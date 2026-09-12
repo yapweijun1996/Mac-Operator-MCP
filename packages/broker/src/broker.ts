@@ -32,6 +32,7 @@ import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, validateGitBranchRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector } from "./git-inspector.js";
+import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -49,6 +50,7 @@ export interface BrokerOptions {
   gitBranchInspector?: GitBranchInspector;
   gitLogInspector?: GitLogInspector;
   gitDiffInspector?: GitDiffInspector;
+  packageInspector?: PackageInspector;
 }
 
 export class Broker {
@@ -63,6 +65,7 @@ export class Broker {
   private readonly gitBranchInspector: GitBranchInspector;
   private readonly gitLogInspector: GitLogInspector;
   private readonly gitDiffInspector: GitDiffInspector;
+  private readonly packageInspector: PackageInspector;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -76,6 +79,7 @@ export class Broker {
     this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector();
     this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl();
     this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl();
+    this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -602,6 +606,58 @@ export class Broker {
           }
         };
       }
+      case "mac_package_inspect": {
+        if (!execution.packageInspect) throw new BrokerError("EXECUTION_FAILED", "Package inspection execution plan is unavailable");
+        const inspection = await this.packageInspector.inspect(
+          execution.packageInspect.projectRoot,
+          execution.packageInspect.manager,
+          execution.packageInspect.checkOutdated,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        const data = {
+          project_root: inspection.projectRoot,
+          manager: inspection.manager,
+          dependencies: inspection.dependencies.map((dependency) => ({
+            name: dependency.name,
+            version: dependency.version,
+            ...(dependency.source !== undefined ? { source: dependency.source } : {})
+          })),
+          lockfile: {
+            present: inspection.lockfile.present,
+            ...(inspection.lockfile.path !== undefined ? { path: inspection.lockfile.path } : {})
+          },
+          outdated: inspection.outdated.map((dependency) => ({
+            name: dependency.name,
+            current: dependency.current,
+            latest: dependency.latest
+          })),
+          truncated: inspection.truncated
+        };
+        return {
+          data,
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "package_metadata_result_validation",
+            evidence: {
+              summary: "Package manifests and lockfile identity were read through bounded descriptor checks without executing package-manager scripts",
+              readback_hash: sha256(canonicalJson(data)),
+              observed_at: new Date(this.now()).toISOString()
+            }
+          },
+          warnings: [...inspection.warnings],
+          truncated: inspection.truncated,
+          auditTarget: `project:${inspection.projectRoot}`,
+          auditEvidence: {
+            manager: inspection.manager,
+            dependencyCount: inspection.dependencies.length,
+            lockfilePresent: inspection.lockfile.present,
+            outdatedCount: inspection.outdated.length,
+            truncated: inspection.truncated,
+            warningCount: inspection.warnings.length
+          }
+        };
+      }
       case "mac_process_list": {
         assertExactArguments(request.arguments, ["limit", "sort"]);
         validateProcessArguments(request.arguments);
@@ -694,7 +750,7 @@ export class Broker {
             }
             authorizationTarget = { kind: "job", reference: "owned" };
           } else if (tool.targetType === "project") {
-            if (target.kind !== "project") throw new BrokerError("PRECONDITION_FAILED", "Git policy query requires a project target");
+            if (target.kind !== "project") throw new BrokerError("PRECONDITION_FAILED", "Project policy query requires a project target");
             validateGitStatusRequest(target.reference, true);
           }
           authorizeTarget(policy, request.principal.principalId, tool.requiredScopes, authorizationTarget);
@@ -1430,6 +1486,19 @@ export class Broker {
         gitDiff: { projectRoot, paths: [...paths] as string[], staged, ...(base !== undefined ? { base } : {}), maxBytes }
       };
     }
+    if (request.tool === "mac_package_inspect") {
+      assertExactArguments(request.arguments, ["project_root", "manager", "check_outdated"]);
+      const projectRoot = request.arguments.project_root;
+      const manager = (request.arguments.manager ?? "auto") as PackageManagerRequest;
+      const checkOutdated = (request.arguments.check_outdated ?? false) as boolean;
+      if (typeof projectRoot !== "string") throw new BrokerError("PRECONDITION_FAILED", "project_root must be a string");
+      validatePackageInspectRequest(projectRoot, manager, checkOutdated);
+      return {
+        target: { kind: "project", reference: projectRoot },
+        auditTarget: `project:${projectRoot}`,
+        packageInspect: { projectRoot, manager, checkOutdated }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -1731,6 +1800,11 @@ interface ExecutionPlan {
     staged: boolean;
     base?: string;
     maxBytes: number;
+  };
+  packageInspect?: {
+    projectRoot: string;
+    manager: PackageManagerRequest;
+    checkOutdated: boolean;
   };
   job?: BrokerJob;
   write?: {

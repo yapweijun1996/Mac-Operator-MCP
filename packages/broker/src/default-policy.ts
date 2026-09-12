@@ -303,6 +303,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_package_inspect",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.package.read"],
+    capabilityFamilies: ["read"],
+    targetType: "project",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_storage_analysis",
     contractVersion: "0.1",
     requiredScopes: ["mac.storage.read"],
@@ -427,7 +440,7 @@ export function createDefaultPolicy(
       }));
       return;
     }
-    if (scope === "mac.git.read") {
+    if (scope === "mac.git.read" || scope === "mac.package.read") {
       projectRoots.forEach((projectRoot, projectIndex) => targetRules.push({
         ruleId: `test-project-${index}-${projectIndex}`,
         effect: "allow",

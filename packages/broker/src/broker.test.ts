@@ -387,6 +387,18 @@ test("mac_git_diff returns bounded sanitized diff metadata for an authorized pro
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
     edgeAuthenticationKeys: testKeyring(key),
+    gitDiffInspector: {
+      diff: async (root, paths, staged, base) => ({
+        projectRoot: root,
+        diff: "safe diff\n",
+        changedPaths: [...paths],
+        staged,
+        ...(base !== undefined ? { base } : {}),
+        sha256: "a".repeat(64),
+        truncated: false,
+        warnings: []
+      })
+    },
     now: () => NOW
   });
   try {
@@ -394,7 +406,7 @@ test("mac_git_diff returns bounded sanitized diff metadata for an authorized pro
       requestId: "git-diff-request",
       nonce: "git-diff-nonce",
       tool: "mac_git_diff",
-      arguments: { project_root: projectRoot, paths: ["packages/broker/src/git-inspector.ts"], staged: false, base: "HEAD", max_bytes: 65_536 }
+      arguments: { project_root: projectRoot, paths: ["packages/broker/src/broker.ts"], staged: false, base: "HEAD", max_bytes: 65_536 }
     }, ["mac.git.read"]);
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -411,10 +423,52 @@ test("mac_git_diff returns bounded sanitized diff metadata for an authorized pro
     assert.equal(data.project_root, projectRoot);
     assert.equal(data.staged, false);
     assert.equal(data.base, "HEAD");
-    assert.ok(data.changed_paths.includes("packages/broker/src/git-inspector.ts"));
+    assert.ok(data.changed_paths.includes("packages/broker/src/broker.ts"));
     assert.ok(Buffer.byteLength(data.diff, "utf8") <= 65_536);
     assert.match(data.sha256, /^[A-Fa-f0-9]{64}$/u);
     assert.equal(JSON.stringify(result.verification).includes("/usr/bin/git"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_package_inspect returns bounded manifest metadata without executing scripts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-package-broker-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const projectRoot = await realpath(process.cwd());
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.package.read"], ["edge-key-1"], [], [], [], [projectRoot]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "package-inspect-request",
+      nonce: "package-inspect-nonce",
+      tool: "mac_package_inspect",
+      arguments: { project_root: projectRoot, manager: "npm", check_outdated: false }
+    }, ["mac.package.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      project_root: string;
+      manager: string;
+      dependencies: Array<{ name: string; version: string; source?: string }>;
+      lockfile: { present: boolean; path?: string };
+      outdated: unknown[];
+      truncated: boolean;
+    };
+    assert.equal(data.project_root, projectRoot);
+    assert.equal(data.manager, "npm");
+    assert.ok(data.dependencies.some((dependency) => dependency.name === "typescript"));
+    assert.deepEqual(data.lockfile, { present: true, path: "package-lock.json" });
+    assert.deepEqual(data.outdated, []);
+    assert.equal(data.truncated, false);
+    assert.equal(JSON.stringify(result.verification).includes("npm install"), false);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -531,7 +585,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 27);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 28);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
