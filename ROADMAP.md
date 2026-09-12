@@ -6,7 +6,7 @@ Last verified: 2026-09-12
 
 ## Current position
 
-The repository has a committed TypeScript/Node implementation baseline. Work is in Phase 1: the authenticated Edge/Broker foundation and bounded L0/L1 metadata, content-read, file-hash, directory-list, and directory-tree slices are implemented locally, while production enablement remains closed.
+The repository has a committed TypeScript/Node implementation baseline. Work spans Phase 1 and the early Phase 2/4 slices: the authenticated Edge/Broker foundation, MCP discovery/error mapping, bounded post-authentication rate limiting, and bounded L0/L1 plus Git/package/Docker inspection slices are implemented locally, while production enablement remains closed.
 
 ## Phase 0 — Foundation and contracts
 
@@ -42,9 +42,9 @@ Exit: the Mac can be diagnosed safely through released read-only tools with exac
 
 ## Phase 4 — L2 developer operations
 
-Status: `PLANNED`
+Status: `IN_PROGRESS`
 
-Add Git, package, and Docker inspection; then named test/build profiles and Broker-owned jobs. Prove filesystem, network, environment, process-tree, and credential isolation before enabling controlled writes. Add atomic file writes, patching, explicit staging, and local commits with preconditions and verification.
+Bounded Git, package, and fixed local-only Docker inspection are implemented with independent scopes and target authorization. Continue with named test/build profiles and Broker-owned jobs only after sandbox evidence; prove filesystem, network, environment, process-tree, and credential isolation before enabling controlled writes. Add atomic file writes, patching, explicit staging, and local commits with preconditions and verification.
 
 Exit: approved real-project workflows pass without exposing a generic shell or controller credentials.
 
