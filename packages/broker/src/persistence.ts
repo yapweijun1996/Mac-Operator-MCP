@@ -178,6 +178,12 @@ export interface AtomicJobAdmissionInput {
   job: CreateJobInput;
 }
 
+export interface ApprovedJobAdmissionInput {
+  intent: AuditEvent;
+  approval: ApprovalConsumptionBinding;
+  job: CreateJobInput;
+}
+
 /**
  * Test-only failure points for proving that atomic admission never exposes a
  * partially committed request, approval, audit event, or job. Production code
@@ -743,6 +749,74 @@ export class BrokerStore {
       if (transitioned.changes !== 1) throw new BrokerError("CONFLICT", "Request revision changed concurrently");
       return this.requireRequest(current.requestId);
     }));
+  }
+
+  admitApprovedJobAfterDecision(input: ApprovedJobAdmissionInput): { request: RequestRecord; job: BrokerJob } {
+    if (input.intent.eventType !== "intent" || input.intent.decision !== "allow" || input.intent.resultClass !== "INTENT_RECORDED" ||
+        !validAuditTimestamp(input.intent.timestampMs) || !validAuditTarget(input.intent.targetRef) ||
+        input.approval.targetRef !== input.intent.targetRef || input.job.payloadDigest !== input.approval.payloadDigest ||
+        input.job.createdAtMs < input.intent.timestampMs) {
+      throw malformedRequest();
+    }
+    validateApprovalBinding(input.approval);
+    validateJobCreation(input.job);
+    try {
+      return this.runTransaction(() => {
+        const current = this.requireRequest(input.intent.requestId);
+        if (!current.mutation || current.state !== "AUTHORIZED" || input.intent.timestampMs < current.updatedAtMs ||
+            current.targetRef !== input.intent.targetRef || input.job.ownerPrincipalId !== current.principalId ||
+            input.job.ownerSessionId !== current.sessionId || input.job.tool !== current.tool ||
+            input.job.policyVersion !== current.policyVersion || input.job.targetRef !== input.intent.targetRef) {
+          throw new BrokerError("CONFLICT", "Request state or approved Job identity changed");
+        }
+        assertAuditMatchesRequest(input.intent, current);
+        const row = this.findConsumableApproval(current.principalId, current.tool, current.policyVersion, input.approval, input.intent.timestampMs);
+        if (!row) throw new BrokerError("POLICY_DENIED", "No valid approval matches this mutation");
+        const approval = mapApproval(row);
+        const consumed = this.database.prepare(`
+          UPDATE approvals SET used_count = used_count + 1, last_consumed_at_ms = ?, last_request_id = ?, revision = revision + 1
+          WHERE approval_id = ? AND revision = ? AND revoked_at_ms IS NULL AND used_count < use_limit
+        `).run(input.intent.timestampMs, current.requestId, approval.approvalId, approval.revision);
+        if (consumed.changes !== 1) throw new BrokerError("CONFLICT", "Approval changed concurrently");
+        this.insertAudit({
+          ...input.intent,
+          evidence: {
+            ...asEvidenceRecord(input.intent.evidence),
+            approvalId: approval.approvalId,
+            approvalClass: approval.approvalClass,
+            jobId: input.job.jobId
+          }
+        });
+        this.database.prepare(`
+          INSERT INTO jobs(
+            job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
+            payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
+            finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
+            cancel_requested, cancel_reason, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, 0)
+        `).run(
+          input.job.jobId, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
+          input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
+          input.job.createdAtMs
+        );
+        const transitioned = this.database.prepare(`
+          UPDATE requests SET state = 'INTENT_RECORDED', result_class = 'INTENT_RECORDED',
+            target_ref = ?, approval_id = ?, job_id = ?, updated_at_ms = ?, revision = revision + 1
+          WHERE request_id = ? AND revision = ?
+        `).run(input.intent.targetRef, approval.approvalId, input.job.jobId, input.intent.timestampMs, current.requestId, current.revision);
+        if (transitioned.changes !== 1) throw new BrokerError("CONFLICT", "Request revision changed concurrently");
+        return {
+          request: this.requireRequest(current.requestId),
+          job: this.requireOwnedJob(input.job.jobId, input.job.ownerPrincipalId)
+        };
+      });
+    } catch (error) {
+      if (String(error).includes("UNIQUE constraint failed")) {
+        throw new BrokerError("CONFLICT", "Approved Job identity was already used");
+      }
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Approved Job admission could not be persisted");
+    }
   }
 
   markRequestRunning(requestId: string, nowMs: number): RequestRecord {

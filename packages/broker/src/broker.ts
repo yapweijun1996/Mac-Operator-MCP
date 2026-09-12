@@ -169,48 +169,8 @@ export class Broker {
       });
       authorized = true;
       if (toolPolicy.mutation) {
-        this.options.store.recordRequestIntent({
-          requestId: request.requestId,
-          principalId: request.principal.principalId,
-          tool: request.tool,
-          eventType: "intent",
-          decision: "allow",
-          resultClass: "INTENT_RECORDED",
-          targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
-          policyVersion: policy.version,
-          evidence: {
-            argumentDigest: sha256(canonicalJson(request.arguments)),
-            ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {}),
-            ...(request.tool === "mac_task_run" ? { jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}` } : {})
-          },
-          timestampMs: this.now()
-        }, {
-          contractVersion: request.contractVersion,
-          targetKind: target.kind,
-          targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
-          payloadDigest: sha256(canonicalJson(request.arguments)),
-          approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
-          unattended: false
-        });
-        if (request.tool === "mac_write_file_atomic") {
-          const jobInput = {
-            jobId: `job:write-${sha256(canonicalJson({ principalId: request.principal.principalId, idempotencyKey: execution.write!.idempotencyKey })).slice(0, 48)}`,
-            ownerPrincipalId: request.principal.principalId,
-            ownerSessionId: request.principal.sessionId,
-            tool: request.tool,
-            targetRef: `${target.kind}:${target.reference}`,
-            policyVersion: request.policyVersion,
-            payloadDigest: sha256(canonicalJson(request.arguments)),
-            idempotencyKey: execution.write!.idempotencyKey,
-            createdAtMs: this.now()
-          } as const;
-          const created = this.options.store.createJob(jobInput);
-          execution.writeJob = created.job;
-          execution.writeJobNew = !created.reused;
-          this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
-        }
         if (request.tool === "mac_task_run") {
-          const idempotencyKey = `task:${request.requestId}`;
+          const admissionAt = this.now();
           const jobInput = {
             jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
             ownerPrincipalId: request.principal.principalId,
@@ -219,13 +179,74 @@ export class Broker {
             targetRef: `${target.kind}:${target.reference}`,
             policyVersion: request.policyVersion,
             payloadDigest: sha256(canonicalJson(request.arguments)),
-            idempotencyKey,
-            createdAtMs: this.now()
+            idempotencyKey: `task:${request.requestId}`,
+            createdAtMs: admissionAt
           } as const;
-          const created = this.options.store.createJob(jobInput);
-          execution.taskJob = created.job;
-          execution.taskJobNew = !created.reused;
-          this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          const admitted = this.options.store.admitApprovedJobAfterDecision({
+            intent: {
+              requestId: request.requestId,
+              principalId: request.principal.principalId,
+              tool: request.tool,
+              eventType: "intent",
+              decision: "allow",
+              resultClass: "INTENT_RECORDED",
+              targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
+              policyVersion: policy.version,
+              evidence: { argumentDigest: sha256(canonicalJson(request.arguments)) },
+              timestampMs: admissionAt
+            },
+            approval: {
+              contractVersion: request.contractVersion,
+              targetKind: target.kind,
+              targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
+              unattended: false
+            },
+            job: jobInput
+          });
+          execution.taskJob = admitted.job;
+          execution.taskJobNew = true;
+        } else {
+          this.options.store.recordRequestIntent({
+            requestId: request.requestId,
+            principalId: request.principal.principalId,
+            tool: request.tool,
+            eventType: "intent",
+            decision: "allow",
+            resultClass: "INTENT_RECORDED",
+            targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
+            policyVersion: policy.version,
+            evidence: {
+              argumentDigest: sha256(canonicalJson(request.arguments)),
+              ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {})
+            },
+            timestampMs: this.now()
+          }, {
+            contractVersion: request.contractVersion,
+            targetKind: target.kind,
+            targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
+            payloadDigest: sha256(canonicalJson(request.arguments)),
+            approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
+            unattended: false
+          });
+          if (request.tool === "mac_write_file_atomic") {
+            const jobInput = {
+              jobId: `job:write-${sha256(canonicalJson({ principalId: request.principal.principalId, idempotencyKey: execution.write!.idempotencyKey })).slice(0, 48)}`,
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: execution.write!.idempotencyKey,
+              createdAtMs: this.now()
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.writeJob = created.job;
+            execution.writeJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
         }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
