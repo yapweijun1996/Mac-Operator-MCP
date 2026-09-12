@@ -51,7 +51,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
-Latest exact-revision addendum: commit `7fc13fc` records 183 passing tests, including the bounded post-authentication Edge rate limiter and a real Mac local Docker daemon status readback (`29.1.3`). The 180-test paragraph below is the preceding evidence baseline; the current detailed record is `evidence/2026-09-12-local-broker-foundation.md`.
+Latest exact-revision addendum: commit `707f411` records 187 passing tests, including fail-closed bounded Edge contract loading, the bounded post-authentication Edge rate limiter, and a real Mac local Docker daemon status readback (`29.1.3`). The 180-test paragraph below is the preceding evidence baseline; the current detailed record is `evidence/2026-09-12-local-broker-foundation.md`.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.
 
