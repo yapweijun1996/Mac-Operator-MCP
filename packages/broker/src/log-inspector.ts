@@ -42,7 +42,7 @@ export class MacLogInspector implements LogInspector {
   async tail(source: string, lines: number, sinceSeconds: number, control: LogExecutionControl): Promise<SafeLogTail> {
     validateLogRequest(source, lines, sinceSeconds);
     const effectiveSince = Math.max(1, Math.min(sinceSeconds, MAX_EFFECTIVE_SINCE_SECONDS));
-    const args = ["show", "--last", `${effectiveSince}s`, "--style", "ndjson", "--no-pager"];
+    const args = ["show", "--last", `${effectiveSince}s`, "--style", "compact", "--no-pager"];
     if (source.startsWith("process/")) args.push("--process", source.slice("process/".length));
     const result = await this.supervisor.run({
       executable: LOG_EXECUTABLE,
@@ -82,27 +82,21 @@ function parseLogResult(
   const warnings: string[] = [];
   let malformedLines = 0;
   for (const line of result.stdout.split("\n")) {
-    if (line.trim().length === 0) continue;
-    let parsed: unknown;
-    try { parsed = JSON.parse(line) as unknown; } catch {
+    if (line.trim().length === 0 || /^Timestamp\s+Ty\s+Process/u.test(line)) continue;
+    const match = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\s+(\S+)\s+\S+\s+(.*)$/u.exec(line);
+    if (!match) {
       malformedLines += 1;
       continue;
     }
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      malformedLines += 1;
-      continue;
-    }
-    const record = parsed as Record<string, unknown>;
-    const rawMessage = typeof record.eventMessage === "string"
-      ? record.eventMessage
-      : typeof record.message === "string" ? record.message : "";
+    const rawMessage = match[3]!.replace(/^\[[^\]]{0,256}\]\s+/u, "").trim();
     if (rawMessage.length === 0) continue;
     const redacted = redactLogText(rawMessage);
-    const timestamp = parseTimestamp(record.timestamp);
-    const level = typeof record.messageType === "string" && record.messageType.length <= 64
-      ? record.messageType
-      : undefined;
-    entries.push({ timestamp, ...(level ? { level } : {}), message: redacted.text });
+    const parsedTimestamp = Date.parse(match[1]!);
+    entries.push({
+      timestamp: Number.isNaN(parsedTimestamp) ? null : new Date(parsedTimestamp).toISOString(),
+      level: match[2]!.slice(0, 64),
+      message: redacted.text
+    });
   }
   const selected = entries.slice(Math.max(0, entries.length - lines));
   if (malformedLines > 0) warnings.push("Some log records were malformed and were omitted");
@@ -116,10 +110,4 @@ function parseLogResult(
     truncated: result.truncated || malformedLines > 0 || entries.length > lines,
     warnings: warnings.slice(0, 32)
   };
-}
-
-function parseTimestamp(value: unknown): string | null {
-  if (typeof value !== "string" || value.length < 1 || value.length > 64) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
 }

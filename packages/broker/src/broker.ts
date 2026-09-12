@@ -446,7 +446,7 @@ export class Broker {
             required: false,
             status: "verified",
             strategy: "sanitized_log_result_validation",
-            evidence: { summary: "Log records were collected from a fixed allowlisted source, parsed as bounded NDJSON, and secret-redacted before return" }
+            evidence: { summary: "Log records were collected from a fixed allowlisted source, parsed as bounded compact records, and secret-redacted before return" }
           },
           warnings: [...tail.warnings],
           truncated: tail.truncated,
