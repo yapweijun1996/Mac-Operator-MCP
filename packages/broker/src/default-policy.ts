@@ -381,6 +381,19 @@ const tools: ToolPolicy[] = [
     enabled: false
   },
   {
+    tool: "mac_task_run",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.task.run"],
+    capabilityFamilies: ["process", "write"],
+    targetType: "task_profile",
+    mutation: true,
+    approvalPolicy: "trusted_profile",
+    outputCapBytes: 2_097_152,
+    timeoutMs: 600_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_job_status",
     contractVersion: "0.1",
     requiredScopes: ["mac.job.read"],
@@ -417,7 +430,8 @@ export function createDefaultPolicy(
   serviceIds: readonly string[] = [],
   logSources: readonly string[] = [],
   projectRoots: readonly string[] = [],
-  dockerObjectIds: readonly string[] = []
+  dockerObjectIds: readonly string[] = [],
+  taskProfiles: readonly string[] = []
 ): BrokerPolicy {
   const grants = new Map<string, PrincipalGrant>();
   if (principalScopes.length > 0) {
@@ -448,6 +462,16 @@ export function createDefaultPolicy(
         scope,
         target: { kind: "job", reference: "owned" }
       });
+      return;
+    }
+    if (scope === "mac.task.run") {
+      taskProfiles.forEach((profile, profileIndex) => targetRules.push({
+        ruleId: `test-task-profile-${index}-${profileIndex}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "task_profile", reference: profile }
+      }));
       return;
     }
     if (scope === "mac.process.read") {

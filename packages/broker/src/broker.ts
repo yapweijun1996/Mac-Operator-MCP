@@ -34,7 +34,9 @@ import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-in
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, validateGitBranchRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
-import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
+import { FailClosedTaskRunner, validateTaskExecutionResult, type TaskRunner } from "./task-runner.js";
+import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -53,6 +55,8 @@ export interface BrokerOptions {
   gitDiffInspector?: GitDiffInspector;
   packageInspector?: PackageInspector;
   dockerInspector?: DockerInspector;
+  taskProfileRegistry?: TaskProfileRegistry;
+  taskRunner?: TaskRunner;
 }
 
 export class Broker {
@@ -69,6 +73,8 @@ export class Broker {
   private readonly gitDiffInspector: GitDiffInspector;
   private readonly packageInspector: PackageInspector;
   private readonly dockerInspector: DockerInspector;
+  private readonly taskProfileRegistry: TaskProfileRegistry;
+  private readonly taskRunner: TaskRunner;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -84,6 +90,8 @@ export class Broker {
     this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl();
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
     this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
+    this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
+    this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -172,7 +180,8 @@ export class Broker {
           policyVersion: policy.version,
           evidence: {
             argumentDigest: sha256(canonicalJson(request.arguments)),
-            ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {})
+            ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {}),
+            ...(request.tool === "mac_task_run" ? { jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}` } : {})
           },
           timestampMs: this.now()
         }, {
@@ -200,15 +209,40 @@ export class Broker {
           execution.writeJobNew = !created.reused;
           this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
         }
+        if (request.tool === "mac_task_run") {
+          const idempotencyKey = `task:${request.requestId}`;
+          const jobInput = {
+            jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+            ownerPrincipalId: request.principal.principalId,
+            ownerSessionId: request.principal.sessionId,
+            tool: request.tool,
+            targetRef: `${target.kind}:${target.reference}`,
+            policyVersion: request.policyVersion,
+            payloadDigest: sha256(canonicalJson(request.arguments)),
+            idempotencyKey,
+            createdAtMs: this.now()
+          } as const;
+          const created = this.options.store.createJob(jobInput);
+          execution.taskJob = created.job;
+          execution.taskJobNew = !created.reused;
+          this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+        }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
-      if (execution.writeJob && execution.writeJobNew && execution.writeJob.state === "queued") {
-        execution.writeJob = this.options.store.startJob(
-          execution.writeJob.jobId,
+      const pendingJob = execution.writeJob && execution.writeJobNew
+        ? { kind: "write" as const, job: execution.writeJob }
+        : execution.taskJob && execution.taskJobNew
+          ? { kind: "task" as const, job: execution.taskJob }
+          : undefined;
+      if (pendingJob && pendingJob.job.state === "queued") {
+        const started = this.options.store.startJob(
+          pendingJob.job.jobId,
           request.principal.principalId,
-          execution.writeJob.revision,
+          pendingJob.job.revision,
           this.now()
         );
+        if (pendingJob.kind === "write") execution.writeJob = started;
+        else execution.taskJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       this.ensureActiveAuthority(request, execution.target);
@@ -1308,6 +1342,9 @@ export class Broker {
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
+      case "mac_task_run": {
+        return this.dispatchTask(request, execution, toolPolicy.timeoutMs, toolPolicy.outputCapBytes);
+      }
       case "mac_job_status": {
         if (!execution.job) throw new BrokerError("EXECUTION_FAILED", "Job execution plan is unavailable");
         const tailBytes = (request.arguments.tail_bytes ?? 65_536) as number;
@@ -1425,6 +1462,111 @@ export class Broker {
     }
   }
 
+  private async dispatchTask(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number,
+    outputCapBytes: number
+  ): Promise<DispatchResult> {
+    if (!execution.taskRun || !execution.taskJob) {
+      throw new BrokerError("EXECUTION_FAILED", "Task job execution plan is unavailable");
+    }
+    const job = execution.taskJob;
+    if (job.state === "unknown") {
+      throw new BrokerError("UNKNOWN_OUTCOME", "Task outcome is unresolved; inspect its Broker job", true);
+    }
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "Task was cancelled before execution");
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "Task job is not running");
+    let resolved: ResolvedTaskProfile;
+    try {
+      resolved = await this.taskProfileRegistry.resolve({
+        profile: execution.taskRun.profile,
+        cwd: execution.taskRun.cwd,
+        args: execution.taskRun.args
+      });
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Task profile resolution failed");
+      try {
+        execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          state: "failed",
+          resultClass: "failed",
+          finishedAtMs: this.now()
+        });
+      } catch {
+        // Preserve the original profile error when terminal persistence fails.
+      }
+      throw brokerError;
+    }
+    let terminalPersisted = false;
+    try {
+      const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
+        resolved,
+        this.executionControl(request, execution.target, timeoutMs, job.jobId)
+      ));
+      // A runner may return after cancellation or revocation without observing
+      // the control callback. Never publish a success after the Broker lost
+      // authority; the outcome is unresolved and must remain inspectable.
+      this.ensureActiveAuthority(request, execution.target);
+      const streamCap = Math.max(1, Math.floor(outputCapBytes / 2));
+      const stdout = redactBoundedText(taskResult.stdout, streamCap);
+      const stderr = redactBoundedText(taskResult.stderr, streamCap);
+      const finished = taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
+      const terminalState = finished ? "completed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
+      const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
+      execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: terminalState,
+        resultClass: terminalClass,
+        finishedAtMs: this.now(),
+        exitCode: taskResult.exitCode,
+        stdout: stdout.text,
+        stderr: stderr.text
+      });
+      terminalPersisted = true;
+      if (!finished) {
+        if (terminalState === "cancelled") throw new BrokerError("CANCELLED", "Task was cancelled under active authority");
+        if (terminalState === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Task outcome could not be verified", true);
+        if (taskResult.state === "timed_out") throw new BrokerError("TIMEOUT", "Task exceeded its execution budget");
+        if (taskResult.verification.status !== "verified") throw new BrokerError("VERIFICATION_FAILED", "Task postcondition verification failed");
+        throw new BrokerError(taskResult.resultClass === "OUTPUT_LIMIT" ? "OUTPUT_LIMIT" : "EXECUTION_FAILED", "Task execution failed");
+      }
+      return {
+        data: {
+          profile: resolved.profile,
+          cwd: resolved.cwd,
+          state: execution.taskJob.state,
+          job_id: execution.taskJob.jobId,
+          exit_code: taskResult.exitCode,
+          stdout: stdout.text,
+          stderr: stderr.text,
+          truncated: taskResult.truncated || stdout.truncated || stderr.truncated
+        },
+        verification: {
+          required: true,
+          status: "verified",
+          strategy: resolved.verificationStrategy,
+          evidence: { summary: taskResult.verification.summary ?? "Task exit status and declared task verification passed" }
+        },
+        truncated: taskResult.truncated || stdout.truncated || stderr.truncated,
+        auditTarget: `task_profile:${resolved.profile}`,
+        auditEvidence: { jobId: execution.taskJob.jobId, state: execution.taskJob.state, verification: taskResult.verification.status }
+      };
+    } catch (error) {
+      if (!terminalPersisted) {
+        try {
+          execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+            state: "unknown",
+            resultClass: "unknown",
+            finishedAtMs: this.now()
+          });
+        } catch {
+          // Preserve the original error; the running task has no trusted terminal readback.
+        }
+      }
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("UNKNOWN_OUTCOME", "Task outcome could not be persisted", true);
+    }
+  }
+
   private planExecution(request: BrokerRequest, policy: BrokerPolicy, toolPolicy: ToolPolicy): ExecutionPlan {
     if (request.tool === "mac_job_status" || request.tool === "mac_job_cancel") {
       assertExactArguments(request.arguments, request.tool === "mac_job_status" ? ["job_id", "tail_bytes"] : ["job_id", "reason"]);
@@ -1432,6 +1574,22 @@ export class Broker {
       const job = this.options.store.ownedJob(request.arguments.job_id as string, request.principal.principalId);
       if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
       return { target: { kind: "job", reference: "owned" }, auditTarget: `job:${job.jobId}`, job };
+    }
+    if (request.tool === "mac_task_run") {
+      assertExactArguments(request.arguments, ["profile", "cwd", "args", "async"]);
+      const parsed = validateTaskRunArguments(request.arguments);
+      if (!this.taskRunner.available) {
+        throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
+      }
+      return {
+        target: { kind: "task_profile", reference: parsed.profile },
+        auditTarget: `task_profile:${parsed.profile}`,
+        taskRun: {
+          profile: parsed.profile,
+          cwd: parsed.cwd,
+          args: [...(parsed.args ?? [])]
+        }
+      };
     }
     if (request.tool === "mac_find_files") {
       assertExactArguments(request.arguments, ["roots", "query", "max_results"]);
@@ -1817,6 +1975,19 @@ export class Broker {
       }
       throw new BrokerError("POLICY_DENIED", "No Docker object is authorized for this tool");
     }
+    if (tool.targetType === "task_profile") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "task_profile" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized task profile is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No task profile is authorized for this tool");
+    }
     if (tool.targetType !== "path") {
       authorizeTarget(policy, principalId, tool.requiredScopes, executionTarget(tool));
       return;
@@ -2013,6 +2184,11 @@ interface ExecutionPlan {
     tail: number;
     sinceSeconds: number;
   };
+  taskRun?: {
+    profile: string;
+    cwd: string;
+    args: readonly string[];
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -2022,6 +2198,8 @@ interface ExecutionPlan {
   };
   writeJob?: BrokerJob;
   writeJobNew?: boolean;
+  taskJob?: BrokerJob;
+  taskJobNew?: boolean;
 }
 
 interface DispatchResult {
@@ -2121,6 +2299,8 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       throw new BrokerError("PRECONDITION_FAILED", "Docker object target requires Docker-specific planning");
     case "job":
       throw new BrokerError("PRECONDITION_FAILED", "Job target requires Broker-owned job planning");
+    case "task_profile":
+      throw new BrokerError("PRECONDITION_FAILED", "Task profile target requires task-specific planning");
   }
 }
 

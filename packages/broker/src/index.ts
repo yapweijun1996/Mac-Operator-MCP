@@ -11,6 +11,7 @@ export * from "./policy.js";
 export * from "./policy-loader.js";
 export * from "./process-supervisor.js";
 export * from "./task-profile.js";
+export * from "./task-runner.js";
 export * from "./approval-authority.js";
 export * from "./approval-keyring.js";
 export * from "./approval-ipc-server.js";

@@ -11,6 +11,8 @@ import { EdgeKeyring } from "./edge-keyring.js";
 import type { FilesystemExecutor } from "./filesystem-executor.js";
 import { BrokerStore, redactEvidence } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
+import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
+import type { TaskRunner } from "./task-runner.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -51,6 +53,25 @@ function unsigned(overrides: Partial<UnsignedBrokerRequest> = {}, scopes: Scope[
     policyVersion: "policy-0.1",
     authenticationKeyId: "edge-key-1",
     ...overrides
+  };
+}
+
+function taskProfile(root: string): TaskProfile {
+  return {
+    schemaVersion: "0.1",
+    profile: "tests.echo",
+    executable: "/bin/echo",
+    allowedCwdRoots: [root],
+    allowedArgumentPattern: "^[a-z0-9._=-]{1,32}$",
+    maxArguments: 2,
+    environment: { LANG: "C" },
+    filesystemRoots: [root],
+    networkPolicy: "none",
+    sandboxProfile: "deny-default-v0.1",
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    verificationStrategy: "exit_status_and_declared_task_verification",
+    enabled: true
   };
 }
 
@@ -651,7 +672,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
         name: "mac_policy_explain", enabled: false, scopes: ["mac.policy.explain"], reason: "scope_not_granted"
       });
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_task_run"), {
-        name: "mac_task_run", enabled: false, scopes: [], reason: "not_implemented"
+        name: "mac_task_run", enabled: false, scopes: ["mac.task.run"], reason: "disabled_by_policy"
       });
     }
   } finally { await context.close(); }
@@ -660,8 +681,156 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 31);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 32);
   assert.deepEqual(policy.filesystemRoots, []);
+});
+
+test("mac_task_run fails closed before consuming approval when no isolation runner is available", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-fail-closed-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
+  const request = unsigned({
+    requestId: "task-fail-closed",
+    nonce: "task-fail-closed-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-fail-closed",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "POLICY_DENIED");
+    assert.equal(store.approvalRecord("approval:task-fail-closed")?.usedCount, 0);
+    assert.equal(store.requestRecord("task-fail-closed")?.state, "DENIED");
+    assert.equal(store.ownedJobByIdempotencyKey("task:task-fail-closed", "principal-1"), undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_task_run binds approval, profile resolution, and verified Job completion", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-run-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const taskRunner: TaskRunner = {
+    available: true,
+    async run(profile, control) {
+      assert.equal(profile.process.executable, "/bin/echo");
+      assert.equal(profile.networkPolicy, "none");
+      assert.equal(control.timeoutMs, 600_000);
+      assert.equal(control.shouldCancel(), false);
+      return {
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "ok\n",
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
+        verification: { status: "verified", summary: "fake isolated runner read back its postcondition" }
+      };
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
+    taskRunner,
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
+  const request = unsigned({
+    requestId: "task-success",
+    nonce: "task-success-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-success",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(store.approvalRecord("approval:task-success")?.usedCount, 1);
+    assert.equal(store.requestRecord("task-success")?.state, "SUCCEEDED");
+    assert.ok(store.requestRecord("task-success")?.jobId);
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        profile: "tests.echo",
+        cwd: root,
+        state: "completed",
+        job_id: store.requestRecord("task-success")?.jobId,
+        exit_code: 0,
+        stdout: "ok\n",
+        stderr: "",
+        truncated: false
+      });
+      assert.equal(result.verification.status, "verified");
+    }
+    const jobId = store.requestRecord("task-success")!.jobId!;
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "completed");
+    assert.equal(store.ownedJob(jobId, "principal-1")?.resultClass, "success");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("job status and queued cancellation are owner-bound and durably audited", async () => {

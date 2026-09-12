@@ -39,6 +39,32 @@ export interface TaskRunRequest {
   profile: string;
   cwd: string;
   args?: readonly string[];
+  asynchronous?: boolean;
+}
+
+export function validateTaskRunArguments(argumentsValue: Readonly<Record<string, unknown>>): TaskRunRequest {
+  const keys = Object.keys(argumentsValue);
+  if (keys.some((key) => !["profile", "cwd", "args", "async"].includes(key)) ||
+      typeof argumentsValue.profile !== "string" || !PROFILE_ID_PATTERN.test(argumentsValue.profile) ||
+      typeof argumentsValue.cwd !== "string" || argumentsValue.cwd.length < 1 || argumentsValue.cwd.length > 4_096 ||
+      argumentsValue.cwd.includes("\0") ||
+      (argumentsValue.args !== undefined && (!Array.isArray(argumentsValue.args) || argumentsValue.args.some((value) => typeof value !== "string"))) ||
+      (argumentsValue.async !== undefined && typeof argumentsValue.async !== "boolean")) {
+    throw new BrokerError("PRECONDITION_FAILED", "Task run arguments are malformed");
+  }
+  const args = argumentsValue.args as readonly string[] | undefined;
+  if (args && args.some((argument) => argument.length > MAX_ARGUMENT_LENGTH || argument.includes("\0") || argument.includes("\n"))) {
+    throw new BrokerError("PRECONDITION_FAILED", "Task argument is malformed");
+  }
+  if (argumentsValue.async === true) {
+    throw new BrokerError("UNSUPPORTED_CAPABILITY", "Asynchronous task dispatch is not enabled");
+  }
+  return {
+    profile: argumentsValue.profile,
+    cwd: argumentsValue.cwd,
+    ...(args === undefined ? {} : { args }),
+    asynchronous: argumentsValue.async ?? false
+  };
 }
 
 export interface ResolvedTaskProfile {
@@ -75,7 +101,7 @@ export class TaskProfileRegistry {
 
   async resolve(request: TaskRunRequest): Promise<ResolvedTaskProfile> {
     if (request === null || typeof request !== "object" || Array.isArray(request) ||
-        Object.keys(request as unknown as Record<string, unknown>).some((key) => !["profile", "cwd", "args"].includes(key)) ||
+        Object.keys(request as unknown as Record<string, unknown>).some((key) => !["profile", "cwd", "args", "asynchronous"].includes(key)) ||
         typeof request.profile !== "string" || !PROFILE_ID_PATTERN.test(request.profile)) {
       throw new BrokerError("PRECONDITION_FAILED", "Task profile request is malformed");
     }
