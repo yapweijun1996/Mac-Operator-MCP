@@ -6,7 +6,7 @@ Last verified: 2026-09-12
 
 ## Current situation
 
-The accepted documentation baseline is commit `2e389b8`; the current committed implementation baseline is `dab8fed`, which adds the governed L1 file-hash and bounded directory-listing slices. Shared contracts, a Broker core, authenticated Unix-socket transport, an authenticated MCP 2026-07-28 HTTPS Edge factory, SQLite prototype persistence, tests, and developer commands are present. No public deployment, installed service, deployment artifact, privileged helper, or production-enabled tool exists.
+The accepted documentation baseline is commit `2e389b8`; the current committed implementation baseline is `d9c7fc8`, which adds the governed L1 file-hash and bounded directory-listing slices with same-volume entry filtering. Shared contracts, a Broker core, authenticated Unix-socket transport, an authenticated MCP 2026-07-28 HTTPS Edge factory, SQLite prototype persistence, tests, and developer commands are present. No public deployment, installed service, deployment artifact, privileged helper, or production-enabled tool exists.
 
 ## Completed work
 
@@ -109,7 +109,7 @@ There is no blocker to continued local implementation. Production enablement is 
 
 ## Verification performed
 
-- Confirmed accepted documentation baseline `2e389b8` and implementation baseline `dab8fed`; the exact-revision evidence record is refreshed after the governed hash and directory-listing slices.
+- Confirmed accepted documentation baseline `2e389b8` and implementation baseline `d9c7fc8`; the exact-revision evidence record is refreshed after the governed hash and directory-listing slices.
 - Confirmed all 44 catalog tools have one valid JSON materialization, a unique tool name, a unique KB item ID, preserved source text, and a catalog link.
 - Confirmed the runtime catalog reports all 44 tools separately; eleven have local handlers and the production default enables none.
 - Confirmed all 44 contracts have one taxonomy-valid `audit_class` and one structured `postcondition_verification`; all remain `planned`.
