@@ -833,6 +833,82 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
   }
 });
 
+test("mac_task_run does not publish success after active session revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-revoke-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const taskRunner: TaskRunner = {
+    available: true,
+    async run(_profile, control) {
+      store.revoke("session", "session-1", "active-revocation-test", NOW);
+      assert.equal(control.shouldCancel(), true);
+      return {
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "must-not-publish",
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
+        verification: { status: "verified", summary: "runner returned after revocation" }
+      };
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
+    taskRunner,
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
+  const request = unsigned({
+    requestId: "task-revoked",
+    nonce: "task-revoked-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-revoked",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "CANCELLED");
+    assert.equal(store.requestRecord("task-revoked")?.state, "CANCELLED");
+    const jobId = store.requestRecord("task-revoked")?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
+    assert.equal(store.ownedJob(jobId, "principal-1")?.resultClass, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("job status and queued cancellation are owner-bound and durably audited", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-job-tools-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
