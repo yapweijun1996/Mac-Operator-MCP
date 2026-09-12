@@ -1,6 +1,8 @@
 #include <node_api.h>
 
 #include <CommonCrypto/CommonDigest.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <libproc.h>
 #include <algorithm>
 #include <cerrno>
@@ -10,6 +12,9 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <map>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <set>
 #include <string>
 #include <sys/stat.h>
@@ -117,6 +122,45 @@ unsigned long long StorageBytes(uint64_t blocks, uint32_t block_size) {
   return static_cast<unsigned long long>(bytes);
 }
 
+struct NetworkInterfaceRecord {
+  std::string name;
+  bool up;
+  std::set<std::string> addresses;
+};
+
+std::string SanitizeInterfaceName(const char* value) {
+  if (value == nullptr || value[0] == '\0') return "unknown";
+  std::string result;
+  result.reserve(32);
+  for (size_t index = 0; value[index] != '\0' && index < 128; ++index) {
+    const unsigned char character = static_cast<unsigned char>(value[index]);
+    if ((character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') ||
+        (character >= '0' && character <= '9') || character == '.' || character == '_' ||
+        character == ':' || character == '@' || character == '/' || character == '+' || character == '-') {
+      result.push_back(static_cast<char>(character));
+    } else {
+      result.push_back('_');
+    }
+  }
+  return result.empty() ? "unknown" : result;
+}
+
+bool FormatNetworkAddress(const struct sockaddr* address, std::string* output) {
+  if (address == nullptr || output == nullptr) return false;
+  char buffer[INET6_ADDRSTRLEN] = {};
+  if (address->sa_family == AF_INET && inet_ntop(AF_INET, &reinterpret_cast<const struct sockaddr_in*>(address)->sin_addr,
+      buffer, sizeof(buffer)) != nullptr) {
+    *output = buffer;
+    return true;
+  }
+  if (address->sa_family == AF_INET6 && inet_ntop(AF_INET6, &reinterpret_cast<const struct sockaddr_in6*>(address)->sin6_addr,
+      buffer, sizeof(buffer)) != nullptr) {
+    *output = buffer;
+    return true;
+  }
+  return false;
+}
+
 napi_value GetPeerCredentials(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -157,6 +201,75 @@ napi_value GetPeerCredentials(napi_env env, napi_callback_info info) {
   napi_set_named_property(env, result, "uid", uid_value);
   napi_set_named_property(env, result, "gid", gid_value);
   napi_set_named_property(env, result, "pid", pid_value);
+  return result;
+}
+
+napi_value InspectNetwork(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "inspectNetwork requires includeListeners");
+    return nullptr;
+  }
+  bool include_listeners = false;
+  if (napi_get_value_bool(env, args[0], &include_listeners) != napi_ok) {
+    napi_throw_type_error(env, nullptr, "includeListeners must be a boolean");
+    return nullptr;
+  }
+
+  struct ifaddrs* addresses = nullptr;
+  if (getifaddrs(&addresses) != 0 || addresses == nullptr) {
+    ThrowSystemError(env, "Network interfaces could not be enumerated");
+    return nullptr;
+  }
+  std::map<std::string, NetworkInterfaceRecord> interfaces;
+  for (struct ifaddrs* current = addresses; current != nullptr; current = current->ifa_next) {
+    const std::string name = SanitizeInterfaceName(current->ifa_name);
+    auto found = interfaces.find(name);
+    if (found == interfaces.end()) {
+      found = interfaces.emplace(name, NetworkInterfaceRecord{name, (current->ifa_flags & IFF_UP) != 0, {}}).first;
+    } else if ((current->ifa_flags & IFF_UP) != 0) {
+      found->second.up = true;
+    }
+    std::string formatted;
+    if (FormatNetworkAddress(current->ifa_addr, &formatted) && found->second.addresses.size() < 32) {
+      found->second.addresses.insert(formatted);
+    }
+  }
+  freeifaddrs(addresses);
+
+  // Listener enumeration uses a private, OS-version-sensitive kernel ABI. Keep this
+  // adapter read-only and fail closed until a version-pinned parser is available.
+  const bool listener_query_failed = include_listeners;
+  const bool listeners_truncated = false;
+
+  napi_value result;
+  napi_value interface_array;
+  napi_value listener_array;
+  napi_create_object(env, &result);
+  napi_create_array_with_length(env, interfaces.size(), &interface_array);
+  size_t interface_index = 0;
+  for (const auto& item : interfaces) {
+    napi_value value;
+    napi_value address_array;
+    napi_create_object(env, &value);
+    napi_create_array_with_length(env, item.second.addresses.size(), &address_array);
+    size_t address_index = 0;
+    for (const std::string& address : item.second.addresses) {
+      napi_value address_value;
+      napi_create_string_utf8(env, address.c_str(), NAPI_AUTO_LENGTH, &address_value);
+      napi_set_element(env, address_array, address_index++, address_value);
+    }
+    SetString(env, value, "name", item.second.name.c_str());
+    SetString(env, value, "state", item.second.up ? "up" : "down");
+    napi_set_named_property(env, value, "addresses", address_array);
+    napi_set_element(env, interface_array, interface_index++, value);
+  }
+  napi_create_array_with_length(env, 0, &listener_array);
+  napi_set_named_property(env, result, "interfaces", interface_array);
+  napi_set_named_property(env, result, "listeners", listener_array);
+  SetBoolean(env, result, "listenerQueryFailed", listener_query_failed);
+  SetBoolean(env, result, "listenersTruncated", listeners_truncated);
   return result;
 }
 
@@ -1172,6 +1285,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value function;
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);
   napi_set_named_property(env, exports, "getPeerCredentials", function);
+  napi_create_function(env, "inspectNetwork", NAPI_AUTO_LENGTH, InspectNetwork, nullptr, &function);
+  napi_set_named_property(env, exports, "inspectNetwork", function);
   napi_create_function(env, "statPathWithinRoot", NAPI_AUTO_LENGTH, StatPathWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "statPathWithinRoot", function);
   napi_create_function(env, "statStorageVolumeWithinRoot", NAPI_AUTO_LENGTH, StatStorageVolumeWithinRoot, nullptr, &function);

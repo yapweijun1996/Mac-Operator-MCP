@@ -43,6 +43,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_network_status",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.network.read"],
+    capabilityFamilies: ["network"],
+    targetType: "broker",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 262_144,
+    timeoutMs: 5_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_process_list",
     contractVersion: "0.1",
     requiredScopes: ["mac.process.read"],

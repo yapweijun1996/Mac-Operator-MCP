@@ -95,6 +95,42 @@ test("mac_process_list returns bounded redacted process metadata", async () => {
   }
 });
 
+test("mac_network_status returns local interface metadata without active probing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-network-status-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.network.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "network-status-request",
+      nonce: "network-status-nonce",
+      tool: "mac_network_status",
+      arguments: { include_listeners: false }
+    }, ["mac.network.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      interfaces: Array<{ name: string; state: string; addresses: string[] }>;
+      listeners: Array<{ protocol: string; address: string; port: number }>;
+      connectivity: string;
+    };
+    assert.ok(data.interfaces.length <= 64);
+    assert.deepEqual(data.listeners, []);
+    assert.ok(["online", "limited", "offline", "unknown"].includes(data.connectivity));
+    assert.equal(result.warnings.some((warning) => warning.includes("active network probe")), true);
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("packet")), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -205,7 +241,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 19);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 20);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

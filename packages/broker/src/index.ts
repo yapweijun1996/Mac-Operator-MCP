@@ -15,6 +15,7 @@ export * from "./approval-authority.js";
 export * from "./approval-keyring.js";
 export * from "./approval-ipc-server.js";
 export * from "./system-inspector.js";
+export * from "./network-inspector.js";
 export * from "./process-inspector.js";
 export * from "./process-executor.js";
 export * from "./request-validator.js";

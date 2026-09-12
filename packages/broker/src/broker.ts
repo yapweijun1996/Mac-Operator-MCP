@@ -27,6 +27,7 @@ import { parseBrokerRequest } from "./request-validator.js";
 import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
+import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
@@ -348,6 +349,42 @@ export class Broker {
             ...(summary.load ? { load: summary.load } : {})
           },
           verification: { required: false, status: "verified", strategy: "bounded_system_result_validation" }
+        };
+      }
+      case "mac_network_status": {
+        assertExactArguments(request.arguments, ["include_listeners"]);
+        const includeListeners = request.arguments.include_listeners ?? false;
+        if (typeof includeListeners !== "boolean") throw new BrokerError("PRECONDITION_FAILED", "include_listeners must be a boolean");
+        const status = inspectNetwork(includeListeners);
+        return {
+          data: {
+            interfaces: status.interfaces.map((networkInterface) => ({
+              name: networkInterface.name,
+              state: networkInterface.state,
+              addresses: [...networkInterface.addresses]
+            })),
+            listeners: status.listeners.map((listener) => ({
+              protocol: listener.protocol,
+              address: listener.address,
+              port: listener.port
+            })),
+            connectivity: status.connectivity
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_network_result_validation",
+            evidence: { summary: "Network state was collected from local interface metadata without active probes or packet capture" }
+          },
+          warnings: [...status.warnings],
+          truncated: status.truncated,
+          auditTarget: "host:broker",
+          auditEvidence: {
+            interfaceCount: status.interfaces.length,
+            listenerCount: status.listeners.length,
+            connectivity: status.connectivity,
+            truncated: status.truncated
+          }
         };
       }
       case "mac_process_list": {
