@@ -45,9 +45,9 @@ Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires 
 ## P2 — Remote Edge
 
 - `MOP-020` — `IN_PROGRESS` — MCP SDK v2 initialize/modern protocol handling, Broker-filtered tool discovery, `mac_health` routing, and stable Broker failure mapping are implemented and tested. Real-client interoperability, pagination/notification behavior, and deployment evidence remain.
-- `MOP-021` — `IN_PROGRESS` — The MCP Edge accepts an injected OAuth verifier, requires expiry and exact resource binding, projects only known scopes into immutable Broker principal context, and proves bearer tokens do not cross IPC. Real issuer integration, subject mapping policy, revocation latency, rate limits, and client interoperability remain open.
+- `MOP-021` — `IN_PROGRESS` — The MCP Edge accepts an injected OAuth verifier, requires expiry and exact resource binding, projects only known scopes into immutable Broker principal context, and proves bearer tokens do not cross IPC. Real issuer integration, subject mapping policy, revocation latency, and client interoperability remain open; the local fixed-window rate limiter is tracked under MOP-023.
 - `MOP-022` — `PLANNED` — Implement Edge-to-Broker signed request construction.
-- `MOP-023` — `PLANNED` — Implement client/session rate limits and bounded discovery.
+- `MOP-023` — `IN_PROGRESS` — Implemented a bounded in-memory fixed-window Edge limiter after Bearer verification, keyed by verifier-provided client/principal identity, with fixed request/window/key budgets and `Retry-After` responses; Broker-filtered discovery is bounded. Shared multi-instance limits, durable counters, and real-client load evidence remain.
 - `MOP-024` — `IN_PROGRESS` — Broker session/principal/Edge/key revocation and request/session expiry pass local tests. Remote issuer revocation, refresh/session lifecycle, propagation latency, and active-work behavior remain open.
 - `MOP-025` — `PLANNED` — Select authenticated HTTPS/tunnel deployment and verify a real client end to end.
 

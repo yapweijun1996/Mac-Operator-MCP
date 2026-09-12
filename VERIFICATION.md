@@ -34,7 +34,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 | VT-UI-02 | Sensitive UI denied | T-017 | MOP-054 | Password, credential and security-setting tests | GUI | OPEN |
 | VT-PRIV-01 | Helper exposes no arbitrary root | T-018 | MOP-060, MOP-061 | Schema fuzz, caller spoof, operation bypass tests | L5 | BLOCKED |
 | VT-POL-01 | Policy integrity/versioning | T-019 | MOP-080, MOP-084 | Invalid config, downgrade, atomic reload and rollback tests | Local | OPEN — schema/signature/tamper/downgrade/transactional activation/restart matching/explicit rollback/version-binding and legacy revocation migration pass; signer rotation, general migrations and crash injection remain |
-| VT-DOS-01 | Resource bounds | T-020 | MOP-017, MOP-070 | Rate, output, disk, depth, timeout and concurrency tests | Release | OPEN — filesystem worker concurrency, V8 memory/stack settings, empty environment, output caps, deadline and cancellation tests pass; global/session rate limits, disk/depth budgets, kernel-level cancellation and general jobs remain |
+| VT-DOS-01 | Resource bounds | T-020 | MOP-017, MOP-070 | Rate, output, disk, depth, timeout and concurrency tests | Release | OPEN — filesystem worker concurrency, V8 memory/stack settings, empty environment, output caps, deadline and cancellation tests pass; local post-auth Edge fixed-window rate limits pass; shared durable/session limits, disk/depth budgets, kernel-level cancellation and general jobs remain |
 | VT-COMP-01 | Version negotiation fails safely | T-021 | MOP-081 | Edge/Broker/helper compatibility matrix | Local/Remote/L5 | OPEN |
 | VT-OPS-01 | Disable/uninstall removes authority | T-022 | MOP-071, MOP-087 | Revocation, service removal and readback procedure | Release | OPEN |
 
@@ -50,6 +50,8 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 - Release gate: exact revision has no unresolved P0/P1 or High/Critical threat in affected boundaries.
 
 ## Current evidence
+
+Latest exact-revision addendum: commit `402b267` records 183 passing tests, including the bounded post-authentication Edge rate limiter. The 180-test paragraph below is the preceding evidence baseline; the current detailed record is `evidence/2026-09-12-local-broker-foundation.md`.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.
 
