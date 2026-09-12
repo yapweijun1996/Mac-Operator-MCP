@@ -5,10 +5,10 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `35f6d204a85dea70fa669ea6f6239d8735e6106a`
+- Base commit: `8bc038a8f6e7ecd1c199bbc367825d8820a69ba9`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `345d7b043d41983e63393e3691ad73d61810c2c9fc7b79004bbdaffba5054c30`
+- Runtime source manifest SHA-256: `08c92088feafafdef15dba382d3d94bd8a1c139c7d58f2b93bbbe6c7a2f3b791`
 - Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -77,6 +77,7 @@ Observed results:
 - Filesystem adapter calls executed in Broker-owned worker threads with empty environment/arguments, bounded V8 heap/stack settings, a four-worker cap, per-tool deadlines, cancellation polling, termination requests, and runtime message validation. Tests covered normal completion, capacity exhaustion, timeout, active cancellation, and a credential-shaped environment canary that did not cross into the worker.
 - Native process inventory executes in its own Broker-owned worker boundary with empty environment/arguments, bounded V8 heap/stack settings, a two-worker cap, deadline/cancellation termination, and strict post-message validation; the Broker dispatch path does not run native enumeration on its event loop.
 - `mac_find_files` executes in the Broker-owned filesystem worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, authorization for every requested root, a fixed 50,000-entry/32-level budget, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
+- `mac_recent_files` executes in the same Broker-owned worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, per-root authorization, a Broker-supplied clock and bounded time window, fixed traversal/result budgets, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - A Broker integration test revoked the active session during a filesystem read, verified the worker cancellation predicate changed immediately, discarded the otherwise successful result, and recorded `AUTHORIZED` decision followed by `CANCELLED` completion.
 - Job Ledger tests verified principal-scoped payload-bound idempotency, conflicting reuse denial, revision-checked and time/result-consistent transitions, bounded secret-output replacement, owner isolation, immediate/idempotent queued cancellation, and startup recovery from queued/running to `cancelled`/`unknown` with hash-linked audit evidence.
 - `mac_job_status` and `mac_job_cancel` passed their versioned success schemas. Dynamic job IDs were resolved to Broker-owned ownership before the `job:owned` policy decision; foreign jobs were indistinguishable from missing jobs. Cancellation produced separate decision, payload-digest intent, state mutation, readback verification, and completion audit records.
@@ -87,6 +88,7 @@ Observed results:
 - The disabled-by-default `mac_directory_tree` slice verified independent `mac.files.read` scope and content-root authorization, depth and entry bounds, descriptor-backed recursion only through real directories, inherited protected-entry filtering, same-volume child filtering, canonical root identity, and explicit truncation reporting.
 - The enabled-in-test `mac_process_list` slice verified independent `mac.process.read` scope and `process:all` target authorization, native bounded PID enumeration, executable/name/CPU/resident-memory bounds, numeric owner labels, sort/limit validation, strict worker-result validation, and no argv/environment output.
 - The enabled-in-test `mac_find_files` slice verified metadata-only search on a root with `contentRead` disabled, canonical matching paths and safe metadata, nested traversal, protected-entry filtering, result/depth bounds, worker execution, and independent authorization failure when one of multiple requested roots lacked a target grant.
+- The enabled-in-test `mac_recent_files` slice verified a Broker-bound 24-hour window, inclusion of a recent file and exclusion of an older file, metadata-only roots with `contentRead` disabled, protected-entry filtering, bounded result validation, worker execution, and absence of content or credential-shaped output.
 
 ## Boundary and limitations
 
