@@ -344,6 +344,40 @@ test("mac_git_branch_list returns bounded local branch metadata without network"
   }
 });
 
+test("mac_git_log returns bounded redacted commit metadata", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-log-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const projectRoot = await realpath(process.cwd());
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "git-log-request",
+      nonce: "git-log-nonce",
+      tool: "mac_git_log",
+      arguments: { project_root: projectRoot, limit: 5, ref: "HEAD" }
+    }, ["mac.git.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { project_root: string; commits: Array<{ id: string; author?: string; timestamp: string; subject: string }>; truncated: boolean };
+    assert.equal(data.project_root, projectRoot);
+    assert.ok(data.commits.length <= 5);
+    assert.equal(data.commits.every((commit) => /^[A-Fa-f0-9]{40,64}$/u.test(commit.id)), true);
+    assert.equal(data.commits.every((commit) => !Number.isNaN(Date.parse(commit.timestamp))), true);
+    assert.equal(data.commits.every((commit) => commit.subject.length <= 500), true);
+    assert.equal(JSON.stringify(result).includes("/usr/bin/git"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -454,7 +488,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 25);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 26);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

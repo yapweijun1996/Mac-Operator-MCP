@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { GitBranchListInspector, GitStatusInspector, parseGitBranchResult, parseGitStatusOutput, validateGitStatusRequest } from "./git-inspector.js";
+import { GitBranchListInspector, GitLogInspectorImpl, GitStatusInspector, parseGitBranchResult, parseGitLogResult, parseGitStatusOutput, validateGitLogRequest, validateGitStatusRequest } from "./git-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 function success(stdout: string): ProcessExecutionResult {
@@ -89,6 +89,48 @@ test("Git branch listing uses the fixed command boundary", async () => {
   assert.equal(observed.args.includes("refs/remotes"), false);
   assert.equal(observed.environment?.GIT_CONFIG_NOSYSTEM, "1");
   assert.equal(observed.environment?.GIT_TERMINAL_PROMPT, "0");
+});
+
+test("Git log parser returns bounded commit metadata and rejects revision injection", () => {
+  const result = parseGitLogResult(
+    "/tmp/project",
+    success([
+      "a".repeat(40), "\0", "Alice", "\0", "2026-09-12T10:00:00+08:00", "\0", "safe subject", "\0",
+      "b".repeat(40), "\0", "", "\0", "2026-09-11T10:00:00Z", "\0", "", "\0"
+    ].join(""))
+  );
+  assert.equal(result.commits.length, 2);
+  assert.deepEqual(result.commits[0], {
+    id: "a".repeat(40),
+    author: "Alice",
+    timestamp: "2026-09-12T02:00:00.000Z",
+    subject: "safe subject"
+  });
+  assert.equal(result.commits[1]!.author, undefined);
+  assert.throws(() => validateGitLogRequest("/tmp/project", 5, "HEAD..origin/main"), BrokerError);
+  assert.throws(() => validateGitLogRequest("/tmp/project", 201), BrokerError);
+});
+
+test("Git log inspector binds ref arguments and fixed no-network execution", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-log-"));
+  const target = join(directory, "target");
+  await mkdir(join(target, ".git"), { recursive: true });
+  await writeFile(join(target, ".git", "config"), "[core]\n\tbare = false\n");
+  let observed: { args: readonly string[]; environment?: Readonly<Record<string, string>> } | undefined;
+  const inspector = new GitLogInspectorImpl({
+    run: async (request) => {
+      observed = { args: request.args, ...(request.environment ? { environment: request.environment } : {}) };
+      return success("");
+    }
+  });
+  const canonicalTarget = await realpath(target);
+  const result = await inspector.log(canonicalTarget, 5, "HEAD", { timeoutMs: 1_000, shouldCancel: () => false });
+  assert.equal(result.commits.length, 0);
+  assert.ok(observed);
+  assert.ok(observed.args.includes("log"));
+  assert.ok(observed.args.includes("--max-count=5"));
+  assert.equal(observed.args.at(-1), "HEAD");
+  assert.equal(observed.environment?.GIT_CONFIG_GLOBAL, "/dev/null");
 });
 
 test("Git status rejects a symlink project root before child execution", async () => {

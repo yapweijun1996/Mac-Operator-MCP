@@ -65,6 +65,24 @@ export interface GitBranchInspector {
   branches(projectRoot: string, includeRemote: boolean, control: GitExecutionControl): Promise<SafeGitBranches>;
 }
 
+export interface SafeGitCommit {
+  id: string;
+  author?: string;
+  timestamp: string;
+  subject: string;
+}
+
+export interface SafeGitLog {
+  projectRoot: string;
+  commits: readonly SafeGitCommit[];
+  truncated: boolean;
+  warnings: readonly string[];
+}
+
+export interface GitLogInspector {
+  log(projectRoot: string, limit: number, ref: string | undefined, control: GitExecutionControl): Promise<SafeGitLog>;
+}
+
 export class GitStatusInspector implements GitInspector {
   private readonly supervisor: Pick<ProcessSupervisor, "run">;
 
@@ -144,6 +162,50 @@ export class GitBranchListInspector implements GitBranchInspector {
   }
 }
 
+export class GitLogInspectorImpl implements GitLogInspector {
+  private readonly supervisor: Pick<ProcessSupervisor, "run">;
+
+  constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
+    maxConcurrent: 2,
+    allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
+  })) {
+    this.supervisor = supervisor;
+  }
+
+  async log(projectRoot: string, limit: number, ref: string | undefined, control: GitExecutionControl): Promise<SafeGitLog> {
+    validateGitLogRequest(projectRoot, limit, ref);
+    const identity = canonicalProjectRoot(projectRoot);
+    const args = [
+      "--no-pager",
+      "--no-optional-locks",
+      "--git-dir=.git",
+      "--work-tree=.",
+      "-c", "core.fsmonitor=false",
+      "-c", "core.hooksPath=/dev/null",
+      "log",
+      "--format=%H%x00%an%x00%aI%x00%s%x00",
+      `--max-count=${limit}`,
+      "--no-decorate",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--end-of-options",
+      ref ?? "HEAD"
+    ];
+    const result = await this.supervisor.run({
+      executable: GIT_EXECUTABLE,
+      args,
+      cwd: identity.path,
+      environment: SAFE_GIT_ENVIRONMENT,
+      timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
+      outputCapBytes: MAX_OUTPUT_BYTES,
+      shouldCancel: control.shouldCancel
+    });
+    assertProjectIdentity(identity.path, identity.identity);
+    return parseGitLogResult(identity.path, result);
+  }
+}
+
 export function validateGitStatusRequest(projectRoot: string, includeUntracked = true): void {
   if (typeof projectRoot !== "string" || projectRoot.length < 1 || projectRoot.length > MAX_PROJECT_ROOT_LENGTH ||
       !PROJECT_ROOT_PATTERN.test(projectRoot) || !isAbsolute(projectRoot) || resolve(projectRoot) !== projectRoot ||
@@ -159,14 +221,70 @@ export function validateGitBranchRequest(projectRoot: string, includeRemote = fa
   validateGitStatusRequest(projectRoot, true);
 }
 
-function sanitizeGitValue(value: string, maxLength: number): { value: string | null; redacted: boolean } {
-  if (value.length < 1 || value.length > maxLength) return { value: null, redacted: false };
+export function validateGitLogRequest(projectRoot: string, limit = 50, ref?: string): void {
+  validateGitStatusRequest(projectRoot, true);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 ||
+      (ref !== undefined && (typeof ref !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(ref) || ref.includes("..")))) {
+    throw new BrokerError("PRECONDITION_FAILED", "Git log arguments are outside the supported range");
+  }
+}
+
+function sanitizeGitValue(value: string, maxLength: number, allowEmpty = false): { value: string | null; redacted: boolean } {
+  if ((!allowEmpty && value.length < 1) || value.length > maxLength) return { value: null, redacted: false };
   const redactedValue = redactLogText(value);
   const safe = redactedValue.text.replace(/[\u0001-\u001f\u007f]/gu, "�");
   return {
     value: safe.length > maxLength ? safe.slice(0, maxLength) : safe,
     redacted: redactedValue.redacted || safe !== value
   };
+}
+
+export function parseGitLogResult(projectRoot: string, result: ProcessExecutionResult): SafeGitLog {
+  if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Git log was cancelled");
+  if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Git log timed out");
+  if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Git log exceeded its output limit");
+  if (result.resultClass !== "SUCCEEDED") {
+    if (/not a git repository/u.test(result.stderr)) {
+      throw new BrokerError("TARGET_NOT_FOUND", "The project root is not a Git repository");
+    }
+    throw new BrokerError("EXECUTION_FAILED", "Git log failed");
+  }
+  const commits: SafeGitCommit[] = [];
+  const warnings: string[] = [];
+  const records = result.stdout.split("\0");
+  let malformed = false;
+  let redacted = false;
+  for (let index = 0; index + 3 < records.length; index += 4) {
+    const id = records[index]!;
+    const author = sanitizeGitValue(records[index + 1]!, 256, true);
+    const timestamp = records[index + 2]!;
+    const subject = sanitizeGitValue(records[index + 3]!, 500, true);
+    if (!/^[A-Fa-f0-9]{40,64}$/u.test(id) || author.value === null || subject.value === null) {
+      malformed = true;
+      continue;
+    }
+    const parsedTimestamp = Date.parse(timestamp);
+    if (Number.isNaN(parsedTimestamp)) {
+      malformed = true;
+      continue;
+    }
+    redacted ||= author.redacted || subject.redacted;
+    commits.push({
+      id,
+      ...(author.value.length > 0 ? { author: author.value } : {}),
+      timestamp: new Date(parsedTimestamp).toISOString(),
+      subject: subject.value
+    });
+  }
+  if (records.length % 4 !== 1) malformed = true;
+  const addWarning = (warning: string): void => {
+    if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
+  };
+  if (malformed) addWarning("Some Git log records were malformed and were omitted");
+  if (redacted) addWarning("Sensitive Git log text was redacted");
+  const truncated = result.truncated || malformed;
+  if (truncated) addWarning("Git log output was limited by fixed adapter budgets");
+  return { projectRoot, commits, truncated, warnings };
 }
 
 export function parseGitBranchResult(projectRoot: string, result: ProcessExecutionResult): SafeGitBranches {
