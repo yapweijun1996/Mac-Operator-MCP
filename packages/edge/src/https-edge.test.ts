@@ -63,24 +63,14 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
   const issuer = new URL("https://issuer.example.test");
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const publicJwk = await exportJWK(publicKey);
-  const accessToken = await new SignJWT({
-    sid: "session-1",
-    azp: "client-1",
-    scope: "mac.control.read"
-  })
-    .setProtectedHeader({ alg: "RS256", kid: "integration-key", typ: "at+jwt" })
-    .setIssuer(issuer.href)
-    .setAudience(edgeOptions.resourceServerUrl.href)
-    .setSubject("principal-1")
-    .setIssuedAt()
-    .setExpirationTime("5 minutes")
-    .setJti("integration-token-1")
-    .sign(privateKey);
+  const revokedTokenIds = new Set<string>();
+  const accessToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read", "integration-token-1");
   edgeOptions.tokenVerifier = createJwtAccessTokenVerifier({
     issuer,
     issuerId: "issuer-1",
     resourceServerUrl: edgeOptions.resourceServerUrl,
-    jwks: { keys: [{ ...publicJwk, kid: "integration-key", alg: "RS256", use: "sig" }] }
+    jwks: { keys: [{ ...publicJwk, kid: "integration-key", alg: "RS256", use: "sig" }] },
+    revocationCheck: async ({ tokenId }) => revokedTokenIds.has(tokenId)
   });
   edgeOptions.gateway = {
     async execute(tool): Promise<BrokerResult> {
@@ -113,11 +103,12 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     await once(edge.server, "listening");
     const address = edge.server.address();
     assert.ok(address && typeof address === "object");
+    const fetch = createPinnedFetch(address.port);
     transport = new StreamableHTTPClientTransport(
       new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
       {
         authProvider: { token: async () => accessToken },
-        fetch: createPinnedFetch(address.port),
+        fetch,
         onInsufficientScope: "throw"
       }
     );
@@ -127,6 +118,44 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     assert.equal(client.getNegotiatedProtocolVersion(), "2026-07-28");
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((tool) => tool.name), ["mac_health"]);
+
+    const metadataResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}/.well-known/oauth-protected-resource${edgeOptions.resourceServerUrl.pathname}`),
+      { method: "GET" }
+    );
+    assert.equal(metadataResponse.status, 200);
+    const metadata = await metadataResponse.json() as { resource?: string; authorization_servers?: string[] };
+    assert.equal(metadata.resource, edgeOptions.resourceServerUrl.href);
+    assert.deepEqual(metadata.authorization_servers, ["https://issuer.example.test"]);
+
+    const invalidTokenResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
+      createMcpAuthRequest("not-a-jwt")
+    );
+    assert.equal(invalidTokenResponse.status, 401);
+    assert.match(invalidTokenResponse.headers.get("www-authenticate") ?? "", /invalid_token/u);
+
+    const scopeReducedToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.app.control", "scope-reduced-token");
+    const scopeResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
+      createMcpAuthRequest(scopeReducedToken)
+    );
+    assert.equal(scopeResponse.status, 403);
+    assert.match(scopeResponse.headers.get("www-authenticate") ?? "", /insufficient_scope/u);
+
+    const expiredToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read", "expired-token", Math.floor(Date.now() / 1_000) - 10);
+    const expiredResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
+      createMcpAuthRequest(expiredToken)
+    );
+    assert.equal(expiredResponse.status, 401);
+
+    revokedTokenIds.add("integration-token-1");
+    const revokedResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
+      createMcpAuthRequest(accessToken)
+    );
+    assert.equal(revokedResponse.status, 401);
   } finally {
     await client.close().catch(() => undefined);
     await transport?.close().catch(() => undefined);
@@ -167,6 +196,49 @@ async function createTestCertificate(directory: string): Promise<{ certificatePa
     }
   );
   return { certificatePath, keyPath };
+}
+
+async function createAccessToken(
+  privateKey: CryptoKey,
+  issuer: URL,
+  resourceServerUrl: URL,
+  scope: string,
+  tokenId: string,
+  expiresAt?: number
+): Promise<string> {
+  return new SignJWT({ sid: "session-1", azp: "client-1", scope })
+    .setProtectedHeader({ alg: "RS256", kid: "integration-key", typ: "at+jwt" })
+    .setIssuer(issuer.href)
+    .setAudience(resourceServerUrl.href)
+    .setSubject("principal-1")
+    .setIssuedAt()
+    .setExpirationTime(expiresAt ?? "5 minutes")
+    .setJti(tokenId)
+    .sign(privateKey);
+}
+
+function createMcpAuthRequest(token: string): RequestInit {
+  return {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Mcp-Method": "server/discover",
+      "Mcp-Protocol-Version": "2026-07-28"
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "auth-boundary-probe",
+      method: "server/discover",
+      params: {
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": { name: "auth-boundary-probe", version: "1.0.0" },
+          "io.modelcontextprotocol/clientCapabilities": {}
+        }
+      }
+    })
+  };
 }
 
 function createPinnedFetch(port: number): FetchLike {
