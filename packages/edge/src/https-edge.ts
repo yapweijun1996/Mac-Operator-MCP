@@ -1,5 +1,6 @@
 import { createServer, type Server as HttpsServer } from "node:https";
 import type { NextFunction, Request, Response } from "express";
+import type { AuthInfo } from "@modelcontextprotocol/server";
 import { SCOPES } from "@mac-operator/contracts";
 import {
   createMcpExpressApp,
@@ -16,6 +17,7 @@ import {
 } from "@modelcontextprotocol/server";
 import type { GovernedMcpServerOptions } from "./mcp-server.js";
 import { createGovernedMcpServerFactory } from "./mcp-server.js";
+import { FixedWindowRateLimiter, type RateLimitOptions } from "./rate-limiter.js";
 
 export interface HttpsMcpEdgeOptions extends GovernedMcpServerOptions {
   bindHost: string;
@@ -25,6 +27,7 @@ export interface HttpsMcpEdgeOptions extends GovernedMcpServerOptions {
   tlsPrivateKey: Buffer | string;
   tokenVerifier: OAuthTokenVerifier;
   oauthMetadata: OAuthMetadata;
+  rateLimit?: RateLimitOptions;
 }
 
 export interface HttpsMcpEdge {
@@ -59,10 +62,19 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
     requiredScopes: ["mac.control.read"],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(options.resourceServerUrl)
   });
+  const rateLimiter = new FixedWindowRateLimiter(options.rateLimit);
   app.all(options.resourceServerUrl.pathname, (_request: Request, response: Response, next: NextFunction) => {
     response.setHeader("Cache-Control", "no-store");
     next();
   }, bearerAuth, (request: Request, response: Response, next: NextFunction) => {
+    const auth = (request as Request & { auth?: AuthInfo }).auth;
+    const identity = auth?.clientId ?? readPrincipalId(auth) ?? "authenticated";
+    const decision = rateLimiter.consume(identity);
+    if (!decision.allowed) {
+      response.setHeader("Retry-After", String(Math.max(1, Math.ceil(decision.retryAfterMs / 1_000))));
+      response.status(429).json({ error: "rate_limit_exceeded" });
+      return;
+    }
     void nodeHandler(request, response, request.body).catch(next);
   });
   app.use((_error: unknown, _request: Request, response: Response, _next: NextFunction) => {
@@ -89,6 +101,11 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
       });
     }
   };
+}
+
+function readPrincipalId(auth: AuthInfo | undefined): string | undefined {
+  const value = auth?.extra?.principalId;
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value) ? value : undefined;
 }
 
 function validateOptions(options: HttpsMcpEdgeOptions): void {

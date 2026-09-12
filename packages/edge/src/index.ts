@@ -5,3 +5,4 @@ export * from "./ipc-client.js";
 export * from "./mcp-server.js";
 export * from "./principal.js";
 export * from "./request-factory.js";
+export * from "./rate-limiter.js";
