@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   buildMacOsInstallPlan,
+  inspectMacOsInstallFilesystem,
   MacOsInstallPlanError,
   validateCodeSignatureReadback,
   validateExistingServicePrecondition,
@@ -117,4 +121,57 @@ test("upgrade and uninstall plans bind an exact existing revision and fail close
 test("malformed nested readback is rejected with a stable plan error", () => {
   const plan = buildMacOsInstallPlan(base);
   assert.throws(() => validateMacOsInstallReadback(plan, { launchd: null } as never), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_READBACK");
+});
+
+test("filesystem preflight rejects symlinks and writable paths, then returns stable identity readback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-install-"));
+  try {
+    const userHome = join(root, "home");
+    const installRoot = join(userHome, "MacOperator");
+    const binRoot = join(installRoot, "bin");
+    const logRoot = join(installRoot, "logs");
+    const artifact = join(installRoot, "MacOperatorBroker.app");
+    const launchAgents = join(userHome, "Library", "LaunchAgents");
+    await mkdir(binRoot, { recursive: true, mode: 0o700 });
+    await mkdir(logRoot, { recursive: true, mode: 0o700 });
+    await mkdir(artifact, { recursive: true, mode: 0o700 });
+    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
+    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
+    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
+    await chmod(userHome, 0o700);
+    await chmod(join(userHome, "Library"), 0o700);
+    await chmod(launchAgents, 0o700);
+    await chmod(installRoot, 0o700);
+    await chmod(binRoot, 0o700);
+    await chmod(logRoot, 0o700);
+    await chmod(artifact, 0o700);
+    const uid = process.getuid?.();
+    if (uid === undefined) throw new Error("POSIX identity is unavailable");
+    const plan = buildMacOsInstallPlan({
+      ...base,
+      uid,
+      userHome,
+      installRoot,
+      plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
+      signedArtifactPath: artifact,
+      service: {
+        ...base.service,
+        program: join(binRoot, "node"),
+        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        workingDirectory: installRoot,
+        stdoutPath: join(logRoot, "broker.out.log"),
+        stderrPath: join(logRoot, "broker.err.log")
+      }
+    });
+    const preflight = await inspectMacOsInstallFilesystem(plan, { ownerUid: uid });
+    assert.ok(preflight.entries.some((entry) => entry.path === artifact && entry.kind === "directory"));
+    await chmod(join(binRoot, "node"), 0o722);
+    await assert.rejects(inspectMacOsInstallFilesystem(plan, { ownerUid: uid }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "FILESYSTEM_MISMATCH");
+    await chmod(join(binRoot, "node"), 0o700);
+    await rm(join(binRoot, "node"));
+    await symlink(join(installRoot, "service-entrypoint.js"), join(binRoot, "node"));
+    await assert.rejects(inspectMacOsInstallFilesystem(plan, { ownerUid: uid }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "FILESYSTEM_MISMATCH");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

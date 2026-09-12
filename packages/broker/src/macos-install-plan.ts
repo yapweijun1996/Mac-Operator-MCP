@@ -1,3 +1,4 @@
+import { lstat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
@@ -18,6 +19,7 @@ export type MacOsInstallPlanErrorCode =
   | "INVALID_PACKAGE_PATH"
   | "INVALID_SIGNATURE_EXPECTATION"
   | "INVALID_METADATA"
+  | "FILESYSTEM_MISMATCH"
   | "INVALID_READBACK"
   | "SIGNATURE_MISMATCH"
   | "SERVICE_MISMATCH";
@@ -93,6 +95,7 @@ export interface MacOsInstallPlan {
   userHome: string;
   installRoot: string;
   plistPath: string;
+  entrypointPath: string;
   backupPath: string;
   metadata: BrokerServiceMetadata;
   signature: CodeSignatureExpectation;
@@ -132,6 +135,27 @@ export interface ExistingServiceReadback {
   present: boolean;
   sourceRevision: string | null;
 }
+
+export interface InstallFilesystemOptions {
+  ownerUid: number;
+  requirePlist?: boolean;
+}
+
+export interface InstallFilesystemEntryReadback {
+  path: string;
+  kind: "file" | "directory";
+  ownerUid: number;
+  mode: number;
+  device: number;
+  inode: number;
+}
+
+export interface InstallFilesystemReadback {
+  ownerUid: number;
+  entries: readonly InstallFilesystemEntryReadback[];
+}
+
+type ExpectedFilesystemKind = "file" | "directory" | "file-or-directory";
 
 /**
  * Builds a reviewable, non-executing LaunchAgent installation plan.
@@ -211,6 +235,7 @@ export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstal
     userHome,
     installRoot,
     plistPath,
+    entrypointPath: entrypoint,
     backupPath,
     metadata,
     signature,
@@ -298,6 +323,51 @@ export function validateExistingServicePrecondition(plan: MacOsInstallPlan, read
   }
 }
 
+/**
+ * Performs the read-only filesystem portion of installer preflight. Every
+ * checked path is lstat'ed twice and must retain its device/inode identity;
+ * symlinks, foreign ownership, group/other write access, and unexpected types
+ * fail closed. The caller must still use descriptor-relative atomic writes for
+ * the actual installation step.
+ */
+export async function inspectMacOsInstallFilesystem(
+  plan: MacOsInstallPlan,
+  options: InstallFilesystemOptions
+): Promise<InstallFilesystemReadback> {
+  if (!Number.isSafeInteger(options.ownerUid) || options.ownerUid < 1 || options.ownerUid !== parseUid(plan.domain)) {
+    fail("FILESYSTEM_MISMATCH", "filesystem preflight owner does not match the planned user domain");
+  }
+  const paths = new Map<string, ExpectedFilesystemKind>();
+  paths.set(plan.installRoot, "directory");
+  paths.set(plan.launchd.workingDirectory, "directory");
+  paths.set(plan.launchd.program, "file");
+  paths.set(plan.signedArtifactPath, "file-or-directory");
+  paths.set(plan.entrypointPath, "file");
+  paths.set(dirname(plan.launchd.stdoutPath), "directory");
+  paths.set(dirname(plan.plistPath), "directory");
+  for (const protectedTarget of [
+    plan.installRoot,
+    dirname(plan.launchd.program),
+    dirname(plan.entrypointPath),
+    dirname(plan.signedArtifactPath),
+    dirname(plan.launchd.stdoutPath)
+  ]) {
+    for (const ancestor of ancestorsThrough(plan.userHome, protectedTarget)) paths.set(ancestor, "directory");
+  }
+  for (const ancestor of ancestorsThrough(plan.userHome, dirname(plan.plistPath))) paths.set(ancestor, "directory");
+  if (options.requirePlist || plan.operation !== "install") paths.set(plan.plistPath, "file");
+  const entries: InstallFilesystemEntryReadback[] = [];
+  for (const [path, expectedKind] of [...paths.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    const first = await readFilesystemEntry(path, expectedKind, options.ownerUid, path === plan.plistPath);
+    const second = await readFilesystemEntry(path, expectedKind, options.ownerUid, path === plan.plistPath);
+    if (first.device !== second.device || first.inode !== second.inode) {
+      fail("FILESYSTEM_MISMATCH", "filesystem identity changed during install preflight");
+    }
+    entries.push(first);
+  }
+  return { ownerUid: options.ownerUid, entries };
+}
+
 function launchctlCommand(args: readonly string[]): LaunchdCommandSpec {
   return {
     executable: LAUNCHCTL_PATH,
@@ -307,6 +377,54 @@ function launchctlCommand(args: readonly string[]): LaunchdCommandSpec {
     timeoutMs: SERVICE_TIMEOUT_MS,
     outputCapBytes: SERVICE_OUTPUT_CAP_BYTES
   };
+}
+
+async function readFilesystemEntry(
+  path: string,
+  expectedKind: ExpectedFilesystemKind,
+  ownerUid: number,
+  requireOwnerOnlyFile: boolean
+): Promise<InstallFilesystemEntryReadback> {
+  let stats;
+  try {
+    stats = await lstat(path);
+  } catch {
+    fail("FILESYSTEM_MISMATCH", "required installation path is unavailable");
+  }
+  if (stats.isSymbolicLink() || stats.uid !== ownerUid || (stats.mode & 0o022) !== 0 ||
+      (expectedKind === "file" && !stats.isFile()) ||
+      (expectedKind === "directory" && !stats.isDirectory()) ||
+      (expectedKind === "file-or-directory" && !stats.isFile() && !stats.isDirectory()) ||
+      (requireOwnerOnlyFile && (stats.mode & 0o777) !== 0o600)) {
+    fail("FILESYSTEM_MISMATCH", "installation path ownership, mode, symlink, or type is unsafe");
+  }
+  return {
+    path,
+    kind: stats.isFile() ? "file" : "directory",
+    ownerUid: stats.uid,
+    mode: stats.mode & 0o777,
+    device: stats.dev,
+    inode: stats.ino
+  };
+}
+
+function ancestorsThrough(root: string, target: string): readonly string[] {
+  const result: string[] = [];
+  let current = target;
+  while (true) {
+    if (!isWithin(root, current, true)) fail("FILESYSTEM_MISMATCH", "plist parent escapes the user home");
+    result.push(current);
+    if (current === root) break;
+    const parent = dirname(current);
+    if (parent === current) fail("FILESYSTEM_MISMATCH", "plist parent cannot reach the user home");
+    current = parent;
+  }
+  return result;
+}
+
+function parseUid(domain: string): number {
+  const value = Number(domain.slice("gui/".length));
+  return Number.isSafeInteger(value) ? value : -1;
 }
 
 function codesignVerifyCommand(path: string): CodeSignatureCommandSpec {
