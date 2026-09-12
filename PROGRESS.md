@@ -28,6 +28,8 @@ The latest implementation addendum is `5804f04`: the packaging boundary now expo
 
 The latest implementation addendum is `8fe6663`: `inspectMacOsInstallFilesystem` now performs read-only double-`lstat` checks over the user-home parent chain and package-owned executable, entrypoint, artifact, logs, and plist paths. It fails closed on symlinks, foreign owners, group/other write bits, unexpected types, and device/inode changes. This still does not perform descriptor-relative writes or launchd mutation.
 
+The latest implementation addendum is `b4945c3`: `applyMacOsPlistPlan` now binds target device/inode preconditions and uses the existing native `openat`/`renameat`/`fsync` writer for temporary-root-tested install, upgrade backup, and rollback. It verifies reopened bytes/identity and attempts restoration on upgrade failure; uninstall deletion and launchd mutation remain disabled.
+
 ## Completed work
 
 - Created the Git repository and initial commit.
@@ -44,6 +46,7 @@ The latest implementation addendum is `8fe6663`: `inspectMacOsInstallFilesystem`
 - Added a launchd packaging boundary with canonical path/argv validation, no shell or environment injection, bounded restart settings, a signal-aware service lifecycle, component/policy/source readback, and an unprivileged LaunchAgent template; installation, signing, and live launchd readback remain disabled.
 - Added a non-executing macOS install preflight plan with fixed signature/service command argv, empty environments, bounded timeout/output, per-user/root denial, package-owned entrypoint/path checks, exact upgrade/rollback/uninstall preconditions, rollback/uninstall actions, and exact post-bootstrap identity validation; live installation and signature/launchd host evidence remain disabled.
 - Added a read-only macOS install filesystem preflight with double-`lstat` identity checks across package paths and parent directories; symlink, owner, mode, type, and target-swap boundaries fail closed, while descriptor-relative atomic installation remains future work.
+- Added a bounded plist apply primitive that reuses the native descriptor-relative atomic writer, binds external identity preconditions, verifies content/identity readback, and restores upgrade content on failure in temporary-root tests; it never invokes launchd and intentionally does not delete uninstall targets.
 - Started documentation-only remediation against the newer KB SSOT: repaired stale dynamic-state ownership; materialized locked Security, Filesystem Policy, Tool Contract Standard, and Tool Catalog documents; added threat, scope, persistence, verification, ADR, sandbox-research, navigation, testing, configuration, deployment, operations, incident, rollback, and kill-switch documents.
 - Resolved the two representation conflicts: every contract now has deterministic `audit_class` and structured `postcondition_verification`, and the legacy contract `phase` field is now canonical `tool_delivery_wave`.
 - Completed MOP-084 functional API schema materialization: all 44 planned tools now have explicit bounded `input_schema` and tool-specific `output_schema` objects integrated with the common result envelope. Envelope validation, functional schema compilation, semantic review, authority-surface review, and catalog parity pass; runtime compatibility remains a separate gate.
