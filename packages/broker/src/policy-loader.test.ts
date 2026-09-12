@@ -140,6 +140,18 @@ test("a signed filesystem root authorizes descriptor-backed mac_stat_path", asyn
 
 test("policy verification rejects tampering, unknown fields, and unimplemented enablement", async () => {
   const { instance, keys } = await verifier();
+  const logPolicy = policyDocument();
+  logPolicy.principal_grants[0]!.scopes.push("mac.log.read");
+  logPolicy.target_rules.push({
+    rule_id: "allow-system-log",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.log.read",
+    target: { kind: "log_source", reference: "system" }
+  });
+  logPolicy.tool_enablement.push({ tool: "mac_log_tail", enabled: true });
+  assert.equal(instance.verify(signedBundle(logPolicy, keys.privateKey)).policy.tools.get("mac_log_tail")?.enabled, true);
+
   const bundle = signedBundle(policyDocument(), keys.privateKey);
   bundle.payload.audience = "altered-audience";
   assert.throws(() => instance.verify(bundle), /digest does not match/u);
