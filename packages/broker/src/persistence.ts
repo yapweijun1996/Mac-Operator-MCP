@@ -3,7 +3,7 @@ import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export type SwitchName = "global" | "mutations" | "process" | "network" | "gui" | "destructive" | "privileged";
-export type RevocationKind = "principal" | "session" | "edge" | "edge_key" | "approval_key";
+export type RevocationKind = "principal" | "session" | "edge" | "edge_key" | "approval_key" | "policy_signer";
 
 export interface AuditEvent {
   requestId: string;
@@ -27,6 +27,12 @@ export interface PolicyActivationIdentity {
 }
 
 export interface ApprovalKeyConfigActivationIdentity {
+  revision: number;
+  payloadDigest: string;
+  activatedAtMs: number;
+}
+
+export interface PolicySignerConfigActivationIdentity {
   revision: number;
   payloadDigest: string;
   activatedAtMs: number;
@@ -231,7 +237,7 @@ export class BrokerStore {
         UNIQUE (request_id)
       ) STRICT;
       CREATE TABLE IF NOT EXISTS revocations (
-        kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key')),
+        kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key', 'policy_signer')),
         subject_id TEXT NOT NULL,
         revoked_at_ms INTEGER NOT NULL,
         reason TEXT NOT NULL,
@@ -285,6 +291,18 @@ export class BrokerStore {
         payload_digest TEXT NOT NULL,
         activated_at_ms INTEGER NOT NULL,
         FOREIGN KEY (revision) REFERENCES approval_key_config_history(revision)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS policy_signer_config_history (
+        revision INTEGER PRIMARY KEY,
+        payload_digest TEXT NOT NULL UNIQUE,
+        activated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS active_policy_signer_config (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        revision INTEGER NOT NULL,
+        payload_digest TEXT NOT NULL,
+        activated_at_ms INTEGER NOT NULL,
+        FOREIGN KEY (revision) REFERENCES policy_signer_config_history(revision)
       ) STRICT;
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY,
@@ -922,6 +940,37 @@ export class BrokerStore {
     return this.database.prepare("SELECT 1 FROM revocations WHERE kind = ? AND subject_id = ?").get(kind, subjectId) !== undefined;
   }
 
+  revokePolicySigner(keyId: string, reason: string, nowMs = Date.now()): void {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(keyId) ||
+        typeof reason !== "string" || reason.length < 1 || reason.length > 128 ||
+        !Number.isSafeInteger(nowMs) || nowMs < 0) {
+      throw new BrokerError("PRECONDITION_FAILED", "Policy signer revocation is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        const requestId = `policy-signer-revoke-${keyId}-${sha256(canonicalJson({ keyId, reason, nowMs })).slice(0, 16)}`;
+        const auditBase = {
+          requestId,
+          principalId: "local-policy-signer-operator",
+          tool: "internal_policy_signer_revoke",
+          decision: "allow" as const,
+          targetRef: `policy-signer:${keyId}`,
+          policyVersion: "internal-policy-signer-config-0.1",
+          evidence: { keyId, reason },
+          timestampMs: nowMs
+        };
+        this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
+        this.database.prepare(
+          "INSERT INTO revocations(kind, subject_id, revoked_at_ms, reason) VALUES ('policy_signer', ?, ?, ?) ON CONFLICT(kind, subject_id) DO UPDATE SET revoked_at_ms=excluded.revoked_at_ms, reason=excluded.reason"
+        ).run(keyId, nowMs, reason);
+        this.insertAudit({ ...auditBase, eventType: "completion", resultClass: "SUCCEEDED" });
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Policy signer revocation could not be persisted");
+    }
+  }
+
   setSwitch(name: SwitchName, disabled: boolean, reason: string, nowMs = Date.now()): void {
     this.database.prepare(
       "INSERT INTO switches(name, disabled, changed_at_ms, reason) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET disabled=excluded.disabled, changed_at_ms=excluded.changed_at_ms, reason=excluded.reason"
@@ -1309,6 +1358,141 @@ export class BrokerStore {
     } : undefined;
   }
 
+  activatePolicySignerConfig(
+    identity: PolicySignerConfigActivationIdentity,
+    expectedPreviousRevision: number
+  ): void {
+    validateConfigActivationIdentity(identity, "Policy signer configuration");
+    if (!Number.isSafeInteger(expectedPreviousRevision) || expectedPreviousRevision < 0) {
+      throw new BrokerError("PRECONDITION_FAILED", "Policy signer configuration revision precondition is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        const current = this.activePolicySignerConfigIdentity();
+        if ((current?.revision ?? 0) !== expectedPreviousRevision) {
+          throw new BrokerError("CONFLICT", "Persisted policy signer configuration revision changed concurrently");
+        }
+        if (identity.revision <= expectedPreviousRevision) {
+          throw new BrokerError("CONFLICT", "Policy signer configuration revision must increase");
+        }
+        const highest = this.database.prepare(
+          "SELECT MAX(revision) AS revision FROM policy_signer_config_history"
+        ).get() as { revision: number | null };
+        if (identity.revision <= (highest.revision ?? 0)) {
+          throw new BrokerError("CONFLICT", "Policy signer configuration revision was already used or is below history");
+        }
+        const requestId = `policy-signer-config-${identity.revision}-${identity.payloadDigest.slice(0, 16)}`;
+        const auditBase = {
+          requestId,
+          principalId: "local-policy-signer-operator",
+          tool: "internal_policy_signer_config_activate",
+          decision: "allow" as const,
+          targetRef: `policy_signer_config:${identity.revision}`,
+          policyVersion: "internal-policy-signer-config-0.1",
+          evidence: { payloadDigest: identity.payloadDigest, revision: identity.revision },
+          timestampMs: identity.activatedAtMs
+        };
+        this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
+        this.database.prepare(
+          "INSERT INTO policy_signer_config_history(revision, payload_digest, activated_at_ms) VALUES (?, ?, ?)"
+        ).run(identity.revision, identity.payloadDigest, identity.activatedAtMs);
+        this.database.prepare(`
+          INSERT INTO active_policy_signer_config(singleton, revision, payload_digest, activated_at_ms)
+          VALUES (1, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            revision=excluded.revision,
+            payload_digest=excluded.payload_digest,
+            activated_at_ms=excluded.activated_at_ms
+        `).run(identity.revision, identity.payloadDigest, identity.activatedAtMs);
+        this.insertAudit({ ...auditBase, eventType: "completion", resultClass: "SUCCEEDED" });
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Policy signer configuration activation could not be persisted");
+    }
+  }
+
+  rollbackPolicySignerConfig(
+    identity: PolicySignerConfigActivationIdentity,
+    expectedCurrentRevision: number,
+    reasonCode: string,
+    rolledBackAtMs: number
+  ): void {
+    validateConfigActivationIdentity(identity, "Policy signer configuration");
+    if (!Number.isSafeInteger(expectedCurrentRevision) || expectedCurrentRevision < 1 ||
+        !/^[A-Z0-9_:-]{1,64}$/u.test(reasonCode) ||
+        !Number.isSafeInteger(rolledBackAtMs) || rolledBackAtMs < 0) {
+      throw new BrokerError("PRECONDITION_FAILED", "Policy signer rollback precondition is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        const current = this.activePolicySignerConfigIdentity();
+        if (!current || current.revision !== expectedCurrentRevision) {
+          throw new BrokerError("CONFLICT", "Persisted policy signer configuration does not match rollback precondition");
+        }
+        if (identity.revision >= current.revision) {
+          throw new BrokerError("PRECONDITION_FAILED", "Policy signer rollback target must be an older revision");
+        }
+        const historical = this.database.prepare(`
+          SELECT payload_digest, activated_at_ms FROM policy_signer_config_history WHERE revision = ?
+        `).get(identity.revision) as { payload_digest: string; activated_at_ms: number } | undefined;
+        if (!historical || historical.payload_digest !== identity.payloadDigest) {
+          throw new BrokerError("PRECONDITION_FAILED", "Policy signer rollback target does not match verified history");
+        }
+        const requestId = `policy-signer-rollback-${current.revision}-to-${identity.revision}`;
+        const auditBase = {
+          requestId,
+          principalId: "local-policy-signer-operator",
+          tool: "internal_policy_signer_config_rollback",
+          decision: "allow" as const,
+          targetRef: `policy_signer_config:${identity.revision}`,
+          policyVersion: "internal-policy-signer-config-0.1",
+          evidence: {
+            fromRevision: current.revision,
+            toRevision: identity.revision,
+            payloadDigest: identity.payloadDigest,
+            reasonCode
+          },
+          timestampMs: rolledBackAtMs
+        };
+        this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
+        this.database.prepare(`
+          UPDATE active_policy_signer_config SET revision = ?, payload_digest = ?, activated_at_ms = ?
+          WHERE singleton = 1
+        `).run(identity.revision, identity.payloadDigest, rolledBackAtMs);
+        this.insertAudit({ ...auditBase, eventType: "completion", resultClass: "SUCCEEDED" });
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Policy signer configuration rollback could not be persisted");
+    }
+  }
+
+  policySignerConfigHistoryIdentity(revision: number): PolicySignerConfigActivationIdentity | undefined {
+    if (!Number.isSafeInteger(revision) || revision < 1) return undefined;
+    const row = this.database.prepare(`
+      SELECT revision, payload_digest, activated_at_ms
+      FROM policy_signer_config_history WHERE revision = ?
+    `).get(revision) as {
+      revision: number;
+      payload_digest: string;
+      activated_at_ms: number;
+    } | undefined;
+    return row ? { revision: row.revision, payloadDigest: row.payload_digest, activatedAtMs: row.activated_at_ms } : undefined;
+  }
+
+  activePolicySignerConfigIdentity(): PolicySignerConfigActivationIdentity | undefined {
+    const row = this.database.prepare(`
+      SELECT revision, payload_digest, activated_at_ms
+      FROM active_policy_signer_config WHERE singleton = 1
+    `).get() as {
+      revision: number;
+      payload_digest: string;
+      activated_at_ms: number;
+    } | undefined;
+    return row ? { revision: row.revision, payloadDigest: row.payload_digest, activatedAtMs: row.activated_at_ms } : undefined;
+  }
+
   auditRows(): Array<Record<string, unknown>> {
     return this.database.prepare("SELECT * FROM audit_events ORDER BY sequence").all() as Array<Record<string, unknown>>;
   }
@@ -1482,12 +1666,12 @@ export class BrokerStore {
 
   private migrateRevocationsSchema(): void {
     const row = this.database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revocations'").get() as { sql: string };
-    if (row.sql.includes("'approval_key'")) return;
+    if (row.sql.includes("'approval_key'") && row.sql.includes("'policy_signer'")) return;
     this.runTransaction(() => {
       this.database.exec(`
         ALTER TABLE revocations RENAME TO revocations_v0;
         CREATE TABLE revocations (
-          kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key')),
+          kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key', 'policy_signer')),
           subject_id TEXT NOT NULL,
           revoked_at_ms INTEGER NOT NULL,
           reason TEXT NOT NULL,
@@ -1505,6 +1689,14 @@ export class BrokerStore {
     const names = new Set(columns.map((column) => column.name));
     if (!names.has("approval_id")) this.database.exec("ALTER TABLE requests ADD COLUMN approval_id TEXT");
     if (!names.has("job_id")) this.database.exec("ALTER TABLE requests ADD COLUMN job_id TEXT");
+  }
+}
+
+function validateConfigActivationIdentity(identity: PolicySignerConfigActivationIdentity, label: string): void {
+  if (!Number.isSafeInteger(identity.revision) || identity.revision < 1 ||
+      !/^[a-f0-9]{64}$/u.test(identity.payloadDigest) ||
+      !Number.isSafeInteger(identity.activatedAtMs) || identity.activatedAtMs < 0) {
+    throw new BrokerError("PRECONDITION_FAILED", `${label} identity is malformed`);
   }
 }
 

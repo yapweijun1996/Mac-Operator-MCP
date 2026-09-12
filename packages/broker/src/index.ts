@@ -9,6 +9,7 @@ export * from "./persistence.js";
 export * from "./peer-credentials.js";
 export * from "./policy.js";
 export * from "./policy-loader.js";
+export * from "./policy-signer-keyring.js";
 export * from "./process-supervisor.js";
 export * from "./task-profile.js";
 export * from "./task-runner.js";
