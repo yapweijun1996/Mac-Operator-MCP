@@ -5,10 +5,10 @@ Recorded: 2026-09-13 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `dbf8b4ff6994e3ac5726e95c783f47fb350a8e45`
+- Base commit: `983891205b2c9bedb2715cb40c95a9ac68b6790c`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `0478c8512cbc0b75c830d81bae802cf84b29fe4f70b803e9a5da504a938b94b1`
+- Runtime source manifest SHA-256: `be7006704d677caa7f07ccf2b37da92a7159fad25ce5c44a110dfea41ca096fe`
 - Tool-contract manifest SHA-256: `656ebeede8a828c68022915b54c85c4a9b3f146df0668ca8464b677a7781945d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 172 tests passed; 0 failed, skipped, cancelled, or todo.
+- 179 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the twenty-eight implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the thirty-one implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -84,6 +84,7 @@ Observed results:
 - `mac_git_log` executes through the same Broker-authorized exact canonical project target and a fixed `/usr/bin/git log` adapter with bounded revision and count arguments, NUL-delimited commit metadata, fixed non-secret Git configuration environment, `.git` directory/config identity checks, repository executable-integration rejection, hooks/fsmonitor/optional-lock and external diff/textconv/rename disabling, detached process-group timeout/cancellation, 256 KiB output cap, 200-commit bound, timestamp normalization, sensitive author/subject redaction, and post-execution root/metadata identity readback; it performs no diff, fetch, checkout, mutation, or network operation.
 - `mac_git_diff` executes through the same Broker-authorized exact canonical project target and a fixed `/usr/bin/git diff` adapter with literal relative-path allowlisting, bounded revision selection, staged/read-tree separation, fixed non-secret Git configuration environment, `.git` directory/config identity checks, repository executable-integration rejection, hooks/fsmonitor/optional-lock and external diff/textconv/rename disabling, detached process-group timeout/cancellation, 1 MiB result budget, secret-pattern redaction, changed-path extraction, sanitized SHA-256 hashing, and post-execution root/metadata identity readback; it performs no staging, commit, fetch, checkout, mutation, or network operation.
 - `mac_package_inspect` executes through a Broker-authorized exact canonical project target and a descriptor-backed read-only adapter with independent `mac.package.read` scope, non-symlink manifest/lock identity checks, bounded npm/pnpm/yarn/pip/uv/poetry/Brewfile parsing, protected-content denial, cancellation/timeout checks, no child process or repository-script execution, and an explicit warning instead of an unallowlisted outdated-registry read.
+- `mac_docker_status`, `mac_docker_inspect`, and `mac_docker_logs` execute through Broker-authorized `mac.docker.read` runtime/object targets and a fixed local-only Docker adapter. The adapter pins a canonical executable, `/` cwd, local Unix socket, empty synthetic HOME/config paths, and fixed non-mutating arguments; it parses bounded JSON/line output, omits environment fields, redacts mount and log secrets, maps cancellation/timeouts, and never exposes a raw Docker socket. Real daemon compatibility, host socket negative evidence, and Docker storage readback remain open.
 - `mac_find_files` executes in the Broker-owned filesystem worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, authorization for every requested root, a fixed 50,000-entry/32-level budget, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_recent_files` executes in the same Broker-owned worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, per-root authorization, a Broker-supplied clock and bounded time window, fixed traversal/result budgets, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_search_text` executes in the same Broker-owned worker with empty environment/arguments, content-read root planning, independent `mac.files.search` scope and per-root authorization, 1 MiB per-file and 64 MiB aggregate scan budgets, UTF-8-only text handling, binary/NUL rejection, 100 matches per file, sanitized snippets, protected-entry/secret-content filtering, active cancellation, and strict result validation. Metadata-only roots are denied before content execution.
@@ -107,6 +108,7 @@ Observed results:
 - The enabled-in-test `mac_git_log` slice verified independent `mac.git.read` scope, exact project-root authorization, canonical/non-symlink project and `.git` identity checks, executable revision rejection, fixed log arguments/environment, NUL-delimited commit parsing, timestamp/id/subject budgets, redacted author/subject output, post-execution identity readback, and no raw Git command or executable path in audit evidence.
 - The enabled-in-test `mac_git_diff` slice verified independent `mac.git.read` scope, exact project-root authorization, canonical/non-symlink project and `.git` identity checks, literal relative-path and revision rejection, staged/base argument binding, fixed diff arguments/environment, bounded output and changed-path extraction, secret-pattern redaction, sanitized SHA-256 readback, UTF-8 byte-budget enforcement, post-execution identity readback, and no raw Git command or executable path in verification or audit evidence.
 - The enabled-in-test `mac_package_inspect` slice verified independent `mac.package.read` scope, exact project-root authorization, canonical/non-symlink root and manifest identity checks, npm/Python/Brewfile parsing, lockfile presence, package-script non-execution, protected-content and manifest-symlink denial, cancellation, bounded dependency output, and explicit outdated-registry disablement.
+- The enabled-in-test Docker slice verified independent `mac.docker.read` scope, exact runtime/object target authorization, fixed local-only executable/arguments/environment, no raw socket argument surface, bounded status/object/log parsing, environment omission, mount/log secret redaction, cancellation mapping, truncation handling, and schema conformance. It does not prove a real Docker daemon or host-level socket isolation.
 - The enabled-in-test `mac_find_files` slice verified metadata-only search on a root with `contentRead` disabled, canonical matching paths and safe metadata, nested traversal, protected-entry filtering, result/depth bounds, worker execution, and independent authorization failure when one of multiple requested roots lacked a target grant.
 - The enabled-in-test `mac_recent_files` slice verified a Broker-bound 24-hour window, inclusion of a recent file and exclusion of an older file, metadata-only roots with `contentRead` disabled, protected-entry filtering, bounded result validation, worker execution, and absence of content or credential-shaped output.
 - The enabled-in-test `mac_search_text` slice verified literal/glob matching, line/column/snippet output, UTF-8/binary handling, protected credential filtering, no secret leakage in result/audit evidence, content-root authorization, metadata-only denial, bounded result validation, and worker execution.
