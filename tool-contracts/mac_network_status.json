@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_network_status",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.network.read"
+  ],
+  "normalized_target_type": "host_network",
+  "timeout_ms": 5000,
+  "output_cap_bytes": 262144,
+  "network_policy": "inspect_only",
+  "filesystem_policy": "none",
+  "secret_policy": "redact",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_network_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "return interfaces, routes/listeners and bounded connectivity metadata; no packet capture.",
+  "input_summary": "include_listeners?:boolean.",
+  "output_summary": "sanitized network state.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "a8f3a966-3c61-414e-817f-a371da870735",
+    "source_text": "Purpose: return interfaces, routes/listeners and bounded connectivity metadata; no packet capture. Input: include_listeners?:boolean. Output: sanitized network state. Contract: L0 read_only; scope mac.network.read; target host_network; timeout 5000ms; cap 256KiB; network inspection only; filesystem none; redact sensitive peer/detail fields; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

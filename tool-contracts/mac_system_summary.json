@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_system_summary",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.system.read"
+  ],
+  "normalized_target_type": "host",
+  "timeout_ms": 5000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "redact",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_system_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "return bounded macOS version, architecture, CPU, memory, uptime and load facts.",
+  "input_summary": "include_load?:boolean.",
+  "output_summary": "sanitized system summary.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "40e420a1-1b3d-4f9b-820c-76fd5566fb62",
+    "source_text": "Purpose: return bounded macOS version, architecture, CPU, memory, uptime and load facts. Input: include_load?:boolean. Output: sanitized system summary. Contract: L0 read_only; scope mac.system.read; target host; timeout 5000ms; cap 128KiB; network none; filesystem none; redact sensitive host details where policy requires; approval trusted_read; idempotent yes; verification bounded parse. Phase 2 planned."
+  }
+}

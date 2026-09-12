@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_app_focus",
+  "capability_level": "L3",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.app.control"
+  ],
+  "normalized_target_type": "app_window",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "deny_sensitive_targets",
+  "approval_policy": "trusted_app_control",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "focused_app_window_reobservation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "app_control",
+  "tool_delivery_wave": "wave_4",
+  "implementation_status": "planned",
+  "purpose": "focus an allowlisted running app/window by normalized identity.",
+  "input_summary": "app_id:string, window_hint?:string.",
+  "output_summary": "resolved app/window and focus verification.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "11cdbfed-ec6c-4445-9946-1734631aa9bb",
+    "source_text": "Purpose: focus an allowlisted running app/window by normalized identity. Input: app_id:string, window_hint?:string. Output: resolved app/window and focus verification. Contract: L3 writes_local; scope mac.app.control; target app_window; timeout 10000ms; cap 128KiB; no network/filesystem; sensitive/system-security targets denied; approval trusted_app_control; operation may be repeated safely after re-resolution. Phase 4 planned."
+  }
+}

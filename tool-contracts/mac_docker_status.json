@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_docker_status",
+  "capability_level": "L2",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.docker.read"
+  ],
+  "normalized_target_type": "docker_runtime",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 524288,
+  "network_policy": "local_docker_only",
+  "filesystem_policy": "none",
+  "secret_policy": "redact_env_mount_secrets",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "sanitized_docker_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "Docker runtime/container/image/storage summary through brokered adapter, never a raw socket proxy.",
+  "input_summary": "include_images?:boolean, include_storage?:boolean.",
+  "output_summary": "daemon state, bounded objects and storage facts.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "f3df5621-4cfd-4d1a-a6d6-8e4e4103b79e",
+    "source_text": "Purpose: Docker runtime/container/image/storage summary through brokered adapter, never a raw socket proxy. Input: include_images?:boolean, include_storage?:boolean. Output: daemon state, bounded objects and storage facts. Contract: L2 read_only; scope mac.docker.read; target docker_runtime; timeout 10000ms; cap 512KiB; local Docker only; no generic socket exposure; redact env/mount secrets; approval trusted_read; idempotent yes. Phase 3 planned."
+  }
+}

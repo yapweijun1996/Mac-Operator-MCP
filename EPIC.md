@@ -10,10 +10,10 @@ No Epic has implementation evidence yet. Status values are `PLANNED`, `IN_PROGRE
 
 Status: `IN_PROGRESS`
 
-Establish the repository structure, runtime decision, shared schemas, error model, policy vocabulary, threat model, audit contract, test strategy, CI, and synchronized project documentation.
+Establish the repository structure, runtime decision, shared schemas, error model, policy vocabulary, threat model, audit contract, verification matrix, ADR system, test strategy, CI, and synchronized repo/KB documentation. Materialize the locked security, filesystem, tool-standard, catalog, and individual tool contracts without treating documentation as runtime implementation. Contract capability sequencing uses `tool_delivery_wave`; project lifecycle sequencing remains the roadmap's `Phase 0` through `Phase 7`.
 
 Dependencies: none.
-Exit: baseline builds and tests pass; authority invariants are represented by executable tests; documentation matches repository state.
+Exit: all locked KB contracts are represented and validated in the repo; open decisions are accepted or explicitly deferred; baseline builds and tests pass; authority invariants are represented by executable tests; documentation matches repository state.
 
 ## EPIC-002 — Secure Remote MCP Edge
 
@@ -81,3 +81,7 @@ Exit: the release checklist is green, exact-revision evidence is available, and 
 ## Completion rule
 
 An Epic is `DONE` only when code, required tests, real-host evidence, documentation, operational procedures, and release-state readback are complete. Design documents or tool registration alone do not satisfy completion.
+
+## Related documents
+
+See `ROADMAP.md`, `TASK.md`, `VERIFICATION.md`, `THREAT_MODEL.md`, and `docs/adr/README.md`.

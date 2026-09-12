@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_task_run",
+  "capability_level": "L2",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.task.run"
+  ],
+  "normalized_target_type": "task_profile",
+  "timeout_ms": 600000,
+  "output_cap_bytes": 2097152,
+  "network_policy": "profile_defined",
+  "filesystem_policy": "profile_defined",
+  "secret_policy": "deny_secret_env",
+  "approval_policy": "trusted_profile",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "exit_status_and_declared_task_verification",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "execution",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "execute one allowlisted named task profile such as test/build; no arbitrary command string.",
+  "input_summary": "profile:string, cwd:string, args?:string[], async?:boolean.",
+  "output_summary": "result or broker job_id, bounded stdout/stderr, exit class, verification.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "d1c6a0c1-266c-488c-884b-86b3ae381986",
+    "source_text": "Purpose: execute one allowlisted named task profile such as test/build; no arbitrary command string. Input: profile:string, cwd:string, args?:string[], async?:boolean. Output: result or broker job_id, bounded stdout/stderr, exit class, verification. Contract: L2 writes_local; scope mac.task.run; target task_profile; timeout max 600000ms; cap 2MiB; network/profile-defined; filesystem/profile-defined; minimal env and secret-env denial; approval trusted_profile; non-idempotent unless profile declares otherwise. Phase 3 planned."
+  }
+}

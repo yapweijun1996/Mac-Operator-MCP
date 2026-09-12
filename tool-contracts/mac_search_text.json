@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_search_text",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.files.search"
+  ],
+  "normalized_target_type": "filesystem_roots",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 524288,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_roots",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "filesystem_read",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "bounded text search across allowed roots while excluding secret zones.",
+  "input_summary": "roots:string[], query:string, glob?:string, max_results?:1..1000.",
+  "output_summary": "path,line/range,sanitized snippet.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "18677c27-f540-400a-93b1-6a91f4e35c82",
+    "source_text": "Purpose: bounded text search across allowed roots while excluding secret zones. Input: roots:string[], query:string, glob?:string, max_results?:1..1000. Output: path,line/range,sanitized snippet. Contract: L1 read_only; scope mac.files.search; target filesystem_roots; timeout 30000ms; cap 512KiB; network none; filesystem read_allowed_roots; deny secret content and redact matches that resemble credentials; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

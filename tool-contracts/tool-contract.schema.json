@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mac-operator-mcp.local/schemas/tool-contract-v0.1.json",
+  "title": "Mac-Operator-MCP Tool Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool_name",
+    "capability_level",
+    "safety_class",
+    "required_scopes",
+    "normalized_target_type",
+    "timeout_ms",
+    "output_cap_bytes",
+    "network_policy",
+    "filesystem_policy",
+    "secret_policy",
+    "approval_policy",
+    "idempotent",
+    "postcondition_verification",
+    "audit_class",
+    "tool_delivery_wave",
+    "implementation_status",
+    "purpose",
+    "input_summary",
+    "output_summary",
+    "source"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "0.1" },
+    "tool_name": { "type": "string", "pattern": "^mac_[a-z0-9_]+$" },
+    "capability_level": { "enum": ["L0", "L1", "L2", "L3", "L4", "L5"] },
+    "safety_class": { "enum": ["read_only", "writes_local", "destructive", "privileged"] },
+    "required_scopes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^mac\\.[a-z0-9_.-]+$" }
+    },
+    "normalized_target_type": { "type": "string", "minLength": 1 },
+    "timeout_ms": { "type": "integer", "minimum": 1 },
+    "output_cap_bytes": { "type": "integer", "minimum": 1 },
+    "network_policy": { "type": "string", "minLength": 1 },
+    "filesystem_policy": { "type": "string", "minLength": 1 },
+    "secret_policy": { "type": "string", "minLength": 1 },
+    "approval_policy": { "type": "string", "minLength": 1 },
+    "idempotent": { "type": "boolean" },
+    "postcondition_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "strategy", "failure_class"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "strategy": {
+          "enum": [
+            "bounded_result_validation",
+            "bounded_tree_result_validation",
+            "capability_state_result_validation",
+            "component_health_result_validation",
+            "policy_decision_result_validation",
+            "bounded_system_result_validation",
+            "bounded_storage_result_validation",
+            "bounded_process_result_validation",
+            "sanitized_log_result_validation",
+            "bounded_network_result_validation",
+            "service_state_result_validation",
+            "canonical_metadata_result_validation",
+            "bounded_content_result_validation",
+            "digest_result_validation",
+            "safe_project_result_validation",
+            "sanitized_diff_result_validation",
+            "package_metadata_result_validation",
+            "sanitized_docker_result_validation",
+            "exit_status_and_declared_task_verification",
+            "job_result_validation",
+            "job_state_termination_verification",
+            "changed_paths_and_hash_readback",
+            "readback_hash",
+            "staged_diff_hash",
+            "commit_id_parent_and_staged_precondition",
+            "app_inventory_result_validation",
+            "launch_state_and_target_reobservation",
+            "focused_app_window_reobservation",
+            "accessibility_snapshot_validation",
+            "accessibility_reobservation",
+            "focused_target_and_input_postcondition",
+            "service_state_readback",
+            "installed_version_verification",
+            "handoff_acceptance_and_scheduled_state"
+          ]
+        },
+        "failure_class": { "const": "VERIFICATION_FAILED" }
+      }
+    },
+    "audit_class": {
+      "enum": [
+        "observe",
+        "filesystem_read",
+        "developer_read",
+        "execution",
+        "filesystem_write",
+        "git_write",
+        "app_control",
+        "gui_control",
+        "privileged"
+      ]
+    },
+    "tool_delivery_wave": { "enum": ["wave_1", "wave_2", "wave_3", "wave_4", "wave_5"] },
+    "implementation_status": { "const": "planned" },
+    "purpose": { "type": ["string", "null"] },
+    "input_summary": { "type": ["string", "null"] },
+    "output_summary": { "type": ["string", "null"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kbid", "kb_id", "kb_item_id", "source_text"],
+      "properties": {
+        "kbid": { "const": "mac-operator-mcp" },
+        "kb_id": { "const": "90f1df58-87f6-4f47-aa9a-2881c478f8a0" },
+        "kb_item_id": { "type": "string", "format": "uuid" },
+        "source_text": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_job_cancel",
+  "capability_level": "L2",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.job.cancel"
+  ],
+  "normalized_target_type": "job_id",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "broker_job_artifacts",
+  "secret_policy": "redact",
+  "approval_policy": "trusted_write",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "job_state_termination_verification",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "execution",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "cancel only a Broker-owned cancellable job; cannot signal arbitrary host PID.",
+  "input_summary": "job_id:string, reason?:string<=200.",
+  "output_summary": "prior/new state and cancellation verification.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "c165b814-bf7c-4b9f-a9c1-10378021f398",
+    "source_text": "Purpose: cancel only a Broker-owned cancellable job; cannot signal arbitrary host PID. Input: job_id:string, reason?:string<=200. Output: prior/new state and cancellation verification. Contract: L2 writes_local; scope mac.job.cancel; target job_id; timeout 10000ms; cap 128KiB; network none; filesystem broker_job_artifacts; secrets redacted; approval trusted_write; repeated cancel is safe/idempotent by job state. Phase 3 planned."
+  }
+}

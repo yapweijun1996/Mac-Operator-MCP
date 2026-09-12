@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_process_inspect",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.process.read"
+  ],
+  "normalized_target_type": "pid",
+  "timeout_ms": 5000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "redact_env_args",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_process_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "inspect one normalized PID with bounded non-secret metadata.",
+  "input_summary": "pid:positive integer.",
+  "output_summary": "identity/state/resources/safe parent-child facts.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "28c3c384-2004-4107-b292-3eea0601877e",
+    "source_text": "Purpose: inspect one normalized PID with bounded non-secret metadata. Input: pid:positive integer. Output: identity/state/resources/safe parent-child facts. Contract: L0 read_only; scope mac.process.read; target pid; timeout 5000ms; cap 128KiB; no network/filesystem; never reveal sensitive env/argv contents; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

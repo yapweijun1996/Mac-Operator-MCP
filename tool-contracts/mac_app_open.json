@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_app_open",
+  "capability_level": "L3",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.app.control"
+  ],
+  "normalized_target_type": "app_id",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 262144,
+  "network_policy": "explicit_allowlist_only",
+  "filesystem_policy": "path_if_explicit_allowlist",
+  "secret_policy": "deny_sensitive_targets",
+  "approval_policy": "trusted_app_control",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "launch_state_and_target_reobservation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "app_control",
+  "tool_delivery_wave": "wave_4",
+  "implementation_status": "planned",
+  "purpose": "launch an allowlisted app and optional approved document/URL; no arbitrary script execution.",
+  "input_summary": "app_id:string, document_path?:string, url?:string.",
+  "output_summary": "launched/already-running state and verified target.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "c200dad7-21c9-4e2f-a22d-6714b830ec2c",
+    "source_text": "Purpose: launch an allowlisted app and optional approved document/URL; no arbitrary script execution. Input: app_id:string, document_path?:string, url?:string. Output: launched/already-running state and verified target. Contract: L3 writes_local; scope mac.app.control; target app_id; timeout 30000ms; cap 256KiB; network only for explicitly allowed URL schemes/hosts; filesystem path allowlist; sensitive targets denied; approval trusted_app_control. Phase 4 planned."
+  }
+}

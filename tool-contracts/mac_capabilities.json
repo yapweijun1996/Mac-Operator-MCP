@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_capabilities",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.control.read"
+  ],
+  "normalized_target_type": "broker",
+  "timeout_ms": 3000,
+  "output_cap_bytes": 65536,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "redact",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "capability_state_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_1",
+  "implementation_status": "planned",
+  "purpose": "list enabled Mac-Operator capabilities, caller-visible scopes and macOS permission state; never expose credentials.",
+  "input_summary": "{}.",
+  "output_summary": "capability groups, enabled/disabled reason, granted host permissions, version.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "16f2a59e-5599-4cd3-b951-1e123f863c69",
+    "source_text": "Purpose: list enabled Mac-Operator capabilities, caller-visible scopes and macOS permission state; never expose credentials. Input: {}. Output: capability groups, enabled/disabled reason, granted host permissions, version. Contract: L0 read_only; scope mac.control.read; target broker; timeout 3000ms; cap 64KiB; network none; filesystem none; secret policy redact; approval trusted_read; idempotent yes; verification bounded result. Phase 1, status planned. Broker remains final authority."
+  }
+}

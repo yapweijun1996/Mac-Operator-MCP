@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_priv_package_install",
+  "capability_level": "L5",
+  "safety_class": "privileged",
+  "required_scopes": [
+    "mac.priv.package"
+  ],
+  "normalized_target_type": "package_id",
+  "timeout_ms": 600000,
+  "output_cap_bytes": 1048576,
+  "network_policy": "allowlisted_package_source",
+  "filesystem_policy": "approved_install_paths",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "explicit_privileged_policy",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "installed_version_verification",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "privileged",
+  "tool_delivery_wave": "wave_5",
+  "implementation_status": "planned",
+  "purpose": "install only an approved package identity/version via privileged helper; never arbitrary installer command.",
+  "input_summary": "package_id:string, version?:string, source_profile?:string.",
+  "output_summary": "resolved approved artifact, precondition, install result and version verification.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "685e893e-671a-409d-9123-468e77ae171e",
+    "source_text": "Purpose: install only an approved package identity/version via privileged helper; never arbitrary installer command. Input: package_id:string, version?:string, source_profile?:string. Output: resolved approved artifact, precondition, install result and version verification. Contract: L5 privileged; scope mac.priv.package; timeout 600000ms; cap 1MiB; network allowlisted_package_source only; filesystem approved install paths; explicit privileged policy required; non-idempotent but installed-version precheck prevents duplicate work. Phase 5 planned."
+  }
+}

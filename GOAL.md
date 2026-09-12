@@ -8,9 +8,9 @@ Last verified: 2026-09-12
 
 Build a governed MCP service and local macOS broker that let ChatGPT and other authorized AI clients inspect and operate a physical Mac mini. The system must provide useful machine-level capabilities while keeping credentials, authorization, privileged execution, and recovery under deterministic host control.
 
-## Current truth
+## Implementation interpretation
 
-The Git repository exists on `main` and contains only `.gitattributes` at commit `8f8d6b5`. No application code, package configuration, tests, deployment configuration, MCP tools, broker, adapters, audit store, or privileged helper has been implemented. Every capability described in this document is a target unless explicitly marked complete.
+This document defines durable product intent. `PROGRESS.md` is the source of truth for current Git state, implementation status, verification, blockers, and next work. A documented capability remains a target until repository evidence marks it implemented and enabled.
 
 ## Intended outcome
 
@@ -60,3 +60,7 @@ The first release proves authenticated Edge-to-Broker communication and a narrow
 - Secret-boundary, path-race, replay, revocation, and process-isolation tests pass.
 - Every mutation has preconditions, idempotency or recovery semantics, and postcondition verification.
 - Production release has no unresolved P0 or P1 findings in the affected authority boundary.
+
+## Related documents
+
+See `DESIGN.md`, `SPEC.md`, `SECURITY.md`, `FILESYSTEM_POLICY.md`, and `PROGRESS.md`.

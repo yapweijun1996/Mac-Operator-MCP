@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_list_directory",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.files.read"
+  ],
+  "normalized_target_type": "path",
+  "timeout_ms": 5000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_roots",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "filesystem_read",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "list entries for one canonical authorized directory with bounded pagination.",
+  "input_summary": "path:string, cursor?:string, limit?:1..500, include_hidden?:boolean.",
+  "output_summary": "names/types/safe metadata and next cursor.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "98253c3d-aa71-4a7c-91aa-18b896a80c72",
+    "source_text": "Purpose: list entries for one canonical authorized directory with bounded pagination. Input: path:string, cursor?:string, limit?:1..500, include_hidden?:boolean. Output: names/types/safe metadata and next cursor. Contract: L1 read_only; scope mac.files.read; target path; timeout 5000ms; cap 256KiB; network none; filesystem read_allowed_roots; deny secret content and filter protected entries; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

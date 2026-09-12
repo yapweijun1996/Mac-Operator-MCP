@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_git_stage",
+  "capability_level": "L2",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.git.write"
+  ],
+  "normalized_target_type": "project_root",
+  "timeout_ms": 15000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "write_allowed_project",
+  "secret_policy": "deny_secret_paths",
+  "approval_policy": "trusted_write",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "staged_diff_hash",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "git_write",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "stage only explicit authorized paths in one repository; never implicit all-files staging.",
+  "input_summary": "project_root:string, paths:string[] non-empty.",
+  "output_summary": "staged paths, skipped/denied paths and staged diff hash.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "683caa43-3811-4756-acec-36389175c454",
+    "source_text": "Purpose: stage only explicit authorized paths in one repository; never implicit all-files staging. Input: project_root:string, paths:string[] non-empty. Output: staged paths, skipped/denied paths and staged diff hash. Contract: L2 writes_local; scope mac.git.write; target project_root; timeout 15000ms; cap 256KiB; network none; filesystem write_allowed_project; secret paths denied; approval trusted_write; retry must verify current index state. Phase 3 planned."
+  }
+}

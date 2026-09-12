@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_priv_service_control",
+  "capability_level": "L5",
+  "safety_class": "privileged",
+  "required_scopes": [
+    "mac.priv.service"
+  ],
+  "normalized_target_type": "service_id",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "explicit_privileged_policy",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "service_state_readback",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "privileged",
+  "tool_delivery_wave": "wave_5",
+  "implementation_status": "planned",
+  "purpose": "request separately authenticated privileged helper to perform one allowlisted service action.",
+  "input_summary": "service_id:string, action:start|stop|restart|enable|disable, expected_state?:string.",
+  "output_summary": "pre-state, action result, post-state verification.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "c56388ed-fa65-4298-9812-aba5fe0ba679",
+    "source_text": "Purpose: request separately authenticated privileged helper to perform one allowlisted service action. Input: service_id:string, action:start|stop|restart|enable|disable, expected_state?:string. Output: pre-state, action result, post-state verification. Contract: L5 privileged; scope mac.priv.service; target service_id; timeout 30000ms; cap 256KiB; no generic command string; helper allowlist and caller authentication mandatory; approval explicit_privileged_policy; non-idempotent except state-setting actions. Phase 5 planned."
+  }
+}

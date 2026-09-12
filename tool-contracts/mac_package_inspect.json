@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_package_inspect",
+  "capability_level": "L2",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.package.read"
+  ],
+  "normalized_target_type": "project_root",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 524288,
+  "network_policy": "allowlisted_registry_read_optional",
+  "filesystem_policy": "read_allowed_project",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "package_metadata_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "inspect supported package-manager manifests/locks and optional outdated metadata without install/update.",
+  "input_summary": "project_root:string, manager?:auto|npm|pnpm|yarn|pip|uv|poetry|brew, check_outdated?:boolean.",
+  "output_summary": "manager, dependencies/lock facts, safe outdated summary.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "c22b2bed-5716-4855-9d73-7f3c069a8d0a",
+    "source_text": "Purpose: inspect supported package-manager manifests/locks and optional outdated metadata without install/update. Input: project_root:string, manager?:auto|npm|pnpm|yarn|pip|uv|poetry|brew, check_outdated?:boolean. Output: manager, dependencies/lock facts, safe outdated summary. Contract: L2 read_only; scope mac.package.read; target project_root; timeout 30000ms; cap 512KiB; registry-read network only when enabled; filesystem read_allowed_project; secret files denied. Phase 3 planned."
+  }
+}

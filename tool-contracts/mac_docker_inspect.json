@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_docker_inspect",
+  "capability_level": "L2",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.docker.read"
+  ],
+  "normalized_target_type": "docker_object",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 524288,
+  "network_policy": "local_docker_only",
+  "filesystem_policy": "none",
+  "secret_policy": "redact_env_mount_secrets",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "sanitized_docker_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "inspect one container/image/network/volume with sensitive env/mount values redacted.",
+  "input_summary": "object_type:container|image|network|volume, id:string.",
+  "output_summary": "sanitized object metadata.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "7de06c49-65b8-486c-9116-f2731fde498e",
+    "source_text": "Purpose: inspect one container/image/network/volume with sensitive env/mount values redacted. Input: object_type:container|image|network|volume, id:string. Output: sanitized object metadata. Contract: L2 read_only; scope mac.docker.read; target docker_object; timeout 10000ms; cap 512KiB; local Docker only; no raw socket proxy; secrets redacted; approval trusted_read; idempotent yes. Phase 3 planned."
+  }
+}

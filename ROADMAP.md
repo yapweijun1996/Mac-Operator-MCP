@@ -12,7 +12,7 @@ The repository exists but has no implementation baseline. Work is in Phase 0. Do
 
 Status: `IN_PROGRESS`
 
-Confirm runtime and package strategy; create project structure; freeze shared request/result/error schemas; define principal, scope, policy, target, job, idempotency, audit, and revocation contracts; create the threat model and executable test fixtures; establish formatting, lint, typecheck, unit, security, and CI checks.
+Materialize locked KB security, filesystem, and tool contracts; confirm runtime and package strategy; create project structure; freeze request/result/error schemas and principal, scope, identity/IPC, approval, policy, persistence, job, idempotency, audit, and revocation contracts; complete sandbox research; maintain the threat and verification matrices; establish formatting, lint, typecheck, unit, security, and CI checks.
 
 Exit: documentation and schemas agree; the baseline is reproducible; security invariants have failing-then-passing tests; no host mutation capability is enabled.
 
@@ -86,17 +86,25 @@ Contracts
   -> Broader operator capabilities
 ```
 
+The 44 contracts use `tool_delivery_wave` (`wave_1` through `wave_5`) for capability sequencing. This is intentionally distinct from the project lifecycle `Phase 0` through `Phase 7` used by this roadmap. The migration and evidence are recorded in `CONFLICTS.md` and `KB_SYNC.md`.
+
 ## Priority rule
 
 Authority and credential defects take priority over functional expansion. Then address broken core behavior, secret boundaries, reliability, read-only capabilities, developer operations, GUI control, privileged operations, and convenience features.
 
 ## Current blockers and decisions required
 
-- Confirm implementation runtime; TypeScript/Node is the current candidate.
-- Select Edge-to-Broker authentication and replay mechanism.
+- Confirm implementation runtime through ADR-0001; TypeScript/Node is the current candidate.
+- Accept identity and Edge-to-Broker IPC through ADR-0002.
+- Accept remote authentication through ADR-0003.
+- Freeze policy/config and audit persistence through ADR-0004 and ADR-0005.
 - Select an enforceable macOS child-process sandbox.
-- Define initial filesystem allow and deny roots.
-- Select policy and audit storage formats.
+- Close scope and approval semantics through `MOP-080` and `MOP-082`.
+- Complete input/output schema detail and automated validation for all 44 machine-readable tool contracts; the mandatory audit/postcondition fields and delivery-wave naming are already closed.
 - Decide read-only behavior during audit-store failure.
 - Select remote authentication/tunnel only after the local vertical slice is verified.
 - Define packaging/signing before GUI and privileged distribution.
+
+## Related documents
+
+See `EPIC.md`, `TASK.md`, `PROGRESS.md`, `VERIFICATION.md`, and `docs/adr/README.md`.

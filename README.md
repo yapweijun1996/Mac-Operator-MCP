@@ -1,0 +1,51 @@
+# Mac-Operator-MCP
+
+Mac-Operator-MCP is a planned governed MCP Edge and local macOS Broker for operating a physical Mac mini with high capability and bounded authority. The Local Broker performs final authorization; secret content, unrestricted shell, unrestricted root, and the interfaces excluded by `SECURITY.md` remain unavailable.
+
+## Current status
+
+See `PROGRESS.md` for current Git evidence, implementation and enablement state, verification, blockers, and next work.
+
+## Start here
+
+- [Goal](GOAL.md)
+- [Current progress](PROGRESS.md)
+- [Architecture](DESIGN.md)
+- [Specification](SPEC.md)
+- [Security baseline](SECURITY.md)
+- [Threat model](THREAT_MODEL.md)
+- [Filesystem policy](FILESYSTEM_POLICY.md)
+- [Scope model](SCOPE_MODEL.md)
+- [Persistence model](PERSISTENCE_MODEL.md)
+- [Tool catalog](TOOL_CATALOG.md)
+- [Tool contract standard](TOOL_CONTRACT_STANDARD.md)
+- [Machine-readable tool contracts](tool-contracts/README.md)
+- [Epics](EPIC.md)
+- [Roadmap](ROADMAP.md)
+- [Task ledger](TASK.md)
+- [Verification matrix](VERIFICATION.md)
+- [SSOT conflict register](CONFLICTS.md)
+- [KB-MCP synchronization](KB_SYNC.md)
+- [Architecture decisions](docs/adr/README.md)
+
+## Delivery and operations
+
+- [Testing](TESTING.md)
+- [Configuration](CONFIGURATION.md)
+- [Deployment](DEPLOYMENT.md)
+- [Operations](OPERATIONS.md)
+- [Kill switch](KILL_SWITCH.md)
+- [Incident response](INCIDENT_RESPONSE.md)
+- [Rollback](ROLLBACK.md)
+
+## Source-of-truth rules
+
+- Repository code and exact-revision evidence determine implementation truth.
+- `PROGRESS.md` owns dynamic Git, implementation, verification, blocker, and next-step status.
+- Durable architecture and requirements belong in their named documents.
+- KBID `mac-operator-mcp` is the upstream design SSOT for materialized KB artifacts until a reviewed synchronization rule replaces it.
+- A documented contract is not an implemented or enabled capability.
+
+## Development
+
+The implementation runtime and package structure are still open under `MOP-003` and ADR-0001. No build, test, install, or run command exists yet.

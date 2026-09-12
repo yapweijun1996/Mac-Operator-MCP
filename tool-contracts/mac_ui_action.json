@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_ui_action",
+  "capability_level": "L4",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.ui.control"
+  ],
+  "normalized_target_type": "ui_element",
+  "timeout_ms": 15000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "deny_sensitive_targets",
+  "approval_policy": "trusted_gui",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "accessibility_reobservation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "gui_control",
+  "tool_delivery_wave": "wave_4",
+  "implementation_status": "planned",
+  "purpose": "perform one supported Accessibility action on a previously resolved approved element.",
+  "input_summary": "element_ref:string, action:press|select|increment|decrement|show_menu|focus.",
+  "output_summary": "action result plus re-observed postcondition.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "b9155116-18c8-41e3-a8e9-924b0138e57d",
+    "source_text": "Purpose: perform one supported Accessibility action on a previously resolved approved element. Input: element_ref:string, action:press|select|increment|decrement|show_menu|focus. Output: action result plus re-observed postcondition. Contract: L4 writes_local; scope mac.ui.control; target ui_element; timeout 15000ms; cap 256KiB; no network/filesystem; sensitive dialogs/security/credential UI denied; approval trusted_gui; non-idempotent unless action semantics are inherently safe. Phase 4 planned."
+  }
+}

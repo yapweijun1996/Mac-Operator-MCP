@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_priv_power",
+  "capability_level": "L5",
+  "safety_class": "privileged",
+  "required_scopes": [
+    "mac.priv.power"
+  ],
+  "normalized_target_type": "host",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "redact",
+  "approval_policy": "explicit_privileged_policy",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "handoff_acceptance_and_scheduled_state",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "privileged",
+  "tool_delivery_wave": "wave_5",
+  "implementation_status": "planned",
+  "purpose": "tightly scoped reboot/shutdown through privileged helper.",
+  "input_summary": "action:reboot|shutdown, reason?:string<=200, not_before?:timestamp.",
+  "output_summary": "accepted/rejected policy decision and scheduled/executed state; connection loss is expected after success.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "2c799a68-8873-4069-8a91-9f6a1dc115a9",
+    "source_text": "Purpose: tightly scoped reboot/shutdown through privileged helper. Input: action:reboot|shutdown, reason?:string<=200, not_before?:timestamp. Output: accepted/rejected policy decision and scheduled/executed state; connection loss is expected after success. Contract: L5 privileged; scope mac.priv.power; target host; timeout 30000ms before handoff; cap 256KiB; no generic root command; explicit privileged policy/preconditions/kill-switch checks mandatory; non-idempotent with operation nonce/state guard. Phase 5 planned."
+  }
+}

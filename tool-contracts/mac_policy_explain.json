@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_policy_explain",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.policy.explain"
+  ],
+  "normalized_target_type": "policy_request",
+  "timeout_ms": 3000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "metadata_only",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "policy_decision_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_1",
+  "implementation_status": "planned",
+  "purpose": "dry-run Broker policy for a proposed tool/target/arguments; MUST NOT execute it.",
+  "input_summary": "proposed_tool:string, target?:object, arguments?:object.",
+  "output_summary": "allow/deny, normalized target summary, required/missing scopes, reason codes; sensitive values redacted.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "2556a4e2-01c5-40fe-a045-9b5f75ad12c7",
+    "source_text": "Purpose: dry-run Broker policy for a proposed tool/target/arguments; MUST NOT execute it. Input: proposed_tool:string, target?:object, arguments?:object. Output: allow/deny, normalized target summary, required/missing scopes, reason codes; sensitive values redacted. Contract: L0 read_only; scope mac.policy.explain; timeout 3000ms; cap 128KiB; network none; filesystem metadata-only; deny secret content; approval trusted_read; idempotent yes. Phase 1 planned."
+  }
+}

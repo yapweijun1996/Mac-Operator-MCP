@@ -1,6 +1,6 @@
 # Mac-Operator-MCP Specification
 
-Status: Draft requirements; implementation has not started
+Status: Draft requirements baseline
 Version: 0.1
 Last verified: 2026-09-12
 
@@ -14,7 +14,7 @@ The system will expose structured MCP tools for host and broker status, safe sys
 
 ## Implementation status
 
-No requirements in this specification are implemented. The repository currently contains only `.gitattributes` on `main` at commit `8f8d6b5`.
+`PROGRESS.md` is authoritative for implementation and verification state. Requirements and contracts in this repository do not become executable authority merely by being documented.
 
 ## Common tool contract
 
@@ -29,7 +29,7 @@ Every tool MUST declare:
 - Approval or trusted-policy requirement when applicable.
 - Idempotency and retry behavior.
 - Postcondition verification.
-- Audit class, delivery phase, implementation status, and enabled state.
+- Audit class, tool delivery wave, implementation status, and enabled state.
 
 Tool discovery MUST distinguish `planned`, `implemented`, and `enabled`. A planned contract MUST NOT be executable.
 
@@ -134,7 +134,7 @@ Audit MUST record principal reference, request ID, tool, normalized target refer
 
 ## Planned tool surface
 
-The current planning catalog contains 44 tools across Broker introspection, L0 observation, L1 files/projects, L2 developer operations and controlled writes, L3/L4 app and GUI actions, and L5 privileged operations. `TASK.md` is the delivery mapping. The catalog is planned and MUST NOT be reported as implemented or enabled.
+The locked planning catalog contains 44 tools across Broker introspection, L0 observation, L1 files/projects, L2 developer operations and controlled writes, L3/L4 app and GUI actions, and L5 privileged operations. `TOOL_CATALOG.md`, `TOOL_CONTRACT_STANDARD.md`, and `tool-contracts/` are authoritative for that planned surface. `TASK.md` maps delivery work. Planned tools MUST NOT be reported as implemented or enabled.
 
 ## V0.1 vertical-slice acceptance
 
@@ -151,3 +151,7 @@ The first releasable slice MUST demonstrate:
 ## Release definition
 
 A capability is released only when its contract, implementation, focused tests, affected regression checks, adversarial boundary tests, real-Mac evidence where applicable, documentation, deployment configuration, rollback path, and enabled state are verified. The affected authority boundary MUST have no unresolved P0 or P1 findings.
+
+## Related documents
+
+See `SECURITY.md`, `FILESYSTEM_POLICY.md`, `TOOL_CATALOG.md`, `tool-contracts/`, `THREAT_MODEL.md`, and `VERIFICATION.md`.

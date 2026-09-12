@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_health",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.control.read"
+  ],
+  "normalized_target_type": "broker",
+  "timeout_ms": 3000,
+  "output_cap_bytes": 65536,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "redact",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "component_health_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_1",
+  "implementation_status": "planned",
+  "purpose": "report Edge, Local Broker and optional helper health/version/reachability without secret material.",
+  "input_summary": "include_components?:boolean.",
+  "output_summary": "component states, versions, degraded reasons.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "13bd1c09-05e6-45fd-bbba-8505265098a8",
+    "source_text": "Purpose: report Edge, Local Broker and optional helper health/version/reachability without secret material. Input: include_components?:boolean. Output: component states, versions, degraded reasons. Contract: L0 read_only; scope mac.control.read; target broker; timeout 3000ms; cap 64KiB; network none; filesystem none; secrets redacted; approval trusted_read; idempotent yes. Phase 1 planned. Must not return tokens, sockets with credentials or auth configuration values."
+  }
+}

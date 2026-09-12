@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_stat_path",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.files.read"
+  ],
+  "normalized_target_type": "path",
+  "timeout_ms": 5000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "metadata_allowed_roots",
+  "secret_policy": "existence_only_for_secret_zones",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "canonical_metadata_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "filesystem_read",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "return safe metadata for one canonical path without opening protected secret contents.",
+  "input_summary": "path:string, follow_symlink?:boolean.",
+  "output_summary": "type,size,timestamps,mode,symlink metadata subject to policy.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "f992c130-5dba-40e8-8f6b-f6bd6b621fcc",
+    "source_text": "Purpose: return safe metadata for one canonical path without opening protected secret contents. Input: path:string, follow_symlink?:boolean. Output: type,size,timestamps,mode,symlink metadata subject to policy. Contract: L1 read_only; scope mac.files.read; target path; timeout 5000ms; cap 128KiB; network none; filesystem metadata_allowed_roots; secret zones existence-only; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

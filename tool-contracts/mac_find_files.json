@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_find_files",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.files.search"
+  ],
+  "normalized_target_type": "filesystem_roots",
+  "timeout_ms": 20000,
+  "output_cap_bytes": 524288,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_roots",
+  "secret_policy": "secret_paths_existence_only",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "filesystem_read",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "bounded filename/path discovery within explicit authorized roots.",
+  "input_summary": "roots:string[], query:string, max_results?:1..1000.",
+  "output_summary": "canonical matching paths and safe metadata.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "96643c79-8a9a-40ad-8e4e-694547c3deed",
+    "source_text": "Purpose: bounded filename/path discovery within explicit authorized roots. Input: roots:string[], query:string, max_results?:1..1000. Output: canonical matching paths and safe metadata. Contract: L1 read_only; scope mac.files.search; target filesystem_roots; timeout 20000ms; cap 512KiB; network none; filesystem read_allowed_roots; secret paths may be hidden/existence-only and content never returned; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

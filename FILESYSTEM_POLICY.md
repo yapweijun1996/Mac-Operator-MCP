@@ -1,0 +1,100 @@
+# Mac-Operator-MCP Filesystem Policy
+
+Status: Locked architecture baseline
+Version: 0.1
+Source: KBID `mac-operator-mcp`, item `fabad579-3f3d-4d08-a963-43b7b986b76b`
+
+## Objective
+
+Allow near-whole-Mac discovery without turning broad filesystem visibility into unrestricted content or write authority. The Broker owns path normalization and authorization. Full Disk Access or another macOS permission only makes an OS operation technically possible; it never overrides this policy.
+
+## Locked precedence
+
+Evaluate every filesystem request in this order:
+
+`HARD_DENY > SENSITIVE_OPT_IN > WRITE_ROOT > READ_ROOT > METADATA_DISCOVERY > DEFAULT_DENY`
+
+A broader allow never overrides a narrower deny. Read and write authority are independent.
+
+## Access classes
+
+- F0 `HARD_DENY`: generic tools never expose content or writes. Existence may be exposed only when explicitly useful and non-sensitive.
+- F1 `SENSITIVE_OPT_IN`: private user data requires a dedicated scope and purpose-built adapter.
+- F2 `METADATA_ONLY`: path, type, size, timestamp, and storage metadata may be inspected; contents are not returned.
+- F3 `CONTENT_READ`: bounded read, search, and hash are permitted within configured read roots, subject to deny and file-type rules.
+- F4 `CONTROLLED_WRITE`: atomic write, patch, and stage operations require configured write roots and write scopes.
+- F5 `PRIVILEGED_TARGET`: generic file tools never mutate system targets; only an approved privileged-helper operation may do so.
+
+## Default discovery surface
+
+The host root `/` may be used for bounded metadata discovery. Discovery skips or sharply bounds dynamic and special trees such as `/dev`, `/private/var/run`, `/System/Volumes` internals, device, socket, and pseudo-filesystem surfaces. `/Volumes` is metadata-only by default. Removable, network, and Time Machine volumes require explicit per-volume policy before content access.
+
+## Default read roots
+
+- `$HOME` is content-readable except F0, F1, `~/Library` restrictions, and configured deny patterns.
+- `~/Library` is metadata-only by default; selected subpaths require specific allow rules.
+- `/Applications` is metadata/read-only where required for app discovery.
+- `/Library`, `/System`, `/usr`, `/bin`, `/sbin`, `/private`, `/etc`, and package-manager or system locations are metadata-only unless a narrower read adapter requires access.
+- Projects outside explicit read roots remain metadata-only until policy grants content access.
+
+## Default write roots
+
+Do not make all of `$HOME` writable. Use explicit user-owned project/workspace roots and the Broker workspace, such as configurable roots under `$HOME/Developer`, `$HOME/Projects`, or `$HOME/Documents/GitHub`. A discovered project outside a write root remains read-only. Generic writes to application, system, package-manager, LaunchAgent, LaunchDaemon, or login-item locations are denied and require a dedicated contract.
+
+## F0 secret zones
+
+Generic read, search, diff, and write tools deny secret content from:
+
+- `~/Library/Keychains/**` and Keychain material.
+- Private material under `~/.ssh/**` and `~/.gnupg/**`.
+- Cloud-provider credentials and authentication caches.
+- Docker, Kubernetes, Git, package-manager, and network credential files.
+- Private keys, signing credentials, and provisioning secrets.
+- `.env`, `.env.*`, vault files, and policy-classified credential files.
+- Browser login, cookie, session, credential-vault, and token stores.
+- macOS account, authorization, TCC, and privacy databases.
+
+Path denial is primary. Content redaction is defense in depth and is never the only secret boundary.
+
+## F1 private-data zones
+
+Mail, Messages, browser history and profile content, Photos libraries, personal chat databases, and similar private stores are blocked from generic reads and searches. They require an explicit scope and purpose-built adapter with a narrow result contract.
+
+## Path normalization and anti-escape rules
+
+1. Reject NUL bytes, malformed paths, and unsupported encodings.
+2. Expand only Broker-defined tokens; never perform shell expansion.
+3. Convert to an absolute canonical target before authorization.
+4. Resolve symlinks for every existing path segment and authorize the resolved target.
+5. For new targets, authorize the canonical parent and create with no-follow or race-resistant semantics where available.
+6. Deny traversal, mount escape, alias indirection, and symlink chains outside the authorized root.
+7. Revalidate target identity before mutation and prefer descriptor/handle-based operations.
+8. Generic tools accept only supported regular files and directories. Special files require a dedicated adapter.
+
+## Read limits
+
+Every read, search, list, and tree operation has byte, result, depth, and time budgets. Large files require bounded ranges. Binary content defaults to metadata or hash. Search excludes deny zones before opening files.
+
+## Write semantics
+
+`mac_write_file_atomic` and `mac_apply_patch` operate only in F4 roots. Prefer a bounded temporary file in the same directory, deliberate mode handling, appropriate synchronization, atomic rename, and hash/readback verification. Existing-file replacement should support an expected SHA-256. Never follow a final symlink. Failed verification returns `VERIFICATION_FAILED`.
+
+## Git interaction
+
+Git read tools inherit filesystem read policy. `mac_git_diff` redacts secret-like output and refuses F0 paths. `mac_git_stage` accepts explicit paths and cannot stage denied files. `mac_git_commit` commits only staged content after a staged-diff/hash precondition; it cannot push, alter remotes, or bypass filesystem policy.
+
+## External, removable, and network volumes
+
+Default access is metadata-only. Content access requires a stable volume identity and allowed root. Revalidate identity after remount. Network-share reads require separate enablement; writes are disabled in v0.1.
+
+## Configuration model
+
+Versioned authority configuration contains discovery, read, and write roots; hard-deny and sensitive-opt-in zones; volume rules; limits; and policy version. Ordinary filesystem tools cannot modify this configuration.
+
+## Required adversarial tests
+
+Cover traversal, symlink escape and swap, case and Unicode normalization, relevant hardlink edges, hidden files, deny-inside-allow precedence, project outside write root, secret patterns, `.env`, browser credentials, SSH keys, removable-volume remount, special files, oversized operations, precondition mismatch, atomic-write crash recovery, and audit redaction.
+
+## Initial decision
+
+V0.1 uses broad metadata discovery, broad user-space read with explicit privacy and secret exclusions, and narrow explicit project/workspace write roots. Generic whole-home and system writes remain unavailable.

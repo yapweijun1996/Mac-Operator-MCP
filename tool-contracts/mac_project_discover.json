@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_project_discover",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.project.read"
+  ],
+  "normalized_target_type": "filesystem_roots",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 524288,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_roots",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "safe_project_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "filesystem_read",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "discover Git/Node/Python/Docker/Swift/etc project roots under explicit allowed roots.",
+  "input_summary": "roots:string[], types?:string[], max_results?:1..500.",
+  "output_summary": "project roots/types and safe indicators only.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "d3c96dfd-d71b-4ccf-9d09-8b35e98185aa",
+    "source_text": "Purpose: discover Git/Node/Python/Docker/Swift/etc project roots under explicit allowed roots. Input: roots:string[], types?:string[], max_results?:1..500. Output: project roots/types and safe indicators only. Contract: L1 read_only; scope mac.project.read; target filesystem_roots; timeout 30000ms; cap 512KiB; network none; filesystem read_allowed_roots; deny secret content; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

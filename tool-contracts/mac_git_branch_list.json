@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_git_branch_list",
+  "capability_level": "L2",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.git.read"
+  ],
+  "normalized_target_type": "project_root",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_project",
+  "secret_policy": "redact",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "return local/remote branch metadata without checkout, switch or fetch.",
+  "input_summary": "project_root:string, include_remote?:boolean.",
+  "output_summary": "branches, current branch, upstream/ahead/behind if locally known.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "889f7cd2-a545-4ed5-9686-cf225650e349",
+    "source_text": "Purpose: return local/remote branch metadata without checkout, switch or fetch. Input: project_root:string, include_remote?:boolean. Output: branches, current branch, upstream/ahead/behind if locally known. Contract: L2 read_only; scope mac.git.read; target project_root; timeout 10000ms; cap 256KiB; network none; filesystem read_allowed_project; secrets redacted; approval trusted_read; idempotent yes. Phase 3 planned."
+  }
+}

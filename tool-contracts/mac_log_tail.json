@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_log_tail",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.log.read"
+  ],
+  "normalized_target_type": "log_source",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 524288,
+  "network_policy": "none",
+  "filesystem_policy": "allowlisted_logs",
+  "secret_policy": "redact",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "sanitized_log_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "bounded tail from an allowlisted log source.",
+  "input_summary": "source:string, lines?:1..2000, since_seconds?:integer.",
+  "output_summary": "sanitized log entries plus truncation state.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "07566ecc-7381-456b-814b-85cc79472bb3",
+    "source_text": "Purpose: bounded tail from an allowlisted log source. Input: source:string, lines?:1..2000, since_seconds?:integer. Output: sanitized log entries plus truncation state. Contract: L0 read_only; scope mac.log.read; target log_source; timeout 10000ms; cap 512KiB; network none; filesystem allowlisted_logs; secret-pattern redaction mandatory; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

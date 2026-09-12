@@ -1,12 +1,12 @@
 # Mac-Operator-MCP Design
 
-Status: Draft architecture; no runtime implementation exists
+Status: Locked architecture core with proposed detailed decisions
 Version: 0.1
 Last verified: 2026-09-12
 
 ## Source-of-truth statement
 
-Current repository evidence is authoritative for implementation status. At commit `8f8d6b5`, the repository contains only `.gitattributes`. The architecture below records approved direction and design proposals; it does not describe running software.
+This document owns durable architecture. `PROGRESS.md` owns current Git and delivery state. `SECURITY.md`, `FILESYSTEM_POLICY.md`, and the tool contracts provide the detailed authority rules. Architecture text does not prove that a component is implemented or enabled.
 
 ## System context
 
@@ -165,4 +165,10 @@ Configuration changes that alter authority are versioned, validated, audited, an
 
 Decided: Broker final authority; separate Edge and Broker; structured tools; deny-first policy; secret deny zones; bounded execution; redacted audit; kill switches; separate privileged helper; no unrestricted shell.
 
-Open: TypeScript/Node runtime confirmation; transport and remote authentication provider; IPC authentication primitive; sandbox implementation; policy file format; audit storage backend; macOS packaging/signing; initial allow/deny roots; read-only behavior during audit failure; generic process execution eligibility.
+Open: TypeScript/Node runtime confirmation; transport and remote authentication provider; IPC authentication primitive; sandbox implementation; policy/config serialization format; audit storage backend; macOS packaging/signing; read-only behavior during audit failure; generic process execution eligibility.
+
+The filesystem authority classes, precedence, default discovery direction, secret zones, and narrow write-root direction are locked in `FILESYSTEM_POLICY.md`; implementations may refine platform mechanics without replacing that model.
+
+## Related documents
+
+See `SECURITY.md`, `THREAT_MODEL.md`, `SCOPE_MODEL.md`, `PERSISTENCE_MODEL.md`, `TOOL_CONTRACT_STANDARD.md`, `VERIFICATION.md`, and `docs/adr/README.md`.

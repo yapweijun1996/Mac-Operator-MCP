@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_process_list",
+  "capability_level": "L0",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.process.read"
+  ],
+  "normalized_target_type": "process_set",
+  "timeout_ms": 5000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "none",
+  "secret_policy": "redact_env_args",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_process_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "observe",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "bounded process inventory.",
+  "input_summary": "limit?:1..500, sort?:cpu|memory|pid|name.",
+  "output_summary": "PID, executable identity, CPU/memory and safe owner metadata.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "3806d4fd-b627-41b8-874c-e07af88674e9",
+    "source_text": "Purpose: bounded process inventory. Input: limit?:1..500, sort?:cpu|memory|pid|name. Output: PID, executable identity, CPU/memory and safe owner metadata. Contract: L0 read_only; scope mac.process.read; target process_set; timeout 5000ms; cap 256KiB; no network/filesystem; process argv/env redacted by policy; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

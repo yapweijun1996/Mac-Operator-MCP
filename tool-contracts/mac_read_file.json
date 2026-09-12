@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_read_file",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.files.read"
+  ],
+  "normalized_target_type": "path",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 1048576,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_roots",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_content_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "filesystem_read",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "safely read one allowed file with byte/range cap.",
+  "input_summary": "path:string, offset?:integer, max_bytes?:1..1048576, encoding?:utf8|base64|metadata.",
+  "output_summary": "bounded content/metadata and truncation flag.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "42ea66a7-da1f-4a26-a820-68402d0de2c7",
+    "source_text": "Purpose: safely read one allowed file with byte/range cap. Input: path:string, offset?:integer, max_bytes?:1..1048576, encoding?:utf8|base64|metadata. Output: bounded content/metadata and truncation flag. Contract: L1 read_only; scope mac.files.read; target path; timeout 10000ms; cap 1MiB; network none; filesystem read_allowed_roots; protected secret content always denied; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}

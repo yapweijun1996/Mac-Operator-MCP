@@ -1,0 +1,35 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_directory_tree",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.files.read"
+  ],
+  "normalized_target_type": "path",
+  "timeout_ms": 10000,
+  "output_cap_bytes": 524288,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_roots",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": false,
+    "strategy": "bounded_tree_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "filesystem_read",
+  "tool_delivery_wave": "wave_2",
+  "implementation_status": "planned",
+  "purpose": "return a depth/entry bounded directory tree for an authorized root.",
+  "input_summary": "path:string, depth?:0..8, max_entries?:1..5000.",
+  "output_summary": "sanitized tree with truncation.",
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "6005b81b-b74e-40c3-9ed0-025298afb5fb",
+    "source_text": "Purpose: return a depth/entry bounded directory tree for an authorized root. Input: path:string, depth?:0..8, max_entries?:1..5000. Output: sanitized tree with truncation. Contract: L1 read_only; scope mac.files.read; target path; timeout 10000ms; cap 512KiB; network none; filesystem read_allowed_roots; deny-zone filtering mandatory; approval trusted_read; idempotent yes. Phase 2 planned."
+  }
+}
