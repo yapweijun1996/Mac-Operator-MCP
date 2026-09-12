@@ -53,11 +53,15 @@ function policyDocument(): PolicyDocument {
   };
 }
 
-function signedBundle(document: PolicyDocument, privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"]): SignedPolicyBundle {
+function signedBundle(
+  document: PolicyDocument,
+  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
+  keyId = "policy-key-1"
+): SignedPolicyBundle {
   const payloadBytes = Buffer.from(canonicalJson(document), "utf8");
   return {
     bundle_version: "0.1",
-    key_id: "policy-key-1",
+    key_id: keyId,
     algorithm: "Ed25519",
     payload_digest: sha256(payloadBytes),
     payload: document,
@@ -184,6 +188,61 @@ test("policy verification rejects tampering, unknown fields, and unimplemented e
     target: { kind: "project", reference: "/tmp/../etc" }
   });
   assert.throws(() => instance.verify(signedBundle(invalidProject, keys.privateKey)), /Project target rule is not a canonical absolute path/u);
+});
+
+test("policy verifier supports bounded signing-key rotation and revocation", async () => {
+  const first = generateKeyPairSync("ed25519");
+  const second = generateKeyPairSync("ed25519");
+  let revoked = false;
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-policy-rotation-"));
+  try {
+    const firstPath = join(directory, "policy-key-1.pem");
+    const secondPath = join(directory, "policy-key-2.pem");
+    await writeFile(firstPath, first.publicKey.export({ type: "spki", format: "pem" }), { mode: 0o600 });
+    await writeFile(secondPath, second.publicKey.export({ type: "spki", format: "pem" }), { mode: 0o600 });
+    const instance = await PolicyBundleVerifier.createFromKeyFiles({
+      schemaDirectory: join(repositoryRoot, "schemas"),
+      keys: [
+        { keyId: "policy-key-1", publicKeyPath: firstPath, notBeforeMs: NOW - 60_000, expiresAtMs: NOW + 60_000 },
+        { keyId: "policy-key-2", publicKeyPath: secondPath, notBeforeMs: NOW, expiresAtMs: NOW + 60_000 }
+      ],
+      revocationCheck: (keyId) => revoked && keyId === "policy-key-1",
+      now: () => NOW
+    });
+    assert.equal(instance.verify(signedBundle(policyDocument(), first.privateKey, "policy-key-1")).keyId, "policy-key-1");
+    assert.equal(instance.verify(signedBundle(policyDocument(), second.privateKey, "policy-key-2")).keyId, "policy-key-2");
+    revoked = true;
+    assert.throws(
+      () => instance.verify(signedBundle(policyDocument(), first.privateKey, "policy-key-1")),
+      /signing key is revoked/u
+    );
+    const unknown = generateKeyPairSync("ed25519");
+    assert.throws(
+      () => instance.verify(signedBundle(policyDocument(), unknown.privateKey, "policy-key-3")),
+      /key ID is not trusted/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("policy verifier rejects signing keys outside their validity window", async () => {
+  const keys = generateKeyPairSync("ed25519");
+  const instance = await PolicyBundleVerifier.create({
+    schemaDirectory: join(repositoryRoot, "schemas"),
+    trustedKeys: [{
+      keyId: "policy-key-future",
+      publicKeyPem: keys.publicKey.export({ type: "spki", format: "pem" }),
+      notBeforeMs: NOW + 60_001,
+      expiresAtMs: NOW + 120_000
+    }],
+    now: () => NOW,
+    allowedClockSkewMs: 5_000
+  });
+  assert.throws(
+    () => instance.verify(signedBundle(policyDocument(), keys.privateKey, "policy-key-future")),
+    /outside its validity window/u
+  );
 });
 
 test("policy manager rejects downgrade or same-revision replacement by default", async () => {

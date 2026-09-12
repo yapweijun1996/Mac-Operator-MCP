@@ -58,6 +58,13 @@ export interface SignedPolicyBundle {
   signature: string;
 }
 
+export interface PolicyVerificationKey {
+  keyId: string;
+  publicKeyPem: string | Buffer;
+  notBeforeMs?: number;
+  expiresAtMs?: number;
+}
+
 export interface VerifiedPolicy {
   policy: BrokerPolicy;
   payloadDigest: string;
@@ -68,16 +75,18 @@ export class PolicyBundleVerifier {
   private constructor(
     private readonly validateBundle: ((value: unknown) => boolean) & { errors?: unknown },
     private readonly ajv: InstanceType<typeof Ajv2020>,
-    private readonly expectedKeyId: string,
-    private readonly publicKey: KeyObject,
+    private readonly trustedKeys: ReadonlyMap<string, { publicKey: KeyObject; notBeforeMs: number; expiresAtMs: number }>,
+    private readonly revocationCheck: (keyId: string) => boolean,
     private readonly now: () => number,
     private readonly allowedClockSkewMs: number
   ) {}
 
   static async create(options: {
     schemaDirectory: string;
-    expectedKeyId: string;
-    publicKeyPem: string | Buffer;
+    expectedKeyId?: string;
+    publicKeyPem?: string | Buffer;
+    trustedKeys?: readonly PolicyVerificationKey[];
+    revocationCheck?: (keyId: string) => boolean;
     now?: () => number;
     allowedClockSkewMs?: number;
   }): Promise<PolicyBundleVerifier> {
@@ -88,13 +97,32 @@ export class PolicyBundleVerifier {
     addFormats(ajv);
     ajv.addSchema(documentSchema);
     const validateBundle = ajv.compile(bundleSchema);
-    const publicKey = createPublicKey(options.publicKeyPem);
-    if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("Policy verification key must be Ed25519");
+    const configuredKeys = options.trustedKeys ?? (options.expectedKeyId !== undefined && options.publicKeyPem !== undefined
+      ? [{ keyId: options.expectedKeyId, publicKeyPem: options.publicKeyPem }]
+      : []);
+    if (configuredKeys.length < 1 || configuredKeys.length > 32) {
+      throw new Error("At least one and no more than 32 policy verification keys are required");
+    }
+    const trustedKeys = new Map<string, { publicKey: KeyObject; notBeforeMs: number; expiresAtMs: number }>();
+    for (const key of configuredKeys) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(key.keyId) || trustedKeys.has(key.keyId)) {
+        throw new Error("Policy verification key identity is duplicated or malformed");
+      }
+      const notBeforeMs = key.notBeforeMs ?? 0;
+      const expiresAtMs = key.expiresAtMs ?? Number.MAX_SAFE_INTEGER;
+      if (!Number.isSafeInteger(notBeforeMs) || notBeforeMs < 0 ||
+          !Number.isSafeInteger(expiresAtMs) || expiresAtMs <= notBeforeMs) {
+        throw new Error(`Policy verification key validity window is invalid: ${key.keyId}`);
+      }
+      const publicKey = createPublicKey(key.publicKeyPem);
+      if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("Policy verification key must be Ed25519");
+      trustedKeys.set(key.keyId, { publicKey, notBeforeMs, expiresAtMs });
+    }
     return new PolicyBundleVerifier(
       validateBundle,
       ajv,
-      options.expectedKeyId,
-      publicKey,
+      trustedKeys,
+      options.revocationCheck ?? (() => false),
       options.now ?? Date.now,
       options.allowedClockSkewMs ?? 5_000
     );
@@ -117,18 +145,50 @@ export class PolicyBundleVerifier {
     });
   }
 
+  static async createFromKeyFiles(options: {
+    schemaDirectory: string;
+    keys: readonly (Omit<PolicyVerificationKey, "publicKeyPem"> & { publicKeyPath: string })[];
+    revocationCheck?: (keyId: string) => boolean;
+    now?: () => number;
+    allowedClockSkewMs?: number;
+  }): Promise<PolicyBundleVerifier> {
+    const trustedKeys: PolicyVerificationKey[] = [];
+    for (const key of options.keys) {
+      const publicKeyPem = await readProtectedRegularFile(key.publicKeyPath, 64 * 1024, "Policy verification key");
+      trustedKeys.push({
+        keyId: key.keyId,
+        publicKeyPem,
+        ...(key.notBeforeMs !== undefined ? { notBeforeMs: key.notBeforeMs } : {}),
+        ...(key.expiresAtMs !== undefined ? { expiresAtMs: key.expiresAtMs } : {})
+      });
+    }
+    return PolicyBundleVerifier.create({
+      schemaDirectory: options.schemaDirectory,
+      trustedKeys,
+      ...(options.revocationCheck ? { revocationCheck: options.revocationCheck } : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.allowedClockSkewMs !== undefined ? { allowedClockSkewMs: options.allowedClockSkewMs } : {})
+    });
+  }
+
   verify(rawBundle: unknown): VerifiedPolicy {
     if (!this.validateBundle(rawBundle)) {
       throw new Error(`Policy bundle schema validation failed: ${this.ajv.errorsText(this.validateBundle.errors)}`);
     }
     const bundle = rawBundle as SignedPolicyBundle;
-    if (bundle.key_id !== this.expectedKeyId) throw new Error("Policy signing key ID is not trusted");
+    const key = this.trustedKeys.get(bundle.key_id);
+    if (!key) throw new Error("Policy signing key ID is not trusted");
+    if (this.revocationCheck(bundle.key_id)) throw new Error("Policy signing key is revoked");
+    const nowMs = this.now();
+    if (nowMs + this.allowedClockSkewMs < key.notBeforeMs || nowMs >= key.expiresAtMs) {
+      throw new Error("Policy signing key is outside its validity window");
+    }
     const payloadBytes = Buffer.from(canonicalJson(bundle.payload), "utf8");
     const digest = sha256(payloadBytes);
     if (digest !== bundle.payload_digest) throw new Error("Policy payload digest does not match");
     const signature = Buffer.from(bundle.signature, "base64");
-    if (!verify(null, payloadBytes, this.publicKey, signature)) throw new Error("Policy signature is invalid");
-    if (bundle.payload.issued_at_ms > this.now() + this.allowedClockSkewMs) {
+    if (!verify(null, payloadBytes, key.publicKey, signature)) throw new Error("Policy signature is invalid");
+    if (bundle.payload.issued_at_ms > nowMs + this.allowedClockSkewMs) {
       throw new Error("Policy issue time is in the future");
     }
     return {
