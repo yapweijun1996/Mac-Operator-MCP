@@ -38,6 +38,7 @@ npm audit --audit-level=high
 Observed results:
 
 - 189 tests passed; 0 failed, skipped, cancelled, or todo.
+- A one-shot local HTTPS server probe used an ephemeral self-signed certificate and removed it after the run. The real Node HTTPS path served protected-resource metadata with `200`, returned `401` without a bearer token, rejected an unlisted Host and Origin with `403`, reached the MCP handler with an authenticated request (`405` for an unsupported GET), returned `429` plus `Retry-After: 60` on the second request under a one-request window, rejected a TLS 1.2-only client handshake, and read back request/header/keep-alive/per-socket budgets of `30,000`/`10,000`/`5,000` ms/`100`.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
