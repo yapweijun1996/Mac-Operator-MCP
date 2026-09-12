@@ -44,7 +44,7 @@ Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires 
 
 ## P2 — Remote Edge
 
-- `MOP-020` — `PLANNED` — Implement MCP initialize, tool discovery, health, and stable error mapping.
+- `MOP-020` — `IN_PROGRESS` — MCP SDK v2 initialize/modern protocol handling, Broker-filtered tool discovery, `mac_health` routing, and stable Broker failure mapping are implemented and tested. Real-client interoperability, pagination/notification behavior, and deployment evidence remain.
 - `MOP-021` — `IN_PROGRESS` — The MCP Edge accepts an injected OAuth verifier, requires expiry and exact resource binding, projects only known scopes into immutable Broker principal context, and proves bearer tokens do not cross IPC. Real issuer integration, subject mapping policy, revocation latency, rate limits, and client interoperability remain open.
 - `MOP-022` — `PLANNED` — Implement Edge-to-Broker signed request construction.
 - `MOP-023` — `PLANNED` — Implement client/session rate limits and bounded discovery.

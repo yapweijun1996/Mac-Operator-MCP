@@ -5,10 +5,10 @@ Recorded: 2026-09-13 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `983891205b2c9bedb2715cb40c95a9ac68b6790c`
+- Base commit: `65a02a3b37da98f19d929489eeabe75f8988a68c`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `be7006704d677caa7f07ccf2b37da92a7159fad25ce5c44a110dfea41ca096fe`
+- Runtime source manifest SHA-256: `0456cf75569ad2b02e125325fc7b592f19476829c963453f5637dd370c749a6f`
 - Tool-contract manifest SHA-256: `656ebeede8a828c68022915b54c85c4a9b3f146df0668ca8464b677a7781945d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 179 tests passed; 0 failed, skipped, cancelled, or todo.
+- 180 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the thirty-one implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the thirty-one implemented Broker handlers and the common stable failure envelope passed their JSON Schemas; MCP Edge tests also cover stable failure mapping for Broker and transport errors.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -85,6 +85,7 @@ Observed results:
 - `mac_git_diff` executes through the same Broker-authorized exact canonical project target and a fixed `/usr/bin/git diff` adapter with literal relative-path allowlisting, bounded revision selection, staged/read-tree separation, fixed non-secret Git configuration environment, `.git` directory/config identity checks, repository executable-integration rejection, hooks/fsmonitor/optional-lock and external diff/textconv/rename disabling, detached process-group timeout/cancellation, 1 MiB result budget, secret-pattern redaction, changed-path extraction, sanitized SHA-256 hashing, and post-execution root/metadata identity readback; it performs no staging, commit, fetch, checkout, mutation, or network operation.
 - `mac_package_inspect` executes through a Broker-authorized exact canonical project target and a descriptor-backed read-only adapter with independent `mac.package.read` scope, non-symlink manifest/lock identity checks, bounded npm/pnpm/yarn/pip/uv/poetry/Brewfile parsing, protected-content denial, cancellation/timeout checks, no child process or repository-script execution, and an explicit warning instead of an unallowlisted outdated-registry read.
 - `mac_docker_status`, `mac_docker_inspect`, and `mac_docker_logs` execute through Broker-authorized `mac.docker.read` runtime/object targets and a fixed local-only Docker adapter. The adapter pins a canonical executable, `/` cwd, local Unix socket, empty synthetic HOME/config paths, and fixed non-mutating arguments; it parses bounded JSON/line output, omits environment fields, redacts mount and log secrets, maps cancellation/timeouts, and never exposes a raw Docker socket. Real daemon compatibility, host socket negative evidence, and Docker storage readback remain open.
+- The MCP Edge factory creates a fresh SDK v2 server per authenticated request, advertises only Broker-enabled tools, rejects missing verified auth context, never forwards bearer tokens to IPC, and maps `BrokerError` or unknown gateway failures to the stable redacted failure envelope. Real OAuth issuer/client interoperability and HTTPS deployment remain open.
 - `mac_find_files` executes in the Broker-owned filesystem worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, authorization for every requested root, a fixed 50,000-entry/32-level budget, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_recent_files` executes in the same Broker-owned worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, per-root authorization, a Broker-supplied clock and bounded time window, fixed traversal/result budgets, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_search_text` executes in the same Broker-owned worker with empty environment/arguments, content-read root planning, independent `mac.files.search` scope and per-root authorization, 1 MiB per-file and 64 MiB aggregate scan budgets, UTF-8-only text handling, binary/NUL rejection, 100 matches per file, sanitized snippets, protected-entry/secret-content filtering, active cancellation, and strict result validation. Metadata-only roots are denied before content execution.
