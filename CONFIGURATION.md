@@ -5,6 +5,7 @@ Status: Signed policy and local signer lifecycle candidates implemented; install
 ## Configuration domains
 
 - Edge: remote issuer, audience, endpoint exposure, client/session rate limits, Broker address.
+- Edge TLS: certificate and private-key paths must resolve to owner-only regular files; the source loader rejects symlinks, weak permissions, non-canonical paths, oversized files, and device/inode changes during open/read.
 - Broker: component identity, capability switches, adapter registry, execution budgets, persistence, audit outage policy.
 - Policy: exact scopes, target grants, F0-F5 filesystem data, app/service/package/volume allowlists, task profiles.
 - Operations: log levels, retention, backups, health thresholds, update channel, emergency controls.

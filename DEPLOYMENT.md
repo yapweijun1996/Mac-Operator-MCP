@@ -13,7 +13,7 @@ Status: Draft plan
 
 ## Required deployment inputs
 
-Supported macOS/hardware versions, component identities, install paths, permissions, launch ownership, secret references, policy version, persistence location, audit retention, port/socket ownership, health checks, upgrade and rollback compatibility, and uninstall procedure.
+Supported macOS/hardware versions, component identities, install paths, permissions, launch ownership, protected TLS certificate/private-key references, other secret references, policy version, persistence location, audit retention, port/socket ownership, health checks, upgrade and rollback compatibility, and uninstall procedure.
 
 ## Release rule
 
