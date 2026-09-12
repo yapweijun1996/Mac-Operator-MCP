@@ -5,10 +5,10 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `27c4a3dc35baf60fd145bbfd8f02f66f41063497`
+- Base commit: `35f6d204a85dea70fa669ea6f6239d8735e6106a`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `ce2148a0c97f0986b31caa45412a8ababb5e653f21d63adaec089fc513be812e`
+- Runtime source manifest SHA-256: `345d7b043d41983e63393e3691ad73d61810c2c9fc7b79004bbdaffba5054c30`
 - Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 128 tests passed; 0 failed, skipped, cancelled, or todo.
+- 130 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -76,6 +76,7 @@ Observed results:
 - A production-default policy assertion verified that all tools remain disabled and no filesystem root exists unless explicitly supplied by authenticated authority configuration.
 - Filesystem adapter calls executed in Broker-owned worker threads with empty environment/arguments, bounded V8 heap/stack settings, a four-worker cap, per-tool deadlines, cancellation polling, termination requests, and runtime message validation. Tests covered normal completion, capacity exhaustion, timeout, active cancellation, and a credential-shaped environment canary that did not cross into the worker.
 - Native process inventory executes in its own Broker-owned worker boundary with empty environment/arguments, bounded V8 heap/stack settings, a two-worker cap, deadline/cancellation termination, and strict post-message validation; the Broker dispatch path does not run native enumeration on its event loop.
+- `mac_find_files` executes in the Broker-owned filesystem worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, authorization for every requested root, a fixed 50,000-entry/32-level budget, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - A Broker integration test revoked the active session during a filesystem read, verified the worker cancellation predicate changed immediately, discarded the otherwise successful result, and recorded `AUTHORIZED` decision followed by `CANCELLED` completion.
 - Job Ledger tests verified principal-scoped payload-bound idempotency, conflicting reuse denial, revision-checked and time/result-consistent transitions, bounded secret-output replacement, owner isolation, immediate/idempotent queued cancellation, and startup recovery from queued/running to `cancelled`/`unknown` with hash-linked audit evidence.
 - `mac_job_status` and `mac_job_cancel` passed their versioned success schemas. Dynamic job IDs were resolved to Broker-owned ownership before the `job:owned` policy decision; foreign jobs were indistinguishable from missing jobs. Cancellation produced separate decision, payload-digest intent, state mutation, readback verification, and completion audit records.
@@ -85,6 +86,7 @@ Observed results:
 - The disabled-by-default `mac_list_directory` slice verified independent `mac.files.read` scope and content-root authorization, descriptor-backed local-volume directory opening, bounded lexicographic pagination, hidden-entry handling, protected `.env`/secret-zone filtering before result construction, canonical path/device/inode identity checks, and rejection of directory identity changes after enumeration.
 - The disabled-by-default `mac_directory_tree` slice verified independent `mac.files.read` scope and content-root authorization, depth and entry bounds, descriptor-backed recursion only through real directories, inherited protected-entry filtering, same-volume child filtering, canonical root identity, and explicit truncation reporting.
 - The enabled-in-test `mac_process_list` slice verified independent `mac.process.read` scope and `process:all` target authorization, native bounded PID enumeration, executable/name/CPU/resident-memory bounds, numeric owner labels, sort/limit validation, strict worker-result validation, and no argv/environment output.
+- The enabled-in-test `mac_find_files` slice verified metadata-only search on a root with `contentRead` disabled, canonical matching paths and safe metadata, nested traversal, protected-entry filtering, result/depth bounds, worker execution, and independent authorization failure when one of multiple requested roots lacked a target grant.
 
 ## Boundary and limitations
 
