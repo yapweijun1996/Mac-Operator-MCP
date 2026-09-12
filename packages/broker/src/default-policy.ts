@@ -316,6 +316,45 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_docker_status",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.docker.read"],
+    capabilityFamilies: ["read"],
+    targetType: "docker_runtime",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: true
+  },
+  {
+    tool: "mac_docker_inspect",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.docker.read"],
+    capabilityFamilies: ["read"],
+    targetType: "docker_object",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: true
+  },
+  {
+    tool: "mac_docker_logs",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.docker.read"],
+    capabilityFamilies: ["read"],
+    targetType: "docker_object",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 1_048_576,
+    timeoutMs: 15_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_storage_analysis",
     contractVersion: "0.1",
     requiredScopes: ["mac.storage.read"],
@@ -377,7 +416,8 @@ export function createDefaultPolicy(
   filesystemRoots: readonly FilesystemRootPolicy[] = [],
   serviceIds: readonly string[] = [],
   logSources: readonly string[] = [],
-  projectRoots: readonly string[] = []
+  projectRoots: readonly string[] = [],
+  dockerObjectIds: readonly string[] = []
 ): BrokerPolicy {
   const grants = new Map<string, PrincipalGrant>();
   if (principalScopes.length > 0) {
@@ -447,6 +487,23 @@ export function createDefaultPolicy(
         principalId: "principal-1",
         scope,
         target: { kind: "project", reference: projectRoot }
+      }));
+      return;
+    }
+    if (scope === "mac.docker.read") {
+      targetRules.push({
+        ruleId: `test-docker-runtime-${index}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "docker_runtime", reference: "local" }
+      });
+      dockerObjectIds.forEach((objectId, objectIndex) => targetRules.push({
+        ruleId: `test-docker-object-${index}-${objectIndex}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "docker_object", reference: objectId }
       }));
       return;
     }

@@ -11,6 +11,7 @@ import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { BrokerStore } from "./persistence.js";
+import type { DockerInspector } from "./docker-inspector.js";
 
 const require = createRequire(import.meta.url);
 const Ajv2020 = require("ajv/dist/2020").default as new (options: Record<string, unknown>) => {
@@ -32,12 +33,13 @@ test("implemented broker results conform to versioned success and failure schema
   const basePolicy = createDefaultPolicy(
     "edge-1",
     true,
-    ["mac.control.read", "mac.policy.explain", "mac.system.read", "mac.network.read", "mac.service.read", "mac.log.read", "mac.process.read", "mac.files.read", "mac.files.search", "mac.project.read", "mac.git.read", "mac.package.read", "mac.storage.read", "mac.files.hash", "mac.files.write", "mac.job.read", "mac.job.cancel"],
+    ["mac.control.read", "mac.policy.explain", "mac.system.read", "mac.network.read", "mac.service.read", "mac.log.read", "mac.process.read", "mac.files.read", "mac.files.search", "mac.project.read", "mac.git.read", "mac.package.read", "mac.docker.read", "mac.storage.read", "mac.files.hash", "mac.files.write", "mac.job.read", "mac.job.cancel"],
     ["edge-key-1"],
     [{ rootId: "test-root", path: directory, metadata: true, contentRead: true, write: true, denyRelativePaths: [] }],
     ["system/com.apple.logd"],
     ["system"],
-    [repositoryRoot]
+    [repositoryRoot],
+    ["contract-container"]
   );
   const writeTool = basePolicy.tools.get("mac_write_file_atomic");
   assert.ok(writeTool);
@@ -49,7 +51,8 @@ test("implemented broker results conform to versioned success and failure schema
     store,
     policy,
     edgeAuthenticationKeys: keyring,
-    now: () => now
+    now: () => now,
+    dockerInspector: fakeDockerInspector()
   });
   store.createJob({
     jobId: "job:contract",
@@ -90,6 +93,9 @@ test("implemented broker results conform to versioned success and failure schema
       { tool: "mac_git_log", arguments: { project_root: repositoryRoot, limit: 5, ref: "HEAD" } },
       { tool: "mac_git_diff", arguments: { project_root: repositoryRoot, paths: ["packages/broker/src/git-inspector.ts"], staged: false, max_bytes: 65_536 } },
       { tool: "mac_package_inspect", arguments: { project_root: repositoryRoot, manager: "npm", check_outdated: false } },
+      { tool: "mac_docker_status", arguments: { include_images: false, include_storage: false } },
+      { tool: "mac_docker_inspect", arguments: { object_type: "container", id: "contract-container" } },
+      { tool: "mac_docker_logs", arguments: { container_id: "contract-container", tail: 5, since_seconds: 1 } },
       { tool: "mac_storage_analysis", arguments: { roots: [directory], top_n: 20, max_depth: 1 } },
       { tool: "mac_write_file_atomic", arguments: { path: writePath, content: "safe", idempotency_key: "contract-write-1", encoding: "utf8", create_only: true } },
       { tool: "mac_job_status", arguments: { job_id: "job:contract", tail_bytes: 128 } },
@@ -161,7 +167,7 @@ function makeRequest(now: number, index: number, tool: string, args: Record<stri
     arguments: args,
       principal: {
       principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer",
-      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_network_status" ? ["mac.network.read"] : []), ...(tool === "mac_service_status" ? ["mac.service.read"] : []), ...(tool === "mac_log_tail" ? ["mac.log.read"] : []), ...(tool === "mac_process_list" || tool === "mac_process_inspect" ? ["mac.process.read"] : []), "mac.files.read", ...(tool === "mac_find_files" || tool === "mac_recent_files" || tool === "mac_search_text" ? ["mac.files.search"] : []), ...(tool === "mac_project_discover" || tool === "mac_project_summary" ? ["mac.project.read"] : []), ...(tool === "mac_git_status" || tool === "mac_git_branch_list" || tool === "mac_git_log" || tool === "mac_git_diff" ? ["mac.git.read"] : []), ...(tool === "mac_package_inspect" ? ["mac.package.read"] : []), ...(tool === "mac_storage_analysis" ? ["mac.storage.read"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
+      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_network_status" ? ["mac.network.read"] : []), ...(tool === "mac_service_status" ? ["mac.service.read"] : []), ...(tool === "mac_log_tail" ? ["mac.log.read"] : []), ...(tool === "mac_process_list" || tool === "mac_process_inspect" ? ["mac.process.read"] : []), "mac.files.read", ...(tool === "mac_find_files" || tool === "mac_recent_files" || tool === "mac_search_text" ? ["mac.files.search"] : []), ...(tool === "mac_project_discover" || tool === "mac_project_summary" ? ["mac.project.read"] : []), ...(tool === "mac_git_status" || tool === "mac_git_branch_list" || tool === "mac_git_log" || tool === "mac_git_diff" ? ["mac.git.read"] : []), ...(tool === "mac_package_inspect" ? ["mac.package.read"] : []), ...(tool === "mac_docker_status" || tool === "mac_docker_inspect" || tool === "mac_docker_logs" ? ["mac.docker.read"] : []), ...(tool === "mac_storage_analysis" ? ["mac.storage.read"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
       issuedAtMs: now - 1_000, expiresAtMs: now + 60_000, edgeId: "edge-1"
     },
     timestampMs: now,
@@ -169,5 +175,19 @@ function makeRequest(now: number, index: number, tool: string, args: Record<stri
     policyAudience: "mac-operator-broker",
     policyVersion: "policy-0.1",
     authenticationKeyId: "edge-key-1"
+  };
+}
+
+function fakeDockerInspector(): DockerInspector {
+  return {
+    async status() {
+      return { daemon: { available: true, version: "27.5.1", context: "local" }, containers: [], images: [], warnings: [], truncated: false };
+    },
+    async inspect() {
+      return { objectType: "container", id: "contract-container", name: "contract", state: "created", image: "example/app:latest", ports: [], mounts: [], warnings: [], truncated: false };
+    },
+    async logs() {
+      return { containerId: "contract-container", entries: [], warnings: [], truncated: false };
+    }
   };
 }

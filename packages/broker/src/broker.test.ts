@@ -10,6 +10,7 @@ import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import type { FilesystemExecutor } from "./filesystem-executor.js";
 import { BrokerStore, redactEvidence } from "./persistence.js";
+import type { DockerInspector } from "./docker-inspector.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -475,6 +476,80 @@ test("mac_package_inspect returns bounded manifest metadata without executing sc
   }
 });
 
+test("Docker handlers remain fixed-scope and redact object/log secrets", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-docker-broker-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const dockerInspector: DockerInspector = {
+    async status() {
+      return {
+        daemon: { available: true, version: "27.5.1", context: "local" },
+        containers: [{ id: "abc123", name: "web", state: "running" }],
+        images: [],
+        warnings: [],
+        truncated: false
+      };
+    },
+    async inspect() {
+      return {
+        objectType: "container",
+        id: "abc123",
+        name: "/web",
+        state: "running",
+        image: "example/app:latest",
+        ports: [{ protocol: "tcp", containerPort: 8080, hostPort: 18080 }],
+        mounts: [{ source: "[REDACTED]", target: "/app", readOnly: true }],
+        warnings: [],
+        truncated: false
+      };
+    },
+    async logs() {
+      return {
+        containerId: "abc123",
+        entries: [{ timestamp: null, line: "token=[REDACTED]" }],
+        warnings: [],
+        truncated: false
+      };
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.docker.read"], ["edge-key-1"], [], [], [], [], ["abc123"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    dockerInspector,
+    now: () => NOW
+  });
+  try {
+    const status = await broker.handle(signRequest(unsigned({
+      requestId: "docker-status-request",
+      nonce: "docker-status-nonce",
+      tool: "mac_docker_status",
+      arguments: { include_images: false, include_storage: false }
+    }, ["mac.docker.read"]), key));
+    assert.equal(status.ok, true, JSON.stringify(status));
+    const inspect = await broker.handle(signRequest(unsigned({
+      requestId: "docker-inspect-request",
+      nonce: "docker-inspect-nonce",
+      tool: "mac_docker_inspect",
+      arguments: { object_type: "container", id: "abc123" }
+    }, ["mac.docker.read"]), key));
+    assert.equal(inspect.ok, true, JSON.stringify(inspect));
+    const logs = await broker.handle(signRequest(unsigned({
+      requestId: "docker-logs-request",
+      nonce: "docker-logs-nonce",
+      tool: "mac_docker_logs",
+      arguments: { container_id: "abc123", tail: 20, since_seconds: 60 }
+    }, ["mac.docker.read"]), key));
+    assert.equal(logs.ok, true, JSON.stringify(logs));
+    assert.equal(JSON.stringify(inspect).includes("TOKEN"), false);
+    assert.equal(JSON.stringify(logs).includes("super-secret-value"), false);
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("docker inspect")), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -585,7 +660,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 28);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 31);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

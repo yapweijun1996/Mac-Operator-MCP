@@ -22,5 +22,6 @@ export * from "./service-inspector.js";
 export * from "./log-inspector.js";
 export * from "./git-inspector.js";
 export * from "./package-inspector.js";
+export * from "./docker-inspector.js";
 export * from "./secret-policy.js";
 export * from "./request-validator.js";

@@ -33,6 +33,7 @@ import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } fro
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, validateGitBranchRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
+import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -51,6 +52,7 @@ export interface BrokerOptions {
   gitLogInspector?: GitLogInspector;
   gitDiffInspector?: GitDiffInspector;
   packageInspector?: PackageInspector;
+  dockerInspector?: DockerInspector;
 }
 
 export class Broker {
@@ -66,6 +68,7 @@ export class Broker {
   private readonly gitLogInspector: GitLogInspector;
   private readonly gitDiffInspector: GitDiffInspector;
   private readonly packageInspector: PackageInspector;
+  private readonly dockerInspector: DockerInspector;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -80,6 +83,7 @@ export class Broker {
     this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl();
     this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl();
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
+    this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -655,6 +659,143 @@ export class Broker {
             outdatedCount: inspection.outdated.length,
             truncated: inspection.truncated,
             warningCount: inspection.warnings.length
+          }
+        };
+      }
+      case "mac_docker_status": {
+        if (!execution.dockerStatus) throw new BrokerError("EXECUTION_FAILED", "Docker status execution plan is unavailable");
+        const status = await this.dockerInspector.status(
+          execution.dockerStatus.includeImages,
+          execution.dockerStatus.includeStorage,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        const data = {
+          daemon: {
+            available: status.daemon.available,
+            ...(status.daemon.version !== undefined ? { version: status.daemon.version } : {}),
+            ...(status.daemon.context !== undefined ? { context: status.daemon.context } : {})
+          },
+          containers: status.containers.map((container) => ({
+            id: container.id,
+            ...(container.name !== undefined ? { name: container.name } : {}),
+            state: container.state
+          })),
+          images: status.images.map((image) => ({
+            id: image.id,
+            ...(image.name !== undefined ? { name: image.name } : {}),
+            ...(image.tag !== undefined ? { tag: image.tag } : {})
+          })),
+          ...(status.storage ? {
+            storage: {
+              used_bytes: status.storage.usedBytes,
+              available_bytes: status.storage.availableBytes
+            }
+          } : {})
+        };
+        return {
+          data,
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "sanitized_docker_result_validation",
+            evidence: {
+              summary: "Docker state was collected through fixed local-only CLI arguments, bounded parsing, and secret-safe field selection",
+              readback_hash: sha256(canonicalJson(data)),
+              observed_at: new Date(this.now()).toISOString()
+            }
+          },
+          warnings: [...status.warnings],
+          truncated: status.truncated,
+          auditTarget: "docker_runtime:local",
+          auditEvidence: {
+            daemonAvailable: status.daemon.available,
+            containerCount: status.containers.length,
+            imageCount: status.images.length,
+            truncated: status.truncated,
+            warningCount: status.warnings.length
+          }
+        };
+      }
+      case "mac_docker_inspect": {
+        if (!execution.dockerInspect) throw new BrokerError("EXECUTION_FAILED", "Docker inspect execution plan is unavailable");
+        const inspection = await this.dockerInspector.inspect(
+          execution.dockerInspect.objectType,
+          execution.dockerInspect.id,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        const data = {
+          object_type: inspection.objectType,
+          id: inspection.id,
+          name: inspection.name,
+          state: inspection.state,
+          image: inspection.image,
+          ports: inspection.ports.map((port) => ({
+            protocol: port.protocol,
+            container_port: port.containerPort,
+            host_port: port.hostPort
+          })),
+          mounts: inspection.mounts.map((mount) => ({
+            ...(mount.source !== undefined ? { source: mount.source } : {}),
+            target: mount.target,
+            read_only: mount.readOnly
+          }))
+        };
+        return {
+          data,
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "sanitized_docker_result_validation",
+            evidence: {
+              summary: "Docker object metadata was selected from a fixed inspect response with environment omission and mount redaction",
+              readback_hash: sha256(canonicalJson(data)),
+              observed_at: new Date(this.now()).toISOString()
+            }
+          },
+          warnings: [...inspection.warnings],
+          truncated: inspection.truncated,
+          auditTarget: `docker_object:${inspection.id}`,
+          auditEvidence: {
+            objectType: inspection.objectType,
+            portCount: inspection.ports.length,
+            mountCount: inspection.mounts.length,
+            truncated: inspection.truncated,
+            warningCount: inspection.warnings.length
+          }
+        };
+      }
+      case "mac_docker_logs": {
+        if (!execution.dockerLogs) throw new BrokerError("EXECUTION_FAILED", "Docker logs execution plan is unavailable");
+        const logs = await this.dockerInspector.logs(
+          execution.dockerLogs.containerId,
+          execution.dockerLogs.tail,
+          execution.dockerLogs.sinceSeconds,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        const data = {
+          container_id: logs.containerId,
+          entries: logs.entries.map((entry) => ({ timestamp: entry.timestamp, line: entry.line })),
+          truncated: logs.truncated
+        };
+        return {
+          data,
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "sanitized_docker_result_validation",
+            evidence: {
+              summary: "Docker logs were collected for one authorized container with fixed tail/time bounds and mandatory secret redaction",
+              readback_hash: sha256(canonicalJson(data)),
+              observed_at: new Date(this.now()).toISOString()
+            }
+          },
+          warnings: [...logs.warnings],
+          truncated: logs.truncated,
+          auditTarget: `docker_object:${logs.containerId}`,
+          auditEvidence: {
+            entryCount: logs.entries.length,
+            truncated: logs.truncated,
+            warningCount: logs.warnings.length
           }
         };
       }
@@ -1499,6 +1640,42 @@ export class Broker {
         packageInspect: { projectRoot, manager, checkOutdated }
       };
     }
+    if (request.tool === "mac_docker_status") {
+      assertExactArguments(request.arguments, ["include_images", "include_storage"]);
+      const includeImages = (request.arguments.include_images ?? false) as boolean;
+      const includeStorage = (request.arguments.include_storage ?? false) as boolean;
+      validateDockerStatusRequest(includeImages, includeStorage);
+      return {
+        target: { kind: "docker_runtime", reference: "local" },
+        auditTarget: "docker_runtime:local",
+        dockerStatus: { includeImages, includeStorage }
+      };
+    }
+    if (request.tool === "mac_docker_inspect") {
+      assertExactArguments(request.arguments, ["object_type", "id"]);
+      const objectType = request.arguments.object_type as DockerObjectType;
+      const id = request.arguments.id;
+      if (typeof id !== "string") throw new BrokerError("PRECONDITION_FAILED", "id must be a string");
+      validateDockerObjectRequest(objectType, id);
+      return {
+        target: { kind: "docker_object", reference: id },
+        auditTarget: `docker_object:${id}`,
+        dockerInspect: { objectType, id }
+      };
+    }
+    if (request.tool === "mac_docker_logs") {
+      assertExactArguments(request.arguments, ["container_id", "tail", "since_seconds"]);
+      const containerId = request.arguments.container_id;
+      const tail = (request.arguments.tail ?? 200) as number;
+      const sinceSeconds = (request.arguments.since_seconds ?? 60) as number;
+      if (typeof containerId !== "string") throw new BrokerError("PRECONDITION_FAILED", "container_id must be a string");
+      validateDockerLogsRequest(containerId, tail, sinceSeconds);
+      return {
+        target: { kind: "docker_object", reference: containerId },
+        auditTarget: `docker_object:${containerId}`,
+        dockerLogs: { containerId, tail, sinceSeconds }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -1622,6 +1799,23 @@ export class Broker {
         }
       }
       throw new BrokerError("POLICY_DENIED", "No project root is authorized for this tool");
+    }
+    if (tool.targetType === "docker_runtime") {
+      authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "docker_runtime", reference: "local" });
+      return;
+    }
+    if (tool.targetType === "docker_object") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "docker_object" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized Docker object is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No Docker object is authorized for this tool");
     }
     if (tool.targetType !== "path") {
       authorizeTarget(policy, principalId, tool.requiredScopes, executionTarget(tool));
@@ -1806,6 +2000,19 @@ interface ExecutionPlan {
     manager: PackageManagerRequest;
     checkOutdated: boolean;
   };
+  dockerStatus?: {
+    includeImages: boolean;
+    includeStorage: boolean;
+  };
+  dockerInspect?: {
+    objectType: DockerObjectType;
+    id: string;
+  };
+  dockerLogs?: {
+    containerId: string;
+    tail: number;
+    sinceSeconds: number;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -1908,6 +2115,10 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       throw new BrokerError("PRECONDITION_FAILED", "Service target requires service-specific planning");
     case "log_source":
       throw new BrokerError("PRECONDITION_FAILED", "Log target requires log-source-specific planning");
+    case "docker_runtime":
+      throw new BrokerError("PRECONDITION_FAILED", "Docker runtime target requires Docker-specific planning");
+    case "docker_object":
+      throw new BrokerError("PRECONDITION_FAILED", "Docker object target requires Docker-specific planning");
     case "job":
       throw new BrokerError("PRECONDITION_FAILED", "Job target requires Broker-owned job planning");
   }
