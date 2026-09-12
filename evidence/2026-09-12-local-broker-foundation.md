@@ -5,10 +5,10 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `d535f27c0b4cb8d13c10afc6ebc2ae7696470fd2`
+- Base commit: `b6dfd4b29ab9aca0b9e790fa9c9e85b92c0a83c7`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `3ee8a2f861992aaa13c0aad616ee58596638dafb177a35f6013b8ee9dcf4ebfc`
+- Runtime source manifest SHA-256: `47bdb7180cdce9ede89a31de0b5e3e954f590d718bf4cd8c57a186b0443494b7`
 - Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 143 tests passed; 0 failed, skipped, cancelled, or todo.
+- 146 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the twenty-one implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the twenty-two implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -77,6 +77,7 @@ Observed results:
 - Filesystem adapter calls executed in Broker-owned worker threads with empty environment/arguments, bounded V8 heap/stack settings, a four-worker cap, per-tool deadlines, cancellation polling, termination requests, and runtime message validation. Tests covered normal completion, capacity exhaustion, timeout, active cancellation, and a credential-shaped environment canary that did not cross into the worker.
 - Native process inventory executes in its own Broker-owned worker boundary with empty environment/arguments, bounded V8 heap/stack settings, a two-worker cap, deadline/cancellation termination, and strict post-message validation; the Broker dispatch path does not run native enumeration on its event loop.
 - `mac_process_inspect` executes in the same Broker-owned worker boundary with a Broker-authorized PID, bounded native process name/executable/state/resource metadata, numeric owner redaction, bounded sorted parent/child identities, deadline/cancellation termination, and strict post-message validation; argv and environment data are never requested or returned.
+- `mac_service_status` executes through a Broker-authorized exact `system/<label>` target and a fixed `/bin/launchctl print` adapter with `/` cwd, empty environment, detached process-group timeout/cancellation, 128 KiB output cap, stable not-found/timeout/error mapping, and strict state/exit/PID parsing; it does not mutate launchd state.
 - `mac_find_files` executes in the Broker-owned filesystem worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, authorization for every requested root, a fixed 50,000-entry/32-level budget, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_recent_files` executes in the same Broker-owned worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, per-root authorization, a Broker-supplied clock and bounded time window, fixed traversal/result budgets, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_search_text` executes in the same Broker-owned worker with empty environment/arguments, content-read root planning, independent `mac.files.search` scope and per-root authorization, 1 MiB per-file and 64 MiB aggregate scan budgets, UTF-8-only text handling, binary/NUL rejection, 100 matches per file, sanitized snippets, protected-entry/secret-content filtering, active cancellation, and strict result validation. Metadata-only roots are denied before content execution.
@@ -93,6 +94,7 @@ Observed results:
 - The disabled-by-default `mac_directory_tree` slice verified independent `mac.files.read` scope and content-root authorization, depth and entry bounds, descriptor-backed recursion only through real directories, inherited protected-entry filtering, same-volume child filtering, canonical root identity, and explicit truncation reporting.
 - The enabled-in-test `mac_process_list` slice verified independent `mac.process.read` scope and `process:all` target authorization, native bounded PID enumeration, executable/name/CPU/resident-memory bounds, numeric owner labels, sort/limit validation, strict worker-result validation, and no argv/environment output.
 - The enabled-in-test `mac_process_inspect` slice verified independent `mac.process.read` scope and `process:all` target authorization, native single-PID metadata, bounded state/resource/name/executable fields, redacted numeric owner, parent/child PID bounds, malformed-PID denial, strict worker-result validation, and no argv/environment output.
+- The enabled-in-test `mac_service_status` slice verified independent `mac.service.read` scope, exact service-target authorization, traversal/non-system identifier denial, fixed launchd execution, bounded state/exit/PID parsing, no mutation, and no raw launchctl command or output in audit evidence.
 - The enabled-in-test `mac_find_files` slice verified metadata-only search on a root with `contentRead` disabled, canonical matching paths and safe metadata, nested traversal, protected-entry filtering, result/depth bounds, worker execution, and independent authorization failure when one of multiple requested roots lacked a target grant.
 - The enabled-in-test `mac_recent_files` slice verified a Broker-bound 24-hour window, inclusion of a recent file and exclusion of an older file, metadata-only roots with `contentRead` disabled, protected-entry filtering, bounded result validation, worker execution, and absence of content or credential-shaped output.
 - The enabled-in-test `mac_search_text` slice verified literal/glob matching, line/column/snippet output, UTF-8/binary handling, protected credential filtering, no secret leakage in result/audit evidence, content-root authorization, metadata-only denial, bounded result validation, and worker execution.
