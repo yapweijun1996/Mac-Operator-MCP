@@ -26,6 +26,241 @@
   "purpose": "inspect one container/image/network/volume with sensitive env/mount values redacted.",
   "input_summary": "object_type:container|image|network|volume, id:string.",
   "output_summary": "sanitized object metadata.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_docker_inspect input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "object_type": {
+        "enum": [
+          "container",
+          "image",
+          "network",
+          "volume"
+        ]
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:/-]+$"
+      }
+    },
+    "required": [
+      "object_type",
+      "id"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_docker_inspect result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_docker_inspect"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "object_type": {
+            "enum": [
+              "container",
+              "image",
+              "network",
+              "volume"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:/-]+$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "state": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 128
+          },
+          "image": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256
+          },
+          "ports": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "tcp",
+                    "udp"
+                  ]
+                },
+                "container_port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                "host_port": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "protocol",
+                "container_port",
+                "host_port"
+              ]
+            }
+          },
+          "mounts": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 1000,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 4096
+                },
+                "target": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 4096
+                },
+                "read_only": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "target",
+                "read_only"
+              ]
+            }
+          }
+        },
+        "required": [
+          "object_type",
+          "id",
+          "name",
+          "state",
+          "image",
+          "ports",
+          "mounts"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": false
+          },
+          "status": {
+            "enum": [
+              "not_required",
+              "verified",
+              "failed",
+              "unknown"
+            ]
+          },
+          "strategy": {
+            "const": "sanitized_docker_result_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

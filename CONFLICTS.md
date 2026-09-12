@@ -23,11 +23,11 @@ Freeze a deterministic repository taxonomy and map every tool exactly once. `aud
 
 ### Migration impact
 
-The 44 contracts no longer contain `null` for either mandatory field. Contract envelope closure is complete; `MOP-084` remains `IN_PROGRESS` for per-tool functional input/output schema closure and validation automation. No tool changed from `planned`, no authority changed, and no runtime implementation was added.
+The 44 contracts no longer contain `null` for either mandatory field. Contract envelope and per-tool functional input/output schema closure are complete; `MOP-084` is `DONE` for documentation/schema work. No tool changed from `planned`, no authority changed, and no runtime implementation was added.
 
 ### Verification evidence
 
-The documentation consistency check confirmed exactly 44 contracts, no null mandatory fields, schema-valid envelope objects, one audit class per tool, and semantic strategies for read, write, Git, GUI, execution, and privileged tools. Runtime postcondition behavior and functional input/output schemas remain unverified/incomplete and are still governed by the release gates.
+The documentation consistency check confirmed exactly 44 contracts, no null mandatory fields, schema-valid envelope and functional schema objects, one audit class per tool, and semantic strategies for read, write, Git, GUI, execution, and privileged tools. Runtime postcondition behavior, compatibility, and host safety remain unverified and are still governed by the release gates.
 
 ## C-002 — Two incompatible meanings of phase
 

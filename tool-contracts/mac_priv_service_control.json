@@ -26,6 +26,182 @@
   "purpose": "request separately authenticated privileged helper to perform one allowlisted service action.",
   "input_summary": "service_id:string, action:start|stop|restart|enable|disable, expected_state?:string.",
   "output_summary": "pre-state, action result, post-state verification.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_priv_service_control input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "service_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:@/+-]+$"
+      },
+      "action": {
+        "enum": [
+          "start",
+          "stop",
+          "restart",
+          "enable",
+          "disable"
+        ]
+      },
+      "expected_state": {
+        "enum": [
+          "running",
+          "stopped",
+          "enabled",
+          "disabled"
+        ]
+      }
+    },
+    "required": [
+      "service_id",
+      "action"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_priv_service_control result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_priv_service_control"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "service_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:@/+-]+$"
+          },
+          "action": {
+            "enum": [
+              "start",
+              "stop",
+              "restart",
+              "enable",
+              "disable"
+            ]
+          },
+          "pre_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "post_state": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "verification_status": {
+            "enum": [
+              "verified",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "service_id",
+          "action",
+          "pre_state",
+          "post_state",
+          "verification_status"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "service_state_readback"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

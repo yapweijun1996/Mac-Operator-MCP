@@ -26,6 +26,226 @@
   "purpose": "read status and bounded sanitized output for a Broker-owned asynchronous job.",
   "input_summary": "job_id:string, tail_bytes?:0..524288.",
   "output_summary": "queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_job_status input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "job_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:/-]+$"
+      },
+      "tail_bytes": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 524288
+      }
+    },
+    "required": [
+      "job_id"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_job_status result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_job_status"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:/-]+$"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "format": "date-time"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result_class": {
+            "enum": [
+              "success",
+              "denied",
+              "failed",
+              "verification_failed",
+              "queued",
+              "accepted",
+              "unknown"
+            ]
+          },
+          "stdout": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 524288
+          },
+          "stderr": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 524288
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "job_id",
+          "state",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "exit_code",
+          "result_class",
+          "stdout",
+          "stderr",
+          "truncated"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": false
+          },
+          "status": {
+            "enum": [
+              "not_required",
+              "verified",
+              "failed",
+              "unknown"
+            ]
+          },
+          "strategy": {
+            "const": "job_result_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

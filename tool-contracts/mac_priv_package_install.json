@@ -26,6 +26,198 @@
   "purpose": "install only an approved package identity/version via privileged helper; never arbitrary installer command.",
   "input_summary": "package_id:string, version?:string, source_profile?:string.",
   "output_summary": "resolved approved artifact, precondition, install result and version verification.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_priv_package_install input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "package_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:@/+-]+$"
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._+:-]+$"
+      },
+      "source_profile": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._:@/+-]+$"
+      }
+    },
+    "required": [
+      "package_id"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_priv_package_install result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_priv_package_install"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:@/+-]+$"
+          },
+          "requested_version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "installed_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:@/+-]+$"
+          },
+          "precondition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "already_installed": {
+                "type": "boolean"
+              },
+              "matched_version": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "already_installed",
+              "matched_version"
+            ]
+          },
+          "state": {
+            "enum": [
+              "installed",
+              "already_installed",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "package_id",
+          "requested_version",
+          "installed_version",
+          "artifact_id",
+          "precondition",
+          "state"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "installed_version_verification"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

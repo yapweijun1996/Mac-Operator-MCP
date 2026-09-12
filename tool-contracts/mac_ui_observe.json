@@ -26,6 +26,200 @@
   "purpose": "bounded Accessibility-tree snapshot for an approved app/window.",
   "input_summary": "app_id:string, window_hint?:string, max_nodes?:1..2000.",
   "output_summary": "stable opaque element refs, roles, labels and safe states; secure nodes masked.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_ui_observe input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "app_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:/-]+$"
+      },
+      "window_hint": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 256
+      },
+      "max_nodes": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2000
+      }
+    },
+    "required": [
+      "app_id"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_ui_observe result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_ui_observe"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:/-]+$"
+          },
+          "window_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:/-]+$"
+          },
+          "nodes": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 2000,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "element_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[A-Za-z0-9._:/-]+$"
+                },
+                "role": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 512
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "focused": {
+                  "type": "boolean"
+                },
+                "secure": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "element_ref",
+                "role",
+                "enabled",
+                "focused",
+                "secure"
+              ]
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "app_id",
+          "window_id",
+          "nodes",
+          "truncated"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": false
+          },
+          "status": {
+            "enum": [
+              "not_required",
+              "verified",
+              "failed",
+              "unknown"
+            ]
+          },
+          "strategy": {
+            "const": "accessibility_snapshot_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

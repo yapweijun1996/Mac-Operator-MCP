@@ -1,0 +1,65 @@
+{
+  "recorded_at": "2026-09-12",
+  "status": "PARTIAL",
+  "host": {
+    "hardware": "Mac16,10 Apple M4 16 GB",
+    "os": "macOS 26.2",
+    "build": "25C56",
+    "architecture": "arm64",
+    "node": "v25.5.0",
+    "sandbox_exec": "/usr/bin/sandbox-exec (deprecated by macOS)"
+  },
+  "candidate": "sandbox-exec with an explicit deny-default profile and canonical path filters",
+  "observations": [
+    {
+      "id": "filesystem-root",
+      "status": "ENFORCED",
+      "result": "A custom deny-default profile allowed a canonical scratch root and allowed fixture, denied an outside read, denied an outside write, and denied a symlink from the allowed root to the outside root."
+    },
+    {
+      "id": "process-exec",
+      "status": "ENFORCED",
+      "result": "A profile allowing only /bin/bash denied /usr/bin/true and /bin/launchctl execution from the child."
+    },
+    {
+      "id": "network",
+      "status": "PARTIAL",
+      "result": "A deny-default profile running /usr/bin/curl produced exit 6 with zero output for https://example.com; the built-in no-network profile also produced no DNS result. An allowlisted-network profile was not established."
+    },
+    {
+      "id": "environment",
+      "status": "UNAVAILABLE",
+      "result": "MOP_CONTROLLER_SECRET set by the parent was printed by the sandboxed child. The sandbox does not clear inherited environment variables."
+    },
+    {
+      "id": "file-descriptors",
+      "status": "UNKNOWN",
+      "result": "The sandbox-exec wrapper did not expose the test descriptor to the child, but this does not prove that a Broker-created executor cannot leak descriptors through another launch path."
+    },
+    {
+      "id": "process-tree",
+      "status": "UNAVAILABLE",
+      "result": "A sandboxed bash parent started /bin/sleep; terminating the parent left the child alive until the harness explicitly killed it. No Broker-owned process-group lease or descendant cleanup exists yet."
+    },
+    {
+      "id": "credential-canaries",
+      "status": "PARTIAL",
+      "result": "Fake SSH, cloud, Docker, and Keychain canary files outside the allowed root were denied by the profile. No real credential surface was opened or collected."
+    },
+    {
+      "id": "credentials-docker-persistence",
+      "status": "UNKNOWN",
+      "result": "Keychain, SSH/cloud/package credential canaries, Docker authority, launchd persistence, privilege escalation, native binaries, scripts, and grandchildren require a dedicated hostile fixture."
+    }
+  ],
+  "decision": "Do not select or enable sandbox-exec as the production task boundary. Keep mac_task_run disabled until a stronger, reproducible boundary proves credential, process-tree, network, persistence, and cleanup guarantees.",
+  "artifact_hashes": {
+    "allowed_fixture_sha256": "c146f621b9be7f2372f5259bb1ffc03c3e8181eff1921998ac8e137a3853ff57",
+    "denied_fixture_sha256": "c852753aa9ea32410c200d7fc8df959bf199567bb724fb76dfbd0dc7c2db85fd"
+  },
+  "limitations": [
+    "The fixture hashes above identify the non-secret test labels only; no user credential or private data was collected.",
+    "sandbox-exec is deprecated and profile semantics are platform-private; a passing profile is not a product guarantee.",
+    "No production task handler, signed app sandbox entitlement, VM/container boundary, or real external network allowlist is selected by this record."
+  ]
+}

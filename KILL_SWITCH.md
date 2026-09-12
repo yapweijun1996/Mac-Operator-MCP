@@ -1,6 +1,6 @@
 # Kill-Switch Runbook
 
-Status: Contract draft; no switch is implemented
+Status: Prototype admission and filesystem active-work controls implemented; operator runbook remains draft
 
 ## Required controls
 
@@ -18,3 +18,7 @@ Activation rejects new matching requests, cancels queued matching work, rechecks
 ## Future procedure
 
 The implemented runbook must identify the trusted operator path, activation and verification commands, affected capability states, active-job handling, audit evidence, recovery prerequisites, and safe re-enable steps. Until then, this document is not an executable runbook.
+
+## Current implementation evidence
+
+The Broker core evaluates both persisted runtime switches and signed-policy kill-switch states. Either source can disable admission; policy cannot override an already-active persisted runtime switch. The global and capability-family primitives reject new matching work, and signed global-disable behavior passes tests. Filesystem workers poll authority during execution, request termination on revocation, revalidate before returning success, and emit a failed completion audit with `CANCELLED`. Broker-owned queued jobs can be cancelled durably and idempotently; abandoned queued/running jobs reconcile to `cancelled`/`unknown` on restart. Bulk queue cancellation, active process-tree termination, operator commands, restart switch readback, and safe re-enable procedures remain unimplemented.

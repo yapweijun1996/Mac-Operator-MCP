@@ -1,6 +1,6 @@
 # Scope Model
 
-Status: Proposed for ADR approval; no implementation
+Status: Exact-scope and exact-target core implemented; parameterized resources remain proposed
 Version: 0.1
 
 ## Purpose
@@ -9,7 +9,7 @@ Scopes are explicit grants consumed by Broker policy. They identify an action fa
 
 ## Existing scope vocabulary
 
-The KB tool contracts already use scopes such as `mac.control.read`, `mac.files.read`, `mac.files.search`, `mac.files.write`, `mac.project.read`, `mac.project.write`, `mac.git.read`, `mac.git.write`, `mac.task.run`, `mac.job.read`, `mac.job.cancel`, `mac.docker.read`, `mac.app.read`, `mac.app.control`, `mac.ui.observe`, `mac.ui.control`, `mac.priv.service`, `mac.priv.package`, and `mac.priv.power`.
+The runtime vocabulary is the exact union used by the 44 contracts: `mac.control.read`, `mac.policy.explain`, `mac.system.read`, `mac.storage.read`, `mac.process.read`, `mac.log.read`, `mac.network.read`, `mac.service.read`, `mac.package.read`, `mac.files.read`, `mac.files.search`, `mac.files.hash`, `mac.files.write`, `mac.project.read`, `mac.project.write`, `mac.git.read`, `mac.git.write`, `mac.task.run`, `mac.job.read`, `mac.job.cancel`, `mac.docker.read`, `mac.app.read`, `mac.app.control`, `mac.ui.observe`, `mac.ui.control`, `mac.priv.service`, `mac.priv.package`, and `mac.priv.power`. Automated verification rejects a contract scope absent from this runtime list.
 
 ## Proposed rules
 
@@ -33,6 +33,8 @@ A session binds principal ID, session ID, audience, issued-at, expiry, projected
 ## Parameterized authority
 
 Target constraints belong in signed grants or Broker policy, not in model-editable scope strings. A parameterized grant should bind a scope to typed constraints such as canonical root ID, app bundle ID, service ID, volume identity, task profile, or allowed host set. The serialization and matching algorithm remain open pending ADR approval.
+
+The current Broker implements exact `(principal, scope, target kind, target reference)` rules with deny-over-allow and default deny. Introspection handlers use the Broker-owned normalized target `host:broker`; model-editable arguments cannot replace their execution target. Path-root containment, volume identity, app/window identity, and other parameterized matching remain unimplemented and must not be inferred from exact opaque-reference support.
 
 ## Revocation
 

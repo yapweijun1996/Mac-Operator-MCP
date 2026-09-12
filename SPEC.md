@@ -35,7 +35,7 @@ Tool discovery MUST distinguish `planned`, `implemented`, and `enabled`. A plann
 
 ## Request envelope
 
-The Edge-to-Broker request MUST contain a request ID, contract version, tool, validated arguments, immutable principal context, session reference, timestamp, nonce, canonical payload digest, and authentication proof. Caller identity, scopes, policy overrides, credentials, and privileged command text MUST NOT be accepted from model-editable tool arguments.
+The Edge-to-Broker request MUST contain a request ID, contract version, tool, validated arguments, immutable principal context, session reference, timestamp, nonce, policy audience and version, canonical payload digest, and authentication proof. Caller identity, scopes, policy overrides, credentials, and privileged command text MUST NOT be accepted from model-editable tool arguments.
 
 ## Result envelope
 

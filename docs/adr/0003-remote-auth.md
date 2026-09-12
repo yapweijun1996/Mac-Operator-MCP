@@ -22,6 +22,12 @@ Client compatibility, issuer and subject stability, PKCE/registration support wh
 
 Transport reachability is not authorization. The Edge cannot project scopes it did not validate, and Broker policy remains authoritative. No tunnel directly exposes Broker IPC. Local integration tests must work without public deployment.
 
+## Prototype evidence
+
+The current Edge candidate uses the official MCP TypeScript SDK v2 and serves only the 2026-07-28 protocol through a fresh per-request server. It accepts an injected OAuth token verifier, requires an expiring token with the exact resource URL and baseline `mac.control.read` scope, projects only the known contract scopes, and never includes the bearer token in the Broker request. Host and Origin allowlists, a 1 MiB JSON limit, TLS 1.3 minimum, OAuth protected-resource metadata, caller-filtered Broker capability discovery, and Broker-authenticated responses are wired. Tests cover missing authentication context, resource mismatch, unknown-scope filtering, token isolation, and per-principal tool visibility.
+
+No real OAuth issuer, certificate, tunnel, rate limiter, public listener, or AI-client interoperability test exists. This ADR remains Proposed and the Edge must not be deployed publicly from this prototype evidence.
+
 ## Acceptance evidence
 
 Metadata discovery, authorization flow, valid connection, invalid token, expiry, revocation, scope reduction, rate limits, tunnel outage, and Broker-unavailable behavior must be verified without recording secrets.

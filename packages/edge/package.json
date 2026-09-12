@@ -1,0 +1,19 @@
+{
+  "name": "@mac-operator/edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/index.js",
+  "dependencies": {
+    "@mac-operator/contracts": "0.1.0",
+    "@modelcontextprotocol/express": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "express": "^5.1.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@mac-operator/broker": "0.1.0",
+    "@types/express": "^5.0.6"
+  }
+}

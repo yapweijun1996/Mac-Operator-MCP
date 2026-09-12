@@ -48,4 +48,13 @@ See `PROGRESS.md` for current Git evidence, implementation and enablement state,
 
 ## Development
 
-The implementation runtime and package structure are still open under `MOP-003` and ADR-0001. No build, test, install, or run command exists yet.
+The Edge/Broker baseline uses TypeScript on Node.js 24 or newer with npm workspaces. Production tools remain disabled by default.
+
+```sh
+npm install
+npm run typecheck
+npm test
+npm run verify:contracts
+```
+
+The current code is an authenticated MCP Edge and local Broker foundation, not an installed or remotely reachable deployment. See `PROGRESS.md` and the verification matrix before treating any capability as released.

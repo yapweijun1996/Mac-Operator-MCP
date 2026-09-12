@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mac-operator-mcp.local/schemas/approval-issuance.schema.json",
+  "title": "Authenticated approval issuance envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "requestId", "nonce", "nonceExpiresAtMs", "issuerId", "keyId", "timestampMs", "approval", "previewDigest", "issuanceDigest", "authenticationProof"],
+  "properties": {
+    "protocolVersion": { "const": "0.1" },
+    "requestId": { "type": "string", "pattern": "^approval-issue:[A-Za-z0-9._:-]{1,240}$" },
+    "nonce": { "type": "string", "pattern": "^approval-nonce:[A-Za-z0-9._:-]{1,240}$" },
+    "nonceExpiresAtMs": { "type": "integer", "minimum": 0 },
+    "issuerId": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,128}$" },
+    "keyId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "timestampMs": { "type": "integer", "minimum": 0 },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvalId", "approverPrincipalId", "requestingPrincipalId", "tool", "contractVersion", "targetKind", "targetRef", "payloadDigest", "policyVersion", "approvalClass", "unattended", "issuedAtMs", "expiresAtMs"],
+      "properties": {
+        "approvalId": { "type": "string", "pattern": "^approval:[A-Za-z0-9._:-]{1,240}$" },
+        "approverPrincipalId": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,128}$" },
+        "requestingPrincipalId": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,128}$" },
+        "tool": { "type": "string", "pattern": "^mac_[a-z0-9_]{1,123}$" },
+        "contractVersion": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+        "targetKind": { "type": "string", "enum": ["host", "path", "project", "process", "job", "task_profile", "app", "app_window", "ui_element", "service", "package", "power"] },
+        "targetRef": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000]+$" },
+        "payloadDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "policyVersion": { "type": "string", "pattern": "^policy-[A-Za-z0-9._:-]{1,120}$" },
+        "approvalClass": { "type": "string", "enum": ["trusted_write", "trusted_gui", "trusted_profile", "explicit_privileged_policy"] },
+        "unattended": { "type": "boolean" },
+        "issuedAtMs": { "type": "integer", "minimum": 0 },
+        "expiresAtMs": { "type": "integer", "minimum": 0 },
+        "useLimit": { "const": 1 }
+      }
+    },
+    "previewDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "issuanceDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "authenticationProof": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

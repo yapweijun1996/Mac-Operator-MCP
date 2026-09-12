@@ -17,4 +17,4 @@ Tests record the exact source commit, dirty state, contract and policy versions,
 
 ## Release use
 
-`VERIFICATION.md` is the traceability matrix. A release gate remains open until each required row has a current test and evidence reference. Runtime tests remain unavailable until `MOP-003` and `MOP-007` establish the baseline.
+`VERIFICATION.md` is the traceability matrix. A release gate remains open until each required row has a current test and evidence reference. The current runtime test suite covers the bounded Edge/Broker foundation, descriptor-backed metadata/content reads, worker bounds, and initial Request/Approval/Job Ledger behavior. Release evidence still requires clean-revision CI and authenticated approval issuance, remote, complete filesystem/secret, sandbox, mutation recovery, GUI, helper, packaging, and operational layers listed above.

@@ -4,7 +4,7 @@ ADRs capture decisions that materially affect authority, compatibility, data own
 
 | ADR | Topic | Status |
 |---|---|---|
-| [ADR-0001](0001-runtime.md) | Runtime and package structure | Proposed |
+| [ADR-0001](0001-runtime.md) | Runtime and package structure | Accepted for Edge/Broker baseline |
 | [ADR-0002](0002-identity-ipc.md) | Principal identity and Edge-to-Broker IPC | Proposed |
 | [ADR-0003](0003-remote-auth.md) | Remote authentication and transport | Proposed |
 | [ADR-0004](0004-policy-config.md) | Policy and configuration format | Proposed |

@@ -26,6 +26,237 @@
   "purpose": "Docker runtime/container/image/storage summary through brokered adapter, never a raw socket proxy.",
   "input_summary": "include_images?:boolean, include_storage?:boolean.",
   "output_summary": "daemon state, bounded objects and storage facts.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_docker_status input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "include_images": {
+        "type": "boolean"
+      },
+      "include_storage": {
+        "type": "boolean"
+      }
+    },
+    "required": []
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_docker_status result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_docker_status"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "daemon": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "version": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 128
+              },
+              "context": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "available"
+            ]
+          },
+          "containers": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 500,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[A-Za-z0-9._:/-]+$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 256
+                },
+                "state": {
+                  "enum": [
+                    "running",
+                    "exited",
+                    "paused",
+                    "created",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "state"
+              ]
+            }
+          },
+          "images": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 500,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[A-Za-z0-9._:/-]+$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 256
+                },
+                "tag": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          },
+          "storage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "used_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000000000000
+              },
+              "available_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000000000000
+              }
+            },
+            "required": [
+              "used_bytes",
+              "available_bytes"
+            ]
+          }
+        },
+        "required": [
+          "daemon",
+          "containers",
+          "images"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": false
+          },
+          "status": {
+            "enum": [
+              "not_required",
+              "verified",
+              "failed",
+              "unknown"
+            ]
+          },
+          "strategy": {
+            "const": "sanitized_docker_result_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

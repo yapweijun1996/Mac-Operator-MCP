@@ -25,8 +25,25 @@
     "purpose",
     "input_summary",
     "output_summary",
+    "input_schema",
+    "output_schema",
     "source"
   ],
+  "$defs": {
+    "functional_schema": {
+      "type": "object",
+      "required": ["$schema", "title", "type", "properties", "additionalProperties"],
+      "properties": {
+        "$schema": { "const": "https://json-schema.org/draft/2020-12/schema" },
+        "title": { "type": "string", "minLength": 1 },
+        "type": { "const": "object" },
+        "properties": { "type": "object", "minProperties": 0 },
+        "required": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "additionalProperties": { "const": false }
+      },
+      "additionalProperties": true
+    }
+  },
   "properties": {
     "$schema": { "type": "string" },
     "schema_version": { "const": "0.1" },
@@ -112,6 +129,8 @@
     "purpose": { "type": ["string", "null"] },
     "input_summary": { "type": ["string", "null"] },
     "output_summary": { "type": ["string", "null"] },
+    "input_schema": { "$ref": "#/$defs/functional_schema" },
+    "output_schema": { "$ref": "#/$defs/functional_schema" },
     "source": {
       "type": "object",
       "additionalProperties": false,

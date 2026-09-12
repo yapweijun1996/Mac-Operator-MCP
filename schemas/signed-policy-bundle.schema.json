@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mac-operator-mcp.local/schemas/signed-policy-bundle-v0.1.json",
+  "title": "Mac-Operator-MCP Signed Policy Bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bundle_version", "key_id", "algorithm", "payload_digest", "payload", "signature"],
+  "properties": {
+    "bundle_version": { "const": "0.1" },
+    "key_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "algorithm": { "const": "Ed25519" },
+    "payload_digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "payload": { "$ref": "policy-document-v0.1.json" },
+    "signature": { "type": "string", "minLength": 80, "maxLength": 128, "pattern": "^[A-Za-z0-9+/]+={0,2}$" }
+  }
+}

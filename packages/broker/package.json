@@ -1,0 +1,15 @@
+{
+  "name": "@mac-operator/broker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./dist/index.js",
+  "scripts": {
+    "build:native": "sh scripts/build-peer-credentials.sh"
+  },
+  "dependencies": {
+    "@mac-operator/contracts": "0.1.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

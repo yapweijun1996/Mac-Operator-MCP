@@ -1,0 +1,633 @@
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { canonicalJson, sha256, signRequest, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
+import { Broker } from "./broker.js";
+import { createDefaultPolicy } from "./default-policy.js";
+import { EdgeKeyring } from "./edge-keyring.js";
+import type { FilesystemExecutor } from "./filesystem-executor.js";
+import { BrokerStore, redactEvidence } from "./persistence.js";
+
+const NOW = 1_700_000_000_000;
+
+async function fixture() {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-test-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const policy = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  return {
+    broker,
+    key,
+    store,
+    close: async () => { store.close(); await rm(directory, { recursive: true, force: true }); }
+  };
+}
+
+function unsigned(overrides: Partial<UnsignedBrokerRequest> = {}, scopes: Scope[] = ["mac.control.read"]): UnsignedBrokerRequest {
+  return {
+    protocolVersion: "0.1",
+    requestId: "request-1",
+    contractVersion: "0.1",
+    tool: "mac_health",
+    arguments: {},
+    principal: {
+      principalId: "principal-1",
+      sessionId: "session-1",
+      issuer: "test-issuer",
+      audience: "mac-operator-broker",
+      scopes,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 60_000,
+      edgeId: "edge-1"
+    },
+    timestampMs: NOW,
+    nonce: "nonce-1",
+    policyAudience: "mac-operator-broker",
+    policyVersion: "policy-0.1",
+    authenticationKeyId: "edge-key-1",
+    ...overrides
+  };
+}
+
+test("authorized health request succeeds and writes decision plus completion audit", async () => {
+  const context = await fixture();
+  try {
+    const result = await context.broker.handle(signRequest(unsigned(), context.key));
+    assert.equal(result.ok, true);
+    assert.equal(context.store.requestRecord("request-1")?.state, "SUCCEEDED");
+    assert.equal(context.store.auditRows().length, 2);
+  } finally { await context.close(); }
+});
+
+test("tampered authenticated request fails before execution", async () => {
+  const context = await fixture();
+  try {
+    const request = signRequest(unsigned(), context.key);
+    const result = await context.broker.handle({ ...request, tool: "mac_capabilities" });
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "AUTH_INVALID");
+    assert.equal(context.store.auditRows().length, 0);
+  } finally { await context.close(); }
+});
+
+test("duplicate nonce is denied and remains denied after store reopen", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-replay-"));
+  const path = join(directory, "broker.sqlite");
+  const key = randomBytes(32);
+  let store = new BrokerStore(path);
+  let broker = new Broker({ store, policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]), edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  const request = signRequest(unsigned(), key);
+  assert.equal((await broker.handle(request)).ok, true);
+  store.close();
+  store = new BrokerStore(path);
+  broker = new Broker({ store, policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]), edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  const replay = await broker.handle(request);
+  assert.equal(replay.ok, false);
+  assert.equal(replay.result_class, "REPLAY_DENIED");
+  store.close();
+  await rm(directory, { recursive: true, force: true });
+});
+
+test("expired requests and sessions fail closed", async () => {
+  const context = await fixture();
+  try {
+    const old = signRequest(unsigned({ timestampMs: NOW - 60_001 }), context.key);
+    assert.equal((await context.broker.handle(old)).result_class, "AUTH_EXPIRED");
+    const expiredSession = unsigned({ requestId: "request-2", nonce: "nonce-2" });
+    expiredSession.principal = { ...expiredSession.principal, expiresAtMs: NOW };
+    assert.equal((await context.broker.handle(signRequest(expiredSession, context.key))).result_class, "AUTH_EXPIRED");
+  } finally { await context.close(); }
+});
+
+test("scope is exact and tool arguments cannot grant authority", async () => {
+  const context = await fixture();
+  try {
+    const request = unsigned({ arguments: { scopes: ["mac.control.read"] } }, ["mac.files.read"]);
+    const result = await context.broker.handle(signRequest(request, context.key));
+    assert.equal(result.result_class, "SCOPE_DENIED");
+  } finally { await context.close(); }
+});
+
+test("a signed Edge request cannot project scopes outside the Broker-owned grant", async () => {
+  const context = await fixture();
+  try {
+    const request = unsigned({}, ["mac.control.read", "mac.files.write"]);
+    const result = await context.broker.handle(signRequest(request, context.key));
+    assert.equal(result.result_class, "SCOPE_DENIED");
+  } finally { await context.close(); }
+});
+
+test("a post-authorization failure is audited as a failed completion", async () => {
+  const context = await fixture();
+  try {
+    const request = unsigned({ arguments: { unknown: true } });
+    const result = await context.broker.handle(signRequest(request, context.key));
+    assert.equal(result.result_class, "PRECONDITION_FAILED");
+    assert.equal(context.store.requestRecord("request-1")?.state, "FAILED");
+    const rows = context.store.auditRows();
+    assert.deepEqual(rows.map((row) => [row.event_type, row.decision, row.result_class]), [
+      ["decision", "allow", "AUTHORIZED"],
+      ["completion", "allow", "PRECONDITION_FAILED"]
+    ]);
+  } finally { await context.close(); }
+});
+
+test("revocation and global kill switch reject new work", async () => {
+  const context = await fixture();
+  try {
+    context.store.revoke("session", "session-1", "test", NOW);
+    const revoked = await context.broker.handle(signRequest(unsigned(), context.key));
+    assert.equal(revoked.result_class, "REVOKED");
+    context.store.setSwitch("global", true, "test", NOW);
+    const next = signRequest(unsigned({ requestId: "request-2", nonce: "nonce-2", principal: { ...unsigned().principal, sessionId: "session-2" } }), context.key);
+    assert.equal((await context.broker.handle(next)).result_class, "REVOKED");
+  } finally { await context.close(); }
+});
+
+test("capability discovery separates planned, implemented, and enabled", async () => {
+  const context = await fixture();
+  try {
+    const request = signRequest(unsigned({ tool: "mac_capabilities" }), context.key);
+    const result = await context.broker.handle(request);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      const capabilities = (result.data as { capabilities: Array<{ name: string; enabled: boolean; reason: string }> }).capabilities;
+      assert.equal(capabilities.length, 44);
+      assert.deepEqual(capabilities.find((tool) => tool.name === "mac_health"), {
+        name: "mac_health", enabled: true, scopes: ["mac.control.read"], reason: "enabled"
+      });
+      assert.deepEqual(capabilities.find((tool) => tool.name === "mac_policy_explain"), {
+        name: "mac_policy_explain", enabled: false, scopes: ["mac.policy.explain"], reason: "scope_not_granted"
+      });
+      assert.deepEqual(capabilities.find((tool) => tool.name === "mac_task_run"), {
+        name: "mac_task_run", enabled: false, scopes: [], reason: "not_implemented"
+      });
+    }
+  } finally { await context.close(); }
+});
+
+test("production-default policy enables no tool or filesystem root", () => {
+  const policy = createDefaultPolicy("edge-1");
+  assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 9);
+  assert.deepEqual(policy.filesystemRoots, []);
+});
+
+test("job status and queued cancellation are owner-bound and durably audited", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-job-tools-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  store.createJob({
+    jobId: "job:test-1",
+    ownerPrincipalId: "principal-1",
+    ownerSessionId: "session-1",
+    tool: "mac_task_run",
+    targetRef: "task:test",
+    policyVersion: "policy-0.1",
+    payloadDigest: "a".repeat(64),
+    idempotencyKey: "job-tool-test",
+    createdAtMs: NOW - 5_000
+  });
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.job.read", "mac.job.cancel"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const statusRequest = unsigned({
+      requestId: "job-status-request",
+      nonce: "job-status-nonce",
+      tool: "mac_job_status",
+      arguments: { job_id: "job:test-1", tail_bytes: 128 }
+    }, ["mac.job.read", "mac.job.cancel"]);
+    const status = await broker.handle(signRequest(statusRequest, key));
+    assert.equal(status.ok, true);
+    if (status.ok) assert.equal((status.data as { state: string }).state, "queued");
+
+    const cancelRequest = unsigned({
+      requestId: "job-cancel-request",
+      nonce: "job-cancel-nonce",
+      tool: "mac_job_cancel",
+      arguments: { job_id: "job:test-1", reason: "test" }
+    }, ["mac.job.read", "mac.job.cancel"]);
+    const unapprovedRequest = {
+      ...cancelRequest,
+      requestId: "job-cancel-unapproved",
+      nonce: "job-cancel-unapproved-nonce"
+    };
+    const unapproved = await broker.handle(signRequest(unapprovedRequest, key));
+    assert.equal(unapproved.result_class, "POLICY_DENIED");
+    assert.equal(store.ownedJob("job:test-1", "principal-1")?.state, "queued");
+    assert.equal(store.requestRecord("job-cancel-unapproved")?.state, "FAILED");
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === "job-cancel-unapproved")
+      .map((row) => [row.event_type, row.result_class]), [
+      ["decision", "AUTHORIZED"],
+      ["completion", "POLICY_DENIED"]
+    ]);
+    store.issueApproval({
+      approvalId: "approval:job-cancel",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_job_cancel",
+      contractVersion: "0.1",
+      targetKind: "job",
+      targetRef: "job:job:test-1",
+      payloadDigest: sha256(canonicalJson(cancelRequest.arguments)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const cancellation = await broker.handle(signRequest(cancelRequest, key));
+    assert.equal(cancellation.ok, true);
+    assert.equal(store.approvalRecord("approval:job-cancel")?.usedCount, 1);
+    assert.equal(store.requestRecord("job-cancel-request")?.approvalId, "approval:job-cancel");
+    if (cancellation.ok) assert.deepEqual(cancellation.data, {
+      job_id: "job:test-1",
+      prior_state: "queued",
+      new_state: "cancelled",
+      cancel_requested: true,
+      termination_observed: true
+    });
+    assert.deepEqual(store.auditRows()
+      .filter((row) => row.request_id === "job-status-request" || row.request_id === "job-cancel-request")
+      .map((row) => [row.request_id, row.event_type, row.target_ref]), [
+      ["job-status-request", "decision", "job:job:test-1"],
+      ["job-status-request", "completion", "job:job:test-1"],
+      ["job-cancel-request", "decision", "job:job:test-1"],
+      ["job-cancel-request", "intent", "job:job:test-1"],
+      ["job-cancel-request", "completion", "job:job:test-1"]
+    ]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("job tools do not reveal a job owned by another principal", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-job-owner-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  store.createJob({
+    jobId: "job:other",
+    ownerPrincipalId: "principal-2",
+    ownerSessionId: "session-2",
+    tool: "mac_task_run",
+    targetRef: "task:test",
+    policyVersion: "policy-0.1",
+    payloadDigest: "a".repeat(64),
+    idempotencyKey: "other-job",
+    createdAtMs: NOW - 1_000
+  });
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.job.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({ tool: "mac_job_status", arguments: { job_id: "job:other" } }, ["mac.job.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "TARGET_NOT_FOUND");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_stat_path authorizes a signed root before descriptor-backed observation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-stat-"));
+  const path = join(directory, "sample.txt");
+  await writeFile(path, "hello", { mode: 0o600 });
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({ tool: "mac_stat_path", arguments: { path } }, ["mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal((result.data as { path: string }).path, await realpath(path));
+    assert.deepEqual(store.auditRows().map((row) => [row.event_type, row.target_ref]), [
+      ["decision", "path:test-root"],
+      ["completion", `path:${await realpath(path)}`]
+    ]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_stat_path does not execute when the signed root target is not authorized", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-stat-deny-"));
+  const path = join(directory, "sample.txt");
+  await writeFile(path, "hello");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const policy = createDefaultPolicy("edge-1", true, ["mac.files.read"], ["edge-key-1"], [root]);
+  const broker = new Broker({
+    store,
+    policy: { ...policy, targetRules: [] },
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({ tool: "mac_stat_path", arguments: { path } }, ["mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "POLICY_DENIED");
+    assert.deepEqual(store.auditRows().map((row) => row.event_type), ["decision"]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_policy_explain maps a proposed path to the Broker-owned filesystem root", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-policy-explain-path-"));
+  const path = join(directory, "sample.txt");
+  await writeFile(path, "hello");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy(
+      "edge-1",
+      true,
+      ["mac.policy.explain", "mac.files.read"],
+      ["edge-key-1"],
+      [root]
+    ),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      tool: "mac_policy_explain",
+      arguments: {
+        proposed_tool: "mac_stat_path",
+        target: { kind: "path", reference: path }
+      }
+    }, ["mac.policy.explain", "mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        decision: "allow",
+        normalized_target: { kind: "path", reference: path },
+        required_scopes: ["mac.files.read"],
+        missing_scopes: [],
+        reason_codes: ["AUTHORIZED"],
+        policy_version: "policy-0.1"
+      });
+    }
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_read_file returns a bounded descriptor-backed range", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-read-"));
+  const path = join(directory, "sample.txt");
+  await writeFile(path, "hello world", { mode: 0o600 });
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      tool: "mac_read_file",
+      arguments: { path, offset: 6, max_bytes: 3, encoding: "utf8" }
+    }, ["mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      const data = result.data as { path: string; encoding: string; content: string; size_bytes: number; sha256: string; truncated: boolean };
+      assert.equal(data.path, await realpath(path));
+      assert.equal(data.encoding, "utf8");
+      assert.equal(data.content, "wor");
+      assert.equal(data.size_bytes, 11);
+      assert.match(data.sha256, /^[a-f0-9]{64}$/u);
+      assert.equal(data.truncated, true);
+      assert.equal(result.truncated, true);
+      assert.equal(result.verification.status, "verified");
+    }
+    assert.deepEqual(store.auditRows().map((row) => [row.event_type, row.target_ref]), [
+      ["decision", "path:test-root"],
+      ["completion", `path:${await realpath(path)}`]
+    ]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_read_file fails closed before returning secret-shaped content", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-secret-read-"));
+  const path = join(directory, "notes.txt");
+  const secret = "api_key=supersecretvalue";
+  await writeFile(path, secret, { mode: 0o600 });
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({ tool: "mac_read_file", arguments: { path } }, ["mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "POLICY_DENIED");
+    assert.equal(JSON.stringify(result).includes(secret), false);
+    assert.equal(JSON.stringify(store.auditRows()).includes(secret), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_write_file_atomic requires a bound approval and verifies atomic readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-"));
+  const path = join(directory, "written.txt");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  try {
+    const argumentsValue = { path, content: "safe", idempotency_key: "write-test-1", encoding: "utf8", create_only: true };
+    const unsignedRequest = unsigned({
+      requestId: "write-request",
+      nonce: "write-nonce",
+      tool: "mac_write_file_atomic",
+      arguments: argumentsValue
+    }, ["mac.files.write", "mac.job.read"]);
+    const unapproved = await broker.handle(signRequest(unsignedRequest, key));
+    assert.equal(unapproved.result_class, "POLICY_DENIED");
+    assert.equal(store.requestRecord("write-request")?.state, "FAILED");
+
+    store.issueApproval({
+      approvalId: "approval:write",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const approvedRequest = { ...unsignedRequest, requestId: "write-approved-request", nonce: "write-approved-nonce" };
+    const approved = await broker.handle(signRequest(approvedRequest, key));
+    assert.equal(approved.ok, true, JSON.stringify(approved));
+    if (approved.ok) {
+      const data = approved.data as { path: string; job_id: string; bytes_written: number; sha256: string; created: boolean; precondition: { matched: boolean; create_only: boolean } };
+      assert.equal(data.path, await realpath(path));
+      assert.equal(data.bytes_written, 4);
+      assert.equal(data.created, true);
+      assert.equal(data.precondition.matched, true);
+      assert.equal(data.precondition.create_only, true);
+      assert.equal(approved.verification.status, "verified");
+      assert.equal(store.requestRecord("write-approved-request")?.jobId, data.job_id);
+    }
+    assert.equal(await readFile(path, "utf8"), "safe");
+    assert.equal(store.approvalRecord("approval:write")?.usedCount, 1);
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === "write-approved-request").map((row) => [row.event_type, row.target_ref]), [
+      ["decision", "path:test-root"],
+      ["intent", "path:test-root"],
+      ["completion", `path:${await realpath(path)}`]
+    ]);
+
+    store.issueApproval({
+      approvalId: "approval:write-retry",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const retryRequest = { ...unsignedRequest, requestId: "write-retry-request", nonce: "write-retry-nonce" };
+    const retry = await broker.handle(signRequest(retryRequest, key));
+    assert.equal(retry.ok, true);
+    if (retry.ok && approved.ok) {
+      assert.equal((retry.data as { job_id: string }).job_id, (approved.data as { job_id: string }).job_id);
+    }
+    const statusRequest = unsigned({
+      requestId: "write-status-request",
+      nonce: "write-status-nonce",
+      tool: "mac_job_status",
+      arguments: { job_id: (approved.data as { job_id: string }).job_id, tail_bytes: 1024 }
+    }, ["mac.job.read"]);
+    const status = await broker.handle(signRequest(statusRequest, key));
+    assert.equal(status.ok, true);
+    if (status.ok) {
+      assert.equal((status.data as { state: string }).state, "completed");
+      assert.match((status.data as { stdout: string }).stdout, /bytes_written/u);
+    }
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Broker discards a filesystem result when session authority is revoked during execution", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-active-revoke-"));
+  const path = join(directory, "sample.txt");
+  await writeFile(path, "hello", { mode: 0o600 });
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+  const executor: FilesystemExecutor = {
+    stat: async () => { throw new Error("Unexpected stat"); },
+    read: async (_plan, _offset, _maxBytes, encoding, control) => {
+      store.revoke("session", "session-1", "active-test", NOW);
+      assert.equal(control.shouldCancel(), true);
+      return {
+        operation: "read",
+        path,
+        encoding,
+        content: "hello",
+        sizeBytes: 5,
+        sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        truncated: false,
+        rootId: "test-root",
+        device: "1",
+        inode: "1",
+        bytesReturned: 5
+      };
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    filesystemExecutor: executor,
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({ tool: "mac_read_file", arguments: { path } }, ["mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "CANCELLED");
+    assert.deepEqual(store.auditRows().map((row) => [row.event_type, row.result_class]), [
+      ["decision", "AUTHORIZED"],
+      ["completion", "CANCELLED"]
+    ]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("audit evidence redacts secret-bearing fields recursively", () => {
+  assert.deepEqual(
+    redactEvidence({ token: "secret-value", nested: { password: "hunter2", safe: "ok" } }),
+    { token: "[REDACTED]", nested: { password: "[REDACTED]", safe: "ok" } }
+  );
+});
+
+function testKeyring(key: Buffer): EdgeKeyring {
+  return new EdgeKeyring([{
+    edgeId: "edge-1", keyId: "edge-key-1", key,
+    notBeforeMs: NOW - 60_000, expiresAtMs: NOW + 60_000
+  }]);
+}

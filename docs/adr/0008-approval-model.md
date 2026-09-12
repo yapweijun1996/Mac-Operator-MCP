@@ -24,8 +24,14 @@ Bind `approval_id`, approver principal, requesting principal, tool and contract 
 
 ## Open decisions
 
-Approver authentication strength, TTLs by safety class, approval UI/channel, unattended profile ownership, batch approval, cancellation, human-readable preview, and recovery when approval consumption succeeds but execution does not.
+Approver authentication strength, protected issuer-key storage, TTLs by safety class, human approval UI/channel, unattended profile ownership, batch approval, cancellation, human-readable preview delivery, and recovery when approval consumption succeeds but execution does not.
 
 ## Acceptance evidence
 
 Cross-principal reuse, replay, expiry, target substitution, payload mutation, policy-version change, use-limit exhaustion, revocation, concurrent consumption, and unattended-profile escape tests must fail safely.
+
+## Prototype evidence
+
+The Broker-owned SQLite prototype persists the proposed binding fields and accepts only single-use approvals. A separate `ApprovalAuthority` verifies an issuer/key identity, signed canonical payload, bounded preview digest, validity window, unattended-profile policy, and durable issuance nonce before atomically recording approval decision/completion provenance. `mac_job_cancel` now requires the fixed `trusted_write` approval class; the request cannot submit an approval ID or grant itself consent. Exact approval selection and consumption occur in the same transaction as request intent and audit evidence. Bounded tests cover issuer tampering, preview substitution, issuance replay, missing approval, principal/contract/target/payload/policy/attended-mode substitution, expiry, revocation, exhaustion, competing consumers, and revocation before dispatch.
+
+This does not accept the ADR. The issuer channel is a disabled prototype with injected HMAC keys and a separate owner-only local IPC socket. Issuer-key files now use protected owner-only loading/provisioning and durable `approval_key` revocation before retirement. A versioned owner-only metadata config atomically rotates and reloads non-secret key paths with canonical revision/digest readback; BrokerStore activation history and audited intent/completion reject revision rollback and make startup restore exact. This remains an activation guard rather than Keychain-backed secret distribution or installed-service identity. Keychain storage, human UI/preview delivery, unattended-profile authority, batch approvals, privileged-helper integration, and active-work revocation semantics beyond the pre-dispatch gate remain open. Its versioned envelope is materialized in `schemas/approval-issuance.schema.json`.

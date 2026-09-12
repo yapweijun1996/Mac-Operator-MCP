@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mac-operator-mcp.local/schemas/policy-document-v0.1.json",
+  "title": "Mac-Operator-MCP Policy Document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "revision", "audience", "issued_at_ms", "trusted_edge_keys",
+    "principal_grants", "target_rules", "filesystem_roots", "tool_enablement", "kill_switches"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "audience": { "$ref": "#/$defs/id" },
+    "issued_at_ms": { "type": "integer", "minimum": 0 },
+    "trusted_edge_keys": {
+      "type": "array", "minItems": 1, "maxItems": 32,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["edge_id", "key_id", "not_before_ms", "expires_at_ms"],
+        "properties": {
+          "edge_id": { "$ref": "#/$defs/id" },
+          "key_id": { "$ref": "#/$defs/id" },
+          "not_before_ms": { "type": "integer", "minimum": 0 },
+          "expires_at_ms": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "principal_grants": {
+      "type": "array", "maxItems": 256,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["principal_id", "issuer", "scopes", "enabled"],
+        "properties": {
+          "principal_id": { "$ref": "#/$defs/id" },
+          "issuer": { "$ref": "#/$defs/id" },
+          "scopes": {
+            "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true,
+            "items": { "$ref": "#/$defs/scope" }
+          },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    },
+    "target_rules": {
+      "type": "array", "maxItems": 2048,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["rule_id", "effect", "principal_id", "scope", "target"],
+        "properties": {
+          "rule_id": { "$ref": "#/$defs/id" },
+          "effect": { "enum": ["allow", "deny"] },
+          "principal_id": { "$ref": "#/$defs/id" },
+          "scope": { "$ref": "#/$defs/scope" },
+          "target": { "$ref": "#/$defs/target" }
+        }
+      }
+    },
+    "filesystem_roots": {
+      "type": "array", "maxItems": 64,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["root_id", "path", "metadata", "content_read", "deny_relative_paths"],
+        "properties": {
+          "root_id": { "$ref": "#/$defs/id" },
+          "path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^/[^\\u0000]*$" },
+          "metadata": { "type": "boolean" },
+          "content_read": { "type": "boolean" },
+          "write": { "type": "boolean" },
+          "deny_relative_paths": {
+            "type": "array", "maxItems": 256, "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^/\\u0000][^\\u0000]*$" }
+          }
+        }
+      }
+    },
+    "tool_enablement": {
+      "type": "array", "maxItems": 64,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["tool", "enabled"],
+        "properties": {
+          "tool": { "type": "string", "pattern": "^mac_[a-z0-9_]+$", "maxLength": 128 },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    },
+    "kill_switches": {
+      "type": "object", "additionalProperties": false,
+      "required": ["global", "mutations", "process", "network", "gui", "destructive", "privileged"],
+      "properties": {
+        "global": { "type": "boolean" },
+        "mutations": { "type": "boolean" },
+        "process": { "type": "boolean" },
+        "network": { "type": "boolean" },
+        "gui": { "type": "boolean" },
+        "destructive": { "type": "boolean" },
+        "privileged": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "scope": { "type": "string", "pattern": "^mac\\.[a-z0-9_.-]+$", "maxLength": 128 },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "reference"],
+      "properties": {
+        "kind": { "enum": ["host", "path", "project", "process", "job", "app", "app_window", "ui_element", "service", "package", "power"] },
+        "reference": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    }
+  }
+}

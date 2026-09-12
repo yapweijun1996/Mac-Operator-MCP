@@ -1,0 +1,125 @@
+import { Worker } from "node:worker_threads";
+import { randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
+import { BrokerError } from "@mac-operator/contracts";
+import type { FilesystemPathPlan } from "./filesystem-inspector.js";
+import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
+import { BoundedWorkerExecutor } from "./worker-executor.js";
+
+export interface FilesystemExecutionControl {
+  timeoutMs: number;
+  shouldCancel: () => boolean;
+}
+
+export interface FilesystemExecutor {
+  stat(plan: FilesystemPathPlan, followSymlink: boolean, control: FilesystemExecutionControl): Promise<FilesystemWorkerResult>;
+  read(
+    plan: FilesystemPathPlan,
+    offset: number,
+    maxBytes: number,
+    encoding: "utf8" | "base64" | "metadata",
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
+  write?(
+    plan: FilesystemPathPlan,
+    content: Buffer,
+    expectedSha256: string | undefined,
+    createOnly: boolean,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
+}
+
+export class WorkerFilesystemExecutor implements FilesystemExecutor {
+  private readonly executor: BoundedWorkerExecutor<FilesystemWorkerCommand, FilesystemWorkerResult>;
+
+  constructor(maxConcurrent = 4) {
+    this.executor = new BoundedWorkerExecutor(
+      (command) => new Worker(new URL("./filesystem-worker.js", import.meta.url), {
+        workerData: command,
+        argv: [],
+        execArgv: [],
+        env: {},
+        resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8, stackSizeMb: 2 },
+        trackUnmanagedFds: true
+      }),
+      maxConcurrent
+    );
+  }
+
+  stat(plan: FilesystemPathPlan, followSymlink: boolean, control: FilesystemExecutionControl): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "stat", plan, followSymlink }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  read(
+    plan: FilesystemPathPlan,
+    offset: number,
+    maxBytes: number,
+    encoding: "utf8" | "base64" | "metadata",
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "read", plan, offset, maxBytes, encoding }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  write(
+    plan: FilesystemPathPlan,
+    content: Buffer,
+    expectedSha256: string | undefined,
+    createOnly: boolean,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({
+      operation: "write",
+      plan,
+      content,
+      expectedSha256,
+      createOnly,
+      tempName: `.mac-operator-write-${randomUUID()}`
+    }, control.timeoutMs, control.shouldCancel).then(validateFilesystemWorkerResult);
+  }
+}
+
+function validateFilesystemWorkerResult(value: FilesystemWorkerResult): FilesystemWorkerResult {
+  if (value === null || typeof value !== "object") throw malformed();
+  if (value.operation === "stat") {
+    const metadata = value.metadata;
+    if (metadata === null || typeof metadata !== "object" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(metadata.rootId) ||
+        !isAbsolute(metadata.path) || metadata.path.length > 4096 ||
+        !["file", "directory", "symlink", "other"].includes(metadata.type) ||
+        !Number.isSafeInteger(metadata.sizeBytes) || metadata.sizeBytes < 0 || metadata.sizeBytes > 1_000_000_000_000 ||
+        (metadata.modifiedAt !== null && (typeof metadata.modifiedAt !== "string" || !Number.isFinite(Date.parse(metadata.modifiedAt)))) ||
+        typeof metadata.mode !== "string" || !/^[0-7]{4}$/u.test(metadata.mode) ||
+        typeof metadata.isSymlink !== "boolean" || !/^\d+$/u.test(metadata.device) || !/^\d+$/u.test(metadata.inode)) {
+      throw malformed();
+    }
+    return value;
+  }
+  if (value.operation === "write") {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
+        !isAbsolute(value.path) || value.path.length > 4096 ||
+        !Number.isSafeInteger(value.bytesWritten) || value.bytesWritten < 0 || value.bytesWritten > 1_048_576 ||
+        !/^[a-f0-9]{64}$/u.test(value.sha256) || typeof value.created !== "boolean" ||
+        (value.expectedSha256 !== null && !/^[a-f0-9]{64}$/u.test(value.expectedSha256)) ||
+        typeof value.expectedMatched !== "boolean" || !/^\d+$/u.test(value.device) || !/^\d+$/u.test(value.inode)) {
+      throw malformed();
+    }
+    return value;
+  }
+  if (value.operation !== "read" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
+      !isAbsolute(value.path) || value.path.length > 4096 ||
+      !["utf8", "base64", "metadata"].includes(value.encoding) ||
+      !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes < 0 || value.sizeBytes > 1_000_000_000 ||
+      !/^[a-f0-9]{64}$/u.test(value.sha256) || typeof value.truncated !== "boolean" ||
+      !/^\d+$/u.test(value.device) || !/^\d+$/u.test(value.inode) ||
+      !Number.isSafeInteger(value.bytesReturned) || value.bytesReturned < 0 || value.bytesReturned > 1_048_576 ||
+      (value.encoding === "metadata" ? value.content !== undefined : typeof value.content !== "string") ||
+      (typeof value.content === "string" && value.content.length > 1_048_576)) {
+    throw malformed();
+  }
+  return value;
+}
+
+function malformed(): BrokerError {
+  return new BrokerError("EXECUTION_FAILED", "Filesystem worker returned a malformed result");
+}

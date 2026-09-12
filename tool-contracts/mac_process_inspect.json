@@ -26,6 +26,206 @@
   "purpose": "inspect one normalized PID with bounded non-secret metadata.",
   "input_summary": "pid:positive integer.",
   "output_summary": "identity/state/resources/safe parent-child facts.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_process_inspect input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "pid": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 99999999
+      }
+    },
+    "required": [
+      "pid"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_process_inspect result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_process_inspect"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "process": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pid": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 99999999
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "executable": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]+$"
+              },
+              "state": {
+                "enum": [
+                  "running",
+                  "sleeping",
+                  "stopped",
+                  "zombie",
+                  "unknown"
+                ]
+              },
+              "cpu_percent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "memory_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000000000000
+              },
+              "parent_pid": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 99999999
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "child_pids": {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": 256,
+                "uniqueItems": false,
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 99999999
+                }
+              },
+              "owner": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "pid",
+              "name",
+              "executable",
+              "state",
+              "cpu_percent",
+              "memory_bytes",
+              "parent_pid",
+              "child_pids"
+            ]
+          }
+        },
+        "required": [
+          "process"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": false
+          },
+          "status": {
+            "enum": [
+              "not_required",
+              "verified",
+              "failed",
+              "unknown"
+            ]
+          },
+          "strategy": {
+            "const": "bounded_process_result_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

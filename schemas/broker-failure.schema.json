@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mac-operator-mcp.local/schemas/broker-failure-v0.1.json",
+  "title": "Mac-Operator-MCP Broker Failure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "request_id", "tool", "result_class", "error", "duration_ms"],
+  "properties": {
+    "ok": { "const": false },
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "tool": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "result_class": {
+      "enum": [
+        "AUTH_REQUIRED", "AUTH_INVALID", "AUTH_EXPIRED", "REPLAY_DENIED", "REVOKED",
+        "SCOPE_DENIED", "SECRET_BOUNDARY_DENIED", "PATH_DENIED", "NETWORK_DENIED",
+        "PRIVILEGE_DENIED", "POLICY_DENIED", "TARGET_NOT_FOUND", "PRECONDITION_FAILED",
+        "CONFLICT", "TIMEOUT", "OUTPUT_LIMIT", "CANCELLED", "EXECUTION_FAILED",
+        "VERIFICATION_FAILED", "AUDIT_UNAVAILABLE", "UNKNOWN_OUTCOME", "UNSUPPORTED_CAPABILITY"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message", "retryable"],
+      "properties": {
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "duration_ms": { "type": "integer", "minimum": 0, "maximum": 600000 }
+  }
+}

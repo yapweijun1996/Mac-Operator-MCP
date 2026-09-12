@@ -26,6 +26,181 @@
   "purpose": "tightly scoped reboot/shutdown through privileged helper.",
   "input_summary": "action:reboot|shutdown, reason?:string<=200, not_before?:timestamp.",
   "output_summary": "accepted/rejected policy decision and scheduled/executed state; connection loss is expected after success.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_priv_power input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "enum": [
+          "reboot",
+          "shutdown"
+        ]
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 200
+      },
+      "not_before": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "format": "date-time"
+      }
+    },
+    "required": [
+      "action"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_priv_power result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_priv_power"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "reboot",
+              "shutdown"
+            ]
+          },
+          "state": {
+            "enum": [
+              "accepted",
+              "scheduled",
+              "rejected",
+              "executed",
+              "unknown"
+            ]
+          },
+          "scheduled_for": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "handoff_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:/-]+$"
+          },
+          "connection_loss_expected": {
+            "const": true
+          }
+        },
+        "required": [
+          "action",
+          "state",
+          "scheduled_for",
+          "handoff_id",
+          "connection_loss_expected"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "handoff_acceptance_and_scheduled_state"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",

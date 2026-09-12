@@ -14,7 +14,7 @@
   "filesystem_policy": "write_allowed_roots",
   "secret_policy": "deny_secret_content",
   "approval_policy": "trusted_write",
-  "idempotent": false,
+  "idempotent": true,
   "postcondition_verification": {
     "required": true,
     "strategy": "readback_hash",
@@ -23,13 +23,224 @@
   "audit_class": "filesystem_write",
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "atomically create/replace one authorized file with path/type/size policy and optional expected hash.",
-  "input_summary": "path:string, content:string, encoding?:utf8|base64, expected_sha256?:string, create_only?:boolean.",
-  "output_summary": "normalized path, bytes, new sha256 and verification.",
+  "purpose": "atomically create/replace one authorized file with path/type/size policy, explicit idempotency, and optional expected hash.",
+  "input_summary": "path:string, content:string, idempotency_key:string, encoding?:utf8|base64, expected_sha256?:string, create_only?:boolean.",
+  "output_summary": "normalized path, durable job ID, bytes, new sha256 and verification; status is available through mac_job_status.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_write_file_atomic input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      },
+      "content": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 1048576
+      },
+      "idempotency_key": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._:-]+$"
+      },
+      "encoding": {
+        "enum": [
+          "utf8",
+          "base64"
+        ]
+      },
+      "expected_sha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[A-Fa-f0-9]{64}$"
+      },
+      "create_only": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path",
+      "content",
+      "idempotency_key"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_write_file_atomic result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_write_file_atomic"
+      },
+      "result_class": { "const": "SUCCEEDED" },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^job:[A-Za-z0-9._-]{1,240}$"
+          },
+          "bytes_written": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[A-Fa-f0-9]{64}$"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "precondition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "expected_sha256": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 64,
+                    "maxLength": 64,
+                    "pattern": "^[A-Fa-f0-9]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "matched": {
+                "type": "boolean"
+              },
+              "create_only": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "matched",
+              "create_only"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "job_id",
+          "bytes_written",
+          "sha256",
+          "created",
+          "precondition"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "readback_hash"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
     "kb_item_id": "4ef075e0-041d-4465-a609-ee6bd20c8532",
-    "source_text": "Purpose: atomically create/replace one authorized file with path/type/size policy and optional expected hash. Input: path:string, content:string, encoding?:utf8|base64, expected_sha256?:string, create_only?:boolean. Output: normalized path, bytes, new sha256 and verification. Contract: L2 writes_local; scope mac.files.write; target path; timeout 30000ms; cap 1MiB; network none; filesystem write_allowed_roots; secret zones denied; approval trusted_write; retry safety requires create_only/expected hash. Phase 3 planned."
+    "source_text": "Purpose: atomically create/replace one authorized file with path/type/size policy, explicit idempotency, and optional expected hash. Input: path:string, content:string, idempotency_key:string, encoding?:utf8|base64, expected_sha256?:string, create_only?:boolean. Output: normalized path, durable job_id, bytes, new sha256 and verification; status is available through mac_job_status. Contract: L2 writes_local; scope mac.files.write; target path; timeout 30000ms; cap 1MiB; network none; filesystem write_allowed_roots; secret zones denied; approval trusted_write; retries require the same idempotency key and a fresh bound approval; unresolved work is reported UNKNOWN_OUTCOME. Phase 3 planned."
   }
 }
