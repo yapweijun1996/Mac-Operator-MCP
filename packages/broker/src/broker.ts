@@ -30,6 +30,7 @@ import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
+import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -42,6 +43,7 @@ export interface BrokerOptions {
   filesystemExecutor?: FilesystemExecutor;
   processExecutor?: ProcessExecutor;
   serviceInspector?: ServiceInspector;
+  logInspector?: LogInspector;
 }
 
 export class Broker {
@@ -51,6 +53,7 @@ export class Broker {
   private readonly filesystemExecutor: FilesystemExecutor;
   private readonly processExecutor: ProcessExecutor;
   private readonly serviceInspector: ServiceInspector;
+  private readonly logInspector: LogInspector;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -59,6 +62,7 @@ export class Broker {
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();
     this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
     this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector();
+    this.logInspector = options.logInspector ?? new MacLogInspector();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -418,6 +422,36 @@ export class Broker {
           truncated: status.truncated,
           auditTarget: `service:${status.serviceId}`,
           auditEvidence: { loaded: status.loaded, running: status.running, state: status.state, pid: status.pid }
+        };
+      }
+      case "mac_log_tail": {
+        if (!execution.logTail) throw new BrokerError("EXECUTION_FAILED", "Log execution plan is unavailable");
+        const tail = await this.logInspector.tail(
+          execution.logTail.source,
+          execution.logTail.lines,
+          execution.logTail.sinceSeconds,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        return {
+          data: {
+            source: tail.source,
+            entries: tail.entries.map((entry) => ({
+              timestamp: entry.timestamp,
+              ...(entry.level ? { level: entry.level } : {}),
+              message: entry.message
+            })),
+            truncated: tail.truncated
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "sanitized_log_result_validation",
+            evidence: { summary: "Log records were collected from a fixed allowlisted source, parsed as bounded NDJSON, and secret-redacted before return" }
+          },
+          warnings: [...tail.warnings],
+          truncated: tail.truncated,
+          auditTarget: `log_source:${tail.source}`,
+          auditEvidence: { entryCount: tail.entries.length, truncated: tail.truncated, warningCount: tail.warnings.length }
         };
       }
       case "mac_process_list": {
@@ -1178,6 +1212,18 @@ export class Broker {
       validateServiceId(serviceId);
       return { target: { kind: "service", reference: serviceId }, serviceId };
     }
+    if (request.tool === "mac_log_tail") {
+      assertExactArguments(request.arguments, ["source", "lines", "since_seconds"]);
+      const source = request.arguments.source;
+      const lines = (request.arguments.lines ?? 200) as number;
+      const sinceSeconds = (request.arguments.since_seconds ?? 60) as number;
+      if (typeof source !== "string") throw new BrokerError("PRECONDITION_FAILED", "source must be a string");
+      validateLogRequest(source, lines, sinceSeconds);
+      return {
+        target: { kind: "log_source", reference: source },
+        logTail: { source, lines, sinceSeconds }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -1275,6 +1321,19 @@ export class Broker {
         }
       }
       throw new BrokerError("POLICY_DENIED", "No service identifier is authorized for this tool");
+    }
+    if (tool.targetType === "log_source") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "log_source" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized log source is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No log source is authorized for this tool");
     }
     if (tool.targetType !== "path") {
       authorizeTarget(policy, principalId, tool.requiredScopes, executionTarget(tool));
@@ -1429,6 +1488,11 @@ interface ExecutionPlan {
     maxDepth: number;
   };
   serviceId?: string;
+  logTail?: {
+    source: string;
+    lines: number;
+    sinceSeconds: number;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -1527,6 +1591,8 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       return { kind: "process", reference: "all" };
     case "service":
       throw new BrokerError("PRECONDITION_FAILED", "Service target requires service-specific planning");
+    case "log_source":
+      throw new BrokerError("PRECONDITION_FAILED", "Log target requires log-source-specific planning");
     case "job":
       throw new BrokerError("PRECONDITION_FAILED", "Job target requires Broker-owned job planning");
   }
@@ -1825,7 +1891,7 @@ function normalizePolicyQueryTarget(value: unknown): NormalizedTarget {
   }
   const target = value as Record<string, unknown>;
   assertExactArguments(target, ["kind", "reference"]);
-  const allowedKinds = new Set<TargetKind>(["host", "path", "project", "process", "job", "task_profile", "app", "app_window", "ui_element", "service", "package", "power"]);
+  const allowedKinds = new Set<TargetKind>(["host", "path", "project", "process", "job", "task_profile", "app", "app_window", "ui_element", "service", "log_source", "package", "power"]);
   if (
     typeof target.kind !== "string" || !allowedKinds.has(target.kind as TargetKind) ||
     typeof target.reference !== "string" || !/^[A-Za-z0-9._:/-]{1,4096}$/u.test(target.reference)

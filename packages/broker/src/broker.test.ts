@@ -222,6 +222,42 @@ test("mac_service_status requires an allowlisted service target and returns boun
   }
 });
 
+test("mac_log_tail requires an allowlisted source and returns sanitized bounded entries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-log-tail-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.log.read"], ["edge-key-1"], [], [], ["system"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "log-tail-request",
+      nonce: "log-tail-nonce",
+      tool: "mac_log_tail",
+      arguments: { source: "system", lines: 5, since_seconds: 1 }
+    }, ["mac.log.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      source: string;
+      entries: Array<{ timestamp: string | null; level?: string; message: string }>;
+      truncated: boolean;
+    };
+    assert.equal(data.source, "system");
+    assert.ok(data.entries.length <= 5);
+    assert.ok(data.entries.every((entry) => entry.message.length <= 8192));
+    assert.equal(JSON.stringify(result).includes("launchctl"), false);
+    assert.equal(JSON.stringify(result).includes("/usr/bin/log"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -332,7 +368,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 22);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 23);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

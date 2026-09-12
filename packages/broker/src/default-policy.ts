@@ -69,6 +69,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_log_tail",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.log.read"],
+    capabilityFamilies: ["read"],
+    targetType: "log_source",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_process_list",
     contractVersion: "0.1",
     requiredScopes: ["mac.process.read"],
@@ -297,7 +310,8 @@ export function createDefaultPolicy(
   principalScopes: readonly Scope[] = [],
   trustedKeyIds: readonly string[] = ["edge-key-1"],
   filesystemRoots: readonly FilesystemRootPolicy[] = [],
-  serviceIds: readonly string[] = []
+  serviceIds: readonly string[] = [],
+  logSources: readonly string[] = []
 ): BrokerPolicy {
   const grants = new Map<string, PrincipalGrant>();
   if (principalScopes.length > 0) {
@@ -347,6 +361,16 @@ export function createDefaultPolicy(
         principalId: "principal-1",
         scope,
         target: { kind: "service", reference: serviceId }
+      }));
+      return;
+    }
+    if (scope === "mac.log.read") {
+      logSources.forEach((source, sourceIndex) => targetRules.push({
+        ruleId: `test-log-${index}-${sourceIndex}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "log_source", reference: source }
       }));
       return;
     }

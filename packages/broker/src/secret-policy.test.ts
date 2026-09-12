@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, assertContentPathAllowed, redactLogText } from "./secret-policy.js";
 
 test("fixed secret-zone policy denies credential and private-data paths", () => {
   const denied = [
@@ -30,4 +30,15 @@ test("content policy denies representative private keys and access tokens", () =
     assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(value)), /protected secret signature/u);
   }
   assert.doesNotThrow(() => assertContentDoesNotContainSecrets(Buffer.from("ordinary documentation")));
+});
+
+test("log redaction removes secret-shaped values and bounds messages", () => {
+  const redacted = redactLogText("token=supersecretvalue AKIA1234567890ABCDEF /Users/test/.ssh/id_ed25519");
+  assert.equal(redacted.redacted, true);
+  assert.equal(redacted.text.includes("supersecretvalue"), false);
+  assert.equal(redacted.text.includes("AKIA1234567890ABCDEF"), false);
+  assert.equal(redacted.text.includes("id_ed25519"), false);
+  const bounded = redactLogText("x".repeat(20_000));
+  assert.equal(bounded.redacted, true);
+  assert.ok(bounded.text.length <= 8192);
 });

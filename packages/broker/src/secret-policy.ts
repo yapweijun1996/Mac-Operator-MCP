@@ -22,6 +22,17 @@ const SECRET_CONTENT_PATTERNS = [
   /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/iu
 ];
 
+const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
+  /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/gu,
+  /\bAKIA[0-9A-Z]{16}\b/gu,
+  /\bAIza[0-9A-Za-z_-]{30,}\b/gu,
+  /\bgh[pousr]_[0-9A-Za-z]{20,}\b/gu,
+  /\bsk-proj-[0-9A-Za-z_-]{16,}\b/gu,
+  /\bxox[baprs]-[0-9A-Za-z-]{16,}\b/gu,
+  /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/giu,
+  /(?:\/Users\/[^\s/]+|\/var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/Google\/Chrome))[^\s]*/giu
+];
+
 export function assertContentPathAllowed(path: string): void {
   const normalized = path.normalize("NFKC").toLocaleLowerCase("en-US");
   const name = basename(normalized);
@@ -39,4 +50,19 @@ export function assertContentDoesNotContainSecrets(content: Buffer): void {
   if (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(text))) {
     throw new BrokerError("POLICY_DENIED", "Filesystem content matched a protected secret signature");
   }
+}
+
+export function redactLogText(value: string): { text: string; redacted: boolean } {
+  let text = value;
+  let redacted = false;
+  for (const pattern of LOG_SECRET_REDACTION_PATTERNS) {
+    const next = text.replace(pattern, "[REDACTED]");
+    redacted ||= next !== text;
+    text = next;
+  }
+  if (text.length > 8192) {
+    text = `${text.slice(0, 8180)}…[TRUNCATED]`;
+    redacted = true;
+  }
+  return { text, redacted };
 }
