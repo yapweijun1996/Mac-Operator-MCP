@@ -19,6 +19,11 @@ import type { GovernedMcpServerOptions } from "./mcp-server.js";
 import { createGovernedMcpServerFactory } from "./mcp-server.js";
 import { FixedWindowRateLimiter, type RateLimitOptions } from "./rate-limiter.js";
 
+const EDGE_REQUEST_TIMEOUT_MS = 30_000;
+const EDGE_HEADERS_TIMEOUT_MS = 10_000;
+const EDGE_KEEP_ALIVE_TIMEOUT_MS = 5_000;
+const EDGE_MAX_REQUESTS_PER_SOCKET = 100;
+
 export interface HttpsMcpEdgeOptions extends GovernedMcpServerOptions {
   bindHost: string;
   allowedHosts: string[];
@@ -90,6 +95,10 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
     key: options.tlsPrivateKey,
     minVersion: "TLSv1.3"
   }, app);
+  server.requestTimeout = EDGE_REQUEST_TIMEOUT_MS;
+  server.headersTimeout = EDGE_HEADERS_TIMEOUT_MS;
+  server.keepAliveTimeout = EDGE_KEEP_ALIVE_TIMEOUT_MS;
+  server.maxRequestsPerSocket = EDGE_MAX_REQUESTS_PER_SOCKET;
   return {
     server,
     handler,
