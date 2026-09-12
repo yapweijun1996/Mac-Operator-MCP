@@ -1,6 +1,6 @@
 # Configuration Contract
 
-Status: Signed policy candidate implemented; operational configuration remains draft
+Status: Signed policy and local signer lifecycle candidates implemented; installed operational configuration remains draft
 
 ## Configuration domains
 
@@ -15,9 +15,9 @@ Authority configuration is versioned, schema-validated, authenticated, atomicall
 
 ## Implemented policy candidate
 
-`schemas/policy-document.schema.json` and `schemas/signed-policy-bundle.schema.json` define the current authority bundle. The Broker verifies Ed25519 signatures with a pinned, protected public-key file; the signing private key is not a Broker input. Policy revisions are monotonic, requests bind the active policy version, deny rules override allow rules, target matching is exact, and signed policy cannot mark code as implemented.
+`schemas/policy-document.schema.json` and `schemas/signed-policy-bundle.schema.json` define the current authority bundle. The Broker verifies Ed25519 signatures with protected public-key files selected by a versioned owner-only signer configuration; each key entry binds a SHA-256 digest, validity window, and key ID, while the signing private key is never a Broker input. Policy revisions are monotonic, requests bind the active policy version, deny rules override allow rules, target matching is exact, and signed policy cannot mark code as implemented.
 
-Activation identity and audit intent/completion commit in one Broker-owned transaction; the in-memory `PolicyManager` reference changes only after commit. Restart requires an exact verified identity match. Rollback can target only an exact signed historical policy and requires the current revision plus a structured operator reason code. No model-facing tool can load, replace, or roll back policy. Production operator wiring is not implemented.
+Activation identity and audit intent/completion commit in one Broker-owned transaction; the in-memory `PolicyManager` reference changes only after commit. Signer configuration activation/restore/reload/rollback and signer revocation use a separate owner-only HMAC-authenticated UDS with durable replay admission; no model-facing tool can load, replace, or roll back policy. Restart requires an exact verified identity match. Rollback can target only an exact signed historical policy or verified signer configuration and requires the current revision plus a structured operator reason code. Installed startup wiring and production operator-key distribution are not implemented.
 
 Signed `filesystem_roots` bind a stable `root_id` to one lexically normalized absolute path, independent `metadata` and `content_read` enable flags, and normalized relative deny paths. Tool requests provide a path, but only the Broker selects the matching root ID and applies exact target authorization. Descriptor-backed adapters then revalidate canonical containment, same-volume identity, target type, and deny zones after opening the target. No root is configured or production-enabled by default.
 
@@ -27,4 +27,4 @@ Local HMAC key files can be provisioned only with exclusive creation inside an o
 
 ## Pending decisions
 
-Crash-injection evidence, operator reload/rollback mechanism and runbook, signer rotation/revocation, secret-reference provider, production filesystem root/deny classification, a general versioned migration framework, and cross-runtime canonicalization evidence. The specific legacy revocation-table migration for `edge_key` support is implemented and tested.
+Crash-injection evidence across file/database activation, installed startup/operator runbook, secret-reference provider, production filesystem root/deny classification, a general versioned migration framework, Keychain/cross-process operator-key distribution, and cross-runtime canonicalization evidence. The specific legacy revocation-table migrations for `edge_key`, `approval_key`, and `policy_signer` support are implemented and tested.
