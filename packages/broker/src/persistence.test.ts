@@ -470,6 +470,71 @@ test("atomic approved job admission rolls back every injected failure point", as
   }
 });
 
+test("approved task admission after authorization rolls back approval, intent, and Job together", async () => {
+  const faultPoints = [
+    "admit_approved_job_after_decision.after_approval",
+    "admit_approved_job_after_decision.after_job"
+  ] as const;
+
+  for (const [index, faultPoint] of faultPoints.entries()) {
+    const directory = await mkdtemp(join(tmpdir(), `mac-operator-approved-task-fault-${index}-`));
+    const databasePath = join(directory, "broker.sqlite");
+    let store = new BrokerStore(databasePath, {
+      faultInjector: (actualPoint) => {
+        if (actualPoint === faultPoint) throw new Error(`fault injection: ${actualPoint}`);
+      }
+    });
+    try {
+      const input = atomicJobAdmissionInput(
+        `request-approved-fault-${index}`,
+        `nonce-approved-fault-${index}`,
+        `job:approved-fault-${index}`,
+        "task_profile:test",
+        "task_profile:test"
+      );
+      store.issueApproval({
+        approvalId: `approval:approved-fault-${index}`,
+        approverPrincipalId: "operator-1",
+        requestingPrincipalId: "principal-1",
+        tool: "mac_task_run",
+        contractVersion: "0.1",
+        targetKind: "task_profile",
+        targetRef: "task_profile:test",
+        payloadDigest: "b".repeat(64),
+        policyVersion: "policy-0.1",
+        approvalClass: "trusted_profile",
+        unattended: false,
+        issuedAtMs: 1,
+        expiresAtMs: 100
+      });
+      store.admitRequest(input.request);
+      store.recordRequestDecision(input.decision);
+
+      assert.throws(
+        () => store.admitApprovedJobAfterDecision({ intent: input.intent, approval: input.approval, job: input.job }),
+        /could not be persisted/u
+      );
+      assert.equal(store.requestRecord(input.request.requestId)?.state, "AUTHORIZED");
+      assert.equal(store.requestRecord(input.request.requestId)?.jobId, null);
+      assert.equal(store.ownedJob(input.job.jobId, input.job.ownerPrincipalId), undefined);
+      assert.equal(store.approvalRecord(`approval:approved-fault-${index}`)?.usedCount, 0);
+      assert.deepEqual(store.auditRows().filter((row) => row.request_id === input.request.requestId).map((row) => row.event_type), ["decision"]);
+
+      store.close();
+      store = new BrokerStore(databasePath);
+      const recovered = store.requestRecord(input.request.requestId);
+      assert.equal(recovered?.state, "FAILED");
+      assert.equal(recovered?.resultClass, "EXECUTION_FAILED");
+      assert.equal(recovered?.jobId, null);
+      assert.equal(store.ownedJob(input.job.jobId, input.job.ownerPrincipalId), undefined);
+      assert.equal(store.approvalRecord(`approval:approved-fault-${index}`)?.usedCount, 0);
+    } finally {
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
 test("job creation is principal-scoped and payload-bound idempotent", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-idempotency-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));

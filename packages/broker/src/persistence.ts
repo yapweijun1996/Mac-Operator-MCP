@@ -193,7 +193,9 @@ export type PersistenceFaultPoint =
   | "admit_approved_job.after_request"
   | "admit_approved_job.after_authorization"
   | "admit_approved_job.after_approval"
-  | "admit_approved_job.after_job";
+  | "admit_approved_job.after_job"
+  | "admit_approved_job_after_decision.after_approval"
+  | "admit_approved_job_after_decision.after_job";
 
 export interface BrokerStoreOptions {
   /** @internal Test-only; never configure this in a production Broker. */
@@ -778,6 +780,7 @@ export class BrokerStore {
           WHERE approval_id = ? AND revision = ? AND revoked_at_ms IS NULL AND used_count < use_limit
         `).run(input.intent.timestampMs, current.requestId, approval.approvalId, approval.revision);
         if (consumed.changes !== 1) throw new BrokerError("CONFLICT", "Approval changed concurrently");
+        this.injectFault("admit_approved_job_after_decision.after_approval");
         this.insertAudit({
           ...input.intent,
           evidence: {
@@ -799,6 +802,7 @@ export class BrokerStore {
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
           input.job.createdAtMs
         );
+        this.injectFault("admit_approved_job_after_decision.after_job");
         const transitioned = this.database.prepare(`
           UPDATE requests SET state = 'INTENT_RECORDED', result_class = 'INTENT_RECORDED',
             target_ref = ?, approval_id = ?, job_id = ?, updated_at_ms = ?, revision = revision + 1
