@@ -633,6 +633,43 @@ export class Broker {
           }
         };
       }
+      case "mac_recent_files": {
+        if (!execution.recent || !this.filesystemExecutor.recent) {
+          throw new BrokerError("EXECUTION_FAILED", "Recent-file execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.recent(
+          execution.recent.plans,
+          execution.recent.sinceSeconds,
+          execution.recent.limit,
+          execution.recent.nowMs,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs, undefined, execution.additionalTargets)
+        );
+        if (workerResult.operation !== "recent") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            files: workerResult.files.map((file) => ({
+              path: file.path,
+              modified_at: file.modifiedAt,
+              size_bytes: file.sizeBytes,
+              type: file.type
+            })),
+            truncated: workerResult.truncated
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_result_validation",
+            evidence: { summary: "Recent paths were collected from descriptor-backed metadata without reading file contents" }
+          },
+          truncated: workerResult.truncated,
+          ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
+          auditEvidence: {
+            fileCount: workerResult.files.length,
+            truncated: workerResult.truncated,
+            sinceSeconds: execution.recent.sinceSeconds
+          }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -776,6 +813,25 @@ export class Broker {
           plans,
           query: request.arguments.query as string,
           maxResults: (request.arguments.max_results ?? 1000) as number
+        }
+      };
+    }
+    if (request.tool === "mac_recent_files") {
+      assertExactArguments(request.arguments, ["roots", "since_seconds", "limit"]);
+      validateRecentArguments(request.arguments);
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const roots = request.arguments.roots as string[];
+      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
+      return {
+        target: targets[0]!,
+        ...(targets.length > 1 ? { additionalTargets: targets.slice(1) } : {}),
+        auditTarget: `filesystem_roots:${targets.map((target) => target.reference).join(",")}`,
+        recent: {
+          plans,
+          sinceSeconds: request.arguments.since_seconds as number,
+          limit: (request.arguments.limit ?? 1000) as number,
+          nowMs: this.now()
         }
       };
     }
@@ -989,6 +1045,12 @@ interface ExecutionPlan {
     query: string;
     maxResults: number;
   };
+  recent?: {
+    plans: readonly FilesystemPathPlan[];
+    sinceSeconds: number;
+    limit: number;
+    nowMs: number;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -1166,6 +1228,22 @@ function validateFindArguments(argumentsValue: Readonly<Record<string, unknown>>
   const maxResults = argumentsValue.max_results;
   if (maxResults !== undefined && (!Number.isSafeInteger(maxResults) || (maxResults as number) < 1 || (maxResults as number) > 1000)) {
     throw new BrokerError("PRECONDITION_FAILED", "max_results must be an integer between 1 and 1000");
+  }
+}
+
+function validateRecentArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const roots = argumentsValue.roots;
+  if (!Array.isArray(roots) || roots.length < 1 || roots.length > 32 || roots.some((root) =>
+    typeof root !== "string" || !isAbsolute(root) || root.length > 4096 || root.includes("\0"))) {
+    throw new BrokerError("PRECONDITION_FAILED", "roots must contain 1 to 32 bounded absolute paths");
+  }
+  const sinceSeconds = argumentsValue.since_seconds;
+  if (!Number.isSafeInteger(sinceSeconds) || (sinceSeconds as number) < 1 || (sinceSeconds as number) > 31_536_000) {
+    throw new BrokerError("PRECONDITION_FAILED", "since_seconds must be an integer between 1 and 31536000");
+  }
+  const limit = argumentsValue.limit;
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 1000)) {
+    throw new BrokerError("PRECONDITION_FAILED", "limit must be an integer between 1 and 1000");
   }
 }
 

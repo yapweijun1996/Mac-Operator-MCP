@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -205,7 +205,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 14);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 15);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -697,6 +697,48 @@ test("mac_find_files authorizes every requested root independently", async () =>
     assert.equal(result.ok, false);
     assert.equal(result.result_class, "POLICY_DENIED");
     assert.equal(store.auditRows().some((row) => row.event_type === "completion" && row.result_class === "SUCCEEDED"), false);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_recent_files returns bounded metadata without reading protected contents", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-recent-"));
+  const directory = join(parent, "workspace");
+  await mkdir(directory);
+  const recentPath = join(directory, "recent.txt");
+  const oldPath = join(directory, "old.txt");
+  await writeFile(recentPath, "safe");
+  await writeFile(oldPath, "old");
+  await writeFile(join(directory, "credentials"), "TOKEN=private");
+  await writeFile(join(directory, ".env"), "TOKEN=private");
+  await utimes(recentPath, new Date(NOW - 3_600_000), new Date(NOW - 3_600_000));
+  await utimes(oldPath, new Date(NOW - 172_800_000), new Date(NOW - 172_800_000));
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.search"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "recent-request",
+      nonce: "recent-nonce",
+      tool: "mac_recent_files",
+      arguments: { roots: [directory], since_seconds: 86_400, limit: 10 }
+    }, ["mac.files.search"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { files: Array<{ path: string; type: string; size_bytes: number }>; truncated: boolean };
+    assert.deepEqual(data.files.map((file) => [file.path, file.type, file.size_bytes]), [[await realpath(recentPath), "file", 4]]);
+    assert.equal(data.truncated, false);
+    assert.equal(JSON.stringify(result).includes("TOKEN=private"), false);
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("credentials")), false);
   } finally {
     store.close();
     await rm(parent, { recursive: true, force: true });

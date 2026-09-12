@@ -44,6 +44,13 @@ export interface FilesystemExecutor {
     maxResults: number,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  recent?(
+    plans: readonly FilesystemPathPlan[],
+    sinceSeconds: number,
+    limit: number,
+    nowMs: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -123,6 +130,17 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "find", plans, query, maxResults }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  recent(
+    plans: readonly FilesystemPathPlan[],
+    sinceSeconds: number,
+    limit: number,
+    nowMs: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "recent", plans, sinceSeconds, limit, nowMs }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -233,6 +251,19 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
           !["file", "directory", "symlink", "other"].includes(match.type) ||
           !Number.isSafeInteger(match.sizeBytes) || match.sizeBytes < 0 || match.sizeBytes > 1_000_000_000_000 ||
           (match.modifiedAt !== null && (typeof match.modifiedAt !== "string" || !Number.isFinite(Date.parse(match.modifiedAt))))) {
+        throw malformed();
+      }
+    }
+    return value;
+  }
+  if (value.operation === "recent") {
+    if (!Array.isArray(value.files) || value.files.length > 1000 || typeof value.truncated !== "boolean") throw malformed();
+    for (const file of value.files) {
+      if (file === null || typeof file !== "object" ||
+          typeof file.path !== "string" || !isAbsolute(file.path) || file.path.length > 4096 || file.path.includes("\0") ||
+          !["file", "directory", "symlink", "other"].includes(file.type) ||
+          !Number.isSafeInteger(file.sizeBytes) || file.sizeBytes < 0 || file.sizeBytes > 1_000_000_000_000 ||
+          typeof file.modifiedAt !== "string" || !Number.isFinite(Date.parse(file.modifiedAt))) {
         throw malformed();
       }
     }

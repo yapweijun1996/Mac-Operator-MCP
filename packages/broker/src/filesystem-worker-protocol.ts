@@ -13,6 +13,7 @@ export type FilesystemWorkerCommand =
   | { operation: "list"; plan: FilesystemPathPlan; cursor: string | undefined; limit: number; includeHidden: boolean }
   | { operation: "tree"; plan: FilesystemPathPlan; depth: number; maxEntries: number }
   | { operation: "find"; plans: readonly FilesystemPathPlan[]; query: string; maxResults: number }
+  | { operation: "recent"; plans: readonly FilesystemPathPlan[]; sinceSeconds: number; limit: number; nowMs: number }
   | {
       operation: "write";
       plan: FilesystemPathPlan;
@@ -66,6 +67,11 @@ export type FilesystemWorkerResult =
       roots: readonly string[];
       query: string;
       matches: readonly SafeFileMatch[];
+      truncated: boolean;
+    }
+  | {
+      operation: "recent";
+      files: readonly SafeFileMatch[];
       truncated: boolean;
     }
   | {

@@ -74,6 +74,7 @@ test("implemented broker results conform to versioned success and failure schema
       { tool: "mac_list_directory", arguments: { path: directory, limit: 10, include_hidden: false } },
       { tool: "mac_directory_tree", arguments: { path: directory, depth: 1, max_entries: 20 } },
       { tool: "mac_find_files", arguments: { roots: [directory], query: "sample", max_results: 20 } },
+      { tool: "mac_recent_files", arguments: { roots: [directory], since_seconds: 86_400, limit: 20 } },
       { tool: "mac_write_file_atomic", arguments: { path: writePath, content: "safe", idempotency_key: "contract-write-1", encoding: "utf8", create_only: true } },
       { tool: "mac_job_status", arguments: { job_id: "job:contract", tail_bytes: 128 } },
       { tool: "mac_job_cancel", arguments: { job_id: "job:contract", reason: "contract-test" } }
@@ -144,7 +145,7 @@ function makeRequest(now: number, index: number, tool: string, args: Record<stri
     arguments: args,
       principal: {
       principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer",
-      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_process_list" ? ["mac.process.read"] : []), "mac.files.read", ...(tool === "mac_find_files" ? ["mac.files.search"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
+      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_process_list" ? ["mac.process.read"] : []), "mac.files.read", ...(tool === "mac_find_files" || tool === "mac_recent_files" ? ["mac.files.search"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
       issuedAtMs: now - 1_000, expiresAtMs: now + 60_000, edgeId: "edge-1"
     },
     timestampMs: now,

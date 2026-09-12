@@ -77,6 +77,11 @@ export interface SafeFileSearch {
   truncated: boolean;
 }
 
+export interface SafeRecentFiles {
+  files: readonly SafeFileMatch[];
+  truncated: boolean;
+}
+
 export interface SafePathMetadata {
   rootId: string;
   path: string;
@@ -364,16 +369,47 @@ export class FilesystemInspector {
     query: string,
     maxResults: number
   ): SafeFileSearch {
-    if (plans.length < 1 || plans.length > 32) {
-      throw new BrokerError("PRECONDITION_FAILED", "Filesystem search requires between 1 and 32 roots");
-    }
     if (typeof query !== "string" || query.length < 1 || query.length > 256 || query.includes("\0")) {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem search query is malformed");
+    }
+    const normalizedQuery = query.normalize("NFKC").toLocaleLowerCase("en-US");
+    const result = this.traverseMetadata(plans, maxResults, (entry) =>
+      entry.path.normalize("NFKC").toLocaleLowerCase("en-US").includes(normalizedQuery) ? entry : undefined
+    );
+    return { roots: result.roots, query, matches: result.matches, truncated: result.truncated };
+  }
+
+  recentFilesPlanned(
+    plans: readonly FilesystemPathPlan[],
+    sinceSeconds: number,
+    limit: number,
+    nowMs: number
+  ): SafeRecentFiles {
+    if (!Number.isSafeInteger(sinceSeconds) || sinceSeconds < 1 || sinceSeconds > 31_536_000) {
+      throw new BrokerError("PRECONDITION_FAILED", "Recent-file window is outside the supported range");
+    }
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+      throw new BrokerError("PRECONDITION_FAILED", "Recent-file clock value is malformed");
+    }
+    const cutoffMs = nowMs - sinceSeconds * 1000;
+    const result = this.traverseMetadata(plans, limit, (entry) => {
+      const modifiedAtMs = entry.modifiedAt === null ? Number.NaN : Date.parse(entry.modifiedAt);
+      return Number.isFinite(modifiedAtMs) && modifiedAtMs >= cutoffMs ? entry : undefined;
+    });
+    return { files: result.matches, truncated: result.truncated };
+  }
+
+  private traverseMetadata(
+    plans: readonly FilesystemPathPlan[],
+    maxResults: number,
+    select: (entry: SafeFileMatch) => SafeFileMatch | undefined
+  ): { roots: string[]; matches: SafeFileMatch[]; truncated: boolean } {
+    if (plans.length < 1 || plans.length > 32) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem search requires between 1 and 32 roots");
     }
     if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > 1000) {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem search result limit is outside the supported range");
     }
-
     const roots: string[] = [];
     for (const plan of plans) {
       const root = this.statPlanned(plan, false);
@@ -383,24 +419,19 @@ export class FilesystemInspector {
       if (!roots.includes(root.path)) roots.push(root.path);
     }
 
-    const normalizedQuery = query.normalize("NFKC").toLocaleLowerCase("en-US");
     const matches: SafeFileMatch[] = [];
     const matchPaths = new Set<string>();
     const visitedDirectories = new Set<string>();
     const pending: Array<{ plan: FilesystemPathPlan; depth: number }> = plans.map((plan) => ({ plan, depth: 0 }));
     let visitedEntries = 0;
     let truncated = false;
-
     while (pending.length > 0 && !truncated) {
       const current = pending.shift()!;
       let cursor: string | undefined;
       while (!truncated) {
         const listing = this.listPlanned(current.plan, cursor, 500, false);
-        if (!visitedDirectories.has(listing.path)) {
-          visitedDirectories.add(listing.path);
-        } else if (cursor === undefined) {
-          break;
-        }
+        if (!visitedDirectories.has(listing.path)) visitedDirectories.add(listing.path);
+        else if (cursor === undefined) break;
         for (const entry of listing.entries) {
           visitedEntries += 1;
           if (visitedEntries > MAX_SEARCH_ENTRIES) {
@@ -412,15 +443,16 @@ export class FilesystemInspector {
             truncated = true;
             break;
           }
-          const normalizedPath = childPath.normalize("NFKC").toLocaleLowerCase("en-US");
-          if (normalizedPath.includes(normalizedQuery) && !matchPaths.has(childPath)) {
+          const candidate: SafeFileMatch = {
+            path: childPath,
+            type: entry.type,
+            sizeBytes: entry.sizeBytes,
+            modifiedAt: entry.modifiedAt
+          };
+          const selected = select(candidate);
+          if (selected && !matchPaths.has(childPath)) {
             matchPaths.add(childPath);
-            matches.push({
-              path: childPath,
-              type: entry.type,
-              sizeBytes: entry.sizeBytes,
-              modifiedAt: entry.modifiedAt
-            });
+            matches.push(selected);
             if (matches.length >= maxResults) {
               truncated = true;
               break;
@@ -438,9 +470,8 @@ export class FilesystemInspector {
         cursor = listing.nextCursor;
       }
     }
-
     if (roots.length === 0) throw new BrokerError("EXECUTION_FAILED", "Filesystem search returned no root identity");
-    return { roots, query, matches, truncated };
+    return { roots, matches, truncated };
   }
 
   statPlanned(plan: FilesystemPathPlan, followSymlink = true): SafePathMetadata {
