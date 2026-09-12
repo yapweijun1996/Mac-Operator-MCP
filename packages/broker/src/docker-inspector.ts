@@ -4,6 +4,7 @@ import { ProcessSupervisor, type ProcessExecutionResult } from "./process-superv
 import { redactBoundedText, redactLogText } from "./secret-policy.js";
 
 const DOCKER_EXECUTABLE_CANDIDATES = [
+  "/Applications/Docker.app/Contents/Resources/bin/docker",
   "/opt/homebrew/bin/docker",
   "/usr/local/bin/docker",
   "/usr/bin/docker"
