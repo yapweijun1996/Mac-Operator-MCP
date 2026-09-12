@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
 
@@ -82,6 +82,20 @@ export interface SafeRecentFiles {
   truncated: boolean;
 }
 
+export interface SafeTextMatch {
+  path: string;
+  line: number;
+  startColumn: number;
+  endColumn: number;
+  snippet: string;
+}
+
+export interface SafeTextSearch {
+  query: string;
+  matches: readonly SafeTextMatch[];
+  truncated: boolean;
+}
+
 export interface SafePathMetadata {
   rootId: string;
   path: string;
@@ -150,6 +164,9 @@ interface NativeFilesystemAdapter {
 const ROOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_SEARCH_DEPTH = 32;
 const MAX_SEARCH_ENTRIES = 50_000;
+const MAX_TEXT_FILE_BYTES = 1_048_576;
+const MAX_TEXT_SEARCH_BYTES = 64 * 1024 * 1024;
+const MAX_TEXT_MATCHES_PER_FILE = 100;
 const require = createRequire(import.meta.url);
 
 export class FilesystemInspector {
@@ -375,7 +392,7 @@ export class FilesystemInspector {
     const normalizedQuery = query.normalize("NFKC").toLocaleLowerCase("en-US");
     const result = this.traverseMetadata(plans, maxResults, (entry) =>
       entry.path.normalize("NFKC").toLocaleLowerCase("en-US").includes(normalizedQuery) ? entry : undefined
-    );
+    , (entry) => entry.path);
     return { roots: result.roots, query, matches: result.matches, truncated: result.truncated };
   }
 
@@ -395,15 +412,86 @@ export class FilesystemInspector {
     const result = this.traverseMetadata(plans, limit, (entry) => {
       const modifiedAtMs = entry.modifiedAt === null ? Number.NaN : Date.parse(entry.modifiedAt);
       return Number.isFinite(modifiedAtMs) && modifiedAtMs >= cutoffMs ? entry : undefined;
-    });
+    }, (entry) => entry.path);
     return { files: result.matches, truncated: result.truncated };
   }
 
-  private traverseMetadata(
+  searchTextPlanned(
+    plans: readonly FilesystemPathPlan[],
+    query: string,
+    glob: string | undefined,
+    maxResults: number
+  ): SafeTextSearch {
+    if (typeof query !== "string" || query.length < 1 || query.length > 512 || query.includes("\0")) {
+      throw new BrokerError("PRECONDITION_FAILED", "Text search query is malformed");
+    }
+    try {
+      assertContentDoesNotContainSecrets(Buffer.from(query, "utf8"));
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Text search query matched a protected secret signature");
+    }
+    const globPattern = compileSearchGlob(glob);
+    let scannedBytes = 0;
+    let scanBudgetExceeded = false;
+    const result = this.traverseMetadata(
+      plans,
+      maxResults,
+      (entry, plan) => {
+        if (entry.type !== "file" || entry.sizeBytes > MAX_TEXT_FILE_BYTES ||
+            (globPattern && !globPattern.test(basename(entry.path)))) return undefined;
+        if (scannedBytes + entry.sizeBytes > MAX_TEXT_SEARCH_BYTES) {
+          scanBudgetExceeded = true;
+          return undefined;
+        }
+        scannedBytes += entry.sizeBytes;
+        let content: Buffer;
+        try {
+          content = this.readPlanned(plan, 0, MAX_TEXT_FILE_BYTES).content;
+          assertContentDoesNotContainSecrets(content);
+        } catch {
+          return undefined;
+        }
+        let text: string;
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+        } catch {
+          return undefined;
+        }
+        if (text.includes("\0")) return undefined;
+        const matches: SafeTextMatch[] = [];
+        const lines = text.split(/\r?\n/u);
+        for (let lineIndex = 0; lineIndex < lines.length && matches.length < MAX_TEXT_MATCHES_PER_FILE; lineIndex += 1) {
+          const lineText = lines[lineIndex]!;
+          let offset = lineText.indexOf(query);
+          while (offset >= 0 && matches.length < MAX_TEXT_MATCHES_PER_FILE) {
+            const snippetStart = Math.max(0, offset - 200);
+            const snippetEnd = Math.min(lineText.length, offset + query.length + 200);
+            matches.push({
+              path: entry.path,
+              line: lineIndex + 1,
+              startColumn: offset + 1,
+              endColumn: offset + query.length + 1,
+              snippet: sanitizeSearchSnippet(lineText.slice(snippetStart, snippetEnd))
+            });
+            const nextOffset = offset + Math.max(query.length, 1);
+            offset = lineText.indexOf(query, nextOffset);
+          }
+        }
+        return matches;
+      },
+      (match) => `${match.path}:${match.line}:${match.startColumn}`,
+      () => scanBudgetExceeded
+    );
+    return { query, matches: result.matches, truncated: result.truncated };
+  }
+
+  private traverseMetadata<T>(
     plans: readonly FilesystemPathPlan[],
     maxResults: number,
-    select: (entry: SafeFileMatch) => SafeFileMatch | undefined
-  ): { roots: string[]; matches: SafeFileMatch[]; truncated: boolean } {
+    select: (entry: SafeFileMatch, plan: FilesystemPathPlan) => T | readonly T[] | undefined,
+    keyOf?: (value: T) => string,
+    shouldStop?: () => boolean
+  ): { roots: string[]; matches: T[]; truncated: boolean } {
     if (plans.length < 1 || plans.length > 32) {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem search requires between 1 and 32 roots");
     }
@@ -419,8 +507,8 @@ export class FilesystemInspector {
       if (!roots.includes(root.path)) roots.push(root.path);
     }
 
-    const matches: SafeFileMatch[] = [];
-    const matchPaths = new Set<string>();
+    const matches: T[] = [];
+    const matchKeys = new Set<string>();
     const visitedDirectories = new Set<string>();
     const pending: Array<{ plan: FilesystemPathPlan; depth: number }> = plans.map((plan) => ({ plan, depth: 0 }));
     let visitedEntries = 0;
@@ -449,21 +537,31 @@ export class FilesystemInspector {
             sizeBytes: entry.sizeBytes,
             modifiedAt: entry.modifiedAt
           };
-          const selected = select(candidate);
-          if (selected && !matchPaths.has(childPath)) {
-            matchPaths.add(childPath);
-            matches.push(selected);
-            if (matches.length >= maxResults) {
-              truncated = true;
-              break;
+          const childPlan = { ...current.plan, requestedPath: childPath };
+          const selected = select(candidate, childPlan);
+          if (selected !== undefined) {
+            const selectedValues = Array.isArray(selected) ? selected : [selected];
+            for (const value of selectedValues) {
+              const key = keyOf ? keyOf(value) : `${childPath}:${matches.length}`;
+              if (matchKeys.has(key)) continue;
+              matchKeys.add(key);
+              matches.push(value);
+              if (matches.length >= maxResults) {
+                truncated = true;
+                break;
+              }
             }
+          }
+          if (truncated || shouldStop?.()) {
+            truncated = true;
+            break;
           }
           if (entry.type === "directory") {
             if (current.depth >= MAX_SEARCH_DEPTH) {
               truncated = true;
               break;
             }
-            pending.push({ plan: { ...current.plan, requestedPath: childPath }, depth: current.depth + 1 });
+            pending.push({ plan: childPlan, depth: current.depth + 1 });
           }
         }
         if (truncated || listing.nextCursor === null) break;
@@ -697,6 +795,30 @@ function normalizeRelative(path: string): string {
     throw new Error("Denied filesystem path must be a normalized relative path");
   }
   return path;
+}
+
+function compileSearchGlob(glob: string | undefined): RegExp | undefined {
+  if (glob === undefined) return undefined;
+  if (glob.length < 1 || glob.length > 256 || glob.includes("\0")) {
+    throw new BrokerError("PRECONDITION_FAILED", "glob is malformed");
+  }
+  let pattern = "^";
+  for (const character of glob) {
+    if (character === "*") pattern += ".*";
+    else if (character === "?") pattern += ".";
+    else pattern += character.replace(/[\\^$+?.()|[\]{}]/gu, "\\$&");
+  }
+  try {
+    return new RegExp(`${pattern}$`, "u");
+  } catch {
+    throw new BrokerError("PRECONDITION_FAILED", "glob is malformed");
+  }
+}
+
+function sanitizeSearchSnippet(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "�")
+    .slice(0, 2_000);
 }
 
 function isContained(root: string, target: string): boolean {

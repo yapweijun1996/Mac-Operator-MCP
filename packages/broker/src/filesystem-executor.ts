@@ -51,6 +51,13 @@ export interface FilesystemExecutor {
     nowMs: number,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  searchText?(
+    plans: readonly FilesystemPathPlan[],
+    query: string,
+    glob: string | undefined,
+    maxResults: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -141,6 +148,17 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "recent", plans, sinceSeconds, limit, nowMs }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  searchText(
+    plans: readonly FilesystemPathPlan[],
+    query: string,
+    glob: string | undefined,
+    maxResults: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "search_text", plans, query, glob, maxResults }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -264,6 +282,23 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
           !["file", "directory", "symlink", "other"].includes(file.type) ||
           !Number.isSafeInteger(file.sizeBytes) || file.sizeBytes < 0 || file.sizeBytes > 1_000_000_000_000 ||
           typeof file.modifiedAt !== "string" || !Number.isFinite(Date.parse(file.modifiedAt))) {
+        throw malformed();
+      }
+    }
+    return value;
+  }
+  if (value.operation === "search_text") {
+    if (typeof value.query !== "string" || value.query.length < 1 || value.query.length > 512 || value.query.includes("\0") ||
+        !Array.isArray(value.matches) || value.matches.length > 1000 || typeof value.truncated !== "boolean") {
+      throw malformed();
+    }
+    for (const match of value.matches) {
+      if (match === null || typeof match !== "object" ||
+          typeof match.path !== "string" || !isAbsolute(match.path) || match.path.length > 4096 || match.path.includes("\0") ||
+          !Number.isSafeInteger(match.line) || match.line < 1 || match.line > 1_000_000_000 ||
+          !Number.isSafeInteger(match.startColumn) || match.startColumn < 1 || match.startColumn > 1_000_000_000 ||
+          !Number.isSafeInteger(match.endColumn) || match.endColumn < match.startColumn || match.endColumn > 1_000_000_000 ||
+          typeof match.snippet !== "string" || match.snippet.length > 2000 || /[\u0000-\u001f\u007f]/u.test(match.snippet)) {
         throw malformed();
       }
     }

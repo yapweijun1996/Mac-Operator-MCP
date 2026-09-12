@@ -14,6 +14,7 @@ export type FilesystemWorkerCommand =
   | { operation: "tree"; plan: FilesystemPathPlan; depth: number; maxEntries: number }
   | { operation: "find"; plans: readonly FilesystemPathPlan[]; query: string; maxResults: number }
   | { operation: "recent"; plans: readonly FilesystemPathPlan[]; sinceSeconds: number; limit: number; nowMs: number }
+  | { operation: "search_text"; plans: readonly FilesystemPathPlan[]; query: string; glob: string | undefined; maxResults: number }
   | {
       operation: "write";
       plan: FilesystemPathPlan;
@@ -72,6 +73,12 @@ export type FilesystemWorkerResult =
   | {
       operation: "recent";
       files: readonly SafeFileMatch[];
+      truncated: boolean;
+    }
+  | {
+      operation: "search_text";
+      query: string;
+      matches: readonly import("./filesystem-inspector.js").SafeTextMatch[];
       truncated: boolean;
     }
   | {

@@ -670,6 +670,44 @@ export class Broker {
           }
         };
       }
+      case "mac_search_text": {
+        if (!execution.searchText || !this.filesystemExecutor.searchText) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem text-search execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.searchText(
+          execution.searchText.plans,
+          execution.searchText.query,
+          execution.searchText.glob,
+          execution.searchText.maxResults,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs, undefined, execution.additionalTargets)
+        );
+        if (workerResult.operation !== "search_text") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            query: workerResult.query,
+            matches: workerResult.matches.map((match) => ({
+              path: match.path,
+              line: match.line,
+              start_column: match.startColumn,
+              end_column: match.endColumn,
+              snippet: match.snippet
+            })),
+            truncated: workerResult.truncated
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_result_validation",
+            evidence: { summary: "Text matches were collected from content-authorized descriptor-backed files with secret filtering and fixed byte budgets" }
+          },
+          truncated: workerResult.truncated,
+          ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
+          auditEvidence: {
+            matchCount: workerResult.matches.length,
+            truncated: workerResult.truncated
+          }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -835,6 +873,25 @@ export class Broker {
         }
       };
     }
+    if (request.tool === "mac_search_text") {
+      assertExactArguments(request.arguments, ["roots", "query", "glob", "max_results"]);
+      validateSearchTextArguments(request.arguments);
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const roots = request.arguments.roots as string[];
+      const plans = roots.map((root) => inspector.planPath(root, "content_read"));
+      const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
+      return {
+        target: targets[0]!,
+        ...(targets.length > 1 ? { additionalTargets: targets.slice(1) } : {}),
+        auditTarget: `filesystem_roots:${targets.map((target) => target.reference).join(",")}`,
+        searchText: {
+          plans,
+          query: request.arguments.query as string,
+          glob: request.arguments.glob as string | undefined,
+          maxResults: (request.arguments.max_results ?? 1000) as number
+        }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -909,7 +966,8 @@ export class Broker {
       return;
     }
     if (tool.targetType === "filesystem_roots") {
-      for (const root of policy.filesystemRoots.filter((candidate) => candidate.metadata === true)) {
+      const requiresContent = tool.tool === "mac_search_text";
+      for (const root of policy.filesystemRoots.filter((candidate) => requiresContent ? candidate.contentRead === true : candidate.metadata === true)) {
         try {
           authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "path", reference: root.rootId });
           return;
@@ -1050,6 +1108,12 @@ interface ExecutionPlan {
     sinceSeconds: number;
     limit: number;
     nowMs: number;
+  };
+  searchText?: {
+    plans: readonly FilesystemPathPlan[];
+    query: string;
+    glob: string | undefined;
+    maxResults: number;
   };
   job?: BrokerJob;
   write?: {
@@ -1244,6 +1308,26 @@ function validateRecentArguments(argumentsValue: Readonly<Record<string, unknown
   const limit = argumentsValue.limit;
   if (limit !== undefined && (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 1000)) {
     throw new BrokerError("PRECONDITION_FAILED", "limit must be an integer between 1 and 1000");
+  }
+}
+
+function validateSearchTextArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const roots = argumentsValue.roots;
+  if (!Array.isArray(roots) || roots.length < 1 || roots.length > 32 || roots.some((root) =>
+    typeof root !== "string" || !isAbsolute(root) || root.length > 4096 || root.includes("\0"))) {
+    throw new BrokerError("PRECONDITION_FAILED", "roots must contain 1 to 32 bounded absolute paths");
+  }
+  const query = argumentsValue.query;
+  if (typeof query !== "string" || query.length < 1 || query.length > 512 || query.includes("\0")) {
+    throw new BrokerError("PRECONDITION_FAILED", "query must be a bounded string");
+  }
+  const glob = argumentsValue.glob;
+  if (glob !== undefined && (typeof glob !== "string" || glob.length < 1 || glob.length > 256 || glob.includes("\0"))) {
+    throw new BrokerError("PRECONDITION_FAILED", "glob must be a bounded string");
+  }
+  const maxResults = argumentsValue.max_results;
+  if (maxResults !== undefined && (!Number.isSafeInteger(maxResults) || (maxResults as number) < 1 || (maxResults as number) > 1000)) {
+    throw new BrokerError("PRECONDITION_FAILED", "max_results must be an integer between 1 and 1000");
   }
 }
 

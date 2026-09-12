@@ -10,7 +10,9 @@ if (!parentPort) throw new Error("Filesystem worker requires a parent port");
 
 try {
   const command = workerData as FilesystemWorkerCommand;
-  const plans = command.operation === "find" || command.operation === "recent" ? command.plans : [command.plan];
+  const plans = command.operation === "find" || command.operation === "recent" || command.operation === "search_text"
+    ? command.plans
+    : [command.plan];
   const roots = [...new Map(plans.map((plan) => [plan.root.rootId, plan.root])).values()];
   const inspector = new FilesystemInspector(roots);
   let value: FilesystemWorkerResult;
@@ -83,6 +85,14 @@ try {
       operation: "recent",
       files: recent.files,
       truncated: recent.truncated
+    };
+  } else if (command.operation === "search_text") {
+    const search = inspector.searchTextPlanned(command.plans, command.query, command.glob, command.maxResults);
+    value = {
+      operation: "search_text",
+      query: search.query,
+      matches: search.matches,
+      truncated: search.truncated
     };
   } else if (command.operation === "write") {
     assertContentDoesNotContainSecrets(command.content);

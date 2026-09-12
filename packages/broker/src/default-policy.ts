@@ -160,6 +160,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_search_text",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.files.search"],
+    capabilityFamilies: ["read"],
+    targetType: "filesystem_roots",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_write_file_atomic",
     contractVersion: "0.1",
     requiredScopes: ["mac.files.write"],

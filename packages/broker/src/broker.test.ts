@@ -205,7 +205,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 15);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 16);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -739,6 +739,78 @@ test("mac_recent_files returns bounded metadata without reading protected conten
     assert.equal(data.truncated, false);
     assert.equal(JSON.stringify(result).includes("TOKEN=private"), false);
     assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("credentials")), false);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_search_text returns bounded sanitized matches from content-authorized roots", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-search-text-"));
+  const directory = join(parent, "workspace");
+  await mkdir(directory);
+  const notesPath = join(directory, "notes.txt");
+  await writeFile(notesPath, "hello world\nsecond hello\n");
+  await writeFile(join(directory, "binary.txt"), Buffer.from([0, 1, 2, 3]));
+  await writeFile(join(directory, "credentials"), "token=private-value");
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.search"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "search-text-request",
+      nonce: "search-text-nonce",
+      tool: "mac_search_text",
+      arguments: { roots: [directory], query: "hello", glob: "*.txt", max_results: 10 }
+    }, ["mac.files.search"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { query: string; matches: Array<{ path: string; line: number; start_column: number; end_column: number; snippet: string }>; truncated: boolean };
+    assert.equal(data.query, "hello");
+    assert.deepEqual(data.matches, [
+      { path: await realpath(notesPath), line: 1, start_column: 1, end_column: 6, snippet: "hello world" },
+      { path: await realpath(notesPath), line: 2, start_column: 8, end_column: 13, snippet: "second hello" }
+    ]);
+    assert.equal(data.truncated, false);
+    assert.equal(JSON.stringify(result).includes("private-value"), false);
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("private-value")), false);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_search_text denies metadata-only roots before content execution", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-search-text-policy-"));
+  const directory = join(parent, "workspace");
+  await mkdir(directory);
+  await writeFile(join(directory, "notes.txt"), "hello");
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.search"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "search-text-policy-request",
+      nonce: "search-text-policy-nonce",
+      tool: "mac_search_text",
+      arguments: { roots: [directory], query: "hello" }
+    }, ["mac.files.search"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "POLICY_DENIED");
   } finally {
     store.close();
     await rm(parent, { recursive: true, force: true });
