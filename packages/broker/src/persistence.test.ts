@@ -73,6 +73,31 @@ test("BrokerStore adds approval linkage to an existing request ledger", async ()
   }
 });
 
+test("policy signer command nonce replay remains denied after store reopen", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-policy-signer-nonce-"));
+  const databasePath = join(directory, "broker.sqlite");
+  let store = new BrokerStore(databasePath);
+  try {
+    store.admitPolicySignerCommand({
+      requestId: "policy-command-1",
+      nonce: "policy-command-nonce-0001",
+      acceptedAtMs: 1,
+      expiresAtMs: 10_000
+    });
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.throws(() => store.admitPolicySignerCommand({
+      requestId: "policy-command-1",
+      nonce: "policy-command-nonce-0001",
+      acceptedAtMs: 2,
+      expiresAtMs: 10_000
+    }), /REPLAY_DENIED|already accepted/u);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore rejects a tampered audit chain on reopen", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-integrity-"));
   const databasePath = join(directory, "broker.sqlite");
