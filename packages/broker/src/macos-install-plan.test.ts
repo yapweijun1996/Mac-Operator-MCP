@@ -217,6 +217,11 @@ test("plist apply uses native atomic write, creates a backup on upgrade, and res
     const third = await applyMacOsPlistPlan(rollback, { ownerUid: uid });
     assert.equal(third.operation, "rollback");
     assert.equal(await readFile(rollback.plistPath, "utf8"), oldContent);
+    const uninstall = buildMacOsInstallPlan({ ...common, operation: "uninstall", expectedPreviousSourceRevision: base.metadata.sourceRevision, metadata: base.metadata });
+    const removed = await applyMacOsPlistPlan(uninstall, { ownerUid: uid });
+    assert.equal(removed.operation, "uninstall");
+    await assert.rejects(readFile(uninstall.plistPath, "utf8"));
+    await assert.rejects(readFile(uninstall.backupPath, "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

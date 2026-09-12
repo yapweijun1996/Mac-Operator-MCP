@@ -1315,6 +1315,156 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
+  size_t argc = 5;
+  napi_value args[5];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 5) {
+    napi_throw_type_error(env, nullptr, "unlinkFileWithinRoot requires root, target, expectedPresent, expectedDevice, and expectedInode");
+    return nullptr;
+  }
+
+  char configured_root[PATH_MAX];
+  char requested_target[PATH_MAX];
+  char expected_device[64];
+  char expected_inode[64];
+  bool expected_present = false;
+  if (!ReadString(env, args[0], configured_root, sizeof(configured_root)) ||
+      !ReadString(env, args[1], requested_target, sizeof(requested_target)) ||
+      napi_get_value_bool(env, args[2], &expected_present) != napi_ok ||
+      !ReadComponent(env, args[3], expected_device, sizeof(expected_device)) ||
+      !ReadComponent(env, args[4], expected_inode, sizeof(expected_inode))) {
+    napi_throw_type_error(env, nullptr, "Filesystem unlink arguments are malformed");
+    return nullptr;
+  }
+  unsigned long long expected_device_number = 0;
+  unsigned long long expected_inode_number = 0;
+  if (!ParseUnsigned(expected_device, &expected_device_number) || !ParseUnsigned(expected_inode, &expected_inode_number)) {
+    napi_throw_type_error(env, nullptr, "Filesystem unlink identity precondition is malformed");
+    return nullptr;
+  }
+
+  int root_descriptor = open(configured_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (root_descriptor < 0) {
+    ThrowSystemError(env, "Filesystem root could not be opened safely");
+    return nullptr;
+  }
+  struct stat root_stat;
+  struct statfs root_filesystem;
+  char resolved_root[PATH_MAX];
+  if (fstat(root_descriptor, &root_stat) != 0 || fstatfs(root_descriptor, &root_filesystem) != 0 ||
+      (root_filesystem.f_flags & MNT_LOCAL) == 0 || !DescriptorPath(root_descriptor, resolved_root)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem root identity could not be verified");
+    return nullptr;
+  }
+
+  char parent_path[PATH_MAX];
+  const char* slash = strrchr(requested_target, '/');
+  if (slash == nullptr || slash[1] == '\0') {
+    close(root_descriptor);
+    napi_throw_type_error(env, nullptr, "Filesystem unlink target must name a child file");
+    return nullptr;
+  }
+  const size_t parent_length = static_cast<size_t>(slash - requested_target);
+  if (parent_length == 0) {
+    parent_path[0] = '/';
+    parent_path[1] = '\0';
+  } else if (parent_length >= sizeof(parent_path)) {
+    close(root_descriptor);
+    napi_throw_type_error(env, nullptr, "Filesystem unlink parent path is too long");
+    return nullptr;
+  } else {
+    memcpy(parent_path, requested_target, parent_length);
+    parent_path[parent_length] = '\0';
+  }
+  const char* base_name = slash + 1;
+  char resolved_parent[PATH_MAX];
+  if (realpath(parent_path, resolved_parent) == nullptr || !IsWithinRoot(resolved_root, resolved_parent)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink parent escaped the authorized root");
+    return nullptr;
+  }
+  int parent_descriptor = open(resolved_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (parent_descriptor < 0) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink parent could not be opened safely");
+    return nullptr;
+  }
+  struct stat parent_stat;
+  char parent_descriptor_path[PATH_MAX];
+  if (fstat(parent_descriptor, &parent_stat) != 0 || !DescriptorPath(parent_descriptor, parent_descriptor_path) ||
+      !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink parent identity is not authorized");
+    return nullptr;
+  }
+
+  struct stat target_stat;
+  if (fstatat(parent_descriptor, base_name, &target_stat, AT_SYMLINK_NOFOLLOW) != 0) {
+    if (errno == ENOENT && !expected_present) {
+      napi_value result;
+      napi_create_object(env, &result);
+      SetString(env, result, "rootPath", resolved_root);
+      SetString(env, result, "path", requested_target);
+      SetBoolean(env, result, "removed", false);
+      SetString(env, result, "device", "0");
+      SetString(env, result, "inode", "0");
+      close(parent_descriptor);
+      close(root_descriptor);
+      return result;
+    }
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink target could not be inspected");
+    return nullptr;
+  }
+  if (!expected_present || !S_ISREG(target_stat.st_mode) || target_stat.st_nlink != 1 ||
+      target_stat.st_dev != root_stat.st_dev || S_ISLNK(target_stat.st_mode) ||
+      static_cast<unsigned long long>(target_stat.st_dev) != expected_device_number ||
+      static_cast<unsigned long long>(target_stat.st_ino) != expected_inode_number) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink target identity precondition failed");
+    return nullptr;
+  }
+
+  if (unlinkat(parent_descriptor, base_name, 0) != 0 || fsync(parent_descriptor) != 0) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink could not be durably committed");
+    return nullptr;
+  }
+  struct stat after_stat;
+  if (fstatat(parent_descriptor, base_name, &after_stat, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink postcondition failed");
+    return nullptr;
+  }
+  char resolved_target[PATH_MAX];
+  if (snprintf(resolved_target, sizeof(resolved_target), "%s/%s", resolved_parent, base_name) >= static_cast<int>(sizeof(resolved_target))) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink result path is too long");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "rootPath", resolved_root);
+  SetString(env, result, "path", resolved_target);
+  SetBoolean(env, result, "removed", true);
+  char device[32];
+  char inode[32];
+  snprintf(device, sizeof(device), "%llu", static_cast<unsigned long long>(target_stat.st_dev));
+  snprintf(inode, sizeof(inode), "%llu", static_cast<unsigned long long>(target_stat.st_ino));
+  SetString(env, result, "device", device);
+  SetString(env, result, "inode", inode);
+  close(parent_descriptor);
+  close(root_descriptor);
+  return result;
+}
+
 struct ProcessRecord {
   pid_t pid;
   std::string name;
@@ -1543,6 +1693,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "hashFileWithinRoot", function);
   napi_create_function(env, "writeFileAtomicWithinRoot", NAPI_AUTO_LENGTH, WriteFileAtomicWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "writeFileAtomicWithinRoot", function);
+  napi_create_function(env, "unlinkFileWithinRoot", NAPI_AUTO_LENGTH, UnlinkFileWithinRoot, nullptr, &function);
+  napi_set_named_property(env, exports, "unlinkFileWithinRoot", function);
   napi_create_function(env, "listProcesses", NAPI_AUTO_LENGTH, ListProcesses, nullptr, &function);
   napi_set_named_property(env, exports, "listProcesses", function);
   napi_create_function(env, "inspectProcess", NAPI_AUTO_LENGTH, InspectProcess, nullptr, &function);

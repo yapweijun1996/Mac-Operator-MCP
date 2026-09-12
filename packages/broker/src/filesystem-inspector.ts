@@ -222,6 +222,13 @@ interface NativeFilesystemAdapter {
     expectedInode: string,
     temporaryName: string
   ): unknown;
+  unlinkFileWithinRoot(
+    rootPath: string,
+    targetPath: string,
+    expectedPresent: boolean,
+    expectedDevice: string,
+    expectedInode: string
+  ): unknown;
 }
 
 const ROOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -1061,6 +1068,38 @@ export class FilesystemInspector {
       inode: write.inode
     };
   }
+
+  unlinkPlanned(
+    plan: FilesystemPathPlan,
+    expectedIdentity: FilesystemIdentityPrecondition
+  ): { path: string; removed: boolean; device: string; inode: string } {
+    assertContentPathAllowed(plan.requestedPath);
+    if (!/^\d+$/u.test(expectedIdentity.device) || !/^\d+$/u.test(expectedIdentity.inode)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem unlink identity precondition is malformed");
+    }
+    let nativeUnlink: unknown;
+    try {
+      nativeUnlink = this.native.unlinkFileWithinRoot(
+        plan.root.path,
+        plan.requestedPath,
+        expectedIdentity.present,
+        expectedIdentity.device,
+        expectedIdentity.inode
+      );
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem unlink target escaped its authorized root or changed during deletion");
+    }
+    const unlink = parseNativeUnlink(nativeUnlink);
+    const resolvedRelative = relative(unlink.rootPath, unlink.path);
+    if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative) ||
+        plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem unlink result escaped its authorized root or deny zone");
+    }
+    if (unlink.removed !== expectedIdentity.present) {
+      throw new BrokerError("VERIFICATION_FAILED", "Filesystem unlink postcondition did not match the request");
+    }
+    return unlink;
+  }
 }
 
 function parseNativeRead(value: unknown): { rootPath: string; path: string; content: Buffer; sizeBytes: number; truncated: boolean; device: string; inode: string } {
@@ -1170,6 +1209,25 @@ function parseNativeWrite(value: unknown): {
     throw new Error("Malformed native write");
   }
   return record as unknown as { rootPath: string; path: string; bytesWritten: number; sha256: string; created: boolean; device: string; inode: string; readback: Buffer };
+}
+
+function parseNativeUnlink(value: unknown): {
+  rootPath: string;
+  path: string;
+  removed: boolean;
+  device: string;
+  inode: string;
+} {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native unlink");
+  const record = value as Record<string, unknown>;
+  if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
+      typeof record.path !== "string" || !isAbsolute(record.path) ||
+      typeof record.removed !== "boolean" ||
+      typeof record.device !== "string" || !/^\d+$/u.test(record.device) ||
+      typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)) {
+    throw new Error("Malformed native unlink");
+  }
+  return record as { rootPath: string; path: string; removed: boolean; device: string; inode: string };
 }
 
 function normalizeRelative(path: string): string {

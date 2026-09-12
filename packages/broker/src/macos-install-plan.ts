@@ -163,10 +163,10 @@ export interface MacOsPlistApplyOptions {
 }
 
 export interface MacOsPlistApplyResult {
-  operation: "install" | "upgrade" | "rollback";
+  operation: "install" | "upgrade" | "rollback" | "uninstall";
   path: string;
   bytesWritten: number;
-  sha256: string;
+  sha256: string | null;
   created: boolean;
   backupPath: string | null;
   backupSha256: string | null;
@@ -398,7 +398,6 @@ export async function applyMacOsPlistPlan(
   plan: MacOsInstallPlan,
   options: MacOsPlistApplyOptions
 ): Promise<MacOsPlistApplyResult> {
-  if (plan.operation === "uninstall") fail("INVALID_ARGUMENT", "plist apply does not implement uninstall deletion");
   await inspectMacOsInstallFilesystem(plan, { ownerUid: options.ownerUid, requirePlist: plan.operation !== "install" });
   const inspector = options.inspector ?? createInstallInspector(plan);
   const targetPlan = inspector.planPath(plan.plistPath, "write");
@@ -416,6 +415,43 @@ export async function applyMacOsPlistPlan(
   }
   if (current === undefined) fail("FILESYSTEM_MISMATCH", "upgrade or rollback requires an existing plist");
   const currentIdentity = identityFromMetadata(current);
+  if (plan.operation === "uninstall") {
+    const currentContent = readExistingPlist(inspector, plan.plistPath).content;
+    const backupPlan = inspector.planPath(plan.backupPath, "write");
+    const backupCurrent = optionalStat(inspector, backupPlan);
+    let result: { path: string; removed: boolean; device: string; inode: string };
+    let backupRemoved = false;
+    try {
+      result = inspector.unlinkPlanned(targetPlan, currentIdentity);
+      if (backupCurrent !== undefined) {
+        inspector.unlinkPlanned(backupPlan, identityFromMetadata(backupCurrent));
+        backupRemoved = true;
+      }
+    } catch (error) {
+      if (optionalStat(inspector, targetPlan) === undefined) {
+        try {
+          inspector.writePlanned(targetPlan, currentContent, undefined, true, temporaryName("uninstall-restore"), identity(false));
+        } catch (restoreError) {
+          throw new AggregateError([error, restoreError], "macOS plist uninstall failed and restoration also failed");
+        }
+      }
+      throw error;
+    }
+    if (optionalStat(inspector, targetPlan) !== undefined) {
+      fail("FILESYSTEM_MISMATCH", "plist uninstall postcondition did not remove the target");
+    }
+    return {
+      operation: "uninstall",
+      path: result.path,
+      bytesWritten: 0,
+      sha256: null,
+      created: false,
+      backupPath: backupRemoved ? plan.backupPath : null,
+      backupSha256: null,
+      device: result.device,
+      inode: result.inode
+    };
+  }
   if (plan.operation === "upgrade") {
     const original = readExistingPlist(inspector, plan.plistPath);
     const backupPlan = inspector.planPath(plan.backupPath, "write");
