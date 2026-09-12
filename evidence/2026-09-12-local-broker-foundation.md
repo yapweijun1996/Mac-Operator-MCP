@@ -5,10 +5,10 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `cc3713ed97b374ae7bc0de7eccc7a1cac58d1884`
+- Base commit: `45c2097c41d7a2d3964f06283a88537e9e8e83c6`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `7d9f4f5b5b74ab611cfc2d4fbafdf0f392511fd843f6d44a1e32a89c28859aad`
+- Runtime source manifest SHA-256: `bbacceef4ff1378e80418094671fc731dca2c7b9fea8ebe12f99be0d3cb30aee`
 - Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 137 tests passed; 0 failed, skipped, cancelled, or todo.
+- 140 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the nineteen implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the twenty implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -97,6 +97,7 @@ Observed results:
 - The enabled-in-test `mac_project_discover` slice verified Git/Node/Python marker detection, metadata-only roots with content reads disabled, protected-directory exclusion, unsupported-type rejection, bounded result validation, worker execution, and absence of credential-shaped output.
 - The enabled-in-test `mac_project_summary` slice verified safe Git/manifest/language/structure metadata, metadata-only roots with content reads disabled, protected `.env` exclusion, branch/dirty omission warnings, bounded tree output, bounded result validation, worker execution, and absence of source or credential-shaped output.
 - The enabled-in-test `mac_storage_analysis` slice verified metadata-only roots with content reads disabled, descriptor-backed capacity output, ranked nested consumers, fixed `top_n`/depth bounds, protected `.ssh` exclusion, no credential-shaped output, bounded result validation, worker execution, and audit redaction.
+- The enabled-in-test `mac_network_status` slice verified bounded local interface metadata, inferred connectivity, empty listener output with an explicit limitation warning, no active probes or packet capture, independent `mac.network.read` authorization, bounded native result validation, and audit evidence without credential-shaped network data. Listener enumeration remains disabled until a version-pinned macOS kernel ABI adapter is available.
 
 ## Boundary and limitations
 
