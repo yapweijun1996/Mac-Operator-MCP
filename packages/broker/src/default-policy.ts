@@ -186,6 +186,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_project_summary",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.project.read"],
+    capabilityFamilies: ["read"],
+    targetType: "path",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 15_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_write_file_atomic",
     contractVersion: "0.1",
     requiredScopes: ["mac.files.write"],

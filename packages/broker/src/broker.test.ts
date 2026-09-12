@@ -205,7 +205,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 17);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 18);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -884,6 +884,60 @@ test("mac_project_discover rejects unsupported project types", async () => {
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, false);
     assert.equal(result.result_class, "PRECONDITION_FAILED");
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_project_summary returns safe structure metadata without reading project content", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-project-summary-"));
+  const directory = join(parent, "workspace");
+  const sourceDirectory = join(directory, "src");
+  await mkdir(join(directory, ".git"), { recursive: true });
+  await mkdir(sourceDirectory, { recursive: true });
+  await writeFile(join(directory, "package.json"), "{\"name\":\"safe\",\"token\":\"should-not-be-read\"}");
+  await writeFile(join(sourceDirectory, "index.ts"), "const token = 'should-not-be-read';\n");
+  await writeFile(join(directory, ".env"), "TOKEN=private-value");
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.project.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "project-summary-request",
+      nonce: "project-summary-nonce",
+      tool: "mac_project_summary",
+      arguments: { project_root: directory, include_tree: true, tree_depth: 1 }
+    }, ["mac.project.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      project_root: string;
+      vcs: { system: string; branch?: string; dirty?: boolean };
+      manifests: string[];
+      languages: string[];
+      tree_entries: Array<{ path: string; type: string; depth: number }>;
+      warnings: string[];
+    };
+    assert.equal(data.project_root, await realpath(directory));
+    assert.deepEqual(data.vcs, { system: "git" });
+    assert.deepEqual(data.manifests, ["package.json"]);
+    assert.deepEqual(data.languages, ["javascript", "typescript"]);
+    const envPath = await realpath(join(directory, ".env"));
+    const sourcePath = await realpath(join(sourceDirectory, "index.ts"));
+    assert.equal(data.tree_entries.some((entry) => entry.path === envPath), false);
+    assert.equal(data.tree_entries.some((entry) => entry.path === sourcePath && entry.depth === 1), true);
+    assert.equal(data.warnings.some((warning) => warning.includes("branch and dirty state")), true);
+    assert.equal(result.truncated, false);
+    assert.equal(JSON.stringify(result).includes("should-not-be-read"), false);
+    assert.equal(JSON.stringify(result).includes("private-value"), false);
   } finally {
     store.close();
     await rm(parent, { recursive: true, force: true });

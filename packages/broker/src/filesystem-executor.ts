@@ -64,6 +64,12 @@ export interface FilesystemExecutor {
     maxResults: number,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  summarizeProject?(
+    plan: FilesystemPathPlan,
+    includeTree: boolean,
+    treeDepth: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -175,6 +181,16 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "project_discover", plans, types, maxResults }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  summarizeProject(
+    plan: FilesystemPathPlan,
+    includeTree: boolean,
+    treeDepth: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "project_summary", plan, includeTree, treeDepth }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -334,6 +350,32 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
           throw malformed();
         }
       }
+    }
+    return value;
+  }
+  if (value.operation === "project_summary") {
+    if (typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || value.projectRoot.length > 4096 || value.projectRoot.includes("\0") ||
+        value.vcs === null || typeof value.vcs !== "object" || !["git", "none", "other"].includes(value.vcs.system) ||
+        (value.vcs.branch !== undefined && (typeof value.vcs.branch !== "string" || value.vcs.branch.length > 256 || value.vcs.branch.includes("\0"))) ||
+        (value.vcs.dirty !== undefined && typeof value.vcs.dirty !== "boolean") ||
+        !Array.isArray(value.manifests) || value.manifests.length > 64 ||
+        !Array.isArray(value.languages) || value.languages.length > 64 ||
+        !Array.isArray(value.treeEntries) || value.treeEntries.length > 1000 ||
+        !Array.isArray(value.warnings) || value.warnings.length > 32 || typeof value.truncated !== "boolean") {
+      throw malformed();
+    }
+    for (const manifest of value.manifests) {
+      if (typeof manifest !== "string" || manifest.length < 1 || manifest.length > 256 || manifest.includes("\0")) throw malformed();
+    }
+    for (const language of value.languages) {
+      if (typeof language !== "string" || language.length < 1 || language.length > 64 || language.includes("\0")) throw malformed();
+    }
+    for (const entry of value.treeEntries) {
+      if (entry === null || typeof entry !== "object" || typeof entry.path !== "string" || !isAbsolute(entry.path) || entry.path.length > 4096 || entry.path.includes("\0") ||
+          !["file", "directory", "symlink", "other"].includes(entry.type) || !Number.isSafeInteger(entry.depth) || entry.depth < 0 || entry.depth > 4) throw malformed();
+    }
+    for (const warning of value.warnings) {
+      if (typeof warning !== "string" || warning.length < 1 || warning.length > 512 || warning.includes("\0")) throw malformed();
     }
     return value;
   }

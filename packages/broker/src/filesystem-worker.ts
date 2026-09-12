@@ -101,6 +101,9 @@ try {
       projects: discovery.projects,
       truncated: discovery.truncated
     };
+  } else if (command.operation === "project_summary") {
+    const summary = inspector.summarizeProjectPlanned(command.plan, command.includeTree, command.treeDepth);
+    value = { operation: "project_summary", ...summary };
   } else if (command.operation === "write") {
     assertContentDoesNotContainSecrets(command.content);
     const write = inspector.writePlanned(

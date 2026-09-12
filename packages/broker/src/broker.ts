@@ -742,6 +742,37 @@ export class Broker {
           }
         };
       }
+      case "mac_project_summary": {
+        if (!execution.filesystem || !execution.projectSummary || !this.filesystemExecutor.summarizeProject) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem project-summary execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.summarizeProject(
+          execution.filesystem.plan,
+          execution.projectSummary.includeTree,
+          execution.projectSummary.treeDepth,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        if (workerResult.operation !== "project_summary") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            project_root: workerResult.projectRoot,
+            vcs: workerResult.vcs,
+            manifests: [...workerResult.manifests],
+            languages: [...workerResult.languages],
+            tree_entries: workerResult.treeEntries.map((entry) => ({ path: entry.path, type: entry.type, depth: entry.depth })),
+            warnings: [...workerResult.warnings]
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "safe_project_result_validation",
+            evidence: { summary: "Project summary was collected from bounded descriptor-backed metadata without source or VCS control-file reads" }
+          },
+          truncated: workerResult.truncated,
+          auditTarget: `path:${workerResult.projectRoot}`,
+          auditEvidence: { manifestCount: workerResult.manifests.length, treeEntryCount: workerResult.treeEntries.length, truncated: workerResult.truncated }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -941,6 +972,20 @@ export class Broker {
           plans,
           types: normalizeProjectTypes((request.arguments.types ?? []) as string[]),
           maxResults: (request.arguments.max_results ?? 500) as number
+        }
+      };
+    }
+    if (request.tool === "mac_project_summary") {
+      assertExactArguments(request.arguments, ["project_root", "include_tree", "tree_depth"]);
+      validateProjectSummaryArguments(request.arguments);
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const plan = inspector.planPath(request.arguments.project_root as string, "metadata");
+      return {
+        target: { kind: "path", reference: plan.rootId },
+        filesystem: { inspector, plan },
+        projectSummary: {
+          includeTree: (request.arguments.include_tree ?? false) as boolean,
+          treeDepth: (request.arguments.tree_depth ?? 2) as number
         }
       };
     }
@@ -1171,6 +1216,10 @@ interface ExecutionPlan {
     plans: readonly FilesystemPathPlan[];
     types: readonly string[];
     maxResults: number;
+  };
+  projectSummary?: {
+    includeTree: boolean;
+    treeDepth: number;
   };
   job?: BrokerJob;
   write?: {
@@ -1403,6 +1452,21 @@ function validateProjectDiscoverArguments(argumentsValue: Readonly<Record<string
   const maxResults = argumentsValue.max_results;
   if (maxResults !== undefined && (!Number.isSafeInteger(maxResults) || (maxResults as number) < 1 || (maxResults as number) > 500)) {
     throw new BrokerError("PRECONDITION_FAILED", "max_results must be an integer between 1 and 500");
+  }
+}
+
+function validateProjectSummaryArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const projectRoot = argumentsValue.project_root;
+  if (typeof projectRoot !== "string" || !isAbsolute(projectRoot) || projectRoot.length > 4096 || projectRoot.includes("\0")) {
+    throw new BrokerError("PRECONDITION_FAILED", "project_root must be a bounded absolute path");
+  }
+  const includeTree = argumentsValue.include_tree;
+  if (includeTree !== undefined && typeof includeTree !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "include_tree must be a boolean");
+  }
+  const treeDepth = argumentsValue.tree_depth;
+  if (treeDepth !== undefined && (!Number.isSafeInteger(treeDepth) || (treeDepth as number) < 0 || (treeDepth as number) > 4)) {
+    throw new BrokerError("PRECONDITION_FAILED", "tree_depth must be an integer between 0 and 4");
   }
 }
 

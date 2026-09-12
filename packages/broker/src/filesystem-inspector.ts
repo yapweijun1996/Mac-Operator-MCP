@@ -107,6 +107,24 @@ export interface SafeProjectDiscovery {
   truncated: boolean;
 }
 
+export interface SafeProjectSummary {
+  projectRoot: string;
+  vcs: {
+    system: "git" | "none" | "other";
+    branch?: string;
+    dirty?: boolean;
+  };
+  manifests: readonly string[];
+  languages: readonly string[];
+  treeEntries: readonly {
+    path: string;
+    type: SafeDirectoryEntry["type"];
+    depth: number;
+  }[];
+  warnings: readonly string[];
+  truncated: boolean;
+}
+
 export interface SafePathMetadata {
   rootId: string;
   path: string;
@@ -181,6 +199,13 @@ const MAX_TEXT_MATCHES_PER_FILE = 100;
 const MAX_PROJECT_DEPTH = 16;
 const MAX_PROJECT_DIRECTORIES = 10_000;
 const MAX_PROJECT_ENTRIES = 50_000;
+const MAX_PROJECT_SUMMARY_TREE_ENTRIES = 1_000;
+const PROJECT_SUMMARY_MANIFESTS = new Set([
+  "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "tsconfig.json",
+  "pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
+  "compose.yml", "compose.yaml", "Package.swift", "Cargo.toml", "go.mod", "Gemfile", "pom.xml", "build.gradle",
+  "build.gradle.kts", "settings.gradle", "settings.gradle.kts"
+]);
 const PROJECT_MARKERS: Readonly<Record<string, readonly string[]>> = {
   git: [".git"],
   node: ["package.json"],
@@ -584,6 +609,87 @@ export class FilesystemInspector {
     return { projects, truncated };
   }
 
+  summarizeProjectPlanned(
+    plan: FilesystemPathPlan,
+    includeTree: boolean,
+    treeDepth: number
+  ): SafeProjectSummary {
+    if (typeof includeTree !== "boolean") {
+      throw new BrokerError("PRECONDITION_FAILED", "include_tree must be a boolean");
+    }
+    if (!Number.isSafeInteger(treeDepth) || treeDepth < 0 || treeDepth > 4) {
+      throw new BrokerError("PRECONDITION_FAILED", "Project summary tree depth is outside the supported range");
+    }
+    const root = this.statPlanned(plan, false);
+    if (root.type !== "directory") throw new BrokerError("PRECONDITION_FAILED", "Project summary root must be a directory");
+
+    const manifests = new Set<string>();
+    const languages = new Set<string>();
+    const treeEntries: Array<{ path: string; type: SafeDirectoryEntry["type"]; depth: number }> = [];
+    const warnings: string[] = [];
+    const pending: Array<{ plan: FilesystemPathPlan; depth: number }> = [{ plan, depth: 0 }];
+    const visitedDirectories = new Set<string>();
+    let visitedEntries = 0;
+    let visitedDirectoriesCount = 0;
+    let truncated = false;
+    let hasGit = false;
+
+    while (pending.length > 0 && !truncated) {
+      const current = pending.shift()!;
+      let cursor: string | undefined;
+      while (!truncated) {
+        const listing = this.listPlanned(current.plan, cursor, 500, true);
+        if (visitedDirectories.has(listing.path) && cursor === undefined) break;
+        if (!visitedDirectories.has(listing.path)) {
+          visitedDirectories.add(listing.path);
+          visitedDirectoriesCount += 1;
+          if (visitedDirectoriesCount > MAX_PROJECT_DIRECTORIES) {
+            truncated = true;
+            break;
+          }
+        }
+        for (const entry of listing.entries) {
+          visitedEntries += 1;
+          if (visitedEntries > MAX_PROJECT_ENTRIES) {
+            truncated = true;
+            break;
+          }
+          const childPath = join(listing.path, entry.name);
+          if (!isAbsolute(childPath) || childPath.length > 4096) {
+            truncated = true;
+            break;
+          }
+          if (current.depth === 0 && entry.type !== "symlink") {
+            if (entry.name === ".git") hasGit = true;
+            if (PROJECT_SUMMARY_MANIFESTS.has(entry.name)) manifests.add(entry.name);
+          }
+          addProjectLanguage(languages, entry.name, entry.type);
+          if (includeTree && treeEntries.length < MAX_PROJECT_SUMMARY_TREE_ENTRIES) {
+            treeEntries.push({ path: childPath, type: entry.type, depth: current.depth });
+          } else if (includeTree) {
+            truncated = true;
+            break;
+          }
+          if (!includeTree || entry.type !== "directory" || current.depth >= treeDepth || PROJECT_SKIP_DIRECTORIES.has(entry.name)) continue;
+          pending.push({ plan: { ...current.plan, requestedPath: childPath }, depth: current.depth + 1 });
+        }
+        if (truncated || listing.nextCursor === null) break;
+        cursor = listing.nextCursor;
+      }
+    }
+    if (hasGit) warnings.push("VCS branch and dirty state are omitted by the metadata-only summary");
+    if (truncated) warnings.push("Project summary traversal was truncated by fixed metadata budgets");
+    return {
+      projectRoot: root.path,
+      vcs: { system: hasGit ? "git" : "none" },
+      manifests: [...manifests].sort(),
+      languages: [...languages].sort(),
+      treeEntries,
+      warnings: warnings.slice(0, 32),
+      truncated
+    };
+  }
+
   private traverseMetadata<T>(
     plans: readonly FilesystemPathPlan[],
     maxResults: number,
@@ -910,6 +1016,32 @@ export function normalizeProjectTypes(types: readonly string[]): string[] {
     normalized.add(value);
   }
   return [...normalized].sort();
+}
+
+function addProjectLanguage(languages: Set<string>, name: string, type: SafeDirectoryEntry["type"]): void {
+  if (type === "directory" && !PROJECT_SUMMARY_MANIFESTS.has(name)) return;
+  const lowerName = name.normalize("NFKC").toLocaleLowerCase("en-US");
+  const extension = lowerName.includes(".") ? lowerName.slice(lowerName.lastIndexOf(".")) : "";
+  const language = lowerName === "package.json" || [".js", ".jsx", ".mjs", ".cjs"].includes(extension)
+    ? "javascript"
+    : ["tsconfig.json", ".ts", ".tsx", ".mts", ".cts"].includes(lowerName) || [".ts", ".tsx", ".mts", ".cts"].includes(extension)
+      ? "typescript"
+      : ["pyproject.toml", "setup.py", "requirements.txt", "pipfile", ".py"].includes(lowerName) || extension === ".py"
+        ? "python"
+        : ["packages.swift", "package.swift", ".swift"].includes(lowerName) || extension === ".swift"
+          ? "swift"
+          : ["cargo.toml", ".rs"].includes(lowerName) || extension === ".rs"
+            ? "rust"
+            : ["go.mod", ".go"].includes(lowerName) || extension === ".go"
+              ? "go"
+              : ["gemfile", ".rb"].includes(lowerName) || extension === ".rb"
+                ? "ruby"
+                : ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", ".java", ".kt"].includes(lowerName) || [".java", ".kt"].includes(extension)
+                  ? "jvm"
+                  : ["dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"].includes(lowerName)
+                    ? "docker"
+                    : undefined;
+  if (language !== undefined && languages.size < 64) languages.add(language);
 }
 
 function compileSearchGlob(glob: string | undefined): RegExp | undefined {
