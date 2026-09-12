@@ -5,10 +5,10 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `0b5582603a4d1cc8716c59c2717e4c57326c6c06`
+- Base commit: `8638356f825da90db6a901f5000ca9f77ae3ecb2`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `e4f152d50457f8eb02358a1c04b3b9097b4283d7d0795ac6c7781d1334c3e82f`
+- Runtime source manifest SHA-256: `211341c6348c83e41d9225ebd5f645a93d8a29ec588a124bcafa4c824a238be5`
 - Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 133 tests passed; 0 failed, skipped, cancelled, or todo.
+- 135 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the sixteen implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the seventeen implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -79,6 +79,7 @@ Observed results:
 - `mac_find_files` executes in the Broker-owned filesystem worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, authorization for every requested root, a fixed 50,000-entry/32-level budget, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_recent_files` executes in the same Broker-owned worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, per-root authorization, a Broker-supplied clock and bounded time window, fixed traversal/result budgets, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_search_text` executes in the same Broker-owned worker with empty environment/arguments, content-read root planning, independent `mac.files.search` scope and per-root authorization, 1 MiB per-file and 64 MiB aggregate scan budgets, UTF-8-only text handling, binary/NUL rejection, 100 matches per file, sanitized snippets, protected-entry/secret-content filtering, active cancellation, and strict result validation. Metadata-only roots are denied before content execution.
+- `mac_project_discover` executes in the same Broker-owned worker with empty environment/arguments, metadata-only root planning, independent `mac.project.read` scope and per-root authorization, allowlisted project marker types, fixed 16-level/10,000-directory/50,000-entry/result budgets, dependency-directory pruning, protected-entry filtering, active cancellation, and strict result validation. It does not read project file contents.
 - A Broker integration test revoked the active session during a filesystem read, verified the worker cancellation predicate changed immediately, discarded the otherwise successful result, and recorded `AUTHORIZED` decision followed by `CANCELLED` completion.
 - Job Ledger tests verified principal-scoped payload-bound idempotency, conflicting reuse denial, revision-checked and time/result-consistent transitions, bounded secret-output replacement, owner isolation, immediate/idempotent queued cancellation, and startup recovery from queued/running to `cancelled`/`unknown` with hash-linked audit evidence.
 - `mac_job_status` and `mac_job_cancel` passed their versioned success schemas. Dynamic job IDs were resolved to Broker-owned ownership before the `job:owned` policy decision; foreign jobs were indistinguishable from missing jobs. Cancellation produced separate decision, payload-digest intent, state mutation, readback verification, and completion audit records.
@@ -91,6 +92,7 @@ Observed results:
 - The enabled-in-test `mac_find_files` slice verified metadata-only search on a root with `contentRead` disabled, canonical matching paths and safe metadata, nested traversal, protected-entry filtering, result/depth bounds, worker execution, and independent authorization failure when one of multiple requested roots lacked a target grant.
 - The enabled-in-test `mac_recent_files` slice verified a Broker-bound 24-hour window, inclusion of a recent file and exclusion of an older file, metadata-only roots with `contentRead` disabled, protected-entry filtering, bounded result validation, worker execution, and absence of content or credential-shaped output.
 - The enabled-in-test `mac_search_text` slice verified literal/glob matching, line/column/snippet output, UTF-8/binary handling, protected credential filtering, no secret leakage in result/audit evidence, content-root authorization, metadata-only denial, bounded result validation, and worker execution.
+- The enabled-in-test `mac_project_discover` slice verified Git/Node/Python marker detection, metadata-only roots with content reads disabled, protected-directory exclusion, unsupported-type rejection, bounded result validation, worker execution, and absence of credential-shaped output.
 
 ## Boundary and limitations
 
