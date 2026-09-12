@@ -2,7 +2,7 @@
 
 ## Scope
 
-- Source revisions: `5804f04` (`feat: add macOS install preflight plan`), `8fe6663` (`feat: verify macOS install filesystem preflight`), `b4945c3` (`feat: atomically apply macOS plist plans`)
+- Source revisions: `5804f04` (`feat: add macOS install preflight plan`), `8fe6663` (`feat: verify macOS install filesystem preflight`), `b4945c3` (`feat: atomically apply macOS plist plans`), `662801b` (`feat: add guarded macOS plist uninstall`)
 - Host: Mac mini M4, macOS 26.2 (`25C56`), `arm64`
 - Node: `v25.5.0`
 - npm: `11.8.0`
@@ -22,6 +22,7 @@
 - validates exact launchd, Broker native-runtime, source/contract/policy/capability, and code-signature readback before readiness.
 - `inspectMacOsInstallFilesystem` performs read-only double-`lstat` checks over the user-home parent chain, package root, working directory, executable, entrypoint, signed artifact, log directory, and optional plist; it rejects symlinks, foreign owners, group/other write bits, unexpected types, and device/inode changes.
 - `applyMacOsPlistPlan` reuses the native descriptor-relative atomic writer for install, upgrade, and rollback; it binds device/inode preconditions, writes same-directory temporary files with `fsync`/`renameat`, verifies reopened content/hash identity, and restores the previous bytes if an upgrade write fails. It intentionally does not delete uninstall targets or invoke launchd.
+- `applyMacOsPlistPlan` uses a separate native `unlinkat` path for exact plist/backup uninstall, with root/regular-file/device/inode checks, parent `fsync`, absence readback, and plist restoration if backup removal fails. It exposes no recursive deletion and never invokes launchd.
 
 ## Boundary tests
 
@@ -33,7 +34,7 @@ The seven focused tests in `packages/broker/src/macos-install-plan.test.ts` cove
 - exact previous-revision preconditions for upgrade and uninstall;
 - malformed nested readback returning the stable `INVALID_READBACK` error class.
 - real temporary-directory filesystem preflight, writable-path denial, symlink denial, and stable device/inode readback.
-- temporary-root install, upgrade backup, rollback restoration, and native atomic-write readback.
+- temporary-root install, upgrade backup, rollback restoration, exact-target uninstall, and native atomic-write/unlink readback.
 
 ## Verification
 
@@ -47,12 +48,13 @@ The seven focused tests in `packages/broker/src/macos-install-plan.test.ts` cove
 ## Artifact hashes
 
 ```text
-packages/broker/src/macos-install-plan.ts       8a1ea68d3b3eeaca73702d29b02584324c25e8e88fc5ff8bae5a7fe5d0128a3d
-packages/broker/src/macos-install-plan.test.ts  8d0de52973346f1a028aa8e78dcbe7425988d198323691992da1832e02be5e26
-packages/broker/src/filesystem-inspector.ts     bcd476737b2b2ab711520392fec685baa9f9a21d94d4b7fa23347245139c47a9
-packaging/macos/README.md                       0459c6c9b15ecc4ebc22f9b3aabf12d249be64f3d30245b0271f5389e3bc439b
-DEPLOYMENT.md                                   2b5e275a77a35cf45fcbe781ca72d2dd9579a47bf90d191f6174581d2c8e0ced
-ROLLBACK.md                                     08c07d3f074ef99a68ba80c08556393a92590157c8f2afd16365e40ba2ff7abd
+packages/broker/src/macos-install-plan.ts       9f9c56495d620568e951e0416b56ee128a59d933015ef2a1baa2c4b7a8d472bc
+packages/broker/src/macos-install-plan.test.ts  c5aad21ba54d896dbb825ee91b028b757309e6fea2b33b8b6bceeda0b39b6f3b
+packages/broker/src/filesystem-inspector.ts     30faf1db6dfa2ae1b0c2d617fc6e0e529d19a1a3ba51cbfb8b807609cf66edab
+packages/broker/native/peer_credentials.cc      2b44d259a8ee674548e054b3767d8048c0ba18602833efc3a93e9e9036aebbbf
+packaging/macos/README.md                       409c688a97904f7b57a11acd391ef947a70bbff30fb8e0b60629ee9a8a01eca6
+DEPLOYMENT.md                                   6e0eb08e4a633001ef654fe57967df7387f70a9f1eaa9125f77bc7a3049c642a
+ROLLBACK.md                                     ef6ff19354ec39ab49886f69da42b394dacd7fde3ef4cce0355c1cf9cf7a0382
 ```
 
 ## Not proven

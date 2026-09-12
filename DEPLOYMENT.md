@@ -15,7 +15,7 @@ Status: Draft plan
 
 Supported macOS/hardware versions, component identities, install paths, permissions, launch ownership, protected TLS certificate/private-key references, other secret references, policy version, persistence location, audit retention, port/socket ownership, health checks, upgrade and rollback compatibility, and uninstall procedure.
 
-The source template, renderer, and install plan are not installation authorization. A future installer must run `inspectMacOsInstallFilesystem`, use `applyMacOsPlistPlan` for descriptor-relative plist install/upgrade/rollback, verify the exact package signature, owner/mode/symlink state, native module identity, source/contract/policy readback, exact existing-service revision, and rollback backup before any `launchctl bootstrap` call. These APIs do not invoke `codesign` or `launchctl`; uninstall deletion remains intentionally unimplemented.
+The source template, renderer, and install plan are not installation authorization. A future installer must run `inspectMacOsInstallFilesystem`, use `applyMacOsPlistPlan` for descriptor-relative plist install/upgrade/rollback/uninstall, verify the exact package signature, owner/mode/symlink state, native module identity, source/contract/policy readback, exact existing-service revision, and rollback backup before any `launchctl bootstrap` call. These APIs do not invoke `codesign` or `launchctl`, and the uninstall primitive accepts only the exact planned plist plus its exact backup.
 
 ## Release rule
 

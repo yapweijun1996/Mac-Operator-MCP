@@ -30,6 +30,8 @@ The latest implementation addendum is `8fe6663`: `inspectMacOsInstallFilesystem`
 
 The latest implementation addendum is `b4945c3`: `applyMacOsPlistPlan` now binds target device/inode preconditions and uses the existing native `openat`/`renameat`/`fsync` writer for temporary-root-tested install, upgrade backup, and rollback. It verifies reopened bytes/identity and attempts restoration on upgrade failure; uninstall deletion and launchd mutation remain disabled.
 
+The latest implementation addendum is `662801b`: the native filesystem boundary now exposes exact-target `unlinkat` with root, regular-file, owner-domain, and device/inode preconditions. `applyMacOsPlistPlan` uses it for temporary-root-tested plist/backup uninstall and restores the plist if backup deletion fails; recursive deletion and launchd mutation remain unavailable.
+
 ## Completed work
 
 - Created the Git repository and initial commit.
@@ -47,6 +49,7 @@ The latest implementation addendum is `b4945c3`: `applyMacOsPlistPlan` now binds
 - Added a non-executing macOS install preflight plan with fixed signature/service command argv, empty environments, bounded timeout/output, per-user/root denial, package-owned entrypoint/path checks, exact upgrade/rollback/uninstall preconditions, rollback/uninstall actions, and exact post-bootstrap identity validation; live installation and signature/launchd host evidence remain disabled.
 - Added a read-only macOS install filesystem preflight with double-`lstat` identity checks across package paths and parent directories; symlink, owner, mode, type, and target-swap boundaries fail closed, while descriptor-relative atomic installation remains future work.
 - Added a bounded plist apply primitive that reuses the native descriptor-relative atomic writer, binds external identity preconditions, verifies content/identity readback, and restores upgrade content on failure in temporary-root tests; it never invokes launchd and intentionally does not delete uninstall targets.
+- Added exact-target native `unlinkat` with postcondition verification and recovery around plist/backup uninstall; no recursive or arbitrary deletion surface is exposed, and real service removal remains unverified.
 - Started documentation-only remediation against the newer KB SSOT: repaired stale dynamic-state ownership; materialized locked Security, Filesystem Policy, Tool Contract Standard, and Tool Catalog documents; added threat, scope, persistence, verification, ADR, sandbox-research, navigation, testing, configuration, deployment, operations, incident, rollback, and kill-switch documents.
 - Resolved the two representation conflicts: every contract now has deterministic `audit_class` and structured `postcondition_verification`, and the legacy contract `phase` field is now canonical `tool_delivery_wave`.
 - Completed MOP-084 functional API schema materialization: all 44 planned tools now have explicit bounded `input_schema` and tool-specific `output_schema` objects integrated with the common result envelope. Envelope validation, functional schema compilation, semantic review, authority-surface review, and catalog parity pass; runtime compatibility remains a separate gate.
