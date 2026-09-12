@@ -5,11 +5,11 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `f6a177df290ba59152c7b1d9297e8392e1b413c7`
+- Base commit: `dab8fedeea77c3cfef49ca0cfb78acb1a81f17d3`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `b8076ca51757deead93d9392434fcd7672c55a862af5bfc2a22f71b8b7f8c596`
-- Tool-contract manifest SHA-256: `f9787b535efdab784a8ade9302faebb02df7e92d544a88e8de03eed5e642c537`
+- Runtime source manifest SHA-256: `356e6a9caf2f1ab61122c2444f69ca9883c15da3e3b148050ff21e660b6f0e96`
+- Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
 
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 121 tests passed; 0 failed, skipped, cancelled, or todo.
+- 123 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the ten implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the eleven implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -78,6 +78,10 @@ Observed results:
 - A Broker integration test revoked the active session during a filesystem read, verified the worker cancellation predicate changed immediately, discarded the otherwise successful result, and recorded `AUTHORIZED` decision followed by `CANCELLED` completion.
 - Job Ledger tests verified principal-scoped payload-bound idempotency, conflicting reuse denial, revision-checked and time/result-consistent transitions, bounded secret-output replacement, owner isolation, immediate/idempotent queued cancellation, and startup recovery from queued/running to `cancelled`/`unknown` with hash-linked audit evidence.
 - `mac_job_status` and `mac_job_cancel` passed their versioned success schemas. Dynamic job IDs were resolved to Broker-owned ownership before the `job:owned` policy decision; foreign jobs were indistinguishable from missing jobs. Cancellation produced separate decision, payload-digest intent, state mutation, readback verification, and completion audit records.
+
+## Directory-listing slice
+
+- The disabled-by-default `mac_list_directory` slice verified independent `mac.files.read` scope and content-root authorization, descriptor-backed local-volume directory opening, bounded lexicographic pagination, hidden-entry handling, protected `.env`/secret-zone filtering before result construction, canonical path/device/inode identity checks, and rejection of directory identity changes after enumeration.
 
 ## Boundary and limitations
 
