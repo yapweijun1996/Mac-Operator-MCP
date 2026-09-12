@@ -756,9 +756,11 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
     ...basePolicy,
     tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
   };
+  let runnerCalls = 0;
   const taskRunner: TaskRunner = {
     available: true,
     async run(profile, control) {
+      runnerCalls += 1;
       assert.equal(profile.process.executable, "/bin/echo");
       assert.equal(profile.networkPolicy, "none");
       assert.equal(control.timeoutMs, 600_000);
@@ -767,7 +769,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
         state: "completed",
         resultClass: "SUCCEEDED",
         exitCode: 0,
-        stdout: "ok\n",
+        stdout: runnerCalls === 1 ? "ok\n" : "x".repeat(2_048),
         stderr: "",
         truncated: false,
         durationMs: 1,
@@ -827,6 +829,34 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
     const jobId = store.requestRecord("task-success")!.jobId!;
     assert.equal(store.ownedJob(jobId, "principal-1")?.state, "completed");
     assert.equal(store.ownedJob(jobId, "principal-1")?.resultClass, "success");
+
+    const oversizedArguments = { profile: "tests.echo", cwd: root, args: ["oversized"] };
+    const oversizedRequest = unsigned({
+      requestId: "task-output-limit",
+      nonce: "task-output-limit-nonce",
+      tool: "mac_task_run",
+      arguments: oversizedArguments
+    }, ["mac.task.run"]);
+    store.issueApproval({
+      approvalId: "approval:task-output-limit",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(oversizedArguments)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const oversized = await broker.handle(signRequest(oversizedRequest, key));
+    assert.equal(oversized.result_class, "OUTPUT_LIMIT");
+    const oversizedJobId = store.requestRecord("task-output-limit")?.jobId;
+    assert.ok(oversizedJobId);
+    assert.equal(store.ownedJob(oversizedJobId, "principal-1")?.state, "failed");
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

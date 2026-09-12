@@ -1507,12 +1507,15 @@ export class Broker {
       // the control callback. Never publish a success after the Broker lost
       // authority; the outcome is unresolved and must remain inspectable.
       this.ensureActiveAuthority(request, execution.target);
+      const rawOutputBytes = Buffer.byteLength(taskResult.stdout, "utf8") + Buffer.byteLength(taskResult.stderr, "utf8");
+      const outputBudgetExceeded = taskResult.truncated || rawOutputBytes > resolved.process.outputCapBytes;
+      const timeoutBudgetExceeded = taskResult.durationMs > Math.min(timeoutMs, resolved.process.timeoutMs);
       const streamCap = Math.max(1, Math.floor(outputCapBytes / 2));
       const stdout = redactBoundedText(taskResult.stdout, streamCap);
       const stderr = redactBoundedText(taskResult.stderr, streamCap);
-      const finished = taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
-      const terminalState = finished ? "completed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
-      const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
+      const finished = !outputBudgetExceeded && !timeoutBudgetExceeded && taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
+      const terminalState = finished ? "completed" : timeoutBudgetExceeded || taskResult.state === "timed_out" ? "failed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
+      const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : timeoutBudgetExceeded || taskResult.state === "timed_out" || outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT" ? "failed" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
       execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
         state: terminalState,
         resultClass: terminalClass,
@@ -1525,9 +1528,10 @@ export class Broker {
       if (!finished) {
         if (terminalState === "cancelled") throw new BrokerError("CANCELLED", "Task was cancelled under active authority");
         if (terminalState === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Task outcome could not be verified", true);
-        if (taskResult.state === "timed_out") throw new BrokerError("TIMEOUT", "Task exceeded its execution budget");
+        if (timeoutBudgetExceeded || taskResult.state === "timed_out") throw new BrokerError("TIMEOUT", "Task exceeded its execution budget");
+        if (outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Task exceeded its output budget");
         if (taskResult.verification.status !== "verified") throw new BrokerError("VERIFICATION_FAILED", "Task postcondition verification failed");
-        throw new BrokerError(taskResult.resultClass === "OUTPUT_LIMIT" ? "OUTPUT_LIMIT" : "EXECUTION_FAILED", "Task execution failed");
+        throw new BrokerError("EXECUTION_FAILED", "Task execution failed");
       }
       return {
         data: {
