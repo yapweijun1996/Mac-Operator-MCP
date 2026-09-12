@@ -24,5 +24,17 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Local certificates and private keys
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+
+# Local scratch state
+.tmp/
+.cache/
+.runtime/
+
 # macOS metadata
 .DS_Store
