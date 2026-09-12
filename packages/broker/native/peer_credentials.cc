@@ -67,6 +67,17 @@ std::string Sha256Hex(const std::vector<unsigned char>& content) {
   return result;
 }
 
+std::string HexDigest(const unsigned char* digest, size_t length) {
+  static const char* hex = "0123456789abcdef";
+  std::string result;
+  result.reserve(length * 2);
+  for (size_t index = 0; index < length; ++index) {
+    result.push_back(hex[(digest[index] >> 4) & 0x0f]);
+    result.push_back(hex[digest[index] & 0x0f]);
+  }
+  return result;
+}
+
 bool DescriptorPath(int descriptor, char* output) {
   return fcntl(descriptor, F_GETPATH, output) == 0;
 }
@@ -350,6 +361,143 @@ napi_value ReadFileWithinRoot(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value HashFileWithinRoot(napi_env env, napi_callback_info info) {
+  size_t argc = 4;
+  napi_value args[4];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+    napi_throw_type_error(env, nullptr, "hashFileWithinRoot requires root, target, algorithm, and authorizer");
+    return nullptr;
+  }
+
+  char configured_root[PATH_MAX];
+  char requested_target[PATH_MAX];
+  char algorithm[16];
+  if (!ReadString(env, args[0], configured_root, sizeof(configured_root)) ||
+      !ReadString(env, args[1], requested_target, sizeof(requested_target)) ||
+      !ReadComponent(env, args[2], algorithm, sizeof(algorithm)) ||
+      (strcmp(algorithm, "sha256") != 0 && strcmp(algorithm, "sha512") != 0)) {
+    napi_throw_type_error(env, nullptr, "Filesystem hash arguments are malformed");
+    return nullptr;
+  }
+  napi_valuetype authorizer_type;
+  if (napi_typeof(env, args[3], &authorizer_type) != napi_ok || authorizer_type != napi_function) {
+    napi_throw_type_error(env, nullptr, "Filesystem hash authorizer must be a function");
+    return nullptr;
+  }
+
+  int root_descriptor = open(configured_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (root_descriptor < 0) {
+    ThrowSystemError(env, "Filesystem root could not be opened safely");
+    return nullptr;
+  }
+  struct stat root_stat;
+  struct statfs root_filesystem;
+  char resolved_root[PATH_MAX];
+  if (fstat(root_descriptor, &root_stat) != 0 || fstatfs(root_descriptor, &root_filesystem) != 0 ||
+      (root_filesystem.f_flags & MNT_LOCAL) == 0 || !DescriptorPath(root_descriptor, resolved_root)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem root identity could not be verified");
+    return nullptr;
+  }
+
+  int target_descriptor = open(requested_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (target_descriptor < 0) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem file could not be opened safely");
+    return nullptr;
+  }
+  struct stat target_stat;
+  char resolved_target[PATH_MAX];
+  if (fstat(target_descriptor, &target_stat) != 0 || !DescriptorPath(target_descriptor, resolved_target) ||
+      !S_ISREG(target_stat.st_mode) || target_stat.st_nlink != 1 || target_stat.st_size < 0 ||
+      target_stat.st_size > 1000000000LL || !IsWithinRoot(resolved_root, resolved_target) ||
+      target_stat.st_dev != root_stat.st_dev) {
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem file identity is not authorized");
+    return nullptr;
+  }
+
+  napi_value global;
+  napi_value canonical_path;
+  napi_value authorization_result;
+  napi_get_global(env, &global);
+  napi_create_string_utf8(env, resolved_target, NAPI_AUTO_LENGTH, &canonical_path);
+  napi_status authorization_status = napi_call_function(
+      env, global, args[3], 1, &canonical_path, &authorization_result);
+  if (authorization_status != napi_ok) {
+    close(target_descriptor);
+    close(root_descriptor);
+    return nullptr;
+  }
+
+  CC_SHA256_CTX sha256_context;
+  CC_SHA512_CTX sha512_context;
+  if (strcmp(algorithm, "sha256") == 0) CC_SHA256_Init(&sha256_context);
+  else CC_SHA512_Init(&sha512_context);
+  std::vector<unsigned char> buffer(1024 * 1024);
+  off_t offset = 0;
+  while (offset < target_stat.st_size) {
+    const size_t remaining = static_cast<size_t>(target_stat.st_size - offset);
+    const size_t requested = remaining < buffer.size() ? remaining : buffer.size();
+    ssize_t bytes_read = pread(target_descriptor, buffer.data(), requested, offset);
+    if (bytes_read < 0 && errno == EINTR) continue;
+    if (bytes_read <= 0) {
+      close(target_descriptor);
+      close(root_descriptor);
+      ThrowSystemError(env, "Filesystem file could not be hashed");
+      return nullptr;
+    }
+    if (strcmp(algorithm, "sha256") == 0) {
+      CC_SHA256_Update(&sha256_context, buffer.data(), static_cast<CC_LONG>(bytes_read));
+    } else {
+      CC_SHA512_Update(&sha512_context, buffer.data(), static_cast<CC_LONG>(bytes_read));
+    }
+    offset += bytes_read;
+  }
+
+  struct stat readback_stat;
+  if (fstat(target_descriptor, &readback_stat) != 0 ||
+      readback_stat.st_dev != target_stat.st_dev || readback_stat.st_ino != target_stat.st_ino ||
+      readback_stat.st_nlink != 1 || readback_stat.st_size != target_stat.st_size ||
+      readback_stat.st_mtimespec.tv_sec != target_stat.st_mtimespec.tv_sec ||
+      readback_stat.st_mtimespec.tv_nsec != target_stat.st_mtimespec.tv_nsec ||
+      readback_stat.st_ctimespec.tv_sec != target_stat.st_ctimespec.tv_sec ||
+      readback_stat.st_ctimespec.tv_nsec != target_stat.st_ctimespec.tv_nsec) {
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem file changed during hash");
+    return nullptr;
+  }
+
+  unsigned char digest[CC_SHA512_DIGEST_LENGTH];
+  size_t digest_length = 0;
+  if (strcmp(algorithm, "sha256") == 0) {
+    CC_SHA256_Final(digest, &sha256_context);
+    digest_length = CC_SHA256_DIGEST_LENGTH;
+  } else {
+    CC_SHA512_Final(digest, &sha512_context);
+    digest_length = CC_SHA512_DIGEST_LENGTH;
+  }
+  const std::string digest_hex = HexDigest(digest, digest_length);
+  char device[32];
+  char inode[32];
+  snprintf(device, sizeof(device), "%llu", static_cast<unsigned long long>(target_stat.st_dev));
+  snprintf(inode, sizeof(inode), "%llu", static_cast<unsigned long long>(target_stat.st_ino));
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "rootPath", resolved_root);
+  SetString(env, result, "path", resolved_target);
+  SetString(env, result, "algorithm", algorithm);
+  SetString(env, result, "digest", digest_hex.c_str());
+  SetNumber(env, result, "sizeBytes", static_cast<double>(target_stat.st_size));
+  SetString(env, result, "device", device);
+  SetString(env, result, "inode", inode);
+  close(target_descriptor);
+  close(root_descriptor);
+  return result;
+}
+
 napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   size_t argc = 8;
   napi_value args[8];
@@ -602,6 +750,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "statPathWithinRoot", function);
   napi_create_function(env, "readFileWithinRoot", NAPI_AUTO_LENGTH, ReadFileWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "readFileWithinRoot", function);
+  napi_create_function(env, "hashFileWithinRoot", NAPI_AUTO_LENGTH, HashFileWithinRoot, nullptr, &function);
+  napi_set_named_property(env, exports, "hashFileWithinRoot", function);
   napi_create_function(env, "writeFileAtomicWithinRoot", NAPI_AUTO_LENGTH, WriteFileAtomicWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "writeFileAtomicWithinRoot", function);
   return exports;

@@ -36,6 +36,18 @@ try {
       inode: read.inode,
       bytesReturned: read.content.length
     };
+  } else if (command.operation === "hash") {
+    const hash = inspector.hashPlanned(command.plan, command.algorithm);
+    value = {
+      operation: "hash",
+      path: hash.path,
+      algorithm: hash.algorithm,
+      digest: hash.digest,
+      sizeBytes: hash.sizeBytes,
+      rootId: hash.rootId,
+      device: hash.device,
+      inode: hash.inode
+    };
   } else {
     assertContentDoesNotContainSecrets(command.content);
     const write = inspector.writePlanned(

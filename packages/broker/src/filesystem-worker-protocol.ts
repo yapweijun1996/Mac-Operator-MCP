@@ -3,6 +3,7 @@ import type { FilesystemPathPlan, SafePathMetadata } from "./filesystem-inspecto
 export type FilesystemWorkerCommand =
   | { operation: "stat"; plan: FilesystemPathPlan; followSymlink: boolean }
   | { operation: "read"; plan: FilesystemPathPlan; offset: number; maxBytes: number; encoding: "utf8" | "base64" | "metadata" }
+  | { operation: "hash"; plan: FilesystemPathPlan; algorithm: "sha256" | "sha512" }
   | {
       operation: "write";
       plan: FilesystemPathPlan;
@@ -26,6 +27,16 @@ export type FilesystemWorkerResult =
       device: string;
       inode: string;
       bytesReturned: number;
+    }
+  | {
+      operation: "hash";
+      path: string;
+      algorithm: "sha256" | "sha512";
+      digest: string;
+      sizeBytes: number;
+      rootId: string;
+      device: string;
+      inode: string;
     }
   | {
       operation: "write";

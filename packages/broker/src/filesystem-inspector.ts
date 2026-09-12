@@ -23,6 +23,16 @@ export interface SafeFileRead {
   inode: string;
 }
 
+export interface SafeFileHash {
+  rootId: string;
+  path: string;
+  algorithm: "sha256" | "sha512";
+  digest: string;
+  sizeBytes: number;
+  device: string;
+  inode: string;
+}
+
 export interface SafePathMetadata {
   rootId: string;
   path: string;
@@ -60,6 +70,12 @@ interface NativeFilesystemAdapter {
     targetPath: string,
     offset: number,
     maxBytes: number,
+    authorizeCanonicalPath: (path: string) => void
+  ): unknown;
+  hashFileWithinRoot(
+    rootPath: string,
+    targetPath: string,
+    algorithm: "sha256" | "sha512",
     authorizeCanonicalPath: (path: string) => void
   ): unknown;
   writeFileAtomicWithinRoot(
@@ -147,6 +163,39 @@ export class FilesystemInspector {
     assertContentPathAllowed(read.path);
     return { rootId: plan.rootId, path: read.path, content: read.content, sizeBytes: read.sizeBytes,
       truncated: read.truncated, device: read.device, inode: read.inode };
+  }
+
+  hashPlanned(plan: FilesystemPathPlan, algorithm: "sha256" | "sha512"): SafeFileHash {
+    assertContentPathAllowed(plan.requestedPath);
+    let nativeHash: unknown;
+    try {
+      nativeHash = this.native.hashFileWithinRoot(
+        plan.root.path,
+        plan.requestedPath,
+        algorithm,
+        (canonicalPath) => assertContentPathAllowed(canonicalPath)
+      );
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem file escaped its authorized root, type, or volume");
+    }
+    const hash = parseNativeHash(nativeHash);
+    const resolvedRelative = relative(hash.rootPath, hash.path);
+    if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem file escaped its authorized root or volume");
+    }
+    if (plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
+    }
+    assertContentPathAllowed(hash.path);
+    return {
+      rootId: plan.rootId,
+      path: hash.path,
+      algorithm: hash.algorithm,
+      digest: hash.digest,
+      sizeBytes: hash.sizeBytes,
+      device: hash.device,
+      inode: hash.inode
+    };
   }
 
   statPlanned(plan: FilesystemPathPlan, followSymlink = true): SafePathMetadata {
@@ -267,6 +316,39 @@ function parseNativeRead(value: unknown): { rootPath: string; path: string; cont
       typeof record.truncated !== "boolean" || typeof record.device !== "string" || !/^\d+$/u.test(record.device) ||
       typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)) throw new Error("Malformed native read");
   return record as { rootPath: string; path: string; content: Buffer; sizeBytes: number; truncated: boolean; device: string; inode: string };
+}
+
+function parseNativeHash(value: unknown): {
+  rootPath: string;
+  path: string;
+  algorithm: "sha256" | "sha512";
+  digest: string;
+  sizeBytes: number;
+  device: string;
+  inode: string;
+} {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native hash");
+  const record = value as Record<string, unknown>;
+  if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
+      typeof record.path !== "string" || !isAbsolute(record.path) ||
+      (record.algorithm !== "sha256" && record.algorithm !== "sha512") ||
+      typeof record.digest !== "string" ||
+      !((record.algorithm === "sha256" && /^[a-f0-9]{64}$/u.test(record.digest)) ||
+        (record.algorithm === "sha512" && /^[a-f0-9]{128}$/u.test(record.digest))) ||
+      !Number.isSafeInteger(record.sizeBytes) || (record.sizeBytes as number) < 0 || (record.sizeBytes as number) > 1_000_000_000 ||
+      typeof record.device !== "string" || !/^\d+$/u.test(record.device) ||
+      typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)) {
+    throw new Error("Malformed native hash");
+  }
+  return record as {
+    rootPath: string;
+    path: string;
+    algorithm: "sha256" | "sha512";
+    digest: string;
+    sizeBytes: number;
+    device: string;
+    inode: string;
+  };
 }
 
 function parseNativeWrite(value: unknown): {

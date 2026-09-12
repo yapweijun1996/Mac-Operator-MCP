@@ -458,6 +458,39 @@ export class Broker {
           }
         };
       }
+      case "mac_hash_file": {
+        if (!execution.filesystem || !execution.hashAlgorithm || !this.filesystemExecutor.hash) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem hash execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.hash(
+          execution.filesystem.plan,
+          execution.hashAlgorithm,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        if (workerResult.operation !== "hash") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            path: workerResult.path,
+            algorithm: workerResult.algorithm,
+            digest: workerResult.digest,
+            size_bytes: workerResult.sizeBytes
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "digest_result_validation",
+            evidence: { summary: "File digest was computed after descriptor identity readback" }
+          },
+          auditTarget: `path:${workerResult.path}`,
+          auditEvidence: {
+            rootId: workerResult.rootId,
+            device: workerResult.device,
+            inode: workerResult.inode,
+            algorithm: workerResult.algorithm,
+            sizeBytes: workerResult.sizeBytes
+          }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -586,12 +619,14 @@ export class Broker {
       if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
       return { target: { kind: "job", reference: "owned" }, auditTarget: `job:${job.jobId}`, job };
     }
-    if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
+    if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
       : request.tool === "mac_read_file"
         ? ["path", "offset", "max_bytes", "encoding"]
-        : ["path", "content", "idempotency_key", "encoding", "expected_sha256", "create_only"]);
+        : request.tool === "mac_hash_file"
+          ? ["path", "algorithm"]
+          : ["path", "content", "idempotency_key", "encoding", "expected_sha256", "create_only"]);
     if (typeof request.arguments.path !== "string") {
       throw new BrokerError("PRECONDITION_FAILED", "path must be a string");
     }
@@ -599,6 +634,11 @@ export class Broker {
       throw new BrokerError("PRECONDITION_FAILED", "follow_symlink must be a boolean");
     }
     if (request.tool === "mac_read_file") validateReadArguments(request.arguments);
+    let hashAlgorithm: ExecutionPlan["hashAlgorithm"];
+    if (request.tool === "mac_hash_file") {
+      validateHashArguments(request.arguments);
+      hashAlgorithm = (request.arguments.algorithm ?? "sha256") as "sha256" | "sha512";
+    }
     let write: ExecutionPlan["write"];
     if (request.tool === "mac_write_file_atomic") {
       validateWriteArguments(request.arguments);
@@ -619,6 +659,7 @@ export class Broker {
     return {
       target: { kind: "path", reference: plan.rootId },
       filesystem: { inspector, plan },
+      ...(hashAlgorithm ? { hashAlgorithm } : {}),
       ...(write ? { write } : {})
     };
   }
@@ -726,6 +767,7 @@ interface ExecutionPlan {
   target: NormalizedTarget;
   auditTarget?: string;
   filesystem?: { inspector: FilesystemInspector; plan: FilesystemPathPlan };
+  hashAlgorithm?: "sha256" | "sha512";
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -850,6 +892,13 @@ function validateReadArguments(argumentsValue: Readonly<Record<string, unknown>>
   const encoding = argumentsValue.encoding;
   if (encoding !== undefined && encoding !== "utf8" && encoding !== "base64" && encoding !== "metadata") {
     throw new BrokerError("PRECONDITION_FAILED", "encoding must be utf8, base64, or metadata");
+  }
+}
+
+function validateHashArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const algorithm = argumentsValue.algorithm;
+  if (algorithm !== undefined && algorithm !== "sha256" && algorithm !== "sha512") {
+    throw new BrokerError("PRECONDITION_FAILED", "algorithm must be sha256 or sha512");
   }
 }
 

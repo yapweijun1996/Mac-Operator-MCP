@@ -6,7 +6,7 @@ Last verified: 2026-09-12
 
 ## Current position
 
-The repository exists but has no implementation baseline. Work is in Phase 0. Documentation is being materialized from the initial project SSOT and refined architecture review.
+The repository has a committed TypeScript/Node implementation baseline. Work is in Phase 1: the authenticated Edge/Broker foundation and bounded L0/L1 metadata, content-read, and file-hash slices are implemented locally, while production enablement remains closed.
 
 ## Phase 0 — Foundation and contracts
 
@@ -18,7 +18,7 @@ Exit: documentation and schemas agree; the baseline is reproducible; security in
 
 ## Phase 1 — Local Broker vertical slice
 
-Status: `PLANNED`
+Status: `IN_PROGRESS`
 
 Implement protected local IPC, Broker health and capabilities, policy explanation, principal validation, replay defense, target normalization, policy evaluation, audit events, kill switches, and one safe file-read adapter.
 
@@ -26,7 +26,7 @@ Exit: local integration tests and real-Mac evidence cover success, unauthorized 
 
 ## Phase 2 — Remote MCP Edge
 
-Status: `PLANNED`
+Status: `IN_PROGRESS`
 
 Implement MCP transport, remote authentication, principal projection, tool-state discovery, request signing, rate limits, revocation, and a deployment-independent local test mode. Select and configure the authenticated HTTPS/tunnel path after the local boundary passes.
 
@@ -34,7 +34,7 @@ Exit: a real authorized client reaches the Phase 1 slice remotely; forged, repla
 
 ## Phase 3 — L0/L1 inspection expansion
 
-Status: `PLANNED`
+Status: `IN_PROGRESS`
 
 Add system, storage, process, service, network, approved log, directory, search, hash, recent-file metadata, project discovery, summary, and bounded tree tools. Expand secret, filesystem-race, redaction, and resource-exhaustion tests.
 

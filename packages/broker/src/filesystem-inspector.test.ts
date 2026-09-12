@@ -128,6 +128,49 @@ test("descriptor-backed content read is bounded and rejects final symlinks", asy
   }
 });
 
+test("descriptor-backed hash returns only a bounded digest and stable identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-hash-"));
+  const file = join(directory, "file.txt");
+  await writeFile(file, "hello world", { mode: 0o600 });
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    const plan = inspector.planPath(file, "metadata");
+    const sha256 = inspector.hashPlanned(plan, "sha256");
+    const sha512 = inspector.hashPlanned(plan, "sha512");
+    assert.deepEqual(sha256, {
+      rootId: "test-root",
+      path: await realpath(file),
+      algorithm: "sha256",
+      digest: createHash("sha256").update("hello world").digest("hex"),
+      sizeBytes: 11,
+      device: sha256.device,
+      inode: sha256.inode
+    });
+    assert.equal(sha512.algorithm, "sha512");
+    assert.equal(sha512.digest, createHash("sha512").update("hello world").digest("hex"));
+    assert.equal(sha512.sizeBytes, 11);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("descriptor-backed hash denies protected secret paths", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-hash-secret-"));
+  const secretDirectory = join(directory, ".ssh");
+  const file = join(secretDirectory, "known_hosts");
+  await mkdir(secretDirectory);
+  await writeFile(file, "private");
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    assert.throws(
+      () => inspector.hashPlanned(inspector.planPath(file, "metadata"), "sha256"),
+      /protected secret zone/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("content read requires independent root enablement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-read-scope-"));
   const file = join(directory, "file.txt");
@@ -185,6 +228,23 @@ test("native descriptor read rejects a file changed after authorization", async 
     assert.throws(
       () => native.readFileWithinRoot(directory, file, 0, 32, () => appendFileSync(file, "changed")),
       /changed during read/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native descriptor hash rejects a file changed after authorization", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-hash-readback-"));
+  const file = join(directory, "file.txt");
+  await writeFile(file, "stable");
+  const native = require("./peer_credentials.node") as {
+    hashFileWithinRoot(rootPath: string, targetPath: string, algorithm: "sha256" | "sha512", authorizer: () => void): unknown;
+  };
+  try {
+    assert.throws(
+      () => native.hashFileWithinRoot(directory, file, "sha256", () => appendFileSync(file, "changed")),
+      /changed during hash/u
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

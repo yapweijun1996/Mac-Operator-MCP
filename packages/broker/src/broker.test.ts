@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -173,7 +173,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 9);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 10);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -462,6 +462,42 @@ test("mac_read_file fails closed before returning secret-shaped content", async 
     assert.equal(result.result_class, "POLICY_DENIED");
     assert.equal(JSON.stringify(result).includes(secret), false);
     assert.equal(JSON.stringify(store.auditRows()).includes(secret), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_hash_file returns a descriptor-verified digest without content", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-hash-"));
+  const path = join(directory, "sample.txt");
+  await writeFile(path, "hash me", { mode: 0o600 });
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.hash"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      tool: "mac_hash_file",
+      arguments: { path, algorithm: "sha256" }
+    }, ["mac.files.hash"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        path: await realpath(path),
+        algorithm: "sha256",
+        digest: createHash("sha256").update("hash me").digest("hex"),
+        size_bytes: 7
+      });
+      assert.equal(result.verification.strategy, "digest_result_validation");
+      assert.equal(JSON.stringify(result).includes("hash me"), false);
+    }
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

@@ -20,6 +20,11 @@ export interface FilesystemExecutor {
     encoding: "utf8" | "base64" | "metadata",
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  hash?(
+    plan: FilesystemPathPlan,
+    algorithm: "sha256" | "sha512",
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -59,6 +64,15 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "read", plan, offset, maxBytes, encoding }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  hash(
+    plan: FilesystemPathPlan,
+    algorithm: "sha256" | "sha512",
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "hash", plan, algorithm }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -102,6 +116,17 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
         !/^[a-f0-9]{64}$/u.test(value.sha256) || typeof value.created !== "boolean" ||
         (value.expectedSha256 !== null && !/^[a-f0-9]{64}$/u.test(value.expectedSha256)) ||
         typeof value.expectedMatched !== "boolean" || !/^\d+$/u.test(value.device) || !/^\d+$/u.test(value.inode)) {
+      throw malformed();
+    }
+    return value;
+  }
+  if (value.operation === "hash") {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
+        !isAbsolute(value.path) || value.path.length > 4096 ||
+        (value.algorithm !== "sha256" && value.algorithm !== "sha512") ||
+        (value.algorithm === "sha256" ? !/^[a-f0-9]{64}$/u.test(value.digest) : !/^[a-f0-9]{128}$/u.test(value.digest)) ||
+        !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes < 0 || value.sizeBytes > 1_000_000_000 ||
+        !/^\d+$/u.test(value.device) || !/^\d+$/u.test(value.inode)) {
       throw malformed();
     }
     return value;
