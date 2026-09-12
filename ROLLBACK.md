@@ -17,4 +17,4 @@ Source and artifact version, contract and policy versions, persistence schema ve
 
 ## Evidence
 
-Each releasable phase requires a tested rollback procedure with exact artifacts, commands, expected state, failure handling, and post-rollback verification. The source-level launchd boundary has lifecycle failure tests, but no installed artifact, `launchctl` rollback, uninstall, or signature-failure evidence exists yet.
+Each releasable phase requires a tested rollback procedure with exact artifacts, commands, expected state, failure handling, and post-rollback verification. The source-level launchd boundary now includes a non-executing install plan with fixed `codesign`/`launchctl` argv, exact previous-revision preconditions, bootout/restore/bootstrap actions, and readback validation. No installed artifact, live `launchctl` rollback, uninstall, or signature-failure host evidence exists yet.

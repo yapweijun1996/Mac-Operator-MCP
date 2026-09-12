@@ -24,6 +24,8 @@ The latest implementation addendum is `6683344`: Broker, policy-signer, and appr
 
 The latest implementation addendum is `fde7341`: the source-level launchd boundary now validates and renders an unprivileged no-shell plist, exposes a signal-aware Broker service entrypoint with bounded readback, and includes a reviewable LaunchAgent template. No service installation or signing is implied.
 
+The latest implementation addendum is `5804f04`: the packaging boundary now exposes a non-executing `buildMacOsInstallPlan` with explicit non-root user domain, package-owned JavaScript entrypoint, signed-artifact path, fixed `/usr/bin/codesign` and `/bin/launchctl` argv, bounded command budgets, exact previous-revision preconditions, rollback/uninstall file actions, and post-bootstrap launchd/Broker/signature readback validation. This remains source-level evidence; no signing, filesystem installation, `launchctl` mutation, or live host readback is implied.
+
 ## Completed work
 
 - Created the Git repository and initial commit.
@@ -38,6 +40,7 @@ The latest implementation addendum is `fde7341`: the source-level launchd bounda
 - Added an explicit `createMacOsNativeBrokerRuntime` factory so a future macOS packaging entrypoint selects the native Broker IPC channel and cannot accidentally wire the legacy private-handle server; startup/rollback/close semantics remain owned by `LocalBrokerRuntime`.
 - Added a shared `MacOsNativePeerIpcServer` and native peer-policy mode for policy-signer and approval channels, keeping their HMAC/signed-command semantics after pre-parse OS identity authorization; compatibility verifier mode remains explicit and non-production.
 - Added a launchd packaging boundary with canonical path/argv validation, no shell or environment injection, bounded restart settings, a signal-aware service lifecycle, component/policy/source readback, and an unprivileged LaunchAgent template; installation, signing, and live launchd readback remain disabled.
+- Added a non-executing macOS install preflight plan with fixed signature/service command argv, empty environments, bounded timeout/output, per-user/root denial, package-owned entrypoint/path checks, exact upgrade/rollback/uninstall preconditions, rollback/uninstall actions, and exact post-bootstrap identity validation; live installation and signature/launchd host evidence remain disabled.
 - Started documentation-only remediation against the newer KB SSOT: repaired stale dynamic-state ownership; materialized locked Security, Filesystem Policy, Tool Contract Standard, and Tool Catalog documents; added threat, scope, persistence, verification, ADR, sandbox-research, navigation, testing, configuration, deployment, operations, incident, rollback, and kill-switch documents.
 - Resolved the two representation conflicts: every contract now has deterministic `audit_class` and structured `postcondition_verification`, and the legacy contract `phase` field is now canonical `tool_delivery_wave`.
 - Completed MOP-084 functional API schema materialization: all 44 planned tools now have explicit bounded `input_schema` and tool-specific `output_schema` objects integrated with the common result envelope. Envelope validation, functional schema compilation, semantic review, authority-surface review, and catalog parity pass; runtime compatibility remains a separate gate.
