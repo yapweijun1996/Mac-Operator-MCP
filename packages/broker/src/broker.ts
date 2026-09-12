@@ -31,7 +31,7 @@ import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
-import { GitStatusInspector, validateGitStatusRequest, type GitInspector } from "./git-inspector.js";
+import { GitBranchListInspector, GitStatusInspector, validateGitBranchRequest, validateGitStatusRequest, type GitBranchInspector, type GitInspector } from "./git-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -46,6 +46,7 @@ export interface BrokerOptions {
   serviceInspector?: ServiceInspector;
   logInspector?: LogInspector;
   gitInspector?: GitInspector;
+  gitBranchInspector?: GitBranchInspector;
 }
 
 export class Broker {
@@ -57,6 +58,7 @@ export class Broker {
   private readonly serviceInspector: ServiceInspector;
   private readonly logInspector: LogInspector;
   private readonly gitInspector: GitInspector;
+  private readonly gitBranchInspector: GitBranchInspector;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -67,6 +69,7 @@ export class Broker {
     this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector();
     this.logInspector = options.logInspector ?? new MacLogInspector();
     this.gitInspector = options.gitInspector ?? new GitStatusInspector();
+    this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -486,6 +489,36 @@ export class Broker {
           truncated: status.truncated,
           auditTarget: `project:${status.projectRoot}`,
           auditEvidence: { branch: status.branch, dirty: status.dirty, stagedCount: status.stagedPaths.length, unstagedCount: status.unstagedPaths.length, untrackedCount: status.untrackedPaths.length, conflictedCount: status.conflictedPaths.length, truncated: status.truncated }
+        };
+      }
+      case "mac_git_branch_list": {
+        if (!execution.gitBranches) throw new BrokerError("EXECUTION_FAILED", "Git branch execution plan is unavailable");
+        const branches = await this.gitBranchInspector.branches(
+          execution.gitBranches.projectRoot,
+          execution.gitBranches.includeRemote,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        return {
+          data: {
+            project_root: branches.projectRoot,
+            branches: branches.branches.map((branch) => ({
+              name: branch.name,
+              current: branch.current,
+              ...(branch.upstream !== undefined ? { upstream: branch.upstream } : {}),
+              ...(branch.ahead !== undefined ? { ahead: branch.ahead } : {}),
+              ...(branch.behind !== undefined ? { behind: branch.behind } : {})
+            }))
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_result_validation",
+            evidence: { summary: "Git branch metadata was collected through a fixed read-only adapter with repository identity readback" }
+          },
+          warnings: [...branches.warnings],
+          truncated: branches.truncated,
+          auditTarget: `project:${branches.projectRoot}`,
+          auditEvidence: { branchCount: branches.branches.length, truncated: branches.truncated, warningCount: branches.warnings.length }
         };
       }
       case "mac_process_list": {
@@ -1274,6 +1307,18 @@ export class Broker {
         gitStatus: { projectRoot: normalizedProjectRoot, includeUntracked }
       };
     }
+    if (request.tool === "mac_git_branch_list") {
+      assertExactArguments(request.arguments, ["project_root", "include_remote"]);
+      const projectRoot = request.arguments.project_root;
+      const includeRemote = (request.arguments.include_remote ?? false) as boolean;
+      if (typeof projectRoot !== "string") throw new BrokerError("PRECONDITION_FAILED", "project_root must be a string");
+      validateGitBranchRequest(projectRoot, includeRemote);
+      return {
+        target: { kind: "project", reference: projectRoot },
+        auditTarget: `project:${projectRoot}`,
+        gitBranches: { projectRoot, includeRemote }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -1559,6 +1604,10 @@ interface ExecutionPlan {
   gitStatus?: {
     projectRoot: string;
     includeUntracked: boolean;
+  };
+  gitBranches?: {
+    projectRoot: string;
+    includeRemote: boolean;
   };
   job?: BrokerJob;
   write?: {

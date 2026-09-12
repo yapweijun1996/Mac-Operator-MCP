@@ -46,6 +46,25 @@ export interface GitInspector {
   status(projectRoot: string, includeUntracked: boolean, control: GitExecutionControl): Promise<SafeGitStatus>;
 }
 
+export interface SafeGitBranch {
+  name: string;
+  current: boolean;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+}
+
+export interface SafeGitBranches {
+  projectRoot: string;
+  branches: readonly SafeGitBranch[];
+  warnings: readonly string[];
+  truncated: boolean;
+}
+
+export interface GitBranchInspector {
+  branches(projectRoot: string, includeRemote: boolean, control: GitExecutionControl): Promise<SafeGitBranches>;
+}
+
 export class GitStatusInspector implements GitInspector {
   private readonly supervisor: Pick<ProcessSupervisor, "run">;
 
@@ -86,12 +105,143 @@ export class GitStatusInspector implements GitInspector {
   }
 }
 
+export class GitBranchListInspector implements GitBranchInspector {
+  private readonly supervisor: Pick<ProcessSupervisor, "run">;
+
+  constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
+    maxConcurrent: 2,
+    allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
+  })) {
+    this.supervisor = supervisor;
+  }
+
+  async branches(projectRoot: string, includeRemote: boolean, control: GitExecutionControl): Promise<SafeGitBranches> {
+    validateGitBranchRequest(projectRoot, includeRemote);
+    const identity = canonicalProjectRoot(projectRoot);
+    const refs = includeRemote ? ["refs/heads", "refs/remotes"] : ["refs/heads"];
+    const result = await this.supervisor.run({
+      executable: GIT_EXECUTABLE,
+      args: [
+        "--no-pager",
+        "--no-optional-locks",
+        "--git-dir=.git",
+        "--work-tree=.",
+        "-c", "core.fsmonitor=false",
+        "-c", "core.hooksPath=/dev/null",
+        "for-each-ref",
+        "--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(upstream:track)%00",
+        "--sort=refname",
+        ...refs
+      ],
+      cwd: identity.path,
+      environment: SAFE_GIT_ENVIRONMENT,
+      timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
+      outputCapBytes: MAX_OUTPUT_BYTES,
+      shouldCancel: control.shouldCancel
+    });
+    assertProjectIdentity(identity.path, identity.identity);
+    return parseGitBranchResult(identity.path, result);
+  }
+}
+
 export function validateGitStatusRequest(projectRoot: string, includeUntracked = true): void {
   if (typeof projectRoot !== "string" || projectRoot.length < 1 || projectRoot.length > MAX_PROJECT_ROOT_LENGTH ||
       !PROJECT_ROOT_PATTERN.test(projectRoot) || !isAbsolute(projectRoot) || resolve(projectRoot) !== projectRoot ||
       typeof includeUntracked !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Git status arguments are outside the supported range");
   }
+}
+
+export function validateGitBranchRequest(projectRoot: string, includeRemote = false): void {
+  if (typeof includeRemote !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "include_remote must be a boolean");
+  }
+  validateGitStatusRequest(projectRoot, true);
+}
+
+function sanitizeGitValue(value: string, maxLength: number): { value: string | null; redacted: boolean } {
+  if (value.length < 1 || value.length > maxLength) return { value: null, redacted: false };
+  const redactedValue = redactLogText(value);
+  const safe = redactedValue.text.replace(/[\u0001-\u001f\u007f]/gu, "�");
+  return {
+    value: safe.length > maxLength ? safe.slice(0, maxLength) : safe,
+    redacted: redactedValue.redacted || safe !== value
+  };
+}
+
+export function parseGitBranchResult(projectRoot: string, result: ProcessExecutionResult): SafeGitBranches {
+  if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Git branch listing was cancelled");
+  if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Git branch listing timed out");
+  if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Git branch listing exceeded its output limit");
+  if (result.resultClass !== "SUCCEEDED") {
+    if (/not a git repository/u.test(result.stderr)) {
+      throw new BrokerError("TARGET_NOT_FOUND", "The project root is not a Git repository");
+    }
+    throw new BrokerError("EXECUTION_FAILED", "Git branch listing failed");
+  }
+  const branches: SafeGitBranch[] = [];
+  const warnings: string[] = [];
+  let malformed = false;
+  let truncated = result.truncated;
+  let redacted = false;
+  const records = result.stdout.split("\0");
+  const addWarning = (warning: string): void => {
+    if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
+  };
+  for (let index = 0; index + 3 < records.length; index += 4) {
+    const name = sanitizeGitValue(records[index]!, MAX_BRANCH_LENGTH);
+    const marker = records[index + 1];
+    const upstream = records[index + 2] === ""
+      ? { value: "", redacted: false }
+      : sanitizeGitValue(records[index + 2]!, MAX_BRANCH_LENGTH);
+    const track = records[index + 3]!;
+    if (name.value === null || (marker !== "*" && marker !== " ") || upstream.value === null ||
+        (track.length > MAX_BRANCH_LENGTH && track.length > 0)) {
+      malformed = true;
+      continue;
+    }
+    redacted ||= name.redacted || upstream.redacted;
+    if (branches.length >= 500) {
+      truncated = true;
+      continue;
+    }
+    const branch: SafeGitBranch = { name: name.value, current: marker === "*" };
+    if (upstream.value.length > 0) branch.upstream = upstream.value;
+    if (track.length > 0) {
+      const ahead = /\[ahead (\d+)(?:, behind (\d+))?\]/u.exec(track);
+      const behindOnly = /\[behind (\d+)\]/u.exec(track);
+      if (ahead) {
+        const aheadValue = Number(ahead[1]);
+        const behindValue = ahead[2] === undefined ? undefined : Number(ahead[2]);
+        if (!Number.isSafeInteger(aheadValue) || aheadValue > 1_000_000 ||
+            (behindValue !== undefined && (!Number.isSafeInteger(behindValue) || behindValue > 1_000_000))) {
+          malformed = true;
+          continue;
+        }
+        branch.ahead = aheadValue;
+        if (behindValue !== undefined) branch.behind = behindValue;
+      } else if (behindOnly) {
+        const behindValue = Number(behindOnly[1]);
+        if (!Number.isSafeInteger(behindValue) || behindValue > 1_000_000) {
+          malformed = true;
+          continue;
+        }
+        branch.behind = behindValue;
+      } else {
+        malformed = true;
+        continue;
+      }
+    }
+    branches.push(branch);
+  }
+  if (records.length % 4 !== 1) malformed = true;
+  if (malformed) {
+    truncated = true;
+    addWarning("Some Git branch records were malformed and were omitted");
+  }
+  if (redacted) addWarning("Sensitive Git branch text was redacted");
+  if (truncated) addWarning("Git branch output was limited by fixed adapter budgets");
+  return { projectRoot, branches, warnings, truncated };
 }
 
 export function parseGitStatusOutput(projectRoot: string, result: ProcessExecutionResult): SafeGitStatus {

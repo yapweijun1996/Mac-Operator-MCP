@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { GitStatusInspector, parseGitStatusOutput, validateGitStatusRequest } from "./git-inspector.js";
+import { GitBranchListInspector, GitStatusInspector, parseGitBranchResult, parseGitStatusOutput, validateGitStatusRequest } from "./git-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 function success(stdout: string): ProcessExecutionResult {
@@ -50,6 +50,45 @@ test("Git status rejects malformed requests and missing HEAD", () => {
   }
   assert.throws(() => validateGitStatusRequest("/tmp/project", "yes" as unknown as boolean), BrokerError);
   assert.throws(() => parseGitStatusOutput("/tmp/project", success("# branch.oid " + "0".repeat(40) + "\0")), /no committed HEAD/u);
+});
+
+test("Git branch parser returns upstream and ahead/behind metadata", () => {
+  const result = parseGitBranchResult(
+    "/tmp/project",
+    success([
+      "main\0*\0origin/main\0[ahead 2, behind 3]\0",
+      "topic\0 \0\0\0",
+      "origin/main\0 \0\0\0"
+    ].join(""))
+  );
+  assert.deepEqual(result.branches, [
+    { name: "main", current: true, upstream: "origin/main", ahead: 2, behind: 3 },
+    { name: "topic", current: false },
+    { name: "origin/main", current: false }
+  ]);
+  assert.equal(result.truncated, false);
+});
+
+test("Git branch listing uses the fixed command boundary", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-branches-"));
+  const target = join(directory, "target");
+  await mkdir(join(target, ".git"), { recursive: true });
+  await writeFile(join(target, ".git", "config"), "[core]\n\tbare = false\n");
+  let observed: { args: readonly string[]; environment?: Readonly<Record<string, string>> } | undefined;
+  const inspector = new GitBranchListInspector({
+    run: async (request) => {
+      observed = { args: request.args, ...(request.environment ? { environment: request.environment } : {}) };
+      return success("");
+    }
+  });
+  const canonicalTarget = await realpath(target);
+  const result = await inspector.branches(canonicalTarget, false, { timeoutMs: 1_000, shouldCancel: () => false });
+  assert.equal(result.branches.length, 0);
+  assert.ok(observed);
+  assert.ok(observed.args.includes("for-each-ref"));
+  assert.equal(observed.args.includes("refs/remotes"), false);
+  assert.equal(observed.environment?.GIT_CONFIG_NOSYSTEM, "1");
+  assert.equal(observed.environment?.GIT_TERMINAL_PROMPT, "0");
 });
 
 test("Git status rejects a symlink project root before child execution", async () => {

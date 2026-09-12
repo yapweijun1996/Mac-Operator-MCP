@@ -264,6 +264,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_git_branch_list",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.git.read"],
+    capabilityFamilies: ["read"],
+    targetType: "project",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 262_144,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_storage_analysis",
     contractVersion: "0.1",
     requiredScopes: ["mac.storage.read"],

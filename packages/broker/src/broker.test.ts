@@ -311,6 +311,39 @@ test("mac_git_status requires an exact project target and returns bounded status
   }
 });
 
+test("mac_git_branch_list returns bounded local branch metadata without network", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-branches-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const projectRoot = await realpath(process.cwd());
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "git-branches-request",
+      nonce: "git-branches-nonce",
+      tool: "mac_git_branch_list",
+      arguments: { project_root: projectRoot, include_remote: false }
+    }, ["mac.git.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { project_root: string; branches: Array<{ name: string; current: boolean; upstream?: string; ahead?: number; behind?: number }> };
+    assert.equal(data.project_root, projectRoot);
+    assert.ok(data.branches.length <= 500);
+    assert.equal(data.branches.filter((branch) => branch.current).length <= 1, true);
+    assert.equal(data.branches.every((branch) => branch.name.length <= 256), true);
+    assert.equal(JSON.stringify(result).includes("/usr/bin/git"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -421,7 +454,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 24);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 25);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
