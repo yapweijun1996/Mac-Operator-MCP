@@ -5,10 +5,10 @@ Recorded: 2026-09-13 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `6d83c2a786c4f2bdf4eb6bd26cabeddfdefebe27`
+- Base commit: `6fe60cbf2707dad7cad0024302b5aafaedf6e99f`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `bc049b8cfd69aec66d9482c439a3c6ad330b7c8e3821dba01e5245019e865da7`
+- Runtime source manifest SHA-256: `6204b6d3490c749f4541db7c025fa67c963c98d163a0d88737f56a3888479ac1`
 - Tool-contract manifest SHA-256: `656ebeede8a828c68022915b54c85c4a9b3f146df0668ca8464b677a7781945d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -90,6 +90,7 @@ Observed results:
 - The HTTPS Edge applies a fixed-window, bounded in-memory rate limiter after Bearer verification, keyed only by verifier-provided client/principal identity, with fixed request/window/key budgets and `Retry-After` responses. Shared multi-instance counters, durable rate-limit state, and load evidence remain open.
 - The Edge contract registry rejects symlinked/non-regular contract files, symlinked directories, invalid tool/version identifiers, and oversized file/count/aggregate inputs before parsing; regular files are opened with `O_NOFOLLOW` and read under fixed byte budgets. Adversarial loader tests cover regular-file success, symlink denial, directory denial, size denial, and invalid schema versions.
 - The HTTPS Edge validates non-empty TLS material, dedicated HTTPS resource URLs, canonical host/origin hostname lists, resource-host inclusion, and duplicate normalization before constructing the server. Tests reject insecure URLs, scheme/port/path smuggling, empty TLS material, and host-list mismatches.
+- The HTTPS Edge sets fixed request, header, keep-alive, and per-socket request limits (`30s`, `10s`, `5s`, and `100` respectively) in addition to the 1 MiB JSON body limit. These are local transport controls; shared multi-instance admission and load evidence remain open.
 - `mac_find_files` executes in the Broker-owned filesystem worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, authorization for every requested root, a fixed 50,000-entry/32-level budget, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_recent_files` executes in the same Broker-owned worker with empty environment/arguments, metadata-only descriptor-backed traversal, independent `mac.files.search` scope, per-root authorization, a Broker-supplied clock and bounded time window, fixed traversal/result budgets, protected-entry filtering, active cancellation, and strict result validation. No file contents are read or returned.
 - `mac_search_text` executes in the same Broker-owned worker with empty environment/arguments, content-read root planning, independent `mac.files.search` scope and per-root authorization, 1 MiB per-file and 64 MiB aggregate scan budgets, UTF-8-only text handling, binary/NUL rejection, 100 matches per file, sanitized snippets, protected-entry/secret-content filtering, active cancellation, and strict result validation. Metadata-only roots are denied before content execution.
