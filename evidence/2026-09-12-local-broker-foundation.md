@@ -5,10 +5,10 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `86963c671acb4b821fdcfd46cddbf880970b586c`
+- Base commit: `0165458a52263da9defa0b0f34654d1029f30274`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `f4dfa4c25e93d0c43b0082ef133a29a0ab868cc349dddcbcc40fef136366592c`
+- Runtime source manifest SHA-256: `96662cb770940fbec670d677a0d9148a063a2f261e7d178ecb5f4cdb0d756a04`
 - Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 125 tests passed; 0 failed, skipped, cancelled, or todo.
+- 128 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the twelve implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the thirteen implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -83,6 +83,7 @@ Observed results:
 
 - The disabled-by-default `mac_list_directory` slice verified independent `mac.files.read` scope and content-root authorization, descriptor-backed local-volume directory opening, bounded lexicographic pagination, hidden-entry handling, protected `.env`/secret-zone filtering before result construction, canonical path/device/inode identity checks, and rejection of directory identity changes after enumeration.
 - The disabled-by-default `mac_directory_tree` slice verified independent `mac.files.read` scope and content-root authorization, depth and entry bounds, descriptor-backed recursion only through real directories, inherited protected-entry filtering, same-volume child filtering, canonical root identity, and explicit truncation reporting.
+- The enabled-in-test `mac_process_list` slice verified independent `mac.process.read` scope and `process:all` target authorization, native bounded PID enumeration, executable/name/CPU/resident-memory bounds, numeric owner labels, sort/limit validation, and no argv/environment output.
 
 ## Boundary and limitations
 
