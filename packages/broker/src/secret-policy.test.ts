@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertContentDoesNotContainSecrets, assertContentPathAllowed, redactLogText } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, assertContentPathAllowed, redactBoundedText, redactLogText } from "./secret-policy.js";
 
 test("fixed secret-zone policy denies credential and private-data paths", () => {
   const denied = [
@@ -41,4 +41,12 @@ test("log redaction removes secret-shaped values and bounds messages", () => {
   const bounded = redactLogText("x".repeat(20_000));
   assert.equal(bounded.redacted, true);
   assert.ok(bounded.text.length <= 8192);
+});
+
+test("bounded redaction never exceeds the requested UTF-8 byte budget", () => {
+  for (const maxBytes of [1, 2, 3, 8, 16]) {
+    const bounded = redactBoundedText("🙂".repeat(20), maxBytes);
+    assert.ok(Buffer.byteLength(bounded.text, "utf8") <= maxBytes);
+    assert.equal(bounded.truncated, true);
+  }
 });

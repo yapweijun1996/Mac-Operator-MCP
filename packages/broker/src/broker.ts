@@ -31,7 +31,7 @@ import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
-import { GitBranchListInspector, GitLogInspectorImpl, GitStatusInspector, validateGitBranchRequest, validateGitLogRequest, validateGitStatusRequest, type GitBranchInspector, type GitInspector, type GitLogInspector } from "./git-inspector.js";
+import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, validateGitBranchRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector } from "./git-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -48,6 +48,7 @@ export interface BrokerOptions {
   gitInspector?: GitInspector;
   gitBranchInspector?: GitBranchInspector;
   gitLogInspector?: GitLogInspector;
+  gitDiffInspector?: GitDiffInspector;
 }
 
 export class Broker {
@@ -61,6 +62,7 @@ export class Broker {
   private readonly gitInspector: GitInspector;
   private readonly gitBranchInspector: GitBranchInspector;
   private readonly gitLogInspector: GitLogInspector;
+  private readonly gitDiffInspector: GitDiffInspector;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -73,6 +75,7 @@ export class Broker {
     this.gitInspector = options.gitInspector ?? new GitStatusInspector();
     this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector();
     this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl();
+    this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -553,6 +556,50 @@ export class Broker {
           truncated: log.truncated,
           auditTarget: `project:${log.projectRoot}`,
           auditEvidence: { commitCount: log.commits.length, truncated: log.truncated, warningCount: log.warnings.length }
+        };
+      }
+      case "mac_git_diff": {
+        if (!execution.gitDiff) throw new BrokerError("EXECUTION_FAILED", "Git diff execution plan is unavailable");
+        const diff = await this.gitDiffInspector.diff(
+          execution.gitDiff.projectRoot,
+          execution.gitDiff.paths,
+          execution.gitDiff.staged,
+          execution.gitDiff.base,
+          execution.gitDiff.maxBytes,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        return {
+          data: {
+            project_root: diff.projectRoot,
+            diff: diff.diff,
+            changed_paths: [...diff.changedPaths],
+            ...(diff.base !== undefined ? { base: diff.base } : {}),
+            staged: diff.staged,
+            sha256: diff.sha256,
+            truncated: diff.truncated
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "sanitized_diff_result_validation",
+            evidence: {
+              summary: "Git diff was collected through a fixed read-only adapter, bounded, secret-redacted, and hashed after sanitization",
+              readback_hash: diff.sha256,
+              observed_at: new Date(this.now()).toISOString()
+            }
+          },
+          warnings: [...diff.warnings],
+          truncated: diff.truncated,
+          auditTarget: `project:${diff.projectRoot}`,
+          auditEvidence: {
+            changedPathCount: diff.changedPaths.length,
+            byteLength: Buffer.byteLength(diff.diff, "utf8"),
+            staged: diff.staged,
+            ...(diff.base !== undefined ? { base: diff.base } : {}),
+            sha256: diff.sha256,
+            truncated: diff.truncated,
+            warningCount: diff.warnings.length
+          }
         };
       }
       case "mac_process_list": {
@@ -1366,6 +1413,23 @@ export class Broker {
         gitLog: { projectRoot, limit, ...(ref !== undefined ? { ref } : {}) }
       };
     }
+    if (request.tool === "mac_git_diff") {
+      assertExactArguments(request.arguments, ["project_root", "paths", "staged", "base", "max_bytes"]);
+      const projectRoot = request.arguments.project_root;
+      const paths = request.arguments.paths === undefined ? [] : request.arguments.paths;
+      const staged = (request.arguments.staged ?? false) as boolean;
+      const base = request.arguments.base as string | undefined;
+      const maxBytes = (request.arguments.max_bytes ?? 1_048_576) as number;
+      if (typeof projectRoot !== "string" || !Array.isArray(paths)) {
+        throw new BrokerError("PRECONDITION_FAILED", "project_root and paths must have supported types");
+      }
+      validateGitDiffRequest(projectRoot, paths as readonly string[], staged, base, maxBytes);
+      return {
+        target: { kind: "project", reference: projectRoot },
+        auditTarget: `project:${projectRoot}`,
+        gitDiff: { projectRoot, paths: [...paths] as string[], staged, ...(base !== undefined ? { base } : {}), maxBytes }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -1660,6 +1724,13 @@ interface ExecutionPlan {
     projectRoot: string;
     limit: number;
     ref?: string;
+  };
+  gitDiff?: {
+    projectRoot: string;
+    paths: readonly string[];
+    staged: boolean;
+    base?: string;
+    maxBytes: number;
   };
   job?: BrokerJob;
   write?: {

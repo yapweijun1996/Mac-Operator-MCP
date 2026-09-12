@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
@@ -5,7 +6,7 @@ import {
   ProcessSupervisor,
   type ProcessExecutionResult
 } from "./process-supervisor.js";
-import { redactLogText } from "./secret-policy.js";
+import { redactBoundedText, redactLogText } from "./secret-policy.js";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
 const MAX_PROJECT_ROOT_LENGTH = 4_096;
@@ -15,6 +16,9 @@ const MAX_PATHS = 5_000;
 const MAX_OUTPUT_BYTES = 262_144;
 const MAX_TIMEOUT_MS = 10_000;
 const MAX_CONFIG_BYTES = 262_144;
+const MAX_DIFF_BYTES = 1_048_576;
+const MAX_DIFF_PROCESS_OUTPUT_BYTES = 1_200_000;
+const MAX_DIFF_TIMEOUT_MS = 15_000;
 const PROJECT_ROOT_PATTERN = /^\/[^\u0000\n]*$/u;
 const SAFE_GIT_ENVIRONMENT = {
   GIT_CONFIG_NOSYSTEM: "1",
@@ -81,6 +85,28 @@ export interface SafeGitLog {
 
 export interface GitLogInspector {
   log(projectRoot: string, limit: number, ref: string | undefined, control: GitExecutionControl): Promise<SafeGitLog>;
+}
+
+export interface SafeGitDiff {
+  projectRoot: string;
+  diff: string;
+  changedPaths: readonly string[];
+  staged: boolean;
+  base?: string;
+  sha256: string;
+  truncated: boolean;
+  warnings: readonly string[];
+}
+
+export interface GitDiffInspector {
+  diff(
+    projectRoot: string,
+    paths: readonly string[],
+    staged: boolean,
+    base: string | undefined,
+    maxBytes: number,
+    control: GitExecutionControl
+  ): Promise<SafeGitDiff>;
 }
 
 export class GitStatusInspector implements GitInspector {
@@ -206,6 +232,62 @@ export class GitLogInspectorImpl implements GitLogInspector {
   }
 }
 
+export class GitDiffInspectorImpl implements GitDiffInspector {
+  private readonly supervisor: Pick<ProcessSupervisor, "run">;
+
+  constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
+    maxConcurrent: 2,
+    allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
+  })) {
+    this.supervisor = supervisor;
+  }
+
+  async diff(
+    projectRoot: string,
+    paths: readonly string[],
+    staged: boolean,
+    base: string | undefined,
+    maxBytes: number,
+    control: GitExecutionControl
+  ): Promise<SafeGitDiff> {
+    validateGitDiffRequest(projectRoot, paths, staged, base, maxBytes);
+    const identity = canonicalProjectRoot(projectRoot);
+    const args = [
+      "--no-pager",
+      "--no-optional-locks",
+      "--literal-pathspecs",
+      "--git-dir=.git",
+      "--work-tree=.",
+      "-c", "core.fsmonitor=false",
+      "-c", "core.hooksPath=/dev/null",
+      "-c", "diff.external=false",
+      "diff",
+      ...(staged ? ["--cached"] : []),
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--no-color",
+      "--full-index",
+      "--unified=3",
+      "--end-of-options",
+      ...(base !== undefined ? [base] : []),
+      "--",
+      ...paths
+    ];
+    const result = await this.supervisor.run({
+      executable: GIT_EXECUTABLE,
+      args,
+      cwd: identity.path,
+      environment: SAFE_GIT_ENVIRONMENT,
+      timeoutMs: Math.min(control.timeoutMs, MAX_DIFF_TIMEOUT_MS),
+      outputCapBytes: Math.min(MAX_DIFF_PROCESS_OUTPUT_BYTES, maxBytes + 64_000),
+      shouldCancel: control.shouldCancel
+    });
+    assertProjectIdentity(identity.path, identity.identity);
+    return parseGitDiffResult(identity.path, paths, staged, base, maxBytes, result);
+  }
+}
+
 export function validateGitStatusRequest(projectRoot: string, includeUntracked = true): void {
   if (typeof projectRoot !== "string" || projectRoot.length < 1 || projectRoot.length > MAX_PROJECT_ROOT_LENGTH ||
       !PROJECT_ROOT_PATTERN.test(projectRoot) || !isAbsolute(projectRoot) || resolve(projectRoot) !== projectRoot ||
@@ -223,10 +305,39 @@ export function validateGitBranchRequest(projectRoot: string, includeRemote = fa
 
 export function validateGitLogRequest(projectRoot: string, limit = 50, ref?: string): void {
   validateGitStatusRequest(projectRoot, true);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 ||
-      (ref !== undefined && (typeof ref !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(ref) || ref.includes("..")))) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200 || !isSafeGitRevision(ref, 256)) {
     throw new BrokerError("PRECONDITION_FAILED", "Git log arguments are outside the supported range");
   }
+}
+
+export function validateGitDiffRequest(
+  projectRoot: string,
+  paths: readonly string[] = [],
+  staged = false,
+  base?: string,
+  maxBytes = MAX_DIFF_BYTES
+): void {
+  validateGitStatusRequest(projectRoot, true);
+  if (!Array.isArray(paths) || paths.length > MAX_PATHS ||
+      paths.some((path) => typeof path !== "string" || !isSafeGitPath(path))) {
+    throw new BrokerError("PRECONDITION_FAILED", "Git diff paths are outside the supported range");
+  }
+  if (typeof staged !== "boolean" || !isSafeGitRevision(base) ||
+      !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_DIFF_BYTES) {
+    throw new BrokerError("PRECONDITION_FAILED", "Git diff arguments are outside the supported range");
+  }
+}
+
+function isSafeGitRevision(ref: string | undefined, maxLength = 128): boolean {
+  return ref === undefined || (typeof ref === "string" && ref.length <= maxLength &&
+    /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/u.test(ref) && !ref.includes(".."));
+}
+
+function isSafeGitPath(path: string): boolean {
+  if (path.length < 1 || path.length > MAX_PATH_LENGTH || isAbsolute(path) || path.startsWith(":")) return false;
+  if (/[\u0000-\u001f\u007f\\]/u.test(path)) return false;
+  const segments = path.split("/");
+  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
 function sanitizeGitValue(value: string, maxLength: number, allowEmpty = false): { value: string | null; redacted: boolean } {
@@ -285,6 +396,83 @@ export function parseGitLogResult(projectRoot: string, result: ProcessExecutionR
   const truncated = result.truncated || malformed;
   if (truncated) addWarning("Git log output was limited by fixed adapter budgets");
   return { projectRoot, commits, truncated, warnings };
+}
+
+export function parseGitDiffResult(
+  projectRoot: string,
+  paths: readonly string[],
+  staged: boolean,
+  base: string | undefined,
+  maxBytes: number,
+  result: ProcessExecutionResult
+): SafeGitDiff {
+  if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Git diff was cancelled");
+  if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Git diff timed out");
+  if (result.resultClass !== "SUCCEEDED" && result.resultClass !== "OUTPUT_LIMIT") {
+    if (/not a git repository/u.test(result.stderr)) {
+      throw new BrokerError("TARGET_NOT_FOUND", "The project root is not a Git repository");
+    }
+    throw new BrokerError("EXECUTION_FAILED", "Git diff failed");
+  }
+  const bounded = redactBoundedText(result.stdout, maxBytes);
+  const safeText = redactBoundedText(
+    bounded.text.replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "�"),
+    maxBytes
+  );
+  const diff = safeText.text;
+  const warnings: string[] = [];
+  const addWarning = (warning: string): void => {
+    if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
+  };
+  const changedPaths = extractGitDiffPaths(diff, addWarning);
+  const truncated = result.truncated || result.resultClass === "OUTPUT_LIMIT" || bounded.truncated || safeText.truncated;
+  if (bounded.redacted || safeText.redacted) addWarning("Sensitive Git diff text was redacted");
+  if (truncated) addWarning("Git diff output was limited by fixed adapter budgets");
+  const digest = createHash("sha256").update(diff, "utf8").digest("hex");
+  return {
+    projectRoot,
+    diff,
+    changedPaths,
+    staged,
+    ...(base !== undefined ? { base } : {}),
+    sha256: digest,
+    truncated,
+    warnings
+  };
+}
+
+function extractGitDiffPaths(diff: string, addWarning: (warning: string) => void): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  let truncated = false;
+  const add = (value: string): void => {
+    const safe = sanitizeGitValue(value, MAX_PATH_LENGTH);
+    if (safe.value === null || !isSafeGitPath(safe.value)) return;
+    if (seen.has(safe.value)) return;
+    if (paths.length >= MAX_PATHS) {
+      truncated = true;
+      return;
+    }
+    seen.add(safe.value);
+    paths.push(safe.value);
+  };
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      const separator = line.lastIndexOf(" b/");
+      if (separator > "diff --git a/".length) {
+        const left = line.slice("diff --git a/".length, separator);
+        const right = line.slice(separator + " b/".length);
+        add(left);
+        add(right);
+      }
+    } else if (line.startsWith("--- a/")) {
+      add(line.slice("--- a/".length));
+    } else if (line.startsWith("+++ b/")) {
+      add(line.slice("+++ b/".length));
+    }
+  }
+  if (truncated) addWarning("Changed Git diff paths were limited by fixed adapter budgets");
+  return paths;
 }
 
 export function parseGitBranchResult(projectRoot: string, result: ProcessExecutionResult): SafeGitBranches {

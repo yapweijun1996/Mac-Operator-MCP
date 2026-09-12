@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { GitBranchListInspector, GitLogInspectorImpl, GitStatusInspector, parseGitBranchResult, parseGitLogResult, parseGitStatusOutput, validateGitLogRequest, validateGitStatusRequest } from "./git-inspector.js";
+import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, parseGitBranchResult, parseGitDiffResult, parseGitLogResult, parseGitStatusOutput, validateGitDiffRequest, validateGitLogRequest, validateGitStatusRequest } from "./git-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 function success(stdout: string): ProcessExecutionResult {
@@ -131,6 +131,65 @@ test("Git log inspector binds ref arguments and fixed no-network execution", asy
   assert.ok(observed.args.includes("--max-count=5"));
   assert.equal(observed.args.at(-1), "HEAD");
   assert.equal(observed.environment?.GIT_CONFIG_GLOBAL, "/dev/null");
+});
+
+test("Git diff parser redacts content, extracts bounded paths, and hashes sanitized output", () => {
+  const result = parseGitDiffResult(
+    "/tmp/project",
+    ["src/main.ts"],
+    false,
+    "HEAD",
+    4096,
+    success([
+      "diff --git a/src/main.ts b/src/main.ts\n",
+      "index 1111111..2222222 100644\n",
+      "--- a/src/main.ts\n",
+      "+++ b/src/main.ts\n",
+      "@@ -1 +1 @@\n",
+      "+token=super-secret-value\n"
+    ].join(""))
+  );
+  assert.deepEqual(result.changedPaths, ["src/main.ts"]);
+  assert.equal(result.staged, false);
+  assert.equal(result.base, "HEAD");
+  assert.equal(result.diff.includes("super-secret-value"), false);
+  assert.equal(result.warnings.includes("Sensitive Git diff text was redacted"), true);
+  assert.match(result.sha256, /^[a-f0-9]{64}$/u);
+});
+
+test("Git diff validates literal paths, revisions, and byte budgets", () => {
+  for (const path of ["/absolute/path", "../outside", "nested/../outside", ":(glob)secret", "bad\\path"]) {
+    assert.throws(() => validateGitDiffRequest("/tmp/project", [path]), BrokerError);
+  }
+  assert.throws(() => validateGitDiffRequest("/tmp/project", [], false, "HEAD..main"), BrokerError);
+  assert.throws(() => validateGitDiffRequest("/tmp/project", [], false, undefined, 1_048_577), BrokerError);
+});
+
+test("Git diff inspector binds staged, revision, literal paths, and fixed environment", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-diff-"));
+  const target = join(directory, "target");
+  await mkdir(join(target, ".git"), { recursive: true });
+  await writeFile(join(target, ".git", "config"), "[core]\n\tbare = false\n");
+  let observed: { args: readonly string[]; environment?: Readonly<Record<string, string>> } | undefined;
+  const inspector = new GitDiffInspectorImpl({
+    run: async (request) => {
+      observed = { args: request.args, ...(request.environment ? { environment: request.environment } : {}) };
+      return success("diff --git a/src/file.ts b/src/file.ts\n");
+    }
+  });
+  const canonicalTarget = await realpath(target);
+  const result = await inspector.diff(canonicalTarget, ["src/file.ts"], true, "HEAD", 4096, { timeoutMs: 1_000, shouldCancel: () => false });
+  assert.equal(result.changedPaths[0], "src/file.ts");
+  assert.ok(observed);
+  assert.ok(observed.args.includes("--literal-pathspecs"));
+  assert.ok(observed.args.includes("--cached"));
+  assert.ok(observed.args.includes("--no-ext-diff"));
+  assert.ok(observed.args.includes("--no-textconv"));
+  assert.ok(observed.args.includes("--end-of-options"));
+  assert.equal(observed.args.at(-3), "HEAD");
+  assert.equal(observed.args.at(-2), "--");
+  assert.equal(observed.args.at(-1), "src/file.ts");
+  assert.equal(observed.environment?.GIT_CONFIG_SYSTEM, "/dev/null");
 });
 
 test("Git status rejects a symlink project root before child execution", async () => {

@@ -290,6 +290,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_git_diff",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.git.read"],
+    capabilityFamilies: ["read"],
+    targetType: "project",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 1_048_576,
+    timeoutMs: 15_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_storage_analysis",
     contractVersion: "0.1",
     requiredScopes: ["mac.storage.read"],

@@ -53,6 +53,11 @@ export function assertContentDoesNotContainSecrets(content: Buffer): void {
 }
 
 export function redactLogText(value: string): { text: string; redacted: boolean } {
+  const result = redactBoundedText(value, 8_192);
+  return { text: result.text, redacted: result.redacted || result.truncated };
+}
+
+export function redactBoundedText(value: string, maxBytes: number): { text: string; redacted: boolean; truncated: boolean } {
   let text = value;
   let redacted = false;
   for (const pattern of LOG_SECRET_REDACTION_PATTERNS) {
@@ -60,9 +65,31 @@ export function redactLogText(value: string): { text: string; redacted: boolean 
     redacted ||= next !== text;
     text = next;
   }
-  if (text.length > 8192) {
-    text = `${text.slice(0, 8180)}…[TRUNCATED]`;
-    redacted = true;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new BrokerError("PRECONDITION_FAILED", "Redaction output budget is invalid");
   }
-  return { text, redacted };
+  const encoded = Buffer.from(text, "utf8");
+  let truncated = false;
+  if (encoded.byteLength > maxBytes) {
+    const suffix = Buffer.from("…[TRUNCATED]", "utf8");
+    if (maxBytes < suffix.byteLength) {
+      text = utf8Prefix(encoded, maxBytes);
+    } else {
+      const prefixBytes = maxBytes - suffix.byteLength;
+      text = `${utf8Prefix(encoded, prefixBytes)}${suffix.toString("utf8")}`;
+    }
+    redacted = true;
+    truncated = true;
+  }
+  return { text, redacted, truncated };
+}
+
+function utf8Prefix(value: Buffer, maxBytes: number): string {
+  let end = Math.min(value.byteLength, maxBytes);
+  while (end > 0) {
+    const prefix = value.subarray(0, end).toString("utf8");
+    if (Buffer.byteLength(prefix, "utf8") <= maxBytes) return prefix;
+    end -= 1;
+  }
+  return "";
 }
