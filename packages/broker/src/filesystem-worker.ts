@@ -48,6 +48,15 @@ try {
       device: hash.device,
       inode: hash.inode
     };
+  } else if (command.operation === "list") {
+    const listing = inspector.listPlanned(command.plan, command.cursor, command.limit, command.includeHidden);
+    value = {
+      operation: "list",
+      path: listing.path,
+      entries: listing.entries,
+      nextCursor: listing.nextCursor,
+      rootId: listing.rootId
+    };
   } else {
     assertContentDoesNotContainSecrets(command.content);
     const write = inspector.writePlanned(

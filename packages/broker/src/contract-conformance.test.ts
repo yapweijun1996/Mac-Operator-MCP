@@ -70,6 +70,7 @@ test("implemented broker results conform to versioned success and failure schema
       { tool: "mac_stat_path", arguments: { path: samplePath, follow_symlink: true } },
       { tool: "mac_read_file", arguments: { path: samplePath, max_bytes: 5, encoding: "utf8" } },
       { tool: "mac_hash_file", arguments: { path: samplePath, algorithm: "sha256" } },
+      { tool: "mac_list_directory", arguments: { path: directory, limit: 10, include_hidden: false } },
       { tool: "mac_write_file_atomic", arguments: { path: writePath, content: "safe", idempotency_key: "contract-write-1", encoding: "utf8", create_only: true } },
       { tool: "mac_job_status", arguments: { job_id: "job:contract", tail_bytes: 128 } },
       { tool: "mac_job_cancel", arguments: { job_id: "job:contract", reason: "contract-test" } }

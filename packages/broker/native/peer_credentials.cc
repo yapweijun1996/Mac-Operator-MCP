@@ -1,10 +1,12 @@
 #include <node_api.h>
 
 #include <CommonCrypto/CommonDigest.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <string>
@@ -241,6 +243,239 @@ napi_value StatPathWithinRoot(napi_env env, napi_callback_info info) {
   SetString(env, result, "device", device);
   SetString(env, result, "inode", inode);
 
+  close(target_descriptor);
+  close(root_descriptor);
+  return result;
+}
+
+struct DirectoryEntryRecord {
+  std::string name;
+  const char* type;
+  off_t size;
+  double modified_at_ms;
+  bool hidden;
+};
+
+napi_value ListDirectoryWithinRoot(napi_env env, napi_callback_info info) {
+  size_t argc = 6;
+  napi_value args[6];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 6) {
+    napi_throw_type_error(env, nullptr, "listDirectoryWithinRoot requires root, target, includeHidden, cursor, limit, and authorizer");
+    return nullptr;
+  }
+
+  char configured_root[PATH_MAX];
+  char requested_target[PATH_MAX];
+  bool include_hidden = false;
+  int64_t limit = 0;
+  if (!ReadString(env, args[0], configured_root, sizeof(configured_root)) ||
+      !ReadString(env, args[1], requested_target, sizeof(requested_target)) ||
+      napi_get_value_bool(env, args[2], &include_hidden) != napi_ok ||
+      napi_get_value_int64(env, args[4], &limit) != napi_ok || limit < 1 || limit > 500) {
+    napi_throw_type_error(env, nullptr, "Filesystem directory-list arguments are malformed");
+    return nullptr;
+  }
+  std::string cursor;
+  napi_valuetype cursor_type;
+  if (napi_typeof(env, args[3], &cursor_type) != napi_ok) {
+    napi_throw_type_error(env, nullptr, "Filesystem directory-list cursor is malformed");
+    return nullptr;
+  }
+  if (cursor_type != napi_undefined && cursor_type != napi_null) {
+    size_t cursor_length = 0;
+    if (cursor_type != napi_string || napi_get_value_string_utf8(env, args[3], nullptr, 0, &cursor_length) != napi_ok ||
+        cursor_length == 0 || cursor_length >= PATH_MAX) {
+      napi_throw_type_error(env, nullptr, "Filesystem directory-list cursor is malformed");
+      return nullptr;
+    }
+    cursor.resize(cursor_length, '\0');
+    size_t copied = 0;
+    if (napi_get_value_string_utf8(env, args[3], cursor.data(), cursor.size() + 1, &copied) != napi_ok || copied != cursor_length) {
+      napi_throw_type_error(env, nullptr, "Filesystem directory-list cursor is malformed");
+      return nullptr;
+    }
+  }
+  napi_valuetype authorizer_type;
+  if (napi_typeof(env, args[5], &authorizer_type) != napi_ok || authorizer_type != napi_function) {
+    napi_throw_type_error(env, nullptr, "Filesystem directory-list authorizer must be a function");
+    return nullptr;
+  }
+
+  int root_descriptor = open(configured_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (root_descriptor < 0) {
+    ThrowSystemError(env, "Filesystem root could not be opened safely");
+    return nullptr;
+  }
+  struct stat root_stat;
+  struct statfs root_filesystem;
+  char resolved_root[PATH_MAX];
+  if (fstat(root_descriptor, &root_stat) != 0 || fstatfs(root_descriptor, &root_filesystem) != 0 ||
+      (root_filesystem.f_flags & MNT_LOCAL) == 0 || !DescriptorPath(root_descriptor, resolved_root)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem root identity could not be verified");
+    return nullptr;
+  }
+
+  int target_descriptor = open(requested_target, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (target_descriptor < 0) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory could not be opened safely");
+    return nullptr;
+  }
+  struct stat target_stat;
+  char resolved_target[PATH_MAX];
+  if (fstat(target_descriptor, &target_stat) != 0 || !DescriptorPath(target_descriptor, resolved_target) ||
+      !S_ISDIR(target_stat.st_mode) || target_stat.st_nlink < 1 ||
+      !IsWithinRoot(resolved_root, resolved_target) || target_stat.st_dev != root_stat.st_dev) {
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory identity is not authorized");
+    return nullptr;
+  }
+
+  napi_value global;
+  napi_value canonical_path;
+  napi_value authorization_result;
+  napi_get_global(env, &global);
+  napi_create_string_utf8(env, resolved_target, NAPI_AUTO_LENGTH, &canonical_path);
+  napi_status authorization_status = napi_call_function(
+      env, global, args[5], 1, &canonical_path, &authorization_result);
+  if (authorization_status != napi_ok) {
+    close(target_descriptor);
+    close(root_descriptor);
+    return nullptr;
+  }
+  bool target_authorized = false;
+  if (napi_get_value_bool(env, authorization_result, &target_authorized) != napi_ok || !target_authorized) {
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory is denied by policy");
+    return nullptr;
+  }
+
+  int scan_descriptor = dup(target_descriptor);
+  if (scan_descriptor < 0) {
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory could not be duplicated");
+    return nullptr;
+  }
+  DIR* directory = fdopendir(scan_descriptor);
+  if (directory == nullptr) {
+    close(scan_descriptor);
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory could not be enumerated");
+    return nullptr;
+  }
+
+  std::vector<DirectoryEntryRecord> entries;
+  entries.reserve(static_cast<size_t>(limit) + 1);
+  errno = 0;
+  while (struct dirent* entry = readdir(directory)) {
+    const char* name = entry->d_name;
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+    const bool hidden = name[0] == '.';
+    if (hidden && !include_hidden) continue;
+    if (cursor.size() > 0 && strcmp(name, cursor.c_str()) <= 0) continue;
+
+    char child_path[PATH_MAX];
+    const int written = snprintf(child_path, sizeof(child_path), "%s%s%s", resolved_target,
+        (strcmp(resolved_target, "/") == 0 ? "" : "/"), name);
+    if (written < 0 || static_cast<size_t>(written) >= sizeof(child_path)) continue;
+    napi_value child_value;
+    napi_value child_authorized_value;
+    napi_create_string_utf8(env, child_path, NAPI_AUTO_LENGTH, &child_value);
+    if (napi_call_function(env, global, args[5], 1, &child_value, &child_authorized_value) != napi_ok) {
+      closedir(directory);
+      close(target_descriptor);
+      close(root_descriptor);
+      return nullptr;
+    }
+    bool child_authorized = false;
+    if (napi_get_value_bool(env, child_authorized_value, &child_authorized) != napi_ok) {
+      closedir(directory);
+      close(target_descriptor);
+      close(root_descriptor);
+      napi_throw_type_error(env, nullptr, "Filesystem directory authorizer returned a malformed result");
+      return nullptr;
+    }
+    if (!child_authorized) continue;
+
+    struct stat entry_stat;
+    if (fstatat(target_descriptor, name, &entry_stat, AT_SYMLINK_NOFOLLOW) != 0) {
+      if (errno == ENOENT) continue;
+      closedir(directory);
+      close(target_descriptor);
+      close(root_descriptor);
+      ThrowSystemError(env, "Filesystem directory entry could not be inspected");
+      return nullptr;
+    }
+    const char* type = "other";
+    if (S_ISREG(entry_stat.st_mode)) type = "file";
+    else if (S_ISDIR(entry_stat.st_mode)) type = "directory";
+    else if (S_ISLNK(entry_stat.st_mode)) type = "symlink";
+    entries.push_back({name, type, entry_stat.st_size,
+      static_cast<double>(entry_stat.st_mtimespec.tv_sec) * 1000.0 +
+        static_cast<double>(entry_stat.st_mtimespec.tv_nsec) / 1000000.0, hidden});
+    if (entries.size() > static_cast<size_t>(limit) + 1) {
+      std::sort(entries.begin(), entries.end(), [](const DirectoryEntryRecord& left, const DirectoryEntryRecord& right) {
+        return left.name < right.name;
+      });
+      entries.resize(static_cast<size_t>(limit) + 1);
+    }
+  }
+  const int enumeration_error = errno;
+  closedir(directory);
+  if (enumeration_error != 0) {
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory enumeration failed");
+    return nullptr;
+  }
+  struct stat readback_stat;
+  if (fstat(target_descriptor, &readback_stat) != 0 ||
+      readback_stat.st_dev != target_stat.st_dev || readback_stat.st_ino != target_stat.st_ino ||
+      readback_stat.st_nlink != target_stat.st_nlink || readback_stat.st_size != target_stat.st_size ||
+      readback_stat.st_mtimespec.tv_sec != target_stat.st_mtimespec.tv_sec ||
+      readback_stat.st_mtimespec.tv_nsec != target_stat.st_mtimespec.tv_nsec ||
+      readback_stat.st_ctimespec.tv_sec != target_stat.st_ctimespec.tv_sec ||
+      readback_stat.st_ctimespec.tv_nsec != target_stat.st_ctimespec.tv_nsec) {
+    close(target_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory changed during enumeration");
+    return nullptr;
+  }
+  std::sort(entries.begin(), entries.end(), [](const DirectoryEntryRecord& left, const DirectoryEntryRecord& right) {
+    return left.name < right.name;
+  });
+  const bool has_more = entries.size() > static_cast<size_t>(limit);
+  if (entries.size() > static_cast<size_t>(limit)) entries.resize(static_cast<size_t>(limit));
+
+  napi_value result;
+  napi_value entry_array;
+  napi_create_object(env, &result);
+  napi_create_array_with_length(env, entries.size(), &entry_array);
+  for (size_t index = 0; index < entries.size(); ++index) {
+    const DirectoryEntryRecord& entry = entries[index];
+    napi_value item;
+    napi_create_object(env, &item);
+    SetString(env, item, "name", entry.name.c_str());
+    SetString(env, item, "type", entry.type);
+    SetNumber(env, item, "sizeBytes", static_cast<double>(entry.size));
+    SetNumber(env, item, "modifiedAtMs", entry.modified_at_ms);
+    SetBoolean(env, item, "hidden", entry.hidden);
+    napi_set_element(env, entry_array, index, item);
+  }
+  SetString(env, result, "rootPath", resolved_root);
+  SetString(env, result, "path", resolved_target);
+  napi_set_named_property(env, result, "entries", entry_array);
+  if (has_more && !entries.empty()) SetString(env, result, "nextCursor", entries.back().name.c_str());
+  else {
+    napi_value null_value;
+    napi_get_null(env, &null_value);
+    napi_set_named_property(env, result, "nextCursor", null_value);
+  }
   close(target_descriptor);
   close(root_descriptor);
   return result;
@@ -748,6 +983,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "getPeerCredentials", function);
   napi_create_function(env, "statPathWithinRoot", NAPI_AUTO_LENGTH, StatPathWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "statPathWithinRoot", function);
+  napi_create_function(env, "listDirectoryWithinRoot", NAPI_AUTO_LENGTH, ListDirectoryWithinRoot, nullptr, &function);
+  napi_set_named_property(env, exports, "listDirectoryWithinRoot", function);
   napi_create_function(env, "readFileWithinRoot", NAPI_AUTO_LENGTH, ReadFileWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "readFileWithinRoot", function);
   napi_create_function(env, "hashFileWithinRoot", NAPI_AUTO_LENGTH, HashFileWithinRoot, nullptr, &function);

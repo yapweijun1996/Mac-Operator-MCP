@@ -25,6 +25,13 @@ export interface FilesystemExecutor {
     algorithm: "sha256" | "sha512",
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  list?(
+    plan: FilesystemPathPlan,
+    cursor: string | undefined,
+    limit: number,
+    includeHidden: boolean,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -73,6 +80,17 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "hash", plan, algorithm }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  list(
+    plan: FilesystemPathPlan,
+    cursor: string | undefined,
+    limit: number,
+    includeHidden: boolean,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "list", plan, cursor, limit, includeHidden }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -128,6 +146,26 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
         !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes < 0 || value.sizeBytes > 1_000_000_000 ||
         !/^\d+$/u.test(value.device) || !/^\d+$/u.test(value.inode)) {
       throw malformed();
+    }
+    return value;
+  }
+  if (value.operation === "list") {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
+        !isAbsolute(value.path) || value.path.length > 4096 ||
+        !Array.isArray(value.entries) || value.entries.length > 501 ||
+        (value.nextCursor !== null && (typeof value.nextCursor !== "string" || value.nextCursor.length === 0 || value.nextCursor.length > 1024))) {
+      throw malformed();
+    }
+    for (const entry of value.entries) {
+      if (entry === null || typeof entry !== "object" ||
+          typeof entry.name !== "string" || entry.name.length === 0 || entry.name.length > 1024 ||
+          entry.name.includes("\0") || entry.name.includes("/") ||
+          !["file", "directory", "symlink", "other"].includes(entry.type) ||
+          !Number.isSafeInteger(entry.sizeBytes) || entry.sizeBytes < 0 || entry.sizeBytes > 1_000_000_000_000 ||
+          typeof entry.modifiedAt !== "string" || !Number.isFinite(Date.parse(entry.modifiedAt)) ||
+          typeof entry.hidden !== "boolean") {
+        throw malformed();
+      }
     }
     return value;
   }

@@ -171,6 +171,32 @@ test("descriptor-backed hash denies protected secret paths", async () => {
   }
 });
 
+test("descriptor-backed directory listing paginates and filters protected entries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-list-"));
+  await writeFile(join(directory, "a.txt"), "a");
+  await writeFile(join(directory, "b.txt"), "b");
+  await writeFile(join(directory, "c.txt"), "c");
+  await writeFile(join(directory, ".hidden"), "hidden");
+  await mkdir(join(directory, ".ssh"));
+  await writeFile(join(directory, ".ssh", "known_hosts"), "private");
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    const plan = inspector.planPath(directory, "content_read");
+    const first = inspector.listPlanned(plan, undefined, 2, false);
+    assert.deepEqual(first.entries.map((entry) => entry.name), ["a.txt", "b.txt"]);
+    assert.equal(first.entries.every((entry) => !entry.hidden), true);
+    assert.ok(first.nextCursor);
+    const second = inspector.listPlanned(plan, first.nextCursor ?? undefined, 2, false);
+    assert.deepEqual(second.entries.map((entry) => entry.name), ["c.txt"]);
+    assert.equal(second.nextCursor, null);
+    const hidden = inspector.listPlanned(plan, undefined, 20, true);
+    assert.equal(hidden.entries.some((entry) => entry.name === ".hidden"), true);
+    assert.equal(hidden.entries.some((entry) => entry.name === ".ssh"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("content read requires independent root enablement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-read-scope-"));
   const file = join(directory, "file.txt");

@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
@@ -31,6 +32,21 @@ export interface SafeFileHash {
   sizeBytes: number;
   device: string;
   inode: string;
+}
+
+export interface SafeDirectoryEntry {
+  name: string;
+  type: "file" | "directory" | "symlink" | "other";
+  sizeBytes: number;
+  modifiedAt: string | null;
+  hidden: boolean;
+}
+
+export interface SafeDirectoryListing {
+  rootId: string;
+  path: string;
+  entries: readonly SafeDirectoryEntry[];
+  nextCursor: string | null;
 }
 
 export interface SafePathMetadata {
@@ -65,6 +81,14 @@ interface NativePathMetadata {
 
 interface NativeFilesystemAdapter {
   statPathWithinRoot(rootPath: string, targetPath: string, followSymlink: boolean): unknown;
+  listDirectoryWithinRoot(
+    rootPath: string,
+    targetPath: string,
+    includeHidden: boolean,
+    cursor: string | undefined,
+    limit: number,
+    authorizeCanonicalPath: (path: string) => boolean
+  ): unknown;
   readFileWithinRoot(
     rootPath: string,
     targetPath: string,
@@ -195,6 +219,66 @@ export class FilesystemInspector {
       sizeBytes: hash.sizeBytes,
       device: hash.device,
       inode: hash.inode
+    };
+  }
+
+  listPlanned(
+    plan: FilesystemPathPlan,
+    cursor: string | undefined,
+    limit: number,
+    includeHidden: boolean
+  ): SafeDirectoryListing {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
+      throw new BrokerError("PRECONDITION_FAILED", "Directory entry limit is outside the supported range");
+    }
+    if (cursor !== undefined && (cursor.length === 0 || cursor.length > 4096 || cursor.includes("\0") || cursor.includes("/"))) {
+      throw new BrokerError("PRECONDITION_FAILED", "Directory cursor is malformed");
+    }
+    if (typeof includeHidden !== "boolean") {
+      throw new BrokerError("PRECONDITION_FAILED", "include_hidden must be a boolean");
+    }
+    let canonicalRootPath: string;
+    try {
+      canonicalRootPath = realpathSync.native(plan.root.path);
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem root could not be canonicalized");
+    }
+    let nativeListing: unknown;
+    try {
+      nativeListing = this.native.listDirectoryWithinRoot(
+        plan.root.path,
+        plan.requestedPath,
+        includeHidden,
+        cursor,
+        limit,
+        (canonicalPath) => {
+          try {
+            assertContentPathAllowed(canonicalPath);
+            const resolvedRelative = relative(canonicalRootPath, canonicalPath);
+            if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)) return false;
+            return !plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative));
+          } catch {
+            return false;
+          }
+        }
+      );
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem directory escaped its authorized root, type, or volume");
+    }
+    const listing = parseNativeDirectoryListing(nativeListing);
+    const resolvedRelative = relative(listing.rootPath, listing.path);
+    if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem directory escaped its authorized root or volume");
+    }
+    if (plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
+    }
+    assertContentPathAllowed(listing.path);
+    return {
+      rootId: plan.rootId,
+      path: listing.path,
+      entries: listing.entries,
+      nextCursor: listing.nextCursor
     };
   }
 
@@ -348,6 +432,48 @@ function parseNativeHash(value: unknown): {
     sizeBytes: number;
     device: string;
     inode: string;
+  };
+}
+
+function parseNativeDirectoryListing(value: unknown): {
+  rootPath: string;
+  path: string;
+  entries: SafeDirectoryEntry[];
+  nextCursor: string | null;
+} {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native directory listing");
+  const record = value as Record<string, unknown>;
+  if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
+      typeof record.path !== "string" || !isAbsolute(record.path) ||
+      !Array.isArray(record.entries) || record.entries.length > 501 ||
+      (record.nextCursor !== null && typeof record.nextCursor !== "string")) {
+    throw new Error("Malformed native directory listing");
+  }
+  const entries: SafeDirectoryEntry[] = [];
+  for (const value of record.entries) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native directory entry");
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.name !== "string" || entry.name.length === 0 || entry.name.length > 1024 ||
+        entry.name.includes("\0") || entry.name.includes("/") ||
+        (entry.type !== "file" && entry.type !== "directory" && entry.type !== "symlink" && entry.type !== "other") ||
+        !Number.isSafeInteger(entry.sizeBytes) || (entry.sizeBytes as number) < 0 || (entry.sizeBytes as number) > 1_000_000_000_000 ||
+        typeof entry.modifiedAtMs !== "number" || !Number.isFinite(entry.modifiedAtMs) ||
+        typeof entry.hidden !== "boolean") {
+      throw new Error("Malformed native directory entry");
+    }
+    entries.push({
+      name: entry.name,
+      type: entry.type,
+      sizeBytes: entry.sizeBytes as number,
+      modifiedAt: new Date(entry.modifiedAtMs).toISOString(),
+      hidden: entry.hidden
+    });
+  }
+  return {
+    rootPath: record.rootPath,
+    path: record.path,
+    entries,
+    nextCursor: record.nextCursor as string | null
   };
 }
 

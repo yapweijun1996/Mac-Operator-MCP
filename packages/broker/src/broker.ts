@@ -360,7 +360,7 @@ export class Broker {
           let reportedTarget = target;
           if (tool.targetType === "path") {
             if (target.kind !== "path") throw new BrokerError("PRECONDITION_FAILED", "Filesystem policy query requires a path target");
-            const capability = candidate === "mac_read_file" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
+            const capability = candidate === "mac_read_file" || candidate === "mac_list_directory" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
             const plan = new FilesystemInspector(policy.filesystemRoots).planPath(target.reference, capability);
             authorizationTarget = { kind: "path", reference: plan.rootId };
             reportedTarget = { kind: "path", reference: plan.requestedPath };
@@ -491,6 +491,40 @@ export class Broker {
           }
         };
       }
+      case "mac_list_directory": {
+        if (!execution.filesystem || !execution.list || !this.filesystemExecutor.list) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem directory-list execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.list(
+          execution.filesystem.plan,
+          execution.list.cursor,
+          execution.list.limit,
+          execution.list.includeHidden,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        if (workerResult.operation !== "list") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            path: workerResult.path,
+            entries: workerResult.entries.map((entry) => ({
+              name: entry.name,
+              type: entry.type,
+              size_bytes: entry.sizeBytes,
+              modified_at: entry.modifiedAt,
+              hidden: entry.hidden
+            })),
+            next_cursor: workerResult.nextCursor === null ? null : encodeDirectoryCursor(workerResult.nextCursor)
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_result_validation",
+            evidence: { summary: "Directory entries were enumerated from a descriptor with identity readback" }
+          },
+          auditTarget: `path:${workerResult.path}`,
+          auditEvidence: { rootId: workerResult.rootId, entryCount: workerResult.entries.length, hasNextCursor: workerResult.nextCursor !== null }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -619,13 +653,15 @@ export class Broker {
       if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
       return { target: { kind: "job", reference: "owned" }, auditTarget: `job:${job.jobId}`, job };
     }
-    if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
+    if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
       : request.tool === "mac_read_file"
         ? ["path", "offset", "max_bytes", "encoding"]
         : request.tool === "mac_hash_file"
           ? ["path", "algorithm"]
+          : request.tool === "mac_list_directory"
+            ? ["path", "cursor", "limit", "include_hidden"]
           : ["path", "content", "idempotency_key", "encoding", "expected_sha256", "create_only"]);
     if (typeof request.arguments.path !== "string") {
       throw new BrokerError("PRECONDITION_FAILED", "path must be a string");
@@ -638,6 +674,15 @@ export class Broker {
     if (request.tool === "mac_hash_file") {
       validateHashArguments(request.arguments);
       hashAlgorithm = (request.arguments.algorithm ?? "sha256") as "sha256" | "sha512";
+    }
+    let list: ExecutionPlan["list"];
+    if (request.tool === "mac_list_directory") {
+      validateListArguments(request.arguments);
+      list = {
+        cursor: decodeDirectoryCursor(request.arguments.cursor),
+        limit: (request.arguments.limit ?? 100) as number,
+        includeHidden: (request.arguments.include_hidden ?? false) as boolean
+      };
     }
     let write: ExecutionPlan["write"];
     if (request.tool === "mac_write_file_atomic") {
@@ -654,12 +699,13 @@ export class Broker {
     const inspector = new FilesystemInspector(policy.filesystemRoots);
     const plan = inspector.planPath(
       request.arguments.path,
-      request.tool === "mac_read_file" ? "content_read" : request.tool === "mac_write_file_atomic" ? "write" : "metadata"
+      request.tool === "mac_read_file" || request.tool === "mac_list_directory" ? "content_read" : request.tool === "mac_write_file_atomic" ? "write" : "metadata"
     );
     return {
       target: { kind: "path", reference: plan.rootId },
       filesystem: { inspector, plan },
       ...(hashAlgorithm ? { hashAlgorithm } : {}),
+      ...(list ? { list } : {}),
       ...(write ? { write } : {})
     };
   }
@@ -674,7 +720,7 @@ export class Broker {
       return;
     }
     for (const root of policy.filesystemRoots.filter((candidate) =>
-      tool.tool === "mac_read_file" ? candidate.contentRead === true : tool.tool === "mac_write_file_atomic" ? candidate.write === true : candidate.metadata)) {
+      tool.tool === "mac_read_file" || tool.tool === "mac_list_directory" ? candidate.contentRead === true : tool.tool === "mac_write_file_atomic" ? candidate.write === true : candidate.metadata)) {
       try {
         authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "path", reference: root.rootId });
         return;
@@ -768,6 +814,11 @@ interface ExecutionPlan {
   auditTarget?: string;
   filesystem?: { inspector: FilesystemInspector; plan: FilesystemPathPlan };
   hashAlgorithm?: "sha256" | "sha512";
+  list?: {
+    cursor: string | undefined;
+    limit: number;
+    includeHidden: boolean;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -900,6 +951,42 @@ function validateHashArguments(argumentsValue: Readonly<Record<string, unknown>>
   if (algorithm !== undefined && algorithm !== "sha256" && algorithm !== "sha512") {
     throw new BrokerError("PRECONDITION_FAILED", "algorithm must be sha256 or sha512");
   }
+}
+
+function validateListArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const cursor = argumentsValue.cursor;
+  if (cursor !== undefined && (typeof cursor !== "string" || cursor.length === 0 || cursor.length > 512 || !/^[A-Za-z0-9_-]+$/u.test(cursor))) {
+    throw new BrokerError("PRECONDITION_FAILED", "cursor must be a bounded opaque identifier");
+  }
+  const limit = argumentsValue.limit;
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 500)) {
+    throw new BrokerError("PRECONDITION_FAILED", "limit must be an integer between 1 and 500");
+  }
+  const includeHidden = argumentsValue.include_hidden;
+  if (includeHidden !== undefined && typeof includeHidden !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "include_hidden must be a boolean");
+  }
+}
+
+function decodeDirectoryCursor(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new BrokerError("PRECONDITION_FAILED", "cursor must be a string");
+  let decoded: string;
+  try {
+    const bytes = Buffer.from(value, "base64url");
+    if (bytes.length === 0 || bytes.toString("base64url") !== value) throw new Error("non-canonical cursor");
+    decoded = bytes.toString("utf8");
+  } catch {
+    throw new BrokerError("PRECONDITION_FAILED", "cursor is malformed");
+  }
+  if (decoded.length === 0 || decoded.includes("\0") || decoded.includes("/")) {
+    throw new BrokerError("PRECONDITION_FAILED", "cursor is malformed");
+  }
+  return decoded;
+}
+
+function encodeDirectoryCursor(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64url");
 }
 
 function validateWriteArguments(argumentsValue: Readonly<Record<string, unknown>>): void {

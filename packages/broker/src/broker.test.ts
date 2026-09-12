@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -173,7 +173,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 10);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 11);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -501,6 +501,57 @@ test("mac_hash_file returns a descriptor-verified digest without content", async
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_list_directory paginates descriptor metadata and filters secret entries", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-list-"));
+  const directory = join(parent, "workspace");
+  await mkdir(directory);
+  await writeFile(join(directory, "a.txt"), "a");
+  await writeFile(join(directory, "b.txt"), "b");
+  await writeFile(join(directory, "c.txt"), "c");
+  await writeFile(join(directory, ".env"), "TOKEN=private");
+  await writeFile(join(directory, ".visible"), "safe");
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const firstRequest = unsigned({
+      requestId: "list-first",
+      nonce: "list-first-nonce",
+      tool: "mac_list_directory",
+      arguments: { path: directory, limit: 2, include_hidden: false }
+    }, ["mac.files.read"]);
+    const first = await broker.handle(signRequest(firstRequest, key));
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.ok(first.ok);
+    const firstData = first.data as { entries: Array<{ name: string }>; next_cursor: string | null };
+    assert.deepEqual(firstData.entries.map((entry) => entry.name), ["a.txt", "b.txt"]);
+    assert.ok(firstData.next_cursor);
+    const secondRequest = unsigned({
+      requestId: "list-second",
+      nonce: "list-second-nonce",
+      tool: "mac_list_directory",
+      arguments: { path: directory, cursor: firstData.next_cursor, limit: 2, include_hidden: false }
+    }, ["mac.files.read"]);
+    const second = await broker.handle(signRequest(secondRequest, key));
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.ok(second.ok);
+    const secondData = second.data as { entries: Array<{ name: string }>; next_cursor: string | null };
+    assert.deepEqual(secondData.entries.map((entry) => entry.name), ["c.txt"]);
+    assert.equal(secondData.next_cursor, null);
+    assert.equal(JSON.stringify(first).includes("TOKEN=private"), false);
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes(".env")), false);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
   }
 });
 

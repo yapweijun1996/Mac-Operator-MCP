@@ -1,9 +1,10 @@
-import type { FilesystemPathPlan, SafePathMetadata } from "./filesystem-inspector.js";
+import type { FilesystemPathPlan, SafeDirectoryEntry, SafePathMetadata } from "./filesystem-inspector.js";
 
 export type FilesystemWorkerCommand =
   | { operation: "stat"; plan: FilesystemPathPlan; followSymlink: boolean }
   | { operation: "read"; plan: FilesystemPathPlan; offset: number; maxBytes: number; encoding: "utf8" | "base64" | "metadata" }
   | { operation: "hash"; plan: FilesystemPathPlan; algorithm: "sha256" | "sha512" }
+  | { operation: "list"; plan: FilesystemPathPlan; cursor: string | undefined; limit: number; includeHidden: boolean }
   | {
       operation: "write";
       plan: FilesystemPathPlan;
@@ -37,6 +38,13 @@ export type FilesystemWorkerResult =
       rootId: string;
       device: string;
       inode: string;
+    }
+  | {
+      operation: "list";
+      path: string;
+      entries: readonly SafeDirectoryEntry[];
+      nextCursor: string | null;
+      rootId: string;
     }
   | {
       operation: "write";
