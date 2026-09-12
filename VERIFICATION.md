@@ -51,6 +51,8 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
+Latest launchd boundary addendum: commit `fde7341` records 225 passing tests and adds canonical launchd plist rendering, no-shell/no-environment/no-root-key constraints, signal-aware service lifecycle, and bounded source/contract/policy readback. Evidence: `evidence/2026-09-13-launchd-service-boundary.md`. This is source-level packaging evidence only; installation, code signing, notarization, live `launchctl` readback, upgrade, uninstall, and rollback remain open.
+
 Latest native operator IPC addendum: commit `6683344` records 221 passing tests and shares one native peer-accept transport across Broker, policy-signer, and approval channels. Native UID/GID/PID policy is enforced before handler parsing; native round trips and denied-peer/no-audit cases pass. Evidence: `evidence/2026-09-13-native-operator-ipc.md`. Legacy private-descriptor verifier mode remains compatibility-only; launchd packaging, code signing, Edge PID lifecycle, protected secret distribution, and production enablement remain open.
 
 Latest native runtime assembly addendum: commit `24f1824` records 221 passing tests and adds `createMacOsNativeBrokerRuntime`, which constructs `MacOsNativeBrokerIpcServer` before optional operator channels and delegates lifecycle rollback/recovery to `LocalBrokerRuntime`. Evidence: `evidence/2026-09-13-native-runtime-assembly.md`. This closes only the in-process transport-selection ambiguity; installed launchd packaging, code signing, Edge PID lifecycle, protected secret distribution, operator-channel native migration, and production capability enablement remain open.

@@ -22,6 +22,8 @@ The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime
 
 The latest implementation addendum is `6683344`: Broker, policy-signer, and approval IPC now share a native peer-accept transport. Supplying `peerPolicy` performs UID/GID/PID authorization before handler parsing; the legacy private-descriptor verifier remains compatibility-only.
 
+The latest implementation addendum is `fde7341`: the source-level launchd boundary now validates and renders an unprivileged no-shell plist, exposes a signal-aware Broker service entrypoint with bounded readback, and includes a reviewable LaunchAgent template. No service installation or signing is implied.
+
 ## Completed work
 
 - Created the Git repository and initial commit.
@@ -35,6 +37,7 @@ The latest implementation addendum is `6683344`: Broker, policy-signer, and appr
 - Added a macOS-native Broker IPC transport with bounded owner-only UDS creation, CLOEXEC/SIGPIPE controls, native `getpeereid`/`LOCAL_PEERPID` acceptance, public Node descriptor handoff, denied-peer pre-parse behavior, and fail-closed listener cleanup; the transport is explicit and does not enable installed service packaging or production capability enablement by itself.
 - Added an explicit `createMacOsNativeBrokerRuntime` factory so a future macOS packaging entrypoint selects the native Broker IPC channel and cannot accidentally wire the legacy private-handle server; startup/rollback/close semantics remain owned by `LocalBrokerRuntime`.
 - Added a shared `MacOsNativePeerIpcServer` and native peer-policy mode for policy-signer and approval channels, keeping their HMAC/signed-command semantics after pre-parse OS identity authorization; compatibility verifier mode remains explicit and non-production.
+- Added a launchd packaging boundary with canonical path/argv validation, no shell or environment injection, bounded restart settings, a signal-aware service lifecycle, component/policy/source readback, and an unprivileged LaunchAgent template; installation, signing, and live launchd readback remain disabled.
 - Started documentation-only remediation against the newer KB SSOT: repaired stale dynamic-state ownership; materialized locked Security, Filesystem Policy, Tool Contract Standard, and Tool Catalog documents; added threat, scope, persistence, verification, ADR, sandbox-research, navigation, testing, configuration, deployment, operations, incident, rollback, and kill-switch documents.
 - Resolved the two representation conflicts: every contract now has deterministic `audit_class` and structured `postcondition_verification`, and the legacy contract `phase` field is now canonical `tool_delivery_wave`.
 - Completed MOP-084 functional API schema materialization: all 44 planned tools now have explicit bounded `input_schema` and tool-specific `output_schema` objects integrated with the common result envelope. Envelope validation, functional schema compilation, semantic review, authority-surface review, and catalog parity pass; runtime compatibility remains a separate gate.
@@ -109,7 +112,7 @@ The latest implementation addendum is `6683344`: Broker, policy-signer, and appr
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 32 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 221 passing.
+- Automated tests: 225 passing.
 - Real-Mac execution evidence: bounded local foundation and partial sandbox research records on Mac mini M4/macOS 26.2; both are dirty-tree prototype evidence, not release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: none.
@@ -169,6 +172,7 @@ There is no blocker to continued local implementation. Production enablement is 
 - A later source revision `0cdb8f0` reran the full suite at 220 passing tests and added the native Broker IPC transport boundary; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-native-ipc-transport.md`.
 - A later source revision `24f1824` reran the full suite at 221 passing tests and added the explicit native runtime assembly boundary; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-native-runtime-assembly.md`.
 - A later source revision `6683344` reran the full suite at 221 passing tests and moved operator-channel peer checks onto the shared native transport; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-native-operator-ipc.md`.
+- A later source revision `fde7341` reran the full suite at 225 passing tests and added the launchd/service-entrypoint boundary; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-launchd-service-boundary.md`.
 - Recorded initial real-Mac sandbox evidence in `SANDBOX_RESEARCH.md` and `evidence/2026-09-12-sandbox-research.json`; the result is explicitly partial and does not unblock `mac_task_run`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
 

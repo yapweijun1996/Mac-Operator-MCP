@@ -19,3 +19,7 @@ The model cannot grant OS permissions, install persistence, alter update authori
 ## Acceptance evidence
 
 Fresh install, upgrade, downgrade rejection, rollback, signature failure, partial install, permission denial/revocation, helper mismatch, uninstall, and stale-credential tests are required.
+
+## Candidate implementation evidence
+
+Source revision `fde7341` adds a bounded launchd plist renderer, an unprivileged LaunchAgent template, and a signal-aware `BrokerServiceEntrypoint` whose readback binds component, source, contract, policy, runtime, and enabled-capability state. The renderer emits no shell, environment, `UserName`, or privileged launchd fields and requires canonical absolute paths and fixed argv boundaries. This is a packaging boundary candidate only; no install, signing, notarization, live launchd readback, upgrade, rollback, or uninstall acceptance evidence exists.
