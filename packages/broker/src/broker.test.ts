@@ -173,7 +173,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 11);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 12);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -549,6 +549,46 @@ test("mac_list_directory paginates descriptor metadata and filters secret entrie
     assert.equal(secondData.next_cursor, null);
     assert.equal(JSON.stringify(first).includes("TOKEN=private"), false);
     assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes(".env")), false);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_directory_tree bounds depth and excludes protected entries", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-tree-"));
+  const directory = join(parent, "workspace");
+  await mkdir(join(directory, "nested"), { recursive: true });
+  await writeFile(join(directory, "a.txt"), "a");
+  await writeFile(join(directory, "nested", "inside.txt"), "inside");
+  await writeFile(join(directory, ".env"), "TOKEN=private");
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "tree-request",
+      nonce: "tree-nonce",
+      tool: "mac_directory_tree",
+      arguments: { path: directory, depth: 1, max_entries: 20 }
+    }, ["mac.files.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { entries: Array<{ path: string; depth: number }>; truncated: boolean };
+    assert.deepEqual(data.entries.map((entry) => [entry.path.split("/").pop(), entry.depth]), [
+      ["a.txt", 0],
+      ["nested", 0],
+      ["inside.txt", 1]
+    ]);
+    assert.equal(data.entries.some((entry) => entry.path.endsWith(".env")), false);
+    assert.equal(data.truncated, false);
   } finally {
     store.close();
     await rm(parent, { recursive: true, force: true });

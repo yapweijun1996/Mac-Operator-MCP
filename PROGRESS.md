@@ -6,7 +6,7 @@ Last verified: 2026-09-12
 
 ## Current situation
 
-The accepted documentation baseline is commit `2e389b8`; the current committed implementation baseline is `d9c7fc8`, which adds the governed L1 file-hash and bounded directory-listing slices with same-volume entry filtering. Shared contracts, a Broker core, authenticated Unix-socket transport, an authenticated MCP 2026-07-28 HTTPS Edge factory, SQLite prototype persistence, tests, and developer commands are present. No public deployment, installed service, deployment artifact, privileged helper, or production-enabled tool exists.
+The accepted documentation baseline is commit `2e389b8`; the current committed implementation baseline is `d9c7fc8`, with a pending bounded directory-tree slice on top of the governed L1 file-hash and directory-listing slices. Shared contracts, a Broker core, authenticated Unix-socket transport, an authenticated MCP 2026-07-28 HTTPS Edge factory, SQLite prototype persistence, tests, and developer commands are present. No public deployment, installed service, deployment artifact, privileged helper, or production-enabled tool exists.
 
 ## Completed work
 
@@ -23,7 +23,7 @@ The accepted documentation baseline is commit `2e389b8`; the current committed i
 - Prepared the KB writeback manifest without changing KB-MCP; orchestration review is still required before upstream synchronization.
 - Accepted TypeScript/Node 24+ for the Edge/Broker baseline under ADR-0001 and created npm workspaces for shared contracts and Broker code.
 - Implemented signed payload binding, strict request parsing, timestamp/session expiry, persistent nonce/request replay denial, exact scope authorization, revocation, independent kill-switch primitives, bounded structured outputs, recursive audit redaction, and hash-linked audit records.
-- Implemented local handlers for `mac_health`, `mac_capabilities`, `mac_policy_explain`, `mac_stat_path`, bounded `mac_read_file`, descriptor-backed `mac_hash_file`, and bounded descriptor-backed `mac_list_directory`; production defaults keep the filesystem handlers disabled.
+- Implemented local handlers for `mac_health`, `mac_capabilities`, `mac_policy_explain`, `mac_stat_path`, bounded `mac_read_file`, descriptor-backed `mac_hash_file`, bounded descriptor-backed `mac_list_directory`, and bounded `mac_directory_tree`; production defaults keep the filesystem handlers disabled.
 - Implemented a bounded `mac_system_summary` Broker handler and adapter for sanitized OS version, architecture, CPU, memory, uptime, and optional load facts; it does not read user identity, paths, credentials, or network content.
 - Implemented a mode-`0600` Unix-domain socket prototype with application-layer HMAC authentication and a 1 MiB request cap.
 - Added functional input/output schemas for all 44 planned tools, a common stable failure schema, automated compilation/uniqueness checks, and implemented-handler conformance tests.
@@ -58,9 +58,9 @@ The accepted documentation baseline is commit `2e389b8`; the current committed i
 
 - Runtime implementation: local foundation only; no meaningful whole-program percentage is claimed.
 - Released tools: 0 of 44 planned.
-- Implemented local Broker handlers: 11 of 44 planned.
+- Implemented local Broker handlers: 12 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 123 passing.
+- Automated tests: 125 passing.
 - Real-Mac execution evidence: bounded local foundation and partial sandbox research records on Mac mini M4/macOS 26.2; both are dirty-tree prototype evidence, not release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: none.
@@ -72,11 +72,11 @@ Percentages beyond these objective counts are intentionally omitted because the 
 
 - Contract envelope schema: complete and validated for all 44 materialized contracts. This covers identity, capability, policy, budgets, lifecycle, audit, delivery wave, provenance, and summary fields.
 - Per-tool functional input/output schema objects exist and compile for all 44 contracts. Success schemas use `SUCCEEDED`; failures use the shared stable-error schema.
-- Schema presence is complete. Semantic review, compatibility fixtures, and runtime conformance remain limited to the eleven implemented handlers, so this is not a 44-tool implementation claim.
+- Schema presence is complete. Semantic review, compatibility fixtures, and runtime conformance remain limited to the twelve implemented handlers, so this is not a 44-tool implementation claim.
 
 ## Current phase
 
-Phase 1 — Broker and Edge foundation with initial L0/L1 filesystem slices. Runtime/package selection, signed-policy activation/rollback, HMAC plus macOS UID/GID/PID-authenticated local IPC, authenticated MCP introspection, descriptor-backed path metadata, and bounded regular-file reads run in tests. Production key distribution, native-adapter packaging/runtime compatibility, remote issuer integration, operational policy tooling, audit reliability, packaging, configurable secret/remount controls, and enforceable I/O deadlines remain open.
+Phase 1 — Broker and Edge foundation with initial L0/L1 filesystem slices. Runtime/package selection, signed-policy activation/rollback, HMAC plus macOS UID/GID/PID-authenticated local IPC, authenticated MCP introspection, descriptor-backed path metadata, bounded regular-file reads, directory listing, and depth/entry-bounded trees run in tests. Production key distribution, native-adapter packaging/runtime compatibility, remote issuer integration, operational policy tooling, audit reliability, packaging, configurable secret/remount controls, and enforceable I/O deadlines remain open.
 
 ## Decisions recorded
 
@@ -111,11 +111,11 @@ There is no blocker to continued local implementation. Production enablement is 
 
 - Confirmed accepted documentation baseline `2e389b8` and implementation baseline `d9c7fc8`; the exact-revision evidence record is refreshed after the governed hash and directory-listing slices.
 - Confirmed all 44 catalog tools have one valid JSON materialization, a unique tool name, a unique KB item ID, preserved source text, and a catalog link.
-- Confirmed the runtime catalog reports all 44 tools separately; eleven have local handlers and the production default enables none.
+- Confirmed the runtime catalog reports all 44 tools separately; twelve have local handlers and the production default enables none.
 - Confirmed all 44 contracts have one taxonomy-valid `audit_class` and one structured `postcondition_verification`; all remain `planned`.
 - Confirmed canonical contracts contain `tool_delivery_wave` and no top-level legacy `phase` field; roadmap lifecycle phases remain separate.
 - Validated all 44 contract envelopes and compiled all 44 functional input/output schemas; checked unique tool and provenance IDs, bounded fields, forbidden authority-field absence, and output/verification compatibility.
-- Ran 123 automated tests covering the identity, IPC, Edge, policy, filesystem metadata/content/hash/list/write adapters, system-summary adapter, worker, secret, audit, contract, Request/Approval/Job Ledgers, authenticated approval issuance, protected issuer-key lifecycle, named task profile boundary, and disabled process supervisor, including bounded directory pagination and protected-entry filtering, exact write-approval binding, durable write-job idempotency/status/restart recovery, descriptor-backed create/replace, expected hash and create-only preconditions, atomic rename/readback, descriptor-backed SHA-256/SHA-512 hashing without content return, hash target-change rejection, symlink/intermediate escape rejection, issuer/key authentication, preview binding, issuance replay denial, attended/unattended profile gating, durable approval-key revocation, revoke-before-retire deletion, versioned key metadata atomic write/reload and digest readback, persisted monotonic activation, exact restart restore, activation audit, rollback rejection, fixed executable/cwd/environment selection, anchored argument allowlists, symlink/duplicate/revoked config rejection, expiry/revocation/exhaustion, competing consumption, pre-dispatch invalidation, atomic future-job admission, idempotent reuse, conflict rollback, fault-injected admission rollback and restart readback, atomic replay admission, revisioned request lifecycle, fail-closed restart reconciliation, owner isolation, cancellation, explicit environment/argument/cwd validation, bounded output, process-group timeout/cancellation, descendant cleanup, capacity accounting, and schema conformance.
+- Ran 125 automated tests covering the identity, IPC, Edge, policy, filesystem metadata/content/hash/list/tree/write adapters, system-summary adapter, worker, secret, audit, contract, Request/Approval/Job Ledgers, authenticated approval issuance, protected issuer-key lifecycle, named task profile boundary, and disabled process supervisor, including bounded directory pagination/tree depth and protected-entry filtering, exact write-approval binding, durable write-job idempotency/status/restart recovery, descriptor-backed create/replace, expected hash and create-only preconditions, atomic rename/readback, descriptor-backed SHA-256/SHA-512 hashing without content return, hash target-change rejection, symlink/intermediate escape rejection, issuer/key authentication, preview binding, issuance replay denial, attended/unattended profile gating, durable approval-key revocation, revoke-before-retire deletion, versioned key metadata atomic write/reload and digest readback, persisted monotonic activation, exact restart restore, activation audit, rollback rejection, fixed executable/cwd/environment selection, anchored argument allowlists, symlink/duplicate/revoked config rejection, expiry/revocation/exhaustion, competing consumption, pre-dispatch invalidation, atomic future-job admission, idempotent reuse, conflict rollback, fault-injected admission rollback and restart readback, atomic replay admission, revisioned request lifecycle, fail-closed restart reconciliation, owner isolation, cancellation, explicit environment/argument/cwd validation, bounded output, process-group timeout/cancellation, descendant cleanup, capacity accounting, and schema conformance.
 - Recorded initial real-Mac sandbox evidence in `SANDBOX_RESEARCH.md` and `evidence/2026-09-12-sandbox-research.json`; the result is explicitly partial and does not unblock `mac_task_run`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
 

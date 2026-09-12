@@ -6,7 +6,7 @@ Last verified: 2026-09-12
 
 ## Current position
 
-The repository has a committed TypeScript/Node implementation baseline. Work is in Phase 1: the authenticated Edge/Broker foundation and bounded L0/L1 metadata, content-read, and file-hash slices are implemented locally, while production enablement remains closed.
+The repository has a committed TypeScript/Node implementation baseline. Work is in Phase 1: the authenticated Edge/Broker foundation and bounded L0/L1 metadata, content-read, file-hash, directory-list, and directory-tree slices are implemented locally, while production enablement remains closed.
 
 ## Phase 0 — Foundation and contracts
 

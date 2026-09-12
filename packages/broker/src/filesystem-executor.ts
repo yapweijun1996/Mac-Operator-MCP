@@ -32,6 +32,12 @@ export interface FilesystemExecutor {
     includeHidden: boolean,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  tree?(
+    plan: FilesystemPathPlan,
+    depth: number,
+    maxEntries: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -91,6 +97,16 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "list", plan, cursor, limit, includeHidden }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  tree(
+    plan: FilesystemPathPlan,
+    depth: number,
+    maxEntries: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "tree", plan, depth, maxEntries }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -164,6 +180,23 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
           !Number.isSafeInteger(entry.sizeBytes) || entry.sizeBytes < 0 || entry.sizeBytes > 1_000_000_000_000 ||
           typeof entry.modifiedAt !== "string" || !Number.isFinite(Date.parse(entry.modifiedAt)) ||
           typeof entry.hidden !== "boolean") {
+        throw malformed();
+      }
+    }
+    return value;
+  }
+  if (value.operation === "tree") {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
+        !isAbsolute(value.root) || value.root.length > 4096 ||
+        !Array.isArray(value.entries) || value.entries.length > 5000 || typeof value.truncated !== "boolean") {
+      throw malformed();
+    }
+    for (const entry of value.entries) {
+      if (entry === null || typeof entry !== "object" ||
+          typeof entry.path !== "string" || !isAbsolute(entry.path) || entry.path.length > 4096 ||
+          !["file", "directory", "symlink", "other"].includes(entry.type) ||
+          !Number.isSafeInteger(entry.depth) || entry.depth < 0 || entry.depth > 8 ||
+          !Number.isSafeInteger(entry.sizeBytes) || entry.sizeBytes < 0 || entry.sizeBytes > 1_000_000_000_000) {
         throw malformed();
       }
     }

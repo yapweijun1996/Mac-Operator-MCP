@@ -360,7 +360,7 @@ export class Broker {
           let reportedTarget = target;
           if (tool.targetType === "path") {
             if (target.kind !== "path") throw new BrokerError("PRECONDITION_FAILED", "Filesystem policy query requires a path target");
-            const capability = candidate === "mac_read_file" || candidate === "mac_list_directory" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
+            const capability = candidate === "mac_read_file" || candidate === "mac_list_directory" || candidate === "mac_directory_tree" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
             const plan = new FilesystemInspector(policy.filesystemRoots).planPath(target.reference, capability);
             authorizationTarget = { kind: "path", reference: plan.rootId };
             reportedTarget = { kind: "path", reference: plan.requestedPath };
@@ -525,6 +525,39 @@ export class Broker {
           auditEvidence: { rootId: workerResult.rootId, entryCount: workerResult.entries.length, hasNextCursor: workerResult.nextCursor !== null }
         };
       }
+      case "mac_directory_tree": {
+        if (!execution.filesystem || !execution.tree || !this.filesystemExecutor.tree) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem directory-tree execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.tree(
+          execution.filesystem.plan,
+          execution.tree.depth,
+          execution.tree.maxEntries,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        if (workerResult.operation !== "tree") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            root: workerResult.root,
+            entries: workerResult.entries.map((entry) => ({
+              path: entry.path,
+              type: entry.type,
+              depth: entry.depth,
+              size_bytes: entry.sizeBytes
+            })),
+            truncated: workerResult.truncated
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_tree_result_validation",
+            evidence: { summary: "Directory tree entries were enumerated from descriptor-backed directories with protected-entry and volume filtering" }
+          },
+          truncated: workerResult.truncated,
+          auditTarget: `path:${workerResult.root}`,
+          auditEvidence: { rootId: workerResult.rootId, entryCount: workerResult.entries.length, truncated: workerResult.truncated }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -653,7 +686,7 @@ export class Broker {
       if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
       return { target: { kind: "job", reference: "owned" }, auditTarget: `job:${job.jobId}`, job };
     }
-    if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
+    if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
       : request.tool === "mac_read_file"
@@ -662,6 +695,8 @@ export class Broker {
           ? ["path", "algorithm"]
           : request.tool === "mac_list_directory"
             ? ["path", "cursor", "limit", "include_hidden"]
+            : request.tool === "mac_directory_tree"
+              ? ["path", "depth", "max_entries"]
           : ["path", "content", "idempotency_key", "encoding", "expected_sha256", "create_only"]);
     if (typeof request.arguments.path !== "string") {
       throw new BrokerError("PRECONDITION_FAILED", "path must be a string");
@@ -684,6 +719,14 @@ export class Broker {
         includeHidden: (request.arguments.include_hidden ?? false) as boolean
       };
     }
+    let tree: ExecutionPlan["tree"];
+    if (request.tool === "mac_directory_tree") {
+      validateTreeArguments(request.arguments);
+      tree = {
+        depth: (request.arguments.depth ?? 2) as number,
+        maxEntries: (request.arguments.max_entries ?? 500) as number
+      };
+    }
     let write: ExecutionPlan["write"];
     if (request.tool === "mac_write_file_atomic") {
       validateWriteArguments(request.arguments);
@@ -699,13 +742,14 @@ export class Broker {
     const inspector = new FilesystemInspector(policy.filesystemRoots);
     const plan = inspector.planPath(
       request.arguments.path,
-      request.tool === "mac_read_file" || request.tool === "mac_list_directory" ? "content_read" : request.tool === "mac_write_file_atomic" ? "write" : "metadata"
+      request.tool === "mac_read_file" || request.tool === "mac_list_directory" || request.tool === "mac_directory_tree" ? "content_read" : request.tool === "mac_write_file_atomic" ? "write" : "metadata"
     );
     return {
       target: { kind: "path", reference: plan.rootId },
       filesystem: { inspector, plan },
       ...(hashAlgorithm ? { hashAlgorithm } : {}),
       ...(list ? { list } : {}),
+      ...(tree ? { tree } : {}),
       ...(write ? { write } : {})
     };
   }
@@ -720,7 +764,7 @@ export class Broker {
       return;
     }
     for (const root of policy.filesystemRoots.filter((candidate) =>
-      tool.tool === "mac_read_file" || tool.tool === "mac_list_directory" ? candidate.contentRead === true : tool.tool === "mac_write_file_atomic" ? candidate.write === true : candidate.metadata)) {
+      tool.tool === "mac_read_file" || tool.tool === "mac_list_directory" || tool.tool === "mac_directory_tree" ? candidate.contentRead === true : tool.tool === "mac_write_file_atomic" ? candidate.write === true : candidate.metadata)) {
       try {
         authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "path", reference: root.rootId });
         return;
@@ -818,6 +862,10 @@ interface ExecutionPlan {
     cursor: string | undefined;
     limit: number;
     includeHidden: boolean;
+  };
+  tree?: {
+    depth: number;
+    maxEntries: number;
   };
   job?: BrokerJob;
   write?: {
@@ -965,6 +1013,17 @@ function validateListArguments(argumentsValue: Readonly<Record<string, unknown>>
   const includeHidden = argumentsValue.include_hidden;
   if (includeHidden !== undefined && typeof includeHidden !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "include_hidden must be a boolean");
+  }
+}
+
+function validateTreeArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const depth = argumentsValue.depth;
+  if (depth !== undefined && (!Number.isSafeInteger(depth) || (depth as number) < 0 || (depth as number) > 8)) {
+    throw new BrokerError("PRECONDITION_FAILED", "depth must be an integer between 0 and 8");
+  }
+  const maxEntries = argumentsValue.max_entries;
+  if (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || (maxEntries as number) < 1 || (maxEntries as number) > 5000)) {
+    throw new BrokerError("PRECONDITION_FAILED", "max_entries must be an integer between 1 and 5000");
   }
 }
 

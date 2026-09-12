@@ -57,6 +57,15 @@ try {
       nextCursor: listing.nextCursor,
       rootId: listing.rootId
     };
+  } else if (command.operation === "tree") {
+    const tree = inspector.treePlanned(command.plan, command.depth, command.maxEntries);
+    value = {
+      operation: "tree",
+      root: tree.root,
+      entries: tree.entries,
+      truncated: tree.truncated,
+      rootId: tree.rootId
+    };
   } else {
     assertContentDoesNotContainSecrets(command.content);
     const write = inspector.writePlanned(

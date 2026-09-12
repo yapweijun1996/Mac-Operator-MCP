@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
 
@@ -47,6 +47,20 @@ export interface SafeDirectoryListing {
   path: string;
   entries: readonly SafeDirectoryEntry[];
   nextCursor: string | null;
+}
+
+export interface SafeTreeEntry {
+  path: string;
+  type: SafeDirectoryEntry["type"];
+  depth: number;
+  sizeBytes: number;
+}
+
+export interface SafeDirectoryTree {
+  rootId: string;
+  root: string;
+  entries: readonly SafeTreeEntry[];
+  truncated: boolean;
 }
 
 export interface SafePathMetadata {
@@ -280,6 +294,53 @@ export class FilesystemInspector {
       entries: listing.entries,
       nextCursor: listing.nextCursor
     };
+  }
+
+  treePlanned(plan: FilesystemPathPlan, depth: number, maxEntries: number): SafeDirectoryTree {
+    if (!Number.isSafeInteger(depth) || depth < 0 || depth > 8) {
+      throw new BrokerError("PRECONDITION_FAILED", "Directory tree depth is outside the supported range");
+    }
+    if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 5000) {
+      throw new BrokerError("PRECONDITION_FAILED", "Directory tree entry limit is outside the supported range");
+    }
+
+    const entries: SafeTreeEntry[] = [];
+    let rootPath: string | undefined;
+    let truncated = false;
+    const walk = (directoryPlan: FilesystemPathPlan, currentDepth: number): void => {
+      if (truncated) return;
+      let cursor: string | undefined;
+      while (!truncated) {
+        const remaining = maxEntries - entries.length;
+        if (remaining <= 0) {
+          truncated = true;
+          return;
+        }
+        const listing = this.listPlanned(directoryPlan, cursor, Math.min(500, remaining), false);
+        if (rootPath === undefined) rootPath = listing.path;
+        for (const entry of listing.entries) {
+          if (entries.length >= maxEntries) {
+            truncated = true;
+            return;
+          }
+          const childPath = join(listing.path, entry.name);
+          if (!isAbsolute(childPath) || childPath.length > 4096) {
+            throw new BrokerError("OUTPUT_LIMIT", "Directory tree path exceeds the contract limit");
+          }
+          entries.push({ path: childPath, type: entry.type, depth: currentDepth, sizeBytes: entry.sizeBytes });
+          if (entry.type === "directory" && currentDepth < depth) {
+            walk({ ...directoryPlan, requestedPath: childPath }, currentDepth + 1);
+            if (truncated) return;
+          }
+        }
+        if (listing.nextCursor === null) return;
+        cursor = listing.nextCursor;
+      }
+    };
+
+    walk(plan, 0);
+    if (rootPath === undefined) throw new BrokerError("EXECUTION_FAILED", "Directory tree returned no root identity");
+    return { rootId: plan.rootId, root: rootPath, entries, truncated };
   }
 
   statPlanned(plan: FilesystemPathPlan, followSymlink = true): SafePathMetadata {

@@ -197,6 +197,31 @@ test("descriptor-backed directory listing paginates and filters protected entrie
   }
 });
 
+test("descriptor-backed directory tree bounds depth and filters protected entries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-tree-"));
+  await writeFile(join(directory, "a.txt"), "a");
+  await mkdir(join(directory, "nested"));
+  await writeFile(join(directory, "nested", "inside.txt"), "inside");
+  await writeFile(join(directory, ".env"), "TOKEN=private");
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    const plan = inspector.planPath(directory, "content_read");
+    const tree = inspector.treePlanned(plan, 1, 20);
+    assert.equal(tree.root, await realpath(directory));
+    assert.deepEqual(tree.entries.map((entry) => [entry.path, entry.depth]), [
+      [join(await realpath(directory), "a.txt"), 0],
+      [join(await realpath(directory), "nested"), 0],
+      [join(await realpath(directory), "nested", "inside.txt"), 1]
+    ]);
+    assert.equal(tree.entries.some((entry) => entry.path.endsWith(".env")), false);
+    const bounded = inspector.treePlanned(plan, 8, 1);
+    assert.equal(bounded.entries.length, 1);
+    assert.equal(bounded.truncated, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("content read requires independent root enablement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-read-scope-"));
   const file = join(directory, "file.txt");

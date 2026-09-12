@@ -108,6 +108,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_directory_tree",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.files.read"],
+    capabilityFamilies: ["read"],
+    targetType: "path",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_write_file_atomic",
     contractVersion: "0.1",
     requiredScopes: ["mac.files.write"],
