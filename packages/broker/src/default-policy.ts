@@ -69,6 +69,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_process_inspect",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.process.read"],
+    capabilityFamilies: ["process"],
+    targetType: "process",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 131_072,
+    timeoutMs: 5_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_policy_explain",
     contractVersion: "0.1",
     requiredScopes: ["mac.policy.explain"],

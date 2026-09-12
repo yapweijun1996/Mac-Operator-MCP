@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectProcesses } from "./process-inspector.js";
+import { inspectProcess, inspectProcesses } from "./process-inspector.js";
 
 test("process inspector returns bounded redacted native metadata", () => {
   const inventory = inspectProcesses(20, "pid");
@@ -20,4 +20,24 @@ test("process inspector rejects unbounded limits and unsupported sorting", () =>
   assert.throws(() => inspectProcesses(0, "pid"), /outside the supported range/u);
   assert.throws(() => inspectProcesses(501, "pid"), /outside the supported range/u);
   assert.throws(() => inspectProcesses(10, "unsupported" as "pid"), /unsupported/u);
+});
+
+test("process inspector returns bounded detail without argv or environment", () => {
+  const process = inspectProcess(globalThis.process.pid);
+  assert.equal(process.pid, globalThis.process.pid);
+  assert.ok(process.name.length > 0 && process.name.length <= 256);
+  assert.ok(process.executable.length > 0 && process.executable.length <= 4096);
+  assert.ok(["running", "sleeping", "stopped", "zombie", "unknown"].includes(process.state));
+  assert.ok(process.cpuPercent >= 0 && process.cpuPercent <= 100);
+  assert.ok(process.memoryBytes >= 0 && process.memoryBytes <= 1_000_000_000_000);
+  assert.match(process.owner, /^uid:\d+$/u);
+  assert.ok(process.childPids.length <= 256);
+  for (let index = 1; index < process.childPids.length; index += 1) {
+    assert.ok(process.childPids[index - 1]! < process.childPids[index]!);
+  }
+});
+
+test("process inspector rejects malformed pid", () => {
+  assert.throws(() => inspectProcess(0), /outside the supported range/u);
+  assert.throws(() => inspectProcess(100_000_000), /outside the supported range/u);
 });

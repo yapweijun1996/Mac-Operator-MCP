@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/mount.h>
+#include <sys/proc.h>
 #include <sys/stdio.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -1191,6 +1192,83 @@ double ProcessCpuPercent(pid_t pid) {
   return std::min(100.0, total);
 }
 
+std::string ProcessState(uint32_t status) {
+  switch (status) {
+    case SRUN: return "running";
+    case SSLEEP: return "sleeping";
+    case SSTOP: return "stopped";
+    case SZOMB: return "zombie";
+    default: return "unknown";
+  }
+}
+
+napi_value InspectProcess(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "inspectProcess requires pid");
+    return nullptr;
+  }
+  int32_t requested_pid = 0;
+  if (napi_get_value_int32(env, args[0], &requested_pid) != napi_ok || requested_pid < 1 || requested_pid > 99'999'999) {
+    napi_throw_type_error(env, nullptr, "Process pid must be between 1 and 99999999");
+    return nullptr;
+  }
+  const pid_t pid = static_cast<pid_t>(requested_pid);
+  struct proc_bsdinfo bsd_info{};
+  if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd_info, sizeof(bsd_info)) != sizeof(bsd_info)) {
+    ThrowSystemError(env, "Process could not be inspected");
+    return nullptr;
+  }
+  struct proc_taskinfo task_info{};
+  const bool task_info_available = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task_info, sizeof(task_info)) == sizeof(task_info);
+  char executable[PROC_PIDPATHINFO_MAXSIZE] = {};
+  const bool executable_available = proc_pidpath(pid, executable, sizeof(executable)) > 0;
+  std::string name = BoundedProcessText(bsd_info.pbi_name, sizeof(bsd_info.pbi_name));
+  if (name == "unknown") name = BoundedProcessText(bsd_info.pbi_comm, sizeof(bsd_info.pbi_comm));
+  const std::string executable_text = executable_available ? BoundedProcessText(executable, sizeof(executable)) : "unknown";
+
+  constexpr size_t MAX_CHILDREN = 256;
+  std::vector<pid_t> children(MAX_CHILDREN);
+  const int child_bytes = proc_listchildpids(pid, children.data(), static_cast<int>(children.size() * sizeof(pid_t)));
+  if (child_bytes < 0) {
+    children.clear();
+  } else {
+    const size_t child_count = std::min(static_cast<size_t>(child_bytes) / sizeof(pid_t), children.size());
+    children.resize(child_count);
+    children.erase(std::remove_if(children.begin(), children.end(), [](pid_t child) { return child <= 0; }), children.end());
+    std::sort(children.begin(), children.end());
+    children.erase(std::unique(children.begin(), children.end()), children.end());
+  }
+
+  char owner[64];
+  snprintf(owner, sizeof(owner), "uid:%u", static_cast<unsigned int>(bsd_info.pbi_uid));
+  napi_value result;
+  napi_value child_array;
+  napi_create_object(env, &result);
+  napi_create_array_with_length(env, children.size(), &child_array);
+  for (size_t index = 0; index < children.size(); ++index) {
+    napi_value child;
+    napi_create_int32(env, static_cast<int32_t>(children[index]), &child);
+    napi_set_element(env, child_array, index, child);
+  }
+  SetNumber(env, result, "pid", static_cast<double>(pid));
+  SetString(env, result, "name", name.c_str());
+  SetString(env, result, "executable", executable_text.c_str());
+  SetString(env, result, "state", ProcessState(bsd_info.pbi_status).c_str());
+  SetNumber(env, result, "cpuPercent", task_info_available ? ProcessCpuPercent(pid) : 0.0);
+  SetNumber(env, result, "memoryBytes", task_info_available ? static_cast<double>(std::min<uint64_t>(task_info.pti_resident_size, 1'000'000'000'000ULL)) : 0.0);
+  if (bsd_info.pbi_ppid > 0) SetNumber(env, result, "parentPid", static_cast<double>(bsd_info.pbi_ppid));
+  else {
+    napi_value null_value;
+    napi_get_null(env, &null_value);
+    napi_set_named_property(env, result, "parentPid", null_value);
+  }
+  napi_set_named_property(env, result, "childPids", child_array);
+  SetString(env, result, "owner", owner);
+  return result;
+}
+
 napi_value ListProcesses(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value args[2];
@@ -1301,6 +1379,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "writeFileAtomicWithinRoot", function);
   napi_create_function(env, "listProcesses", NAPI_AUTO_LENGTH, ListProcesses, nullptr, &function);
   napi_set_named_property(env, exports, "listProcesses", function);
+  napi_create_function(env, "inspectProcess", NAPI_AUTO_LENGTH, InspectProcess, nullptr, &function);
+  napi_set_named_property(env, exports, "inspectProcess", function);
   return exports;
 }
 

@@ -1,8 +1,15 @@
-import type { SafeProcessInventory } from "./process-inspector.js";
+import type { SafeProcessDetail, SafeProcessInventory } from "./process-inspector.js";
 
-export interface ProcessWorkerCommand {
+export interface ProcessListWorkerCommand {
+  operation: "list";
   limit: number;
   sort: "cpu" | "memory" | "pid" | "name";
 }
 
-export type ProcessWorkerResult = SafeProcessInventory;
+export interface ProcessInspectWorkerCommand {
+  operation: "inspect";
+  pid: number;
+}
+
+export type ProcessWorkerCommand = ProcessListWorkerCommand | ProcessInspectWorkerCommand;
+export type ProcessWorkerResult = SafeProcessInventory | SafeProcessDetail;

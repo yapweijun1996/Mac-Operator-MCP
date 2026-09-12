@@ -1,6 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { BrokerError } from "@mac-operator/contracts";
-import { inspectProcesses } from "./process-inspector.js";
+import { inspectProcess, inspectProcesses } from "./process-inspector.js";
 import type { ProcessWorkerCommand } from "./process-worker-protocol.js";
 import type { WorkerResult } from "./worker-executor.js";
 
@@ -8,7 +8,9 @@ if (!parentPort) throw new Error("Process worker requires a parent port");
 
 try {
   const command = workerData as ProcessWorkerCommand;
-  const value = inspectProcesses(command.limit, command.sort);
+  const value = command.operation === "list"
+    ? inspectProcesses(command.limit, command.sort)
+    : inspectProcess(command.pid);
   parentPort.postMessage({ ok: true, value } satisfies WorkerResult<typeof value>);
 } catch (error) {
   const brokerError = error instanceof BrokerError

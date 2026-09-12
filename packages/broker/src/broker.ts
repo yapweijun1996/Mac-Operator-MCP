@@ -417,6 +417,40 @@ export class Broker {
           auditEvidence: { processCount: inventory.processes.length, truncated: inventory.truncated }
         };
       }
+      case "mac_process_inspect": {
+        assertExactArguments(request.arguments, ["pid"]);
+        const pid = request.arguments.pid;
+        if (!Number.isSafeInteger(pid) || (pid as number) < 1 || (pid as number) > 99_999_999) {
+          throw new BrokerError("PRECONDITION_FAILED", "pid must be an integer between 1 and 99999999");
+        }
+        const process = await this.processExecutor.inspect(
+          pid as number,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        return {
+          data: {
+            process: {
+              pid: process.pid,
+              name: process.name,
+              executable: process.executable,
+              state: process.state,
+              cpu_percent: process.cpuPercent,
+              memory_bytes: process.memoryBytes,
+              parent_pid: process.parentPid,
+              child_pids: [...process.childPids],
+              owner: process.owner
+            }
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_process_result_validation",
+            evidence: { summary: "Process metadata was collected through bounded native inspection with redacted owner identity" }
+          },
+          auditTarget: `process:${process.pid}`,
+          auditEvidence: { pid: process.pid, childCount: process.childPids.length }
+        };
+      }
       case "mac_policy_explain": {
         assertExactArguments(request.arguments, ["proposed_tool", "target", "argument_digest"]);
         const candidate = request.arguments.proposed_tool;
@@ -1093,6 +1127,14 @@ export class Broker {
           maxDepth: (request.arguments.max_depth ?? 4) as number
         }
       };
+    }
+    if (request.tool === "mac_process_inspect") {
+      assertExactArguments(request.arguments, ["pid"]);
+      const pid = request.arguments.pid;
+      if (!Number.isSafeInteger(pid) || (pid as number) < 1 || (pid as number) > 99_999_999) {
+        throw new BrokerError("PRECONDITION_FAILED", "pid must be an integer between 1 and 99999999");
+      }
+      return { target: { kind: "process", reference: "all" } };
     }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"

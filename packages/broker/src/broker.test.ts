@@ -95,6 +95,55 @@ test("mac_process_list returns bounded redacted process metadata", async () => {
   }
 });
 
+test("mac_process_inspect returns bounded detail for an authorized pid", async () => {
+  const key = randomBytes(32);
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-inspect-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.process.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "process-inspect-request",
+      nonce: "process-inspect-nonce",
+      tool: "mac_process_inspect",
+      arguments: { pid: process.pid }
+    }, ["mac.process.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      process: {
+        pid: number;
+        name: string;
+        executable: string;
+        state: string;
+        cpu_percent: number;
+        memory_bytes: number;
+        parent_pid: number | null;
+        child_pids: number[];
+        owner: string;
+      };
+    };
+    assert.equal(data.process.pid, process.pid);
+    assert.ok(data.process.name.length > 0 && data.process.name.length <= 256);
+    assert.ok(data.process.executable.length > 0 && data.process.executable.length <= 4096);
+    assert.ok(["running", "sleeping", "stopped", "zombie", "unknown"].includes(data.process.state));
+    assert.ok(data.process.cpu_percent >= 0 && data.process.cpu_percent <= 100);
+    assert.ok(data.process.memory_bytes >= 0);
+    assert.match(data.process.owner, /^uid:\d+$/u);
+    assert.ok(data.process.child_pids.length <= 256);
+    assert.equal(JSON.stringify(result).includes("argv"), false);
+    assert.equal(JSON.stringify(result).includes("environment"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_network_status returns local interface metadata without active probing", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-network-status-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -241,7 +290,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 20);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 21);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
