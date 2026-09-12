@@ -46,6 +46,8 @@ export interface JwtAccessTokenVerifierOptions {
   maxTokenBytes?: number;
   maxTokenAgeSeconds?: number;
   clockToleranceSeconds?: number;
+  /** Permit a controlled test or operator profile to shorten unknown-kid refresh cooldown. */
+  jwksCooldownMs?: number;
   revocationCheck?: (context: JwtRevocationContext) => Promise<boolean>;
 }
 
@@ -123,6 +125,7 @@ interface ValidatedOptions {
   maxTokenBytes: number;
   maxTokenAgeSeconds: number;
   clockToleranceSeconds: number;
+  jwksCooldownMs: number;
   revocationCheck?: (context: JwtRevocationContext) => Promise<boolean>;
 }
 
@@ -150,6 +153,7 @@ function validateOptions(options: JwtAccessTokenVerifierOptions): ValidatedOptio
   const maxTokenBytes = boundedInteger(options.maxTokenBytes ?? DEFAULT_MAX_TOKEN_BYTES, 256, 64 * 1024, "JWT token byte limit");
   const maxTokenAgeSeconds = boundedInteger(options.maxTokenAgeSeconds ?? DEFAULT_MAX_TOKEN_AGE_SECONDS, 1, 86_400, "JWT max token age");
   const clockToleranceSeconds = boundedInteger(options.clockToleranceSeconds ?? DEFAULT_CLOCK_TOLERANCE_SECONDS, 0, 60, "JWT clock tolerance");
+  const jwksCooldownMs = boundedInteger(options.jwksCooldownMs ?? DEFAULT_JWKS_COOLDOWN_MS, 0, 10 * 60 * 1_000, "JWT JWKS cooldown");
   return {
     issuer: new URL(options.issuer),
     issuerId: options.issuerId,
@@ -161,6 +165,7 @@ function validateOptions(options: JwtAccessTokenVerifierOptions): ValidatedOptio
     maxTokenBytes,
     maxTokenAgeSeconds,
     clockToleranceSeconds,
+    jwksCooldownMs,
     ...(options.revocationCheck === undefined ? {} : { revocationCheck: options.revocationCheck })
   };
 }
@@ -178,7 +183,7 @@ function createKeySet(options: ValidatedOptions): RemoteJWKSet | ReturnType<type
     const remoteOptions: Parameters<typeof createRemoteJWKSet>[1] = {
       timeoutDuration: DEFAULT_JWKS_TIMEOUT_MS,
       cacheMaxAge: DEFAULT_JWKS_CACHE_MAX_AGE_MS,
-      cooldownDuration: DEFAULT_JWKS_COOLDOWN_MS
+      cooldownDuration: options.jwksCooldownMs
     };
     if (options.jwksFetch !== undefined) remoteOptions[customFetch] = options.jwksFetch;
     return createRemoteJWKSet(options.jwksUri, remoteOptions);

@@ -72,6 +72,7 @@ test("JWT verifier bounds and caches a remote JWKS fetch", async () => {
     issuerId: "issuer-prod",
     resourceServerUrl,
     jwksUri: new URL("https://issuer.example.test/.well-known/jwks.json"),
+    jwksCooldownMs: 0,
     jwksFetch: async () => {
       fetchCount += 1;
       return new Response(JSON.stringify(jwks), {
@@ -93,16 +94,41 @@ test("JWT verifier bounds and caches a remote JWKS fetch", async () => {
   assert.throws(() => createJwtAccessTokenVerifier({ issuer, issuerId: "issuer-prod", resourceServerUrl, jwks, jwksUri: new URL("https://issuer.example.test/jwks") }), /exactly one JWKS/u);
 });
 
-async function createJwks(publicKey: CryptoKey): Promise<JSONWebKeySet> {
+test("JWT verifier refreshes remote JWKS when a rotated key id appears", async () => {
+  const oldKey = await generateKeyPair("RS256");
+  const newKey = await generateKeyPair("RS256");
+  let jwks = await createJwks(oldKey.publicKey, "key-1");
+  let fetchCount = 0;
+  const verifier = createJwtAccessTokenVerifier({
+    issuer,
+    issuerId: "issuer-prod",
+    resourceServerUrl,
+    jwksUri: new URL("https://issuer.example.test/.well-known/jwks.json"),
+    jwksCooldownMs: 0,
+    jwksFetch: async () => {
+      fetchCount += 1;
+      return new Response(JSON.stringify(jwks), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
+  });
+  await verifier.verifyAccessToken(await createToken(oldKey.privateKey));
+  jwks = await createJwks(newKey.publicKey, "key-2");
+  await verifier.verifyAccessToken(await createToken(newKey.privateKey, { keyId: "key-2" }));
+  assert.equal(fetchCount, 2);
+});
+
+async function createJwks(publicKey: CryptoKey, keyId = "key-1"): Promise<JSONWebKeySet> {
   const jwk = await exportJWK(publicKey);
   return {
-    keys: [{ ...jwk, kid: "key-1", alg: "RS256", use: "sig" }]
+    keys: [{ ...jwk, kid: keyId, alg: "RS256", use: "sig" }]
   };
 }
 
 async function createToken(
   privateKey: CryptoKey,
-  options: { audience?: string; expiresAt?: number; tokenId?: string | null } = {}
+  options: { audience?: string; expiresAt?: number; tokenId?: string | null; keyId?: string } = {}
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   const token = new SignJWT({
@@ -110,7 +136,7 @@ async function createToken(
     azp: "client-1",
     scope: "mac.control.read mac.app.control"
   })
-    .setProtectedHeader({ alg: "RS256", kid: "key-1", typ: "at+jwt" })
+    .setProtectedHeader({ alg: "RS256", kid: options.keyId ?? "key-1", typ: "at+jwt" })
     .setIssuer(issuer.href)
     .setAudience(options.audience ?? resourceServerUrl.href)
     .setSubject("principal-1")

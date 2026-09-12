@@ -40,6 +40,18 @@ test("HTTPS Edge rejects malformed transport and policy configuration before sta
     ...baseOptions(),
     tlsCertificate: ""
   }), /TLS certificate and private key must not be empty/u);
+  assert.throws(() => createHttpsMcpEdge({
+    ...baseOptions(),
+    oauthIssuer: new URL("http://issuer.example.test")
+  }), /OAuth issuer URL.*HTTPS/u);
+  assert.throws(() => createHttpsMcpEdge({
+    ...baseOptions(),
+    oauthMetadata: { ...baseOptions().oauthMetadata, issuer: "https://other-issuer.example.test" }
+  }), /metadata issuer must match/u);
+  assert.throws(() => createHttpsMcpEdge({
+    ...baseOptions(),
+    oauthMetadata: { ...baseOptions().oauthMetadata, token_endpoint: "http://issuer.example.test/token" }
+  }), /token endpoint.*HTTPS/u);
 });
 
 test("HTTPS Edge normalizes case and rejects host-list syntax smuggling", () => {
@@ -328,6 +340,7 @@ function baseOptions(): HttpsMcpEdgeOptions {
     allowedOrigins: ["CLIENT.EXAMPLE.TEST"],
     tlsCertificate: "test-certificate",
     tlsPrivateKey: "test-private-key",
+    oauthIssuer: new URL("https://issuer.example.test"),
     tokenVerifier: {
       async verifyAccessToken(): Promise<AuthInfo> {
         return authInfo;

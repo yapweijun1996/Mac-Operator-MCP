@@ -30,6 +30,8 @@ export interface HttpsMcpEdgeOptions extends GovernedMcpServerOptions {
   allowedOrigins: string[];
   tlsCertificate: Buffer | string;
   tlsPrivateKey: Buffer | string;
+  /** The authorization-server issuer must match oauthMetadata.issuer exactly. */
+  oauthIssuer: URL;
   tokenVerifier: OAuthTokenVerifier;
   oauthMetadata: OAuthMetadata;
   rateLimit?: RateLimitOptions;
@@ -120,19 +122,12 @@ function readPrincipalId(auth: AuthInfo | undefined): string | undefined {
 function validateOptions(options: HttpsMcpEdgeOptions): {
   allowedHosts: string[];
   allowedOrigins: string[];
+  oauthIssuer: URL;
 } {
   if (typeof options.bindHost !== "string" || options.bindHost.length === 0 || options.bindHost.includes("\0")) {
     throw new Error("MCP bind host must be a non-empty safe hostname");
   }
-  if (options.resourceServerUrl.protocol !== "https:") throw new Error("MCP resource server URL must use HTTPS");
-  if (
-    options.resourceServerUrl.username ||
-    options.resourceServerUrl.password ||
-    options.resourceServerUrl.hash ||
-    options.resourceServerUrl.search
-  ) {
-    throw new Error("MCP resource server URL must not contain credentials, a query, or a fragment");
-  }
+  validateHttpsUrl(options.resourceServerUrl, "MCP resource server URL");
   if (!options.resourceServerUrl.pathname.startsWith("/") || options.resourceServerUrl.pathname === "/") {
     throw new Error("MCP resource server URL must use a dedicated path");
   }
@@ -147,7 +142,28 @@ function validateOptions(options: HttpsMcpEdgeOptions): {
   if (!hasTlsMaterial(options.tlsCertificate) || !hasTlsMaterial(options.tlsPrivateKey)) {
     throw new Error("MCP TLS certificate and private key must not be empty");
   }
-  return { allowedHosts, allowedOrigins };
+  const oauthIssuer = validateHttpsUrl(options.oauthIssuer, "MCP OAuth issuer URL");
+  const metadataIssuer = validateHttpsUrl(options.oauthMetadata.issuer, "MCP OAuth metadata issuer URL");
+  if (metadataIssuer.href !== oauthIssuer.href) {
+    throw new Error("MCP OAuth metadata issuer must match the configured issuer");
+  }
+  validateHttpsUrl(options.oauthMetadata.authorization_endpoint, "MCP OAuth authorization endpoint");
+  validateHttpsUrl(options.oauthMetadata.token_endpoint, "MCP OAuth token endpoint");
+  return { allowedHosts, allowedOrigins, oauthIssuer };
+}
+
+function validateHttpsUrl(value: unknown, label: string): URL {
+  let parsed: URL;
+  try {
+    parsed = value instanceof URL ? new URL(value.href) : new URL(String(value));
+  } catch {
+    throw new Error(`${label} must be a valid HTTPS URL`);
+  }
+  if (parsed.protocol !== "https:") throw new Error(`${label} must use HTTPS`);
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`${label} must be an HTTPS URL without credentials, query, or fragment`);
+  }
+  return parsed;
 }
 
 function validateHostnameList(values: string[], label: string): string[] {
