@@ -759,7 +759,7 @@ export class FilesystemInspector {
       let canonicalPolicyRoot: string;
       try { canonicalPolicyRoot = realpathSync.native(plan.root.path); }
       catch { throw new BrokerError("POLICY_DENIED", "Filesystem volume root could not be canonicalized"); }
-      if (volume.rootPath !== canonicalPolicyRoot) {
+      if (volume.rootPath !== canonicalPolicyRoot || !volume.id.startsWith(`dev:${root.device}:`)) {
         throw new BrokerError("POLICY_DENIED", "Filesystem volume identity changed during authorization");
       }
       if (!volumes.has(volume.id)) volumes.set(volume.id, volume);
