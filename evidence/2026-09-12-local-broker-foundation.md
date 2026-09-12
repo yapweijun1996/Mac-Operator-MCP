@@ -5,15 +5,15 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `2e389b831ae85db5291cf381402d16e023b042c7`
-- Working tree: dirty; implementation and contract changes were not committed when tested
-- Git status manifest SHA-256: `71bf23ba25ae140e7ea795e55d67bc6e3bccd58b535b080ac9ae386d287a832b`
-- Runtime source manifest SHA-256: `fe3dbc15696fca917fa29610b29c1b8d97f8b40a8dd6de0ac0bb9d18de353937`
-- Tool-contract manifest SHA-256: `760e44a4041c9efbdebb27d6cf963f3ba440d4607fc9d0b3264cf89bb01ecebd`
+- Base commit: `f6a177df290ba59152c7b1d9297e8392e1b413c7`
+- Working tree: clean; implementation and contract changes were committed when tested
+- Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+- Runtime source manifest SHA-256: `b8076ca51757deead93d9392434fcd7672c55a862af5bfc2a22f71b8b7f8c596`
+- Tool-contract manifest SHA-256: `f9787b535efdab784a8ade9302faebb02df7e92d544a88e8de03eed5e642c537`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
 
-This evidence applies only to the recorded dirty tree. It must be regenerated against a clean exact commit before a release gate can pass.
+This evidence applies only to the recorded exact commit. It is prototype evidence and does not by itself close a release gate.
 
 ## Host profile
 
@@ -37,7 +37,7 @@ npm audit --audit-level=high
 
 Observed results:
 
-- 117 tests passed; 0 failed, skipped, cancelled, or todo.
+- 121 tests passed; 0 failed, skipped, cancelled, or todo.
 - 44 unique tool contract envelopes and functional schemas compiled successfully.
 - TypeScript project-reference type checking passed and npm reported 0 known vulnerabilities.
 - The Unix-domain socket integration tests verified mode `0600`, a signed request round trip, and rejection of a group-writable socket directory.
@@ -45,7 +45,7 @@ Observed results:
 - The Edge verified a response HMAC bound to the complete request/result and rejected a substituted local Broker socket holding a different key.
 - MCP Edge tests verified exact OAuth resource binding, known-scope projection, bearer-token isolation, missing-authentication rejection, and Broker-filtered tool discovery through a fresh per-request MCP SDK v2 server.
 - Negative cases covered payload tampering, expired request/session, duplicate nonce across Broker-store restart, missing exact scope, Broker-grant scope expansion, session revocation, global kill switch, and recursive audit-field redaction.
-- Success envelopes for the nine implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
+- Success envelopes for the ten implemented Broker handlers and the common stable failure envelope passed their JSON Schemas.
 - A failure after authorization was verified to produce an allowed decision followed by a failed completion event, rather than a contradictory denial event.
 - Authentication-key tests verified owner-only raw-key loading and rejection of weak permissions and symlinks.
 - Signed-policy tests verified Ed25519 signatures, payload digests, schema strictness, protected policy/public-key files, monotonic revision activation, exact target deny precedence, static global disable, unimplemented-tool rejection, and request binding to the active policy version.
@@ -70,6 +70,7 @@ Observed results:
 - Signed filesystem policy tests verified root schema loading, exact root-ID target authorization, default denial when that target grant is absent, and path-aware `mac_policy_explain` behavior without letting a request choose its own authority identity.
 - The descriptor-backed `mac_stat_path` slice verified regular-file metadata, canonical path plus device/inode evidence, traversal rejection, internal and escaping symlinks, root-symlink rejection, deny-inside-allow after canonical readback, root `/` handling, same-volume containment, and 2,000 atomic symlink target swaps where every successful observation remained inside the authorized root.
 - The bounded `mac_read_file` slice verified independent signed content-root enablement, local-volume and single-link regular-file enforcement, final-symlink denial, offset/length bounds, strict UTF-8 output, contract conformance, canonical audit identity, range hashes, post-read descriptor stability, and 2,000 intermediate-directory symlink swaps where every successful read returned only authorized content.
+- The disabled-by-default `mac_hash_file` slice verified independent `mac.files.hash` scope and metadata-root authorization, descriptor-backed SHA-256/SHA-512 hashing without content return, protected secret-path denial, canonical path/device/inode evidence, bounded 1GB size handling, and rejection when the target changes after canonical-path authorization.
 - The disabled `mac_write_file_atomic` slice verified an independently enabled write root, exact approval binding to the canonical argument digest and root target, explicit idempotency key and Broker Job Ledger linkage, `mac_job_status` readback, secret path/content denial, descriptor-backed same-volume parent/target identity, atomic same-directory temporary-file rename with `fsync`, create-only exclusion, expected hash preconditions, final/intermediate symlink escape rejection, and readback SHA-256 verification. This is dirty-tree prototype evidence; crash/partial-mutation recovery, create-target race coverage, and release rollback/readback gates remain open.
 - Mandatory path tests denied representative SSH, GPG, cloud, Docker, Kubernetes, Keychain, Mail, Messages, Safari, Chrome, Photos, dot-env, and credential zones. Representative private-key/token/credential signatures were denied before result construction without raw secret material in results or audit rows.
 - A production-default policy assertion verified that all tools remain disabled and no filesystem root exists unless explicitly supplied by authenticated authority configuration.

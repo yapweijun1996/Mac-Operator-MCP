@@ -6,7 +6,7 @@ Last verified: 2026-09-12
 
 ## Current situation
 
-The accepted documentation baseline is commit `2e389b8`; the committed implementation foundation is `b174647`, and the current working tree contains the next uncommitted L1 hash slice. Shared contracts, a Broker core, authenticated Unix-socket transport, an authenticated MCP 2026-07-28 HTTPS Edge factory, SQLite prototype persistence, tests, and developer commands are present. No public deployment, installed service, deployment artifact, privileged helper, or production-enabled tool exists.
+The accepted documentation baseline is commit `2e389b8`; the current committed implementation baseline is `f6a177d`, which adds the governed L1 file-hash slice. Shared contracts, a Broker core, authenticated Unix-socket transport, an authenticated MCP 2026-07-28 HTTPS Edge factory, SQLite prototype persistence, tests, and developer commands are present. No public deployment, installed service, deployment artifact, privileged helper, or production-enabled tool exists.
 
 ## Completed work
 
@@ -109,7 +109,7 @@ There is no blocker to continued local implementation. Production enablement is 
 
 ## Verification performed
 
-- Confirmed accepted documentation baseline HEAD `2e389b8`; the current working tree intentionally contains uncommitted MOP-084 changes and pre-existing untracked runtime-foundation files outside this task.
+- Confirmed accepted documentation baseline `2e389b8` and implementation baseline `f6a177d`; the exact-revision evidence record is refreshed after the governed hash slice.
 - Confirmed all 44 catalog tools have one valid JSON materialization, a unique tool name, a unique KB item ID, preserved source text, and a catalog link.
 - Confirmed the runtime catalog reports all 44 tools separately; nine have local handlers and the production default enables none.
 - Confirmed all 44 contracts have one taxonomy-valid `audit_class` and one structured `postcondition_verification`; all remain `planned`.
