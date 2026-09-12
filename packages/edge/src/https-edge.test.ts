@@ -8,11 +8,13 @@ import https from "node:https";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { BrokerResult } from "@mac-operator/contracts";
 import { Client, StreamableHTTPClientTransport, type FetchLike } from "@modelcontextprotocol/client";
 import { ToolContractRegistry } from "./contract-registry.js";
 import { createHttpsMcpEdge, type HttpsMcpEdgeOptions } from "./https-edge.js";
+import { createJwtAccessTokenVerifier } from "./jwt-verifier.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const contracts = await ToolContractRegistry.load(resolve(repositoryRoot, "tool-contracts"));
@@ -58,6 +60,28 @@ test("HTTPS Edge normalizes case and rejects host-list syntax smuggling", () => 
 test("official MCP client discovers Broker-enabled tools over HTTPS", async () => {
   const tlsDirectory = await mkdtemp(join(tmpdir(), "mac-operator-edge-tls-"));
   const edgeOptions = baseOptions();
+  const issuer = new URL("https://issuer.example.test");
+  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const publicJwk = await exportJWK(publicKey);
+  const accessToken = await new SignJWT({
+    sid: "session-1",
+    azp: "client-1",
+    scope: "mac.control.read"
+  })
+    .setProtectedHeader({ alg: "RS256", kid: "integration-key", typ: "at+jwt" })
+    .setIssuer(issuer.href)
+    .setAudience(edgeOptions.resourceServerUrl.href)
+    .setSubject("principal-1")
+    .setIssuedAt()
+    .setExpirationTime("5 minutes")
+    .setJti("integration-token-1")
+    .sign(privateKey);
+  edgeOptions.tokenVerifier = createJwtAccessTokenVerifier({
+    issuer,
+    issuerId: "issuer-1",
+    resourceServerUrl: edgeOptions.resourceServerUrl,
+    jwks: { keys: [{ ...publicJwk, kid: "integration-key", alg: "RS256", use: "sig" }] }
+  });
   edgeOptions.gateway = {
     async execute(tool): Promise<BrokerResult> {
       return {
@@ -92,7 +116,7 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     transport = new StreamableHTTPClientTransport(
       new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
       {
-        authProvider: { token: async () => "integration-token" },
+        authProvider: { token: async () => accessToken },
         fetch: createPinnedFetch(address.port),
         onInsufficientScope: "throw"
       }
