@@ -1,4 +1,4 @@
-import type { BrokerSuccess, PrincipalContext } from "@mac-operator/contracts";
+import { BrokerError, type BrokerFailure, type BrokerResult, type BrokerSuccess, type PrincipalContext } from "@mac-operator/contracts";
 import {
   McpServer,
   fromJsonSchema,
@@ -66,7 +66,12 @@ async function executeTool(
   principal: PrincipalContext,
   context: ServerContext
 ) {
-  const result = await gateway.execute(toolName, argumentsValue, principal, context.mcpReq.signal);
+  let result: BrokerResult;
+  try {
+    result = await gateway.execute(toolName, argumentsValue, principal, context.mcpReq.signal);
+  } catch (error) {
+    result = mapGatewayError(toolName, error);
+  }
   if (!result.ok) {
     return {
       isError: true as const,
@@ -76,6 +81,27 @@ async function executeTool(
   return {
     content: [{ type: "text" as const, text: JSON.stringify(result) }],
     structuredContent: result as BrokerSuccess & Record<string, unknown>
+  };
+}
+
+export function mapGatewayError(tool: string, error: unknown): BrokerFailure {
+  if (error instanceof BrokerError) {
+    return {
+      ok: false,
+      request_id: "edge-error",
+      tool,
+      result_class: error.errorClass,
+      error: { message: error.message, retryable: error.retryable },
+      duration_ms: 0
+    };
+  }
+  return {
+    ok: false,
+    request_id: "edge-error",
+    tool,
+    result_class: "EXECUTION_FAILED",
+    error: { message: "Edge-to-Broker execution failed", retryable: true },
+    duration_ms: 0
   };
 }
 

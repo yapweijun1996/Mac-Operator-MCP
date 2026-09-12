@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import type { BrokerResult, PrincipalContext } from "@mac-operator/contracts";
+import { BrokerError, type BrokerResult, type PrincipalContext } from "@mac-operator/contracts";
 import { McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { ToolContractRegistry } from "./contract-registry.js";
 import type { BrokerGateway } from "./gateway.js";
-import { createGovernedMcpServerFactory } from "./mcp-server.js";
+import { createGovernedMcpServerFactory, mapGatewayError } from "./mcp-server.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -71,4 +71,23 @@ test("MCP factory fails closed without verified authentication context", async (
     gateway: { async execute() { throw new Error("must not execute"); } }
   });
   await assert.rejects(async () => { await factory({ era: "modern" }); }, /Authenticated MCP context is required/u);
+});
+
+test("MCP gateway errors map to the stable Broker failure envelope", () => {
+  assert.deepEqual(mapGatewayError("mac_health", new BrokerError("TIMEOUT", "Broker request timed out", true)), {
+    ok: false,
+    request_id: "edge-error",
+    tool: "mac_health",
+    result_class: "TIMEOUT",
+    error: { message: "Broker request timed out", retryable: true },
+    duration_ms: 0
+  });
+  assert.deepEqual(mapGatewayError("mac_health", new Error("private transport detail")), {
+    ok: false,
+    request_id: "edge-error",
+    tool: "mac_health",
+    result_class: "EXECUTION_FAILED",
+    error: { message: "Edge-to-Broker execution failed", retryable: true },
+    duration_ms: 0
+  });
 });
