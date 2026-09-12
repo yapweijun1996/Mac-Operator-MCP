@@ -188,7 +188,7 @@ export class Broker {
         tool: request.tool,
         result_class: "SUCCEEDED",
         data: dispatched.data,
-        warnings: [],
+        warnings: dispatched.warnings ? [...dispatched.warnings] : [],
         truncated: dispatched.truncated ?? false,
         verification: dispatched.verification,
         duration_ms: Math.max(0, this.now() - startedAt)
@@ -773,6 +773,52 @@ export class Broker {
           auditEvidence: { manifestCount: workerResult.manifests.length, treeEntryCount: workerResult.treeEntries.length, truncated: workerResult.truncated }
         };
       }
+      case "mac_storage_analysis": {
+        if (!execution.storageAnalysis || !this.filesystemExecutor.analyzeStorage) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem storage-analysis execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.analyzeStorage(
+          execution.storageAnalysis.plans,
+          execution.storageAnalysis.topN,
+          execution.storageAnalysis.maxDepth,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs, undefined, execution.additionalTargets)
+        );
+        if (workerResult.operation !== "storage_analysis") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            volumes: workerResult.volumes.map((volume) => ({
+              id: volume.id,
+              name: volume.name,
+              mount_path: volume.mountPath,
+              total_bytes: volume.totalBytes,
+              available_bytes: volume.availableBytes,
+              used_bytes: volume.usedBytes
+            })),
+            consumers: workerResult.consumers.map((consumer) => ({
+              path: consumer.path,
+              size_bytes: consumer.sizeBytes,
+              type: consumer.type
+            })),
+            analyzed_roots: [...workerResult.analyzedRoots]
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_storage_result_validation",
+            evidence: { summary: "Volume capacity and ranked consumers were collected from descriptor-backed metadata with protected-path filtering" }
+          },
+          truncated: workerResult.truncated,
+          warnings: [...workerResult.warnings],
+          ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
+          auditEvidence: {
+            volumeCount: workerResult.volumes.length,
+            consumerCount: workerResult.consumers.length,
+            rootCount: workerResult.analyzedRoots.length,
+            warningCount: workerResult.warnings.length,
+            truncated: workerResult.truncated
+          }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -986,6 +1032,28 @@ export class Broker {
         projectSummary: {
           includeTree: (request.arguments.include_tree ?? false) as boolean,
           treeDepth: (request.arguments.tree_depth ?? 2) as number
+        }
+      };
+    }
+    if (request.tool === "mac_storage_analysis") {
+      assertExactArguments(request.arguments, ["roots", "top_n", "max_depth"]);
+      validateStorageAnalysisArguments(request.arguments);
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const requestedRoots = request.arguments.roots as string[] | undefined;
+      const roots = requestedRoots && requestedRoots.length > 0
+        ? requestedRoots
+        : policy.filesystemRoots.filter((root) => root.metadata === true).map((root) => root.path);
+      if (roots.length < 1 || roots.length > 32) throw new BrokerError("POLICY_DENIED", "No metadata filesystem roots are authorized for storage analysis");
+      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
+      return {
+        target: targets[0]!,
+        ...(targets.length > 1 ? { additionalTargets: targets.slice(1) } : {}),
+        auditTarget: `filesystem_roots:${targets.map((target) => target.reference).join(",")}`,
+        storageAnalysis: {
+          plans,
+          topN: (request.arguments.top_n ?? 20) as number,
+          maxDepth: (request.arguments.max_depth ?? 4) as number
         }
       };
     }
@@ -1221,6 +1289,11 @@ interface ExecutionPlan {
     includeTree: boolean;
     treeDepth: number;
   };
+  storageAnalysis?: {
+    plans: readonly FilesystemPathPlan[];
+    topN: number;
+    maxDepth: number;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -1238,6 +1311,7 @@ interface DispatchResult {
   auditTarget?: string;
   auditEvidence?: Record<string, unknown>;
   truncated?: boolean;
+  warnings?: readonly string[];
 }
 
 interface WriteResultData {
@@ -1467,6 +1541,22 @@ function validateProjectSummaryArguments(argumentsValue: Readonly<Record<string,
   const treeDepth = argumentsValue.tree_depth;
   if (treeDepth !== undefined && (!Number.isSafeInteger(treeDepth) || (treeDepth as number) < 0 || (treeDepth as number) > 4)) {
     throw new BrokerError("PRECONDITION_FAILED", "tree_depth must be an integer between 0 and 4");
+  }
+}
+
+function validateStorageAnalysisArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const roots = argumentsValue.roots;
+  if (roots !== undefined && (!Array.isArray(roots) || roots.length > 32 || roots.some((root) =>
+    typeof root !== "string" || !isAbsolute(root) || root.length > 4096 || root.includes("\0")))) {
+    throw new BrokerError("PRECONDITION_FAILED", "roots must contain at most 32 bounded absolute paths");
+  }
+  const topN = argumentsValue.top_n;
+  if (topN !== undefined && (!Number.isSafeInteger(topN) || (topN as number) < 1 || (topN as number) > 100)) {
+    throw new BrokerError("PRECONDITION_FAILED", "top_n must be an integer between 1 and 100");
+  }
+  const maxDepth = argumentsValue.max_depth;
+  if (maxDepth !== undefined && (!Number.isSafeInteger(maxDepth) || (maxDepth as number) < 0 || (maxDepth as number) > 8)) {
+    throw new BrokerError("PRECONDITION_FAILED", "max_depth must be an integer between 0 and 8");
   }
 }
 

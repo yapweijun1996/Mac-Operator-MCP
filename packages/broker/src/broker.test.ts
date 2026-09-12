@@ -205,7 +205,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 18);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 19);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -938,6 +938,54 @@ test("mac_project_summary returns safe structure metadata without reading projec
     assert.equal(result.truncated, false);
     assert.equal(JSON.stringify(result).includes("should-not-be-read"), false);
     assert.equal(JSON.stringify(result).includes("private-value"), false);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_storage_analysis returns bounded capacity and ranked metadata consumers", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-storage-analysis-"));
+  const directory = join(parent, "workspace");
+  const nested = join(directory, "nested");
+  await mkdir(nested, { recursive: true });
+  await mkdir(join(directory, ".ssh"), { recursive: true });
+  await writeFile(join(directory, "small.txt"), "small");
+  await writeFile(join(nested, "large.bin"), "0123456789abcdef");
+  await writeFile(join(directory, ".ssh", "id_rsa"), "PRIVATE-KEY-MATERIAL");
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.storage.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "storage-analysis-request",
+      nonce: "storage-analysis-nonce",
+      tool: "mac_storage_analysis",
+      arguments: { roots: [directory], top_n: 10, max_depth: 2 }
+    }, ["mac.storage.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      volumes: Array<{ id: string; mount_path: string; total_bytes: number; available_bytes: number; used_bytes: number }>;
+      consumers: Array<{ path: string; size_bytes: number; type: string }>;
+      analyzed_roots: string[];
+    };
+    assert.equal(data.analyzed_roots[0], await realpath(directory));
+    assert.ok(data.volumes.length >= 1);
+    assert.equal(data.volumes.every((volume) => volume.total_bytes >= volume.available_bytes && volume.total_bytes >= volume.used_bytes), true);
+    assert.equal(data.consumers.length <= 10, true);
+    const largePath = await realpath(join(nested, "large.bin"));
+    assert.equal(data.consumers.some((consumer) => consumer.path === largePath), true);
+    assert.equal(data.consumers.some((consumer) => consumer.path.includes(".ssh")), false);
+    assert.equal(JSON.stringify(result).includes("PRIVATE-KEY-MATERIAL"), false);
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("PRIVATE-KEY-MATERIAL")), false);
   } finally {
     store.close();
     await rm(parent, { recursive: true, force: true });

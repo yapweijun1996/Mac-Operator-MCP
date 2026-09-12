@@ -125,6 +125,29 @@ export interface SafeProjectSummary {
   truncated: boolean;
 }
 
+export interface SafeStorageVolume {
+  id: string;
+  name: string;
+  mountPath: string;
+  totalBytes: number;
+  availableBytes: number;
+  usedBytes: number;
+}
+
+export interface SafeStorageConsumer {
+  path: string;
+  sizeBytes: number;
+  type: "file" | "directory" | "other";
+}
+
+export interface SafeStorageAnalysis {
+  volumes: readonly SafeStorageVolume[];
+  consumers: readonly SafeStorageConsumer[];
+  analyzedRoots: readonly string[];
+  warnings: readonly string[];
+  truncated: boolean;
+}
+
 export interface SafePathMetadata {
   rootId: string;
   path: string;
@@ -155,8 +178,13 @@ interface NativePathMetadata {
   inode: string;
 }
 
+interface NativeStorageVolume extends SafeStorageVolume {
+  rootPath: string;
+}
+
 interface NativeFilesystemAdapter {
   statPathWithinRoot(rootPath: string, targetPath: string, followSymlink: boolean): unknown;
+  statStorageVolumeWithinRoot(rootPath: string): unknown;
   listDirectoryWithinRoot(
     rootPath: string,
     targetPath: string,
@@ -200,6 +228,9 @@ const MAX_PROJECT_DEPTH = 16;
 const MAX_PROJECT_DIRECTORIES = 10_000;
 const MAX_PROJECT_ENTRIES = 50_000;
 const MAX_PROJECT_SUMMARY_TREE_ENTRIES = 1_000;
+const MAX_STORAGE_DEPTH = 8;
+const MAX_STORAGE_ENTRIES = 50_000;
+const MAX_STORAGE_DIRECTORIES = 10_000;
 const PROJECT_SUMMARY_MANIFESTS = new Set([
   "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "tsconfig.json",
   "pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
@@ -690,6 +721,136 @@ export class FilesystemInspector {
     };
   }
 
+  analyzeStoragePlanned(
+    plans: readonly FilesystemPathPlan[],
+    topN: number,
+    maxDepth: number
+  ): SafeStorageAnalysis {
+    if (plans.length < 1 || plans.length > 32) {
+      throw new BrokerError("PRECONDITION_FAILED", "Storage analysis requires between 1 and 32 roots");
+    }
+    if (!Number.isSafeInteger(topN) || topN < 1 || topN > 100) {
+      throw new BrokerError("PRECONDITION_FAILED", "Storage top_n must be an integer between 1 and 100");
+    }
+    if (!Number.isSafeInteger(maxDepth) || maxDepth < 0 || maxDepth > MAX_STORAGE_DEPTH) {
+      throw new BrokerError("PRECONDITION_FAILED", "Storage max_depth must be an integer between 0 and 8");
+    }
+
+    const volumes = new Map<string, SafeStorageVolume>();
+    const analyzedRoots: string[] = [];
+    const warnings: string[] = [];
+    const pending: Array<{ plan: FilesystemPathPlan; depth: number }> = [];
+    const visitedDirectories = new Set<string>();
+    const parentByPath = new Map<string, string>();
+    const typeByPath = new Map<string, SafeStorageConsumer["type"]>();
+    const sizeByPath = new Map<string, number>();
+    let visitedEntries = 0;
+    let visitedDirectoriesCount = 0;
+    let truncated = false;
+
+    for (const plan of plans) {
+      const root = this.statPlanned(plan, false);
+      if (root.type !== "directory" || root.isSymlink) {
+        throw new BrokerError("PRECONDITION_FAILED", "Storage analysis roots must be non-symlink directories");
+      }
+      if (!analyzedRoots.includes(root.path)) analyzedRoots.push(root.path);
+      const nativeVolume = this.native.statStorageVolumeWithinRoot(plan.root.path);
+      const volume = parseNativeStorageVolume(nativeVolume);
+      let canonicalPolicyRoot: string;
+      try { canonicalPolicyRoot = realpathSync.native(plan.root.path); }
+      catch { throw new BrokerError("POLICY_DENIED", "Filesystem volume root could not be canonicalized"); }
+      if (volume.rootPath !== canonicalPolicyRoot) {
+        throw new BrokerError("POLICY_DENIED", "Filesystem volume identity changed during authorization");
+      }
+      if (!volumes.has(volume.id)) volumes.set(volume.id, volume);
+      pending.push({ plan: { ...plan, requestedPath: root.path }, depth: 0 });
+    }
+
+    const addWarning = (warning: string): void => {
+      if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
+    };
+    while (pending.length > 0 && !truncated) {
+      const current = pending.shift()!;
+      let cursor: string | undefined;
+      while (!truncated) {
+        const listing = this.listPlanned(current.plan, cursor, 500, true);
+        if (visitedDirectories.has(listing.path) && cursor === undefined) break;
+        if (!visitedDirectories.has(listing.path)) {
+          visitedDirectories.add(listing.path);
+          visitedDirectoriesCount += 1;
+          if (visitedDirectoriesCount > MAX_STORAGE_DIRECTORIES) {
+            truncated = true;
+            addWarning("Storage traversal exceeded the fixed directory budget");
+            break;
+          }
+        }
+        for (const entry of listing.entries) {
+          visitedEntries += 1;
+          if (visitedEntries > MAX_STORAGE_ENTRIES) {
+            truncated = true;
+            addWarning("Storage traversal exceeded the fixed entry budget");
+            break;
+          }
+          const childPath = join(listing.path, entry.name);
+          if (!isAbsolute(childPath) || childPath.length > 4096) {
+            truncated = true;
+            addWarning("Storage traversal encountered a path outside the contract limit");
+            break;
+          }
+          const childPlan = { ...current.plan, requestedPath: childPath };
+          let child: SafePathMetadata;
+          try {
+            child = this.statPlanned(childPlan, false);
+          } catch {
+            addWarning("Some storage entries could not be verified during traversal");
+            continue;
+          }
+          if (child.isSymlink || child.type === "symlink") continue;
+          if (child.type === "directory") {
+            typeByPath.set(child.path, "directory");
+            parentByPath.set(child.path, listing.path);
+            sizeByPath.set(child.path, child.sizeBytes);
+            if (current.depth >= maxDepth) {
+              truncated = true;
+              addWarning("Storage traversal was truncated at max_depth");
+              continue;
+            }
+            pending.push({ plan: childPlan, depth: current.depth + 1 });
+          } else {
+            const consumerType = child.type === "file" ? "file" : "other";
+            typeByPath.set(child.path, consumerType);
+            parentByPath.set(child.path, listing.path);
+            sizeByPath.set(child.path, child.sizeBytes);
+          }
+        }
+        if (truncated || listing.nextCursor === null) break;
+        cursor = listing.nextCursor;
+      }
+    }
+
+    const aggregateSizes = new Map(sizeByPath);
+    const pathsByDepth = [...parentByPath.keys()].sort((left, right) => right.length - left.length || right.localeCompare(left));
+    for (const path of pathsByDepth) {
+      const parent = parentByPath.get(path);
+      if (parent === undefined || !typeByPath.has(parent)) continue;
+      const currentSize = aggregateSizes.get(parent) ?? 0;
+      const childSize = aggregateSizes.get(path) ?? 0;
+      aggregateSizes.set(parent, Math.min(Math.max(currentSize, currentSize + childSize), 100_000_000_000_000));
+    }
+    const consumers = [...typeByPath.entries()]
+      .filter(([path]) => !analyzedRoots.includes(path))
+      .map(([path, type]) => ({ path, type, sizeBytes: aggregateSizes.get(path) ?? 0 }))
+      .sort((left, right) => right.sizeBytes - left.sizeBytes || left.path.localeCompare(right.path))
+      .slice(0, topN);
+    return {
+      volumes: [...volumes.values()].sort((left, right) => left.id.localeCompare(right.id)),
+      consumers,
+      analyzedRoots,
+      warnings,
+      truncated
+    };
+  }
+
   private traverseMetadata<T>(
     plans: readonly FilesystemPathPlan[],
     maxResults: number,
@@ -1091,4 +1252,28 @@ function parseNativeMetadata(value: unknown): NativePathMetadata {
     typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)
   ) throw new Error("Malformed native metadata");
   return record as unknown as NativePathMetadata;
+}
+
+function parseNativeStorageVolume(value: unknown): NativeStorageVolume {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native storage volume");
+  const record = value as Record<string, unknown>;
+  if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
+      typeof record.id !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/u.test(record.id) ||
+      typeof record.name !== "string" || record.name.length < 1 || record.name.length > 256 || record.name.includes("\0") ||
+      typeof record.mountPath !== "string" || !isAbsolute(record.mountPath) || record.mountPath.length > 4096 ||
+      !Number.isSafeInteger(record.totalBytes) || (record.totalBytes as number) < 0 || (record.totalBytes as number) > 100_000_000_000_000 ||
+      !Number.isSafeInteger(record.availableBytes) || (record.availableBytes as number) < 0 || (record.availableBytes as number) > 100_000_000_000_000 ||
+      !Number.isSafeInteger(record.usedBytes) || (record.usedBytes as number) < 0 || (record.usedBytes as number) > 100_000_000_000_000 ||
+      (record.availableBytes as number) > (record.totalBytes as number) || (record.usedBytes as number) > (record.totalBytes as number)) {
+    throw new Error("Malformed native storage volume");
+  }
+  return {
+    rootPath: record.rootPath,
+    id: record.id,
+    name: record.name,
+    mountPath: record.mountPath,
+    totalBytes: record.totalBytes as number,
+    availableBytes: record.availableBytes as number,
+    usedBytes: record.usedBytes as number
+  };
 }

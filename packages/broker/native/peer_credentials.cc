@@ -111,6 +111,12 @@ void SetBoolean(napi_env env, napi_value object, const char* name, bool value) {
   napi_set_named_property(env, object, name, property);
 }
 
+unsigned long long StorageBytes(uint64_t blocks, uint32_t block_size) {
+  const __uint128_t bytes = static_cast<__uint128_t>(blocks) * static_cast<__uint128_t>(block_size);
+  if (bytes > 100'000'000'000'000ULL) return 100'000'000'000'000ULL;
+  return static_cast<unsigned long long>(bytes);
+}
+
 napi_value GetPeerCredentials(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -246,6 +252,61 @@ napi_value StatPathWithinRoot(napi_env env, napi_callback_info info) {
   SetString(env, result, "inode", inode);
 
   close(target_descriptor);
+  close(root_descriptor);
+  return result;
+}
+
+napi_value StatStorageVolumeWithinRoot(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "statStorageVolumeWithinRoot requires a root path");
+    return nullptr;
+  }
+
+  char configured_root[PATH_MAX];
+  if (!ReadString(env, args[0], configured_root, sizeof(configured_root))) {
+    napi_throw_type_error(env, nullptr, "Filesystem root path is malformed");
+    return nullptr;
+  }
+
+  int root_descriptor = open(configured_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (root_descriptor < 0) {
+    ThrowSystemError(env, "Filesystem root could not be opened safely");
+    return nullptr;
+  }
+
+  struct stat root_stat;
+  struct statfs root_filesystem;
+  char resolved_root[PATH_MAX];
+  if (fstat(root_descriptor, &root_stat) != 0 || fstatfs(root_descriptor, &root_filesystem) != 0 ||
+      (root_filesystem.f_flags & MNT_LOCAL) == 0 || !DescriptorPath(root_descriptor, resolved_root)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem volume identity could not be verified");
+    return nullptr;
+  }
+
+  const unsigned long long total_bytes = StorageBytes(root_filesystem.f_blocks, root_filesystem.f_bsize);
+  const unsigned long long available_bytes = StorageBytes(root_filesystem.f_bavail, root_filesystem.f_bsize);
+  const unsigned long long free_bytes = StorageBytes(root_filesystem.f_bfree, root_filesystem.f_bsize);
+  const unsigned long long used_bytes = total_bytes >= free_bytes ? total_bytes - free_bytes : 0;
+
+  char id[256];
+  snprintf(id, sizeof(id), "dev:%llu:fsid:%d:%d",
+      static_cast<unsigned long long>(root_stat.st_dev),
+      root_filesystem.f_fsid.val[0], root_filesystem.f_fsid.val[1]);
+  const char* filesystem_name = root_filesystem.f_fstypename[0] == '\0' ? "unknown" : root_filesystem.f_fstypename;
+  const char* mount_path = root_filesystem.f_mntonname[0] == '\0' ? resolved_root : root_filesystem.f_mntonname;
+
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "rootPath", resolved_root);
+  SetString(env, result, "id", id);
+  SetString(env, result, "name", filesystem_name);
+  SetString(env, result, "mountPath", mount_path);
+  SetNumber(env, result, "totalBytes", static_cast<double>(total_bytes));
+  SetNumber(env, result, "availableBytes", static_cast<double>(available_bytes));
+  SetNumber(env, result, "usedBytes", static_cast<double>(used_bytes));
   close(root_descriptor);
   return result;
 }
@@ -1113,6 +1174,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "getPeerCredentials", function);
   napi_create_function(env, "statPathWithinRoot", NAPI_AUTO_LENGTH, StatPathWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "statPathWithinRoot", function);
+  napi_create_function(env, "statStorageVolumeWithinRoot", NAPI_AUTO_LENGTH, StatStorageVolumeWithinRoot, nullptr, &function);
+  napi_set_named_property(env, exports, "statStorageVolumeWithinRoot", function);
   napi_create_function(env, "listDirectoryWithinRoot", NAPI_AUTO_LENGTH, ListDirectoryWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "listDirectoryWithinRoot", function);
   napi_create_function(env, "readFileWithinRoot", NAPI_AUTO_LENGTH, ReadFileWithinRoot, nullptr, &function);

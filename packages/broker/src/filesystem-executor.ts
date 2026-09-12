@@ -70,6 +70,12 @@ export interface FilesystemExecutor {
     treeDepth: number,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  analyzeStorage?(
+    plans: readonly FilesystemPathPlan[],
+    topN: number,
+    maxDepth: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -191,6 +197,16 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "project_summary", plan, includeTree, treeDepth }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  analyzeStorage(
+    plans: readonly FilesystemPathPlan[],
+    topN: number,
+    maxDepth: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "storage_analysis", plans, topN, maxDepth }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -373,6 +389,36 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     for (const entry of value.treeEntries) {
       if (entry === null || typeof entry !== "object" || typeof entry.path !== "string" || !isAbsolute(entry.path) || entry.path.length > 4096 || entry.path.includes("\0") ||
           !["file", "directory", "symlink", "other"].includes(entry.type) || !Number.isSafeInteger(entry.depth) || entry.depth < 0 || entry.depth > 4) throw malformed();
+    }
+    for (const warning of value.warnings) {
+      if (typeof warning !== "string" || warning.length < 1 || warning.length > 512 || warning.includes("\0")) throw malformed();
+    }
+    return value;
+  }
+  if (value.operation === "storage_analysis") {
+    if (!Array.isArray(value.volumes) || value.volumes.length > 64 ||
+        !Array.isArray(value.consumers) || value.consumers.length > 100 ||
+        !Array.isArray(value.analyzedRoots) || value.analyzedRoots.length > 32 ||
+        !Array.isArray(value.warnings) || value.warnings.length > 32 || typeof value.truncated !== "boolean") {
+      throw malformed();
+    }
+    for (const volume of value.volumes) {
+      if (volume === null || typeof volume !== "object" ||
+          typeof volume.id !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/u.test(volume.id) ||
+          typeof volume.name !== "string" || volume.name.length < 1 || volume.name.length > 256 || volume.name.includes("\0") ||
+          typeof volume.mountPath !== "string" || !isAbsolute(volume.mountPath) || volume.mountPath.length > 4096 ||
+          !Number.isSafeInteger(volume.totalBytes) || volume.totalBytes < 0 || volume.totalBytes > 100_000_000_000_000 ||
+          !Number.isSafeInteger(volume.availableBytes) || volume.availableBytes < 0 || volume.availableBytes > volume.totalBytes ||
+          !Number.isSafeInteger(volume.usedBytes) || volume.usedBytes < 0 || volume.usedBytes > volume.totalBytes) throw malformed();
+    }
+    for (const consumer of value.consumers) {
+      if (consumer === null || typeof consumer !== "object" ||
+          typeof consumer.path !== "string" || !isAbsolute(consumer.path) || consumer.path.length > 4096 || consumer.path.includes("\0") ||
+          !Number.isSafeInteger(consumer.sizeBytes) || consumer.sizeBytes < 0 || consumer.sizeBytes > 100_000_000_000_000 ||
+          !["file", "directory", "other"].includes(consumer.type)) throw malformed();
+    }
+    for (const path of value.analyzedRoots) {
+      if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096 || path.includes("\0")) throw malformed();
     }
     for (const warning of value.warnings) {
       if (typeof warning !== "string" || warning.length < 1 || warning.length > 512 || warning.includes("\0")) throw malformed();

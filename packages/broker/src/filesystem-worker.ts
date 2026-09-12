@@ -10,7 +10,7 @@ if (!parentPort) throw new Error("Filesystem worker requires a parent port");
 
 try {
   const command = workerData as FilesystemWorkerCommand;
-  const plans = command.operation === "find" || command.operation === "recent" || command.operation === "search_text" || command.operation === "project_discover"
+  const plans = command.operation === "find" || command.operation === "recent" || command.operation === "search_text" || command.operation === "project_discover" || command.operation === "storage_analysis"
     ? command.plans
     : [command.plan];
   const roots = [...new Map(plans.map((plan) => [plan.root.rootId, plan.root])).values()];
@@ -104,6 +104,9 @@ try {
   } else if (command.operation === "project_summary") {
     const summary = inspector.summarizeProjectPlanned(command.plan, command.includeTree, command.treeDepth);
     value = { operation: "project_summary", ...summary };
+  } else if (command.operation === "storage_analysis") {
+    const analysis = inspector.analyzeStoragePlanned(command.plans, command.topN, command.maxDepth);
+    value = { operation: "storage_analysis", ...analysis };
   } else if (command.operation === "write") {
     assertContentDoesNotContainSecrets(command.content);
     const write = inspector.writePlanned(

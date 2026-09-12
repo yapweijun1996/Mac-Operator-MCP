@@ -5,6 +5,7 @@ import type {
   SafePathMetadata,
   SafeProject,
   SafeProjectSummary,
+  SafeStorageAnalysis,
   SafeTreeEntry
 } from "./filesystem-inspector.js";
 
@@ -19,6 +20,7 @@ export type FilesystemWorkerCommand =
   | { operation: "search_text"; plans: readonly FilesystemPathPlan[]; query: string; glob: string | undefined; maxResults: number }
   | { operation: "project_discover"; plans: readonly FilesystemPathPlan[]; types: readonly string[]; maxResults: number }
   | { operation: "project_summary"; plan: FilesystemPathPlan; includeTree: boolean; treeDepth: number }
+  | { operation: "storage_analysis"; plans: readonly FilesystemPathPlan[]; topN: number; maxDepth: number }
   | {
       operation: "write";
       plan: FilesystemPathPlan;
@@ -91,6 +93,7 @@ export type FilesystemWorkerResult =
       truncated: boolean;
     }
   | ({ operation: "project_summary" } & SafeProjectSummary)
+  | ({ operation: "storage_analysis" } & SafeStorageAnalysis)
   | {
       operation: "write";
       path: string;

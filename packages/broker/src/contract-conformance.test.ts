@@ -32,7 +32,7 @@ test("implemented broker results conform to versioned success and failure schema
   const basePolicy = createDefaultPolicy(
     "edge-1",
     true,
-    ["mac.control.read", "mac.policy.explain", "mac.system.read", "mac.process.read", "mac.files.read", "mac.files.search", "mac.project.read", "mac.files.hash", "mac.files.write", "mac.job.read", "mac.job.cancel"],
+    ["mac.control.read", "mac.policy.explain", "mac.system.read", "mac.process.read", "mac.files.read", "mac.files.search", "mac.project.read", "mac.storage.read", "mac.files.hash", "mac.files.write", "mac.job.read", "mac.job.cancel"],
     ["edge-key-1"],
     [{ rootId: "test-root", path: directory, metadata: true, contentRead: true, write: true, denyRelativePaths: [] }]
   );
@@ -78,6 +78,7 @@ test("implemented broker results conform to versioned success and failure schema
       { tool: "mac_search_text", arguments: { roots: [directory], query: "hello", glob: "*.txt", max_results: 20 } },
       { tool: "mac_project_discover", arguments: { roots: [directory], types: ["node"], max_results: 20 } },
       { tool: "mac_project_summary", arguments: { project_root: directory, include_tree: true, tree_depth: 1 } },
+      { tool: "mac_storage_analysis", arguments: { roots: [directory], top_n: 20, max_depth: 1 } },
       { tool: "mac_write_file_atomic", arguments: { path: writePath, content: "safe", idempotency_key: "contract-write-1", encoding: "utf8", create_only: true } },
       { tool: "mac_job_status", arguments: { job_id: "job:contract", tail_bytes: 128 } },
       { tool: "mac_job_cancel", arguments: { job_id: "job:contract", reason: "contract-test" } }
@@ -148,7 +149,7 @@ function makeRequest(now: number, index: number, tool: string, args: Record<stri
     arguments: args,
       principal: {
       principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer",
-      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_process_list" ? ["mac.process.read"] : []), "mac.files.read", ...(tool === "mac_find_files" || tool === "mac_recent_files" || tool === "mac_search_text" ? ["mac.files.search"] : []), ...(tool === "mac_project_discover" || tool === "mac_project_summary" ? ["mac.project.read"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
+      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_process_list" ? ["mac.process.read"] : []), "mac.files.read", ...(tool === "mac_find_files" || tool === "mac_recent_files" || tool === "mac_search_text" ? ["mac.files.search"] : []), ...(tool === "mac_project_discover" || tool === "mac_project_summary" ? ["mac.project.read"] : []), ...(tool === "mac_storage_analysis" ? ["mac.storage.read"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
       issuedAtMs: now - 1_000, expiresAtMs: now + 60_000, edgeId: "edge-1"
     },
     timestampMs: now,
