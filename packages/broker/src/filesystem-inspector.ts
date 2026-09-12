@@ -96,6 +96,17 @@ export interface SafeTextSearch {
   truncated: boolean;
 }
 
+export interface SafeProject {
+  root: string;
+  type: string;
+  indicators: readonly string[];
+}
+
+export interface SafeProjectDiscovery {
+  projects: readonly SafeProject[];
+  truncated: boolean;
+}
+
 export interface SafePathMetadata {
   rootId: string;
   path: string;
@@ -167,6 +178,23 @@ const MAX_SEARCH_ENTRIES = 50_000;
 const MAX_TEXT_FILE_BYTES = 1_048_576;
 const MAX_TEXT_SEARCH_BYTES = 64 * 1024 * 1024;
 const MAX_TEXT_MATCHES_PER_FILE = 100;
+const MAX_PROJECT_DEPTH = 16;
+const MAX_PROJECT_DIRECTORIES = 10_000;
+const MAX_PROJECT_ENTRIES = 50_000;
+const PROJECT_MARKERS: Readonly<Record<string, readonly string[]>> = {
+  git: [".git"],
+  node: ["package.json"],
+  python: ["pyproject.toml", "setup.py", "requirements.txt", "Pipfile"],
+  docker: ["Dockerfile", "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"],
+  swift: ["Package.swift", ".xcodeproj", ".xcworkspace"],
+  rust: ["Cargo.toml"],
+  go: ["go.mod"],
+  ruby: ["Gemfile"],
+  java: ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]
+};
+const PROJECT_SKIP_DIRECTORIES = new Set([
+  ".git", ".svn", ".hg", "node_modules", ".venv", "venv", "Pods", "DerivedData", "build", "dist", "target", ".cache"
+]);
 const require = createRequire(import.meta.url);
 
 export class FilesystemInspector {
@@ -485,6 +513,77 @@ export class FilesystemInspector {
     return { query, matches: result.matches, truncated: result.truncated };
   }
 
+  discoverProjectsPlanned(
+    plans: readonly FilesystemPathPlan[],
+    types: readonly string[],
+    maxResults: number
+  ): SafeProjectDiscovery {
+    if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > 500) {
+      throw new BrokerError("PRECONDITION_FAILED", "Project discovery result limit is outside the supported range");
+    }
+    if (plans.length < 1 || plans.length > 32) {
+      throw new BrokerError("PRECONDITION_FAILED", "Project discovery requires between 1 and 32 roots");
+    }
+    const requestedTypes = normalizeProjectTypes(types);
+    const typeSet = new Set(requestedTypes);
+    const projects: SafeProject[] = [];
+    const visitedDirectories = new Set<string>();
+    const pending: Array<{ plan: FilesystemPathPlan; depth: number }> = plans.map((plan) => ({ plan, depth: 0 }));
+    let visitedEntries = 0;
+    let visitedDirectoriesCount = 0;
+    let truncated = false;
+
+    while (pending.length > 0 && !truncated) {
+      const current = pending.shift()!;
+      let cursor: string | undefined;
+      while (!truncated) {
+        const listing = this.listPlanned(current.plan, cursor, 500, true);
+        if (visitedDirectories.has(listing.path) && cursor === undefined) break;
+        if (!visitedDirectories.has(listing.path)) {
+          visitedDirectories.add(listing.path);
+          visitedDirectoriesCount += 1;
+          if (visitedDirectoriesCount > MAX_PROJECT_DIRECTORIES) {
+            truncated = true;
+            break;
+          }
+        }
+        const markerNames = new Set(listing.entries
+          .filter((entry) => entry.type !== "symlink")
+          .map((entry) => entry.name));
+        const foundTypes = (requestedTypes.length > 0 ? requestedTypes : Object.keys(PROJECT_MARKERS))
+          .map((type) => ({ type, indicators: (PROJECT_MARKERS[type] ?? []).filter((marker) => markerNames.has(marker)) }))
+          .filter((candidate) => candidate.indicators.length > 0);
+        if (foundTypes.length > 0) {
+          for (const found of foundTypes) {
+            if (projects.length >= maxResults) {
+              truncated = true;
+              break;
+            }
+            projects.push({ root: listing.path, type: found.type, indicators: found.indicators });
+          }
+        }
+        if (truncated) break;
+        for (const entry of listing.entries) {
+          visitedEntries += 1;
+          if (visitedEntries > MAX_PROJECT_ENTRIES) {
+            truncated = true;
+            break;
+          }
+          if (entry.type !== "directory" || current.depth >= MAX_PROJECT_DEPTH || PROJECT_SKIP_DIRECTORIES.has(entry.name)) continue;
+          const childPath = join(listing.path, entry.name);
+          if (!isAbsolute(childPath) || childPath.length > 4096) {
+            truncated = true;
+            break;
+          }
+          pending.push({ plan: { ...current.plan, requestedPath: childPath }, depth: current.depth + 1 });
+        }
+        if (truncated || listing.nextCursor === null) break;
+        cursor = listing.nextCursor;
+      }
+    }
+    return { projects, truncated };
+  }
+
   private traverseMetadata<T>(
     plans: readonly FilesystemPathPlan[],
     maxResults: number,
@@ -795,6 +894,22 @@ function normalizeRelative(path: string): string {
     throw new Error("Denied filesystem path must be a normalized relative path");
   }
   return path;
+}
+
+export function normalizeProjectTypes(types: readonly string[]): string[] {
+  if (!Array.isArray(types) || types.length > 32) {
+    throw new BrokerError("PRECONDITION_FAILED", "Project types must contain at most 32 values");
+  }
+  const normalized = new Set<string>();
+  for (const type of types) {
+    if (typeof type !== "string" || type.length < 1 || type.length > 64 || type.includes("\0")) {
+      throw new BrokerError("PRECONDITION_FAILED", "Project type is malformed");
+    }
+    const value = type.normalize("NFKC").toLocaleLowerCase("en-US");
+    if (!Object.hasOwn(PROJECT_MARKERS, value)) throw new BrokerError("PRECONDITION_FAILED", "Project type is unsupported");
+    normalized.add(value);
+  }
+  return [...normalized].sort();
 }
 
 function compileSearchGlob(glob: string | undefined): RegExp | undefined {

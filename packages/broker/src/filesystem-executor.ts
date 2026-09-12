@@ -58,6 +58,12 @@ export interface FilesystemExecutor {
     maxResults: number,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  discoverProjects?(
+    plans: readonly FilesystemPathPlan[],
+    types: readonly string[],
+    maxResults: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -159,6 +165,16 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "search_text", plans, query, glob, maxResults }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  discoverProjects(
+    plans: readonly FilesystemPathPlan[],
+    types: readonly string[],
+    maxResults: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "project_discover", plans, types, maxResults }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -300,6 +316,23 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
           !Number.isSafeInteger(match.endColumn) || match.endColumn < match.startColumn || match.endColumn > 1_000_000_000 ||
           typeof match.snippet !== "string" || match.snippet.length > 2000 || /[\u0000-\u001f\u007f]/u.test(match.snippet)) {
         throw malformed();
+      }
+    }
+    return value;
+  }
+  if (value.operation === "project_discover") {
+    if (!Array.isArray(value.projects) || value.projects.length > 500 || typeof value.truncated !== "boolean") throw malformed();
+    for (const project of value.projects) {
+      if (project === null || typeof project !== "object" ||
+          typeof project.root !== "string" || !isAbsolute(project.root) || project.root.length > 4096 || project.root.includes("\0") ||
+          typeof project.type !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/u.test(project.type) ||
+          !Array.isArray(project.indicators) || project.indicators.length > 32) {
+        throw malformed();
+      }
+      for (const indicator of project.indicators) {
+        if (typeof indicator !== "string" || indicator.length < 1 || indicator.length > 128 || indicator.includes("\0") || indicator.includes("/")) {
+          throw malformed();
+        }
       }
     }
     return value;

@@ -205,7 +205,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 16);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 17);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -811,6 +811,79 @@ test("mac_search_text denies metadata-only roots before content execution", asyn
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, false);
     assert.equal(result.result_class, "POLICY_DENIED");
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_project_discover reports safe project markers from metadata-only roots", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-project-discover-"));
+  const directory = join(parent, "workspace");
+  const nested = join(directory, "services", "api");
+  await mkdir(join(directory, ".git"), { recursive: true });
+  await mkdir(nested, { recursive: true });
+  await writeFile(join(directory, "package.json"), "{\"name\":\"safe\"}");
+  await writeFile(join(nested, "pyproject.toml"), "[project]\nname='safe'\n");
+  await mkdir(join(directory, ".ssh"), { recursive: true });
+  await writeFile(join(directory, ".ssh", "id_rsa"), "PRIVATE-KEY-MATERIAL");
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.project.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "project-discover-request",
+      nonce: "project-discover-nonce",
+      tool: "mac_project_discover",
+      arguments: { roots: [directory], types: ["git", "node", "python"], max_results: 10 }
+    }, ["mac.project.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { projects: Array<{ root: string; type: string; indicators: string[] }>; truncated: boolean };
+    assert.deepEqual(data.projects, [
+      { root: await realpath(directory), type: "git", indicators: [".git"] },
+      { root: await realpath(directory), type: "node", indicators: ["package.json"] },
+      { root: await realpath(nested), type: "python", indicators: ["pyproject.toml"] }
+    ]);
+    assert.equal(data.truncated, false);
+    assert.equal(JSON.stringify(result).includes("PRIVATE-KEY-MATERIAL"), false);
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("PRIVATE-KEY-MATERIAL")), false);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("mac_project_discover rejects unsupported project types", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-broker-project-discover-policy-"));
+  const directory = join(parent, "workspace");
+  await mkdir(directory);
+  const store = new BrokerStore(join(parent, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.project.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "project-discover-policy-request",
+      nonce: "project-discover-policy-nonce",
+      tool: "mac_project_discover",
+      arguments: { roots: [directory], types: ["unknown"] }
+    }, ["mac.project.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "PRECONDITION_FAILED");
   } finally {
     store.close();
     await rm(parent, { recursive: true, force: true });

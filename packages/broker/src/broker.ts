@@ -24,7 +24,7 @@ import {
 } from "./policy.js";
 import { PolicyManager } from "./policy-loader.js";
 import { parseBrokerRequest } from "./request-validator.js";
-import { FilesystemInspector, type FilesystemPathPlan } from "./filesystem-inspector.js";
+import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
@@ -708,6 +708,40 @@ export class Broker {
           }
         };
       }
+      case "mac_project_discover": {
+        if (!execution.projectDiscover || !this.filesystemExecutor.discoverProjects) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem project-discovery execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.discoverProjects(
+          execution.projectDiscover.plans,
+          execution.projectDiscover.types,
+          execution.projectDiscover.maxResults,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs, undefined, execution.additionalTargets)
+        );
+        if (workerResult.operation !== "project_discover") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            projects: workerResult.projects.map((project) => ({
+              root: project.root,
+              type: project.type,
+              indicators: [...project.indicators]
+            })),
+            truncated: workerResult.truncated
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "safe_project_result_validation",
+            evidence: { summary: "Project roots were discovered from bounded descriptor-backed metadata with protected-entry filtering and no content reads" }
+          },
+          truncated: workerResult.truncated,
+          ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
+          auditEvidence: {
+            projectCount: workerResult.projects.length,
+            truncated: workerResult.truncated
+          }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -889,6 +923,24 @@ export class Broker {
           query: request.arguments.query as string,
           glob: request.arguments.glob as string | undefined,
           maxResults: (request.arguments.max_results ?? 1000) as number
+        }
+      };
+    }
+    if (request.tool === "mac_project_discover") {
+      assertExactArguments(request.arguments, ["roots", "types", "max_results"]);
+      validateProjectDiscoverArguments(request.arguments);
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const roots = request.arguments.roots as string[];
+      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
+      return {
+        target: targets[0]!,
+        ...(targets.length > 1 ? { additionalTargets: targets.slice(1) } : {}),
+        auditTarget: `filesystem_roots:${targets.map((target) => target.reference).join(",")}`,
+        projectDiscover: {
+          plans,
+          types: normalizeProjectTypes((request.arguments.types ?? []) as string[]),
+          maxResults: (request.arguments.max_results ?? 500) as number
         }
       };
     }
@@ -1115,6 +1167,11 @@ interface ExecutionPlan {
     glob: string | undefined;
     maxResults: number;
   };
+  projectDiscover?: {
+    plans: readonly FilesystemPathPlan[];
+    types: readonly string[];
+    maxResults: number;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -1328,6 +1385,24 @@ function validateSearchTextArguments(argumentsValue: Readonly<Record<string, unk
   const maxResults = argumentsValue.max_results;
   if (maxResults !== undefined && (!Number.isSafeInteger(maxResults) || (maxResults as number) < 1 || (maxResults as number) > 1000)) {
     throw new BrokerError("PRECONDITION_FAILED", "max_results must be an integer between 1 and 1000");
+  }
+}
+
+function validateProjectDiscoverArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const roots = argumentsValue.roots;
+  if (!Array.isArray(roots) || roots.length < 1 || roots.length > 32 || roots.some((root) =>
+    typeof root !== "string" || !isAbsolute(root) || root.length > 4096 || root.includes("\0"))) {
+    throw new BrokerError("PRECONDITION_FAILED", "roots must contain 1 to 32 bounded absolute paths");
+  }
+  const types = argumentsValue.types;
+  if (types !== undefined && (!Array.isArray(types) || types.length > 32 || types.some((type) =>
+    typeof type !== "string" || type.length < 1 || type.length > 64 || type.includes("\0")))) {
+    throw new BrokerError("PRECONDITION_FAILED", "types must contain at most 32 bounded strings");
+  }
+  normalizeProjectTypes((types ?? []) as string[]);
+  const maxResults = argumentsValue.max_results;
+  if (maxResults !== undefined && (!Number.isSafeInteger(maxResults) || (maxResults as number) < 1 || (maxResults as number) > 500)) {
+    throw new BrokerError("PRECONDITION_FAILED", "max_results must be an integer between 1 and 500");
   }
 }
 

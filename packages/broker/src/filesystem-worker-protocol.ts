@@ -3,6 +3,7 @@ import type {
   SafeDirectoryEntry,
   SafeFileMatch,
   SafePathMetadata,
+  SafeProject,
   SafeTreeEntry
 } from "./filesystem-inspector.js";
 
@@ -15,6 +16,7 @@ export type FilesystemWorkerCommand =
   | { operation: "find"; plans: readonly FilesystemPathPlan[]; query: string; maxResults: number }
   | { operation: "recent"; plans: readonly FilesystemPathPlan[]; sinceSeconds: number; limit: number; nowMs: number }
   | { operation: "search_text"; plans: readonly FilesystemPathPlan[]; query: string; glob: string | undefined; maxResults: number }
+  | { operation: "project_discover"; plans: readonly FilesystemPathPlan[]; types: readonly string[]; maxResults: number }
   | {
       operation: "write";
       plan: FilesystemPathPlan;
@@ -79,6 +81,11 @@ export type FilesystemWorkerResult =
       operation: "search_text";
       query: string;
       matches: readonly import("./filesystem-inspector.js").SafeTextMatch[];
+      truncated: boolean;
+    }
+  | {
+      operation: "project_discover";
+      projects: readonly SafeProject[];
       truncated: boolean;
     }
   | {
