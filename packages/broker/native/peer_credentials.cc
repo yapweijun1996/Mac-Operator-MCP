@@ -411,6 +411,7 @@ napi_value ListDirectoryWithinRoot(napi_env env, napi_callback_info info) {
       ThrowSystemError(env, "Filesystem directory entry could not be inspected");
       return nullptr;
     }
+    if (entry_stat.st_dev != target_stat.st_dev) continue;
     const char* type = "other";
     if (S_ISREG(entry_stat.st_mode)) type = "file";
     else if (S_ISDIR(entry_stat.st_mode)) type = "directory";
