@@ -4,6 +4,8 @@ node_modules/
 # TypeScript and build output
 packages/*/dist/
 packages/*/*.tsbuildinfo
+*.node
+*.dSYM/
 
 # Test and coverage output
 coverage/

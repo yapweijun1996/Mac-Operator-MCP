@@ -5,6 +5,7 @@ export * from "./filesystem-inspector.js";
 export * from "./filesystem-executor.js";
 export * from "./default-policy.js";
 export * from "./ipc-server.js";
+export * from "./native-ipc-server.js";
 export * from "./persistence.js";
 export * from "./peer-credentials.js";
 export * from "./policy.js";

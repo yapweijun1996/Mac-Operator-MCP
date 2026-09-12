@@ -205,6 +205,166 @@ napi_value GetPeerCredentials(napi_env env, napi_callback_info info) {
   return result;
 }
 
+bool ReadDescriptor(napi_env env, napi_value value, int* output) {
+  int32_t descriptor = -1;
+  if (napi_get_value_int32(env, value, &descriptor) != napi_ok || descriptor < 0) return false;
+  *output = descriptor;
+  return true;
+}
+
+napi_value CreateUnixListener(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+    napi_throw_type_error(env, nullptr, "createUnixListener requires a socket path and backlog");
+    return nullptr;
+  }
+
+  struct sockaddr_un address{};
+  if (!ReadString(env, args[0], address.sun_path, sizeof(address.sun_path))) {
+    napi_throw_type_error(env, nullptr, "Unix socket path must be an absolute bounded path");
+    return nullptr;
+  }
+  int32_t backlog = 0;
+  if (napi_get_value_int32(env, args[1], &backlog) != napi_ok || backlog < 1 || backlog > 128) {
+    napi_throw_type_error(env, nullptr, "Unix socket backlog must be between 1 and 128");
+    return nullptr;
+  }
+
+  const int descriptor = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (descriptor < 0) {
+    ThrowSystemError(env, "Unix socket creation failed");
+    return nullptr;
+  }
+  const auto close_on_error = [descriptor](const char* message) {
+    close(descriptor);
+    return message;
+  };
+  if (fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket close-on-exec setup failed"));
+    return nullptr;
+  }
+  int no_sigpipe = 1;
+  if (setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe)) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket SIGPIPE protection setup failed"));
+    return nullptr;
+  }
+  address.sun_family = AF_UNIX;
+  address.sun_len = static_cast<uint8_t>(offsetof(struct sockaddr_un, sun_path) + strlen(address.sun_path) + 1);
+  const socklen_t address_length = static_cast<socklen_t>(address.sun_len);
+  if (bind(descriptor, reinterpret_cast<const struct sockaddr*>(&address), address_length) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket bind failed"));
+    return nullptr;
+  }
+  if (chmod(address.sun_path, S_IRUSR | S_IWUSR) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket permission setup failed"));
+    return nullptr;
+  }
+  if (listen(descriptor, backlog) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket listen failed"));
+    return nullptr;
+  }
+  const int flags = fcntl(descriptor, F_GETFL, 0);
+  if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket non-blocking setup failed"));
+    return nullptr;
+  }
+
+  napi_value result;
+  napi_create_int32(env, descriptor, &result);
+  return result;
+}
+
+napi_value AcceptUnixClient(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "acceptUnixClient requires a listener descriptor");
+    return nullptr;
+  }
+  int listener_descriptor = -1;
+  if (!ReadDescriptor(env, args[0], &listener_descriptor)) {
+    napi_throw_type_error(env, nullptr, "Listener descriptor must be a non-negative integer");
+    return nullptr;
+  }
+  struct sockaddr_un address{};
+  socklen_t address_length = sizeof(address);
+  const int descriptor = accept(listener_descriptor, reinterpret_cast<struct sockaddr*>(&address), &address_length);
+  if (descriptor < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      napi_value null_value;
+      napi_get_null(env, &null_value);
+      return null_value;
+    }
+    ThrowSystemError(env, "Unix socket accept failed");
+    return nullptr;
+  }
+  if (fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) {
+    close(descriptor);
+    ThrowSystemError(env, "Accepted Unix socket close-on-exec setup failed");
+    return nullptr;
+  }
+  int no_sigpipe = 1;
+  if (setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe)) != 0) {
+    close(descriptor);
+    ThrowSystemError(env, "Accepted Unix socket SIGPIPE protection setup failed");
+    return nullptr;
+  }
+
+  uid_t user_id = 0;
+  gid_t group_id = 0;
+  if (getpeereid(descriptor, &user_id, &group_id) != 0) {
+    close(descriptor);
+    ThrowSystemError(env, "Accepted Unix socket peer lookup failed");
+    return nullptr;
+  }
+  pid_t process_id = 0;
+  socklen_t process_id_size = sizeof(process_id);
+  if (getsockopt(descriptor, SOL_LOCAL, LOCAL_PEERPID, &process_id, &process_id_size) != 0 ||
+      process_id_size != sizeof(process_id)) {
+    close(descriptor);
+    ThrowSystemError(env, "Accepted Unix socket peer PID lookup failed");
+    return nullptr;
+  }
+
+  napi_value result;
+  napi_value descriptor_value;
+  napi_value uid_value;
+  napi_value gid_value;
+  napi_value pid_value;
+  napi_create_object(env, &result);
+  napi_create_int32(env, descriptor, &descriptor_value);
+  napi_create_uint32(env, static_cast<uint32_t>(user_id), &uid_value);
+  napi_create_uint32(env, static_cast<uint32_t>(group_id), &gid_value);
+  napi_create_int32(env, static_cast<int32_t>(process_id), &pid_value);
+  napi_set_named_property(env, result, "fd", descriptor_value);
+  napi_set_named_property(env, result, "uid", uid_value);
+  napi_set_named_property(env, result, "gid", gid_value);
+  napi_set_named_property(env, result, "pid", pid_value);
+  return result;
+}
+
+napi_value CloseUnixDescriptor(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "closeUnixDescriptor requires a descriptor");
+    return nullptr;
+  }
+  int descriptor = -1;
+  if (!ReadDescriptor(env, args[0], &descriptor)) {
+    napi_throw_type_error(env, nullptr, "Descriptor must be a non-negative integer");
+    return nullptr;
+  }
+  if (close(descriptor) != 0 && errno != EBADF) {
+    ThrowSystemError(env, "Unix socket descriptor close failed");
+    return nullptr;
+  }
+  napi_value undefined_value;
+  napi_get_undefined(env, &undefined_value);
+  return undefined_value;
+}
+
 napi_value InspectNetwork(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -1363,6 +1523,12 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value function;
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);
   napi_set_named_property(env, exports, "getPeerCredentials", function);
+  napi_create_function(env, "createUnixListener", NAPI_AUTO_LENGTH, CreateUnixListener, nullptr, &function);
+  napi_set_named_property(env, exports, "createUnixListener", function);
+  napi_create_function(env, "acceptUnixClient", NAPI_AUTO_LENGTH, AcceptUnixClient, nullptr, &function);
+  napi_set_named_property(env, exports, "acceptUnixClient", function);
+  napi_create_function(env, "closeUnixDescriptor", NAPI_AUTO_LENGTH, CloseUnixDescriptor, nullptr, &function);
+  napi_set_named_property(env, exports, "closeUnixDescriptor", function);
   napi_create_function(env, "inspectNetwork", NAPI_AUTO_LENGTH, InspectNetwork, nullptr, &function);
   napi_set_named_property(env, exports, "inspectNetwork", function);
   napi_create_function(env, "statPathWithinRoot", NAPI_AUTO_LENGTH, StatPathWithinRoot, nullptr, &function);

@@ -48,29 +48,38 @@ export class BrokerIpcServer {
       socket.destroy();
       return;
     }
-    socket.setTimeout(15_000, () => socket.destroy());
-    let chunks: Buffer[] = [];
-    let total = 0;
-    socket.on("data", async (chunk: Buffer) => {
-      total += chunk.byteLength;
-      if (total > this.maxRequestBytes) {
-        writeResult(socket, failure("OUTPUT_LIMIT", "IPC request exceeded the byte limit"));
-        return;
-      }
-      chunks.push(chunk);
-      const combined = Buffer.concat(chunks);
-      const newline = combined.indexOf(0x0a);
-      if (newline === -1) return;
-      socket.pause();
-      chunks = [];
-      try {
-        const request = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
-        writeResult(socket, await this.options.broker.handleForIpc(request));
-      } catch {
-        writeResult(socket, failure("AUTH_INVALID", "IPC request is not valid JSON"));
-      }
-    });
+    handleBrokerSocket(socket, this.options.broker, this.maxRequestBytes);
   }
+}
+
+/** Handles an already peer-authenticated socket for both Node and native UDS transports. */
+export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestBytes: number): void {
+  socket.setTimeout(15_000, () => socket.destroy());
+  let chunks: Buffer[] = [];
+  let total = 0;
+  let handled = false;
+  socket.on("data", async (chunk: Buffer) => {
+    if (handled) return;
+    total += chunk.byteLength;
+    if (total > maxRequestBytes) {
+      handled = true;
+      writeResult(socket, failure("OUTPUT_LIMIT", "IPC request exceeded the byte limit"));
+      return;
+    }
+    chunks.push(chunk);
+    const combined = Buffer.concat(chunks);
+    const newline = combined.indexOf(0x0a);
+    if (newline === -1) return;
+    handled = true;
+    socket.pause();
+    chunks = [];
+    try {
+      const request = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+      writeResult(socket, await broker.handleForIpc(request));
+    } catch {
+      writeResult(socket, failure("AUTH_INVALID", "IPC request is not valid JSON"));
+    }
+  });
 }
 
 function writeResult(socket: Socket, result: BrokerResult | AuthenticatedBrokerResponse): void {
