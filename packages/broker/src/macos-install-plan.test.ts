@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   buildMacOsInstallPlan,
+  applyMacOsPlistPlan,
   inspectMacOsInstallFilesystem,
   MacOsInstallPlanError,
   validateCodeSignatureReadback,
@@ -171,6 +172,51 @@ test("filesystem preflight rejects symlinks and writable paths, then returns sta
     await rm(join(binRoot, "node"));
     await symlink(join(installRoot, "service-entrypoint.js"), join(binRoot, "node"));
     await assert.rejects(inspectMacOsInstallFilesystem(plan, { ownerUid: uid }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "FILESYSTEM_MISMATCH");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("plist apply uses native atomic write, creates a backup on upgrade, and restores it on rollback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-apply-"));
+  try {
+    const userHome = join(root, "home");
+    const installRoot = join(userHome, "MacOperator");
+    const binRoot = join(installRoot, "bin");
+    const logRoot = join(installRoot, "logs");
+    const artifact = join(installRoot, "MacOperatorBroker.app");
+    const launchAgents = join(userHome, "Library", "LaunchAgents");
+    await mkdir(binRoot, { recursive: true, mode: 0o700 });
+    await mkdir(logRoot, { recursive: true, mode: 0o700 });
+    await mkdir(artifact, { recursive: true, mode: 0o700 });
+    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
+    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
+    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
+    for (const directory of [userHome, join(userHome, "Library"), launchAgents, installRoot, binRoot, logRoot, artifact]) await chmod(directory, 0o700);
+    const uid = process.getuid?.();
+    if (uid === undefined) throw new Error("POSIX identity is unavailable");
+    const service = {
+      ...base.service,
+      program: join(binRoot, "node"),
+      programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+      workingDirectory: installRoot,
+      stdoutPath: join(logRoot, "broker.out.log"),
+      stderrPath: join(logRoot, "broker.err.log")
+    };
+    const common = { ...base, uid, userHome, installRoot, plistPath: join(launchAgents, "com.mac-operator.broker.plist"), signedArtifactPath: artifact, service };
+    const install = buildMacOsInstallPlan(common);
+    const first = await applyMacOsPlistPlan(install, { ownerUid: uid });
+    assert.equal(first.created, true);
+    const oldContent = await readFile(install.plistPath, "utf8");
+    const upgrade = buildMacOsInstallPlan({ ...common, operation: "upgrade", expectedPreviousSourceRevision: base.metadata.sourceRevision, metadata: { ...base.metadata, sourceRevision: "abcdef0123456789abcdef0123456789abcdef01" } });
+    const second = await applyMacOsPlistPlan(upgrade, { ownerUid: uid });
+    assert.equal(second.backupPath, upgrade.backupPath);
+    assert.equal(await readFile(upgrade.backupPath, "utf8"), oldContent);
+    assert.equal((await readFile(upgrade.plistPath, "utf8")), upgrade.renderedPlist);
+    const rollback = buildMacOsInstallPlan({ ...common, operation: "rollback", expectedPreviousSourceRevision: upgrade.metadata.sourceRevision, metadata: base.metadata });
+    const third = await applyMacOsPlistPlan(rollback, { ownerUid: uid });
+    assert.equal(third.operation, "rollback");
+    assert.equal(await readFile(rollback.plistPath, "utf8"), oldContent);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

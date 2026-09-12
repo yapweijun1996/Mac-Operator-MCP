@@ -1,5 +1,7 @@
 import { lstat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
 
@@ -153,6 +155,23 @@ export interface InstallFilesystemEntryReadback {
 export interface InstallFilesystemReadback {
   ownerUid: number;
   entries: readonly InstallFilesystemEntryReadback[];
+}
+
+export interface MacOsPlistApplyOptions {
+  ownerUid: number;
+  inspector?: FilesystemInspector;
+}
+
+export interface MacOsPlistApplyResult {
+  operation: "install" | "upgrade" | "rollback";
+  path: string;
+  bytesWritten: number;
+  sha256: string;
+  created: boolean;
+  backupPath: string | null;
+  backupSha256: string | null;
+  device: string;
+  inode: string;
 }
 
 type ExpectedFilesystemKind = "file" | "directory" | "file-or-directory";
@@ -368,6 +387,85 @@ export async function inspectMacOsInstallFilesystem(
   return { ownerUid: options.ownerUid, entries };
 }
 
+/**
+ * Applies only the plist portion of an install, upgrade, or rollback plan.
+ * The native filesystem writer opens the authorized root and parent directory,
+ * creates a same-directory O_EXCL temporary file, fsyncs it, commits with
+ * renameat, and reopens the result for identity/content readback. No launchd
+ * command is executed here.
+ */
+export async function applyMacOsPlistPlan(
+  plan: MacOsInstallPlan,
+  options: MacOsPlistApplyOptions
+): Promise<MacOsPlistApplyResult> {
+  if (plan.operation === "uninstall") fail("INVALID_ARGUMENT", "plist apply does not implement uninstall deletion");
+  await inspectMacOsInstallFilesystem(plan, { ownerUid: options.ownerUid, requirePlist: plan.operation !== "install" });
+  const inspector = options.inspector ?? createInstallInspector(plan);
+  const targetPlan = inspector.planPath(plan.plistPath, "write");
+  const current = optionalStat(inspector, targetPlan);
+  if (plan.operation === "install") {
+    const result = inspector.writePlanned(
+      targetPlan,
+      Buffer.from(plan.renderedPlist, "utf8"),
+      undefined,
+      true,
+      temporaryName("plist"),
+      identity(false)
+    );
+    return toApplyResult(plan.operation, result, null, null);
+  }
+  if (current === undefined) fail("FILESYSTEM_MISMATCH", "upgrade or rollback requires an existing plist");
+  const currentIdentity = identityFromMetadata(current);
+  if (plan.operation === "upgrade") {
+    const original = readExistingPlist(inspector, plan.plistPath);
+    const backupPlan = inspector.planPath(plan.backupPath, "write");
+    const backupCurrent = optionalStat(inspector, backupPlan);
+    const backupResult = inspector.writePlanned(
+      backupPlan,
+      original.content,
+      undefined,
+      false,
+      temporaryName("backup"),
+      backupCurrent === undefined ? identity(false) : identityFromMetadata(backupCurrent)
+    );
+    try {
+      const result = inspector.writePlanned(
+        targetPlan,
+        Buffer.from(plan.renderedPlist, "utf8"),
+        undefined,
+        false,
+        temporaryName("plist"),
+        currentIdentity
+      );
+      return toApplyResult(plan.operation, result, plan.backupPath, backupResult.sha256);
+    } catch (error) {
+      try {
+        inspector.writePlanned(
+          targetPlan,
+          original.content,
+          undefined,
+          false,
+          temporaryName("restore"),
+          currentIdentity
+        );
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], "macOS plist upgrade failed and restoration also failed");
+      }
+      throw error;
+    }
+  }
+  const backup = readExistingPlist(inspector, plan.backupPath);
+  const result = inspector.writePlanned(
+    targetPlan,
+    backup.content,
+    undefined,
+    false,
+    temporaryName("rollback"),
+    currentIdentity
+  );
+  return toApplyResult(plan.operation, result, plan.backupPath, null);
+}
+
 function launchctlCommand(args: readonly string[]): LaunchdCommandSpec {
   return {
     executable: LAUNCHCTL_PATH,
@@ -425,6 +523,63 @@ function ancestorsThrough(root: string, target: string): readonly string[] {
 function parseUid(domain: string): number {
   const value = Number(domain.slice("gui/".length));
   return Number.isSafeInteger(value) ? value : -1;
+}
+
+function createInstallInspector(plan: MacOsInstallPlan): FilesystemInspector {
+  return new FilesystemInspector([{
+    rootId: "macos-install-user-home",
+    path: plan.userHome,
+    metadata: true,
+    contentRead: true,
+    write: true,
+    denyRelativePaths: []
+  }]);
+}
+
+function optionalStat(inspector: FilesystemInspector, plan: FilesystemPathPlan) {
+  try {
+    return inspector.statPlanned(plan, false);
+  } catch {
+    return undefined;
+  }
+}
+
+function readExistingPlist(inspector: FilesystemInspector, path: string): { content: Buffer; device: string; inode: string } {
+  const plan = inspector.planPath(path, "content_read");
+  const read = inspector.readPlanned(plan, 0, 1_048_576);
+  if (read.truncated) fail("FILESYSTEM_MISMATCH", "plist content exceeds the bounded rollback budget");
+  return { content: read.content, device: read.device, inode: read.inode };
+}
+
+function identity(present: boolean, device = "0", inode = "0"): FilesystemIdentityPrecondition {
+  return { present, device, inode };
+}
+
+function identityFromMetadata(metadata: { device: string; inode: string }): FilesystemIdentityPrecondition {
+  return identity(true, metadata.device, metadata.inode);
+}
+
+function temporaryName(kind: string): string {
+  return `.mac-operator-write-${kind}-${randomBytes(12).toString("hex")}`;
+}
+
+function toApplyResult(
+  operation: "install" | "upgrade" | "rollback",
+  result: { path: string; bytesWritten: number; sha256: string; created: boolean; device: string; inode: string },
+  backupPath: string | null,
+  backupSha256: string | null
+): MacOsPlistApplyResult {
+  return {
+    operation,
+    path: result.path,
+    bytesWritten: result.bytesWritten,
+    sha256: result.sha256,
+    created: result.created,
+    backupPath,
+    backupSha256,
+    device: result.device,
+    inode: result.inode
+  };
 }
 
 function codesignVerifyCommand(path: string): CodeSignatureCommandSpec {

@@ -166,6 +166,12 @@ export interface FilesystemPathPlan {
   root: FilesystemRootPolicy;
 }
 
+export interface FilesystemIdentityPrecondition {
+  present: boolean;
+  device: string;
+  inode: string;
+}
+
 interface NativePathMetadata {
   rootPath: string;
   path: string;
@@ -973,7 +979,8 @@ export class FilesystemInspector {
     content: Buffer,
     expectedSha256: string | undefined,
     createOnly: boolean,
-    temporaryName: string
+    temporaryName: string,
+    expectedIdentity?: FilesystemIdentityPrecondition
   ): {
     path: string;
     bytesWritten: number;
@@ -995,6 +1002,15 @@ export class FilesystemInspector {
     if (existing && existing.type !== "file") {
       throw new BrokerError("POLICY_DENIED", "Filesystem write target must be a regular file or absent");
     }
+    if (expectedIdentity !== undefined) {
+      if (!/^\d+$/u.test(expectedIdentity.device) || !/^\d+$/u.test(expectedIdentity.inode)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Filesystem write identity precondition is malformed");
+      }
+      if (expectedIdentity.present !== (existing !== undefined) ||
+          (expectedIdentity.present && (existing?.device !== expectedIdentity.device || existing.inode !== expectedIdentity.inode))) {
+        throw new BrokerError("PRECONDITION_FAILED", "Filesystem write target identity precondition failed");
+      }
+    }
     if (existing && createOnly) throw new BrokerError("PRECONDITION_FAILED", "Filesystem write create-only precondition failed");
     let expectedMatched = true;
     if (expectedSha256 !== undefined) {
@@ -1011,9 +1027,9 @@ export class FilesystemInspector {
         plan.requestedPath,
         content,
         createOnly,
-        existing !== undefined,
-        existing?.device ?? "0",
-        existing?.inode ?? "0",
+        expectedIdentity?.present ?? (existing !== undefined),
+        expectedIdentity?.device ?? existing?.device ?? "0",
+        expectedIdentity?.inode ?? existing?.inode ?? "0",
         temporaryName
       );
     } catch {
