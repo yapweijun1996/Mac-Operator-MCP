@@ -28,3 +28,4 @@ export * from "./package-inspector.js";
 export * from "./docker-inspector.js";
 export * from "./secret-policy.js";
 export * from "./request-validator.js";
+export * from "./runtime.js";
