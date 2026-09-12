@@ -280,6 +280,10 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
     if (rule.target.kind === "path" && !filesystemRootIds.has(rule.target.reference)) {
       throw new Error(`Path target rule references an unknown filesystem root: ${rule.ruleId}`);
     }
+    if (rule.target.kind === "project" &&
+        (!isAbsolute(rule.target.reference) || resolve(rule.target.reference) !== rule.target.reference || rule.target.reference.includes("\n"))) {
+      throw new Error(`Project target rule is not a canonical absolute path: ${rule.ruleId}`);
+    }
   }
   const base = createDefaultPolicy([...trustedEdgeIds][0] ?? "invalid-edge");
   const tools = new Map([...base.tools].map(([name, tool]) => [name, { ...tool, enabled: false }]));

@@ -258,6 +258,59 @@ test("mac_log_tail requires an allowlisted source and returns sanitized bounded 
   }
 });
 
+test("mac_git_status requires an exact project target and returns bounded status", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-status-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const projectRoot = await realpath(process.cwd());
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "git-status-request",
+      nonce: "git-status-nonce",
+      tool: "mac_git_status",
+      arguments: { project_root: projectRoot, include_untracked: false }
+    }, ["mac.git.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      project_root: string;
+      branch: string;
+      head: string;
+      staged_paths: string[];
+      unstaged_paths: string[];
+      untracked_paths: string[];
+      conflicted_paths: string[];
+      dirty: boolean;
+    };
+    assert.equal(data.project_root, projectRoot);
+    assert.match(data.head, /^[A-Fa-f0-9]{40,128}$/u);
+    assert.ok(data.branch.length <= 256);
+    assert.ok(data.staged_paths.length <= 5_000);
+    assert.ok(data.unstaged_paths.length <= 5_000);
+    assert.ok(data.untracked_paths.length <= 5_000);
+    assert.ok(data.conflicted_paths.length <= 5_000);
+    assert.equal(JSON.stringify(result).includes("/usr/bin/git"), false);
+
+    const denied = unsigned({
+      requestId: "git-status-denied-request",
+      nonce: "git-status-denied-nonce",
+      tool: "mac_git_status",
+      arguments: { project_root: "/tmp", include_untracked: false }
+    }, ["mac.git.read"]);
+    assert.equal((await broker.handle(signRequest(denied, key))).result_class, "POLICY_DENIED");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -368,7 +421,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 23);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 24);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

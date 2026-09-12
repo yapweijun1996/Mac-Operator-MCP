@@ -20,5 +20,6 @@ export * from "./process-inspector.js";
 export * from "./process-executor.js";
 export * from "./service-inspector.js";
 export * from "./log-inspector.js";
+export * from "./git-inspector.js";
 export * from "./secret-policy.js";
 export * from "./request-validator.js";

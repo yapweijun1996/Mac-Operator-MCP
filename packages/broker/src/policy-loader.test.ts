@@ -161,6 +161,17 @@ test("policy verification rejects tampering, unknown fields, and unimplemented e
     deny_relative_paths: []
   });
   assert.throws(() => instance.verify(signedBundle(invalidRoot, keys.privateKey)), /not lexically normalized/u);
+
+  const invalidProject = policyDocument();
+  invalidProject.principal_grants[0]!.scopes.push("mac.git.read");
+  invalidProject.target_rules.push({
+    rule_id: "invalid-project-target",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.git.read",
+    target: { kind: "project", reference: "/tmp/../etc" }
+  });
+  assert.throws(() => instance.verify(signedBundle(invalidProject, keys.privateKey)), /Project target rule is not a canonical absolute path/u);
 });
 
 test("policy manager rejects downgrade or same-revision replacement by default", async () => {

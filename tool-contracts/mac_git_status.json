@@ -89,9 +89,9 @@
           },
           "head": {
             "type": "string",
-            "minLength": 64,
+            "minLength": 40,
             "maxLength": 128,
-            "pattern": "^[A-Fa-f0-9]{64,128}$"
+            "pattern": "^[A-Fa-f0-9]{40,128}$"
           },
           "staged_paths": {
             "type": "array",

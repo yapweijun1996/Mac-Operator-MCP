@@ -31,6 +31,7 @@ import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
+import { GitStatusInspector, validateGitStatusRequest, type GitInspector } from "./git-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -44,6 +45,7 @@ export interface BrokerOptions {
   processExecutor?: ProcessExecutor;
   serviceInspector?: ServiceInspector;
   logInspector?: LogInspector;
+  gitInspector?: GitInspector;
 }
 
 export class Broker {
@@ -54,6 +56,7 @@ export class Broker {
   private readonly processExecutor: ProcessExecutor;
   private readonly serviceInspector: ServiceInspector;
   private readonly logInspector: LogInspector;
+  private readonly gitInspector: GitInspector;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -63,6 +66,7 @@ export class Broker {
     this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
     this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector();
     this.logInspector = options.logInspector ?? new MacLogInspector();
+    this.gitInspector = options.gitInspector ?? new GitStatusInspector();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -454,6 +458,36 @@ export class Broker {
           auditEvidence: { entryCount: tail.entries.length, truncated: tail.truncated, warningCount: tail.warnings.length }
         };
       }
+      case "mac_git_status": {
+        if (!execution.gitStatus) throw new BrokerError("EXECUTION_FAILED", "Git status execution plan is unavailable");
+        const status = await this.gitInspector.status(
+          execution.gitStatus.projectRoot,
+          execution.gitStatus.includeUntracked,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        return {
+          data: {
+            project_root: status.projectRoot,
+            branch: status.branch,
+            head: status.head,
+            staged_paths: [...status.stagedPaths],
+            unstaged_paths: [...status.unstagedPaths],
+            untracked_paths: [...status.untrackedPaths],
+            conflicted_paths: [...status.conflictedPaths],
+            dirty: status.dirty
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_result_validation",
+            evidence: { summary: "Git status was collected through a fixed read-only adapter with empty environment and target identity readback" }
+          },
+          warnings: [...status.warnings],
+          truncated: status.truncated,
+          auditTarget: `project:${status.projectRoot}`,
+          auditEvidence: { branch: status.branch, dirty: status.dirty, stagedCount: status.stagedPaths.length, unstagedCount: status.unstagedPaths.length, untrackedCount: status.untrackedPaths.length, conflictedCount: status.conflictedPaths.length, truncated: status.truncated }
+        };
+      }
       case "mac_process_list": {
         assertExactArguments(request.arguments, ["limit", "sort"]);
         validateProcessArguments(request.arguments);
@@ -545,6 +579,9 @@ export class Broker {
               throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
             }
             authorizationTarget = { kind: "job", reference: "owned" };
+          } else if (tool.targetType === "project") {
+            if (target.kind !== "project") throw new BrokerError("PRECONDITION_FAILED", "Git policy query requires a project target");
+            validateGitStatusRequest(target.reference, true);
           }
           authorizeTarget(policy, request.principal.principalId, tool.requiredScopes, authorizationTarget);
           return {
@@ -1224,6 +1261,19 @@ export class Broker {
         logTail: { source, lines, sinceSeconds }
       };
     }
+    if (request.tool === "mac_git_status") {
+      assertExactArguments(request.arguments, ["project_root", "include_untracked"]);
+      const projectRoot = request.arguments.project_root;
+      const includeUntracked = (request.arguments.include_untracked ?? true) as boolean;
+      if (typeof projectRoot !== "string") throw new BrokerError("PRECONDITION_FAILED", "project_root must be a string");
+      validateGitStatusRequest(projectRoot, includeUntracked);
+      const normalizedProjectRoot = projectRoot;
+      return {
+        target: { kind: "project", reference: normalizedProjectRoot },
+        auditTarget: `project:${normalizedProjectRoot}`,
+        gitStatus: { projectRoot: normalizedProjectRoot, includeUntracked }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -1334,6 +1384,19 @@ export class Broker {
         }
       }
       throw new BrokerError("POLICY_DENIED", "No log source is authorized for this tool");
+    }
+    if (tool.targetType === "project") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "project" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized project is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No project root is authorized for this tool");
     }
     if (tool.targetType !== "path") {
       authorizeTarget(policy, principalId, tool.requiredScopes, executionTarget(tool));
@@ -1493,6 +1556,10 @@ interface ExecutionPlan {
     lines: number;
     sinceSeconds: number;
   };
+  gitStatus?: {
+    projectRoot: string;
+    includeUntracked: boolean;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -1587,6 +1654,8 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem target requires descriptor-backed planning");
     case "filesystem_roots":
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem roots require descriptor-backed planning");
+    case "project":
+      throw new BrokerError("PRECONDITION_FAILED", "Project target requires Git-specific planning");
     case "process":
       return { kind: "process", reference: "all" };
     case "service":

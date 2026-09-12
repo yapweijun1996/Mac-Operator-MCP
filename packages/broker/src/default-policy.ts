@@ -251,6 +251,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_git_status",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.git.read"],
+    capabilityFamilies: ["read"],
+    targetType: "project",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 262_144,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_storage_analysis",
     contractVersion: "0.1",
     requiredScopes: ["mac.storage.read"],
@@ -311,7 +324,8 @@ export function createDefaultPolicy(
   trustedKeyIds: readonly string[] = ["edge-key-1"],
   filesystemRoots: readonly FilesystemRootPolicy[] = [],
   serviceIds: readonly string[] = [],
-  logSources: readonly string[] = []
+  logSources: readonly string[] = [],
+  projectRoots: readonly string[] = []
 ): BrokerPolicy {
   const grants = new Map<string, PrincipalGrant>();
   if (principalScopes.length > 0) {
@@ -371,6 +385,16 @@ export function createDefaultPolicy(
         principalId: "principal-1",
         scope,
         target: { kind: "log_source", reference: source }
+      }));
+      return;
+    }
+    if (scope === "mac.git.read") {
+      projectRoots.forEach((projectRoot, projectIndex) => targetRules.push({
+        ruleId: `test-project-${index}-${projectIndex}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "project", reference: projectRoot }
       }));
       return;
     }
