@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.mac-operator.broker</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>@NODE_PATH@</string>
+      <string>@BROKER_ENTRYPOINT@</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>@INSTALL_ROOT@</string>
+    <key>StandardOutPath</key>
+    <string>@LOG_ROOT@/broker.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>@LOG_ROOT@/broker.err.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>AbandonProcessGroup</key>
+    <false/>
+  </dict>
+</plist>

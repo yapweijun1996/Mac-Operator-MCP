@@ -1,0 +1,64 @@
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import test from "node:test";
+import { BrokerServiceEntrypoint } from "./service-entrypoint.js";
+import { LocalBrokerRuntime, type RuntimeChannel } from "./runtime.js";
+
+function metadata() {
+  return {
+    component: "mac-operator-broker" as const,
+    sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+    contractVersion: "0.1",
+    policyVersion: "0.1"
+  };
+}
+
+test("Broker service entrypoint exposes native-required readback and handles termination", async () => {
+  const events: string[] = [];
+  const runtime = new LocalBrokerRuntime({ brokerChannel: channel(events) });
+  const service = new BrokerServiceEntrypoint(runtime, metadata(), ["mac.control.read"]);
+  const signals = new EventEmitter();
+  const run = service.runUntilSignal(signals);
+  await waitFor(() => service.state === "running");
+  assert.deepEqual(service.readback(), {
+    ...metadata(),
+    state: "running",
+    runtimeState: "running",
+    nativeTransportRequired: true,
+    enabledCapabilities: ["mac.control.read"]
+  });
+  signals.emit("SIGTERM");
+  await run;
+  assert.equal(service.state, "stopped");
+  assert.deepEqual(events, ["listen", "close"]);
+});
+
+test("Broker service entrypoint fails closed when startup fails", async () => {
+  const runtime = new LocalBrokerRuntime({
+    brokerChannel: {
+      async listen() { throw new Error("native transport unavailable"); },
+      async close() {}
+    }
+  });
+  const service = new BrokerServiceEntrypoint(runtime, metadata());
+  await assert.rejects(service.start(), /native transport unavailable/u);
+  assert.equal(service.state, "failed");
+  assert.equal(runtime.state, "stopped");
+  await service.stop();
+  assert.equal(service.state, "stopped");
+});
+
+function channel(events: string[]): RuntimeChannel {
+  return {
+    async listen() { events.push("listen"); },
+    async close() { events.push("close"); }
+  };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error("condition was not reached");
+}
