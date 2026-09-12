@@ -3,7 +3,7 @@ export interface RuntimeChannel {
   close(): Promise<void>;
 }
 
-export type LocalBrokerRuntimeState = "stopped" | "starting" | "running" | "stopping";
+export type LocalBrokerRuntimeState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
 export interface LocalBrokerRuntimeOptions {
   brokerChannel: RuntimeChannel;
@@ -22,6 +22,7 @@ export interface LocalBrokerRuntimeOptions {
 export class LocalBrokerRuntime {
   private readonly channels: readonly RuntimeChannel[];
   private stateValue: LocalBrokerRuntimeState = "stopped";
+  private activeChannels: RuntimeChannel[] = [];
   private operation: Promise<void> = Promise.resolve();
 
   constructor(options: LocalBrokerRuntimeOptions) {
@@ -55,6 +56,7 @@ export class LocalBrokerRuntime {
     if (this.stateValue !== "stopped") throw new Error(`Broker runtime cannot start from ${this.stateValue}`);
     this.stateValue = "starting";
     const started: RuntimeChannel[] = [];
+    this.activeChannels = started;
     try {
       for (const channel of this.channels) {
         await channel.listen();
@@ -62,8 +64,17 @@ export class LocalBrokerRuntime {
       }
       this.stateValue = "running";
     } catch (error) {
-      await closeReverse(started);
-      this.stateValue = "stopped";
+      try {
+        await closeReverse(started);
+        this.activeChannels = [];
+        this.stateValue = "stopped";
+      } catch (cleanupError) {
+        this.stateValue = "failed";
+        throw new AggregateError(
+          [error, cleanupError],
+          "Broker runtime startup failed and cleanup also failed"
+        );
+      }
       throw error;
     }
   }
@@ -73,11 +84,12 @@ export class LocalBrokerRuntime {
     this.stateValue = "stopping";
     let firstError: unknown;
     try {
-      await closeReverse(this.channels, (channel) => channel.close());
+      await closeReverse(this.activeChannels, (channel) => channel.close());
+      this.activeChannels = [];
     } catch (error) {
       firstError = error;
     } finally {
-      this.stateValue = "stopped";
+      this.stateValue = firstError === undefined ? "stopped" : "failed";
     }
     if (firstError !== undefined) throw firstError;
   }

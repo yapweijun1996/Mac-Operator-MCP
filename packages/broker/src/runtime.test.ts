@@ -70,7 +70,28 @@ test("local Broker runtime rejects duplicate channels", () => {
   );
 });
 
-function channel(name: string, events: string[], listenError?: Error): RuntimeChannel {
+test("local Broker runtime retains a failed cleanup for explicit recovery", async () => {
+  const events: string[] = [];
+  let cleanupFailure = true;
+  const broker = channel("broker", events, undefined, () => cleanupFailure);
+  const failingSigner = channel("signer", events, new Error("operator channel unavailable"));
+  const runtime = new LocalBrokerRuntime({ brokerChannel: broker, operatorChannels: [failingSigner] });
+
+  await assert.rejects(runtime.start(), /startup failed and cleanup also failed/u);
+  assert.equal(runtime.state, "failed");
+  assert.deepEqual(events, ["broker:listen", "signer:listen", "broker:close"]);
+  await assert.rejects(runtime.start(), /Broker runtime cannot start from failed/u);
+
+  cleanupFailure = false;
+  await runtime.close();
+  assert.equal(runtime.state, "stopped");
+  assert.deepEqual(events, [
+    "broker:listen", "signer:listen", "broker:close",
+    "broker:close"
+  ]);
+});
+
+function channel(name: string, events: string[], listenError?: Error, closeError?: () => boolean): RuntimeChannel {
   return {
     async listen() {
       events.push(`${name}:listen`);
@@ -78,6 +99,7 @@ function channel(name: string, events: string[], listenError?: Error): RuntimeCh
     },
     async close() {
       events.push(`${name}:close`);
+      if (closeError?.()) throw new Error(`${name} close failed`);
     }
   };
 }
