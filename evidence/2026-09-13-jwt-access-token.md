@@ -5,9 +5,9 @@ Recorded: 2026-09-13 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Exact implementation commit: `2ebf03ddf309125eec8badc12275ca1cc9e06656`
+- Exact implementation commit: `b851984c7e721cef319936ef03ee5f0f904c262b`
 - Working tree: clean before this evidence document was added
-- Runtime source manifest SHA-256: `06ac352ee1c18a314e141feeae0ee72dde04bd9fc8640fb1686453411e5b8282`
+- Runtime source manifest SHA-256: `7a3827656067e34ea643dfc8e6d872306b5ac0a292ac28d7facea34e8865fb2b`
 - Tool-contract manifest SHA-256: `656ebeede8a828c68022915b54c85c4a9b3f146df0668ca8464b677a7781945d`
 
 This record covers the Edge JWT/JWKS verifier and its local HTTPS client path. It does not prove a deployed Authorization Server or public release.
@@ -24,6 +24,7 @@ Remote JWKS retrieval has a 3-second fetch timeout, bounded cache age, and coold
 - Negative tests rejected wrong audience, expired token, missing jti, malformed configuration, and a revocation callback decision.
 - Remote-JWKS tests fetched once and reused the bounded cache for a second verification.
 - The official MCP client HTTPS test used a signed RS256 JWT against the local TLS 1.3 Edge, completed pinned `2026-07-28` `server/discover`, and listed exactly the Broker-enabled `mac_health` tool.
+- The same HTTPS boundary returned protected-resource metadata (`200`), rejected a malformed token (`401`), rejected a scope-reduced token (`403`), rejected an expired token (`401`), and rejected a token after the host-owned revocation callback was activated (`401`); no Broker capability call was made for the rejected requests.
 - The full repository test suite passed 193 tests with no failures, skips, cancellations, or todos.
 
 ## Remaining boundary
