@@ -5,10 +5,10 @@ Recorded: 2026-09-12 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Base commit: `cd868947c3d51ed10693f29e5c46f88251af009c`
+- Base commit: `cc3713ed97b374ae7bc0de7eccc7a1cac58d1884`
 - Working tree: clean; implementation and contract changes were committed when tested
 - Git status manifest SHA-256: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-- Runtime source manifest SHA-256: `e1122c2eadfb3228ba61cfeede1c039fb8a8eafa1969ca8db000afe0114bff72`
+- Runtime source manifest SHA-256: `7d9f4f5b5b74ab611cfc2d4fbafdf0f392511fd843f6d44a1e32a89c28859aad`
 - Tool-contract manifest SHA-256: `87629571205c16e7bad7ce9df90f4a37a2b87d38af50b33f1c772f96ece1576d`
 - Contract version: `0.1`
 - Policy version: `policy-0.1`
