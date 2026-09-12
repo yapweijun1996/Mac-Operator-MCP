@@ -37,11 +37,11 @@ export interface HttpsMcpEdge {
 }
 
 export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
-  validateOptions(options);
+  const validated = validateOptions(options);
   const app = createMcpExpressApp({
     host: options.bindHost,
-    allowedHosts: [...options.allowedHosts],
-    allowedOrigins: [...options.allowedOrigins],
+    allowedHosts: validated.allowedHosts,
+    allowedOrigins: validated.allowedOrigins,
     jsonLimit: "1mb"
   });
   app.disable("x-powered-by");
@@ -108,7 +108,13 @@ function readPrincipalId(auth: AuthInfo | undefined): string | undefined {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value) ? value : undefined;
 }
 
-function validateOptions(options: HttpsMcpEdgeOptions): void {
+function validateOptions(options: HttpsMcpEdgeOptions): {
+  allowedHosts: string[];
+  allowedOrigins: string[];
+} {
+  if (typeof options.bindHost !== "string" || options.bindHost.length === 0 || options.bindHost.includes("\0")) {
+    throw new Error("MCP bind host must be a non-empty safe hostname");
+  }
   if (options.resourceServerUrl.protocol !== "https:") throw new Error("MCP resource server URL must use HTTPS");
   if (
     options.resourceServerUrl.username ||
@@ -121,8 +127,49 @@ function validateOptions(options: HttpsMcpEdgeOptions): void {
   if (!options.resourceServerUrl.pathname.startsWith("/") || options.resourceServerUrl.pathname === "/") {
     throw new Error("MCP resource server URL must use a dedicated path");
   }
-  if (options.allowedHosts.length === 0 || !options.allowedHosts.includes(options.resourceServerUrl.hostname)) {
+  if (options.resourceServerUrl.hostname.length === 0) {
+    throw new Error("MCP resource server URL must include a hostname");
+  }
+  const allowedHosts = validateHostnameList(options.allowedHosts, "MCP Host");
+  const allowedOrigins = validateHostnameList(options.allowedOrigins, "MCP Origin");
+  if (!allowedHosts.includes(options.resourceServerUrl.hostname.toLowerCase())) {
     throw new Error("MCP Host allowlist must include the public resource hostname");
   }
-  if (options.allowedOrigins.length === 0) throw new Error("MCP Origin allowlist must not be empty");
+  if (!hasTlsMaterial(options.tlsCertificate) || !hasTlsMaterial(options.tlsPrivateKey)) {
+    throw new Error("MCP TLS certificate and private key must not be empty");
+  }
+  return { allowedHosts, allowedOrigins };
+}
+
+function validateHostnameList(values: string[], label: string): string[] {
+  if (!Array.isArray(values) || values.length === 0) throw new Error(`${label} allowlist must not be empty`);
+  const normalized = values.map((value) => {
+    if (typeof value !== "string" || value.length === 0 || value !== value.trim() || value.includes("\0")) {
+      throw new Error(`${label} allowlist contains an invalid hostname`);
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(`https://${value}`);
+    } catch {
+      throw new Error(`${label} allowlist contains an invalid hostname`);
+    }
+    if (
+      parsed.hostname.length === 0 ||
+      parsed.hostname !== value.toLowerCase() ||
+      parsed.username ||
+      parsed.password ||
+      parsed.port ||
+      parsed.pathname !== "/" ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error(`${label} allowlist contains an invalid hostname`);
+    }
+    return parsed.hostname;
+  });
+  return [...new Set(normalized)].sort();
+}
+
+function hasTlsMaterial(value: Buffer | string): boolean {
+  return Buffer.isBuffer(value) ? value.byteLength > 0 : typeof value === "string" && value.length > 0;
 }
