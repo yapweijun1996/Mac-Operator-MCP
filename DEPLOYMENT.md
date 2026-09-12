@@ -5,7 +5,7 @@ Status: Draft plan
 ## Sequence
 
 1. Build and test contracts locally.
-2. Run Edge and Broker as separate unprivileged local processes over authenticated IPC.
+2. Run Edge and Broker as separate unprivileged local processes over authenticated IPC. The packaged macOS service must select the native Broker UDS transport, not the legacy private-Node-descriptor compatibility path.
 3. Verify the L0/L1 slice on the physical Mac.
 4. Select and configure remote authentication and HTTPS/tunnel transport.
 5. Add signed/package-managed launch, including the separate policy-signer operator socket and protected operator key, only after ADR-0007 is accepted.
