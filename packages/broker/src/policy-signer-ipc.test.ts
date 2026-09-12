@@ -87,7 +87,7 @@ test("policy signer IPC authenticates, rejects replay, and performs audited oper
     manager,
     store,
     authenticationKey,
-    peerCredentialVerifier: { verify() { return { uid: 1, gid: 1, pid: 1 }; } },
+    peerPolicy: currentProcessPeerPolicy(),
     now: () => NOW
   });
   try {
@@ -148,7 +148,7 @@ test("policy signer IPC drops a denied peer before parsing", async () => {
     manager: new PolicySignerKeyManager(configPath, join(repositoryRoot, "schemas"), store, () => NOW),
     store,
     authenticationKey: randomBytes(32),
-    peerCredentialVerifier: { verify() { throw new Error("denied"); } },
+    peerPolicy: deniedPeerPolicy(),
     now: () => NOW
   });
   try {
@@ -169,3 +169,16 @@ test("policy signer IPC drops a denied peer before parsing", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+function currentProcessPeerPolicy(): { expectedUid: number; expectedGid: number; allowedProcessIds: ReadonlySet<number> } {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) throw new Error("POSIX identity is unavailable");
+  return { expectedUid: uid, expectedGid: gid, allowedProcessIds: new Set([process.pid]) };
+}
+
+function deniedPeerPolicy(): { expectedUid: number; allowedProcessIds: ReadonlySet<number> } {
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("POSIX identity is unavailable");
+  return { expectedUid: uid, allowedProcessIds: new Set([process.pid + 1]) };
+}

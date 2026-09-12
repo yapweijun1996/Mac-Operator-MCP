@@ -179,7 +179,7 @@ test("approval issuance uses a separate owner-only local IPC channel", async () 
   const server = new ApprovalIpcServer({
     socketPath,
     authority: context.authority,
-    peerCredentialVerifier: { verify() { return { uid: 1, gid: 1, pid: 1 }; } }
+    peerPolicy: currentProcessPeerPolicy()
   });
   await server.listen();
   try {
@@ -199,11 +199,11 @@ test("approval IPC drops a denied local peer before parsing or auditing", async 
   const server = new ApprovalIpcServer({
     socketPath,
     authority: context.authority,
-    peerCredentialVerifier: { verify() { throw new Error("denied"); } }
+    peerPolicy: deniedPeerPolicy()
   });
   await server.listen();
   try {
-    await assert.rejects(sendApproval(socketPath, "not-json\n"), /(?:EPIPE|ECONNRESET)/u);
+    await assert.rejects(sendApproval(socketPath, "not-json\n"), /(?:EPIPE|ECONNRESET|Unexpected end of JSON input)/u);
     assert.deepEqual(context.store.auditRows(), []);
   } finally {
     await server.close();
@@ -224,4 +224,17 @@ function sendApproval(socketPath: string, body: string): Promise<unknown> {
     });
     socket.on("error", reject);
   });
+}
+
+function currentProcessPeerPolicy(): { expectedUid: number; expectedGid: number; allowedProcessIds: ReadonlySet<number> } {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) throw new Error("POSIX identity is unavailable");
+  return { expectedUid: uid, expectedGid: gid, allowedProcessIds: new Set([process.pid]) };
+}
+
+function deniedPeerPolicy(): { expectedUid: number; allowedProcessIds: ReadonlySet<number> } {
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("POSIX identity is unavailable");
+  return { expectedUid: uid, allowedProcessIds: new Set([process.pid + 1]) };
 }

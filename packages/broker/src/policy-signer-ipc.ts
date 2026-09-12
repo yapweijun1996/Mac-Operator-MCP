@@ -2,6 +2,7 @@ import { chmod, unlink } from "node:fs/promises";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
 import type { PolicySignerKeyManager } from "./policy-signer-keyring.js";
 import type { BrokerStore } from "./persistence.js";
@@ -37,11 +38,13 @@ export interface PolicySignerIpcServerOptions {
   manager: PolicySignerKeyManager;
   store: BrokerStore;
   authenticationKey: Buffer;
-  peerCredentialVerifier: { verify(socket: Socket): unknown };
+  peerCredentialVerifier?: { verify(socket: Socket): unknown };
+  peerPolicy?: NativePeerPolicy;
   maxRequestBytes?: number;
   maxRequestAgeMs?: number;
   allowedClockSkewMs?: number;
   now?: () => number;
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -51,12 +54,16 @@ export interface PolicySignerIpcServerOptions {
  */
 export class PolicySignerIpcServer {
   private server: Server | undefined;
+  private nativeTransport: MacOsNativePeerIpcServer | undefined;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
   private readonly now: () => number;
 
   constructor(private readonly options: PolicySignerIpcServerOptions) {
+    if (!options.peerCredentialVerifier && !options.peerPolicy) {
+      throw new Error("Policy signer IPC requires a peer verifier or native peer policy");
+    }
     if (options.authenticationKey.byteLength < 32) throw new Error("Policy signer IPC key must contain at least 32 bytes");
     this.maxRequestBytes = options.maxRequestBytes ?? 64 * 1024;
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -70,7 +77,22 @@ export class PolicySignerIpcServer {
   }
 
   async listen(): Promise<void> {
-    if (this.server) throw new Error("Policy signer IPC server is already running");
+    if (this.server || this.nativeTransport) throw new Error("Policy signer IPC server is already running");
+    if (this.options.peerPolicy) {
+      this.nativeTransport = new MacOsNativePeerIpcServer({
+        socketPath: this.options.socketPath,
+        peerPolicy: this.options.peerPolicy,
+        ...(this.options.onError === undefined ? {} : { onError: this.options.onError }),
+        onSocket: (socket) => this.handleAuthenticatedSocket(socket)
+      });
+      try {
+        await this.nativeTransport.listen();
+      } catch (error) {
+        this.nativeTransport = undefined;
+        throw error;
+      }
+      return;
+    }
     await validateSocketParent(this.options.socketPath);
     await removeStaleSocket(this.options.socketPath);
     this.server = createServer((socket) => this.handleSocket(socket));
@@ -82,6 +104,12 @@ export class PolicySignerIpcServer {
   }
 
   async close(): Promise<void> {
+    const nativeTransport = this.nativeTransport;
+    this.nativeTransport = undefined;
+    if (nativeTransport) {
+      await nativeTransport.close();
+      return;
+    }
     const server = this.server;
     this.server = undefined;
     if (server) await new Promise<void>((resolve, reject) => server.close((error) => {
@@ -95,11 +123,15 @@ export class PolicySignerIpcServer {
 
   private handleSocket(socket: Socket): void {
     try {
-      this.options.peerCredentialVerifier.verify(socket);
+      this.options.peerCredentialVerifier!.verify(socket);
     } catch {
       socket.destroy();
       return;
     }
+    this.handleAuthenticatedSocket(socket);
+  }
+
+  private handleAuthenticatedSocket(socket: Socket): void {
     socket.setTimeout(15_000, () => socket.destroy());
     let chunks: Buffer[] = [];
     let total = 0;
