@@ -33,6 +33,7 @@ See `PROGRESS.md` for current Git evidence, implementation and enablement state,
 - [Testing](TESTING.md)
 - [Configuration](CONFIGURATION.md)
 - [Deployment](DEPLOYMENT.md)
+- [macOS packaging boundary](packaging/macos/README.md)
 - [Operations](OPERATIONS.md)
 - [Kill switch](KILL_SWITCH.md)
 - [Incident response](INCIDENT_RESPONSE.md)
