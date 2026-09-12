@@ -11,6 +11,39 @@ import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { MacOsNativeBrokerIpcServer } from "./native-ipc-server.js";
 import { BrokerStore } from "./persistence.js";
+import { createMacOsNativeBrokerRuntime } from "./runtime.js";
+
+test("macOS runtime factory selects the native Broker IPC channel", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-native-runtime-"));
+  const socketPath = join(directory, "broker.sock");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const now = Date.now();
+  const key = randomBytes(32);
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: new EdgeKeyring([{
+      edgeId: "edge-1", keyId: "edge-key-1", key,
+      notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+    }]),
+    now: () => now
+  });
+  const { runtime, brokerChannel } = createMacOsNativeBrokerRuntime({
+    socketPath,
+    broker,
+    peerPolicy: currentProcessPeerPolicy()
+  });
+  await runtime.start();
+  try {
+    assert.equal(runtime.state, "running");
+    assert.equal(brokerChannel instanceof MacOsNativeBrokerIpcServer, true);
+    assert.equal((await stat(socketPath)).mode & 0o777, 0o600);
+  } finally {
+    await runtime.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("native IPC accepts a peer-authenticated fd through public Socket({ fd })", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-"));

@@ -1,3 +1,6 @@
+import type { Broker } from "./broker.js";
+import { MacOsNativeBrokerIpcServer, type NativeBrokerIpcServerOptions } from "./native-ipc-server.js";
+
 export interface RuntimeChannel {
   listen(): Promise<void>;
   close(): Promise<void>;
@@ -7,6 +10,11 @@ export type LocalBrokerRuntimeState = "stopped" | "starting" | "running" | "stop
 
 export interface LocalBrokerRuntimeOptions {
   brokerChannel: RuntimeChannel;
+  operatorChannels?: readonly RuntimeChannel[];
+}
+
+export interface MacOsNativeBrokerRuntimeOptions extends Omit<NativeBrokerIpcServerOptions, "broker"> {
+  broker: Broker;
   operatorChannels?: readonly RuntimeChannel[];
 }
 
@@ -99,6 +107,26 @@ export class LocalBrokerRuntime {
     this.operation = run;
     return run;
   }
+}
+
+/**
+ * Production assembly boundary for the unprivileged macOS Broker process.
+ *
+ * This factory deliberately constructs the native UDS channel instead of the
+ * legacy Node server. The generic lifecycle class still owns ordering and
+ * rollback, while the factory makes transport selection explicit at the
+ * packaging/startup boundary.
+ */
+export function createMacOsNativeBrokerRuntime(
+  options: MacOsNativeBrokerRuntimeOptions
+): { runtime: LocalBrokerRuntime; brokerChannel: MacOsNativeBrokerIpcServer } {
+  const { operatorChannels, ...nativeOptions } = options;
+  const brokerChannel = new MacOsNativeBrokerIpcServer(nativeOptions);
+  const runtime = new LocalBrokerRuntime({
+    brokerChannel,
+    ...(operatorChannels === undefined ? {} : { operatorChannels })
+  });
+  return { runtime, brokerChannel };
 }
 
 async function closeReverse(
