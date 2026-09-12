@@ -27,7 +27,7 @@ import { parseBrokerRequest } from "./request-validator.js";
 import { FilesystemInspector, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
-import { inspectProcesses } from "./process-inspector.js";
+import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -38,6 +38,7 @@ export interface BrokerOptions {
   allowedClockSkewMs?: number;
   now?: () => number;
   filesystemExecutor?: FilesystemExecutor;
+  processExecutor?: ProcessExecutor;
 }
 
 export class Broker {
@@ -45,12 +46,14 @@ export class Broker {
   private readonly allowedClockSkewMs: number;
   private readonly now: () => number;
   private readonly filesystemExecutor: FilesystemExecutor;
+  private readonly processExecutor: ProcessExecutor;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
     this.now = options.now ?? Date.now;
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();
+    this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -347,9 +350,10 @@ export class Broker {
       case "mac_process_list": {
         assertExactArguments(request.arguments, ["limit", "sort"]);
         validateProcessArguments(request.arguments);
-        const inventory = inspectProcesses(
+        const inventory = await this.processExecutor.list(
           (request.arguments.limit ?? 100) as number,
-          (request.arguments.sort ?? "pid") as "cpu" | "memory" | "pid" | "name"
+          (request.arguments.sort ?? "pid") as "cpu" | "memory" | "pid" | "name",
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
         );
         return {
           data: {
