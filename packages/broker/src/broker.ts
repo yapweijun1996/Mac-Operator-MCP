@@ -29,6 +29,7 @@ import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-
 import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
+import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -40,6 +41,7 @@ export interface BrokerOptions {
   now?: () => number;
   filesystemExecutor?: FilesystemExecutor;
   processExecutor?: ProcessExecutor;
+  serviceInspector?: ServiceInspector;
 }
 
 export class Broker {
@@ -48,6 +50,7 @@ export class Broker {
   private readonly now: () => number;
   private readonly filesystemExecutor: FilesystemExecutor;
   private readonly processExecutor: ProcessExecutor;
+  private readonly serviceInspector: ServiceInspector;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -55,6 +58,7 @@ export class Broker {
     this.now = options.now ?? Date.now;
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();
     this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
+    this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector();
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -385,6 +389,35 @@ export class Broker {
             connectivity: status.connectivity,
             truncated: status.truncated
           }
+        };
+      }
+      case "mac_service_status": {
+        if (!execution.serviceId) throw new BrokerError("EXECUTION_FAILED", "Service execution plan is unavailable");
+        const status = await this.serviceInspector.inspect(
+          execution.serviceId,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        return {
+          data: {
+            service: {
+              service_id: status.serviceId,
+              loaded: status.loaded,
+              running: status.running,
+              state: status.state,
+              last_exit_code: status.lastExitCode,
+              pid: status.pid
+            }
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "service_state_result_validation",
+            evidence: { summary: "Launchd state was collected through a fixed system adapter with bounded output and no mutation" }
+          },
+          warnings: [...status.warnings],
+          truncated: status.truncated,
+          auditTarget: `service:${status.serviceId}`,
+          auditEvidence: { loaded: status.loaded, running: status.running, state: status.state, pid: status.pid }
         };
       }
       case "mac_process_list": {
@@ -1136,6 +1169,15 @@ export class Broker {
       }
       return { target: { kind: "process", reference: "all" } };
     }
+    if (request.tool === "mac_service_status") {
+      assertExactArguments(request.arguments, ["service_id"]);
+      const serviceId = request.arguments.service_id;
+      if (typeof serviceId !== "string" || serviceId.length < 1 || serviceId.length > 256) {
+        throw new BrokerError("PRECONDITION_FAILED", "service_id must be a bounded string");
+      }
+      validateServiceId(serviceId);
+      return { target: { kind: "service", reference: serviceId }, serviceId };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -1220,6 +1262,19 @@ export class Broker {
         }
       }
       throw new BrokerError("POLICY_DENIED", "No filesystem root is authorized for this tool");
+    }
+    if (tool.targetType === "service") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "service" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized service is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No service identifier is authorized for this tool");
     }
     if (tool.targetType !== "path") {
       authorizeTarget(policy, principalId, tool.requiredScopes, executionTarget(tool));
@@ -1373,6 +1428,7 @@ interface ExecutionPlan {
     topN: number;
     maxDepth: number;
   };
+  serviceId?: string;
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -1469,6 +1525,8 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem roots require descriptor-backed planning");
     case "process":
       return { kind: "process", reference: "all" };
+    case "service":
+      throw new BrokerError("PRECONDITION_FAILED", "Service target requires service-specific planning");
     case "job":
       throw new BrokerError("PRECONDITION_FAILED", "Job target requires Broker-owned job planning");
   }

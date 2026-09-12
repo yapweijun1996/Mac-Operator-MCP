@@ -56,6 +56,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_service_status",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.service.read"],
+    capabilityFamilies: ["read"],
+    targetType: "service",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 131_072,
+    timeoutMs: 5_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_process_list",
     contractVersion: "0.1",
     requiredScopes: ["mac.process.read"],
@@ -283,7 +296,8 @@ export function createDefaultPolicy(
   enableReadTools = false,
   principalScopes: readonly Scope[] = [],
   trustedKeyIds: readonly string[] = ["edge-key-1"],
-  filesystemRoots: readonly FilesystemRootPolicy[] = []
+  filesystemRoots: readonly FilesystemRootPolicy[] = [],
+  serviceIds: readonly string[] = []
 ): BrokerPolicy {
   const grants = new Map<string, PrincipalGrant>();
   if (principalScopes.length > 0) {
@@ -324,6 +338,16 @@ export function createDefaultPolicy(
         scope,
         target: { kind: "process", reference: "all" }
       });
+      return;
+    }
+    if (scope === "mac.service.read") {
+      serviceIds.forEach((serviceId, serviceIndex) => targetRules.push({
+        ruleId: `test-service-${index}-${serviceIndex}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "service", reference: serviceId }
+      }));
       return;
     }
     targetRules.push({

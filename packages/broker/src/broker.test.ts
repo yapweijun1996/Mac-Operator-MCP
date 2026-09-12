@@ -180,6 +180,48 @@ test("mac_network_status returns local interface metadata without active probing
   }
 });
 
+test("mac_service_status requires an allowlisted service target and returns bounded launchd state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-service-status-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.service.read"], ["edge-key-1"], [], ["system/com.apple.logd"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "service-status-request",
+      nonce: "service-status-nonce",
+      tool: "mac_service_status",
+      arguments: { service_id: "system/com.apple.logd" }
+    }, ["mac.service.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as {
+      service: {
+        service_id: string;
+        loaded: boolean;
+        running: boolean;
+        state: string;
+        last_exit_code: number | null;
+        pid: number | null;
+      };
+    };
+    assert.equal(data.service.service_id, "system/com.apple.logd");
+    assert.equal(data.service.loaded, true);
+    assert.ok(["loaded", "running", "stopped", "failed", "unknown"].includes(data.service.state));
+    assert.equal(data.service.running, data.service.state === "running");
+    assert.ok(data.service.pid === null || (Number.isSafeInteger(data.service.pid) && data.service.pid > 0));
+    assert.equal(store.auditRows().some((row) => JSON.stringify(row).includes("launchctl")), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -290,7 +332,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 21);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 22);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
