@@ -15,7 +15,7 @@ Status: Draft plan
 
 Supported macOS/hardware versions, component identities, install paths, permissions, launch ownership, protected TLS certificate/private-key references, other secret references, policy version, persistence location, audit retention, port/socket ownership, health checks, upgrade and rollback compatibility, and uninstall procedure.
 
-The source template, renderer, and install plan are not installation authorization. A future installer must verify the exact package signature, owner/mode/symlink state, native module identity, source/contract/policy readback, exact existing-service revision, and rollback backup before any `launchctl bootstrap` call. The plan is declarative and does not invoke `codesign`, `launchctl`, or filesystem writes.
+The source template, renderer, and install plan are not installation authorization. A future installer must run `inspectMacOsInstallFilesystem`, verify the exact package signature, owner/mode/symlink state, native module identity, source/contract/policy readback, exact existing-service revision, and rollback backup before any `launchctl bootstrap` call. The plan and filesystem preflight are read-only/declarative and do not invoke `codesign`, `launchctl`, or filesystem writes.
 
 ## Release rule
 

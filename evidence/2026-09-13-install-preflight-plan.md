@@ -2,7 +2,7 @@
 
 ## Scope
 
-- Source revision: `5804f04` (`feat: add macOS install preflight plan`)
+- Source revisions: `5804f04` (`feat: add macOS install preflight plan`), `8fe6663` (`feat: verify macOS install filesystem preflight`)
 - Host: Mac mini M4, macOS 26.2 (`25C56`), `arm64`
 - Node: `v25.5.0`
 - npm: `11.8.0`
@@ -20,20 +20,22 @@
 - binds upgrade, rollback, and uninstall to an exact previous source revision; install requires an absent existing service;
 - exposes explicit write/bootstrap, bootout/restore/bootstrap, and bootout/remove actions without executing them;
 - validates exact launchd, Broker native-runtime, source/contract/policy/capability, and code-signature readback before readiness.
+- `inspectMacOsInstallFilesystem` performs read-only double-`lstat` checks over the user-home parent chain, package root, working directory, executable, entrypoint, signed artifact, log directory, and optional plist; it rejects symlinks, foreign owners, group/other write bits, unexpected types, and device/inode changes.
 
 ## Boundary tests
 
-The five focused tests in `packages/broker/src/macos-install-plan.test.ts` cover:
+The six focused tests in `packages/broker/src/macos-install-plan.test.ts` cover:
 
 - fixed command argv, empty environments, budgets, and rollback/uninstall actions;
 - root domain, LaunchDaemon, package escape, script-like argv, and traversal denial;
 - signature, launchd, Broker metadata, native transport, and capability readback matching;
 - exact previous-revision preconditions for upgrade and uninstall;
 - malformed nested readback returning the stable `INVALID_READBACK` error class.
+- real temporary-directory filesystem preflight, writable-path denial, symlink denial, and stable device/inode readback.
 
 ## Verification
 
-- `npm test`: 230 passed, 0 failed.
+- `npm test`: 231 passed, 0 failed.
 - `npm run typecheck`: passed.
 - `npm run verify:contracts`: `Validated 44 unique tool contracts.`
 - `npm audit --omit=dev --audit-level=high`: 0 vulnerabilities.
@@ -43,13 +45,13 @@ The five focused tests in `packages/broker/src/macos-install-plan.test.ts` cover
 ## Artifact hashes
 
 ```text
-packages/broker/src/macos-install-plan.ts       47c48963cb1b3311d19f0d40d3546cb72ffac89ba425fc9195e5d5766f7568bd
-packages/broker/src/macos-install-plan.test.ts  de986dab6944abb66cd95d8744664834b44fa2f1c15a2d59fd96569bfc1a12c8
-packaging/macos/README.md                       31072cf5ad75db30414afc3ae078cfd27dbc545ad666016e5c734148a03239f0
-DEPLOYMENT.md                                   10bd5bafc4296ec7abb951ebf9a9270837a85bf20c6050948ca209dd2bb7b21b
-ROLLBACK.md                                     b16cb988ead690bdb3558f6fc81e6594790d4e4482efe4bbb20fb6cf518abcff
+packages/broker/src/macos-install-plan.ts       7094ac91a6a93cf7850e2c24f8de962582742b54435f510c8989bd8fe5ea8546
+packages/broker/src/macos-install-plan.test.ts  a1c337073d7ef7d8895e699bc46d5eaa61c57d54ff8a05939e95d0aeb38b6af3
+packaging/macos/README.md                       7ca80b8af2a3c8d3697fec442c35fd45822ef400fa41f4eff054afbb81289bf1
+DEPLOYMENT.md                                   53c381dd022195af66c6a39c7e2b26e553c45fd7d6a4cbf0651b751a8d4dde43
+ROLLBACK.md                                     25702346d33d4f7da4b14ba0edb95daca12f5394b08872e5b3ca0db552a096a7
 ```
 
 ## Not proven
 
-This evidence is source-level only. No `/usr/bin/codesign` verification was run against a signed artifact; no plist was written; no `launchctl bootstrap`, `bootout`, or `print` was run; no owner/mode/symlink/atomic-write installer exists; and no live upgrade, rollback, uninstall, notarization, Keychain distribution, or installed-service readback is claimed.
+This evidence is source-level plus read-only temporary-directory preflight. No `/usr/bin/codesign` verification was run against a signed artifact; no plist was written; no `launchctl bootstrap`, `bootout`, or `print` was run; no descriptor-relative atomic-write installer exists; and no live upgrade, rollback, uninstall, notarization, Keychain distribution, or installed-service readback is claimed.

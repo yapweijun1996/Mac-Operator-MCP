@@ -95,7 +95,7 @@ Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires 
 
 - `MOP-070` — `PLANNED` — Fuzz schemas and test traversal, replay, revocation, prompt injection, resource exhaustion, and policy downgrade.
 - `MOP-071` — `PLANNED` — Verify crash, restart, partial mutation, audit outage, credential rotation, and kill-switch recovery.
-- `MOP-072` — `IN_PROGRESS` — Added source-level launchd plist rendering, an unprivileged LaunchAgent template, signal-aware Broker service lifecycle, bounded startup readback, and a non-executing install preflight plan with fixed `codesign`/`launchctl` argv, exact previous-revision preconditions, rollback/uninstall actions, and post-bootstrap identity validation. Code signing/notarization, filesystem owner/mode execution, installation, live upgrade/rollback/uninstall, observability, retention, and final operator runbooks remain.
+- `MOP-072` — `IN_PROGRESS` — Added source-level launchd plist rendering, an unprivileged LaunchAgent template, signal-aware Broker service lifecycle, bounded startup readback, a non-executing install preflight plan with fixed `codesign`/`launchctl` argv, exact previous-revision preconditions, rollback/uninstall actions, post-bootstrap identity validation, and double-`lstat` owner/mode/symlink/device/inode checks. Code signing/notarization, atomic descriptor-relative installation, live upgrade/rollback/uninstall, observability, retention, and final operator runbooks remain.
 - `MOP-073` — `PLANNED` — Perform independent security and architecture review; resolve all reproducible P0/P1 findings.
 - `MOP-074` — `PLANNED` — Produce exact-revision release candidate and real-client/real-Mac evidence.
 
