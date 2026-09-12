@@ -20,3 +20,7 @@ Monitor Edge, Broker, persistence, audit, jobs, disk budgets, policy version, cr
 ## Current limitation
 
 The source tree now contains a separate HMAC-authenticated `PolicySignerIpcServer` for reload, rollback, and revocation, but no installed launchd service or operator CLI is shipped. This guide records required operator behavior and must be updated with verified install/startup/readback commands after packaging and native caller identity are accepted.
+
+## Local runtime lifecycle
+
+`LocalBrokerRuntime` is the in-process lifecycle boundary used by a future packaged service. It starts the Broker IPC channel before separate operator channels, closes started channels in reverse order, serializes concurrent lifecycle calls, and enters `failed` when cleanup itself fails so an explicit retry is required. It does not own the SQLite store, load secrets, install launchd persistence, or enable capabilities; those responsibilities remain with the future packaging entrypoint and accepted ADR-0007 configuration.
