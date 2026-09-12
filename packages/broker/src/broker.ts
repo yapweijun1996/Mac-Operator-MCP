@@ -27,6 +27,7 @@ import { parseBrokerRequest } from "./request-validator.js";
 import { FilesystemInspector, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
+import { inspectProcesses } from "./process-inspector.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export interface BrokerOptions {
@@ -341,6 +342,35 @@ export class Broker {
             ...(summary.load ? { load: summary.load } : {})
           },
           verification: { required: false, status: "verified", strategy: "bounded_system_result_validation" }
+        };
+      }
+      case "mac_process_list": {
+        assertExactArguments(request.arguments, ["limit", "sort"]);
+        validateProcessArguments(request.arguments);
+        const inventory = inspectProcesses(
+          (request.arguments.limit ?? 100) as number,
+          (request.arguments.sort ?? "pid") as "cpu" | "memory" | "pid" | "name"
+        );
+        return {
+          data: {
+            processes: inventory.processes.map((process) => ({
+              pid: process.pid,
+              name: process.name,
+              executable: process.executable,
+              cpu_percent: process.cpuPercent,
+              memory_bytes: process.memoryBytes,
+              owner: process.owner
+            }))
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_process_result_validation",
+            evidence: { summary: "Process inventory was collected through bounded native metadata and redacted owner identity" }
+          },
+          truncated: inventory.truncated,
+          auditTarget: "process:all",
+          auditEvidence: { processCount: inventory.processes.length, truncated: inventory.truncated }
         };
       }
       case "mac_policy_explain": {
@@ -958,6 +988,8 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       return { kind: "host", reference: "broker" };
     case "path":
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem target requires descriptor-backed planning");
+    case "process":
+      return { kind: "process", reference: "all" };
     case "job":
       throw new BrokerError("PRECONDITION_FAILED", "Job target requires Broker-owned job planning");
   }
@@ -1024,6 +1056,17 @@ function validateTreeArguments(argumentsValue: Readonly<Record<string, unknown>>
   const maxEntries = argumentsValue.max_entries;
   if (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || (maxEntries as number) < 1 || (maxEntries as number) > 5000)) {
     throw new BrokerError("PRECONDITION_FAILED", "max_entries must be an integer between 1 and 5000");
+  }
+}
+
+function validateProcessArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const limit = argumentsValue.limit;
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 500)) {
+    throw new BrokerError("PRECONDITION_FAILED", "limit must be an integer between 1 and 500");
+  }
+  const sort = argumentsValue.sort;
+  if (sort !== undefined && sort !== "cpu" && sort !== "memory" && sort !== "pid" && sort !== "name") {
+    throw new BrokerError("PRECONDITION_FAILED", "sort is unsupported");
   }
 }
 

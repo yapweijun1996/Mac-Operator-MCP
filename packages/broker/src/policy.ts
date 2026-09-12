@@ -7,7 +7,7 @@ export interface ToolPolicy {
   contractVersion: "0.1";
   requiredScopes: readonly Scope[];
   capabilityFamilies: readonly CapabilityFamily[];
-  targetType: "broker" | "policy_query" | "path" | "job";
+  targetType: "broker" | "policy_query" | "path" | "process" | "job";
   mutation: boolean;
   approvalPolicy: "trusted_read" | "trusted_write" | "trusted_gui" | "trusted_profile" | "explicit_privileged_policy";
   outputCapBytes: number;

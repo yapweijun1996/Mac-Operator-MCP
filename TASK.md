@@ -31,7 +31,7 @@ Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires 
 
 ## P1 — Local Broker vertical slice
 
-- `MOP-010` — `IN_PROGRESS` — Broker core plus local `mac_health`, `mac_capabilities`, `mac_policy_explain`, `mac_stat_path`, bounded `mac_read_file`, descriptor-backed `mac_hash_file`, bounded descriptor-backed `mac_list_directory`, and bounded `mac_directory_tree` handlers exist and pass tests. Installed lifecycle, operator startup, and production enablement remain open.
+- `MOP-010` — `IN_PROGRESS` — Broker core plus local `mac_health`, `mac_capabilities`, `mac_policy_explain`, `mac_system_summary`, `mac_process_list`, `mac_stat_path`, bounded `mac_read_file`, descriptor-backed `mac_hash_file`, bounded descriptor-backed `mac_list_directory`, and bounded `mac_directory_tree` handlers exist and pass tests. Installed lifecycle, operator startup, and production enablement remain open.
 - `MOP-011` — `IN_PROGRESS` — Mode-`0600` Unix IPC, macOS `getpeereid`/`LOCAL_PEERPID`, and domain-separated request/response HMAC authentication pass prototype tests, including OS identity denial and rejection of a replacement socket using another key. Production key lifecycle, native packaging/code identity, stable fd access, and compatibility evidence remain open under ADR-0002.
 - `MOP-012` — `IN_PROGRESS` — Timestamp/session expiry, canonical payload binding, atomic nonce/request admission, persistent replay denial, terminal request lookup, and restart replay/reconciliation tests exist. Corruption, canonicalization cross-runtime, retention, and accepted persistence design remain open.
 - `MOP-013` — `IN_PROGRESS` — Ed25519-signed policy loading, Broker-owned principal grants, exact typed target rules, deny-over-allow, default deny, immutable request snapshots, durable activation/rollback, policy-version binding, filesystem-root authorization, and unimplemented-tool enable rejection pass tests. Other stable resource identities, signer lifecycle, operational reload wiring, and the complete filesystem policy matrix remain open.
@@ -54,7 +54,7 @@ Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires 
 ## P3 — L0/L1 inspection
 
 - `MOP-030` — `IN_PROGRESS` — Implemented bounded `mac_system_summary` with sanitized host facts and optional load; storage analysis, volume bounds, and release evidence remain.
-- `MOP-031` — `PLANNED` — Implement process, network, service, and approved-log inspection tools.
+- `MOP-031` — `IN_PROGRESS` — Implemented bounded native `mac_process_list` with independent `mac.process.read` scope, process target authorization, numeric owner redaction, executable identity, CPU/memory bounds, sort/limit validation, and no argv/environment exposure. Network, service, and approved-log inspection tools remain.
 - `MOP-032` — `IN_PROGRESS` — Descriptor-backed `mac_stat_path`, bounded `mac_list_directory`, and bounded `mac_directory_tree` are implemented with signed roots, canonical readback, same-volume containment, deny-zone revalidation, protected-entry filtering, depth/entry limits, and audit identity. Recent-file metadata, packaging, and release evidence remain.
 - `MOP-033` — `PLANNED` — Implement file discovery and bounded text search.
 - `MOP-034` — `IN_PROGRESS` — The bounded safe-file-read, full-file hash, descriptor-backed directory-list, and depth/entry-bounded directory-tree handlers are implemented. Search behavior, binary policy expansion, secret controls, and broader read behavior remain.

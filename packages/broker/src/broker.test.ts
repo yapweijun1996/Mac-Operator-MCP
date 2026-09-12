@@ -63,6 +63,38 @@ test("authorized health request succeeds and writes decision plus completion aud
   } finally { await context.close(); }
 });
 
+test("mac_process_list returns bounded redacted process metadata", async () => {
+  const key = randomBytes(32);
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-list-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.process.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "process-list-request",
+      nonce: "process-list-nonce",
+      tool: "mac_process_list",
+      arguments: { limit: 20, sort: "pid" }
+    }, ["mac.process.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { processes: Array<{ pid: number; owner?: string; cpu_percent: number; memory_bytes: number }> };
+    assert.ok(data.processes.length <= 20);
+    assert.equal(data.processes.every((process) => process.pid > 0), true);
+    assert.equal(data.processes.every((process) => process.cpu_percent >= 0 && process.cpu_percent <= 100), true);
+    assert.equal(data.processes.every((process) => process.memory_bytes >= 0), true);
+    assert.equal(data.processes.every((process) => process.owner === undefined || /^uid:\d+$/u.test(process.owner)), true);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("tampered authenticated request fails before execution", async () => {
   const context = await fixture();
   try {
@@ -173,7 +205,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 12);
+    assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 13);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

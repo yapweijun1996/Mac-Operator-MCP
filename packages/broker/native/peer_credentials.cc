@@ -1,6 +1,7 @@
 #include <node_api.h>
 
 #include <CommonCrypto/CommonDigest.h>
+#include <libproc.h>
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
@@ -9,6 +10,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <set>
 #include <string>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -978,6 +980,133 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   return result;
 }
 
+struct ProcessRecord {
+  pid_t pid;
+  std::string name;
+  std::string executable;
+  double cpu_percent;
+  uint64_t memory_bytes;
+  std::string owner;
+};
+
+std::string BoundedProcessText(const char* value, size_t capacity) {
+  std::string result;
+  for (size_t index = 0; index < capacity && value[index] != '\0'; ++index) {
+    const unsigned char byte = static_cast<unsigned char>(value[index]);
+    if (byte == '\n' || byte == '\r' || byte == '\t' || (byte >= 0x20 && byte != 0x7f)) {
+      result.push_back(static_cast<char>(byte));
+    } else {
+      result.push_back(' ');
+    }
+  }
+  if (result.size() > 4096) result.resize(4096);
+  return result.empty() ? "unknown" : result;
+}
+
+double ProcessCpuPercent(pid_t pid) {
+  uint64_t thread_ids[256] = {};
+  const int thread_bytes = proc_pidinfo(pid, PROC_PIDLISTTHREADS, 0, thread_ids, sizeof(thread_ids));
+  if (thread_bytes <= 0) return 0.0;
+  const size_t thread_count = std::min(static_cast<size_t>(thread_bytes) / sizeof(uint64_t), size_t(256));
+  double total = 0.0;
+  for (size_t index = 0; index < thread_count; ++index) {
+    struct proc_threadinfo thread_info{};
+    if (proc_pidinfo(pid, PROC_PIDTHREADINFO, thread_ids[index], &thread_info, sizeof(thread_info)) != sizeof(thread_info)) continue;
+    total += std::max(0.0, static_cast<double>(thread_info.pth_cpu_usage) / 10.0);
+  }
+  return std::min(100.0, total);
+}
+
+napi_value ListProcesses(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+    napi_throw_type_error(env, nullptr, "listProcesses requires limit and sort");
+    return nullptr;
+  }
+  int32_t limit = 0;
+  if (napi_get_value_int32(env, args[0], &limit) != napi_ok || limit < 1 || limit > 500) {
+    napi_throw_type_error(env, nullptr, "Process limit must be between 1 and 500");
+    return nullptr;
+  }
+  size_t sort_length = 0;
+  if (napi_get_value_string_utf8(env, args[1], nullptr, 0, &sort_length) != napi_ok || sort_length == 0 || sort_length > 16) {
+    napi_throw_type_error(env, nullptr, "Process sort is malformed");
+    return nullptr;
+  }
+  std::string sort(sort_length, '\0');
+  size_t copied = 0;
+  if (napi_get_value_string_utf8(env, args[1], sort.data(), sort.size() + 1, &copied) != napi_ok || copied != sort_length ||
+      (sort != "cpu" && sort != "memory" && sort != "pid" && sort != "name")) {
+    napi_throw_type_error(env, nullptr, "Process sort is unsupported");
+    return nullptr;
+  }
+
+  const int requested_bytes = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
+  if (requested_bytes <= 0) {
+    ThrowSystemError(env, "Process inventory could not be enumerated");
+    return nullptr;
+  }
+  constexpr size_t MAX_PID_BYTES = 65'536 * sizeof(pid_t);
+  const size_t buffer_bytes = std::min(static_cast<size_t>(requested_bytes), MAX_PID_BYTES);
+  std::vector<pid_t> pids(buffer_bytes / sizeof(pid_t));
+  const int returned_bytes = proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(buffer_bytes));
+  if (returned_bytes <= 0) {
+    ThrowSystemError(env, "Process inventory could not be read");
+    return nullptr;
+  }
+  const size_t pid_count = std::min(static_cast<size_t>(returned_bytes) / sizeof(pid_t), pids.size());
+  const bool inventory_truncated = static_cast<size_t>(requested_bytes) > MAX_PID_BYTES;
+  std::vector<ProcessRecord> records;
+  records.reserve(std::min(pid_count, static_cast<size_t>(limit)));
+  std::set<pid_t> seen;
+  for (size_t index = 0; index < pid_count; ++index) {
+    const pid_t pid = pids[index];
+    if (pid <= 0 || !seen.insert(pid).second) continue;
+    struct proc_bsdinfo bsd_info{};
+    struct proc_taskinfo task_info{};
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd_info, sizeof(bsd_info)) != sizeof(bsd_info) ||
+        proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task_info, sizeof(task_info)) != sizeof(task_info)) continue;
+    char executable[PROC_PIDPATHINFO_MAXSIZE] = {};
+    if (proc_pidpath(pid, executable, sizeof(executable)) <= 0) continue;
+    std::string executable_text = BoundedProcessText(executable, sizeof(executable));
+    std::string name = BoundedProcessText(bsd_info.pbi_name, sizeof(bsd_info.pbi_name));
+    if (name == "unknown") name = BoundedProcessText(bsd_info.pbi_comm, sizeof(bsd_info.pbi_comm));
+    char owner[64];
+    snprintf(owner, sizeof(owner), "uid:%u", static_cast<unsigned int>(bsd_info.pbi_uid));
+    records.push_back({pid, name, executable_text, ProcessCpuPercent(pid),
+      std::min<uint64_t>(task_info.pti_resident_size, 1'000'000'000'000ULL), owner});
+  }
+  std::sort(records.begin(), records.end(), [&sort](const ProcessRecord& left, const ProcessRecord& right) {
+    if (sort == "cpu" && left.cpu_percent != right.cpu_percent) return left.cpu_percent > right.cpu_percent;
+    if (sort == "memory" && left.memory_bytes != right.memory_bytes) return left.memory_bytes > right.memory_bytes;
+    if (sort == "name" && left.name != right.name) return left.name < right.name;
+    return left.pid < right.pid;
+  });
+  const bool truncated = inventory_truncated || records.size() > static_cast<size_t>(limit);
+  if (records.size() > static_cast<size_t>(limit)) records.resize(static_cast<size_t>(limit));
+
+  napi_value result;
+  napi_value process_array;
+  napi_create_object(env, &result);
+  napi_create_array_with_length(env, records.size(), &process_array);
+  for (size_t index = 0; index < records.size(); ++index) {
+    const ProcessRecord& process = records[index];
+    napi_value item;
+    napi_create_object(env, &item);
+    SetNumber(env, item, "pid", static_cast<double>(process.pid));
+    SetString(env, item, "name", process.name.c_str());
+    SetString(env, item, "executable", process.executable.c_str());
+    SetNumber(env, item, "cpuPercent", process.cpu_percent);
+    SetNumber(env, item, "memoryBytes", static_cast<double>(process.memory_bytes));
+    SetString(env, item, "owner", process.owner.c_str());
+    napi_set_element(env, process_array, index, item);
+  }
+  napi_set_named_property(env, result, "processes", process_array);
+  SetBoolean(env, result, "truncated", truncated);
+  return result;
+}
+
 napi_value Initialize(napi_env env, napi_value exports) {
   napi_value function;
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);
@@ -992,6 +1121,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "hashFileWithinRoot", function);
   napi_create_function(env, "writeFileAtomicWithinRoot", NAPI_AUTO_LENGTH, WriteFileAtomicWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "writeFileAtomicWithinRoot", function);
+  napi_create_function(env, "listProcesses", NAPI_AUTO_LENGTH, ListProcesses, nullptr, &function);
+  napi_set_named_property(env, exports, "listProcesses", function);
   return exports;
 }
 

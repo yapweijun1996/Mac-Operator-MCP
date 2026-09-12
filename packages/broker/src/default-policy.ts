@@ -43,6 +43,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_process_list",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.process.read"],
+    capabilityFamilies: ["process"],
+    targetType: "process",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 262_144,
+    timeoutMs: 5_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_policy_explain",
     contractVersion: "0.1",
     requiredScopes: ["mac.policy.explain"],
@@ -196,6 +209,16 @@ export function createDefaultPolicy(
         principalId: "principal-1",
         scope,
         target: { kind: "job", reference: "owned" }
+      });
+      return;
+    }
+    if (scope === "mac.process.read") {
+      targetRules.push({
+        ruleId: `test-process-${index}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "process", reference: "all" }
       });
       return;
     }
