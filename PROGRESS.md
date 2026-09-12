@@ -109,7 +109,7 @@ There is no blocker to continued local implementation. Production enablement is 
 
 ## Verification performed
 
-- Confirmed accepted documentation baseline `2e389b8` and implementation baseline `d9c7fc8`; the exact-revision evidence record is refreshed after the governed hash and directory-listing slices.
+- Confirmed accepted documentation baseline `2e389b8` and implementation baseline `86963c6`; the exact-revision evidence record is refreshed after the governed hash, directory-listing, and directory-tree slices.
 - Confirmed all 44 catalog tools have one valid JSON materialization, a unique tool name, a unique KB item ID, preserved source text, and a catalog link.
 - Confirmed the runtime catalog reports all 44 tools separately; twelve have local handlers and the production default enables none.
 - Confirmed all 44 contracts have one taxonomy-valid `audit_class` and one structured `postcondition_verification`; all remain `planned`.
