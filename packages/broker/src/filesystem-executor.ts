@@ -38,6 +38,12 @@ export interface FilesystemExecutor {
     maxEntries: number,
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult>;
+  find?(
+    plans: readonly FilesystemPathPlan[],
+    query: string,
+    maxResults: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult>;
   write?(
     plan: FilesystemPathPlan,
     content: Buffer,
@@ -107,6 +113,16 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "tree", plan, depth, maxEntries }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult);
+  }
+
+  find(
+    plans: readonly FilesystemPathPlan[],
+    query: string,
+    maxResults: number,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemWorkerResult> {
+    return this.executor.run({ operation: "find", plans, query, maxResults }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);
   }
 
@@ -197,6 +213,26 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
           !["file", "directory", "symlink", "other"].includes(entry.type) ||
           !Number.isSafeInteger(entry.depth) || entry.depth < 0 || entry.depth > 8 ||
           !Number.isSafeInteger(entry.sizeBytes) || entry.sizeBytes < 0 || entry.sizeBytes > 1_000_000_000_000) {
+        throw malformed();
+      }
+    }
+    return value;
+  }
+  if (value.operation === "find") {
+    if (!Array.isArray(value.roots) || value.roots.length < 1 || value.roots.length > 32 ||
+        typeof value.query !== "string" || value.query.length < 1 || value.query.length > 256 || value.query.includes("\0") ||
+        !Array.isArray(value.matches) || value.matches.length > 1000 || typeof value.truncated !== "boolean") {
+      throw malformed();
+    }
+    for (const root of value.roots) {
+      if (typeof root !== "string" || !isAbsolute(root) || root.length > 4096 || root.includes("\0")) throw malformed();
+    }
+    for (const match of value.matches) {
+      if (match === null || typeof match !== "object" ||
+          typeof match.path !== "string" || !isAbsolute(match.path) || match.path.length > 4096 || match.path.includes("\0") ||
+          !["file", "directory", "symlink", "other"].includes(match.type) ||
+          !Number.isSafeInteger(match.sizeBytes) || match.sizeBytes < 0 || match.sizeBytes > 1_000_000_000_000 ||
+          (match.modifiedAt !== null && (typeof match.modifiedAt !== "string" || !Number.isFinite(Date.parse(match.modifiedAt))))) {
         throw malformed();
       }
     }

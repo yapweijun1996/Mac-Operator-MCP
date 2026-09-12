@@ -63,6 +63,20 @@ export interface SafeDirectoryTree {
   truncated: boolean;
 }
 
+export interface SafeFileMatch {
+  path: string;
+  type: SafeDirectoryEntry["type"];
+  sizeBytes: number;
+  modifiedAt: string | null;
+}
+
+export interface SafeFileSearch {
+  roots: readonly string[];
+  query: string;
+  matches: readonly SafeFileMatch[];
+  truncated: boolean;
+}
+
 export interface SafePathMetadata {
   rootId: string;
   path: string;
@@ -129,6 +143,8 @@ interface NativeFilesystemAdapter {
 }
 
 const ROOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const MAX_SEARCH_DEPTH = 32;
+const MAX_SEARCH_ENTRIES = 50_000;
 const require = createRequire(import.meta.url);
 
 export class FilesystemInspector {
@@ -341,6 +357,90 @@ export class FilesystemInspector {
     walk(plan, 0);
     if (rootPath === undefined) throw new BrokerError("EXECUTION_FAILED", "Directory tree returned no root identity");
     return { rootId: plan.rootId, root: rootPath, entries, truncated };
+  }
+
+  findFilesPlanned(
+    plans: readonly FilesystemPathPlan[],
+    query: string,
+    maxResults: number
+  ): SafeFileSearch {
+    if (plans.length < 1 || plans.length > 32) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem search requires between 1 and 32 roots");
+    }
+    if (typeof query !== "string" || query.length < 1 || query.length > 256 || query.includes("\0")) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem search query is malformed");
+    }
+    if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > 1000) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem search result limit is outside the supported range");
+    }
+
+    const roots: string[] = [];
+    for (const plan of plans) {
+      const root = this.statPlanned(plan, false);
+      if (root.type !== "directory") {
+        throw new BrokerError("PRECONDITION_FAILED", "Filesystem search roots must be directories");
+      }
+      if (!roots.includes(root.path)) roots.push(root.path);
+    }
+
+    const normalizedQuery = query.normalize("NFKC").toLocaleLowerCase("en-US");
+    const matches: SafeFileMatch[] = [];
+    const matchPaths = new Set<string>();
+    const visitedDirectories = new Set<string>();
+    const pending: Array<{ plan: FilesystemPathPlan; depth: number }> = plans.map((plan) => ({ plan, depth: 0 }));
+    let visitedEntries = 0;
+    let truncated = false;
+
+    while (pending.length > 0 && !truncated) {
+      const current = pending.shift()!;
+      let cursor: string | undefined;
+      while (!truncated) {
+        const listing = this.listPlanned(current.plan, cursor, 500, false);
+        if (!visitedDirectories.has(listing.path)) {
+          visitedDirectories.add(listing.path);
+        } else if (cursor === undefined) {
+          break;
+        }
+        for (const entry of listing.entries) {
+          visitedEntries += 1;
+          if (visitedEntries > MAX_SEARCH_ENTRIES) {
+            truncated = true;
+            break;
+          }
+          const childPath = join(listing.path, entry.name);
+          if (!isAbsolute(childPath) || childPath.length > 4096) {
+            truncated = true;
+            break;
+          }
+          const normalizedPath = childPath.normalize("NFKC").toLocaleLowerCase("en-US");
+          if (normalizedPath.includes(normalizedQuery) && !matchPaths.has(childPath)) {
+            matchPaths.add(childPath);
+            matches.push({
+              path: childPath,
+              type: entry.type,
+              sizeBytes: entry.sizeBytes,
+              modifiedAt: entry.modifiedAt
+            });
+            if (matches.length >= maxResults) {
+              truncated = true;
+              break;
+            }
+          }
+          if (entry.type === "directory") {
+            if (current.depth >= MAX_SEARCH_DEPTH) {
+              truncated = true;
+              break;
+            }
+            pending.push({ plan: { ...current.plan, requestedPath: childPath }, depth: current.depth + 1 });
+          }
+        }
+        if (truncated || listing.nextCursor === null) break;
+        cursor = listing.nextCursor;
+      }
+    }
+
+    if (roots.length === 0) throw new BrokerError("EXECUTION_FAILED", "Filesystem search returned no root identity");
+    return { roots, query, matches, truncated };
   }
 
   statPlanned(plan: FilesystemPathPlan, followSymlink = true): SafePathMetadata {

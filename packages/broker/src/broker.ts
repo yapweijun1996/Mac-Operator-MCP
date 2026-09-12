@@ -99,6 +99,9 @@ export class Broker {
       const execution = this.planExecution(request, policy, toolPolicy);
       const target = execution.target;
       authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, target);
+      for (const additionalTarget of execution.additionalTargets ?? []) {
+        authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, additionalTarget);
+      }
       if (request.tool === "mac_write_file_atomic") {
         const existingWriteJob = this.options.store.ownedJobByIdempotencyKey(
           execution.write!.idempotencyKey,
@@ -392,7 +395,7 @@ export class Broker {
           const tool = authorizeTool(this.options.store, policy, candidate, request.contractVersion, request.principal.scopes);
           let authorizationTarget = target;
           let reportedTarget = target;
-          if (tool.targetType === "path") {
+          if (tool.targetType === "path" || tool.targetType === "filesystem_roots") {
             if (target.kind !== "path") throw new BrokerError("PRECONDITION_FAILED", "Filesystem policy query requires a path target");
             const capability = candidate === "mac_read_file" || candidate === "mac_list_directory" || candidate === "mac_directory_tree" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
             const plan = new FilesystemInspector(policy.filesystemRoots).planPath(target.reference, capability);
@@ -592,6 +595,44 @@ export class Broker {
           auditEvidence: { rootId: workerResult.rootId, entryCount: workerResult.entries.length, truncated: workerResult.truncated }
         };
       }
+      case "mac_find_files": {
+        if (!execution.find || !this.filesystemExecutor.find) {
+          throw new BrokerError("EXECUTION_FAILED", "Filesystem search execution plan is unavailable");
+        }
+        const workerResult = await this.filesystemExecutor.find(
+          execution.find.plans,
+          execution.find.query,
+          execution.find.maxResults,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs, undefined, execution.additionalTargets)
+        );
+        if (workerResult.operation !== "find") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return {
+          data: {
+            roots: workerResult.roots,
+            query: workerResult.query,
+            matches: workerResult.matches.map((match) => ({
+              path: match.path,
+              type: match.type,
+              size_bytes: match.sizeBytes,
+              modified_at: match.modifiedAt
+            })),
+            truncated: workerResult.truncated
+          },
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "bounded_result_validation",
+            evidence: { summary: "Matching paths were enumerated through descriptor-backed, secret-filtered directory traversal" }
+          },
+          truncated: workerResult.truncated,
+          ...(execution.auditTarget ? { auditTarget: execution.auditTarget } : {}),
+          auditEvidence: {
+            rootCount: workerResult.roots.length,
+            matchCount: workerResult.matches.length,
+            truncated: workerResult.truncated
+          }
+        };
+      }
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
@@ -720,6 +761,24 @@ export class Broker {
       if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
       return { target: { kind: "job", reference: "owned" }, auditTarget: `job:${job.jobId}`, job };
     }
+    if (request.tool === "mac_find_files") {
+      assertExactArguments(request.arguments, ["roots", "query", "max_results"]);
+      validateFindArguments(request.arguments);
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const roots = request.arguments.roots as string[];
+      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
+      return {
+        target: targets[0]!,
+        ...(targets.length > 1 ? { additionalTargets: targets.slice(1) } : {}),
+        auditTarget: `filesystem_roots:${targets.map((target) => target.reference).join(",")}`,
+        find: {
+          plans,
+          query: request.arguments.query as string,
+          maxResults: (request.arguments.max_results ?? 1000) as number
+        }
+      };
+    }
     if (request.tool !== "mac_stat_path" && request.tool !== "mac_read_file" && request.tool !== "mac_hash_file" && request.tool !== "mac_list_directory" && request.tool !== "mac_directory_tree" && request.tool !== "mac_write_file_atomic") return { target: executionTarget(toolPolicy) };
     assertExactArguments(request.arguments, request.tool === "mac_stat_path"
       ? ["path", "follow_symlink"]
@@ -793,6 +852,17 @@ export class Broker {
       authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "job", reference: "owned" });
       return;
     }
+    if (tool.targetType === "filesystem_roots") {
+      for (const root of policy.filesystemRoots.filter((candidate) => candidate.metadata === true)) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "path", reference: root.rootId });
+          return;
+        } catch {
+          // Continue until one independently authorized root is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No filesystem root is authorized for this tool");
+    }
     if (tool.targetType !== "path") {
       authorizeTarget(policy, principalId, tool.requiredScopes, executionTarget(tool));
       return;
@@ -809,12 +879,18 @@ export class Broker {
     throw new BrokerError("POLICY_DENIED", "No filesystem root is authorized for this tool");
   }
 
-  private executionControl(request: BrokerRequest, target: NormalizedTarget, timeoutMs: number, jobId?: string) {
+  private executionControl(
+    request: BrokerRequest,
+    target: NormalizedTarget,
+    timeoutMs: number,
+    jobId?: string,
+    additionalTargets: readonly NormalizedTarget[] = []
+  ) {
     return {
       timeoutMs,
       shouldCancel: () => {
         try {
-          this.ensureActiveAuthority(request, target);
+          this.ensureActiveAuthority(request, target, additionalTargets);
           if (jobId && this.options.store.ownedJob(jobId, request.principal.principalId)?.cancelRequested) return true;
           return false;
         } catch {
@@ -824,7 +900,11 @@ export class Broker {
     };
   }
 
-  private ensureActiveAuthority(request: BrokerRequest, target: NormalizedTarget): void {
+  private ensureActiveAuthority(
+    request: BrokerRequest,
+    target: NormalizedTarget,
+    additionalTargets: readonly NormalizedTarget[] = []
+  ): void {
     if (this.now() >= request.principal.expiresAtMs) {
       throw new BrokerError("CANCELLED", "Active work session expired");
     }
@@ -845,7 +925,9 @@ export class Broker {
         request.contractVersion,
         request.principal.scopes
       );
-      authorizeTarget(currentPolicy, request.principal.principalId, tool.requiredScopes, target);
+      for (const activeTarget of [target, ...additionalTargets]) {
+        authorizeTarget(currentPolicy, request.principal.principalId, tool.requiredScopes, activeTarget);
+      }
     } catch {
       throw new BrokerError("CANCELLED", "Active work authority was revoked");
     }
@@ -889,6 +971,7 @@ export class Broker {
 
 interface ExecutionPlan {
   target: NormalizedTarget;
+  additionalTargets?: readonly NormalizedTarget[];
   auditTarget?: string;
   filesystem?: { inspector: FilesystemInspector; plan: FilesystemPathPlan };
   hashAlgorithm?: "sha256" | "sha512";
@@ -900,6 +983,11 @@ interface ExecutionPlan {
   tree?: {
     depth: number;
     maxEntries: number;
+  };
+  find?: {
+    plans: readonly FilesystemPathPlan[];
+    query: string;
+    maxResults: number;
   };
   job?: BrokerJob;
   write?: {
@@ -992,6 +1080,8 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       return { kind: "host", reference: "broker" };
     case "path":
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem target requires descriptor-backed planning");
+    case "filesystem_roots":
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem roots require descriptor-backed planning");
     case "process":
       return { kind: "process", reference: "all" };
     case "job":
@@ -1060,6 +1150,22 @@ function validateTreeArguments(argumentsValue: Readonly<Record<string, unknown>>
   const maxEntries = argumentsValue.max_entries;
   if (maxEntries !== undefined && (!Number.isSafeInteger(maxEntries) || (maxEntries as number) < 1 || (maxEntries as number) > 5000)) {
     throw new BrokerError("PRECONDITION_FAILED", "max_entries must be an integer between 1 and 5000");
+  }
+}
+
+function validateFindArguments(argumentsValue: Readonly<Record<string, unknown>>): void {
+  const roots = argumentsValue.roots;
+  if (!Array.isArray(roots) || roots.length < 1 || roots.length > 32 || roots.some((root) =>
+    typeof root !== "string" || !isAbsolute(root) || root.length > 4096 || root.includes("\0"))) {
+    throw new BrokerError("PRECONDITION_FAILED", "roots must contain 1 to 32 bounded absolute paths");
+  }
+  const query = argumentsValue.query;
+  if (typeof query !== "string" || query.length < 1 || query.length > 256 || query.includes("\0")) {
+    throw new BrokerError("PRECONDITION_FAILED", "query must be a bounded string");
+  }
+  const maxResults = argumentsValue.max_results;
+  if (maxResults !== undefined && (!Number.isSafeInteger(maxResults) || (maxResults as number) < 1 || (maxResults as number) > 1000)) {
+    throw new BrokerError("PRECONDITION_FAILED", "max_results must be an integer between 1 and 1000");
   }
 }
 

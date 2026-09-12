@@ -134,6 +134,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_find_files",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.files.search"],
+    capabilityFamilies: ["read"],
+    targetType: "filesystem_roots",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 524_288,
+    timeoutMs: 20_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_write_file_atomic",
     contractVersion: "0.1",
     requiredScopes: ["mac.files.write"],
@@ -192,8 +205,8 @@ export function createDefaultPolicy(
   }
   const targetRules: TargetRule[] = [];
   principalScopes.forEach((scope, index) => {
-    if (scope === "mac.files.read" || scope === "mac.files.hash" || scope === "mac.files.write") {
-      filesystemRoots.filter((root) => scope === "mac.files.write" ? root.write === true : root.metadata || root.contentRead === true).forEach((root, rootIndex) => targetRules.push({
+    if (scope === "mac.files.read" || scope === "mac.files.search" || scope === "mac.files.hash" || scope === "mac.files.write") {
+      filesystemRoots.filter((root) => scope === "mac.files.write" ? root.write === true : scope === "mac.files.search" ? root.metadata === true : root.metadata || root.contentRead === true).forEach((root, rootIndex) => targetRules.push({
         ruleId: `test-path-${index}-${rootIndex}`,
         effect: "allow",
         principalId: "principal-1",

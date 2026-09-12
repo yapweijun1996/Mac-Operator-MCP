@@ -10,7 +10,9 @@ if (!parentPort) throw new Error("Filesystem worker requires a parent port");
 
 try {
   const command = workerData as FilesystemWorkerCommand;
-  const inspector = new FilesystemInspector([command.plan.root]);
+  const plans = command.operation === "find" ? command.plans : [command.plan];
+  const roots = [...new Map(plans.map((plan) => [plan.root.rootId, plan.root])).values()];
+  const inspector = new FilesystemInspector(roots);
   let value: FilesystemWorkerResult;
   if (command.operation === "stat") {
     value = { operation: "stat", metadata: inspector.statPlanned(command.plan, command.followSymlink) };
@@ -66,7 +68,16 @@ try {
       truncated: tree.truncated,
       rootId: tree.rootId
     };
-  } else {
+  } else if (command.operation === "find") {
+    const search = inspector.findFilesPlanned(command.plans, command.query, command.maxResults);
+    value = {
+      operation: "find",
+      roots: search.roots,
+      query: search.query,
+      matches: search.matches,
+      truncated: search.truncated
+    };
+  } else if (command.operation === "write") {
     assertContentDoesNotContainSecrets(command.content);
     const write = inspector.writePlanned(
       command.plan,
@@ -87,6 +98,8 @@ try {
       device: write.device,
       inode: write.inode
     };
+  } else {
+    throw new BrokerError("PRECONDITION_FAILED", "Filesystem worker command is unsupported");
   }
   parentPort.postMessage({ ok: true, value } satisfies WorkerResult<FilesystemWorkerResult>);
 } catch (error) {
