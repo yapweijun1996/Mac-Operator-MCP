@@ -13,6 +13,7 @@ import {
 } from "./native-runtime-startup.js";
 import { BrokerServiceEntrypoint, type BrokerServiceMetadata } from "./service-entrypoint.js";
 import { assertSocketNotActive } from "./ipc-server.js";
+import { BrokerServiceInstanceLock } from "./service-instance-lock.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -50,6 +51,11 @@ export interface BrokerServiceAssembly {
   readonly store: BrokerStore;
   readonly edgeKeyring: EdgeKeyring;
   close(): Promise<void>;
+}
+
+export function brokerServiceInstanceLockPath(runtimeRoot: string): string {
+  validateCanonicalPath(runtimeRoot, "runtime root");
+  return join(runtimeRoot, "broker.instance.lock");
 }
 
 /**
@@ -141,15 +147,23 @@ export async function createBrokerServiceFromStartupConfig(options: {
 }): Promise<BrokerServiceAssembly> {
   const config = validateBrokerServiceStartupConfig(options.config);
   await assertStartupDirectories(config);
-  // Do not reconcile a shared Job Ledger until the configured Broker socket
-  // proves that no prior Broker instance is still serving requests.
-  await assertSocketNotActive(config.brokerSocketPath);
   const now = options.now ?? Date.now;
-  const store = new BrokerStore(config.brokerDatabasePath);
+  const instanceLockPath = brokerServiceInstanceLockPath(config.runtimeRoot);
+  let instanceLock: BrokerServiceInstanceLock | undefined;
+  let store: BrokerStore | undefined;
   let edgeKeyring: EdgeKeyring | undefined;
   let broker: Broker | undefined;
   let service: BrokerServiceEntrypoint | undefined;
   try {
+    // Acquire the per-runtime owner lock before checking the Broker socket or
+    // touching the Job Ledger. This closes the pre-listener recovery race
+    // between two concurrent service starts.
+    instanceLock = await BrokerServiceInstanceLock.acquire(instanceLockPath);
+    // Do not reconcile a shared Job Ledger until the configured Broker socket
+    // proves that no prior Broker instance is still serving requests.
+    await assertSocketNotActive(config.brokerSocketPath);
+    const activeStore = new BrokerStore(config.brokerDatabasePath);
+    store = activeStore;
     const verifier = await PolicyBundleVerifier.createFromKeyFile({
       schemaDirectory: config.policySchemaDirectory,
       expectedKeyId: config.policyVerificationKeyId,
@@ -160,7 +174,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
     if (!verifiedPolicy.policy.trustedEdgeIds.has(config.edgeId)) {
       throw new Error("Active policy does not trust the configured Edge identity");
     }
-    const policyManager = new PolicyManager(verifiedPolicy.policy, store, now);
+    const policyManager = new PolicyManager(verifiedPolicy.policy, activeStore, now);
     policyManager.restore(verifiedPolicy);
     const assembled = await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig({
       socketPath: config.brokerSocketPath,
@@ -170,13 +184,14 @@ export async function createBrokerServiceFromStartupConfig(options: {
       ...(config.expectedEdgeGid === undefined ? {} : { expectedEdgeGid: config.expectedEdgeGid }),
       ...(options.commandExecutor === undefined ? {} : { commandExecutor: options.commandExecutor }),
       edgeKeyConfigPath: config.edgeKeyConfigPath,
-      edgeKeyStore: store,
+      edgeKeyStore: activeStore,
       createBroker: (edgeAuthenticationKeys) => {
         edgeKeyring = edgeAuthenticationKeys;
-        broker = new Broker({ store, policy: policyManager, edgeAuthenticationKeys, now });
+        broker = new Broker({ store: activeStore, policy: policyManager, edgeAuthenticationKeys, now });
         return broker;
       }
     });
+    if (!store) throw new Error("Broker service startup did not construct a BrokerStore");
     if (!edgeKeyring) throw new Error("Broker service startup did not construct an Edge keyring");
     if (!broker) throw new Error("Broker service startup did not construct a Broker");
 
@@ -209,7 +224,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
     service = new BrokerServiceEntrypoint(assembled.runtime, metadata, enabledCapabilities);
     return {
       service,
-      store,
+      store: activeStore,
       edgeKeyring,
       async close() {
         let firstError: unknown;
@@ -227,14 +242,20 @@ export async function createBrokerServiceFromStartupConfig(options: {
           firstError ??= error;
         }
         edgeKeyring?.dispose();
-        store.close();
+        activeStore.close();
+        try {
+          await instanceLock?.close();
+        } catch (error) {
+          firstError ??= error;
+        }
         if (firstError !== undefined) throw firstError;
       }
     };
   } catch (error) {
     await broker?.close().catch(() => undefined);
     edgeKeyring?.dispose();
-    store.close();
+    store?.close();
+    await instanceLock?.close().catch(() => undefined);
     throw error;
   }
 }
@@ -275,6 +296,7 @@ async function assertStartupDirectories(config: BrokerServiceStartupConfig): Pro
   await assertDirectory(config.policySchemaDirectory, false);
   await assertStartupTarget(config.dataRoot, config.brokerDatabasePath);
   await assertStartupTarget(config.runtimeRoot, config.brokerSocketPath);
+  await assertStartupTarget(config.runtimeRoot, brokerServiceInstanceLockPath(config.runtimeRoot));
   await assertStartupTarget(config.dataRoot, config.edgeKeyConfigPath);
   await assertStartupTarget(config.dataRoot, config.policyBundlePath);
   await assertStartupTarget(config.dataRoot, config.policyVerificationKeyPath);
