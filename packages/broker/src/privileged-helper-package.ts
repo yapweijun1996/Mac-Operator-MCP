@@ -1,3 +1,4 @@
+import { lstat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
@@ -25,6 +26,7 @@ const INTERPRETER_NAMES = new Set([
   "sh",
   "zsh"
 ]);
+type PrivilegedHelperExpectedFilesystemKind = "file" | "directory" | "file-or-directory";
 
 export type PrivilegedHelperPackageOperation = "install" | "upgrade" | "rollback" | "uninstall";
 
@@ -162,6 +164,20 @@ export interface PrivilegedHelperPackagePlan {
   adapterAvailable: false;
 }
 
+export interface PrivilegedHelperFilesystemEntryReadback {
+  path: string;
+  kind: "file" | "directory";
+  ownerUid: number;
+  mode: number;
+  device: number;
+  inode: number;
+}
+
+export interface PrivilegedHelperFilesystemReadback {
+  ownerUid: 0;
+  entries: readonly PrivilegedHelperFilesystemEntryReadback[];
+}
+
 export interface PrivilegedHelperFileAction {
   kind: "write-plist" | "restore-plist" | "remove-plist";
   path: typeof HELPER_PLIST_PATH;
@@ -284,6 +300,131 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
     adapterAvailable: false
   };
   return plan;
+}
+
+/**
+ * Performs a read-only root-owned preflight for helper package paths. Every
+ * path is lstat'ed twice; the caller must still use descriptor-relative,
+ * identity-bound writes for any later installation.
+ */
+export async function inspectPrivilegedHelperPackageFilesystem(
+  plan: PrivilegedHelperPackagePlan,
+  options: { requirePlist?: boolean } = {}
+): Promise<PrivilegedHelperFilesystemReadback> {
+  const paths = requiredPrivilegedHelperFilesystemPaths(plan, options.requirePlist ?? plan.operation !== "install");
+  const entries: PrivilegedHelperFilesystemEntryReadback[] = [];
+  for (const [path, expectedKind] of paths) {
+    const first = await readPrivilegedHelperFilesystemEntry(path, expectedKind);
+    const second = await readPrivilegedHelperFilesystemEntry(path, expectedKind);
+    if (first.device !== second.device || first.inode !== second.inode) {
+      fail("INVALID_PACKAGE_PATH", "privileged helper filesystem identity changed during preflight");
+    }
+    entries.push(first);
+  }
+  const readback = { ownerUid: 0 as const, entries };
+  validatePrivilegedHelperFilesystemReadback(plan, readback, options.requirePlist ?? plan.operation !== "install");
+  return readback;
+}
+
+export function validatePrivilegedHelperFilesystemReadback(
+  plan: PrivilegedHelperPackagePlan,
+  readback: PrivilegedHelperFilesystemReadback,
+  requirePlist = plan.operation !== "install"
+): void {
+  if (readback === null || typeof readback !== "object" || readback.ownerUid !== 0 || !Array.isArray(readback.entries)) {
+    fail("INVALID_READBACK", "privileged helper filesystem readback is malformed");
+  }
+  const expected = requiredPrivilegedHelperFilesystemPaths(plan, requirePlist);
+  const expectedMap = new Map(expected);
+  if (readback.entries.length !== expected.length) fail("INVALID_READBACK", "privileged helper filesystem readback entry count is invalid");
+  const seen = new Set<string>();
+  for (const entry of readback.entries) {
+    if (entry === null || typeof entry !== "object" || typeof entry.path !== "string" || seen.has(entry.path)) {
+      fail("INVALID_READBACK", "privileged helper filesystem readback contains a duplicate or malformed entry");
+    }
+    const expectedKind = expectedMap.get(entry.path);
+    if (expectedKind === undefined || entry.ownerUid !== 0 ||
+        !Number.isSafeInteger(entry.mode) || (entry.mode & 0o022) !== 0 ||
+        !Number.isSafeInteger(entry.device) || !Number.isSafeInteger(entry.inode) || entry.device < 0 || entry.inode < 0 ||
+        (expectedKind === "file" && entry.kind !== "file") ||
+        (expectedKind === "directory" && entry.kind !== "directory") ||
+        (expectedKind === "file-or-directory" && entry.kind !== "file" && entry.kind !== "directory")) {
+      fail("INVALID_PACKAGE_PATH", "privileged helper filesystem ownership, mode, type, or identity is unsafe");
+    }
+    if ((entry.path === plan.helperKeyConfigPath || entry.path === plan.plistPath) && (entry.mode & 0o777) !== 0o600) {
+      fail("INVALID_PACKAGE_PATH", "privileged helper secret/plist files must be owner-only");
+    }
+    if (entry.path === plan.launchd.program && (entry.mode & 0o100) === 0) {
+      fail("INVALID_PACKAGE_PATH", "privileged helper executable is not owner-executable");
+    }
+    seen.add(entry.path);
+  }
+}
+
+export function requiredPrivilegedHelperFilesystemPaths(
+  plan: PrivilegedHelperPackagePlan,
+  requirePlist = plan.operation !== "install"
+): readonly (readonly [string, PrivilegedHelperExpectedFilesystemKind])[] {
+  const paths = new Map<string, PrivilegedHelperExpectedFilesystemKind>();
+  paths.set(plan.helperRoot, "directory");
+  paths.set(plan.launchd.program, "file");
+  paths.set(plan.signedArtifactPath, "file-or-directory");
+  paths.set(plan.helperKeyConfigPath, "file");
+  paths.set(dirname(plan.helperSocketPath), "directory");
+  paths.set(dirname(plan.launchd.stdoutPath), "directory");
+  paths.set(dirname(plan.plistPath), "directory");
+  if (requirePlist) paths.set(plan.plistPath, "file");
+  for (const target of [
+    plan.helperRoot,
+    dirname(plan.launchd.program),
+    dirname(plan.signedArtifactPath),
+    dirname(plan.helperKeyConfigPath),
+    dirname(plan.helperSocketPath),
+    dirname(plan.launchd.stdoutPath),
+    dirname(plan.plistPath)
+  ]) {
+    for (const ancestor of ancestorsToRoot(target)) paths.set(ancestor, "directory");
+  }
+  return [...paths.entries()].map(([path, kind]) => [path, kind] as const).sort(([left], [right]) => left.localeCompare(right));
+}
+
+async function readPrivilegedHelperFilesystemEntry(
+  path: string,
+  expectedKind: PrivilegedHelperExpectedFilesystemKind
+): Promise<PrivilegedHelperFilesystemEntryReadback> {
+  let stats;
+  try {
+    stats = await lstat(path);
+  } catch {
+    fail("INVALID_PACKAGE_PATH", "required privileged helper package path is unavailable");
+  }
+  if (stats.isSymbolicLink() || stats.uid !== 0 || (stats.mode & 0o022) !== 0 ||
+      (expectedKind === "file" && !stats.isFile()) ||
+      (expectedKind === "directory" && !stats.isDirectory()) ||
+      (expectedKind === "file-or-directory" && !stats.isFile() && !stats.isDirectory())) {
+    fail("INVALID_PACKAGE_PATH", "privileged helper package path ownership, mode, symlink, or type is unsafe");
+  }
+  return {
+    path,
+    kind: stats.isFile() ? "file" : "directory",
+    ownerUid: stats.uid,
+    mode: stats.mode & 0o777,
+    device: stats.dev,
+    inode: stats.ino
+  };
+}
+
+function ancestorsToRoot(target: string): readonly string[] {
+  const result: string[] = [];
+  let current = target;
+  while (true) {
+    result.push(current);
+    if (current === "/") break;
+    const parent = dirname(current);
+    if (parent === current) fail("INVALID_PACKAGE_PATH", "privileged helper path cannot reach the filesystem root");
+    current = parent;
+  }
+  return result;
 }
 
 export function renderPrivilegedHelperLaunchdPlist(config: PrivilegedHelperLaunchdConfig): string {

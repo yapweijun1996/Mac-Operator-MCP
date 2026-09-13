@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import {
   buildPrivilegedHelperPackagePlan,
+  requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
+  validatePrivilegedHelperFilesystemReadback,
   validatePrivilegedHelperPackageReadback,
   type PrivilegedHelperPackagePlanInput
 } from "./privileged-helper-package.js";
@@ -202,4 +204,29 @@ test("privileged helper package signature command verifies a real temporary macO
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
+});
+
+test("privileged helper filesystem readback rejects ownership, mode, and target swaps", () => {
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  const entries = requiredPrivilegedHelperFilesystemPaths(plan, false).map(([path, expectedKind], index) => ({
+    path,
+    kind: expectedKind === "directory" ? "directory" as const : "file" as const,
+    ownerUid: 0,
+    mode: path === plan.helperKeyConfigPath ? 0o600 : path === plan.launchd.program ? 0o700 : 0o755,
+    device: 1,
+    inode: index + 1
+  }));
+  validatePrivilegedHelperFilesystemReadback(plan, { ownerUid: 0, entries }, false);
+  assert.throws(
+    () => validatePrivilegedHelperFilesystemReadback(plan, { ownerUid: 0, entries: entries.map((entry) => entry.path === plan.helperKeyConfigPath ? { ...entry, mode: 0o640 } : entry) }, false),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PACKAGE_PATH"
+  );
+  assert.throws(
+    () => validatePrivilegedHelperFilesystemReadback(plan, { ownerUid: 0, entries: entries.map((entry) => entry.path === plan.launchd.program ? { ...entry, kind: "directory" as const } : entry) }, false),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PACKAGE_PATH"
+  );
+  assert.throws(
+    () => validatePrivilegedHelperFilesystemReadback(plan, { ownerUid: 0, entries: entries.map((entry) => entry.path === plan.helperRoot ? { ...entry, ownerUid: 501 } : entry) }, false),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PACKAGE_PATH"
+  );
 });
