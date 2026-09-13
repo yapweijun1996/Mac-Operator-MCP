@@ -25,6 +25,13 @@ plist identity and SHA-256 content matching the rendered plan, with canonical
 LaunchAgent bootstrap and installed-service evidence remain open. Evidence:
 `evidence/2026-09-13-installed-readback-identity.md`.
 
+Exact-arguments readback addendum: commit `9d90138` parses bounded launchd
+arguments and requires the exact planned Node binary plus Broker entrypoint;
+missing or substituted arguments fail closed. Generic system-service readback
+remains compatible when launchd omits arguments. Real LaunchAgent bootstrap and
+installed-service evidence remain open. Evidence:
+`evidence/2026-09-13-installed-readback-identity.md`.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.

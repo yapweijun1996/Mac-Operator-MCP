@@ -1,6 +1,6 @@
 # Installed Broker readback identity evidence
 
-- Source commit: `70ca1e9`
+- Source commit: `9d90138`
 - Working tree: clean before this evidence document update
 - Host: Mac mini M4, `Darwin yaps-Mac-mini.local 25.2.0`, arm64
 - Runtime: Node `v25.5.0`; macOS platform reported by Node as `darwin`
@@ -33,6 +33,13 @@ inspector, rejects target changes and truncation, and refuses tampered content.
 The macOS `/var` to `/private/var` canonical-path projection is normalized
 before comparison.
 
+The bounded launchd parser now extracts an optional `arguments = { ... }`
+block. Broker installation composition requires that block to be present and
+to match the exact planned Node binary plus JavaScript entrypoint; malformed,
+oversized, incomplete, missing, or substituted argument lists fail closed.
+Generic system-service readback remains compatible when launchd omits its
+arguments block.
+
 The caller remains responsible for obtaining the identity through the native
 macOS process observer (for example, `capturePeerProcessIdentity`) after
 launchd supplies the PID. The repository does not claim installed-service
@@ -48,6 +55,8 @@ the final launchd/Broker/signature verification.
   a matching PID/start-time pair.
 - The plist readback test verifies canonical identity/digest and rejects a
   tampered plist before it can join final service readback.
+- Launchd parser and installer composition tests cover exact arguments and
+  substitution rejection; the existing system-service smoke still passes.
 - `git diff --check` — passed.
 
 ## Interpretation and limits
@@ -60,6 +69,10 @@ physical remount durability. Those remain release evidence requirements.
 Source hashes at capture:
 
 ```text
-84929e6ee2ac1dd67c76128cecb56c39aa0c54f44a6a20dccb62959919dbe67b  packages/broker/src/macos-install-plan.ts
-2ea379d46d28d25573c2eb0a3af8c1bf407fa4074cbce148dc5931aa3742305b  packages/broker/src/macos-install-plan.test.ts
+3fb219cba3561b3bf1b1575d368522775781cc21a36773a7079db7ccd351e8ff  packages/broker/src/launchd.ts
+c35742690b2c241e8fe1d1049df8a3bdaf9c14e584870b1b857ba2f4adbd66c9  packages/broker/src/launchd-readback.ts
+4687e1c489938f7cc0da7a9e26f9506384d3ef9ced10f9e2d586268abebe6c46  packages/broker/src/launchd.test.ts
+40037d48691afe653f0e009f65d8c3bb7c222b844f152987d54edc49307009e6  packages/broker/src/launchd-readback.test.ts
+09af01924288f15462cc8e379c89c271182bb0232c64b8144be31205e68d5c41  packages/broker/src/macos-install-plan.ts
+534a7bdf42908439d06d4905efb3141a9eef5ad560ec0cc3acbbe36cb98de25d  packages/broker/src/macos-install-plan.test.ts
 ```

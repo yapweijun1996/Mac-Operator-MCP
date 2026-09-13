@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest exact-arguments readback addendum: source commit `9d90138` parses the
+bounded launchd `arguments` block and requires the exact planned Node binary
+plus JavaScript entrypoint during Broker service composition. Missing,
+malformed, oversized, incomplete, or substituted arguments fail closed; the
+generic system-service smoke remains compatible when arguments are omitted.
+The full 395-test suite passes. This remains a non-installing boundary; real
+LaunchAgent bootstrap/readback remains open. Evidence:
+`evidence/2026-09-13-installed-readback-identity.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,

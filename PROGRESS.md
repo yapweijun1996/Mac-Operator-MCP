@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `70ca1e9`.
+Current committed implementation baseline: `9d90138`.
+
+The latest exact-arguments readback addendum is `9d90138`: bounded launchd
+readback now parses an optional `arguments` block, and Broker installation
+composition requires the exact planned Node binary plus JavaScript entrypoint.
+Missing, malformed, oversized, incomplete, or substituted arguments fail
+closed, while generic system-service readback remains compatible when launchd
+omits arguments. The final plist identity/digest check remains in force. This
+is still a non-installing boundary; real LaunchAgent bootstrap and final host
+evidence remain open. Evidence:
+`evidence/2026-09-13-installed-readback-identity.md`.
 
 The latest final-plist-readback addendum is `70ca1e9`: the installed-service
 readback now requires a descriptor-backed plist path, device/inode identity,
