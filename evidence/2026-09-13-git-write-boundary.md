@@ -1,7 +1,7 @@
 # Governed Git Write Boundary Evidence
 
 - Date: 2026-09-13
-- Source commit: `e1348f0`
+- Source commit: `0f71779`
 - Repository state: dirty after the source commit because documentation updates are pending; no production policy change
 - Scope: local Broker and Git inspector prototype on the development Mac
 - Policy state: `mac_git_stage` and `mac_git_commit` are implemented but disabled by the default policy
@@ -24,8 +24,9 @@ Before and after mutation, the boundary checks canonical project identity and pa
 - Validator tests reject traversal, `.git`, secret paths, unsafe commit control characters, and malformed staged-diff hashes.
 - Inspector boundary tests assert fixed argv, explicit path staging, no `--all`, no push/reset command surface, no-verify/no-gpg-sign commit behavior, staged-diff binding, HEAD/parent readback, and empty-index postconditions.
 - Broker integration test verifies trusted-write approval binding, mutation intent, generic Job creation/lease dispatch, staged readback, completion audit, and idempotency linkage.
-- Commands run after implementation: `npm test` (251 passing), `npm run typecheck`, `npm run verify:contracts`, `npm audit --omit=dev --audit-level=high`, and `git diff --check`.
+- A real temporary repository test creates an isolated Git repository, configures a non-secret fixture identity, creates an initial commit, then uses the production `GitWriteInspectorImpl` and `ProcessSupervisor` to stage and commit a modified file. It verifies the staged digest, parent commit, expected digest match, clean index, clean working tree, and temporary cleanup.
+- Commands run after implementation: `npm test` (252 passing), `npm run typecheck`, `npm run verify:contracts`, `npm audit --omit=dev --audit-level=high`, and `git diff --check`.
 
 ## Limits and remaining release work
 
-This is controlled source/fake-boundary evidence, not production enablement. No real project was mutated and no real-Mac temporary-repository workflow was used. The contract files intentionally remain `planned`; runtime policy remains disabled. Real-Mac repository compatibility, crash-window and concurrent-index coverage, remount durability, external-actor attribution, stronger redaction corpus, and final readback/recovery evidence remain open under `MOP-046`, `MOP-047`, `VT-GIT-01`, `VT-REL-01`, `VT-AUD-01`, and `VT-DOS-01`.
+This is controlled source and disposable temporary-repository evidence, not production enablement. No user project was mutated and no remote operation was attempted. The contract files intentionally remain `planned`; runtime policy remains disabled. Real-world repository diversity, crash-window and concurrent-index coverage, remount durability, external-actor attribution, stronger redaction corpus, and final readback/recovery evidence remain open under `MOP-046`, `MOP-047`, `VT-GIT-01`, `VT-REL-01`, `VT-AUD-01`, and `VT-DOS-01`.
