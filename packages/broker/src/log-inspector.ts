@@ -33,9 +33,9 @@ export interface LogInspector {
 }
 
 export class MacLogInspector implements LogInspector {
-  private readonly supervisor: ProcessSupervisor;
+  private readonly supervisor: Pick<ProcessSupervisor, "run">;
 
-  constructor(supervisor = new ProcessSupervisor({ maxConcurrent: 2, allowedEnvironmentKeys: [] })) {
+  constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({ maxConcurrent: 2, allowedEnvironmentKeys: [] })) {
     this.supervisor = supervisor;
   }
 
@@ -75,8 +75,13 @@ function parseLogResult(
 ): SafeLogTail {
   if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Log inspection was cancelled");
   if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Log inspection timed out");
-  if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Log inspection exceeded its output limit");
-  if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "Log inspection failed");
+  // An output-limited log process has already been terminated by the
+  // supervisor and its captured bytes are bounded. Parse that prefix and
+  // expose the loss explicitly instead of discarding otherwise safe records.
+  if (result.resultClass === "UNKNOWN_OUTCOME") throw new BrokerError("UNKNOWN_OUTCOME", "Log inspection outcome could not be verified", true);
+  if (result.resultClass !== "SUCCEEDED" && result.resultClass !== "OUTPUT_LIMIT") {
+    throw new BrokerError("EXECUTION_FAILED", "Log inspection failed");
+  }
 
   const entries: SafeLogEntry[] = [];
   const warnings: string[] = [];
