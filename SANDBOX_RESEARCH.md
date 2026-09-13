@@ -41,7 +41,7 @@ The first hostile boundary probe ran on a Mac mini `Mac16,10` (Apple M4, 16 GB),
 | Process executable allowlist | `ENFORCED` | A profile allowing only `/bin/bash` denied `/usr/bin/true` and `/bin/launchctl`. | No process-tree lease, descendant ownership, or cancellation proof exists. |
 | Process-tree ownership | `UNAVAILABLE` | A sandboxed Bash parent started `/bin/sleep`; terminating the parent left the child alive until the harness explicitly killed it. The disabled Broker `ProcessSupervisor` now proves process-group cancellation and descendant cleanup in controlled tests, but is not connected to a task handler. | A real profile/task integration and lease recovery path remain open. |
 | Network allow/deny | `PARTIAL` | `/usr/bin/curl` under the deny-default profile returned exit 6 with zero output for `https://example.com`; a loopback allowlist reached its selected local server and denied a second loopback port. | External allowlisted destinations, DNS pinning, UDP behavior, and broader non-DNS address tests remain open. |
-| Environment isolation | `UNAVAILABLE` | A parent-set `MOP_CONTROLLER_SECRET` was printed by the child. | The Broker executor must construct a minimal environment; sandbox policy does not solve this. |
+| Environment isolation | `UNAVAILABLE` (historical sandbox-only probe) | A parent-set `MOP_CONTROLLER_SECRET` was printed by the child. | The Broker executor must construct a minimal environment; sandbox policy does not solve this. |
 | File descriptor isolation | `PARTIAL` | The `sandbox-exec` wrapper did not expose the test descriptor. Separately, the Broker `ProcessSupervisor` now launches with explicit `stdio` and a temporary parent file-descriptor canary test confirms that a non-stdio canary is not visible in the child (`process-supervisor.test.ts`, source SHA-256 `b3a748e10a5616541f56e0b7b7b6658d86b1304e0ddd7d08cf8e135d581f08d2`). | This proves the current Broker launch boundary on the tested host, not every future executor or OS sandbox profile; a production task runner still needs an explicit isolation proof and a descriptor audit at the sandbox boundary. |
 | Credential canaries | `PARTIAL` | Fake SSH, cloud, Docker, and Keychain canary files outside the allowed root were denied. | No real credential surface was opened; package-manager, Git, signing, and Keychain API canaries remain open. |
 | Docker/persistence/privilege isolation | `UNKNOWN` | Docker authority, launchd persistence, privilege escalation, native binaries, scripts, and grandchildren were not yet exercised. | `mac_task_run` remains disabled. |
@@ -100,3 +100,16 @@ packages/broker/dist/sandbox-profile.test.js` command passed 7/7 with no
 skips. This is a fresh readback of the existing temporary-fixture evidence;
 it does not add real credential-content, crash/restart, remount, Docker,
 persistence, privilege, or production task-runner proof.
+
+## 2026-09-13 Broker environment hardening
+
+Source commit `e9d8570` adds a shared Broker environment-key policy. Task
+profiles reject command-resolution, interpreter-startup, dynamic-loader,
+temporary-directory, and arbitrary Git/Docker configuration variables; the
+lower-level Supervisor permits only the exact non-secret keys used by fixed
+Broker-owned adapters. A real child still receives an explicit environment and
+does not inherit controller, `HOME`, SSH-agent, or AWS-profile values. This
+changes the Broker launch boundary from the historical sandbox-only
+`UNAVAILABLE` result to `PARTIAL` for environment construction, but it does
+not prove real credential-content isolation or make deprecated `sandbox-exec`
+a production selection. `mac_task_run` remains disabled.
