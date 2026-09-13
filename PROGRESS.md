@@ -6,7 +6,21 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `f2ce163`.
+Current committed implementation baseline: `889ccdf`.
+
+The latest OS-process lifecycle addendum is `889ccdf`: `ProcessSupervisor`
+now owns an explicit close boundary that stops new admissions, cancels every
+active process group, waits for tracked process-tree drain, and preserves
+`UNKNOWN_OUTCOME` when termination cannot be observed. `SandboxExecTaskRunner`
+forwards that boundary and `Broker.close()` drains it after transport shutdown.
+The default task runner remains disabled, and the `owned_group` profile remains
+unavailable. The focused close tests pass; the default suite passes 380 tests
+(377 passed, 3 opt-in sandbox tests skipped), while
+`MOPS_REAL_SANDBOX=1 npm test` passes 380/380. This proves graceful shutdown of
+live Broker-owned OS task processes, not ownership after a crashed Broker,
+post-snapshot `setsid` escape resistance, credential isolation, or production
+task-runner enablement. Evidence:
+`evidence/2026-09-13-process-supervisor-close.md`.
 
 The latest cross-Broker stale-completion addendum is `f2ce163`: an actual
 `Broker.handle` write is held in `running`, a second `BrokerStore` reopen
