@@ -22,6 +22,15 @@ Fresh install, upgrade, downgrade rejection, rollback, signature failure, partia
 
 ## Candidate implementation evidence
 
+Revision `f47ecc5` adds a dedicated protected Authority Control key
+configuration. Exactly one operator key is selected from an explicit file or
+Keychain source, bound to a secret digest, rejected when revoked or outside
+its validity window, and activated through audited monotonic revision history
+with exact restart restore. The host-only uninstall assembly constructs its
+authenticated IPC client from that activated manager. This remains a
+host-only candidate; production Keychain ACL review, signed packaging,
+launchd startup, live rotation/deletion, and final host evidence remain open.
+
 Revision `eeebec3` binds the uninstall coordinator to the real owner-only
 `AuthorityControlIpcClient`. The client authenticates complete commands and
 responses, rejects replay through the durable authority ledger, validates the

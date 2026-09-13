@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `eeebec3`.
+Current committed implementation baseline: `f47ecc5`.
+
+The latest authority-key addendum is `f47ecc5`: owner-only Authority Control
+key metadata now has an explicit versioned file/Keychain source, digest-bound
+secret loading, a dedicated `authority_key` revocation kind, monotonic audited
+activation, exact restart restore, validity-window enforcement, and explicit
+secret disposal. The host-only uninstall assembly selects the activated key
+manager before constructing the authenticated Authority Control IPC client;
+raw uninstall arguments cannot supply a key. The full suite passes 332 tests
+(330 passed, 2 opt-in real-sandbox tests skipped), with focused keyring, IPC,
+and persistence coverage passing. Installed keychain ACLs, launchd startup,
+live rotation/deletion, and final real-Mac evidence remain open. Evidence:
+`evidence/2026-09-13-authority-key-activation.md`.
 
 The latest authority-control addendum is `eeebec3`: the host-only uninstall
 coordinator can now bind to the real owner-only `AuthorityControlIpcClient`
