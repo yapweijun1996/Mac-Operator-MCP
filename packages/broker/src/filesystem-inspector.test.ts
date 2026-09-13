@@ -584,7 +584,7 @@ test("filesystem root symlinks fail closed", async () => {
   await symlink(directory, rootLink);
   try {
     const inspector = new FilesystemInspector([root(rootLink)]);
-    assert.throws(() => inspector.statPath(join(rootLink, "file.txt")), /escaped its authorized root/u);
+    assert.throws(() => inspector.statPath(join(rootLink, "file.txt")), /root volume identity could not be established/u);
   } finally {
     await rm(parent, { recursive: true, force: true });
   }
@@ -616,6 +616,26 @@ test("filesystem lexical containment fails closed across case and Unicode aliase
     );
     const canonicalFile = await realpath(file);
     assert.equal(matches.matches.some((match) => match.path === canonicalFile), true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("filesystem plans fail closed when the authorized volume identity changes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-volume-identity-"));
+  const file = join(directory, "value.txt");
+  await writeFile(file, "safe");
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    const plan = inspector.planPath(file, "metadata");
+    const forgedPlan = {
+      ...plan,
+      rootIdentity: { ...plan.rootIdentity, id: `${plan.rootIdentity.id}:replacement` }
+    };
+    assert.throws(
+      () => inspector.statPlanned(forgedPlan),
+      /root volume identity changed during authorization/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

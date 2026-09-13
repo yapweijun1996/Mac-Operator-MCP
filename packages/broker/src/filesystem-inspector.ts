@@ -164,6 +164,13 @@ export interface FilesystemPathPlan {
   rootId: string;
   requestedPath: string;
   root: FilesystemRootPolicy;
+  /** Native volume identity captured when the plan was authorized. */
+  rootIdentity: FilesystemVolumeIdentity;
+}
+
+export interface FilesystemVolumeIdentity {
+  rootPath: string;
+  id: string;
 }
 
 export interface FilesystemIdentityPrecondition {
@@ -323,10 +330,22 @@ export class FilesystemInspector {
     if (root.denyRelativePaths.some((denied) => isRelativeContained(denied, lexicalRelative))) {
       throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
     }
-    return { rootId: root.rootId, requestedPath: lexicalPath, root };
+    let volume: NativeStorageVolume;
+    try {
+      volume = parseNativeStorageVolume(this.native.statStorageVolumeWithinRoot(root.path));
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem root volume identity could not be established");
+    }
+    return {
+      rootId: root.rootId,
+      requestedPath: lexicalPath,
+      root,
+      rootIdentity: { rootPath: volume.rootPath, id: volume.id }
+    };
   }
 
   readPlanned(plan: FilesystemPathPlan, offset: number, maxBytes: number): SafeFileRead {
+    this.assertPlanVolumeStable(plan);
     let nativeRead: unknown;
     try {
       nativeRead = this.native.readFileWithinRoot(
@@ -339,6 +358,7 @@ export class FilesystemInspector {
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem file escaped its authorized root, type, or volume");
     }
+    this.assertPlanVolumeStable(plan);
     const read = parseNativeRead(nativeRead);
     const resolvedRelative = relative(read.rootPath, read.path);
     if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)) {
@@ -354,6 +374,7 @@ export class FilesystemInspector {
 
   hashPlanned(plan: FilesystemPathPlan, algorithm: "sha256" | "sha512"): SafeFileHash {
     assertContentPathAllowed(plan.requestedPath);
+    this.assertPlanVolumeStable(plan);
     let nativeHash: unknown;
     try {
       nativeHash = this.native.hashFileWithinRoot(
@@ -365,6 +386,7 @@ export class FilesystemInspector {
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem file escaped its authorized root, type, or volume");
     }
+    this.assertPlanVolumeStable(plan);
     const hash = parseNativeHash(nativeHash);
     const resolvedRelative = relative(hash.rootPath, hash.path);
     if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)) {
@@ -400,6 +422,7 @@ export class FilesystemInspector {
     if (typeof includeHidden !== "boolean") {
       throw new BrokerError("PRECONDITION_FAILED", "include_hidden must be a boolean");
     }
+    this.assertPlanVolumeStable(plan);
     let canonicalRootPath: string;
     try {
       canonicalRootPath = realpathSync.native(plan.root.path);
@@ -428,6 +451,7 @@ export class FilesystemInspector {
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem directory escaped its authorized root, type, or volume");
     }
+    this.assertPlanVolumeStable(plan);
     const listing = parseNativeDirectoryListing(nativeListing);
     const resolvedRelative = relative(listing.rootPath, listing.path);
     if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)) {
@@ -781,6 +805,7 @@ export class FilesystemInspector {
         throw new BrokerError("PRECONDITION_FAILED", "Storage analysis roots must be non-symlink directories");
       }
       if (!analyzedRoots.includes(root.path)) analyzedRoots.push(root.path);
+      this.assertPlanVolumeStable(plan);
       const nativeVolume = this.native.statStorageVolumeWithinRoot(plan.root.path);
       const volume = parseNativeStorageVolume(nativeVolume);
       let canonicalPolicyRoot: string;
@@ -789,6 +814,7 @@ export class FilesystemInspector {
       if (volume.rootPath !== canonicalPolicyRoot || !volume.id.startsWith(`dev:${root.device}:`)) {
         throw new BrokerError("POLICY_DENIED", "Filesystem volume identity changed during authorization");
       }
+      this.assertPlanVolumeStable(plan);
       if (!volumes.has(volume.id)) volumes.set(volume.id, volume);
       pending.push({ plan: { ...plan, requestedPath: root.path }, depth: 0 });
     }
@@ -966,12 +992,14 @@ export class FilesystemInspector {
   }
 
   statPlanned(plan: FilesystemPathPlan, followSymlink = true): SafePathMetadata {
+    this.assertPlanVolumeStable(plan);
     let metadata: NativePathMetadata;
     try {
       metadata = parseNativeMetadata(this.native.statPathWithinRoot(plan.root.path, plan.requestedPath, followSymlink));
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem target escaped its authorized root or volume");
     }
+    this.assertPlanVolumeStable(plan);
     const resolvedRelative = relative(metadata.rootPath, metadata.path);
     if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative)) {
       throw new BrokerError("POLICY_DENIED", "Filesystem target escaped its authorized root or volume");
@@ -1041,6 +1069,7 @@ export class FilesystemInspector {
       expectedMatched = priorDigest === expectedSha256.toLowerCase();
       if (!expectedMatched) throw new BrokerError("PRECONDITION_FAILED", "Filesystem write expected hash did not match");
     }
+    this.assertPlanVolumeStable(plan);
     let nativeWrite: unknown;
     try {
       nativeWrite = this.native.writeFileAtomicWithinRoot(
@@ -1056,6 +1085,7 @@ export class FilesystemInspector {
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem write target escaped its authorized root or changed during the write");
     }
+    this.assertPlanVolumeStable(plan);
     const write = parseNativeWrite(nativeWrite);
     const resolvedRelative = relative(write.rootPath, write.path);
     if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative) ||
@@ -1124,6 +1154,7 @@ export class FilesystemInspector {
     if (!/^\d+$/u.test(expectedIdentity.device) || !/^\d+$/u.test(expectedIdentity.inode)) {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem unlink identity precondition is malformed");
     }
+    this.assertPlanVolumeStable(plan);
     let nativeUnlink: unknown;
     try {
       nativeUnlink = this.native.unlinkFileWithinRoot(
@@ -1136,6 +1167,7 @@ export class FilesystemInspector {
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem unlink target escaped its authorized root or changed during deletion");
     }
+    this.assertPlanVolumeStable(plan);
     const unlink = parseNativeUnlink(nativeUnlink);
     const resolvedRelative = relative(unlink.rootPath, unlink.path);
     if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative) ||
@@ -1191,6 +1223,18 @@ export class FilesystemInspector {
       throw new BrokerError("VERIFICATION_FAILED", "Filesystem temporary cleanup did not remove the recorded artifact");
     }
     return { status: "removed", path: removed.path, device: removed.device, inode: removed.inode };
+  }
+
+  private assertPlanVolumeStable(plan: FilesystemPathPlan): void {
+    let volume: NativeStorageVolume;
+    try {
+      volume = parseNativeStorageVolume(this.native.statStorageVolumeWithinRoot(plan.root.path));
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem root volume identity could not be verified");
+    }
+    if (volume.rootPath !== plan.rootIdentity.rootPath || volume.id !== plan.rootIdentity.id) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem root volume identity changed during authorization");
+    }
   }
 }
 

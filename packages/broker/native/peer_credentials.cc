@@ -134,6 +134,14 @@ bool IsWithinRoot(const char* root, const char* target) {
   return strncmp(root, target, root_length) == 0 && target[root_length] == '/';
 }
 
+bool SameFilesystem(int descriptor, const struct statfs& expected) {
+  struct statfs actual;
+  if (fstatfs(descriptor, &actual) != 0) return false;
+  return actual.f_fsid.val[0] == expected.f_fsid.val[0] &&
+      actual.f_fsid.val[1] == expected.f_fsid.val[1] &&
+      actual.f_type == expected.f_type;
+}
+
 void SetString(napi_env env, napi_value object, const char* name, const char* value) {
   napi_value property;
   napi_create_string_utf8(env, value, NAPI_AUTO_LENGTH, &property);
@@ -724,7 +732,8 @@ napi_value StatPathWithinRoot(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, "Filesystem target identity could not be verified");
     return nullptr;
   }
-  if (!IsWithinRoot(resolved_root, resolved_target) || target_stat.st_dev != root_stat.st_dev) {
+  if (!IsWithinRoot(resolved_root, resolved_target) || target_stat.st_dev != root_stat.st_dev ||
+      !SameFilesystem(target_descriptor, root_filesystem)) {
     close(target_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem target escaped the authorized root or volume");
@@ -894,7 +903,8 @@ napi_value ListDirectoryWithinRoot(napi_env env, napi_callback_info info) {
   char resolved_target[PATH_MAX];
   if (fstat(target_descriptor, &target_stat) != 0 || !DescriptorPath(target_descriptor, resolved_target) ||
       !S_ISDIR(target_stat.st_mode) || target_stat.st_nlink < 1 ||
-      !IsWithinRoot(resolved_root, resolved_target) || target_stat.st_dev != root_stat.st_dev) {
+      !IsWithinRoot(resolved_root, resolved_target) || target_stat.st_dev != root_stat.st_dev ||
+      !SameFilesystem(target_descriptor, root_filesystem)) {
     close(target_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem directory identity is not authorized");
@@ -1102,7 +1112,8 @@ napi_value ReadFileWithinRoot(napi_env env, napi_callback_info info) {
   if (fstat(target_descriptor, &target_stat) != 0 || !DescriptorPath(target_descriptor, resolved_target) ||
       !S_ISREG(target_stat.st_mode) || target_stat.st_nlink != 1 ||
       target_stat.st_size < 0 || target_stat.st_size > 1000000000LL ||
-      !IsWithinRoot(resolved_root, resolved_target) || target_stat.st_dev != root_stat.st_dev) {
+      !IsWithinRoot(resolved_root, resolved_target) || target_stat.st_dev != root_stat.st_dev ||
+      !SameFilesystem(target_descriptor, root_filesystem)) {
     close(target_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem file identity is not authorized");
@@ -1215,7 +1226,7 @@ napi_value HashFileWithinRoot(napi_env env, napi_callback_info info) {
   if (fstat(target_descriptor, &target_stat) != 0 || !DescriptorPath(target_descriptor, resolved_target) ||
       !S_ISREG(target_stat.st_mode) || target_stat.st_nlink != 1 || target_stat.st_size < 0 ||
       target_stat.st_size > 1000000000LL || !IsWithinRoot(resolved_root, resolved_target) ||
-      target_stat.st_dev != root_stat.st_dev) {
+      target_stat.st_dev != root_stat.st_dev || !SameFilesystem(target_descriptor, root_filesystem)) {
     close(target_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem file identity is not authorized");
@@ -1394,7 +1405,8 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   struct stat parent_stat;
   char parent_descriptor_path[PATH_MAX];
   if (fstat(parent_descriptor, &parent_stat) != 0 || !DescriptorPath(parent_descriptor, parent_descriptor_path) ||
-      !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev) {
+      !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev ||
+      !SameFilesystem(parent_descriptor, root_filesystem)) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem write parent identity is not authorized");
@@ -1501,6 +1513,7 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   if (fstat(target_descriptor, &target_stat) != 0 || !S_ISREG(target_stat.st_mode) || target_stat.st_nlink != 1 ||
       target_stat.st_dev != root_stat.st_dev || target_stat.st_size < 0 || target_stat.st_size > 1048576 ||
       !DescriptorPath(target_descriptor, resolved_target) || !IsWithinRoot(resolved_root, resolved_target) ||
+      !SameFilesystem(target_descriptor, root_filesystem) ||
       static_cast<size_t>(target_stat.st_size) != content_length) {
     close(target_descriptor);
     close(parent_descriptor);
@@ -1637,7 +1650,8 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
   struct stat parent_stat;
   char parent_descriptor_path[PATH_MAX];
   if (fstat(parent_descriptor, &parent_stat) != 0 || !DescriptorPath(parent_descriptor, parent_descriptor_path) ||
-      !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev) {
+      !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev ||
+      !SameFilesystem(parent_descriptor, root_filesystem)) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink parent identity is not authorized");
