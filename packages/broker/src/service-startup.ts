@@ -143,6 +143,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
   const now = options.now ?? Date.now;
   const store = new BrokerStore(config.brokerDatabasePath);
   let edgeKeyring: EdgeKeyring | undefined;
+  let broker: Broker | undefined;
   let service: BrokerServiceEntrypoint | undefined;
   try {
     const verifier = await PolicyBundleVerifier.createFromKeyFile({
@@ -168,10 +169,30 @@ export async function createBrokerServiceFromStartupConfig(options: {
       edgeKeyStore: store,
       createBroker: (edgeAuthenticationKeys) => {
         edgeKeyring = edgeAuthenticationKeys;
-        return new Broker({ store, policy: policyManager, edgeAuthenticationKeys, now });
+        broker = new Broker({ store, policy: policyManager, edgeAuthenticationKeys, now });
+        return broker;
       }
     });
     if (!edgeKeyring) throw new Error("Broker service startup did not construct an Edge keyring");
+    if (!broker) throw new Error("Broker service startup did not construct a Broker");
+
+    // Reconcile interrupted work before the service can expose any IPC
+    // listener. Recovery is bounded and conservative: unresolved process
+    // identities and write artifacts remain UNKNOWN rather than being
+    // promoted to success.
+    let recoveryError: unknown;
+    try {
+      await broker.reconcileRestartedTaskProcesses();
+    } catch (error) {
+      recoveryError = error;
+    }
+    try {
+      broker.reconcileRestartedWriteArtifacts();
+    } catch (error) {
+      recoveryError ??= error;
+    }
+    if (recoveryError !== undefined) throw recoveryError;
+
     const metadata: BrokerServiceMetadata = {
       component: "mac-operator-broker",
       sourceRevision: config.sourceRevision,
@@ -187,15 +208,27 @@ export async function createBrokerServiceFromStartupConfig(options: {
       store,
       edgeKeyring,
       async close() {
+        let firstError: unknown;
         try {
           await service?.stop();
-        } finally {
-          edgeKeyring?.dispose();
-          store.close();
+        } catch (error) {
+          firstError = error;
         }
+        try {
+          // LocalBrokerRuntime closes Broker resources after a running
+          // transport stops. This explicit close also covers an assembled
+          // service that is disposed before its first start.
+          await broker?.close();
+        } catch (error) {
+          firstError ??= error;
+        }
+        edgeKeyring?.dispose();
+        store.close();
+        if (firstError !== undefined) throw firstError;
       }
     };
   } catch (error) {
+    await broker?.close().catch(() => undefined);
     edgeKeyring?.dispose();
     store.close();
     throw error;
