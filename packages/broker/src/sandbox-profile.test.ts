@@ -295,6 +295,44 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
   }
 });
 
+test("real macOS single-process profile denies a hostile fork and session escape", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-descendant-"));
+  const root = await realpath(directory);
+  const marker = join(root, "descendant-marker");
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof()
+  });
+  const script = [
+    "use strict;",
+    "use POSIX qw(setsid);",
+    "my $marker = $ARGV[0];",
+    "my $pid = fork();",
+    "if (!defined $pid) { print qq(fork-denied\\n); exit 42; }",
+    "if ($pid == 0) { setsid(); open(my $fh, chr(62), $marker) or die $!; print $fh $$; close($fh); select(undef, undef, undef, 0.2); exit 0; }",
+    "waitpid($pid, 0); print qq(fork-succeeded\\n);"
+  ].join(" ");
+  try {
+    const result = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.hostile-descendant",
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/usr/bin/perl",
+        args: ["-e", script, marker]
+      }
+    }, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.notEqual(result.resultClass, "SUCCEEDED", JSON.stringify(result));
+    assert.match(result.stdout, /fork-denied/u);
+    await assert.rejects(readFile(marker, "utf8"), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("real macOS sandbox runner maps active cancellation to process-group termination", {
   skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
 }, async () => {
