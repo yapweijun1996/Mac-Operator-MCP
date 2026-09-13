@@ -172,6 +172,16 @@ commands. It authenticates complete responses, fences socket identity, caps
 transport, and maps connection loss to retryable `UNKNOWN_OUTCOME`; it cannot
 create a command or elevate authority.
 
+The helper Job executor boundary now sits above that client as a separate,
+disabled-by-default Broker module. It renews the Job lease, checks the command
+binding against the persisted Job, rechecks authority on both sides of the
+helper call, and commits success only for a verified completed result. Accepted
+but incomplete work, timeout, transport loss, malformed/uncertain execution,
+or a post-dispatch authority change is persisted as `UNKNOWN_OUTCOME`. The
+executor never owns helper key material; the injected client obtains a
+short-lived key buffer and clears it after the bounded exchange. This remains
+an integration primitive: no privileged MCP route or adapter is enabled.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

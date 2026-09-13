@@ -1140,3 +1140,16 @@ helper commands. It authenticates the complete response, caps bytes and time,
 fences socket device/inode identity, returns stable helper failures, and maps
 transport loss to retryable `UNKNOWN_OUTCOME` without inferring privileged
 success. Evidence: `evidence/2026-09-13-helper-command-client.md`.
+
+## Latest helper Job executor addendum
+
+The disabled-by-default `PrivilegedHelperJobExecutor` now binds the existing
+Broker command factory/client to a running Job lease. It rechecks authority
+before and after dispatch, validates command identity against the persisted
+Job, accepts success only for a verified completed helper result, and records
+transport/timeout/accepted-but-incomplete/post-revocation uncertainty as
+retryable `UNKNOWN_OUTCOME`. The short-lived command key buffer is cleared by
+the client binding. The default policy and MCP dispatch still expose no
+privileged operation; helper installation, adapters, and root launchd remain
+disabled. The latest default suite is 405 tests (402 passed, 3 opt-in sandbox
+tests skipped). Evidence: `evidence/2026-09-13-helper-job-executor.md`.

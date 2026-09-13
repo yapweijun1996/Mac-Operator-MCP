@@ -230,6 +230,13 @@ helper commands. It authenticates complete responses and maps transport loss
 to retryable `UNKNOWN_OUTCOME`; no privileged adapter or root service is
 enabled. Evidence: `evidence/2026-09-13-helper-command-client.md`.
 
+The next helper slice adds a disabled-by-default Broker Job executor above the
+client. It renews the Job lease, enforces command-to-Job identity binding,
+rechecks authority before/after dispatch, redacts validated helper evidence,
+and persists conservative `UNKNOWN_OUTCOME` for unresolved execution. The
+executor is not wired to an MCP tool, and helper installation/root launchd
+remain blocked. Evidence: `evidence/2026-09-13-helper-job-executor.md`.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.
