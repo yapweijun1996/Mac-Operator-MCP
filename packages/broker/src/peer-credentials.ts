@@ -27,6 +27,12 @@ interface SocketWithHandle extends Socket {
 
 const require = createRequire(import.meta.url);
 const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
+const REQUIRED_NATIVE_EXPORTS = [
+  "getPeerCredentials", "createUnixListener", "acceptUnixClient", "closeUnixDescriptor",
+  "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
+  "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot",
+  "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity"
+] as const;
 
 interface NativeAdapterArtifact {
   device: number;
@@ -75,12 +81,7 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
     if (!sameNativeAdapterArtifact(before, after)) {
       throw new Error("Native peer adapter changed while loading");
     }
-    if (
-      typeof native.getPeerCredentials !== "function" ||
-      typeof native.createUnixListener !== "function" ||
-      typeof native.acceptUnixClient !== "function" ||
-      typeof native.closeUnixDescriptor !== "function"
-    ) {
+    if (REQUIRED_NATIVE_EXPORTS.some((name) => typeof (native as Record<string, unknown>)[name] !== "function")) {
       throw new Error("Native peer adapter exports are incomplete");
     }
     loadedNativeArtifact = after;
