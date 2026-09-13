@@ -15,6 +15,10 @@ test("launchd readback uses fixed argv, empty environment, and returns bounded m
 \tpath = /Users/operator/Library/LaunchAgents/com.mac-operator.broker.plist
 \tstate = running
 \tprogram = /Users/operator/Library/Application Support/MacOperator/bin/node
+\targuments = {
+\t/Users/operator/Library/Application Support/MacOperator/bin/node
+\t/Users/operator/Library/Application Support/MacOperator/service-entrypoint.js
+\t}
 \tpid = 4123
 \tlast exit code = (never exited)
 }
@@ -27,6 +31,10 @@ test("launchd readback uses fixed argv, empty environment, and returns bounded m
     state: "running",
     pid: 4123,
     program: "/Users/operator/Library/Application Support/MacOperator/bin/node",
+    arguments: [
+      "/Users/operator/Library/Application Support/MacOperator/bin/node",
+      "/Users/operator/Library/Application Support/MacOperator/service-entrypoint.js"
+    ],
     plistPath: "/Users/operator/Library/LaunchAgents/com.mac-operator.broker.plist",
     type: "LaunchAgent",
     lastExitCode: null,
@@ -81,6 +89,7 @@ test("launchd readback smoke reads an existing system service on macOS", async (
   assert.ok(["running", "stopped", "waiting", "launching", "loaded", "failed", "unknown"].includes(readback.state));
   assert.ok(readback.pid === null || (Number.isSafeInteger(readback.pid) && readback.pid > 0));
   assert.ok(readback.program === null || readback.program.startsWith("/"));
+  assert.ok(readback.arguments === null || readback.arguments.length > 0);
   assert.ok(readback.plistPath === null || readback.plistPath.startsWith("/"));
 });
 

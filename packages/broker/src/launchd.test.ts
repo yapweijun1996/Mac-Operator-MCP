@@ -20,6 +20,7 @@ test("launchd renderer emits a bounded unprivileged no-shell plist", () => {
   assert.deepEqual(launchdReadback(valid), {
     label: "com.mac-operator.broker",
     program: "/opt/mac-operator/bin/node",
+    programArguments: ["/opt/mac-operator/bin/node", "/opt/mac-operator/broker/service-entrypoint.js"],
     workingDirectory: "/opt/mac-operator",
     stdoutPath: "/var/log/mac-operator/broker.out.log",
     stderrPath: "/var/log/mac-operator/broker.err.log",

@@ -19,6 +19,7 @@ export interface LaunchdServiceConfig {
 export interface LaunchdServiceReadback {
   label: string;
   program: string;
+  programArguments: readonly string[];
   workingDirectory: string;
   stdoutPath: string;
   stderrPath: string;
@@ -101,6 +102,7 @@ export function launchdReadback(config: LaunchdServiceConfig): LaunchdServiceRea
   return {
     label: normalized.label,
     program: normalized.program,
+    programArguments: [...normalized.programArguments],
     workingDirectory: normalized.workingDirectory,
     stdoutPath: normalized.stdoutPath,
     stderrPath: normalized.stderrPath,

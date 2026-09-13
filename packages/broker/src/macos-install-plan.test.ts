@@ -132,6 +132,7 @@ test("readback composition binds launchd service identity to native process and 
       state: "running",
       pid: 1234,
       program: plan.launchd.program,
+      arguments: [...plan.launchd.programArguments],
       plistPath: plan.plistPath,
       type: "LaunchAgent",
       lastExitCode: null,
@@ -157,7 +158,19 @@ test("readback composition binds launchd service identity to native process and 
   assert.equal(composed.pid, 1234);
   assert.equal(composed.processIdentity.startTimeMicros, 987654321);
   assert.throws(() => composeMacOsInstallReadback(plan, {
-    launchd: { ...composed.launchd, serviceId: "gui/501/com.mac-operator.attacker" } as never,
+    launchd: {
+      serviceId: "gui/501/com.mac-operator.attacker",
+      domain: plan.domain as `gui/${number}`,
+      label: plan.label,
+      state: "running",
+      pid: 1234,
+      program: plan.launchd.program,
+      arguments: [...plan.launchd.programArguments],
+      plistPath: plan.plistPath,
+      type: "LaunchAgent",
+      lastExitCode: null,
+      truncated: false
+    },
     processIdentity: composed.processIdentity,
     plist: composed.plist,
     broker: composed.broker,

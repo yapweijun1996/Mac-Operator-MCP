@@ -5,6 +5,8 @@ const LAUNCHCTL_PATH = "/bin/launchctl";
 const LAUNCHCTL_CWD = "/";
 const LAUNCHCTL_TIMEOUT_MS = 5_000;
 const LAUNCHCTL_OUTPUT_CAP_BYTES = 131_072;
+const MAX_ARGUMENT_COUNT = 64;
+const MAX_ARGUMENT_BYTES = 4_096;
 const SERVICE_ID_PATTERN = /^(?:system|gui\/[1-9][0-9]{0,9})\/[A-Za-z0-9._:@+-]{1,128}$/u;
 
 export type LaunchdReadbackErrorCode =
@@ -34,6 +36,7 @@ export interface LaunchdJobReadback {
   state: "running" | "stopped" | "waiting" | "launching" | "loaded" | "failed" | "unknown";
   pid: number | null;
   program: string | null;
+  arguments: readonly string[] | null;
   plistPath: string | null;
   type: "LaunchAgent" | "LaunchDaemon" | null;
   lastExitCode: number | null;
@@ -96,6 +99,7 @@ export function parseLaunchdJobReadback(
   const state = parseState(stateValue);
   const pid = parsePid(field(output, "pid"));
   const program = parseOptionalPath(field(output, "program"), "program");
+  const argumentsValue = parseArguments(output);
   const plistPath = parseOptionalPath(field(output, "path"), "path");
   const type = parseType(field(output, "type"));
   const lastExitCode = parseExitCode(field(output, "last exit code"));
@@ -106,11 +110,40 @@ export function parseLaunchdJobReadback(
     state,
     pid,
     program,
+    arguments: argumentsValue,
     plistPath,
     type,
     lastExitCode,
     truncated: false
   };
+}
+
+function parseArguments(output: string): readonly string[] | null {
+  const lines = output.split(/\r?\n/u);
+  const start = lines.findIndex((line) => /^\s*arguments\s*=\s*\{\s*$/u.test(line));
+  if (start < 0) return null;
+  const values: string[] = [];
+  let closed = false;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    if (/^\s*\}\s*$/u.test(line)) {
+      closed = true;
+      break;
+    }
+    const value = line.trim();
+    if (value.length === 0 || value.includes("\0") || value.includes("{") || value.includes("}") ||
+        /[\u0000-\u001F\u007F]/u.test(value) || Buffer.byteLength(value, "utf8") > MAX_ARGUMENT_BYTES) {
+      throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd returned a malformed program argument");
+    }
+    values.push(value);
+    if (values.length > MAX_ARGUMENT_COUNT) {
+      throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd returned too many program arguments");
+    }
+  }
+  if (!closed || values.length === 0) {
+    throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd returned an incomplete program argument list");
+  }
+  return values;
 }
 
 function parseServiceId(serviceId: string): { domain: "system" | `gui/${number}`; label: string } {

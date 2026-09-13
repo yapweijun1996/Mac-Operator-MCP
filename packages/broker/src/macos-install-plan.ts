@@ -284,6 +284,7 @@ export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstal
   const launchd = {
     label: service.label,
     program: service.program,
+    programArguments: [...service.programArguments],
     workingDirectory: service.workingDirectory,
     stdoutPath: service.stdoutPath,
     stderrPath: service.stderrPath,
@@ -364,6 +365,7 @@ export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: M
     fail("SERVICE_MISMATCH", "launchd readback does not match the planned per-user service");
   }
   if (readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
+      !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
       readback.launchd.workingDirectory !== plan.launchd.workingDirectory ||
       readback.launchd.stdoutPath !== plan.launchd.stdoutPath || readback.launchd.stderrPath !== plan.launchd.stderrPath ||
       readback.launchd.runsAsUnprivilegedUser !== true || readback.launchd.usesEnvironmentVariables !== false ||
@@ -403,6 +405,7 @@ export function composeMacOsInstallReadback(
   if (launchd.serviceId !== expectedServiceId || launchd.domain !== plan.domain || launchd.label !== plan.label ||
       launchd.state !== "running" || launchd.type !== "LaunchAgent" || launchd.pid === null ||
       launchd.program !== plan.launchd.program || launchd.plistPath !== expectedPlistReadbackPath(plan) ||
+      !sameStrings(launchd.arguments ?? [], plan.launchd.programArguments) ||
       launchd.pid !== sources.processIdentity.pid) {
     fail("SERVICE_MISMATCH", "launchd readback sources do not match the planned Broker service");
   }
