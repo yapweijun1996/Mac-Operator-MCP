@@ -31,4 +31,11 @@ The Broker prototype owns a SQLite database with full synchronous WAL mode, atom
 
 The Broker verifies the complete audit hash chain at startup and refuses a database whose stored event content no longer matches the chain. An atomic migration preserves legacy revocations while adding `edge_key` support. These checks detect accidental or unsophisticated modification; an unkeyed local chain is not proof against an attacker who can rewrite the database and recompute every hash.
 
+The persistence boundary also publishes `schemas/ledger-records.schema.json`,
+a versioned envelope contract for Request, Approval, Job, and Audit records.
+The verifier compiles it with the MCP contracts, while focused tests reject
+malformed lifecycle values and raw helper authority fields. This is a schema
+and compatibility guard; BrokerStore's runtime validators remain authoritative
+for cross-field target, digest, approval, and state-transition invariants.
+
 `node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent access tests, stronger integrity or external anchoring, general versioned migrations, backup/restore, retention, access control, and disk exhaustion are implemented and tested.

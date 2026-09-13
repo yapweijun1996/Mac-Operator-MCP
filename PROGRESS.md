@@ -1165,3 +1165,16 @@ unknown fields, secret-shaped content, unbounded text, target mismatches, and
 digest mismatches. No MCP route accepts these descriptors and privileged policy
 and adapters remain disabled. Persistence/restart and command-binding tests
 cover the new boundary.
+
+MOP-004 now has a versioned machine-readable ledger contract at
+`schemas/ledger-records.schema.json` for Request, Approval, Job, and Audit
+envelopes. The contract is compiled by `verify:contracts` and has positive and
+negative AJV coverage, including raw helper-authority rejection. It documents
+the persistence boundary without weakening the runtime Broker validators or
+claiming SQLite backup, retention, corruption, or stronger audit anchoring.
+Evidence: `evidence/2026-09-13-ledger-record-contracts.md`.
+
+The ledger-contract revision reran the full suite at 409 tests (406 passed,
+3 opt-in sandbox tests skipped), with typecheck, contract verification,
+dependency audit, and diff checks passing. `verify:contracts` now reports both
+the 44 MCP contracts and the versioned ledger-record schema.

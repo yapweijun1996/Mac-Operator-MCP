@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mac-operator-mcp.local/schemas/ledger-records-v0.1.json",
+  "title": "Mac-Operator-MCP versioned ledger records",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "record_type", "record"],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "record_type": { "enum": ["request", "approval", "job", "audit"] },
+    "record": { "type": "object" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "record_type": { "const": "request" },
+        "record": { "$ref": "#/$defs/request_record" }
+      }
+    },
+    {
+      "properties": {
+        "record_type": { "const": "approval" },
+        "record": { "$ref": "#/$defs/approval_record" }
+      }
+    },
+    {
+      "properties": {
+        "record_type": { "const": "job" },
+        "record": { "$ref": "#/$defs/job_record" }
+      }
+    },
+    {
+      "properties": {
+        "record_type": { "const": "audit" },
+        "record": { "$ref": "#/$defs/audit_record" }
+      }
+    }
+  ],
+  "$defs": {
+    "request_id": { "type": "string", "pattern": "^[A-Za-z0-9._:@/+-]{1,256}$" },
+    "principal_id": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,128}$" },
+    "session_id": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,128}$" },
+    "edge_id": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,128}$" },
+    "tool": { "type": "string", "pattern": "^mac_[a-z0-9_]{1,123}$" },
+    "policy_version": { "type": "string", "pattern": "^policy-[A-Za-z0-9._:-]{1,120}$" },
+    "internal_policy_version": { "type": "string", "pattern": "^(?:policy|internal)-[A-Za-z0-9._:-]{1,120}$" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "idempotency_key": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+    "approval_id": { "type": "string", "pattern": "^approval:[A-Za-z0-9._:-]{1,240}$" },
+    "job_id": { "type": "string", "pattern": "^job:[A-Za-z0-9._-]{1,240}$" },
+    "target_ref": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000]*$" },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "contract_version": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+    "request_state": {
+      "enum": ["RECEIVED", "AUTHORIZED", "DENIED", "INTENT_RECORDED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "VERIFICATION_FAILED", "UNKNOWN"]
+    },
+    "job_state": { "enum": ["queued", "running", "completed", "failed", "cancelled", "unknown"] },
+    "job_result_class": { "enum": ["success", "denied", "failed", "verification_failed", "queued", "accepted", "unknown"] },
+    "bounded_text": { "type": "string", "maxLength": 262144, "pattern": "^[^\\u0000]*$" },
+    "nullable_target": {
+      "anyOf": [{ "$ref": "#/$defs/target_ref" }, { "type": "null" }]
+    },
+    "nullable_timestamp": {
+      "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+    },
+    "nullable_digest": {
+      "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }]
+    },
+    "nullable_id": {
+      "anyOf": [{ "$ref": "#/$defs/request_id" }, { "type": "null" }]
+    },
+    "nullable_approval_id": {
+      "anyOf": [{ "$ref": "#/$defs/approval_id" }, { "type": "null" }]
+    },
+    "nullable_job_id": {
+      "anyOf": [{ "$ref": "#/$defs/job_id" }, { "type": "null" }]
+    },
+    "privileged_payload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "service_id", "action"],
+          "properties": {
+            "operation": { "const": "service_control" },
+            "service_id": { "type": "string", "pattern": "^[A-Za-z0-9._:@/+\\-]{1,255}$" },
+            "action": { "enum": ["start", "stop", "restart", "enable", "disable"] },
+            "expected_state": { "enum": ["running", "stopped", "enabled", "disabled"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "package_id"],
+          "properties": {
+            "operation": { "const": "package_install" },
+            "package_id": { "type": "string", "pattern": "^[A-Za-z0-9._:@/+\\-]{1,255}$" },
+            "version": { "type": "string", "pattern": "^[A-Za-z0-9._:+\\-]{1,128}$" },
+            "source_profile": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation", "action"],
+          "properties": {
+            "operation": { "const": "power" },
+            "action": { "enum": ["reboot", "shutdown"] },
+            "reason": { "type": "string", "maxLength": 200, "pattern": "^[^\\u0000\\r\\n]*$" },
+            "not_before": { "type": "string", "maxLength": 64, "pattern": "^[^\\u0000\\r\\n]*$" }
+          }
+        }
+      ]
+    },
+    "write_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rootId", "path", "bytes", "desiredSha256", "expectedSha256", "createOnly"],
+      "properties": {
+        "rootId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^/[^\\u0000]*$" },
+        "bytes": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "desiredSha256": { "$ref": "#/$defs/digest" },
+        "expectedSha256": { "anyOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "createOnly": { "type": "boolean" },
+        "temporaryName": { "type": "string", "pattern": "^\\.mac-operator-write-[A-Za-z0-9._-]{1,96}$" }
+      }
+    },
+    "process_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pid", "processGroupId", "startTimeMicros", "recordedAtMs", "descendants"],
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1, "maximum": 99999999 },
+        "processGroupId": { "type": "integer", "minimum": 1, "maximum": 99999999 },
+        "startTimeMicros": { "type": "integer", "minimum": 1 },
+        "recordedAtMs": { "$ref": "#/$defs/timestamp" },
+        "descendants": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pid", "startTimeMicros"],
+            "properties": {
+              "pid": { "type": "integer", "minimum": 1, "maximum": 99999999 },
+              "startTimeMicros": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "request_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "edgeId", "principalId", "sessionId", "tool", "policyVersion", "payloadDigest", "mutation", "state", "resultClass", "targetRef", "approvalId", "jobId", "receivedAtMs", "updatedAtMs", "revision"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/request_id" },
+        "edgeId": { "$ref": "#/$defs/edge_id" },
+        "principalId": { "$ref": "#/$defs/principal_id" },
+        "sessionId": { "$ref": "#/$defs/session_id" },
+        "tool": { "$ref": "#/$defs/tool" },
+        "policyVersion": { "$ref": "#/$defs/policy_version" },
+        "payloadDigest": { "$ref": "#/$defs/digest" },
+        "mutation": { "type": "boolean" },
+        "state": { "$ref": "#/$defs/request_state" },
+        "resultClass": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 64 }, { "type": "null" }] },
+        "targetRef": { "$ref": "#/$defs/nullable_target" },
+        "approvalId": { "$ref": "#/$defs/nullable_approval_id" },
+        "jobId": { "$ref": "#/$defs/nullable_job_id" },
+        "receivedAtMs": { "$ref": "#/$defs/timestamp" },
+        "updatedAtMs": { "$ref": "#/$defs/timestamp" },
+        "revision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "approval_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approvalId", "approverPrincipalId", "requestingPrincipalId", "tool", "contractVersion", "targetKind", "targetRef", "payloadDigest", "policyVersion", "approvalClass", "unattended", "issuedAtMs", "expiresAtMs", "useLimit", "usedCount", "lastConsumedAtMs", "lastRequestId", "revokedAtMs", "revocationReason", "revision"],
+      "properties": {
+        "approvalId": { "$ref": "#/$defs/approval_id" },
+        "approverPrincipalId": { "$ref": "#/$defs/principal_id" },
+        "requestingPrincipalId": { "$ref": "#/$defs/principal_id" },
+        "tool": { "$ref": "#/$defs/tool" },
+        "contractVersion": { "$ref": "#/$defs/contract_version" },
+        "targetKind": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._:-]+$" },
+        "targetRef": { "$ref": "#/$defs/target_ref" },
+        "payloadDigest": { "$ref": "#/$defs/digest" },
+        "policyVersion": { "$ref": "#/$defs/policy_version" },
+        "approvalClass": { "enum": ["trusted_write", "trusted_gui", "trusted_profile", "explicit_privileged_policy"] },
+        "unattended": { "type": "boolean" },
+        "issuedAtMs": { "$ref": "#/$defs/timestamp" },
+        "expiresAtMs": { "$ref": "#/$defs/timestamp" },
+        "useLimit": { "const": 1 },
+        "usedCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "lastConsumedAtMs": { "$ref": "#/$defs/nullable_timestamp" },
+        "lastRequestId": { "$ref": "#/$defs/nullable_id" },
+        "revokedAtMs": { "$ref": "#/$defs/nullable_timestamp" },
+        "revocationReason": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Z0-9_:-]+$" }, { "type": "null" }] },
+        "revision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "job_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "ownerPrincipalId", "ownerSessionId", "tool", "targetRef", "policyVersion", "payloadDigest", "idempotencyKey", "state", "resultClass", "createdAtMs", "startedAtMs", "finishedAtMs", "exitCode", "stdout", "stderr", "truncated", "cancelRequested", "revision"],
+      "properties": {
+        "jobId": { "type": "string", "pattern": "^job:[A-Za-z0-9._-]{1,240}$" },
+        "ownerPrincipalId": { "$ref": "#/$defs/principal_id" },
+        "ownerSessionId": { "$ref": "#/$defs/session_id" },
+        "tool": { "$ref": "#/$defs/tool" },
+        "targetRef": { "$ref": "#/$defs/target_ref" },
+        "policyVersion": { "$ref": "#/$defs/policy_version" },
+        "payloadDigest": { "$ref": "#/$defs/digest" },
+        "idempotencyKey": { "$ref": "#/$defs/idempotency_key" },
+        "state": { "$ref": "#/$defs/job_state" },
+        "resultClass": { "$ref": "#/$defs/job_result_class" },
+        "createdAtMs": { "$ref": "#/$defs/timestamp" },
+        "startedAtMs": { "$ref": "#/$defs/nullable_timestamp" },
+        "finishedAtMs": { "$ref": "#/$defs/nullable_timestamp" },
+        "exitCode": { "anyOf": [{ "type": "integer", "minimum": -255, "maximum": 255 }, { "type": "null" }] },
+        "stdout": { "$ref": "#/$defs/bounded_text" },
+        "stderr": { "$ref": "#/$defs/bounded_text" },
+        "truncated": { "type": "boolean" },
+        "cancelRequested": { "type": "boolean" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "writeMetadata": { "$ref": "#/$defs/write_metadata" },
+        "processMetadata": { "$ref": "#/$defs/process_metadata" },
+        "privilegedPayload": { "$ref": "#/$defs/privileged_payload" }
+      }
+    },
+    "audit_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "principalId", "tool", "eventType", "decision", "resultClass", "targetRef", "policyVersion", "evidence", "timestampMs"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/request_id" },
+        "principalId": { "$ref": "#/$defs/principal_id" },
+        "tool": { "type": "string", "pattern": "^(?:mac_[a-z0-9_]{1,123}|internal_[a-z0-9_]{1,123})$" },
+        "eventType": { "enum": ["decision", "intent", "completion"] },
+        "decision": { "enum": ["allow", "deny"] },
+        "resultClass": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Z0-9_:-]+$" },
+        "targetRef": { "$ref": "#/$defs/target_ref" },
+        "policyVersion": { "$ref": "#/$defs/internal_policy_version" },
+        "evidence": { "type": "object", "maxProperties": 64 },
+        "timestampMs": { "$ref": "#/$defs/timestamp" }
+      }
+    }
+  }
+}

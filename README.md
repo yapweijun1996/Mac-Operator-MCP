@@ -20,6 +20,7 @@ See `PROGRESS.md` for current Git evidence, implementation and enablement state,
 - [Tool catalog](TOOL_CATALOG.md)
 - [Tool contract standard](TOOL_CONTRACT_STANDARD.md)
 - [Machine-readable tool contracts](tool-contracts/README.md)
+- [Versioned ledger record contracts](schemas/ledger-records.schema.json)
 - [Epics](EPIC.md)
 - [Roadmap](ROADMAP.md)
 - [Task ledger](TASK.md)

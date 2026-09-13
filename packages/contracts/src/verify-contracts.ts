@@ -20,6 +20,7 @@ const failureSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", 
 const policyDocumentSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", "policy-document.schema.json"), "utf8")) as object;
 const signedPolicyBundleSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", "signed-policy-bundle.schema.json"), "utf8")) as object;
 const approvalIssuanceSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", "approval-issuance.schema.json"), "utf8")) as object;
+const ledgerRecordsSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", "ledger-records.schema.json"), "utf8")) as object;
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validate = ajv.compile(schema);
@@ -27,6 +28,7 @@ ajv.compile(failureSchema);
 ajv.addSchema(policyDocumentSchema);
 ajv.compile(signedPolicyBundleSchema);
 ajv.compile(approvalIssuanceSchema);
+ajv.compile(ledgerRecordsSchema);
 const files = (await readdir(contractsDirectory)).filter((file) => file.startsWith("mac_") && file.endsWith(".json")).sort();
 
 if (files.length !== 44) throw new Error(`Expected 44 tool contracts, found ${files.length}`);
@@ -71,7 +73,7 @@ if (JSON.stringify(expectedNames) !== JSON.stringify(actualNames)) {
   throw new Error("Runtime catalog and materialized contract names differ");
 }
 
-process.stdout.write(`Validated ${files.length} unique tool contracts.\n`);
+process.stdout.write(`Validated ${files.length} unique tool contracts and the versioned ledger-record schema.\n`);
 
 function recursivePropertyNames(schemaValue: unknown): string[] {
   if (schemaValue === null || typeof schemaValue !== "object") return [];
