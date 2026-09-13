@@ -6,7 +6,7 @@ release-gate closure for the complete filesystem/secret boundary.
 - Date: 2026-09-13 (Asia/Kuala_Lumpur)
 - Host profile: macOS 26.2, arm64
 - Node: v25.5.0
-- Source commit: `a8fc40c1fe62855a5bc73131a77b16bc26199665`
+- Source commit: `b7ea5fbae08b177d1dfad66141554f7aadb28e6a`
 - Working tree before this evidence document: clean after the source commit
 - Contract version: `0.1`
 - Policy state: no capability enablement or policy mutation performed
@@ -25,8 +25,9 @@ probe on macOS:
   argv/environment fields;
 - filesystem metadata uses the canonical `/System/Library` root, reads only
   directory metadata, lists at most eight entries, and builds a depth-one tree
-  capped at 24 entries. Content reads are disabled and protected relative
-  zones are denied.
+  capped at 24 entries; a depth-one storage analysis also returns bounded APFS
+  volume identity/capacity and an explicit max-depth truncation warning.
+  Content reads are disabled and protected relative zones are denied.
 
 The test does not open credential stores, read file contents, perform network
 probes, launch children, mutate files, change policy, or install services.
@@ -44,7 +45,7 @@ probes, launch children, mutate files, change policy, or install services.
 ## Source hashes
 
 ```text
-dcd04fad955d5da4df3312d1efe3219c980ca053f26668a0370b64e2367a6b24  packages/broker/src/l0-l1-host-readback.test.ts
+42c82df1deaa32cf641b1f0ece5d80afded46103d9fc94417e93a3c757b3660c  packages/broker/src/l0-l1-host-readback.test.ts
 9e4e5e6746434dbcedae4a1d67f11346f4bda9acb9b0cae2797dd868c5115331  packages/edge/src/jwt-verifier.test.ts
 ```
 

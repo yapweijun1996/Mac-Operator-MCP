@@ -52,12 +52,13 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
-Latest L0/L1 host-readback addendum: source commit `a8fc40c` adds a
+Latest L0/L1 host-readback addendum: source commit `b7ea5fb` adds a
 macOS-only, read-only host probe for bounded system facts, interface state
 with active probes and listener enumeration disabled, redacted process
-inventory/current-process identity, and canonical `/System/Library`
-metadata/list/tree output with content reads disabled and protected relative
-zones denied. The probe performs no mutation, child launch, credential read,
+inventory/current-process identity, canonical `/System/Library`
+metadata/list/tree output, and a depth-limited APFS volume/capacity readback
+with content reads disabled and protected relative zones denied. The probe
+performs no mutation, child launch, credential read,
 policy change, or service install. Focused host test passes 1/1; the full suite
 passes 362 tests (360 passed, 2 opt-in real-sandbox tests skipped), and
 `MOPS_REAL_SANDBOX=1 npm test` passes 362/362. Typecheck, 44-contract

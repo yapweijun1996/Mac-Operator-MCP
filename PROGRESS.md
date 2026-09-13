@@ -6,13 +6,14 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `a8fc40c`.
+Current committed implementation baseline: `b7ea5fb`.
 
-The latest L0/L1 host-readback addendum is `a8fc40c`: a macOS-only,
+The latest L0/L1 host-readback addendum is `b7ea5fb`: a macOS-only,
 read-only test now observes bounded system facts, interface state without
 active probes or listener enumeration, redacted process metadata/current
-process identity, and canonical `/System/Library` metadata/list/tree output
-with content reads disabled and protected relative zones denied. It performs
+process identity, canonical `/System/Library` metadata/list/tree output, and
+depth-limited APFS volume/capacity readback with content reads disabled and
+protected relative zones denied. It performs
 no mutation, child launch, credential read, policy change, or service install.
 The focused host test passes 1/1; the full suite passes 362 tests (360 passed,
 2 opt-in real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes
