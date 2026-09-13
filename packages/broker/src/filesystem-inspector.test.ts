@@ -4,6 +4,7 @@ import { appendFileSync } from "node:fs";
 import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -323,6 +324,48 @@ test("atomic write rejects final symlinks, intermediate escapes, and non-write r
     assert.throws(() => readOnly.planPath(join(directory, "new.txt"), "write"), /outside authorized roots/u);
   } finally {
     await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("generic filesystem tools fail closed on Unix socket entries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-special-"));
+  const socketPath = join(directory, "control.sock");
+  const server = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, () => resolve());
+    });
+    const inspector = new FilesystemInspector([writeRoot(directory)]);
+    const listing = inspector.listPlanned(inspector.planPath(directory, "metadata"), undefined, 32, false);
+    assert.equal(listing.entries.find((entry) => entry.name === "control.sock")?.type, "other");
+    assert.throws(
+      () => inspector.readPlanned(inspector.planPath(socketPath, "content_read"), 0, 16),
+      /escaped its authorized root, type, or volume/u
+    );
+    assert.throws(
+      () => inspector.hashPlanned(inspector.planPath(socketPath, "content_read"), "sha256"),
+      /escaped its authorized root, type, or volume/u
+    );
+    assert.throws(
+      () => inspector.writePlanned(
+        inspector.planPath(socketPath, "write"),
+        Buffer.from("x"),
+        undefined,
+        false,
+        ".mac-operator-write-special"
+      ),
+      /regular file or absent|escaped its authorized root/u
+    );
+  } finally {
+    await new Promise<void>((resolve) => {
+      if (!server.listening) {
+        resolve();
+        return;
+      }
+      server.close(() => resolve());
+    });
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
