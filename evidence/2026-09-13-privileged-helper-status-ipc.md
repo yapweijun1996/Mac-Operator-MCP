@@ -1,8 +1,9 @@
 # Privileged Helper Authenticated Status IPC Evidence
 
 Date: 2026-09-13  
-Source commit: `2240870`  
-Dirty-state: clean at capture  
+Implementation commit: `2240870`  
+Documentation commit: `35aa78e`  
+Dirty-state: clean after documentation commit  
 Host: macOS 26.2 (25C56), arm64  
 Runtime: Node.js v25.5.0  
 Tool contract version: 0.1  
