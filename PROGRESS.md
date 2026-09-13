@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest real Broker task-path addendum: an opt-in Darwin integration now
+exercises the signed `mac_task_run` request through Broker policy admission,
+single-use approval, Job creation, `SandboxExecTaskRunner`, and verified
+completion/readback. `MOPS_REAL_SANDBOX=1 npm test` passes 443/444 with one
+explicit host-boundary/opt-in skip; the focused Broker suite passes 69/69. The
+default policy and production task capability remain disabled while MOP-086
+still lacks the required credential, remount, crash-attribution, and
+production-boundary evidence. Evidence:
+`evidence/2026-09-14-real-broker-task-path.md`.
+
 Latest process-supervisor lifecycle addendum: active runs are now registered
 before the first ownership observation. A synchronous persistence failure can
 therefore terminate and remove its run without leaving a close-time ghost

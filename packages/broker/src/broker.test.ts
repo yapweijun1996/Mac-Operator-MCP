@@ -13,6 +13,7 @@ import { FilesystemInspector } from "./filesystem-inspector.js";
 import { BrokerStore, redactEvidence, type BrokerJob, type JobLease } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
+import { SandboxExecTaskRunner } from "./task-runner.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
 import { UiSnapshotRegistry } from "./ui-inspector.js";
 import type { FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
@@ -1682,6 +1683,79 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
     assert.ok(oversizedJobId);
     assert.equal(store.ownedJob(oversizedJobId, "principal-1")?.state, "failed");
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real macOS Broker task path preserves sandbox, approval, and Job readback", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-broker-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
+    taskRunner: new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      allowedEnvironmentKeys: ["LANG"],
+      isolationProof: { ...testTaskIsolationProof(), evidenceRef: "evidence://real-broker-task" }
+    }),
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["sandbox-readback"] };
+  const request = unsigned({
+    requestId: "task-real-broker",
+    nonce: "task-real-broker-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-real-broker",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (result.ok) {
+      assert.equal((result.data as { profile: string }).profile, "tests.echo");
+      assert.equal((result.data as { stdout: string }).stdout, "sandbox-readback\n");
+      assert.equal(result.verification.status, "verified");
+    }
+    const jobId = store.requestRecord("task-real-broker")?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "completed");
+    assert.deepEqual(store.auditRows()
+      .filter((row) => row.request_id === "task-real-broker")
+      .map((row) => row.event_type), ["decision", "intent", "completion"]);
+  } finally {
+    await broker.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }

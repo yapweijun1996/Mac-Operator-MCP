@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest real Broker task-path addendum: an opt-in Darwin integration exercises
+the signed `mac_task_run` path through policy admission, single-use approval,
+Broker Job linkage, `SandboxExecTaskRunner`, and verified completion/readback.
+`MOPS_REAL_SANDBOX=1 npm test` passes 443/444 with one explicit host-boundary/
+opt-in skip, and the
+focused Broker suite passes 69/69. This is end-to-end experimental evidence;
+the default policy remains disabled and MOP-086 still lacks credential,
+remount, crash-attribution, and production-boundary proof. Evidence:
+`evidence/2026-09-14-real-broker-task-path.md`.
+
 Latest process-supervisor lifecycle addendum: registration now precedes the
 initial ownership callback, so synchronous ownership persistence failure cannot
 leave an active-run entry after capacity is released. Focused Darwin tests pass
