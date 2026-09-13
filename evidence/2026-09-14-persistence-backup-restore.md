@@ -35,15 +35,17 @@ does not select external storage, encryption, or automatic scheduling.
 2. numeric retention and symlink-entry rejection; and
 3. audit-chain modification rejection during restore;
 4. a child process killed after SQLite backup publication, followed by stale
-   temporary-artifact cleanup; and
+   temporary-artifact and WAL/SHM sidecar cleanup; and
 5. two independent Broker processes appending audit events concurrently while
-   preserving the hash chain.
+   preserving the hash chain; and
+6. a simulated `ENOSPC` publication failure mapping to retryable
+   `AUDIT_UNAVAILABLE` without leaving temporary files.
 
-The focused persistence suite passes 31/31 tests after this slice. Full-suite
+The focused persistence suite passes 32/32 tests after this slice. Full-suite
 counts and the exact local commit are recorded in `PROGRESS.md` and
 `VERIFICATION.md` after the final verification run.
 
-The final default suite reports 414 tests: 411 passed, 0 failed, and 3 opt-in
+The final default suite reports 415 tests: 412 passed, 0 failed, and 3 opt-in
 sandbox tests skipped.
 
 ## Remaining acceptance work

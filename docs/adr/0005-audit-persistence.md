@@ -47,10 +47,13 @@ device/inode/size/mtime, refuses an existing destination, and performs final
 integrity readback. `pruneBackups` accepts only the exact generated filename
 shape, retains the newest numeric timestamps, and refuses symlinks, foreign
 owners, unsafe modes, oversized files, and target swaps. These are not MCP
-tools and do not enable backup automation or external storage. A hard-crashed
+tools and do not enable backup automation or external storage. SQLite backup
+WAL/SHM/journal sidecars are removed with the temporary base. A hard-crashed
 backup child is covered by a recovery test: stale hidden temporary artifacts
-are removed only after an age threshold and identity recheck. Broker SQLite
-connections use a bounded busy timeout, and two independent process writers
-have been verified to preserve the audit hash chain under `BEGIN IMMEDIATE`.
+and sidecars are removed only after an age threshold and identity recheck.
+Broker SQLite connections use a bounded busy timeout, and two independent
+process writers have been verified to preserve the audit hash chain under
+`BEGIN IMMEDIATE`. A simulated `ENOSPC` at publication maps to retryable
+`AUDIT_UNAVAILABLE` and leaves no temporary artifacts.
 
 `node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, general versioned migrations, encrypted/Keychain-protected backup storage, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested.

@@ -1190,12 +1190,13 @@ symlink refusal, and modified-audit-chain rejection. Typecheck, contract
 verification, dependency audit, and diff checks are recorded after the local
 commit. Evidence: `evidence/2026-09-14-persistence-backup-restore.md`.
 
-The persistence crash/concurrency addendum adds stale temporary-artifact
-cleanup after a hard-killed backup child, a five-second SQLite busy timeout,
+The persistence crash/concurrency addendum adds stale temporary-artifact and
+SQLite WAL/SHM/journal sidecar cleanup after a hard-killed backup child, a
+five-second SQLite busy timeout, a simulated ENOSPC retryable-failure test,
 and a two-process audit-writer test that preserves the hash chain. The focused
-Broker persistence suite now passes 31/31; disk-quota/exhaustion behavior and
-explicit single-owner service policy remain open. Evidence:
+Broker persistence suite now passes 32/32; real disk-quota/exhaustion behavior
+and explicit single-owner service policy remain open. Evidence:
 `evidence/2026-09-14-persistence-backup-restore.md`.
 
-The crash/concurrency addendum reran the full suite at 414 tests (411 passed,
+The crash/concurrency addendum reran the full suite at 415 tests (412 passed,
 3 opt-in sandbox tests skipped), with no failures.

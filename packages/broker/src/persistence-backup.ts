@@ -6,7 +6,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 
 const BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite$/u;
-const BACKUP_TEMP_NAME_PATTERN = /^\.broker-backup-(\d{1,16})-[a-f0-9]{24}\.sqlite\.tmp-[a-f0-9]{24}$/u;
+const BACKUP_TEMP_NAME_PATTERN = /^\.broker-backup-(\d{1,16})-[a-f0-9]{24}\.sqlite\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?$/u;
 const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 const MAX_BACKUP_FILES = 256;
 const MAX_BACKUP_TEMP_FILES = 256;
@@ -56,7 +56,6 @@ export async function createBrokerBackup(
   const name = `broker-backup-${nowMs}-${randomBytes(12).toString("hex")}.sqlite`;
   const destination = join(protectedDirectory, name);
   const temporary = join(protectedDirectory, `.${name}.tmp-${randomBytes(12).toString("hex")}`);
-  let moved = false;
   try {
     await backup(source, temporary, { rate: 64 });
     options.faultInjector?.("after_backup");
@@ -65,7 +64,7 @@ export async function createBrokerBackup(
     const verified = await inspectSnapshot(temporary);
     options.faultInjector?.("after_temp_verify");
     await rename(temporary, destination);
-    moved = true;
+    await cleanupTemporaryBackupFiles(temporary);
     await syncDirectory(protectedDirectory);
     const final = await inspectSnapshot(destination);
     if (final.sha256 !== verified.sha256 || final.auditTailHash !== verified.auditTailHash) {
@@ -77,7 +76,7 @@ export async function createBrokerBackup(
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence backup could not be created", true);
   } finally {
-    if (!moved) await unlink(temporary).catch(() => undefined);
+    await cleanupTemporaryBackupFiles(temporary).catch(() => undefined);
   }
 }
 
@@ -189,6 +188,25 @@ async function cleanupStaleBackupTemps(
   }
   if (removed.length > 0) await syncDirectory(directory);
   return removed;
+}
+
+async function cleanupTemporaryBackupFiles(basePath: string): Promise<void> {
+  for (const suffix of ["", "-wal", "-shm", "-journal"] as const) {
+    const path = `${basePath}${suffix}`;
+    let stat: Awaited<ReturnType<typeof lstat>>;
+    try {
+      stat = await lstat(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || !isOwnedByCurrentUser(stat.uid)) {
+      throw new BrokerError("CONFLICT", "Broker backup temporary target is unsafe", true);
+    }
+    const current = await lstat(path);
+    if (!sameFileIdentity(stat, current)) throw new BrokerError("CONFLICT", "Broker backup temporary target changed", true);
+    await unlink(path);
+  }
 }
 
 interface ProtectedFile {

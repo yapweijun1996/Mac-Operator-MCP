@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 
 test("BrokerStore migrates the legacy revocation constraint without losing data", async () => {
@@ -206,6 +206,7 @@ test("BrokerStore creates an owner-only backup and restores it with integrity re
     assert.equal(manifest.auditEventCount, 1);
     assert.notEqual(manifest.auditTailHash, "0".repeat(64));
     assert.equal((await lstat(manifest.path)).mode & 0o777, 0o600);
+    assert.equal((await readdir(directory)).some((name) => name.includes(".tmp-")), false);
 
     store.close();
     const restoredPath = join(directory, "restored.sqlite");
@@ -263,14 +264,13 @@ test("BrokerStore removes stale backup temporaries left by a hard-crashed backup
     const result = await waitForChild(child);
     assert.equal(result.code, null);
     assert.equal(result.signal, "SIGKILL");
-    const temporaryName = (await readdir(directory)).find((name) => /^\.broker-backup-.*\.sqlite\.tmp-[a-f0-9]{24}$/u.test(name));
-    assert.ok(temporaryName, "the hard-crashed process should leave a temporary artifact");
-    const temporaryPath = join(directory, temporaryName);
+    const temporaryNames = (await readdir(directory)).filter((name) => /^\.broker-backup-.*\.sqlite\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?$/u.test(name));
+    assert.notEqual(temporaryNames.length, 0, "the hard-crashed process should leave a temporary artifact");
     const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    await utimes(temporaryPath, stale, stale);
+    for (const name of temporaryNames) await utimes(join(directory, name), stale, stale);
     const pruned = await store.pruneBackups(directory, 2);
-    assert.equal(pruned.removed.includes(temporaryPath), true);
-    await assert.rejects(lstat(temporaryPath), { code: "ENOENT" });
+    assert.equal(temporaryNames.every((name) => pruned.removed.includes(join(directory, name))), true);
+    for (const name of temporaryNames) await assert.rejects(lstat(join(directory, name)), { code: "ENOENT" });
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     store.close();
@@ -329,6 +329,33 @@ test("BrokerStore serializes concurrent process writers without breaking the aud
     for (const child of children) {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore maps a simulated ENOSPC publication failure to retryable audit unavailability", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-enospc-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    await assert.rejects(
+      store.backupTo(directory, {
+        faultInjector: (point) => {
+          if (point !== "after_temp_verify") return;
+          const error = Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
+          throw error;
+        }
+      }),
+      (error: unknown) => {
+        assert.equal(error instanceof BrokerError, true);
+        assert.equal((error as BrokerError).errorClass, "AUDIT_UNAVAILABLE");
+        assert.equal((error as BrokerError).retryable, true);
+        return true;
+      }
+    );
+    assert.equal((await readdir(directory)).some((name) => name.includes(".tmp-")), false);
+  } finally {
+    store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
