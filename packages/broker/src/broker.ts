@@ -32,6 +32,7 @@ import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-
 import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
+import { ProcessSupervisor } from "./process-supervisor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
@@ -53,6 +54,8 @@ export interface BrokerOptions {
   now?: () => number;
   filesystemExecutor?: FilesystemExecutor;
   processExecutor?: ProcessExecutor;
+  /** Shared Broker-owned OS process authority for default adapters. */
+  processSupervisor?: ProcessSupervisor;
   serviceInspector?: ServiceInspector;
   logInspector?: LogInspector;
   gitInspector?: GitInspector;
@@ -79,6 +82,7 @@ export class Broker {
   private readonly now: () => number;
   private readonly filesystemExecutor: FilesystemExecutor;
   private readonly processExecutor: ProcessExecutor;
+  private readonly processSupervisor: ProcessSupervisor;
   private readonly serviceInspector: ServiceInspector;
   private readonly logInspector: LogInspector;
   private readonly gitInspector: GitInspector;
@@ -104,18 +108,25 @@ export class Broker {
     this.now = options.now ?? Date.now;
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();
     this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
-    this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector();
-    this.logInspector = options.logInspector ?? new MacLogInspector();
-    this.gitInspector = options.gitInspector ?? new GitStatusInspector();
-    this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector();
-    this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl();
-    this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl();
-    this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl();
+    this.processSupervisor = options.processSupervisor ?? new ProcessSupervisor({
+      maxConcurrent: 16,
+      allowedEnvironmentKeys: [
+        "DOCKER_CONFIG", "DOCKER_HOST", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM", "GIT_NO_REPLACE_OBJECTS", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "HOME"
+      ]
+    });
+    this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector(this.processSupervisor);
+    this.logInspector = options.logInspector ?? new MacLogInspector(this.processSupervisor);
+    this.gitInspector = options.gitInspector ?? new GitStatusInspector(this.processSupervisor);
+    this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector(this.processSupervisor);
+    this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl(this.processSupervisor);
+    this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl(this.processSupervisor);
+    this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl(this.processSupervisor);
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
-    this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
-    this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl();
-    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector);
-    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl();
+    this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl({ supervisor: this.processSupervisor });
+    this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl(this.processSupervisor);
+    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, this.processSupervisor);
+    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(this.processSupervisor);
     this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
@@ -131,7 +142,7 @@ export class Broker {
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closing = true;
-    const resources = [this.filesystemExecutor, this.processExecutor, this.taskRunner];
+    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.taskRunner];
     this.closePromise = (async () => {
       let firstError: unknown;
       for (const resource of resources) {

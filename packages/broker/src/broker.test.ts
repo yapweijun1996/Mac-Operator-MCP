@@ -16,6 +16,7 @@ import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
 import { UiSnapshotRegistry } from "./ui-inspector.js";
 import type { FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
+import { ProcessSupervisor } from "./process-supervisor.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -99,6 +100,38 @@ test("authorized health request succeeds and writes decision plus completion aud
     assert.equal(context.store.requestRecord("request-1")?.state, "SUCCEEDED");
     assert.equal(context.store.auditRows().length, 2);
   } finally { await context.close(); }
+});
+
+test("Broker close drains its shared OS process supervisor", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-process-close-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const supervisor = new ProcessSupervisor({ maxConcurrent: 1, pollIntervalMs: 5, terminationGraceMs: 50 });
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: testKeyring(randomBytes(32)),
+    processSupervisor: supervisor,
+    now: () => NOW
+  });
+  try {
+    const running = supervisor.run({
+      executable: "/bin/sleep",
+      args: ["10"],
+      cwd: process.cwd(),
+      timeoutMs: 5_000,
+      outputCapBytes: 100
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await broker.close();
+    const result = await running;
+    assert.equal(result.resultClass, "CANCELLED");
+    assert.equal(result.terminationObserved, true);
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("mac_process_list returns bounded redacted process metadata", async () => {
