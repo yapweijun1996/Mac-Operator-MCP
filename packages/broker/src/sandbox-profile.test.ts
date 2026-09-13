@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -145,13 +145,22 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-real-"));
   const root = await realpath(directory);
   await writeFile(join(root, "fixture.txt"), "fixture", { mode: 0o600 });
+  await mkdir(join(root, "nested"), { mode: 0o700 });
+  await writeFile(join(root, "nested", ".env"), "synthetic-secret=redacted", { mode: 0o600 });
+  await symlink("/private/etc/passwd", join(root, "passwd-link"));
   const runner = new SandboxExecTaskRunner({
     enabled: true,
     hostEvidenceAccepted: true,
     isolationProof: proof()
   });
   const previousCanary = process.env.MOP_CONTROLLER_SECRET;
+  const previousHome = process.env.HOME;
+  const previousSshAgent = process.env.SSH_AUTH_SOCK;
+  const previousAwsProfile = process.env.AWS_PROFILE;
   process.env.MOP_CONTROLLER_SECRET = "synthetic-controller-canary";
+  process.env.HOME = "/synthetic/controller-home";
+  process.env.SSH_AUTH_SOCK = "/synthetic/ssh-agent.sock";
+  process.env.AWS_PROFILE = "synthetic-profile";
   try {
     const canary = await runner.run({
       ...resolvedProfile(root),
@@ -159,11 +168,11 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
       process: {
         ...resolvedProfile(root).process,
         executable: "/bin/bash",
-        args: ["-c", "printf '%s:%s:%s' \"${MOP_CONTROLLER_SECRET-unset}\" \"$(test -r /private/etc/passwd && echo leaked || echo denied)\" \"$(test -r ./fixture.txt && echo allowed || echo denied)\"; printf created > ./created.txt"]
+        args: ["-c", "printf '%s:%s:%s:%s:%s:%s:%s' \"${MOP_CONTROLLER_SECRET-unset}\" \"${HOME-unset}\" \"${SSH_AUTH_SOCK-unset}\" \"${AWS_PROFILE-unset}\" \"$(test -r /private/etc/passwd && echo leaked || echo denied)\" \"$(test -r ./fixture.txt && echo allowed || echo denied)\" \"$(test -r ./nested/.env && echo leaked || echo denied)\"; test -r ./passwd-link && printf ':link-leaked' || printf ':link-denied'; printf created > ./created.txt"]
       }
     }, { timeoutMs: 2_000, shouldCancel: () => false });
     assert.equal(canary.resultClass, "SUCCEEDED");
-    assert.equal(canary.stdout, "unset:denied:allowed");
+    assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied");
     assert.equal(await readFile(join(root, "created.txt"), "utf8"), "created");
 
     const network = await runner.run({
@@ -180,6 +189,43 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
   } finally {
     if (previousCanary === undefined) delete process.env.MOP_CONTROLLER_SECRET;
     else process.env.MOP_CONTROLLER_SECRET = previousCanary;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousSshAgent === undefined) delete process.env.SSH_AUTH_SOCK;
+    else process.env.SSH_AUTH_SOCK = previousSshAgent;
+    if (previousAwsProfile === undefined) delete process.env.AWS_PROFILE;
+    else process.env.AWS_PROFILE = previousAwsProfile;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real macOS sandbox runner maps active cancellation to process-group termination", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-cancel-"));
+  const root = await realpath(directory);
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof()
+  });
+  let cancelled = false;
+  const timer = setTimeout(() => { cancelled = true; }, 100);
+  try {
+    const result = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.cancel",
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/bin/sleep",
+        args: ["5"]
+      }
+    }, { timeoutMs: 2_000, shouldCancel: () => cancelled });
+    assert.equal(result.state, "cancelled");
+    assert.equal(result.resultClass, "CANCELLED");
+    assert.equal(result.verification.status, "failed");
+  } finally {
+    clearTimeout(timer);
     await rm(directory, { recursive: true, force: true });
   }
 });
