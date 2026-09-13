@@ -14,9 +14,23 @@ export interface PeerCredentialVerifier {
   verify(socket: Socket): PeerCredentials;
 }
 
+export interface PeerProcessIdentity {
+  pid: number;
+  startTimeMicros: number;
+}
+
+export interface PeerCredentialPolicy {
+  expectedUid: number;
+  expectedGid?: number;
+  allowedProcessIds?: ReadonlySet<number>;
+  /** Optional PID plus start-time binding that resists PID reuse. */
+  allowedProcessIdentity?: PeerProcessIdentity;
+}
+
 interface NativePeerCredentials {
   nativeNapiVersion: number;
   getPeerCredentials(descriptor: number): unknown;
+  getProcessIdentity(pid: number): unknown;
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
@@ -48,14 +62,11 @@ let loadedNativeArtifact: NativeAdapterArtifact | undefined;
 export class MacOsPeerCredentialVerifier implements PeerCredentialVerifier {
   private readonly native: NativePeerCredentials;
 
-  constructor(private readonly policy: {
-    expectedUid: number;
-    expectedGid?: number;
-    allowedProcessIds?: ReadonlySet<number>;
-  }) {
+  constructor(private readonly policy: PeerCredentialPolicy) {
     if (!Number.isSafeInteger(policy.expectedUid) || policy.expectedUid < 0) {
       throw new Error("Expected Edge user ID is invalid");
     }
+    validateAllowedProcessIdentity(policy.allowedProcessIdentity);
     this.native = loadNativePeerAdapter();
   }
 
@@ -65,7 +76,7 @@ export class MacOsPeerCredentialVerifier implements PeerCredentialVerifier {
       throw new Error("Accepted IPC socket descriptor is unavailable");
     }
     const credentials = parsePeerCredentials(this.native.getPeerCredentials(descriptor as number));
-    authorizePeerCredentials(credentials, this.policy);
+    authorizePeerCredentials(credentials, this.policy, (pid) => this.native.getProcessIdentity(pid));
     return credentials;
   }
 }
@@ -143,9 +154,33 @@ export function parsePeerCredentials(value: unknown): PeerCredentials {
   return { uid: record.uid as number, gid: record.gid as number, pid: record.pid as number };
 }
 
+export function parsePeerProcessIdentity(value: unknown): PeerProcessIdentity {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Peer process identity is malformed");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(record.pid) || (record.pid as number) < 1 || (record.pid as number) > 99_999_999 ||
+    !Number.isSafeInteger(record.parentPid) || (record.parentPid as number) < 1 || (record.parentPid as number) > 99_999_999 ||
+    !Number.isSafeInteger(record.startTimeMicros) || (record.startTimeMicros as number) < 1
+  ) {
+    throw new Error("Peer process identity is malformed");
+  }
+  return { pid: record.pid as number, startTimeMicros: record.startTimeMicros as number };
+}
+
+export function capturePeerProcessIdentity(pid: number): PeerProcessIdentity {
+  if (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999) {
+    throw new Error("Peer process ID is invalid");
+  }
+  const native = loadNativePeerAdapter();
+  return parsePeerProcessIdentity(native.getProcessIdentity(pid));
+}
+
 export function authorizePeerCredentials(
   credentials: PeerCredentials,
-  policy: { expectedUid: number; expectedGid?: number; allowedProcessIds?: ReadonlySet<number> }
+  policy: PeerCredentialPolicy,
+  readProcessIdentity?: (pid: number) => unknown
 ): void {
   if (credentials.uid !== policy.expectedUid) throw new Error("IPC peer user is not authorized");
   if (policy.expectedGid !== undefined && credentials.gid !== policy.expectedGid) {
@@ -153,5 +188,28 @@ export function authorizePeerCredentials(
   }
   if (policy.allowedProcessIds && !policy.allowedProcessIds.has(credentials.pid)) {
     throw new Error("IPC peer process is not authorized");
+  }
+  const expectedIdentity = policy.allowedProcessIdentity;
+  if (expectedIdentity !== undefined) {
+    if (credentials.pid !== expectedIdentity.pid || readProcessIdentity === undefined) {
+      throw new Error("IPC peer process identity is not authorized");
+    }
+    let observed: PeerProcessIdentity;
+    try {
+      observed = parsePeerProcessIdentity(readProcessIdentity(credentials.pid));
+    } catch {
+      throw new Error("IPC peer process identity is unavailable");
+    }
+    if (observed.pid !== expectedIdentity.pid || observed.startTimeMicros !== expectedIdentity.startTimeMicros) {
+      throw new Error("IPC peer process identity is not authorized");
+    }
+  }
+}
+
+function validateAllowedProcessIdentity(identity: PeerProcessIdentity | undefined): void {
+  if (identity === undefined) return;
+  if (!Number.isSafeInteger(identity.pid) || identity.pid < 1 || identity.pid > 99_999_999 ||
+      !Number.isSafeInteger(identity.startTimeMicros) || identity.startTimeMicros < 1) {
+    throw new Error("Allowed peer process identity is invalid");
   }
 }

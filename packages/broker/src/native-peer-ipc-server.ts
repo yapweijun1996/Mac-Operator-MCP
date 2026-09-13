@@ -6,6 +6,7 @@ import {
   authorizePeerCredentials,
   loadNativePeerAdapter,
   parsePeerCredentials,
+  type PeerCredentialPolicy,
   type PeerCredentials
 } from "./peer-credentials.js";
 
@@ -13,6 +14,7 @@ interface NativeUnixPeerAdapter {
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
+  getProcessIdentity(pid: number): unknown;
 }
 
 export interface NativePeerIpcServerOptions {
@@ -24,11 +26,7 @@ export interface NativePeerIpcServerOptions {
   onError?: (error: unknown) => void;
 }
 
-export interface NativePeerPolicy {
-  expectedUid: number;
-  expectedGid?: number;
-  allowedProcessIds?: ReadonlySet<number>;
-}
+export type NativePeerPolicy = PeerCredentialPolicy;
 
 /**
  * Shared macOS-native UDS accept boundary for Broker-owned local channels.
@@ -106,7 +104,11 @@ export class MacOsNativePeerIpcServer {
   private handleAccepted(accepted: AcceptedUnixClient): void {
     let socket: Socket | undefined;
     try {
-      authorizePeerCredentials(accepted.credentials, this.options.peerPolicy);
+      authorizePeerCredentials(
+        accepted.credentials,
+        this.options.peerPolicy,
+        (pid) => this.native.getProcessIdentity(pid)
+      );
       const acceptedSocket = new Socket({ fd: accepted.fd, readable: true, writable: true });
       socket = acceptedSocket;
       this.sockets.add(acceptedSocket);

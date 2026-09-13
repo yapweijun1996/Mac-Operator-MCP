@@ -9,6 +9,7 @@ import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
+import { capturePeerProcessIdentity } from "./peer-credentials.js";
 import { MacOsNativeBrokerIpcServer } from "./native-ipc-server.js";
 import { BrokerStore } from "./persistence.js";
 import { createMacOsNativeBrokerRuntime } from "./runtime.js";
@@ -118,6 +119,44 @@ test("native IPC drops a denied peer before parsing or auditing", async () => {
     socketPath,
     broker,
     peerPolicy: { expectedUid: process.getuid?.() ?? -1, allowedProcessIds: new Set([process.pid + 1]) }
+  });
+  await server.listen();
+  try {
+    try {
+      assert.equal(await send(socketPath, "not-json\n"), "");
+    } catch (error) {
+      assert.match(String((error as NodeJS.ErrnoException).code), /^(?:EPIPE|ECONNRESET)$/u);
+    }
+    assert.deepEqual(store.auditRows(), []);
+  } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native IPC rejects a PID identity replacement before parsing or auditing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-identity-deny-"));
+  const socketPath = join(directory, "broker.sock");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const now = Date.now();
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: new EdgeKeyring([{
+      edgeId: "edge-1", keyId: "edge-key-1", key: randomBytes(32),
+      notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+    }]),
+    now: () => now
+  });
+  const identity = capturePeerProcessIdentity(process.pid);
+  const server = new MacOsNativeBrokerIpcServer({
+    socketPath,
+    broker,
+    peerPolicy: {
+      expectedUid: process.getuid?.() ?? -1,
+      allowedProcessIdentity: { ...identity, startTimeMicros: identity.startTimeMicros + 1 }
+    }
   });
   await server.listen();
   try {

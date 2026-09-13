@@ -4,7 +4,12 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { loadNativePeerAdapter, MacOsPeerCredentialVerifier, validateNativeAdapterPath } from "./peer-credentials.js";
+import {
+  capturePeerProcessIdentity,
+  loadNativePeerAdapter,
+  MacOsPeerCredentialVerifier,
+  validateNativeAdapterPath
+} from "./peer-credentials.js";
 
 test("macOS peer credentials bind an accepted UDS connection to uid, gid, and pid", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-peer-"));
@@ -21,6 +26,66 @@ test("macOS peer credentials bind an accepted UDS connection to uid, gid, and pi
     const server = createServer((socket) => {
       try {
         assert.deepEqual(verifier.verify(socket), { uid, gid, pid: process.pid });
+        socket.end();
+        server.close((error) => error ? reject(error) : resolve());
+      } catch (error) {
+        reject(error);
+      }
+    });
+    server.once("error", reject);
+    server.listen(socketPath, () => createConnection(socketPath));
+  });
+  try {
+    await observed;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("macOS peer credentials bind the accepted PID to its start-time identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-peer-identity-"));
+  const socketPath = join(directory, "peer.sock");
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("POSIX identity is unavailable");
+  const identity = capturePeerProcessIdentity(process.pid);
+  const verifier = new MacOsPeerCredentialVerifier({
+    expectedUid: uid,
+    allowedProcessIdentity: identity
+  });
+  const observed = new Promise<void>((resolve, reject) => {
+    const server = createServer((socket) => {
+      try {
+        assert.deepEqual(verifier.verify(socket), { uid, gid: process.getgid?.(), pid: process.pid });
+        socket.end();
+        server.close((error) => error ? reject(error) : resolve());
+      } catch (error) {
+        reject(error);
+      }
+    });
+    server.once("error", reject);
+    server.listen(socketPath, () => createConnection(socketPath));
+  });
+  try {
+    await observed;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("macOS peer credentials reject a PID whose start-time identity does not match", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-peer-identity-deny-"));
+  const socketPath = join(directory, "peer.sock");
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("POSIX identity is unavailable");
+  const identity = capturePeerProcessIdentity(process.pid);
+  const verifier = new MacOsPeerCredentialVerifier({
+    expectedUid: uid,
+    allowedProcessIdentity: { ...identity, startTimeMicros: identity.startTimeMicros + 1 }
+  });
+  const observed = new Promise<void>((resolve, reject) => {
+    const server = createServer((socket) => {
+      try {
+        assert.throws(() => verifier.verify(socket), /process identity is not authorized/u);
         socket.end();
         server.close((error) => error ? reject(error) : resolve());
       } catch (error) {
