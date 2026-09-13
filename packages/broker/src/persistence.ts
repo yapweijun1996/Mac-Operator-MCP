@@ -275,6 +275,12 @@ export class BrokerStore {
         accepted_at_ms INTEGER NOT NULL,
         expires_at_ms INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS authority_control_nonces (
+        nonce TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE,
+        accepted_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS privileged_helper_nonces (
         nonce TEXT PRIMARY KEY,
         request_id TEXT NOT NULL UNIQUE,
@@ -982,11 +988,13 @@ export class BrokerStore {
     });
   }
 
-  revoke(kind: RevocationKind, subjectId: string, reason: string, nowMs = Date.now()): void {
+  revoke(kind: RevocationKind, subjectId: string, reason: string, nowMs = Date.now(), auditRequestId?: string): void {
     if (!REVOCATION_KINDS.includes(kind) || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(subjectId) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
-        !Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+        !Number.isSafeInteger(nowMs) || nowMs < 0 ||
+        (auditRequestId !== undefined && !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(auditRequestId))) throw malformedJob();
     this.runTransaction(() => {
-      const requestId = `authority-revoke-${kind}-${sha256(canonicalJson({ kind, subjectId, reason, nowMs })).slice(0, 32)}`;
+      const requestId = auditRequestId ?? `authority-revoke-${kind}-${sha256(canonicalJson({ kind, subjectId, reason, nowMs })).slice(0, 32)}`;
+      const reasonDigest = sha256(reason);
       const auditBase = {
         requestId,
         principalId: "local-authority-operator",
@@ -994,7 +1002,7 @@ export class BrokerStore {
         decision: "allow" as const,
         targetRef: `revocation:${kind}:${subjectId}`,
         policyVersion: "internal-authority-0.1",
-        evidence: { kind, subjectId, reason },
+        evidence: { kind, subjectId, reasonDigest },
         timestampMs: nowMs
       };
       this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
@@ -1044,6 +1052,34 @@ export class BrokerStore {
       }
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Policy signer command admission could not be persisted");
+    }
+  }
+
+  admitAuthorityControlCommand(input: {
+    requestId: string;
+    nonce: string;
+    acceptedAtMs: number;
+    expiresAtMs: number;
+  }): void {
+    if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(input.requestId) ||
+        !/^[A-Za-z0-9._:-]{16,128}$/u.test(input.nonce) ||
+        !Number.isSafeInteger(input.acceptedAtMs) || input.acceptedAtMs < 0 ||
+        !Number.isSafeInteger(input.expiresAtMs) || input.expiresAtMs <= input.acceptedAtMs) {
+      throw new BrokerError("PRECONDITION_FAILED", "Authority control command admission is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        this.database.prepare("DELETE FROM authority_control_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        this.database.prepare(
+          "INSERT INTO authority_control_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
+        ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
+      });
+    } catch (error) {
+      if (String(error).includes("UNIQUE constraint failed")) {
+        throw new BrokerError("REPLAY_DENIED", "Authority control command nonce or request ID was already accepted");
+      }
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Authority control command admission could not be persisted");
     }
   }
 
@@ -1139,11 +1175,19 @@ export class BrokerStore {
     return cancelled;
   }
 
-  setSwitch(name: SwitchName, disabled: boolean, reason: string, nowMs = Date.now()): void {
+  setSwitch(name: SwitchName, disabled: boolean, reason: string, nowMs = Date.now(), expectedDisabled?: boolean, auditRequestId?: string): void {
     if (!SWITCH_NAMES.includes(name) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
-        !Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+        !Number.isSafeInteger(nowMs) || nowMs < 0 ||
+        (expectedDisabled !== undefined && typeof expectedDisabled !== "boolean") ||
+        (auditRequestId !== undefined && !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(auditRequestId))) throw malformedJob();
     this.runTransaction(() => {
-      const requestId = `authority-switch-${name}-${sha256(canonicalJson({ name, disabled, reason, nowMs })).slice(0, 32)}`;
+      const existing = this.database.prepare("SELECT disabled FROM switches WHERE name = ?").get(name) as { disabled: number } | undefined;
+      const currentDisabled = existing?.disabled === 1;
+      if (expectedDisabled !== undefined && currentDisabled !== expectedDisabled) {
+        throw new BrokerError("CONFLICT", "Kill-switch state changed since the authority command was issued");
+      }
+      const requestId = auditRequestId ?? `authority-switch-${name}-${sha256(canonicalJson({ name, disabled, reason, nowMs })).slice(0, 32)}`;
+      const reasonDigest = sha256(reason);
       const auditBase = {
         requestId,
         principalId: "local-authority-operator",
@@ -1151,7 +1195,7 @@ export class BrokerStore {
         decision: "allow" as const,
         targetRef: `switch:${name}`,
         policyVersion: "internal-authority-0.1",
-        evidence: { name, disabled, reason },
+        evidence: { name, disabled, reasonDigest },
         timestampMs: nowMs
       };
       this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });

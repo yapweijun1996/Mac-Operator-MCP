@@ -1,0 +1,215 @@
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { connect } from "node:net";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { BrokerStore, type SwitchName, type RevocationKind } from "./persistence.js";
+import {
+  AuthorityControlIpcServer,
+  signAuthorityControlCommand,
+  type AuthorityControlIpcResponse,
+  type AuthorityControlOperation,
+  type UnsignedAuthorityControlCommand
+} from "./authority-control-ipc.js";
+
+const NOW = 1_700_000_000_000;
+
+function command(
+  operation: AuthorityControlOperation,
+  sequence: number,
+  fields: Partial<Omit<UnsignedAuthorityControlCommand, "protocolVersion" | "requestId" | "nonce" | "nonceExpiresAtMs" | "timestampMs" | "operation">> = {}
+): UnsignedAuthorityControlCommand {
+  return {
+    protocolVersion: "0.1",
+    requestId: `authority-command-${sequence}`,
+    nonce: `authority-nonce-${String(sequence).padStart(16, "0")}`,
+    nonceExpiresAtMs: NOW + 30_000,
+    timestampMs: NOW,
+    operation,
+    reason: "TEST_OPERATOR_ACTION",
+    ...fields
+  };
+}
+
+async function sendCommand(socketPath: string, payload: unknown): Promise<AuthorityControlIpcResponse> {
+  return new Promise((resolvePromise, reject) => {
+    const socket = connect(socketPath);
+    const chunks: Buffer[] = [];
+    socket.once("error", reject);
+    socket.on("data", (chunk) => {
+      chunks.push(chunk);
+      const combined = Buffer.concat(chunks);
+      const newline = combined.indexOf(0x0a);
+      if (newline === -1) return;
+      socket.destroy();
+      try {
+        resolvePromise(JSON.parse(combined.subarray(0, newline).toString("utf8")) as AuthorityControlIpcResponse);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    socket.on("close", () => {
+      if (chunks.length === 0) reject(new Error("Authority control IPC closed without a response"));
+    });
+    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+  });
+}
+
+test("authority control IPC authenticates, persists replay, and applies bounded operator actions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "ac-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const socketPath = join(directory, "a.sock");
+  const authenticationKey = randomBytes(32);
+  let store = new BrokerStore(databasePath);
+  const server = new AuthorityControlIpcServer({
+    socketPath,
+    store,
+    authenticationKey,
+    peerPolicy: currentProcessPeerPolicy(),
+    now: () => NOW
+  });
+  try {
+    store.createJob({
+      jobId: "job:authority-control",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task:test",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "authority-control-job",
+      createdAtMs: NOW
+    });
+    await server.listen();
+
+    const disable = command("set_switch", 1, {
+      switchName: "process" as SwitchName,
+      disabled: true,
+      expectedDisabled: false
+    });
+    const disableResponse = await sendCommand(socketPath, signAuthorityControlCommand(disable, authenticationKey));
+    assert.deepEqual(disableResponse, { ok: true, operation: "set_switch", switch_name: "process", disabled: true });
+    assert.equal(store.isSwitchDisabled("process"), true);
+    assert.equal(store.ownedJob("job:authority-control", "principal-1")?.state, "cancelled");
+
+    const replay = await sendCommand(socketPath, signAuthorityControlCommand(disable, authenticationKey));
+    assert.equal(replay.ok, false);
+    if (!replay.ok) assert.equal(replay.result_class, "REPLAY_DENIED");
+
+    const wrongProof = signAuthorityControlCommand(command("revoke", 2, {
+      revocationKind: "session" as RevocationKind,
+      subjectId: "session-1"
+    }), randomBytes(32));
+    const wrongResponse = await sendCommand(socketPath, wrongProof);
+    assert.equal(wrongResponse.ok, false);
+    if (!wrongResponse.ok) assert.equal(wrongResponse.result_class, "AUTH_INVALID");
+
+    const enable = command("set_switch", 3, {
+      switchName: "process" as SwitchName,
+      disabled: false,
+      expectedDisabled: true
+    });
+    const enableResponse = await sendCommand(socketPath, signAuthorityControlCommand(enable, authenticationKey));
+    assert.deepEqual(enableResponse, { ok: true, operation: "set_switch", switch_name: "process", disabled: false });
+    assert.equal(store.isSwitchDisabled("process"), false);
+
+    const revoke = command("revoke", 4, {
+      revocationKind: "session" as RevocationKind,
+      subjectId: "session-1"
+    });
+    const revokeResponse = await sendCommand(socketPath, signAuthorityControlCommand(revoke, authenticationKey));
+    assert.deepEqual(revokeResponse, { ok: true, operation: "revoke", revocation_kind: "session", subject_id: "session-1" });
+    assert.equal(store.isRevoked("session", "session-1"), true);
+    const authorityRows = store.auditRows().filter((row) =>
+      row.tool === "internal_authority_switch" || row.tool === "internal_authority_revoke"
+    );
+    assert.equal(authorityRows.filter((row) => row.tool === "internal_authority_switch").length, 4);
+    assert.equal(authorityRows.filter((row) => row.tool === "internal_authority_revoke").length, 2);
+    assert.equal(new Set(authorityRows.map((row) => row.request_id)).has(disable.requestId), true);
+    assert.equal(new Set(authorityRows.map((row) => row.request_id)).has(revoke.requestId), true);
+    for (const row of authorityRows) {
+      const evidence = JSON.parse(String(row.evidence_json)) as Record<string, unknown>;
+      assert.equal("reason" in evidence, false);
+      assert.match(String(evidence.reasonDigest), /^[a-f0-9]{64}$/u);
+    }
+
+    const stale = command("set_switch", 5, {
+      switchName: "process" as SwitchName,
+      disabled: true,
+      expectedDisabled: true
+    });
+    const staleResponse = await sendCommand(socketPath, signAuthorityControlCommand(stale, authenticationKey));
+    assert.equal(staleResponse.ok, false);
+    if (!staleResponse.ok) assert.equal(staleResponse.result_class, "CONFLICT");
+    assert.equal(store.isSwitchDisabled("process"), false);
+
+    await server.close();
+    store.close();
+    store = new BrokerStore(databasePath);
+    const reopenedServer = new AuthorityControlIpcServer({
+      socketPath,
+      store,
+      authenticationKey,
+      peerPolicy: currentProcessPeerPolicy(),
+      now: () => NOW
+    });
+    try {
+      await reopenedServer.listen();
+      const replayAfterRestart = await sendCommand(socketPath, signAuthorityControlCommand(enable, authenticationKey));
+      assert.equal(replayAfterRestart.ok, false);
+      if (!replayAfterRestart.ok) assert.equal(replayAfterRestart.result_class, "REPLAY_DENIED");
+    } finally {
+      await reopenedServer.close();
+    }
+  } finally {
+    await server.close().catch(() => undefined);
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("authority control IPC drops a denied peer before parsing or auditing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "acd-"));
+  const socketPath = join(directory, "a.sock");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const server = new AuthorityControlIpcServer({
+    socketPath,
+    store,
+    authenticationKey: randomBytes(32),
+    peerPolicy: deniedPeerPolicy(),
+    now: () => NOW
+  });
+  try {
+    await server.listen();
+    await new Promise<void>((resolvePromise, reject) => {
+      const socket = connect(socketPath);
+      socket.once("error", (error: NodeJS.ErrnoException) => {
+        if (error.code === "EPIPE" || error.code === "ECONNRESET") resolvePromise();
+        else reject(error);
+      });
+      socket.once("close", () => resolvePromise());
+      socket.on("connect", () => socket.write("not-json\n"));
+    });
+    assert.deepEqual(store.auditRows(), []);
+    assert.equal(store.isSwitchDisabled("global"), false);
+  } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function currentProcessPeerPolicy(): { expectedUid: number; expectedGid: number; allowedProcessIds: ReadonlySet<number> } {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) throw new Error("POSIX identity is unavailable");
+  return { expectedUid: uid, expectedGid: gid, allowedProcessIds: new Set([process.pid]) };
+}
+
+function deniedPeerPolicy(): { expectedUid: number; allowedProcessIds: ReadonlySet<number> } {
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("POSIX identity is unavailable");
+  return { expectedUid: uid, allowedProcessIds: new Set([process.pid + 1]) };
+}
