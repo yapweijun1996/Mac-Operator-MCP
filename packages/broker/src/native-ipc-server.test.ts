@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
@@ -112,8 +113,11 @@ test("native IPC accepts a separately spawned Edge bound to its PID start-time i
   const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-cross-process-"));
   const socketPath = join(directory, "broker.sock");
   const readyPath = join(directory, "ready");
+  const keyPath = join(directory, "edge.key");
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
+  await writeFile(keyPath, key, { mode: 0o600 });
   const now = Date.now();
   const broker = new Broker({
     store,
@@ -126,19 +130,23 @@ test("native IPC accepts a separately spawned Edge bound to its PID start-time i
   });
   const childScript = [
     'import { createConnection } from "node:net";',
-    'import { stat } from "node:fs/promises";',
-    'const [socketPath, readyPath] = process.argv.slice(1);',
+    'import { readFile, stat } from "node:fs/promises";',
+    'const [socketPath, readyPath, keyPath, contractsModule] = process.argv.slice(1);',
+    'const { signRequest, verifyBrokerResponse } = await import(contractsModule);',
     'const deadline = Date.now() + 5000;',
     'while (true) { try { await stat(readyPath); break; } catch { if (Date.now() >= deadline) process.exit(2); await new Promise((resolve) => setTimeout(resolve, 10)); } }',
+    'const key = await readFile(keyPath);',
+    'const now = Date.now();',
+    'const request = signRequest({ protocolVersion: "0.1", requestId: "cross-process-request", contractVersion: "0.1", tool: "mac_health", arguments: {}, principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes: ["mac.control.read"], issuedAtMs: now - 1000, expiresAtMs: now + 60000, edgeId: "edge-1" }, timestampMs: now, nonce: "cross-process-nonce", policyAudience: "mac-operator-broker", policyVersion: "policy-0.1", authenticationKeyId: "edge-key-1" }, key);',
     'const socket = createConnection(socketPath);',
     'let response = "";',
     'socket.setEncoding("utf8");',
     'socket.on("data", (chunk) => { response += chunk; });',
     'socket.on("error", () => process.exit(3));',
-    'socket.on("end", () => { process.stdout.write(response); });',
-    'socket.on("connect", () => socket.end("not-json\\n"));'
+    'socket.on("end", () => { try { const envelope = JSON.parse(response); if (!verifyBrokerResponse(request, envelope, key)) process.exit(4); process.stdout.write(JSON.stringify(envelope.response)); } catch { process.exit(5); } });',
+    'socket.on("connect", () => socket.end(JSON.stringify(request) + "\\n"));'
   ].join("\n");
-  const child = spawn(process.execPath, ["--input-type=module", "-e", childScript, socketPath, readyPath], {
+  const child = spawn(process.execPath, ["--input-type=module", "-e", childScript, socketPath, readyPath, keyPath, pathToFileURL(join(repositoryRoot, "packages/contracts/dist/index.js")).href], {
     cwd: "/",
     env: { PATH: process.env.PATH ?? "" },
     stdio: ["ignore", "pipe", "pipe"]
@@ -160,7 +168,10 @@ test("native IPC accepts a separately spawned Edge bound to its PID start-time i
   try {
     await writeFile(readyPath, "ready\n", { mode: 0o600 });
     const output = await collectChildOutput(child, 5_000);
-    assert.match(output, /AUTH_INVALID/u);
+    const result = JSON.parse(output) as { ok: boolean; tool: string; result_class: string };
+    assert.equal(result.ok, true);
+    assert.equal(result.tool, "mac_health");
+    assert.equal(result.result_class, "SUCCEEDED");
   } finally {
     if (!child.killed && child.exitCode === null) child.kill("SIGKILL");
     await server.close();
