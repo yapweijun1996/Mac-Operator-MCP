@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `f76e8a0`.
+Current committed implementation baseline: `9c48359`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -88,6 +88,19 @@ identity. The fixture is accepted and reaches the bounded JSON handler, while
 the same boundary rejects substituted identities before parsing. Full
 regression is 300/302 with two opt-in sandbox tests skipped; the real sandbox
 smoke is 7/7. Evidence: `evidence/2026-09-13-native-peer-process-identity.md`.
+
+The latest lifecycle addendum is `9c48359`: the native peer server now checks
+the captured PID/start-time identity before listener creation and on a bounded
+unref'd monitor. If the Edge exits or the PID is replaced, the listener and
+accepted sockets are closed, the socket path is removed, and the explicit
+production runtime callback durably revokes that Edge in the Broker. New work
+is rejected and active authority polling cannot publish a late success. A
+separately spawned `/bin/sleep` fixture proves identity-loss detection and
+socket removal; the Broker test proves the redacted revocation audit pair and
+stable `REVOKED` response. Full regression is 302/304 with two opt-in sandbox
+tests skipped; the real sandbox smoke is 7/7. This remains local lifecycle
+evidence, not installed launchd restart/readback or signed caller provenance.
+Evidence: `evidence/2026-09-13-native-peer-process-identity.md`.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 
@@ -270,7 +283,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 293 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 302 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.

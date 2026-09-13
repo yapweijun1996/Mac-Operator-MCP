@@ -188,6 +188,19 @@ caller-identity evidence rather than installed launchd, signed provenance, or
 Edge restart/revocation evidence. Evidence:
 `evidence/2026-09-13-native-peer-process-identity.md`.
 
+Latest native Edge-lifecycle addendum: commit `9c48359` checks the captured
+PID/start-time identity before listener creation and on a bounded unref'd
+monitor. Identity loss closes the listener and accepted sockets, removes the
+socket path, and invokes the production runtime hook that durably revokes the
+exact Edge in the Broker; queued/new authority is denied and active polling
+cannot publish a late success. A separately spawned `/bin/sleep` fixture proves
+the loss path, durable revocation, and `ENOENT` socket removal. Focused
+IPC/peer tests pass 13/13; the full regression passes 302/304 with two opt-in
+sandbox tests skipped, and the real sandbox smoke remains 7/7. This is local
+lifecycle evidence only; installed launchd startup/readback, signed caller
+provenance, Keychain distribution, and remote issuer propagation remain open.
+Evidence: `evidence/2026-09-13-native-peer-process-identity.md`.
+
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
 
 Latest lifecycle addendum: commit `10ef33a` records 214 passing tests and adds a fail-closed local Broker runtime boundary with ordered Broker-IPC/operator-channel startup, reverse cleanup, explicit recovery after cleanup failure, serialized lifecycle calls, idempotent close, and duplicate-channel rejection. The source evidence is `evidence/2026-09-13-local-runtime-lifecycle.md`; installed launchd startup, code signing, Keychain distribution, native caller identity, policy loading, store ownership, and production capability enablement remain open.
