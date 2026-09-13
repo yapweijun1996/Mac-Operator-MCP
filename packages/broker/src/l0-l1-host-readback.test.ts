@@ -25,6 +25,9 @@ test("real macOS L0/L1 readback stays metadata-only and bounded", (t) => {
   assert.equal(network.listeners.length, 0);
   assert.match(network.warnings[0] ?? "", /no active network probe/u);
   assert.ok(network.interfaces.every((item) => item.name.length <= 128 && item.addresses.length <= 32));
+  const listenerStatus = inspectNetwork(true);
+  assert.ok(listenerStatus.listeners.length <= 256);
+  assert.match(listenerStatus.warnings.join(" "), /Listener metadata is unavailable|active network probe/u);
 
   const inventory = inspectProcesses(16, "pid");
   assert.ok(inventory.processes.length <= 16);
