@@ -6,7 +6,13 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `f24b506`.
+Current committed implementation baseline: `ee6d37b`.
+
+The latest compatibility addendum is `ee6d37b`: separately authenticated
+privileged-helper commands now carry and validate the shared contract version;
+the value is included in the complete HMAC proof and must match before replay
+admission or dispatch. The helper remains disabled and no privileged action was
+run. Evidence: `evidence/2026-09-13-helper-contract-version.md`.
 
 The latest security addendum is `f24b506`: host-only uninstall coordination now
 requires global kill-switch disable and selected Edge revocation through the

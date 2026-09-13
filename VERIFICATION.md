@@ -36,7 +36,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 | VT-PRIV-01 | Helper exposes no arbitrary root | T-018 | MOP-060, MOP-061 | Schema fuzz, caller spoof, operation bypass tests | L5 | BLOCKED — proposed helper IPC now authenticates the OS peer before parsing, binds HMAC commands/responses to a full command digest, persists helper nonce/request replay admission, rejects raw executable/argument fields, dispatches only three operation names, and bounds/redacts postcondition evidence; caller-spoof, privileged packaging/signing, real adapters, crash recovery, and independent review remain |
 | VT-POL-01 | Policy integrity/versioning | T-019 | MOP-080, MOP-084 | Invalid config, downgrade, atomic reload and rollback tests | Local | OPEN — schema/signature/tamper/downgrade/transactional activation/restart matching/explicit rollback/version-binding, protected signer-file loading with per-key digest binding, bounded overlapping signer validity windows, durable activation/restore/reload/rollback, audited key-specific revocation, replay-bound HMAC operator UDS, separate replay-bound Authority Control IPC with native peer denial and expected-state switch preconditions, and legacy revocation migration pass; installed startup, protected key distribution, native caller/process identity packaging, general migrations, crash injection, and cross-runtime canonicalization remain |
 | VT-DOS-01 | Resource bounds | T-020 | MOP-017, MOP-070 | Rate, output, disk, depth, timeout and concurrency tests | Release | OPEN — filesystem worker concurrency, V8 memory/stack settings, empty environment, output caps, deadline/cancellation, bounded detached process-group plus root/descendant identity drain/capacity tests pass; local post-auth Edge fixed-window rate limits pass; shared durable/session limits, disk/depth budgets, kernel-level cancellation and general jobs remain |
-| VT-COMP-01 | Version negotiation fails safely | T-021 | MOP-081 | Edge/Broker/helper compatibility matrix | Local/Remote/L5 | OPEN — local Broker capability readback now binds protocol/contract versions and Edge fails closed on missing or mismatched enabled-tool versions; installed, remote, helper, upgrade/rollback, and cross-runtime compatibility evidence remains |
+| VT-COMP-01 | Version negotiation fails safely | T-021 | MOP-081 | Edge/Broker/helper compatibility matrix | Local/Remote/L5 | OPEN — Broker capability readback and the separately authenticated helper command now bind protocol/contract versions, and Edge/helper fail closed on mismatch; installed, remote, helper packaging, upgrade/rollback, and cross-runtime compatibility evidence remains |
 | VT-OPS-01 | Disable/uninstall removes authority | T-022 | MOP-071, MOP-087 | Revocation, service removal and readback procedure | Release | OPEN — host-only uninstall coordination now requires global kill-switch disable and Edge revocation readback before plist/launchd removal and rechecks authority afterward; temporary-root and callback tests pass, while installed authority-channel packaging, Developer ID/notarization, native identity, live launchd disable/uninstall, key cleanup, and final host readback remain |
 
 ## Release gates
@@ -51,6 +51,15 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 - Release gate: exact revision has no unresolved P0/P1 or High/Critical threat in affected boundaries.
 
 ## Current evidence
+
+Latest helper compatibility addendum: source commit `ee6d37b` binds the shared
+contract version into the HMAC-protected privileged-helper command envelope.
+Parsing rejects missing or mismatched versions before replay admission or
+dispatch, while the Broker factory derives the version from the approved
+contract binding. The focused helper suite passes 7/7 and the full suite passes
+328 tests (326 passed, 2 opt-in real-sandbox tests skipped). Evidence:
+`evidence/2026-09-13-helper-contract-version.md`. The helper remains disabled;
+installed/remote negotiation, packaging, and L5 review remain open.
 
 Latest uninstall authority addendum: source commit `f24b506` adds a host-only
 coordinator that disables the global kill switch and revokes the selected Edge

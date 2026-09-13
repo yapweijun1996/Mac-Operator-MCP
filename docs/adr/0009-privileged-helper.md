@@ -13,6 +13,12 @@ The command carries only the normalized target, the digest of Broker-validated a
 
 The repository currently provides the protocol, peer/authentication boundary, durable nonce adapter, bounded response validation, explicit handler-map validation, a Broker-owned command factory that binds signed commands to persisted approved running Jobs, and a fail-closed default adapter. No real root process, privileged command, package installer, service mutation, reboot, launchd registration, signing, or production enablement is included.
 
+Revision `ee6d37b` additionally binds the shared contract version into the
+HMAC-protected helper command. The parser and Broker factory reject a stale or
+mismatched contract before replay admission or dispatch; this improves local
+compatibility evidence without accepting the helper or enabling privileged
+operations.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
