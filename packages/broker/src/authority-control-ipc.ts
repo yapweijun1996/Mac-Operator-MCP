@@ -1,16 +1,18 @@
-import { chmod, unlink } from "node:fs/promises";
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { createServer, type Server, type Socket } from "node:net";
-import { BrokerError, canonicalJson, type ErrorClass } from "@mac-operator/contracts";
+import { lstat, realpath, chmod, unlink } from "node:fs/promises";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
 import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
 
 const AUTHORITY_CONTROL_DOMAIN = "mac-operator-authority-control-v0.1\0";
+const AUTHORITY_CONTROL_RESPONSE_DOMAIN = "mac-operator-authority-control-response-v0.1\0";
 const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
 const REVOCATION_KINDS: readonly RevocationKind[] = ["principal", "session", "edge", "edge_key", "approval_key", "policy_signer"];
 
-export type AuthorityControlOperation = "set_switch" | "revoke";
+export type AuthorityControlOperation = "set_switch" | "revoke" | "read";
 
 export interface UnsignedAuthorityControlCommand {
   protocolVersion: "0.1";
@@ -32,8 +34,20 @@ export interface SignedAuthorityControlCommand extends UnsignedAuthorityControlC
 }
 
 export type AuthorityControlIpcResponse =
-  | { ok: true; operation: AuthorityControlOperation; switch_name?: SwitchName; disabled?: boolean; revocation_kind?: RevocationKind; subject_id?: string }
-  | { ok: false; result_class: ErrorClass; error: { message: string; retryable: boolean } };
+  | { ok: true; operation: AuthorityControlOperation; switch_name?: SwitchName; disabled?: boolean; revocation_kind?: RevocationKind; subject_id?: string; revoked?: boolean; responseProof: string }
+  | { ok: false; result_class: ErrorClass; error: { message: string; retryable: boolean }; responseProof: string };
+
+type AuthorityControlSuccessResponse = Extract<AuthorityControlIpcResponse, { ok: true }>;
+
+export interface AuthorityControlIpcClientOptions {
+  socketPath: string;
+  authenticationKey: Buffer;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  maxRequestAgeMs?: number;
+  allowedClockSkewMs?: number;
+  now?: () => number;
+}
 
 export interface AuthorityControlIpcServerOptions {
   socketPath: string;
@@ -147,7 +161,7 @@ export class AuthorityControlIpcServer {
       if (total > this.maxRequestBytes) {
         handled = true;
         socket.pause();
-        writeAuthorityControlResponse(socket, failure("OUTPUT_LIMIT", "Authority control IPC request exceeded the byte limit"));
+        writeAuthorityControlResponse(socket, failure("OUTPUT_LIMIT", "Authority control IPC request exceeded the byte limit", false, undefined, this.options.authenticationKey));
         return;
       }
       chunks.push(chunk);
@@ -157,9 +171,10 @@ export class AuthorityControlIpcServer {
       handled = true;
       socket.pause();
       let response: AuthorityControlIpcResponse;
+      let command: UnsignedAuthorityControlCommand | undefined;
       try {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
-        const command = authenticateAuthorityControlCommand(
+        command = authenticateAuthorityControlCommand(
           raw,
           this.options.authenticationKey,
           this.now(),
@@ -172,12 +187,12 @@ export class AuthorityControlIpcServer {
           acceptedAtMs: this.now(),
           expiresAtMs: command.nonceExpiresAtMs
         });
-        response = this.execute(command);
+        response = signAuthorityControlResponse(this.execute(command), command, this.options.authenticationKey);
       } catch (error) {
         const brokerError = error instanceof BrokerError
           ? error
           : new BrokerError("PRECONDITION_FAILED", "Authority control command is invalid");
-        response = failure(brokerError.errorClass, brokerError.message, brokerError.retryable);
+        response = failure(brokerError.errorClass, brokerError.message, brokerError.retryable, command, this.options.authenticationKey);
       }
       writeAuthorityControlResponse(socket, response);
     });
@@ -197,15 +212,30 @@ export class AuthorityControlIpcServer {
         ok: true,
         operation: command.operation,
         switch_name: command.switchName!,
-        disabled: command.disabled!
+        disabled: command.disabled!,
+        responseProof: ""
       };
     }
-    this.options.store.revoke(command.revocationKind!, command.subjectId!, command.reason, command.timestampMs, command.requestId);
+    if (command.operation === "revoke") {
+      this.options.store.revoke(command.revocationKind!, command.subjectId!, command.reason, command.timestampMs, command.requestId);
+      return {
+        ok: true,
+        operation: command.operation,
+        revocation_kind: command.revocationKind!,
+        subject_id: command.subjectId!,
+        responseProof: ""
+      };
+    }
+    if (command.switchName !== undefined) {
+      return { ok: true, operation: command.operation, switch_name: command.switchName, disabled: this.options.store.isSwitchDisabled(command.switchName), responseProof: "" };
+    }
     return {
       ok: true,
       operation: command.operation,
       revocation_kind: command.revocationKind!,
-      subject_id: command.subjectId!
+      subject_id: command.subjectId!,
+      revoked: this.options.store.isRevoked(command.revocationKind!, command.subjectId!),
+      responseProof: ""
     };
   }
 }
@@ -217,6 +247,191 @@ export function signAuthorityControlCommand(
   validateUnsignedAuthorityControlCommand(command);
   if (authenticationKey.byteLength < 32) throw new Error("Authority control IPC key must contain at least 32 bytes");
   return { ...command, authenticationProof: authorityControlCommandProof(command, authenticationKey) };
+}
+
+export function authenticateAuthorityControlResponse(
+  raw: unknown,
+  command: UnsignedAuthorityControlCommand,
+  authenticationKey: Buffer
+): AuthorityControlIpcResponse {
+  if (authenticationKey.byteLength < 32 || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new BrokerError("AUTH_INVALID", "Authority control response is invalid");
+  }
+  const record = raw as Record<string, unknown>;
+  if (typeof record.responseProof !== "string" || !/^[a-f0-9]{64}$/u.test(record.responseProof)) {
+    throw new BrokerError("AUTH_INVALID", "Authority control response proof is malformed");
+  }
+  const body = { ...record };
+  delete body.responseProof;
+  if (!safeEqualHex(record.responseProof, authorityControlResponseProof(command, body, authenticationKey))) {
+    throw new BrokerError("AUTH_INVALID", "Authority control response authentication failed");
+  }
+  if (record.ok === true) {
+    if (!["set_switch", "revoke", "read"].includes(record.operation as string)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Authority control response operation is invalid");
+    }
+    return record as unknown as AuthorityControlIpcResponse;
+  }
+  if (record.ok !== false || typeof record.result_class !== "string" || record.error === null ||
+      typeof record.error !== "object" || typeof (record.error as Record<string, unknown>).message !== "string" ||
+      typeof (record.error as Record<string, unknown>).retryable !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "Authority control response is malformed");
+  }
+  return record as unknown as AuthorityControlIpcResponse;
+}
+
+export class AuthorityControlIpcClient {
+  private readonly timeoutMs: number;
+  private readonly maxResponseBytes: number;
+  private readonly maxRequestAgeMs: number;
+  private readonly allowedClockSkewMs: number;
+  private readonly now: () => number;
+
+  constructor(private readonly options: AuthorityControlIpcClientOptions) {
+    if (!isAbsolute(options.socketPath) || resolve(options.socketPath) !== options.socketPath || options.socketPath.includes("\0")) {
+      throw new Error("Authority control IPC socket path must be canonical");
+    }
+    if (options.authenticationKey.byteLength < 32) throw new Error("Authority control IPC key must contain at least 32 bytes");
+    this.timeoutMs = options.timeoutMs ?? 15_000;
+    this.maxResponseBytes = options.maxResponseBytes ?? 64 * 1024;
+    this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
+    this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
+    this.now = options.now ?? Date.now;
+    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 600_000 ||
+        !Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes < 256 || this.maxResponseBytes > 1_048_576) {
+      throw new Error("Authority control IPC client limits are invalid");
+    }
+  }
+
+  async execute(command: UnsignedAuthorityControlCommand, signal?: AbortSignal): Promise<AuthorityControlSuccessResponse> {
+    validateUnsignedAuthorityControlCommand(command);
+    const signed = signAuthorityControlCommand(command, this.options.authenticationKey);
+    const identity = await validateAuthorityControlSocketTarget(this.options.socketPath);
+    const raw = await this.exchange(`${JSON.stringify(signed)}\n`, command, identity, signal);
+    const response = authenticateAuthorityControlResponse(raw, command, this.options.authenticationKey);
+    if (!response.ok) throw new BrokerError(response.result_class, response.error.message, response.error.retryable);
+    return response as AuthorityControlSuccessResponse;
+  }
+
+  async setSwitch(
+    switchName: SwitchName,
+    disabled: boolean,
+    expectedDisabled: boolean,
+    reason: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const response = await this.execute(this.command({ operation: "set_switch", switchName, disabled, expectedDisabled, reason }), signal);
+    if (response.operation !== "set_switch" || response.switch_name !== switchName || response.disabled !== disabled) {
+      throw new BrokerError("AUTH_INVALID", "Authority control switch response does not match the command");
+    }
+  }
+
+  async revoke(kind: RevocationKind, subjectId: string, reason: string, signal?: AbortSignal): Promise<void> {
+    const response = await this.execute(this.command({ operation: "revoke", revocationKind: kind, subjectId, reason }), signal);
+    if (response.operation !== "revoke" || response.revocation_kind !== kind || response.subject_id !== subjectId) {
+      throw new BrokerError("AUTH_INVALID", "Authority control revocation response does not match the command");
+    }
+  }
+
+  async readSwitch(switchName: SwitchName, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.execute(this.command({ operation: "read", switchName, reason: "authority-readback" }), signal);
+    if (response.operation !== "read" || response.switch_name !== switchName || typeof response.disabled !== "boolean") {
+      throw new BrokerError("AUTH_INVALID", "Authority control switch readback does not match the command");
+    }
+    return response.disabled;
+  }
+
+  async readRevocation(kind: RevocationKind, subjectId: string, signal?: AbortSignal): Promise<boolean> {
+    const response = await this.execute(this.command({ operation: "read", revocationKind: kind, subjectId, reason: "authority-readback" }), signal);
+    if (response.operation !== "read" || response.revocation_kind !== kind || response.subject_id !== subjectId || typeof response.revoked !== "boolean") {
+      throw new BrokerError("AUTH_INVALID", "Authority control revocation readback does not match the command");
+    }
+    return response.revoked;
+  }
+
+  private command(fields: Pick<UnsignedAuthorityControlCommand, "operation" | "reason" | "switchName" | "disabled" | "expectedDisabled" | "revocationKind" | "subjectId">): UnsignedAuthorityControlCommand {
+    const nowMs = this.now();
+    const nonce = `authority-client-nonce:${randomBytes(24).toString("hex")}`;
+    return {
+      protocolVersion: "0.1",
+      requestId: `authority-client-request:${randomBytes(18).toString("hex")}`,
+      nonce,
+      nonceExpiresAtMs: nowMs + this.maxRequestAgeMs,
+      timestampMs: nowMs,
+      ...fields
+    };
+  }
+
+  private exchange(
+    body: string,
+    command: UnsignedAuthorityControlCommand,
+    expectedIdentity: { dev: number; ino: number },
+    signal: AbortSignal | undefined
+  ): Promise<unknown> {
+    return new Promise((resolvePromise, rejectPromise) => {
+      const socket = createConnection(this.options.socketPath);
+      let settled = false;
+      let total = 0;
+      const chunks: Buffer[] = [];
+      const finish = (error?: Error, value?: unknown) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener("abort", onAbort);
+        socket.destroy();
+        if (error) rejectPromise(error);
+        else resolvePromise(value);
+      };
+      const onAbort = () => finish(new BrokerError("CANCELLED", "Authority control IPC request was cancelled"));
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) return onAbort();
+      socket.setTimeout(this.timeoutMs, () => finish(new BrokerError("TIMEOUT", "Authority control IPC request timed out", true)));
+      socket.on("connect", () => {
+        void lstat(this.options.socketPath).then((after) => {
+          if (!after.isSocket() || after.isSymbolicLink() || after.dev !== expectedIdentity.dev || after.ino !== expectedIdentity.ino) {
+            finish(new BrokerError("AUTH_INVALID", "Authority control IPC target changed while connecting"));
+            return;
+          }
+          socket.write(body);
+        }).catch(() => finish(new BrokerError("AUTH_INVALID", "Authority control IPC target could not be revalidated")));
+      });
+      socket.on("data", (chunk: Buffer) => {
+        total += chunk.byteLength;
+        if (total > this.maxResponseBytes) {
+          finish(new BrokerError("OUTPUT_LIMIT", "Authority control IPC response exceeded the byte limit"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      socket.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8").trim();
+        try { finish(undefined, JSON.parse(text) as unknown); }
+        catch { finish(new BrokerError("AUTH_INVALID", "Authority control IPC response is not valid JSON")); }
+      });
+      socket.on("error", () => finish(new BrokerError("EXECUTION_FAILED", "Authority control IPC transport failed", true)));
+    });
+  }
+}
+
+export async function validateAuthorityControlSocketTarget(socketPath: string): Promise<{ dev: number; ino: number }> {
+  if (!isAbsolute(socketPath) || resolve(socketPath) !== socketPath || socketPath.includes("\0")) {
+    throw new BrokerError("AUTH_INVALID", "Authority control IPC socket path is not canonical");
+  }
+  const parentPath = dirname(socketPath);
+  const parent = await lstat(parentPath);
+  const currentUid = process.getuid?.();
+  if (!parent.isDirectory() || parent.isSymbolicLink() || currentUid === undefined || parent.uid !== currentUid || (parent.mode & 0o077) !== 0) {
+    throw new BrokerError("AUTH_INVALID", "Authority control IPC socket directory failed ownership or permission checks");
+  }
+  const canonicalParent = await realpath(parentPath).catch(() => { throw new BrokerError("AUTH_INVALID", "Authority control IPC socket directory could not be canonicalized"); });
+  const canonicalParentStat = await lstat(canonicalParent);
+  if (!canonicalParentStat.isDirectory() || canonicalParentStat.dev !== parent.dev || canonicalParentStat.ino !== parent.ino) {
+    throw new BrokerError("AUTH_INVALID", "Authority control IPC socket directory target changed while canonicalizing");
+  }
+  const socket = await lstat(socketPath);
+  if (!socket.isSocket() || socket.isSymbolicLink() || currentUid === undefined || socket.uid !== currentUid || (socket.mode & 0o177) !== 0) {
+    throw new BrokerError("AUTH_INVALID", "Authority control IPC target failed ownership or permission checks");
+  }
+  return { dev: socket.dev, ino: socket.ino };
 }
 
 export function authorityControlCommandProof(
@@ -319,6 +534,15 @@ export function validateUnsignedAuthorityControlCommand(command: UnsignedAuthori
     }
     return;
   }
+  if (command.operation === "read") {
+    const switchRead = command.switchName !== undefined && SWITCH_NAMES.includes(command.switchName) && command.revocationKind === undefined && command.subjectId === undefined;
+    const revocationRead = command.switchName === undefined && REVOCATION_KINDS.includes(command.revocationKind as RevocationKind) &&
+      typeof command.subjectId === "string" && /^[A-Za-z0-9._:@/-]{1,256}$/u.test(command.subjectId);
+    if ((!switchRead && !revocationRead) || command.disabled !== undefined || command.expectedDisabled !== undefined) {
+      throw new BrokerError("PRECONDITION_FAILED", "Authority control read command is malformed");
+    }
+    return;
+  }
   throw new BrokerError("PRECONDITION_FAILED", "Authority control operation is unsupported");
 }
 
@@ -331,6 +555,39 @@ function writeAuthorityControlResponse(socket: Socket, response: AuthorityContro
   if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
 }
 
-function failure(errorClass: ErrorClass, message: string, retryable = false): AuthorityControlIpcResponse {
-  return { ok: false, result_class: errorClass, error: { message, retryable } };
+function signAuthorityControlResponse(
+  response: AuthorityControlIpcResponse,
+  command: UnsignedAuthorityControlCommand,
+  authenticationKey: Buffer
+): AuthorityControlIpcResponse {
+  const body = { ...response };
+  delete (body as { responseProof?: string }).responseProof;
+  return { ...body, responseProof: authorityControlResponseProof(command, body, authenticationKey) } as AuthorityControlIpcResponse;
+}
+
+function authorityControlResponseProof(
+  command: UnsignedAuthorityControlCommand,
+  body: object,
+  authenticationKey: Buffer
+): string {
+  if (authenticationKey.byteLength < 32) throw new Error("Authority control IPC key must contain at least 32 bytes");
+  return createHmac("sha256", authenticationKey)
+    .update(AUTHORITY_CONTROL_RESPONSE_DOMAIN, "utf8")
+    .update(sha256(canonicalJson(command)), "utf8")
+    .update(canonicalJson(body), "utf8")
+    .digest("hex");
+}
+
+function failure(
+  errorClass: ErrorClass,
+  message: string,
+  retryable = false,
+  command: UnsignedAuthorityControlCommand | undefined,
+  authenticationKey: Buffer
+): AuthorityControlIpcResponse {
+  const body = { ok: false as const, result_class: errorClass, error: { message, retryable } };
+  const responseProof = command === undefined
+    ? createHmac("sha256", authenticationKey).update(AUTHORITY_CONTROL_RESPONSE_DOMAIN, "utf8").update("invalid-command", "utf8").update(canonicalJson(body), "utf8").digest("hex")
+    : authorityControlResponseProof(command, body, authenticationKey);
+  return { ...body, responseProof };
 }

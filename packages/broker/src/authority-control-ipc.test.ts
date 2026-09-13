@@ -7,7 +7,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { BrokerStore, type SwitchName, type RevocationKind } from "./persistence.js";
 import {
+  AuthorityControlIpcClient,
   AuthorityControlIpcServer,
+  authenticateAuthorityControlResponse,
   signAuthorityControlCommand,
   type AuthorityControlIpcResponse,
   type AuthorityControlOperation,
@@ -90,7 +92,17 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
       expectedDisabled: false
     });
     const disableResponse = await sendCommand(socketPath, signAuthorityControlCommand(disable, authenticationKey));
-    assert.deepEqual(disableResponse, { ok: true, operation: "set_switch", switch_name: "process", disabled: true });
+    assert.equal(disableResponse.ok, true);
+    if (disableResponse.ok) {
+      assert.equal(disableResponse.operation, "set_switch");
+      assert.equal(disableResponse.switch_name, "process");
+      assert.equal(disableResponse.disabled, true);
+      assert.match(disableResponse.responseProof, /^[a-f0-9]{64}$/u);
+      assert.throws(
+        () => authenticateAuthorityControlResponse({ ...disableResponse, responseProof: "0".repeat(64) }, disable, authenticationKey),
+        (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "AUTH_INVALID"
+      );
+    }
     assert.equal(store.isSwitchDisabled("process"), true);
     assert.equal(store.ownedJob("job:authority-control", "principal-1")?.state, "cancelled");
 
@@ -112,7 +124,12 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
       expectedDisabled: true
     });
     const enableResponse = await sendCommand(socketPath, signAuthorityControlCommand(enable, authenticationKey));
-    assert.deepEqual(enableResponse, { ok: true, operation: "set_switch", switch_name: "process", disabled: false });
+    assert.equal(enableResponse.ok, true);
+    if (enableResponse.ok) {
+      assert.equal(enableResponse.operation, "set_switch");
+      assert.equal(enableResponse.switch_name, "process");
+      assert.equal(enableResponse.disabled, false);
+    }
     assert.equal(store.isSwitchDisabled("process"), false);
 
     const revoke = command("revoke", 4, {
@@ -120,8 +137,16 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
       subjectId: "session-1"
     });
     const revokeResponse = await sendCommand(socketPath, signAuthorityControlCommand(revoke, authenticationKey));
-    assert.deepEqual(revokeResponse, { ok: true, operation: "revoke", revocation_kind: "session", subject_id: "session-1" });
+    assert.equal(revokeResponse.ok, true);
+    if (revokeResponse.ok) {
+      assert.equal(revokeResponse.operation, "revoke");
+      assert.equal(revokeResponse.revocation_kind, "session");
+      assert.equal(revokeResponse.subject_id, "session-1");
+    }
     assert.equal(store.isRevoked("session", "session-1"), true);
+    const client = new AuthorityControlIpcClient({ socketPath, authenticationKey, now: () => NOW });
+    assert.equal(await client.readSwitch("process"), false);
+    assert.equal(await client.readRevocation("session", "session-1"), true);
     const authorityRows = store.auditRows().filter((row) =>
       row.tool === "internal_authority_switch" || row.tool === "internal_authority_revoke"
     );
@@ -134,6 +159,11 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
       assert.equal("reason" in evidence, false);
       assert.match(String(evidence.reasonDigest), /^[a-f0-9]{64}$/u);
     }
+
+    await client.setSwitch("global", true, false, "client-test");
+    assert.equal(await client.readSwitch("global"), true);
+    await client.revoke("edge", "edge-1", "client-test");
+    assert.equal(await client.readRevocation("edge", "edge-1"), true);
 
     const stale = command("set_switch", 5, {
       switchName: "process" as SwitchName,

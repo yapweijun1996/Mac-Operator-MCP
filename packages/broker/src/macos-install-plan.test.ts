@@ -16,7 +16,7 @@ import {
   type LaunchdCommandSpec,
   type MacOsInstallPlanInput
 } from "./macos-install-plan.js";
-import { executeMacOsUninstallPlan } from "./macos-uninstall-plan.js";
+import { createAuthorityControlUninstallActions, executeMacOsUninstallPlan } from "./macos-uninstall-plan.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const base: MacOsInstallPlanInput = {
@@ -439,6 +439,25 @@ test("uninstall authority gate fails closed before filesystem mutation", async (
   );
   assert.deepEqual(events, ["disable-global", "revoke-edge", "authority-readback"]);
   assert.deepEqual(executor.commands, []);
+});
+
+test("uninstall authority actions bind the selected Edge and are idempotent", async () => {
+  let globalDisabled = false;
+  let edgeRevoked = false;
+  const writes: string[] = [];
+  const actions = createAuthorityControlUninstallActions({
+    async readSwitch() { return globalDisabled; },
+    async setSwitch() { writes.push("set-global"); globalDisabled = true; },
+    async readRevocation() { return edgeRevoked; },
+    async revoke() { writes.push("revoke-edge"); edgeRevoked = true; }
+  }, "edge-1");
+  await actions.disableGlobal();
+  await actions.revokeEdge("edge-1");
+  await actions.disableGlobal();
+  await actions.revokeEdge("edge-1");
+  assert.deepEqual(writes, ["set-global", "revoke-edge"]);
+  assert.deepEqual(await actions.authorityReadback(), { globalDisabled: true, edgeRevoked: true });
+  await assert.rejects(actions.revokeEdge("edge-2"), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_ARGUMENT");
 });
 
 test("install executor stops a mismatched service and leaves an explicit recovery artifact", async () => {
