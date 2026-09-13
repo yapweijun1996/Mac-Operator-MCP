@@ -58,4 +58,11 @@ test("real macOS L0/L1 readback stays metadata-only and bounded", (t) => {
   assert.equal(tree.rootId, "system-library");
   assert.ok(tree.entries.length <= 24);
   assert.ok(tree.entries.every((entry) => entry.path.startsWith(`${systemLibrary}/`)));
+  const storage = filesystem.analyzeStoragePlanned([plan], 5, 1);
+  assert.ok(storage.volumes.length >= 1 && storage.volumes.length <= 32);
+  assert.ok(storage.volumes.every((volume) => volume.totalBytes >= volume.availableBytes && volume.usedBytes >= 0));
+  assert.ok(storage.consumers.length <= 5);
+  assert.equal(storage.analyzedRoots[0], systemLibrary);
+  assert.equal(storage.truncated, true);
+  assert.match(storage.warnings.join(" "), /max_depth/u);
 });
