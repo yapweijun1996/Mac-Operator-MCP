@@ -1,7 +1,7 @@
 # Governed App Launch Boundary Evidence
 
 - Date: 2026-09-13
-- Source commit: `a075837`
+- Source commit: `f05a24f`
 - Repository state: dirty after the source commit because documentation updates are pending; no production policy change
 - Host: macOS arm64 development host
 - Scope: disabled-by-default app launch mutation; no user application was launched during verification
@@ -16,7 +16,7 @@ The adapter first confirms the requested identity in the bounded Broker-owned ap
 ## Verification performed
 
 - App-control tests cover stable Bundle ID validation, traversal-like identity rejection, unsupported document/URL rejection, fixed executable/arguments/cwd/environment, absent-target denial, launch-state reobservation, and already-running state.
-- Broker integration verifies exact app target authorization, `trusted_gui` approval consumption, mutation intent, Job lease linkage, completion audit, stable result data, and active session revocation mapping to cancellation with an unknown Job.
+- Broker integration verifies exact app target authorization, `trusted_gui` approval consumption, mutation intent, Job lease linkage, completion audit, stable result data, and active session revocation mapping to cancellation with an unknown Job. Runtime contract-conformance also validates the successful result against the versioned `mac_app_open` output schema.
 - Policy schema and loader checks reject app target references that are not stable `bundle:<bundle_id>` identities; persistence tests cancel queued GUI jobs when the GUI kill switch is enabled.
 - The full suite passes with 263 tests; `npm run typecheck`, `npm run verify:contracts`, `npm audit --omit=dev --audit-level=high`, and `git diff --check` also pass.
 - No real app was launched during verification. Real-host app inventory evidence is recorded separately in `evidence/2026-09-13-app-inventory-boundary.md`.
