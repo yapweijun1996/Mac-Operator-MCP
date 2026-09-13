@@ -84,10 +84,17 @@ macOS transient `state = xpcproxy`; that value is now normalized to
 `launching` without claiming `running`. The separate service inspector applies
 the same conservative mapping to `loaded`. Strict Edge/helper readiness still
 requires `running` plus native PID/start-time identity. Focused launchd tests
-pass 7/7 and the full real-sandbox suite passes 418/418. This does not close
+pass 7/7 and the full real-sandbox suite passes 419/419. This does not close
 signed production artifacts, installed Broker/Edge handshake, or real-package
 upgrade/rollback/uninstall evidence. Evidence:
 `evidence/2026-09-14-live-launchd-readback.md`.
+
+The Edge identity capture path now retries only the observed `xpcproxy`
+bootstrap state within a five-second global deadline. A second reversible live
+LaunchAgent smoke captured a positive PID/start-time identity through that
+path, then booted the service out and confirmed absence; stopped/malformed
+states remain terminal failures. This strengthens startup readback but does
+not claim an installed Broker/Edge service.
 
 ## P0 — Foundation
 

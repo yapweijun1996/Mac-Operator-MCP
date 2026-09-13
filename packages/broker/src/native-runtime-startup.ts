@@ -13,6 +13,8 @@ import type { NativePeerPolicy } from "./native-peer-ipc-server.js";
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const LAUNCHCTL_TIMEOUT_MS = 5_000;
 const LAUNCHCTL_OUTPUT_CAP_BYTES = 131_072;
+const LAUNCHD_STARTUP_DEADLINE_MS = 5_000;
+const LAUNCHD_XPCPROXY_RETRY_DELAY_MS = 50;
 const EDGE_SERVICE_PATTERN = /^gui\/([1-9][0-9]{0,9})\/(com\.mac-operator\.[A-Za-z0-9.-]{1,96})$/u;
 
 export type NativeRuntimeStartupErrorCode =
@@ -62,24 +64,42 @@ export async function captureLaunchdEdgeProcessIdentity(
 ): Promise<PeerProcessIdentity> {
   const service = parseEdgeServiceId(options.edgeServiceId, options.expectedUid);
   const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
-  let result: ProcessExecutionResult;
-  try {
-    result = await executor.run({
-      executable: LAUNCHCTL_PATH,
-      args: ["print", service.serviceId],
-      cwd: "/",
-      environment: {},
-      timeoutMs: LAUNCHCTL_TIMEOUT_MS,
-      outputCapBytes: LAUNCHCTL_OUTPUT_CAP_BYTES
-    });
-  } catch {
-    throw new NativeRuntimeStartupError("EDGE_SERVICE_UNAVAILABLE", "Edge launchd readback failed");
-  }
-  const readback = parseLaunchdEdgeProcessReadback(service.serviceId, result);
-  try {
-    return capturePeerProcessIdentity(readback.pid);
-  } catch {
-    throw new NativeRuntimeStartupError("EDGE_PROCESS_IDENTITY_UNAVAILABLE", "Edge process identity readback failed");
+  const deadline = Date.now() + LAUNCHD_STARTUP_DEADLINE_MS;
+  for (;;) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service did not reach running state");
+    }
+    let result: ProcessExecutionResult;
+    try {
+      result = await executor.run({
+        executable: LAUNCHCTL_PATH,
+        args: ["print", service.serviceId],
+        cwd: "/",
+        environment: {},
+        timeoutMs: Math.min(LAUNCHCTL_TIMEOUT_MS, remainingMs),
+        outputCapBytes: LAUNCHCTL_OUTPUT_CAP_BYTES
+      });
+    } catch {
+      throw new NativeRuntimeStartupError("EDGE_SERVICE_UNAVAILABLE", "Edge launchd readback failed");
+    }
+    try {
+      const readback = parseLaunchdEdgeProcessReadback(service.serviceId, result);
+      try {
+        return capturePeerProcessIdentity(readback.pid);
+      } catch {
+        throw new NativeRuntimeStartupError("EDGE_PROCESS_IDENTITY_UNAVAILABLE", "Edge process identity readback failed");
+      }
+    } catch (error) {
+      if (error instanceof NativeRuntimeStartupError && error.code === "EDGE_PROCESS_NOT_RUNNING" && isXpcProxyState(result.stdout)) {
+        const delayMs = Math.min(LAUNCHD_XPCPROXY_RETRY_DELAY_MS, Math.max(0, deadline - Date.now()));
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+      }
+      throw error;
+    }
   }
 }
 
@@ -325,4 +345,8 @@ function parseEdgeServiceId(serviceId: string, expectedUid?: number): { serviceI
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function isXpcProxyState(output: string): boolean {
+  return /(?:^|\n)\s*state\s*=\s*xpcproxy\s*(?:\r?\n|$)/u.test(output);
 }

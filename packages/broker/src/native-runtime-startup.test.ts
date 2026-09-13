@@ -40,6 +40,25 @@ ${serviceId} = {
   assert.equal(executor.commands[0]?.environment && Object.keys(executor.commands[0].environment).length, 0);
 });
 
+test("launchd Edge identity capture retries only the xpcproxy bootstrap state", async () => {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  const serviceId = `gui/${uid}/com.mac-operator.edge`;
+  const commands: ProcessExecutionRequest[] = [];
+  const executor = {
+    async run(command: ProcessExecutionRequest): Promise<ProcessExecutionResult> {
+      commands.push(command);
+      const state = commands.length === 1 ? "xpcproxy" : "running";
+      return success(`${serviceId} = {\n\tstate = ${state}\n\tpid = ${process.pid}\n}`);
+    }
+  };
+  const identity = await captureLaunchdEdgeProcessIdentity({ edgeServiceId: serviceId, expectedUid: uid, commandExecutor: executor });
+  assert.equal(identity.pid, process.pid);
+  assert.equal(commands.length, 2);
+  assert.equal(commands[0]?.timeoutMs, 5_000);
+  assert.ok((commands[1]?.timeoutMs ?? 0) > 0);
+});
+
 test("launchd Edge identity capture rejects wrong domains, stopped services, and malformed identities", async () => {
   const uid = process.getuid?.();
   if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");

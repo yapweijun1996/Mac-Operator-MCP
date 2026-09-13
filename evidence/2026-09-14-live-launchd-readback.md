@@ -39,17 +39,31 @@ to the existing stable `launching` state. This does not authorize a running
 service: Edge and privileged-helper startup paths still require an explicit
 `running` state and a positive native PID/start-time identity.
 
+The Edge identity capture path now retries only this explicit `xpcproxy`
+transient, with a five-second global deadline and per-command timeout bounded
+by the remaining budget. It never retries a missing/malformed service,
+non-running state, or failed native PID/start-time capture.
+
 ## Verification
 
 - `node --test packages/broker/dist/launchd-readback.test.js`: 4/4 passed,
   including the `xpcproxy` regression and the real system-service smoke.
-- The default suite reports 418 tests: 415 passed, 0 failed, and 3 opt-in
-  sandbox tests skipped; `MOPS_REAL_SANDBOX=1 npm test` reports 418 passed,
+- The default suite reports 419 tests: 416 passed, 0 failed, and 3 opt-in
+  sandbox tests skipped; `MOPS_REAL_SANDBOX=1 npm test` reports 419 passed,
   0 failed, and 0 skipped.
 - A live temporary LaunchAgent was bootstrapped, parsed through the production
   readback adapter, booted out, and confirmed absent.
+- A second temporary user LaunchAgent was read by the production
+  `captureLaunchdEdgeProcessIdentity` path; it captured a positive PID and
+  native start-time identity, then was booted out and confirmed absent.
 - No persistent plist, service, helper, credential, or capability was left
   installed or enabled.
+
+One earlier full host run had a timing failure in the unrelated detached-
+descendant recovery test. The focused process-supervisor suite then passed
+13/13, followed by two consecutive full `MOPS_REAL_SANDBOX=1` runs at 419/419.
+The failed attempt is retained as a host-timing signal rather than treated as
+proof of a launchd regression.
 
 Remaining packaging acceptance still includes signed production artifacts,
 installed Broker/Edge identity handshake, upgrade/rollback/uninstall of the
