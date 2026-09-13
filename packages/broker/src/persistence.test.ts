@@ -939,7 +939,8 @@ test("task process ownership metadata survives restart as UNKNOWN", async () => 
     pid: 1234,
     processGroupId: 1234,
     startTimeMicros: 987654321,
-    recordedAtMs: 2
+    recordedAtMs: 2,
+    descendants: []
   } as const;
   const lease = {
     ownerId: "broker:test",
@@ -960,11 +961,26 @@ test("task process ownership metadata survives restart as UNKNOWN", async () => 
     );
     assert.deepEqual(recorded.processMetadata, metadata);
     assert.equal(recorded.revision, 2);
+    const extendedMetadata = {
+      ...metadata,
+      recordedAtMs: 3,
+      descendants: [{ pid: 1235, startTimeMicros: 987654322 }]
+    } as const;
+    const updated = store.updateJobProcessOwnership(
+      "job:task-process-metadata",
+      "principal-1",
+      recorded.revision,
+      extendedMetadata,
+      lease,
+      3
+    );
+    assert.deepEqual(updated.processMetadata, extendedMetadata);
+    assert.equal(updated.revision, recorded.revision);
     store.close();
     store = new BrokerStore(databasePath);
     const recovered = store.ownedJob("job:task-process-metadata", "principal-1");
     assert.equal(recovered?.state, "unknown");
-    assert.deepEqual(recovered?.processMetadata, metadata);
+    assert.deepEqual(recovered?.processMetadata, extendedMetadata);
     assert.deepEqual(store.restartUnknownProcessJobs().map((job) => job.jobId), ["job:task-process-metadata"]);
   } finally {
     store.close();

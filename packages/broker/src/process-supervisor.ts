@@ -40,14 +40,26 @@ export interface ProcessExecutionRequest {
   timeoutMs: number;
   outputCapBytes: number;
   shouldCancel?: () => boolean;
-  /** Synchronous hook used to persist the verified root identity before work proceeds. */
-  onStarted?: (identity: ProcessOwnershipIdentity) => void;
+  /** Synchronous hook used to persist verified ownership before work proceeds. */
+  onStarted?: (snapshot: ProcessOwnershipSnapshot) => void;
+  /** Synchronous hook used to persist newly observed descendants. */
+  onOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
 }
 
 export interface ProcessOwnershipIdentity {
   pid: number;
   processGroupId: number;
   startTimeMicros: number;
+}
+
+export interface ProcessDescendantIdentity {
+  pid: number;
+  startTimeMicros: number;
+}
+
+export interface ProcessOwnershipSnapshot {
+  identity: ProcessOwnershipIdentity;
+  descendants: readonly ProcessDescendantIdentity[];
 }
 
 export type ProcessRecoveryOutcome = "drained" | "absent" | "identity_mismatch" | "unknown";
@@ -146,12 +158,20 @@ export class ProcessSupervisor {
     }
     if (request.onStarted !== undefined) {
       const startTimeMicros = processTree?.rootStartTimeMicros;
-      if (startTimeMicros === undefined) {
+      if (processTree === undefined || startTimeMicros === undefined) {
         signalProcessGroup(child, processId, "SIGKILL");
         throw new BrokerError("POLICY_DENIED", "Process identity could not be captured");
       }
       try {
-        request.onStarted({ pid: processId, processGroupId: processId, startTimeMicros });
+        processTree.sample();
+        if (processTree.observationFailed) {
+          signalProcessGroup(child, processId, "SIGKILL");
+          throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
+        }
+        request.onStarted({
+          identity: { pid: processId, processGroupId: processId, startTimeMicros },
+          descendants: processTree.snapshotDescendants()
+        });
       } catch (error) {
         signalProcessGroup(child, processId, "SIGKILL");
         if (error instanceof BrokerError) throw error;
@@ -193,8 +213,16 @@ export class ProcessSupervisor {
    * Recover a process owned by a prior Broker instance. Recovery is deliberately
    * identity-bound and never infers success from a missing process.
    */
-  async recoverOwnedProcess(identity: ProcessOwnershipIdentity, timeoutMs = 5_000): Promise<ProcessRecoveryResult> {
-    validateProcessOwnershipIdentity(identity);
+  async recoverOwnedProcess(
+    persisted: ProcessOwnershipIdentity | ProcessOwnershipSnapshot,
+    timeoutMs = 5_000
+  ): Promise<ProcessRecoveryResult> {
+    const persistedValue = persisted as unknown;
+    const snapshot: ProcessOwnershipSnapshot = persistedValue !== null && typeof persistedValue === "object" && "identity" in persistedValue
+      ? persisted as ProcessOwnershipSnapshot
+      : { identity: persisted as ProcessOwnershipIdentity, descendants: [] };
+    validateProcessOwnershipSnapshot(snapshot);
+    const identity = snapshot.identity;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 25 || timeoutMs > MAX_TIMEOUT_MS) {
       throw new BrokerError("PRECONDITION_FAILED", "Process recovery timeout is outside the supported range");
     }
@@ -241,6 +269,30 @@ export class ProcessSupervisor {
         // The process may have exited; group state below distinguishes absence
         // from an unresolved descendant group.
       }
+      const descendantState = persistedDescendantState(native, snapshot.descendants);
+      if (descendantState === "unknown") {
+        return {
+          outcome: "unknown",
+          processId: identity.pid,
+          processGroupId: identity.processGroupId,
+          terminationObserved: false
+        };
+      }
+      if (descendantState === "alive") {
+        const descendantRecovery = await recoverPersistedDescendants(
+          native,
+          snapshot.descendants,
+          this.pollIntervalMs,
+          this.terminationGraceMs,
+          timeoutMs
+        );
+        return {
+          outcome: descendantRecovery ? "drained" : "unknown",
+          processId: identity.pid,
+          processGroupId: identity.processGroupId,
+          terminationObserved: descendantRecovery
+        };
+      }
       const groupAlive = processGroupAlive(identity.processGroupId);
       return {
         outcome: groupAlive ? "unknown" : "absent",
@@ -258,7 +310,7 @@ export class ProcessSupervisor {
       };
     }
 
-    const processTree = new ProcessTreeTracker(native, identity.pid, identity);
+    const processTree = new ProcessTreeTracker(native, identity.pid, identity, snapshot.descendants);
     processTree.sample();
     if (processTree.observationFailed) {
       return {
@@ -357,6 +409,7 @@ export class ProcessSupervisor {
       let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
       let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
       let spawnError = false;
+      let reportedDescendantCount = -1;
 
       processTree?.sample();
 
@@ -499,6 +552,31 @@ export class ProcessSupervisor {
         });
       };
 
+      const notifyOwnership = () => {
+        if (request.onOwnershipChanged === undefined || processTree === undefined || processTree.observationFailed) return;
+        const descendants = processTree.snapshotDescendants();
+        if (descendants.length <= reportedDescendantCount) return;
+        reportedDescendantCount = descendants.length;
+        const startTimeMicros = processTree.rootStartTimeMicros;
+        if (startTimeMicros === undefined) {
+          terminate("orphaned");
+          return;
+        }
+        try {
+          request.onOwnershipChanged({
+            identity: {
+              pid: processId,
+              processGroupId: processId,
+              startTimeMicros
+            },
+            descendants
+          });
+        } catch {
+          terminate("orphaned");
+        }
+      };
+      notifyOwnership();
+
       child.stdout?.on("data", (chunk: Buffer | string) => {
         if (settled) return;
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -521,6 +599,7 @@ export class ProcessSupervisor {
         childExitSignal = signal;
         if (settled) return;
         processTree?.sample();
+        notifyOwnership();
         const rootState = processTree?.rootState() ?? "alive";
         const descendantState = processTree?.aliveState() ?? "none";
         const currentGroupState = groupState();
@@ -540,6 +619,7 @@ export class ProcessSupervisor {
       timeoutTimer = setTimeout(() => terminate("timed_out"), request.timeoutMs);
       cancellationPoll = setInterval(() => {
         processTree?.sample();
+        notifyOwnership();
         if (this.cancelled(request.shouldCancel)) terminate("cancelled");
       }, this.pollIntervalMs);
       timeoutTimer.unref();
@@ -652,6 +732,82 @@ function validateProcessOwnershipIdentity(identity: ProcessOwnershipIdentity): v
   }
 }
 
+function validateProcessOwnershipSnapshot(snapshot: ProcessOwnershipSnapshot): void {
+  if (snapshot === null || typeof snapshot !== "object" || !Array.isArray(snapshot.descendants)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process ownership snapshot is malformed");
+  }
+  validateProcessOwnershipIdentity(snapshot.identity);
+  if (snapshot.descendants.length > 256) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process ownership snapshot is too large");
+  }
+  let previousPid = 0;
+  for (const descendant of snapshot.descendants) {
+    if (descendant === null || typeof descendant !== "object" ||
+        !Number.isSafeInteger(descendant.pid) || descendant.pid < 1 || descendant.pid > 99_999_999 ||
+        descendant.pid === snapshot.identity.pid || descendant.pid <= previousPid ||
+        !Number.isSafeInteger(descendant.startTimeMicros) || descendant.startTimeMicros < 1) {
+      throw new BrokerError("PRECONDITION_FAILED", "Process ownership snapshot is malformed");
+    }
+    previousPid = descendant.pid;
+  }
+}
+
+function persistedDescendantState(
+  native: NativeProcessTreeAdapter,
+  descendants: readonly ProcessDescendantIdentity[]
+): "none" | "alive" | "unknown" {
+  for (const descendant of descendants) {
+    try {
+      const alive = native.isProcessIdentityAlive(descendant.pid, descendant.startTimeMicros);
+      if (alive === true) return "alive";
+      if (alive !== false) return "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+  return "none";
+}
+
+function signalPersistedDescendants(
+  native: NativeProcessTreeAdapter,
+  descendants: readonly ProcessDescendantIdentity[],
+  signal: NodeJS.Signals
+): void {
+  for (const descendant of descendants) {
+    try {
+      if (native.isProcessIdentityAlive(descendant.pid, descendant.startTimeMicros) === true) {
+        process.kill(descendant.pid, signal);
+      }
+    } catch {
+      // A descendant may exit between identity verification and signalling.
+    }
+  }
+}
+
+async function recoverPersistedDescendants(
+  native: NativeProcessTreeAdapter,
+  descendants: readonly ProcessDescendantIdentity[],
+  pollIntervalMs: number,
+  terminationGraceMs: number,
+  timeoutMs: number
+): Promise<boolean> {
+  signalPersistedDescendants(native, descendants, "SIGTERM");
+  const killAt = Date.now() + terminationGraceMs;
+  const deadline = Date.now() + timeoutMs;
+  let killSent = false;
+  while (Date.now() < deadline) {
+    const state = persistedDescendantState(native, descendants);
+    if (state === "none") return true;
+    if (state === "unknown") return false;
+    if (!killSent && Date.now() >= killAt) {
+      killSent = true;
+      signalPersistedDescendants(native, descendants, "SIGKILL");
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return false;
+}
+
 function createProcessTreeTracker(processId: number): ProcessTreeTracker | undefined {
   if (process.platform !== "darwin") return undefined;
   try {
@@ -672,8 +828,10 @@ class ProcessTreeTracker {
   constructor(
     private readonly native: NativeProcessTreeAdapter,
     private readonly processId: number,
-    expectedRootIdentity?: ProcessOwnershipIdentity
+    expectedRootIdentity?: ProcessOwnershipIdentity,
+    initialDescendants: readonly ProcessDescendantIdentity[] = []
   ) {
+    for (const identity of initialDescendants) this.descendants.set(identity.pid, identity);
     if (expectedRootIdentity !== undefined) {
       this.rootIdentity = {
         pid: expectedRootIdentity.pid,
@@ -693,6 +851,12 @@ class ProcessTreeTracker {
 
   get rootStartTimeMicros(): number | undefined {
     return this.rootIdentity?.startTimeMicros;
+  }
+
+  snapshotDescendants(): readonly ProcessDescendantIdentity[] {
+    return [...this.descendants.values()]
+      .sort((left, right) => left.pid - right.pid)
+      .map((identity) => ({ pid: identity.pid, startTimeMicros: identity.startTimeMicros }));
   }
 
   get observationFailed(): boolean {

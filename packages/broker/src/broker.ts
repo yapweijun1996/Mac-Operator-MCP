@@ -32,7 +32,7 @@ import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-
 import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
-import { ProcessSupervisor, type ProcessOwnershipIdentity } from "./process-supervisor.js";
+import { ProcessSupervisor, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
@@ -305,7 +305,17 @@ export class Broker {
       }
       let outcome: "PROCESS_DRAINED" | "PROCESS_ABSENT" | "PROCESS_IDENTITY_MISMATCH" | "PROCESS_RECOVERY_UNKNOWN";
       try {
-        const result = await this.processSupervisor.recoverOwnedProcess(metadata, 5_000);
+        const result = await this.processSupervisor.recoverOwnedProcess({
+          identity: {
+            pid: metadata.pid,
+            processGroupId: metadata.processGroupId,
+            startTimeMicros: metadata.startTimeMicros
+          },
+          descendants: metadata.descendants.map((descendant) => ({
+            pid: descendant.pid,
+            startTimeMicros: descendant.startTimeMicros
+          }))
+        }, 5_000);
         outcome = result.outcome === "drained" ? "PROCESS_DRAINED" :
           result.outcome === "absent" ? "PROCESS_ABSENT" :
             result.outcome === "identity_mismatch" ? "PROCESS_IDENTITY_MISMATCH" : "PROCESS_RECOVERY_UNKNOWN";
@@ -2436,6 +2446,39 @@ export class Broker {
     let terminalPersisted = false;
     try {
       requireTaskIsolationProof(this.taskRunner.isolationProof, resolved);
+      const persistTaskProcessSnapshot = (snapshot: ProcessOwnershipSnapshot, initial: boolean): void => {
+        if (!execution.taskJob || !execution.jobLease) {
+          throw new BrokerError("EXECUTION_FAILED", "Task process ownership cannot be linked to its Job");
+        }
+        const recordedAtMs = this.now();
+        const metadata = {
+          pid: snapshot.identity.pid,
+          processGroupId: snapshot.identity.processGroupId,
+          startTimeMicros: snapshot.identity.startTimeMicros,
+          recordedAtMs,
+          descendants: snapshot.descendants.map((descendant) => ({
+            pid: descendant.pid,
+            startTimeMicros: descendant.startTimeMicros
+          }))
+        } as const;
+        execution.taskJob = initial
+          ? this.options.store.recordJobProcessOwnership(
+            execution.taskJob.jobId,
+            request.principal.principalId,
+            execution.taskJob.revision,
+            metadata,
+            execution.jobLease,
+            recordedAtMs
+          )
+          : this.options.store.updateJobProcessOwnership(
+            execution.taskJob.jobId,
+            request.principal.principalId,
+            execution.taskJob.revision,
+            metadata,
+            execution.jobLease,
+            recordedAtMs
+          );
+      };
       const taskControl = this.executionControl(
         request,
         execution.target,
@@ -2443,25 +2486,8 @@ export class Broker {
         job.jobId,
         [],
         execution.jobLease,
-        (identity) => {
-          if (!execution.taskJob || !execution.jobLease) {
-            throw new BrokerError("EXECUTION_FAILED", "Task process ownership cannot be linked to its Job");
-          }
-          const recordedAtMs = this.now();
-          execution.taskJob = this.options.store.recordJobProcessOwnership(
-            execution.taskJob.jobId,
-            request.principal.principalId,
-            execution.taskJob.revision,
-            {
-              pid: identity.pid,
-              processGroupId: identity.processGroupId,
-              startTimeMicros: identity.startTimeMicros,
-              recordedAtMs
-            },
-            execution.jobLease,
-            recordedAtMs
-          );
-        }
+        (snapshot) => persistTaskProcessSnapshot(snapshot, true),
+        (snapshot) => persistTaskProcessSnapshot(snapshot, false)
       );
       const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
         resolved,
@@ -2480,7 +2506,7 @@ export class Broker {
       const finished = !outputBudgetExceeded && !timeoutBudgetExceeded && taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
       const terminalState = finished ? "completed" : timeoutBudgetExceeded || taskResult.state === "timed_out" ? "failed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
       const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : timeoutBudgetExceeded || taskResult.state === "timed_out" || outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT" ? "failed" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
-      execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+      execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, execution.taskJob.revision, {
         state: terminalState,
         resultClass: terminalClass,
         finishedAtMs: this.now(),
@@ -2521,7 +2547,7 @@ export class Broker {
     } catch (error) {
       if (!terminalPersisted) {
         try {
-          execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, execution.taskJob?.revision ?? job.revision, {
             state: "unknown",
             resultClass: "unknown",
             finishedAtMs: this.now()
@@ -3121,7 +3147,8 @@ export class Broker {
     jobId?: string,
     additionalTargets: readonly NormalizedTarget[] = [],
     jobLease?: JobLease,
-    onProcessStarted?: (identity: ProcessOwnershipIdentity) => void
+    onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void,
+    onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void
   ) {
     let lastLeaseHeartbeatMs = Number.NEGATIVE_INFINITY;
     return {
@@ -3142,7 +3169,8 @@ export class Broker {
           return true;
         }
       },
-      ...(onProcessStarted === undefined ? {} : { onProcessStarted })
+      ...(onProcessStarted === undefined ? {} : { onProcessStarted }),
+      ...(onProcessOwnershipChanged === undefined ? {} : { onProcessOwnershipChanged })
     };
   }
 

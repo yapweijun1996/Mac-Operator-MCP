@@ -96,6 +96,12 @@ export interface ProcessJobMetadata {
   processGroupId: number;
   startTimeMicros: number;
   recordedAtMs: number;
+  descendants: readonly ProcessDescendantMetadata[];
+}
+
+export interface ProcessDescendantMetadata {
+  pid: number;
+  startTimeMicros: number;
 }
 
 export interface BrokerJob {
@@ -1426,6 +1432,57 @@ export class BrokerStore {
     }, lease, nowMs);
   }
 
+  updateJobProcessOwnership(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    metadata: ProcessJobMetadata,
+    lease: JobLease,
+    nowMs: number
+  ): BrokerJob {
+    validateProcessJobMetadata(metadata);
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+    validateJobLease(lease, nowMs, false);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw malformedJob();
+    return this.runTransaction(() => {
+      const currentRow = this.requireOwnedJobRow(jobId, principalId);
+      const current = mapJob(currentRow);
+      if (current.revision !== expectedRevision || current.state !== "running") {
+        throw new BrokerError("CONFLICT", "Job state or revision changed concurrently");
+      }
+      assertActiveJobLease(currentRow, lease, nowMs);
+      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+          current.processMetadata === undefined ||
+          metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs ||
+          metadata.pid !== current.processMetadata.pid ||
+          metadata.processGroupId !== current.processMetadata.processGroupId ||
+          metadata.startTimeMicros !== current.processMetadata.startTimeMicros ||
+          metadata.recordedAtMs < current.processMetadata.recordedAtMs) {
+        throw new BrokerError("PRECONDITION_FAILED", "Task process ownership metadata is outside the active Job window");
+      }
+      const nextDescendants = new Set(metadata.descendants.map((descendant) => `${descendant.pid}:${descendant.startTimeMicros}`));
+      for (const descendant of current.processMetadata.descendants) {
+        if (!nextDescendants.has(`${descendant.pid}:${descendant.startTimeMicros}`)) {
+          throw new BrokerError("CONFLICT", "Task process ownership snapshot regressed");
+        }
+      }
+      if (metadata.descendants.length < current.processMetadata.descendants.length) {
+        throw new BrokerError("CONFLICT", "Task process ownership snapshot regressed");
+      }
+      const updated = this.database.prepare(`
+        UPDATE jobs SET process_metadata_json = ?
+        WHERE job_id = ? AND owner_principal_id = ? AND state = 'running'
+          AND revision = ? AND lease_owner_id = ? AND lease_token = ?
+          AND lease_expires_at_ms > ?
+      `).run(
+        serializeProcessJobMetadata(metadata), jobId, principalId, expectedRevision,
+        lease.ownerId, lease.token, nowMs
+      );
+      if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Job process ownership changed concurrently");
+      return this.requireOwnedJob(jobId, principalId);
+    });
+  }
+
   finishJob(
     jobId: string,
     principalId: string,
@@ -2565,8 +2622,19 @@ function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {
       !Number.isSafeInteger(metadata.pid) || metadata.pid < 1 || metadata.pid > 99_999_999 ||
       !Number.isSafeInteger(metadata.processGroupId) || metadata.processGroupId !== metadata.pid ||
       !Number.isSafeInteger(metadata.startTimeMicros) || metadata.startTimeMicros < 1 ||
-      !Number.isSafeInteger(metadata.recordedAtMs) || metadata.recordedAtMs < 0) {
+      !Number.isSafeInteger(metadata.recordedAtMs) || metadata.recordedAtMs < 0 ||
+      !Array.isArray(metadata.descendants) || metadata.descendants.length > 256) {
     throw malformedJob();
+  }
+  let previousPid = 0;
+  for (const descendant of metadata.descendants) {
+    if (descendant === null || typeof descendant !== "object" ||
+        !Number.isSafeInteger(descendant.pid) || descendant.pid < 1 || descendant.pid > 99_999_999 ||
+        descendant.pid === metadata.pid || descendant.pid <= previousPid ||
+        !Number.isSafeInteger(descendant.startTimeMicros) || descendant.startTimeMicros < 1) {
+      throw malformedJob();
+    }
+    previousPid = descendant.pid;
   }
 }
 
@@ -2584,12 +2652,21 @@ function parseProcessJobMetadata(value: string): ProcessJobMetadata {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
   }
   const keys = Object.keys(parsed).sort();
-  if (keys.join(",") !== "pid,processGroupId,recordedAtMs,startTimeMicros") {
+  const legacyKeys = "pid,processGroupId,recordedAtMs,startTimeMicros";
+  const currentKeys = "descendants,pid,processGroupId,recordedAtMs,startTimeMicros";
+  if (keys.join(",") !== legacyKeys && keys.join(",") !== currentKeys) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
   }
   const metadata = parsed as Partial<ProcessJobMetadata>;
-  validateProcessJobMetadata(metadata as ProcessJobMetadata);
-  return metadata as ProcessJobMetadata;
+  const normalized = {
+    pid: metadata.pid,
+    processGroupId: metadata.processGroupId,
+    startTimeMicros: metadata.startTimeMicros,
+    recordedAtMs: metadata.recordedAtMs,
+    descendants: metadata.descendants ?? []
+  } as ProcessJobMetadata;
+  validateProcessJobMetadata(normalized);
+  return normalized;
 }
 
 function parseWriteJobMetadata(value: string): WriteJobMetadata {

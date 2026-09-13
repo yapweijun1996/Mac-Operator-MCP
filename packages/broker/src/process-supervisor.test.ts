@@ -263,18 +263,18 @@ test("process supervisor captures and recovers an exact persisted root identity"
     return;
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
-  let identity: import("./process-supervisor.js").ProcessOwnershipIdentity | undefined;
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
   const running = supervisor.run({
     executable: "/bin/sleep",
     args: ["10"],
     cwd: CWD,
     timeoutMs: 5_000,
     outputCapBytes: 100,
-    onStarted: (value) => { identity = value; }
+    onStarted: (value) => { snapshot = value; }
   });
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(identity);
-  const recovered = await supervisor.recoverOwnedProcess(identity!, 1_000);
+  assert.ok(snapshot);
+  const recovered = await supervisor.recoverOwnedProcess(snapshot!.identity, 1_000);
   assert.equal(recovered.outcome, "drained");
   assert.equal(recovered.terminationObserved, true);
   await running;
@@ -287,22 +287,61 @@ test("process supervisor refuses a swapped persisted root identity", async (t) =
     return;
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
-  let identity: import("./process-supervisor.js").ProcessOwnershipIdentity | undefined;
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
   const running = supervisor.run({
     executable: "/bin/sleep",
     args: ["10"],
     cwd: CWD,
     timeoutMs: 5_000,
     outputCapBytes: 100,
-    onStarted: (value) => { identity = value; }
+    onStarted: (value) => { snapshot = value; }
   });
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(identity);
-  const swapped = await supervisor.recoverOwnedProcess({ ...identity!, startTimeMicros: identity!.startTimeMicros + 1 }, 250);
+  assert.ok(snapshot);
+  const swapped = await supervisor.recoverOwnedProcess({ ...snapshot!.identity, startTimeMicros: snapshot!.identity.startTimeMicros + 1 }, 250);
   assert.equal(swapped.outcome, "identity_mismatch");
   assert.equal(swapped.terminationObserved, false);
   await supervisor.close();
   await running;
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor recovers a persisted detached descendant after root exit", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Persisted descendant recovery is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 100, terminationGraceMs: 50 });
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let resolveDescendant!: () => void;
+  const descendantReady = new Promise<void>((resolve) => { resolveDescendant = resolve; });
+  const running = supervisor.run({
+    executable: "/usr/bin/python3",
+    args: ["-c", "import os,time; child=os.fork(); (os.setsid(), time.sleep(30)) if child == 0 else time.sleep(30)"],
+    cwd: CWD,
+    timeoutMs: 35_000,
+    outputCapBytes: 100,
+    onStarted: (value) => { snapshot = value; },
+    onOwnershipChanged: (value) => {
+      snapshot = value;
+      if (value.descendants.length > 0) resolveDescendant();
+    }
+  });
+  try {
+    await Promise.race([
+      descendantReady,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("descendant snapshot timeout")), 5_000))
+    ]);
+    assert.ok(snapshot);
+    assert.ok(snapshot!.descendants.length > 0);
+    process.kill(snapshot!.identity.pid, "SIGKILL");
+    const recovered = await supervisor.recoverOwnedProcess(snapshot!, 2_000);
+    assert.equal(recovered.outcome, "drained");
+    assert.equal(recovered.terminationObserved, true);
+  } finally {
+    await running;
+    await supervisor.close();
+  }
   assert.equal(supervisor.activeCount(), 0);
 });
 

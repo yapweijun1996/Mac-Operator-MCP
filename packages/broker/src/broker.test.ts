@@ -175,14 +175,18 @@ test("restarted Broker recovers an exact task process identity without resolving
       cwd: process.cwd(),
       timeoutMs: 5_000,
       outputCapBytes: 100,
-      onStarted: (identity) => {
-        capturedIdentity = identity;
+      onStarted: (snapshot) => {
+        capturedIdentity = snapshot.identity;
         const recordedAtMs = Date.now();
         store.recordJobProcessOwnership(
           "job:task-process-recovery",
           "principal-1",
           started.revision,
-          { ...identity, recordedAtMs },
+          {
+            ...snapshot.identity,
+            recordedAtMs,
+            descendants: snapshot.descendants.map((descendant) => ({ ...descendant }))
+          },
           lease,
           recordedAtMs
         );
@@ -1557,6 +1561,10 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
       assert.equal(profile.networkPolicy, "none");
       assert.equal(control.timeoutMs, 600_000);
       assert.equal(control.shouldCancel(), false);
+      control.onProcessStarted?.({
+        identity: { pid: 1234, processGroupId: 1234, startTimeMicros: 987654321 },
+        descendants: []
+      });
       return {
         state: "completed",
         resultClass: "SUCCEEDED",
