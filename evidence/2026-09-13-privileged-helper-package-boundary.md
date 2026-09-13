@@ -1,7 +1,7 @@
 # Privileged Helper Package Boundary Evidence
 
 Date: 2026-09-13
-Source commit: `4afbe75`
+Source commit: `c49ff5b`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -32,8 +32,9 @@ and disabled adapter/capability state. The plan is not exposed through MCP.
 
 ## Verification
 
-- `npm test`: 345 tests, 343 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
-- Focused package-boundary tests: 7 passed, 0 failed.
+- `npm test`: 347 tests, 345 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
+- Focused package-boundary tests: 8 passed, 0 failed.
+- `MOPS_REAL_SANDBOX=1 npm test`: 347 tests, 347 passed, 0 skipped.
 - `npm run typecheck -- --pretty false`: passed.
 - `npm run build -- --pretty false`: passed.
 - `npm run verify:contracts`: 44 unique tool contracts validated.
@@ -49,8 +50,9 @@ and read back `com.mac-operator.privileged-helper`. The package filesystem
 preflight double-checks root-owned paths and device/inode identity, and its
 pure readback tests reject unsafe mode/owner/type substitutions. The host-only
 plist apply primitive rejects mismatched operation confirmation and non-root
-ownership before filesystem access; successful root-owned apply/rollback was
-not run.
+ownership before filesystem access; it also verifies the actual current
+process UID, rejecting a forged `ownerUid: 0` before the filesystem preflight.
+Successful root-owned apply/rollback was not run.
 
 ## Remaining gates
 

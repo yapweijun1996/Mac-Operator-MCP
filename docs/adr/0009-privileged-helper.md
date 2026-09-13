@@ -82,6 +82,10 @@ the parser, and confirms a second spawned caller is dropped before parsing.
 The fixture uses a temporary socket only and does not install launchd or start
 a root process.
 
+Revision `c49ff5b` makes host-only plist apply verify the actual current process
+UID in addition to the supplied root identity. A non-root caller that forges
+`ownerUid: 0` is rejected before filesystem preflight or mutation.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

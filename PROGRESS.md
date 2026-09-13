@@ -6,9 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `a778fea`.
+Current committed implementation baseline: `c49ff5b`.
 
-The latest real-Mac sandbox readback was rerun from `a778fea` with
+The latest helper apply hardening is `c49ff5b`: host-only plist mutation now
+checks the real current process UID in addition to the caller-supplied root
+identity, so a non-root process cannot forge `ownerUid: 0`. The rejection is
+tested before any helper filesystem preflight. The default full suite passes
+347 tests (345 passed, 2 opt-in real-sandbox tests skipped); the real-Mac
+opt-in suite passes 347/347. Evidence:
+`evidence/2026-09-13-privileged-helper-package-boundary.md`.
+
+The latest real-Mac sandbox readback was rerun from `c49ff5b` with
 `MOPS_REAL_SANDBOX=1`: both opt-in sandbox tests passed, and the full suite
 passed 346/346 with no skipped tests. The smoke remains synthetic and
 disabled-by-default; it does not establish real credential/persistence
