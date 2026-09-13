@@ -119,6 +119,15 @@ Latest native IPC addendum: commit `0cdb8f0` records 220 passing tests and adds 
 
 Latest native adapter-loading addendum: commit `fa96330` adds focused negative coverage for the protected `peer_credentials.node` load boundary. The loader requires canonical regular-file identity, realpath equality, bounded size, current-user ownership, no group/other write bits, stable device/inode/size across `require`, and the complete required peer-IPC export set; symlinked, writable, and non-canonical artifacts are explicitly rejected, and failures map to unavailable and fail closed. Native peer credential/IPC focused tests pass 7/7, while code signing/provenance, runtime ABI pinning, Keychain distribution, installed launchd startup, and production enablement remain open. Evidence: `evidence/2026-09-13-native-adapter-loading.md`.
 
+Latest native consumer-boundary addendum: commit `22881f9` routes filesystem,
+process, network, and process-tree production consumers through the protected
+loader; a source check reports no production direct `.node` requires. Test-only
+native loads remain isolated to fixtures. This removes a consumer-side bypass
+of artifact canonicalization and load-identity checks; native code
+signing/provenance, runtime ABI pinning, Keychain distribution, installed
+launchd startup, and production enablement remain open. Evidence:
+`evidence/2026-09-13-native-adapter-loading.md`.
+
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
 
 Latest lifecycle addendum: commit `10ef33a` records 214 passing tests and adds a fail-closed local Broker runtime boundary with ordered Broker-IPC/operator-channel startup, reverse cleanup, explicit recovery after cleanup failure, serialized lifecycle calls, idempotent close, and duplicate-channel rejection. The source evidence is `evidence/2026-09-13-local-runtime-lifecycle.md`; installed launchd startup, code signing, Keychain distribution, native caller identity, policy loading, store ownership, and production capability enablement remain open.
