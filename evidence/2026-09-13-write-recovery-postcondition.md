@@ -14,11 +14,12 @@ When startup reconciliation marks a running write `UNKNOWN`, `mac_job_status` ma
 
 - Broker integration: an unknown write with a matching target returns `recovery.postcondition = matches`, `resolution = remains_unknown`, and no file content; the Job remains `unknown`.
 - Broker crash-window simulation: the native atomic write commits in a temporary test executor, completion then fails, and the Broker records `UNKNOWN`; the target is fully committed and status readback reports `matches` without promoting the Job.
+- Native controller-kill boundary: a test-only worker calls the native atomic-write primitive, signals after the atomic operation returns, and is terminated before a hypothetical controller readback; both create-only and replacement cases leave complete `after` content with no temporary file.
 - Persistence restart: the non-secret descriptor survives a BrokerStore close/reopen while stdout remains empty and the Job reconciles to `unknown`.
 - Contract validation: the optional recovery object is bounded and schema-valid under `mac_job_status`.
 
-Observed verification on this revision: `npm test` passed with 241 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed.
+Observed verification on this revision: `npm test` passed with 242 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed.
 
 ## Limits and next gate
 
-This is a Broker completion-failure simulation, not an OS process kill at every native syscall boundary. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Native crash-window injection, filesystem remount identity, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.
+The controller-kill test is a bounded worker termination after the native atomic operation returns, not an OS process kill injected at every native syscall boundary. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Native syscall-boundary crash injection, filesystem remount identity, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.

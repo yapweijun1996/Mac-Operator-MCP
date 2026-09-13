@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
-import { link, lstat, mkdtemp, mkdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -89,6 +89,65 @@ test("write postcondition probe distinguishes match, mismatch, and unavailable",
     assert.equal(inspector.verifyWritePostcondition(plan, "0".repeat(64), 4).status, "mismatch");
     await rm(file);
     assert.equal(inspector.verifyWritePostcondition(plan, desired, 4).status, "unavailable");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native atomic write survives a controller-kill boundary without partial target state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-kill-boundary-"));
+  const nativePath = require.resolve("./peer_credentials.node");
+  const cases = [
+    { name: "created.txt", before: null, createOnly: true },
+    { name: "replaced.txt", before: "before", createOnly: false }
+  ] as const;
+  try {
+    for (const current of cases) {
+      const target = join(directory, current.name);
+      if (current.before !== null) await writeFile(target, current.before, { mode: 0o600 });
+      const inspector = new FilesystemInspector([writeRoot(directory)]);
+      const prior = current.before === null ? undefined : inspector.statPath(target, false);
+      const worker = new Worker(`
+        const { parentPort, workerData } = require("node:worker_threads");
+        const native = require(workerData.nativePath);
+        native.writeFileAtomicWithinRoot(
+          workerData.root,
+          workerData.target,
+          Buffer.from(workerData.content),
+          workerData.createOnly,
+          workerData.expectedPresent,
+          workerData.expectedDevice,
+          workerData.expectedInode,
+          workerData.tempName
+        );
+        parentPort.postMessage("committed-before-controller-readback");
+        setInterval(() => {}, 1000);
+      `, {
+        eval: true,
+        workerData: {
+          nativePath,
+          root: directory,
+          target,
+          content: "after",
+          createOnly: current.createOnly,
+          expectedPresent: prior !== undefined,
+          expectedDevice: prior?.device ?? "0",
+          expectedInode: prior?.inode ?? "0",
+          tempName: `.mac-operator-write-kill-${current.name}`
+        }
+      });
+      const committed = await new Promise<string>((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+      });
+      assert.equal(committed, "committed-before-controller-readback");
+      const exit = new Promise<number>((resolve) => worker.once("exit", resolve));
+      await worker.terminate();
+      assert.notEqual(await exit, 0);
+      assert.equal(await readFile(target, "utf8"), "after");
+      assert.equal((await readdir(directory)).some((entry) => entry.startsWith(".mac-operator-write-kill-")), false);
+      await rm(target);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
