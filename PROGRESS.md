@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `93eeaf8`.
+Current committed implementation baseline: `92137e2`.
+
+The latest macOS volume-inventory addendum is `92137e2`: read-only `diskutil
+list`, `mount`, `/Volumes`, and `df -P` readback shows only the internal APFS
+layout and the system `Macintosh HD -> /` alias; no removable, network, or
+secondary user volume is mounted for a remount exercise. No mount, unmount,
+erase, repartition, or write operation was performed. Physical/removable
+remount evidence remains open because the required disposable target is absent.
+Evidence: `evidence/2026-09-13-volume-inventory.md`.
 
 The latest atomic-write post-commit-error addendum is `93eeaf8`: the
 fault-test-only native module injects `ENOSPC` after atomic rename and before

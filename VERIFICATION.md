@@ -52,6 +52,15 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
+Latest macOS volume-inventory addendum: source commit `92137e2` records
+read-only `diskutil list`, `mount`, `/Volumes`, and `df -P` output. The host has
+only internal APFS surfaces and the system `Macintosh HD -> /` alias; no
+removable, network, or secondary user volume is mounted for a remount exercise.
+No mount, unmount, erase, repartition, or write operation was performed.
+Physical/removable remount evidence remains open because an eligible disposable
+target is absent. Evidence:
+`evidence/2026-09-13-volume-inventory.md`.
+
 Latest atomic-write post-commit-error addendum: source commit `93eeaf8` adds
 fault-test-only `ENOSPC` immediately after atomic rename and before the
 parent-directory `fsync`. The target contains the new bytes, the temporary
