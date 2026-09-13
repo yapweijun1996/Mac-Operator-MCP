@@ -43,14 +43,15 @@ test("JWT verifier fails closed for expiry, audience, missing token identity, an
       return true;
     }
   });
-  const token = await createToken(privateKey);
+  const expectedExpiresAt = Math.floor(Date.now() / 1_000) + 300;
+  const token = await createToken(privateKey, { expiresAt: expectedExpiresAt });
   await assertInvalid(verifier, token);
   assert.deepEqual(revoked, [{
     issuerId: "issuer-prod",
     subject: "principal-1",
     sessionId: "session-1",
     tokenId: "token-1",
-    expiresAt: Math.floor(Date.now() / 1_000) + 300
+    expiresAt: expectedExpiresAt
   }]);
 
   const wrongAudience = await createToken(privateKey, { audience: "https://other.example.test/mcp" });
