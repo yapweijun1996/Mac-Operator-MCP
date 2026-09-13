@@ -15,10 +15,11 @@ When startup reconciliation marks a running write `UNKNOWN`, `mac_job_status` ma
 - Broker integration: an unknown write with a matching target returns `recovery.postcondition = matches`, `resolution = remains_unknown`, and no file content; the Job remains `unknown`.
 - Broker crash-window simulation: the native atomic write commits in a temporary test executor, completion then fails, and the Broker records `UNKNOWN`; the target is fully committed and status readback reports `matches` without promoting the Job.
 - Native syscall crash boundary: a test-only fault-instrumented native module terminates its child process with `SIGKILL` after temporary-file `fsync` and after `rename`; create-before-rename leaves the target absent and only the orphan temporary file, while create/replace-after-rename leave complete `after` content with no temporary file.
+- Active authority boundary: a filesystem write adapter that trips the Broker mutations kill switch before returning cannot complete its Job; the request is `CANCELLED` and the Job remains `UNKNOWN`.
 - Persistence restart: the non-secret descriptor survives a BrokerStore close/reopen while stdout remains empty and the Job reconciles to `unknown`.
 - Contract validation: the optional recovery object is bounded and schema-valid under `mac_job_status`.
 
-Observed verification on this revision: `npm test` passed with 242 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed.
+Observed verification on this revision: `npm test` passed with 243 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed.
 
 ## Limits and next gate
 

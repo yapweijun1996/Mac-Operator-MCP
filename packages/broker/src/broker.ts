@@ -1465,6 +1465,11 @@ export class Broker {
         this.executionControl(request, execution.target, timeoutMs, job.jobId)
       );
       if (workerResult.operation !== "write") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+      // Revalidate authority after the adapter returns and before committing a
+      // successful Job. A mutation may have completed while a kill switch or
+      // revocation changed during the bounded native operation; that outcome
+      // must remain UNKNOWN rather than being published as success.
+      this.ensureActiveAuthority(request, execution.target);
       const data: WriteResultData = {
         path: workerResult.path,
         bytes_written: workerResult.bytesWritten,
