@@ -241,8 +241,16 @@ export async function createBrokerServiceFromStartupConfig(options: {
         } catch (error) {
           firstError ??= error;
         }
-        edgeKeyring?.dispose();
-        activeStore.close();
+        try {
+          edgeKeyring?.dispose();
+        } catch (error) {
+          firstError ??= error;
+        }
+        try {
+          activeStore.close();
+        } catch (error) {
+          firstError ??= error;
+        }
         try {
           await instanceLock?.close();
         } catch (error) {
@@ -253,8 +261,8 @@ export async function createBrokerServiceFromStartupConfig(options: {
     };
   } catch (error) {
     await broker?.close().catch(() => undefined);
-    edgeKeyring?.dispose();
-    store?.close();
+    try { edgeKeyring?.dispose(); } catch { /* preserve the startup error */ }
+    try { store?.close(); } catch { /* preserve the startup error */ }
     await instanceLock?.close().catch(() => undefined);
     throw error;
   }
