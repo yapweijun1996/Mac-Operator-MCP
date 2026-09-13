@@ -1527,6 +1527,26 @@ struct ProcessRecord {
   std::string owner;
 };
 
+struct ProcessIdentityRecord {
+  pid_t pid;
+  pid_t parent_pid;
+  uint64_t start_time_micros;
+};
+
+bool ReadProcessIdentity(pid_t pid, ProcessIdentityRecord* output) {
+  if (pid <= 0 || output == nullptr) return false;
+  struct proc_bsdinfo bsd_info{};
+  if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd_info, sizeof(bsd_info)) != sizeof(bsd_info)) return false;
+  constexpr uint64_t MAX_MICROSECONDS = std::numeric_limits<uint64_t>::max();
+  if (bsd_info.pbi_start_tvsec > (MAX_MICROSECONDS / 1'000'000ULL) ||
+      bsd_info.pbi_start_tvusec > 999'999ULL) return false;
+  const uint64_t start_time_micros = bsd_info.pbi_start_tvsec * 1'000'000ULL + bsd_info.pbi_start_tvusec;
+  output->pid = pid;
+  output->parent_pid = static_cast<pid_t>(bsd_info.pbi_ppid);
+  output->start_time_micros = start_time_micros;
+  return true;
+}
+
 std::string BoundedProcessText(const char* value, size_t capacity) {
   std::string result;
   for (size_t index = 0; index < capacity && value[index] != '\0'; ++index) {
@@ -1629,6 +1649,104 @@ napi_value InspectProcess(napi_env env, napi_callback_info info) {
   }
   napi_set_named_property(env, result, "childPids", child_array);
   SetString(env, result, "owner", owner);
+  return result;
+}
+
+napi_value ListDescendantProcesses(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "listDescendantProcesses requires pid");
+    return nullptr;
+  }
+  int32_t requested_pid = 0;
+  if (napi_get_value_int32(env, args[0], &requested_pid) != napi_ok || requested_pid < 1 || requested_pid > 99'999'999) {
+    napi_throw_type_error(env, nullptr, "Process pid must be between 1 and 99999999");
+    return nullptr;
+  }
+
+  const pid_t root_pid = static_cast<pid_t>(requested_pid);
+  const int requested_bytes = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
+  if (requested_bytes <= 0) {
+    ThrowSystemError(env, "Process descendants could not be enumerated");
+    return nullptr;
+  }
+  constexpr size_t MAX_PID_BYTES = 65'536 * sizeof(pid_t);
+  const size_t buffer_bytes = std::min(static_cast<size_t>(requested_bytes), MAX_PID_BYTES);
+  std::vector<pid_t> pids(buffer_bytes / sizeof(pid_t));
+  const int returned_bytes = proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(buffer_bytes));
+  if (returned_bytes <= 0) {
+    ThrowSystemError(env, "Process descendants could not be read");
+    return nullptr;
+  }
+  const size_t pid_count = std::min(static_cast<size_t>(returned_bytes) / sizeof(pid_t), pids.size());
+  bool truncated = static_cast<size_t>(requested_bytes) > MAX_PID_BYTES;
+  std::vector<ProcessIdentityRecord> identities;
+  identities.reserve(pid_count);
+  for (size_t index = 0; index < pid_count; ++index) {
+    const pid_t pid = pids[index];
+    if (pid <= 0) continue;
+    ProcessIdentityRecord identity{};
+    if (ReadProcessIdentity(pid, &identity)) identities.push_back(identity);
+  }
+
+  std::set<pid_t> known;
+  known.insert(root_pid);
+  std::vector<pid_t> queue{root_pid};
+  std::vector<ProcessIdentityRecord> descendants;
+  for (size_t queue_index = 0; queue_index < queue.size(); ++queue_index) {
+    const pid_t parent_pid = queue[queue_index];
+    for (const ProcessIdentityRecord& identity : identities) {
+      if (identity.parent_pid != parent_pid || known.find(identity.pid) != known.end()) continue;
+      if (descendants.size() >= 256) {
+        truncated = true;
+        break;
+      }
+      known.insert(identity.pid);
+      descendants.push_back(identity);
+      queue.push_back(identity.pid);
+    }
+    if (truncated && descendants.size() >= 256) break;
+  }
+
+  napi_value result;
+  napi_value process_array;
+  napi_create_object(env, &result);
+  napi_create_array_with_length(env, descendants.size(), &process_array);
+  for (size_t index = 0; index < descendants.size(); ++index) {
+    const ProcessIdentityRecord& identity = descendants[index];
+    napi_value item;
+    napi_create_object(env, &item);
+    SetNumber(env, item, "pid", static_cast<double>(identity.pid));
+    SetNumber(env, item, "parentPid", static_cast<double>(identity.parent_pid));
+    SetNumber(env, item, "startTimeMicros", static_cast<double>(identity.start_time_micros));
+    napi_set_element(env, process_array, index, item);
+  }
+  napi_set_named_property(env, result, "processes", process_array);
+  SetBoolean(env, result, "truncated", truncated);
+  return result;
+}
+
+napi_value IsProcessIdentityAlive(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+    napi_throw_type_error(env, nullptr, "isProcessIdentityAlive requires pid and start time");
+    return nullptr;
+  }
+  int32_t requested_pid = 0;
+  double requested_start_time = 0;
+  if (napi_get_value_int32(env, args[0], &requested_pid) != napi_ok || requested_pid < 1 || requested_pid > 99'999'999 ||
+      napi_get_value_double(env, args[1], &requested_start_time) != napi_ok || requested_start_time < 0 ||
+      requested_start_time > 9'007'199'254'740'991.0) {
+    napi_throw_type_error(env, nullptr, "Process identity is malformed");
+    return nullptr;
+  }
+  ProcessIdentityRecord identity{};
+  const bool alive = ReadProcessIdentity(static_cast<pid_t>(requested_pid), &identity) &&
+    static_cast<double>(identity.start_time_micros) == requested_start_time;
+  napi_value result;
+  napi_get_boolean(env, alive, &result);
   return result;
 }
 
@@ -1756,6 +1874,10 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "listProcesses", function);
   napi_create_function(env, "inspectProcess", NAPI_AUTO_LENGTH, InspectProcess, nullptr, &function);
   napi_set_named_property(env, exports, "inspectProcess", function);
+  napi_create_function(env, "listDescendantProcesses", NAPI_AUTO_LENGTH, ListDescendantProcesses, nullptr, &function);
+  napi_set_named_property(env, exports, "listDescendantProcesses", function);
+  napi_create_function(env, "isProcessIdentityAlive", NAPI_AUTO_LENGTH, IsProcessIdentityAlive, nullptr, &function);
+  napi_set_named_property(env, exports, "isProcessIdentityAlive", function);
   return exports;
 }
 

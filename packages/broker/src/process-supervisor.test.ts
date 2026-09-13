@@ -168,6 +168,33 @@ test("process supervisor terminates the process group on timeout and output over
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor terminates a tracked detached descendant", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Detached descendant identity tracking is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const startedAt = Date.now();
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: [
+      "-c",
+      "import os,time; pid=os.fork();\nif pid==0:\n os.setsid(); print(os.getpid(), flush=True); time.sleep(5)\nelse:\n time.sleep(1)"
+    ],
+    cwd: CWD,
+    timeoutMs: 30,
+    outputCapBytes: 1_024
+  });
+  assert.equal(result.state, "timed_out");
+  assert.equal(result.resultClass, "TIMEOUT");
+  assert.equal(result.terminationObserved, true);
+  const descendantPid = Number.parseInt(result.stdout, 10);
+  assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+  assert.ok(Date.now() - startedAt < 2_000, "detached descendant must not hold the supervisor for its full lifetime");
+  await assertProcessGone(descendantPid);
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor cancellation kills descendants and releases capacity", async () => {
   const supervisor = new ProcessSupervisor({ maxConcurrent: 1, pollIntervalMs: 5, terminationGraceMs: 50 });
   let cancelled = false;
