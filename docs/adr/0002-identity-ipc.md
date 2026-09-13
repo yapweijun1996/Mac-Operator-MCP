@@ -64,6 +64,15 @@ revoke the exact Edge in the Broker. This rejects new work and lets active
 authority polling fail closed, but it does not claim installed launchd startup,
 signed caller provenance, or remote revocation propagation.
 
+Revision `f3fc18e` adds the startup capture boundary for an installed Edge
+candidate. The Broker may read only an exact per-user `gui/<uid>/com.mac-operator.*`
+service through bounded `launchctl print`, require its `running` state, and
+capture the returned PID's native start time before constructing the listener.
+The identity is then monitored by the native transport and is never accepted
+from request arguments or environment variables. This closes the local
+startup-assembly ambiguity but not live LaunchAgent installation/readback,
+signed package provenance, or protected cross-process key distribution.
+
 An Edge keyring supports overlapping validity windows for rotation. The Ed25519-signed policy separately authorizes exact `(edge_id, key_id, not_before, expires_at)` metadata, while secret bytes come only from protected local key files. A request must pass both signed-policy metadata and local-key validity. Key-specific revocation is persisted and overrides both. Rotation, unknown key, local expiry, signed-policy expiry, and old-key revocation tests pass.
 
 Key-file lifecycle primitives use an owner-only non-symlink directory, exclusive `0600` creation, file and directory fsync, and an expected-digest precondition. Retirement refuses an Edge key until its exact identity is durably revoked, then uses a unique same-directory quarantine rename and unlink. APFS/SSD physical overwrite is outside this guarantee; cross-process delivery should move to an approved Keychain or packaging mechanism before production acceptance.

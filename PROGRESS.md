@@ -114,6 +114,16 @@ upgrade backup left for explicit recovery. This remains non-live evidence:
 no LaunchAgent was installed or bootstrapped on the host. Evidence:
 `evidence/2026-09-13-install-plan-executor.md`.
 
+The latest startup addendum is `f3fc18e`: the native Broker startup assembly
+can capture an Edge PID from an exact per-user LaunchAgent `launchctl print`,
+require the running state and bounded PID, read its native start time, and pass
+that identity into the production runtime before it listens. Wrong domains,
+stopped/malformed services, and unavailable native identity fail closed. The
+focused tests also start and close a real native listener with the captured
+identity. This is startup assembly evidence only; no Mac-Operator LaunchAgent
+was installed or bootstrapped on the host. Evidence:
+`evidence/2026-09-13-launchd-edge-identity-startup.md`.
+
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 
 The latest implementation addendum is `6683344`: Broker, policy-signer, and approval IPC now share a native peer-accept transport. Supplying `peerPolicy` performs UID/GID/PID authorization before handler parsing; the legacy private-descriptor verifier remains compatibility-only.
@@ -295,7 +305,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 304 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 307 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.

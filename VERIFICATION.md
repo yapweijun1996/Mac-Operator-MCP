@@ -214,6 +214,18 @@ lifecycle evidence only; installed launchd startup/readback, signed caller
 provenance, Keychain distribution, and remote issuer propagation remain open.
 Evidence: `evidence/2026-09-13-native-peer-process-identity.md`.
 
+Latest LaunchAgent identity-startup addendum: commit `f3fc18e` adds a
+host-only startup assembly that accepts only `gui/<uid>/com.mac-operator.*`,
+reads the exact service with bounded empty-environment `launchctl print`,
+requires `running` plus a bounded PID, captures native PID/start-time identity,
+and passes it into the production native runtime before listening. Wrong
+domains, stopped/malformed services, unavailable identity, and missing service
+readback fail closed. Ten focused startup/native tests pass; full regression is
+307/309 with two opt-in sandbox tests skipped. No Mac-Operator LaunchAgent was
+installed or bootstrapped, so signed package provenance and live launchd
+restart/readback remain open. Evidence:
+`evidence/2026-09-13-launchd-edge-identity-startup.md`.
+
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
 
 Latest lifecycle addendum: commit `10ef33a` records 214 passing tests and adds a fail-closed local Broker runtime boundary with ordered Broker-IPC/operator-channel startup, reverse cleanup, explicit recovery after cleanup failure, serialized lifecycle calls, idempotent close, and duplicate-channel rejection. The source evidence is `evidence/2026-09-13-local-runtime-lifecycle.md`; installed launchd startup, code signing, Keychain distribution, native caller identity, policy loading, store ownership, and production capability enablement remain open.
