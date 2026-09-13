@@ -4,7 +4,7 @@ import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { sha256 } from "@mac-operator/contracts";
+import { sha256, verifyRequestAuthentication } from "@mac-operator/contracts";
 import { loadProtectedEdgeAuthenticationKey } from "./authentication-key.js";
 import { EdgeRequestFactory } from "./request-factory.js";
 
@@ -91,4 +91,38 @@ test("Edge request factory can load a protected key without accepting raw startu
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Edge request factory copies injected key bytes and validates key IDs", () => {
+  const mutableKey = randomBytes(32);
+  const originalKey = Buffer.from(mutableKey);
+  const factory = new EdgeRequestFactory({
+    authenticationKey: mutableKey,
+    authenticationKeyId: "edge-key-1",
+    brokerAudience: "mac-operator-broker",
+    policyVersion: () => "policy-1",
+    now: () => 1_700_000_000_000,
+    randomId: (() => {
+      let index = 0;
+      return () => `copy-id-${++index}`;
+    })()
+  });
+  mutableKey.fill(0);
+  const request = factory.create("mac_health", {}, {
+    principalId: "principal-1",
+    issuer: "issuer-1",
+    audience: "mac-operator-broker",
+    sessionId: "session-1",
+    edgeId: "edge-1",
+    scopes: ["mac.control.read"],
+    issuedAtMs: 1_699_999_000_000,
+    expiresAtMs: 1_700_001_000_000
+  });
+  assert.equal(verifyRequestAuthentication(request, originalKey), true);
+  assert.throws(() => new EdgeRequestFactory({
+    authenticationKey: originalKey,
+    authenticationKeyId: "../bad",
+    brokerAudience: "mac-operator-broker",
+    policyVersion: () => "policy-1"
+  }), /key ID is malformed/u);
 });

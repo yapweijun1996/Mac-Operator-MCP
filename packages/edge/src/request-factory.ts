@@ -20,8 +20,21 @@ export interface EdgeRequestFactoryOptions {
 }
 
 export class EdgeRequestFactory {
-  constructor(private readonly options: EdgeRequestFactoryOptions) {
+  private readonly options: EdgeRequestFactoryOptions;
+
+  constructor(options: EdgeRequestFactoryOptions) {
     if (options.authenticationKey.byteLength < 32) throw new Error("Edge authentication key must contain at least 32 bytes");
+    if (typeof options.authenticationKeyId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(options.authenticationKeyId)) {
+      throw new Error("Edge authentication key ID is malformed");
+    }
+    this.options = {
+      authenticationKey: Buffer.from(options.authenticationKey),
+      authenticationKeyId: options.authenticationKeyId,
+      brokerAudience: options.brokerAudience,
+      policyVersion: options.policyVersion,
+      ...(options.now === undefined ? {} : { now: options.now }),
+      ...(options.randomId === undefined ? {} : { randomId: options.randomId })
+    };
   }
 
   static async fromProtectedKeyFile(
