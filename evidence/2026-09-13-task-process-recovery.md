@@ -1,6 +1,6 @@
 # Broker task-process restart recovery evidence
 
-- Source commit: `25065317038fc8f605a23bc8a307a40ebbc31fc5`
+- Source commit: `a20fed791b73d8b8fb02c08384a115bde21e18f9`
 - Working tree: clean before this evidence document update
 - Host: Mac mini M4, `Darwin yaps-Mac-mini.local 25.2.0`, arm64
 - Runtime: Node `v25.5.0`; macOS platform reported by Node as `darwin`
@@ -44,26 +44,31 @@ non-success outcomes; the Job is never changed to `completed`.
   passes on Darwin: a forked child calls `setsid()`, the persisted root is
   killed, and recovery terminates the exact child identity without relying on
   process-group membership.
+- `process supervisor keeps an empty snapshot unresolved after root exit`
+  passes on Darwin: a killed root with no persisted descendants returns
+  `unknown`, not `absent`, because a child could have been created after the
+  last observation and escaped the process group.
 - `task process ownership metadata survives restart as UNKNOWN` passes,
   including schema migration and process-metadata readback.
-- Default `npm test` — 386 tests, 383 passed, 3 opt-in sandbox tests skipped.
-- `MOPS_REAL_SANDBOX=1 npm test` — 386 tests, 386 passed, 0 skipped.
+- Default `npm test` — 387 tests, 384 passed, 3 opt-in sandbox tests skipped.
+- `MOPS_REAL_SANDBOX=1 npm test` — 387 tests, 387 passed, 0 skipped.
 - `npm run typecheck -- --pretty false`, `npm run verify:contracts`,
   `npm audit --omit=dev --audit-level=high`, and `git diff --check` pass.
 
 ## Interpretation and limits
 
 This is real Darwin cross-BrokerStore recovery for a live root and for a
-persisted detached descendant after root exit. It does not prove recovery of
-descendants created after the last snapshot, defeat every post-snapshot
-`setsid` race, or establish sandbox filesystem/network/credential isolation.
-The task runner and `owned_group` profile remain disabled.
+persisted detached descendant after root exit. If no descendant identity was
+persisted, recovery now stays unresolved rather than claiming absence. It does
+not prove cleanup of descendants created after the last snapshot, defeat every
+post-snapshot `setsid` race, or establish sandbox filesystem/network/credential
+isolation. The task runner and `owned_group` profile remain disabled.
 
 Source hashes at capture:
 
 ```text
-8af0345c323f020a79c900b2fb3e2a13177f961be6a5b8fa401ee7430790f7ff  packages/broker/src/process-supervisor.ts
-f92723324d73c28794103c97cb1fdc747bddee7423cadfefd3d39d6c9bef7b43  packages/broker/src/process-supervisor.test.ts
+da604a96f8f0c77b87c06e7da2dfec33ea3c7b85ecf0b2d21394b666dc12a2e7  packages/broker/src/process-supervisor.ts
+116a8644cdd71d65366f04f69a1de809d4c6eecbd5605aca2232aa5f85a18664  packages/broker/src/process-supervisor.test.ts
 15c9c5bfc3acac35d237a23831f4bb8713f4f00e68c7ee9929d921119ef7f55f  packages/broker/src/persistence.ts
 6c73166cd32c03d220247e83b3b52b07c55934f37469ef1a170f7bffdd8382fd  packages/broker/src/persistence.test.ts
 a0dc97ad681563f2567d9260508e769302f2f345e1829298160c01c2851416cf  packages/broker/src/broker.ts
