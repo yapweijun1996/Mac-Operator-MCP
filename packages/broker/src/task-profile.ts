@@ -13,9 +13,29 @@ const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const SAFE_ENVIRONMENT_KEY = /^[A-Z_][A-Z0-9_]{0,63}$/u;
 const SECRET_ENVIRONMENT_KEY = /(?:API|AUTH|COOKIE|CREDENTIAL|KEY|PASSWORD|PASSWD|SECRET|TOKEN|AWS|GITHUB|OPENAI|SSH)/iu;
+const NETWORK_DESTINATION_PATTERN = /^(tcp|udp):\/\/(localhost|127\.0\.0\.1):(\d{1,5})$/u;
 
 export type TaskNetworkPolicy = "none" | "allowlist";
 export type TaskProcessTreePolicy = "single_process" | "owned_group";
+
+export interface TaskNetworkDestination {
+  protocol: "tcp" | "udp";
+  address: string;
+  port: number;
+}
+
+export function parseTaskNetworkDestination(value: unknown): TaskNetworkDestination | null {
+  if (typeof value !== "string" || value.length > 128) return null;
+  const match = NETWORK_DESTINATION_PATTERN.exec(value);
+  if (!match) return null;
+  const protocol = match[1];
+  const address = match[2];
+  const portText = match[3];
+  if (protocol === undefined || address === undefined || portText === undefined) return null;
+  const port = Number(portText);
+  if (port < 1 || port > 65_535) return null;
+  return { protocol: protocol as "tcp" | "udp", address: "localhost", port };
+}
 
 export interface TaskProfile {
   schemaVersion: "0.1";
@@ -202,8 +222,10 @@ function validateProfileDocument(profile: TaskProfile): void {
   if (profile.networkPolicy === "none" && networkAllowlist.length !== 0) {
     throw new Error("A no-network task profile cannot declare network destinations");
   }
-  if (networkAllowlist.some((destination) => typeof destination !== "string" ||
-      destination.length < 1 || destination.length > 256 || destination.includes("\0") || destination.includes("*") || destination.includes("/"))) {
+  if (profile.networkPolicy === "allowlist" && networkAllowlist.length === 0) {
+    throw new Error("An allowlist task profile must declare destinations");
+  }
+  if (networkAllowlist.some((destination) => parseTaskNetworkDestination(destination) === null)) {
     throw new Error("Task profile network allowlist is malformed");
   }
 }

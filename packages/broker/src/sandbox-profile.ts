@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
-import type { ResolvedTaskProfile } from "./task-profile.js";
+import { parseTaskNetworkDestination, type ResolvedTaskProfile } from "./task-profile.js";
 
 const MAX_PROFILE_BYTES = 128 * 1024;
 const MAX_PROFILE_ARGUMENT_LENGTH = 4_096;
@@ -20,7 +20,7 @@ const PROJECT_SECRET_FILES = [
 
 /**
  * Render only the Broker-owned subset of Seatbelt policy. The profile is
- * intentionally deny-default and currently supports no network allowlist;
+ * intentionally deny-default and supports only loopback network destinations;
  * callers must not pass arbitrary SBPL text.
  */
 export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
@@ -31,11 +31,18 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
       !isCanonicalAbsolutePath(profile.process.executable) ||
       !Array.isArray(profile.filesystemRoots) || profile.filesystemRoots.length < 1 ||
       profile.filesystemRoots.some((root) => !isSafeFilesystemRoot(root)) ||
-      !Array.isArray(profile.networkAllowlist)) {
+      !Array.isArray(profile.networkAllowlist) ||
+      (profile.networkPolicy !== "none" && profile.networkPolicy !== "allowlist")) {
     throw new BrokerError("POLICY_DENIED", "Task sandbox profile is not supported by the Broker boundary");
   }
-  if (profile.networkPolicy !== "none" || profile.networkAllowlist.length !== 0) {
-    throw new BrokerError("NETWORK_DENIED", "Task sandbox network allowlists are not supported by this boundary");
+  if (profile.networkPolicy === "none" && profile.networkAllowlist.length !== 0) {
+    throw new BrokerError("NETWORK_DENIED", "No-network task cannot declare destinations");
+  }
+  const networkDestinations = profile.networkPolicy === "allowlist"
+    ? profile.networkAllowlist.map(parseTaskNetworkDestination)
+    : [];
+  if (profile.networkPolicy === "allowlist" && (networkDestinations.length === 0 || networkDestinations.some((destination) => destination === null))) {
+    throw new BrokerError("NETWORK_DENIED", "Task sandbox network allowlist requires loopback destinations");
   }
   const processTreePolicy = profile.processTreePolicy ?? "single_process";
   if (processTreePolicy !== "single_process" && processTreePolicy !== "owned_group") {
@@ -61,6 +68,9 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
     "(allow file-read* (literal \"/private/etc/resolv.conf\"))",
   ];
   if (processTreePolicy === "owned_group") lines.splice(3, 0, "(allow process-fork)");
+  for (const destination of networkDestinations) {
+    if (destination !== null) lines.push(`(allow network-outbound (remote ${destination.protocol} \"${destination.address}:${destination.port}\"))`);
+  }
   for (const root of roots) {
     lines.push(`(allow file-read* (subpath ${quote(root)}))`);
     lines.push(`(allow file-write* (subpath ${quote(root)}))`);

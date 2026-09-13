@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
@@ -77,9 +79,18 @@ test("sandbox profile renderer rejects broad roots, cwd escapes, and network all
       () => renderTaskSandboxProfile(resolvedProfile(root, { cwd: "/tmp" })),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
     );
+    const allowlisted = renderTaskSandboxProfile(resolvedProfile(root, {
+      networkPolicy: "allowlist",
+      networkAllowlist: ["tcp://127.0.0.1:43123"]
+    }));
+    assert.match(allowlisted, /\(allow network-outbound \(remote tcp "localhost:43123"\)\)/u);
     assert.throws(
-      () => renderTaskSandboxProfile(resolvedProfile(root, { networkPolicy: "allowlist", networkAllowlist: ["example.com"] })),
+      () => renderTaskSandboxProfile(resolvedProfile(root, { networkPolicy: "allowlist", networkAllowlist: ["example.com:443"] })),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "NETWORK_DENIED"
+    );
+    assert.throws(
+      () => renderTaskSandboxProfile(resolvedProfile(root, { networkPolicy: "unexpected" as never })),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -180,6 +191,41 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
     assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied");
     assert.equal(await readFile(join(root, "created.txt"), "utf8"), "created");
 
+    const allowedServer = await startHttpServer("network-allowed");
+    const deniedServer = await startHttpServer("network-denied");
+    try {
+      const allowedNetwork = await runner.run({
+        ...resolvedProfile(root),
+        profile: "tests.network-allowlist",
+        networkPolicy: "allowlist",
+        networkAllowlist: [`tcp://localhost:${allowedServer.port}`],
+        process: {
+          ...resolvedProfile(root).process,
+          executable: "/usr/bin/curl",
+          args: ["--silent", "--show-error", "--connect-timeout", "1", `http://localhost:${allowedServer.port}`]
+        }
+      }, { timeoutMs: 2_000, shouldCancel: () => false });
+      assert.equal(allowedNetwork.resultClass, "SUCCEEDED", JSON.stringify(allowedNetwork));
+      assert.equal(allowedNetwork.stdout, "network-allowed");
+
+      const deniedNetwork = await runner.run({
+        ...resolvedProfile(root),
+        profile: "tests.network-denied",
+        networkPolicy: "allowlist",
+        networkAllowlist: [`tcp://localhost:${allowedServer.port}`],
+        process: {
+          ...resolvedProfile(root).process,
+          executable: "/usr/bin/curl",
+          args: ["--silent", "--show-error", "--connect-timeout", "1", `http://localhost:${deniedServer.port}`]
+        }
+      }, { timeoutMs: 2_000, shouldCancel: () => false });
+      assert.notEqual(deniedNetwork.resultClass, "SUCCEEDED");
+      assert.equal(deniedNetwork.stdout, "");
+    } finally {
+      await closeHttpServer(allowedServer.server);
+      await closeHttpServer(deniedServer.server);
+    }
+
     const network = await runner.run({
       ...resolvedProfile(root),
       profile: "tests.network",
@@ -250,4 +296,37 @@ test("real macOS sandbox runner maps active cancellation to process-group termin
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+async function startHttpServer(body: string): Promise<{ server: ReturnType<typeof createServer>; port: number }> {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end(body);
+  });
+  return await new Promise((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        server.close();
+        reject(new Error("HTTP fixture did not expose a numeric port"));
+        return;
+      }
+      resolve({ server, port: (address as AddressInfo).port });
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(0, "127.0.0.1");
+  });
+}
+
+async function closeHttpServer(server: ReturnType<typeof createServer>): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
 }
