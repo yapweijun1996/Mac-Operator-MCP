@@ -44,22 +44,32 @@ export class AppControlInspectorImpl implements AppControlInspector {
     control: AppExecutionControl
   ): Promise<SafeAppOpen> {
     validateAppOpenRequest(appId, documentPath, url);
-    const before = await this.inventory.list(false, true, control);
+    const deadlineMs = Date.now() + Math.min(control.timeoutMs, MAX_TIMEOUT_MS);
+    const boundedControl = (): AppExecutionControl => ({
+      timeoutMs: Math.max(1, deadlineMs - Date.now()),
+      shouldCancel: () => {
+        try { return control.shouldCancel() || Date.now() >= deadlineMs; }
+        catch { return true; }
+      }
+    });
+    if (Date.now() >= deadlineMs) throw new BrokerError("TIMEOUT", "App launch timed out");
+    const before = await this.inventory.list(false, true, boundedControl());
     const installed = before.apps.find((app) => app.appId === appId);
     if (!installed) throw new BrokerError("TARGET_NOT_FOUND", "App identity was not found in the bounded inventory");
     const alreadyRunning = installed.running;
     const bundleId = appId.slice("bundle:".length);
+    if (Date.now() >= deadlineMs) throw new BrokerError("TIMEOUT", "App launch timed out");
     const result = await this.supervisor.run({
       executable: OPEN_EXECUTABLE,
       args: ["-b", bundleId],
       cwd: OPEN_CWD,
       environment: {},
-      timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
+      timeoutMs: Math.max(1, deadlineMs - Date.now()),
       outputCapBytes: MAX_OUTPUT_BYTES,
-      shouldCancel: control.shouldCancel
+      shouldCancel: boundedControl().shouldCancel
     });
     assertOpenResult(result);
-    const observed = await this.waitForRunningApp(appId, control);
+    const observed = await this.waitForRunningApp(appId, boundedControl, deadlineMs);
     if (!observed) throw new BrokerError("VERIFICATION_FAILED", "App launch state could not be verified");
     const warnings = [...before.warnings, ...observed.warnings];
     const redactedWarnings = warnings.map((warning) => redactLogText(warning).text).filter((warning) => warning.length > 0);
@@ -76,15 +86,23 @@ export class AppControlInspectorImpl implements AppControlInspector {
 
   private async waitForRunningApp(
     appId: string,
-    control: AppExecutionControl
+    control: () => AppExecutionControl,
+    deadlineMs: number
   ): Promise<{ app: SafeAppInventory["apps"][number]; warnings: readonly string[] } | undefined> {
     for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
-      if (control.shouldCancel()) throw new BrokerError("CANCELLED", "App launch was cancelled");
-      const inventory = await this.inventory.list(true, false, control);
+      const bounded = control();
+      if (bounded.shouldCancel()) {
+        if (Date.now() >= deadlineMs) throw new BrokerError("TIMEOUT", "App launch timed out");
+        throw new BrokerError("CANCELLED", "App launch was cancelled");
+      }
+      const inventory = await this.inventory.list(true, false, bounded);
       const observed = inventory.apps.find((app) => app.appId === appId && app.running);
       if (observed) return { app: observed, warnings: inventory.warnings };
-      await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      const remainingMs = deadlineMs - Date.now();
+      if (remainingMs <= 0) throw new BrokerError("TIMEOUT", "App launch timed out");
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(POLL_INTERVAL_MS, remainingMs)));
     }
+    if (Date.now() >= deadlineMs) throw new BrokerError("TIMEOUT", "App launch timed out");
     return undefined;
   }
 }

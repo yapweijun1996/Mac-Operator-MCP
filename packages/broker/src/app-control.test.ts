@@ -101,3 +101,30 @@ test("app open fails closed when the identity is absent from inventory", async (
   );
   assert.equal(launchCalls, 0);
 });
+
+test("app open applies one global deadline across launch and reobservation", async () => {
+  let listCalls = 0;
+  const observedTimeouts: number[] = [];
+  const inspector = new AppControlInspectorImpl(
+    {
+      async list(_runningOnly, _includeInstalled, control) {
+        listCalls += 1;
+        observedTimeouts.push(control.timeoutMs);
+        return inventory([{ appId: "bundle:com.example.Editor", bundleId: "com.example.Editor", name: "Editor", running: false }]);
+      }
+    },
+    {
+      async run(request) {
+        observedTimeouts.push(request.timeoutMs);
+        return success;
+      }
+    }
+  );
+  await assert.rejects(
+    inspector.open("bundle:com.example.Editor", undefined, undefined, { timeoutMs: 25, shouldCancel: () => false }),
+    /timed out/u
+  );
+  assert.ok(listCalls > 1);
+  assert.ok(observedTimeouts.every((timeout) => timeout >= 1 && timeout <= 25));
+  assert.ok(observedTimeouts.length >= 2);
+});
