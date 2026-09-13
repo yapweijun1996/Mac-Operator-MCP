@@ -8,17 +8,40 @@ import {
   type BrokerRequest,
   type PrincipalContext
 } from "@mac-operator/contracts";
+import { loadProtectedEdgeAuthenticationKey } from "./authentication-key.js";
+
+export interface EdgeRequestFactoryOptions {
+  authenticationKey: Buffer;
+  authenticationKeyId: string;
+  brokerAudience: string;
+  policyVersion: () => string;
+  now?: () => number;
+  randomId?: () => string;
+}
 
 export class EdgeRequestFactory {
-  constructor(private readonly options: {
-    authenticationKey: Buffer;
-    authenticationKeyId: string;
-    brokerAudience: string;
-    policyVersion: () => string;
-    now?: () => number;
-    randomId?: () => string;
-  }) {
+  constructor(private readonly options: EdgeRequestFactoryOptions) {
     if (options.authenticationKey.byteLength < 32) throw new Error("Edge authentication key must contain at least 32 bytes");
+  }
+
+  static async fromProtectedKeyFile(
+    options: Omit<EdgeRequestFactoryOptions, "authenticationKey"> & {
+      authenticationKeyPath: string;
+      expectedAuthenticationKeyDigest: string;
+    }
+  ): Promise<EdgeRequestFactory> {
+    const authenticationKey = await loadProtectedEdgeAuthenticationKey(
+      options.authenticationKeyPath,
+      options.expectedAuthenticationKeyDigest
+    );
+    return new EdgeRequestFactory({
+      authenticationKey,
+      authenticationKeyId: options.authenticationKeyId,
+      brokerAudience: options.brokerAudience,
+      policyVersion: options.policyVersion,
+      ...(options.now === undefined ? {} : { now: options.now }),
+      ...(options.randomId === undefined ? {} : { randomId: options.randomId })
+    });
   }
 
   create(tool: string, argumentsValue: Readonly<Record<string, unknown>>, principal: PrincipalContext): BrokerRequest {
