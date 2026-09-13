@@ -28,6 +28,13 @@ copy and wipe HMAC keys; constructed paths recheck key-specific revocation
 before issuing or authorizing work. This improves key custody evidence but does not
 enable a helper adapter or establish a separate privileged process.
 
+Revision `12a1ac3` adds an independent helper runtime assembly boundary. It
+restores the exact activated helper key before construction, requires an
+explicit native peer process identity, forbids reuse of the Broker/control
+socket paths, and owns serialized start/close rollback. Its default adapter
+remains fail-closed; this is lifecycle wiring only and does not launch a root
+process or enable a privileged operation.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

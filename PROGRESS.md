@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `d91d406`.
+Current committed implementation baseline: `12a1ac3`.
+
+The latest helper-runtime addendum is `12a1ac3`: an independent helper
+runtime now restores the exact active `helper_key` configuration before
+constructing the separately authenticated listener, requires a native peer
+process identity, rejects socket reuse with the Broker/control channels, and
+owns serialized start/close rollback. The default adapter remains
+fail-closed; no root process or privileged operation is started. The full
+suite passes 337 tests (335 passed, 2 opt-in real-sandbox tests skipped).
+Evidence: `evidence/2026-09-13-privileged-helper-runtime.md`.
 
 The latest helper-key addendum is `d91d406`: helper factories now recheck
 key-specific `helper_key` revocation at issue/authorization time, so revoking
