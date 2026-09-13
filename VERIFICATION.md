@@ -42,6 +42,13 @@ substitution before final helper validation. The full 395-test suite passes;
 real root installation and live LaunchDaemon readback remain open.
 Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Latest privileged-helper executor addendum: source commit `56ab0ca` changes the
+host-only lifecycle callback to return only raw readback sources; the executor
+composes and validates the final package readback internally. This prevents a
+plan-shaped readback bypass. The full 395-test suite passes; root-owned
+installation and live LaunchDaemon readback remain open.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,

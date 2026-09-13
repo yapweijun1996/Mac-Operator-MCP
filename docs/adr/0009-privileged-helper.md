@@ -125,6 +125,10 @@ ID, domain, LaunchDaemon type, running state, PID, argv, plist path, and
 process-identity checks run before the planned fields are copied into the
 validated result.
 
+Revision `56ab0ca` makes the host-only lifecycle executor accept only those raw
+sources and call the composition boundary itself. This prevents an executor
+caller from bypassing independent source checks with a preassembled readback.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

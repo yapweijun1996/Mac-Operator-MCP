@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `1405b99`.
+Current committed implementation baseline: `56ab0ca`.
+
+The latest privileged-helper executor addendum is `56ab0ca`: the host-only
+lifecycle executor now accepts only raw readback sources and invokes
+`composePrivilegedHelperPackageReadback` internally. A caller cannot bypass
+independent launchd/process/plist/signature checks by supplying a preassembled
+package readback. Root-owned installation and live LaunchDaemon evidence remain
+open. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
 The latest privileged-helper source-composition addendum is `1405b99`:
 `composePrivilegedHelperPackageReadback` accepts only independently observed

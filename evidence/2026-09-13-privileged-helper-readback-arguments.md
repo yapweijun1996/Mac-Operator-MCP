@@ -44,6 +44,11 @@ PID/start-time binding before copying the planned launchd configuration into a
 validated package readback. A caller cannot promote a plan-shaped object into
 launchd evidence.
 
+`executePrivilegedHelperPackagePlan` now accepts only
+`PrivilegedHelperPackageReadbackSources` from its host callback and invokes
+the composition function internally. The execution boundary therefore cannot
+report success from a preassembled, caller-provided package readback.
+
 ## Verification
 
 - `npm test`: 395 tests, 392 passed, 0 failed, 3 opt-in macOS sandbox tests skipped.
@@ -57,6 +62,8 @@ launchd evidence.
   `FILESYSTEM_MISMATCH`.
 - Negative coverage: a substituted launchd service ID is rejected with stable
   `SERVICE_MISMATCH` before final helper validation.
+- Type-level and executor boundary coverage prevent a preassembled package
+  readback from being supplied to the lifecycle callback.
 - No root-domain installation or live `launchctl` readback was attempted.
 
 ## Remaining gates
@@ -69,7 +76,7 @@ evidence only; it does not enable a privileged helper capability.
 
 ## Source hashes
 
-- `6b362414eb5fc536f40d29693d21ebfbe88057fc69033b09047825efc1e6d76d`
+- `3824ddfdeb7a410db5e318251f23971ba1e058199358af9f7f51a63ba735815a`
   `packages/broker/src/privileged-helper-package.ts`
 - `ee87f545031211095cf9fe2fb4b1901005bc27890589f4e7d22fe8810e73b3d7`
   `packages/broker/src/privileged-helper-package.test.ts`

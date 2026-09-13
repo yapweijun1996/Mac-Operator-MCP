@@ -13,6 +13,12 @@ PID, argv, plist-path, and process-identity substitution before readiness.
 Real root installation remains open. Evidence:
 `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Privileged-helper executor addendum: commit `56ab0ca` forces the host-only
+lifecycle executor to accept raw readback sources and compose the final
+readback internally, preventing a preassembled-readback bypass. Root-owned
+installation remains open. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Privileged-helper plist addendum: commit `d3efae1` requires the exact
 root-domain plist path, rendered byte count, SHA-256, and descriptor
 device/inode identity in helper readback; descriptor-backed reads reject
