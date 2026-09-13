@@ -105,6 +105,19 @@ Latest launchd boundary addendum: commit `fde7341` records 225 passing tests and
 
 Latest packaging addendum: commit `58b0b94` adds guarded uninstall evidence, and the subsequent packaging smoke test executes ad-hoc signing plus the fixed `/usr/bin/codesign --verify --strict --deep` command against a synthetic temporary bundle on the real Mac. The non-executing install plan still requires an explicit non-root `gui/<uid>` domain, canonical user-owned package paths, exactly one package-owned JavaScript entrypoint, fixed `/bin/launchctl` argv with empty environment and bounded budgets, exact previous-revision preconditions for upgrade/rollback/uninstall, and launchd/Broker/signature readback matching. This remains host command-wiring evidence only; no production artifact, launchd state, Developer ID identity, or notarization is claimed. Detailed evidence: `evidence/2026-09-13-codesign-verification.md`.
 
+Latest install-execution addendum: commit `c59983e` adds the host-only
+`executeMacOsInstallPlan` boundary. It requires exact operation confirmation
+and an existing-service precondition, runs fixed bounded signature/launchctl
+commands with an empty environment, applies the descriptor-backed atomic
+plist, and refuses success until launchd/Broker/signature readback matches the
+plan. A mismatched readback boots out the exact service and leaves the plist
+and upgrade backup for explicit recovery rather than overwriting an uncertain
+target. Ten focused install-plan tests pass; the full regression is 304/306
+with two opt-in sandbox tests skipped and the real sandbox smoke is 7/7. No
+live LaunchAgent was installed or bootstrapped; Developer ID provenance,
+installed Edge identity handshake, and production enablement remain open.
+Evidence: `evidence/2026-09-13-install-plan-executor.md`.
+
 Latest filesystem preflight addendum: commit `8fe6663` adds a sixth focused test and a read-only `lstat` preflight for the user-home parent chain, package root, working directory, executable, JavaScript entrypoint, signed artifact, log directory, and optional plist. Each path is checked twice for stable device/inode identity; symlinks, foreign owners, group/other write bits, unexpected types, and owner-domain mismatch fail closed. This remains source-level evidence and does not prove descriptor-relative installation or live launchd state.
 
 Latest atomic plist addendum: commit `b4945c3` adds a seventh focused test and `applyMacOsPlistPlan`. Temporary-root evidence covers install, upgrade backup, rollback restoration, native `openat`/`renameat`/`fsync` commit, target identity preconditions, reopened content/hash readback, and no launchd execution. Uninstall deletion, signed artifacts, live launchd state, and production installer authority remain open.
