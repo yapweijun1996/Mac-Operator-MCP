@@ -149,6 +149,14 @@ export interface PrivilegedHelperPackageReadbackSources {
   signature: CodeSignatureReadback;
 }
 
+export interface PrivilegedHelperPackageReadbackObserver {
+  readLaunchd(serviceId: string): Promise<LaunchdJobReadback>;
+  readProcessIdentity(pid: number): Promise<PeerProcessIdentity> | PeerProcessIdentity;
+  readPlist(plan: PrivilegedHelperPackagePlan): Promise<MacOsPlistReadback>;
+  readRuntime(): Promise<PrivilegedHelperRuntimeReadback>;
+  readSignature(): Promise<CodeSignatureReadback>;
+}
+
 export interface PrivilegedHelperPackagePlan {
   operation: PrivilegedHelperPackageOperation;
   domain: "system";
@@ -890,6 +898,52 @@ export function composePrivilegedHelperPackageReadback(
 }
 
 /**
+ * Reads the host-owned helper boundary without trusting a single mutable
+ * snapshot. Launchd, PID/start-time, and plist identities are observed twice;
+ * any target or process replacement during collection fails closed before the
+ * sources are composed into a final package readback.
+ */
+export async function observePrivilegedHelperPackageReadback(
+  plan: PrivilegedHelperPackagePlan,
+  observer: PrivilegedHelperPackageReadbackObserver
+): Promise<PrivilegedHelperPackageReadback> {
+  try {
+    if (observer === null || typeof observer !== "object") {
+      fail("INVALID_READBACK", "privileged helper readback observer is malformed");
+    }
+    const serviceId = `${plan.domain}/${plan.label}`;
+    const launchdBefore = await observer.readLaunchd(serviceId);
+    if (launchdBefore.pid === null) fail("SERVICE_MISMATCH", "privileged helper launchd readback has no running PID");
+    const processBefore = await observer.readProcessIdentity(launchdBefore.pid);
+    const plistBefore = await observer.readPlist(plan);
+    const helper = await observer.readRuntime();
+    const signature = await observer.readSignature();
+    const launchdAfter = await observer.readLaunchd(serviceId);
+    if (!sameLaunchdIdentity(launchdBefore, launchdAfter) || launchdAfter.pid === null) {
+      fail("SERVICE_MISMATCH", "privileged helper launchd identity changed during readback");
+    }
+    const processAfter = await observer.readProcessIdentity(launchdAfter.pid);
+    if (!sameProcessIdentity(processBefore, processAfter)) {
+      fail("SERVICE_MISMATCH", "privileged helper process identity changed during readback");
+    }
+    const plistAfter = await observer.readPlist(plan);
+    if (!samePlistIdentity(plistBefore, plistAfter)) {
+      fail("FILESYSTEM_MISMATCH", "privileged helper plist identity changed during readback");
+    }
+    return composePrivilegedHelperPackageReadback(plan, {
+      launchd: launchdAfter,
+      processIdentity: processAfter,
+      plist: plistAfter,
+      helper,
+      signature
+    });
+  } catch (error) {
+    if (error instanceof PrivilegedHelperPackageError) throw error;
+    fail("READBACK_FAILED", "privileged helper host readback failed");
+  }
+}
+
+/**
  * Reads the exact root-domain plist through the descriptor-backed filesystem
  * boundary. The caller must already be the host/root executor; no caller-
  * supplied inspector or path is accepted.
@@ -986,6 +1040,21 @@ function launchctlCommand(args: readonly string[]): LaunchdCommandSpec {
 
 function sameStrings(left: unknown, right: readonly string[]): boolean {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameLaunchdIdentity(left: LaunchdJobReadback, right: LaunchdJobReadback): boolean {
+  return left.serviceId === right.serviceId && left.domain === right.domain && left.label === right.label &&
+    left.state === right.state && left.pid === right.pid && left.program === right.program &&
+    sameStrings(left.arguments, right.arguments ?? []) && left.plistPath === right.plistPath && left.type === right.type;
+}
+
+function sameProcessIdentity(left: PeerProcessIdentity, right: PeerProcessIdentity): boolean {
+  return left.pid === right.pid && left.startTimeMicros === right.startTimeMicros;
+}
+
+function samePlistIdentity(left: MacOsPlistReadback, right: MacOsPlistReadback): boolean {
+  return left.path === right.path && left.bytes === right.bytes && left.sha256 === right.sha256 &&
+    left.device === right.device && left.inode === right.inode;
 }
 
 function isPrivilegedHelperPlistReadback(value: unknown, plan: PrivilegedHelperPackagePlan): value is MacOsPlistReadback {

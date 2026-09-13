@@ -11,12 +11,15 @@ import {
   buildPrivilegedHelperPackagePlan,
   composePrivilegedHelperPackageReadback,
   executePrivilegedHelperPackagePlan,
+  observePrivilegedHelperPackageReadback,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
   validatePrivilegedHelperFilesystemReadback,
   validatePrivilegedHelperPackageReadback,
-  type PrivilegedHelperPackagePlanInput
+  type PrivilegedHelperPackagePlanInput,
+  type PrivilegedHelperPackageReadbackObserver
 } from "./privileged-helper-package.js";
+import type { LaunchdJobReadback } from "./launchd-readback.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
 
 const root = "/Library/Application Support/MacOperator/PrivilegedHelper";
@@ -97,7 +100,7 @@ test("privileged helper package plan rejects user-domain, interpreter, socket, a
   );
 });
 
-test("privileged helper package readback binds root service, Broker peer, and disabled adapter", () => {
+test("privileged helper package readback binds root service, Broker peer, and disabled adapter", async () => {
   const plan = buildPrivilegedHelperPackagePlan(base);
   const renderedPlistBytes = Buffer.from(plan.renderedPlist, "utf8");
   const readback = {
@@ -212,6 +215,46 @@ test("privileged helper package readback binds root service, Broker peer, and di
   assert.throws(
     () => validatePrivilegedHelperPackageReadback(plan, { ...readback, signature: { ...readback.signature, identifier: "com.attacker.helper" } }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SIGNATURE_MISMATCH"
+  );
+
+  const launchdSource: LaunchdJobReadback = {
+    serviceId: "system/com.mac-operator.privileged-helper",
+    domain: "system",
+    label: plan.label,
+    state: "running",
+    pid: 1234,
+    program: plan.launchd.program,
+    arguments: plan.launchd.programArguments,
+    plistPath: plan.plistPath,
+    type: "LaunchDaemon",
+    lastExitCode: null,
+    truncated: false
+  };
+  let launchdReads = 0;
+  let processReads = 0;
+  let plistReads = 0;
+  const observer: PrivilegedHelperPackageReadbackObserver = {
+    readLaunchd: async () => { launchdReads += 1; return launchdSource; },
+    readProcessIdentity: (pid) => { processReads += 1; return { pid, startTimeMicros: 987654321 }; },
+    readPlist: async () => { plistReads += 1; return readback.plist; },
+    readRuntime: async () => readback.helper,
+    readSignature: async () => readback.signature
+  };
+  assert.deepEqual(await observePrivilegedHelperPackageReadback(plan, observer), readback);
+  assert.equal(launchdReads, 2);
+  assert.equal(processReads, 2);
+  assert.equal(plistReads, 2);
+
+  let swappedReads = 0;
+  await assert.rejects(
+    observePrivilegedHelperPackageReadback(plan, {
+      ...observer,
+      readLaunchd: async () => {
+        swappedReads += 1;
+        return swappedReads === 1 ? launchdSource : { ...launchdSource, pid: 4321 };
+      }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
   );
 });
 
