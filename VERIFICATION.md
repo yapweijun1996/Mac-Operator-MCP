@@ -226,6 +226,16 @@ installed or bootstrapped, so signed package provenance and live launchd
 restart/readback remain open. Evidence:
 `evidence/2026-09-13-launchd-edge-identity-startup.md`.
 
+Latest Keychain addendum: commit `ef5e336` adds a native Security.framework
+generic-password read boundary with fixed service/account namespaces,
+unique-match enforcement, exact 32-byte output, and authentication-UI failure
+mode for background operation. Missing-item and malformed-identity tests pass;
+the file-backed key managers are not silently changed, and no real secret item
+was created during verification. The protected loader now requires 18 native
+exports. This is a partial distribution primitive, not Keychain provisioning,
+ACL/rotation/deletion evidence, live installed use, or production enablement.
+Evidence: `evidence/2026-09-13-keychain-key-read.md`.
+
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
 
 Latest lifecycle addendum: commit `10ef33a` records 214 passing tests and adds a fail-closed local Broker runtime boundary with ordered Broker-IPC/operator-channel startup, reverse cleanup, explicit recovery after cleanup failure, serialized lifecycle calls, idempotent close, and duplicate-channel rejection. The source evidence is `evidence/2026-09-13-local-runtime-lifecycle.md`; installed launchd startup, code signing, Keychain distribution, native caller identity, policy loading, store ownership, and production capability enablement remain open.
