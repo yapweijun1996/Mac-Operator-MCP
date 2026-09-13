@@ -39,6 +39,7 @@ import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-
 import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRunner } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
+import { AppControlInspectorImpl, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -59,6 +60,7 @@ export interface BrokerOptions {
   packageInspector?: PackageInspector;
   dockerInspector?: DockerInspector;
   appInspector?: AppInventoryInspector;
+  appControlInspector?: AppControlInspector;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
 }
@@ -82,6 +84,7 @@ export class Broker {
   private readonly packageInspector: PackageInspector;
   private readonly dockerInspector: DockerInspector;
   private readonly appInspector: AppInventoryInspector;
+  private readonly appControlInspector: AppControlInspector;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
   private readonly jobLeaseOwnerId: string;
@@ -102,6 +105,7 @@ export class Broker {
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
     this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl();
+    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector);
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
@@ -379,6 +383,23 @@ export class Broker {
             execution.gitWriteJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
+          if (request.tool === "mac_app_open") {
+            const jobInput = {
+              jobId: `job:app-open-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: `app-open:${request.requestId}`,
+              createdAtMs: this.now()
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.appOpenJob = created.job;
+            execution.appOpenJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
         }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
@@ -390,6 +411,8 @@ export class Broker {
             ? { kind: "git_stage" as const, job: execution.gitStageJob }
             : execution.gitCommitJob && execution.gitWriteJobNew
               ? { kind: "git_commit" as const, job: execution.gitCommitJob }
+              : execution.appOpenJob && execution.appOpenJobNew
+                ? { kind: "app_open" as const, job: execution.appOpenJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
         const leaseStartedAtMs = this.now();
@@ -423,7 +446,8 @@ export class Broker {
         if (pendingJob.kind === "write") execution.writeJob = started;
         else if (pendingJob.kind === "task") execution.taskJob = started;
         else if (pendingJob.kind === "git_stage") execution.gitStageJob = started;
-        else execution.gitCommitJob = started;
+        else if (pendingJob.kind === "git_commit") execution.gitCommitJob = started;
+        else execution.appOpenJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       this.ensureActiveAuthority(request, execution.target);
@@ -577,6 +601,12 @@ export class Broker {
           },
           verification: { required: false, status: "not_required", strategy: "capability_state_result_validation" }
         };
+      }
+      case "mac_app_open": {
+        if (!execution.appOpen || !execution.appOpenJob) {
+          throw new BrokerError("EXECUTION_FAILED", "App open job execution plan is unavailable");
+        }
+        return this.dispatchAppOpen(request, execution, toolPolicy.timeoutMs);
       }
       case "mac_app_list": {
         if (!execution.appList) throw new BrokerError("EXECUTION_FAILED", "App inventory execution plan is unavailable");
@@ -1710,6 +1740,81 @@ export class Broker {
     }
   }
 
+  private async dispatchAppOpen(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.appOpen || !execution.appOpenJob) {
+      throw new BrokerError("EXECUTION_FAILED", "App open job execution plan is unavailable");
+    }
+    const job = execution.appOpenJob;
+    if (job.state === "queued") throw new BrokerError("CONFLICT", "App launch is already queued", true);
+    if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "App launch outcome is unresolved; inspect its Broker job", true);
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "App launch was cancelled before execution");
+    if (job.state === "completed") {
+      return appOpenDispatchResult(job, parseStoredAppOpenResult(job.stdout), true);
+    }
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "App launch job is not running");
+    try {
+      const opened = await this.appControlInspector.open(
+        execution.appOpen.appId,
+        execution.appOpen.documentPath,
+        execution.appOpen.url,
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+      );
+      this.ensureActiveAuthority(request, execution.target);
+      const data = {
+        app_id: opened.appId,
+        state: opened.state,
+        process_id: opened.processId,
+        target: opened.target,
+        verified: opened.verified,
+        job_id: job.jobId
+      };
+      execution.appOpenJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: this.now(),
+        stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return {
+        data,
+        verification: {
+          required: true,
+          status: "verified",
+          strategy: "launch_state_and_target_reobservation",
+          evidence: {
+            summary: "The exact bundle identity was opened through fixed /usr/bin/open and its running state was reobserved",
+            readback_hash: sha256(canonicalJson(data)),
+            observed_at: new Date(this.now()).toISOString()
+          }
+        },
+        warnings: [...opened.warnings],
+        truncated: opened.truncated,
+        auditTarget: `app:${opened.appId}`,
+        auditEvidence: {
+          appId: opened.appId,
+          state: opened.state,
+          verified: opened.verified,
+          warningCount: opened.warnings.length
+        }
+      };
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "App launch failed");
+      try {
+        execution.appOpenJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          state: "unknown",
+          resultClass: "unknown",
+          finishedAtMs: this.now()
+        }, execution.jobLease, this.now());
+      } catch {
+        // Preserve the original error; launch may have occurred without a trusted readback.
+      }
+      throw brokerError;
+    }
+  }
+
   private async dispatchGitStage(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -2010,6 +2115,22 @@ export class Broker {
           profile: parsed.profile,
           cwd: parsed.cwd,
           args: [...(parsed.args ?? [])]
+        }
+      };
+    }
+    if (request.tool === "mac_app_open") {
+      assertExactArguments(request.arguments, ["app_id", "document_path", "url"]);
+      const appId = request.arguments.app_id;
+      const documentPath = request.arguments.document_path;
+      const url = request.arguments.url;
+      validateAppOpenRequest(appId, documentPath, url);
+      return {
+        target: { kind: "app", reference: appId },
+        auditTarget: `app:${appId}`,
+        appOpen: {
+          appId,
+          ...(documentPath !== undefined ? { documentPath: documentPath as string } : {}),
+          ...(url !== undefined ? { url: url as string } : {})
         }
       };
     }
@@ -2412,6 +2533,19 @@ export class Broker {
       authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "app_set", reference: "all" });
       return;
     }
+    if (tool.targetType === "app") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "app" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized app identity is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No app identity is authorized for this tool");
+    }
     if (tool.targetType === "project") {
       for (const rule of policy.targetRules.filter((candidate) =>
         candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
@@ -2684,6 +2818,11 @@ interface ExecutionPlan {
     runningOnly: boolean;
     includeInstalled: boolean;
   };
+  appOpen?: {
+    appId: string;
+    documentPath?: string;
+    url?: string;
+  };
   taskRun?: {
     profile: string;
     cwd: string;
@@ -2704,6 +2843,8 @@ interface ExecutionPlan {
   gitStageJob?: BrokerJob;
   gitCommitJob?: BrokerJob;
   gitWriteJobNew?: boolean;
+  appOpenJob?: BrokerJob;
+  appOpenJobNew?: boolean;
   jobLease?: JobLease;
 }
 
@@ -2780,6 +2921,60 @@ function writeDispatchResult(job: BrokerJob, data: WriteResultData, reused: bool
       expectedMatched: data.precondition.matched,
       created: data.created
     }
+  };
+}
+
+interface AppOpenResultData {
+  app_id: string;
+  state: "launched" | "already_running";
+  process_id: null;
+  target: { kind: "app"; reference: string };
+  verified: true;
+  job_id: string;
+}
+
+function appOpenDispatchResult(job: BrokerJob, data: AppOpenResultData, reused: boolean): DispatchResult {
+  return {
+    data: { ...data, job_id: job.jobId },
+    verification: {
+      required: true,
+      status: "verified",
+      strategy: "launch_state_and_target_reobservation",
+      evidence: {
+        summary: reused ? "Reused a completed app launch Job readback" : "App launch state was reobserved for the exact bundle identity",
+        readback_hash: sha256(canonicalJson(data))
+      }
+    },
+    auditTarget: `app:${data.app_id}`,
+    auditEvidence: { jobId: job.jobId, jobRevision: job.revision, reused, state: data.state, verified: data.verified }
+  };
+}
+
+function parseStoredAppOpenResult(value: string): AppOpenResultData {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed");
+  }
+  const record = parsed as Record<string, unknown>;
+  const target = record.target;
+  if (typeof record.app_id !== "string" || !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(record.app_id) ||
+      (record.state !== "launched" && record.state !== "already_running") || record.process_id !== null || record.verified !== true ||
+      typeof record.job_id !== "string" || !/^job:app-open-[a-f0-9]{48}$/u.test(record.job_id) ||
+      target === null || typeof target !== "object" || Array.isArray(target)) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed");
+  }
+  const targetRecord = target as Record<string, unknown>;
+  if (targetRecord.kind !== "app" || targetRecord.reference !== record.app_id) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch target is malformed");
+  }
+  return {
+    app_id: record.app_id,
+    state: record.state,
+    process_id: null,
+    target: { kind: "app", reference: record.app_id },
+    verified: true,
+    job_id: record.job_id
   };
 }
 

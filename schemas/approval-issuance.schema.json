@@ -32,7 +32,17 @@
         "issuedAtMs": { "type": "integer", "minimum": 0 },
         "expiresAtMs": { "type": "integer", "minimum": 0 },
         "useLimit": { "const": 1 }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "targetKind": { "const": "app" } }, "required": ["targetKind"] },
+          "then": { "properties": { "targetRef": { "type": "string", "pattern": "^app:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$" } } }
+        },
+        {
+          "if": { "properties": { "targetKind": { "const": "app_set" } }, "required": ["targetKind"] },
+          "then": { "properties": { "targetRef": { "type": "string", "const": "app_set:all" } } }
+        }
+      ]
     },
     "previewDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "issuanceDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },

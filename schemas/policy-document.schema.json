@@ -108,7 +108,17 @@
       "properties": {
         "kind": { "enum": ["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "log_source", "package", "power"] },
         "reference": { "type": "string", "minLength": 1, "maxLength": 4096 }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "app" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "app_set" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "const": "all" } } }
+        }
+      ]
     }
   }
 }

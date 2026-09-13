@@ -743,10 +743,145 @@ test("mac_app_list binds app-set authority and returns sanitized metadata", asyn
   }
 });
 
+test("mac_app_open binds GUI approval, app target, Job lease, and launch readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-open-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Editor";
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.app.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const appTool = basePolicy.tools.get("mac_app_open")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_app_open", { ...appTool, enabled: true }) };
+  let calls = 0;
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    appControlInspector: {
+      async open(target, documentPath, url, control) {
+        calls += 1;
+        assert.equal(target, appId);
+        assert.equal(documentPath, undefined);
+        assert.equal(url, undefined);
+        assert.equal(control.shouldCancel(), false);
+        return {
+          appId,
+          state: "launched",
+          processId: null,
+          target: { kind: "app", reference: appId },
+          verified: true,
+          warnings: [],
+          truncated: false
+        };
+      }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { app_id: appId };
+  const request = unsigned({
+    requestId: "app-open-request",
+    nonce: "app-open-nonce",
+    tool: "mac_app_open",
+    arguments: argumentsValue
+  }, ["mac.app.control"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:app-open",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_app_open",
+      contractVersion: "0.1",
+      targetKind: "app",
+      targetRef: `app:${appId}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(calls, 1);
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        app_id: appId,
+        state: "launched",
+        process_id: null,
+        target: { kind: "app", reference: appId },
+        verified: true,
+        job_id: store.requestRecord("app-open-request")?.jobId
+      });
+    }
+    assert.equal(store.approvalRecord("approval:app-open")?.usedCount, 1);
+    assert.equal(store.ownedJobByIdempotencyKey("app-open:app-open-request", "principal-1")?.state, "completed");
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === "app-open-request").map((row) => row.target_ref), [
+      `app:${appId}`, `app:${appId}`, `app:${appId}`
+    ]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_app_open never publishes success after active session revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-open-revoke-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Editor";
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.app.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const appTool = basePolicy.tools.get("mac_app_open")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_app_open", { ...appTool, enabled: true }) };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    appControlInspector: {
+      async open() {
+        store.revoke("session", "session-1", "TEST_REVOKE", NOW);
+        return {
+          appId,
+          state: "launched",
+          processId: null,
+          target: { kind: "app", reference: appId },
+          verified: true,
+          warnings: [],
+          truncated: false
+        };
+      }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { app_id: appId };
+  const request = unsigned({ requestId: "app-open-revoke", nonce: "app-open-revoke-nonce", tool: "mac_app_open", arguments: argumentsValue }, ["mac.app.control"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:app-open-revoke",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_app_open",
+      contractVersion: "0.1",
+      targetKind: "app",
+      targetRef: `app:${appId}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "REVOKED");
+    assert.equal(store.ownedJobByIdempotencyKey("app-open:app-open-revoke", "principal-1")?.state, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 35);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 36);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

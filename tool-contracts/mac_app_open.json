@@ -36,7 +36,7 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 256,
-        "pattern": "^[A-Za-z0-9._:/-]+$"
+        "pattern": "^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$"
       },
       "document_path": {
         "type": "string",
@@ -89,7 +89,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 256,
-            "pattern": "^[A-Za-z0-9._:/-]+$"
+            "pattern": "^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$"
           },
           "state": {
             "enum": [
@@ -135,6 +135,12 @@
           },
           "verified": {
             "type": "boolean"
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^job:app-open-[a-f0-9]{48}$"
           }
         },
         "required": [
@@ -142,7 +148,8 @@
           "state",
           "process_id",
           "target",
-          "verified"
+          "verified",
+          "job_id"
         ]
       },
       "warnings": {

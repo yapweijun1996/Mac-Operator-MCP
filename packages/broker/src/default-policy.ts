@@ -43,6 +43,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_app_open",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.app.control"],
+    capabilityFamilies: ["gui", "write"],
+    targetType: "app",
+    mutation: true,
+    approvalPolicy: "trusted_gui",
+    outputCapBytes: 262_144,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_system_summary",
     contractVersion: "0.1",
     requiredScopes: ["mac.system.read"],
@@ -470,7 +483,8 @@ export function createDefaultPolicy(
   logSources: readonly string[] = [],
   projectRoots: readonly string[] = [],
   dockerObjectIds: readonly string[] = [],
-  taskProfiles: readonly string[] = []
+  taskProfiles: readonly string[] = [],
+  appIds: readonly string[] = []
 ): BrokerPolicy {
   const grants = new Map<string, PrincipalGrant>();
   if (principalScopes.length > 0) {
@@ -521,6 +535,16 @@ export function createDefaultPolicy(
         scope,
         target: { kind: "app_set", reference: "all" }
       });
+      return;
+    }
+    if (scope === "mac.app.control") {
+      appIds.forEach((appId, appIndex) => targetRules.push({
+        ruleId: `test-app-${index}-${appIndex}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "app", reference: appId }
+      }));
       return;
     }
     if (scope === "mac.process.read") {

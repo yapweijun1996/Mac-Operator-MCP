@@ -35,3 +35,4 @@ export * from "./launchd.js";
 export * from "./service-entrypoint.js";
 export * from "./macos-install-plan.js";
 export * from "./app-inspector.js";
+export * from "./app-control.js";

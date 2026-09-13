@@ -2314,6 +2314,9 @@ function validTerminalOutcome(
 function queuedJobAffectedBySwitch(name: SwitchName, tool: string): boolean {
   if (name === "global" || name === "mutations") return true;
   if (name === "process" || name === "network") return tool === "mac_task_run";
+  if (name === "gui") return tool === "mac_app_open" || tool === "mac_app_focus" || tool.startsWith("mac_ui_");
+  if (name === "destructive") return tool === "mac_apply_patch";
+  if (name === "privileged") return tool.startsWith("mac_priv_");
   return false;
 }
 

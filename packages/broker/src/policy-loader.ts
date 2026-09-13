@@ -347,6 +347,9 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
     if (rule.target.kind === "app_set" && rule.target.reference !== "all") {
       throw new Error(`App-set target rule must use the all reference: ${rule.ruleId}`);
     }
+    if (rule.target.kind === "app" && !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(rule.target.reference)) {
+      throw new Error(`App target rule must use a stable bundle identity: ${rule.ruleId}`);
+    }
   }
   const base = createDefaultPolicy([...trustedEdgeIds][0] ?? "invalid-edge");
   const tools = new Map([...base.tools].map(([name, tool]) => [name, { ...tool, enabled: false }]));

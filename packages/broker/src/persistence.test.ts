@@ -788,6 +788,19 @@ test("kill switches and revocations cancel queued jobs in the same persistence t
     assert.equal(store.ownedJob("job:queued-process-write", "principal-1")?.state, "queued");
     store.setSwitch("process", false, "test", 3);
     store.createJob({
+      ...jobInput("job:queued-app-open", "idem-queued-app-open"),
+      tool: "mac_app_open",
+      targetRef: "app:bundle:com.example.Editor"
+    });
+    store.createJob({
+      ...jobInput("job:queued-app-other", "idem-queued-app-other"),
+      tool: "mac_task_run",
+      targetRef: "task:test"
+    });
+    store.setSwitch("gui", true, "test", 3);
+    assert.equal(store.ownedJob("job:queued-app-open", "principal-1")?.state, "cancelled");
+    assert.equal(store.ownedJob("job:queued-app-other", "principal-1")?.state, "queued");
+    store.createJob({
       ...jobInput("job:queued-other-principal", "idem-queued-other"),
       ownerPrincipalId: "principal-2",
       ownerSessionId: "session-2"

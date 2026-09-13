@@ -188,6 +188,17 @@ test("policy verification rejects tampering, unknown fields, and unimplemented e
     target: { kind: "project", reference: "/tmp/../etc" }
   });
   assert.throws(() => instance.verify(signedBundle(invalidProject, keys.privateKey)), /Project target rule is not a canonical absolute path/u);
+
+  const invalidApp = policyDocument();
+  invalidApp.principal_grants[0]!.scopes.push("mac.app.control");
+  invalidApp.target_rules.push({
+    rule_id: "invalid-app-target",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.app.control",
+    target: { kind: "app", reference: "com.example.Editor" }
+  });
+  assert.throws(() => instance.verify(signedBundle(invalidApp, keys.privateKey)), /stable bundle identity/u);
 });
 
 test("policy verifier supports bounded signing-key rotation and revocation", async () => {
