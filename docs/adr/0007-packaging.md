@@ -22,6 +22,14 @@ Fresh install, upgrade, downgrade rejection, rollback, signature failure, partia
 
 ## Candidate implementation evidence
 
+Revision `eeebec3` binds the uninstall coordinator to the real owner-only
+`AuthorityControlIpcClient`. The client authenticates complete commands and
+responses, rejects replay through the durable authority ledger, validates the
+owner-only socket and stable target identity, and supplies bounded switch and
+revocation readback. The action factory is idempotent and exact-Edge-bound.
+This is still a host-only library boundary; protected key delivery, installed
+launchd startup, live uninstall, and final host evidence are not established.
+
 Revision `f24b506` adds a host-only uninstall coordinator that requires the
 separately authenticated authority channel to disable the global kill switch
 and revoke the selected Edge before any plist or launchd removal. It requires

@@ -6,7 +6,22 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `ee6d37b`.
+Current committed implementation baseline: `eeebec3`.
+
+The latest authority-control addendum is `eeebec3`: the host-only uninstall
+coordinator can now bind to the real owner-only `AuthorityControlIpcClient`
+rather than a test callback. The client signs complete protocol-`0.1`
+commands, authenticates complete response bodies, rejects replayed requests
+through the durable server ledger, validates owner-only socket and stable
+device/inode identity before and after connect, and enforces timeout,
+cancellation, and response-size limits. Authenticated switch/revocation
+readback is available for pre/post uninstall fencing, and the uninstall action
+factory is idempotent while binding revocation to the selected Edge ID. The
+full suite passes 329 tests (327 passed, 2 opt-in real-sandbox tests skipped),
+with 14 focused authority/install tests passing. This remains a host-only
+library boundary; protected key delivery, installed startup, live uninstall,
+active-process termination, remote propagation, and final real-Mac readback
+remain open. Evidence: `evidence/2026-09-13-authority-control-client.md`.
 
 The latest compatibility addendum is `ee6d37b`: separately authenticated
 privileged-helper commands now carry and validate the shared contract version;
