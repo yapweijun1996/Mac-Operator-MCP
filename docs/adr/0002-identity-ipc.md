@@ -96,7 +96,10 @@ revision/digest activation and exact restart restore; overlapping validity
 windows are the supported rotation shape. Request-time signed-policy validity
 and key-specific revocation remain the final authority. The manager is
 startup/configuration code only and does not imply installed hot reload or
-cross-process secret distribution.
+cross-process secret distribution. The Edge request factory now provides a
+matching protected-file loader bound to the same expected digest. A Keychain
+source selected by the Broker still needs an approved Edge-side delivery
+mechanism; no environment-variable or MCP-argument fallback is permitted.
 
 This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, session concurrency, canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
 
