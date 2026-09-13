@@ -13,7 +13,7 @@
   "network_policy": "explicit_allowlist_only",
   "filesystem_policy": "path_if_explicit_allowlist",
   "secret_policy": "deny_sensitive_targets",
-  "approval_policy": "trusted_app_control",
+  "approval_policy": "trusted_gui",
   "idempotent": false,
   "postcondition_verification": {
     "required": true,

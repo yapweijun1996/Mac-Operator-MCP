@@ -20,6 +20,7 @@ const Ajv2020 = require("ajv/dist/2020").default as new (options: Record<string,
 };
 const addFormats = require("ajv-formats").default as (ajv: InstanceType<typeof Ajv2020>) => void;
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const appId = "bundle:com.example.ContractApp";
 
 test("implemented broker results conform to versioned success and failure schemas", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-contract-"));
@@ -33,26 +34,44 @@ test("implemented broker results conform to versioned success and failure schema
   const basePolicy = createDefaultPolicy(
     "edge-1",
     true,
-    ["mac.control.read", "mac.policy.explain", "mac.system.read", "mac.network.read", "mac.service.read", "mac.log.read", "mac.process.read", "mac.app.read", "mac.files.read", "mac.files.search", "mac.project.read", "mac.git.read", "mac.package.read", "mac.docker.read", "mac.storage.read", "mac.files.hash", "mac.files.write", "mac.job.read", "mac.job.cancel"],
+    ["mac.control.read", "mac.policy.explain", "mac.system.read", "mac.network.read", "mac.service.read", "mac.log.read", "mac.process.read", "mac.app.read", "mac.app.control", "mac.files.read", "mac.files.search", "mac.project.read", "mac.git.read", "mac.package.read", "mac.docker.read", "mac.storage.read", "mac.files.hash", "mac.files.write", "mac.job.read", "mac.job.cancel"],
     ["edge-key-1"],
     [{ rootId: "test-root", path: directory, metadata: true, contentRead: true, write: true, denyRelativePaths: [] }],
     ["system/com.apple.logd"],
     ["system"],
     [repositoryRoot],
-    ["contract-container"]
+    ["contract-container"],
+    [],
+    [appId]
   );
   const writeTool = basePolicy.tools.get("mac_write_file_atomic");
   assert.ok(writeTool);
   const policy = {
     ...basePolicy,
-    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+    tools: new Map(basePolicy.tools)
+      .set("mac_write_file_atomic", { ...writeTool, enabled: true })
+      .set("mac_app_open", { ...basePolicy.tools.get("mac_app_open")!, enabled: true })
   };
   const broker = new Broker({
     store,
     policy,
     edgeAuthenticationKeys: keyring,
     now: () => now,
-    dockerInspector: fakeDockerInspector()
+    dockerInspector: fakeDockerInspector(),
+    appControlInspector: {
+      async open(requestedAppId) {
+        assert.equal(requestedAppId, appId);
+        return {
+          appId,
+          state: "launched",
+          processId: null,
+          target: { kind: "app", reference: appId },
+          verified: true,
+          warnings: [],
+          truncated: false
+        };
+      }
+    }
   });
   store.createJob({
     jobId: "job:contract",
@@ -71,6 +90,7 @@ test("implemented broker results conform to versioned success and failure schema
     const cases = [
       { tool: "mac_health", arguments: { include_components: true } },
       { tool: "mac_capabilities", arguments: {} },
+      { tool: "mac_app_open", arguments: { app_id: appId } },
       { tool: "mac_app_list", arguments: { running_only: true, include_installed: false } },
       { tool: "mac_system_summary", arguments: { include_load: true } },
       { tool: "mac_network_status", arguments: { include_listeners: true } },
@@ -136,6 +156,23 @@ test("implemented broker results conform to versioned success and failure schema
       issuedAtMs: now - 500,
       expiresAtMs: now + 30_000
     });
+    const appOpenCase = cases.find((item) => item.tool === "mac_app_open");
+    assert.ok(appOpenCase);
+    store.issueApproval({
+      approvalId: "approval:contract-app-open",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_app_open",
+      contractVersion: "0.1",
+      targetKind: "app",
+      targetRef: `app:${appId}`,
+      payloadDigest: sha256(canonicalJson(appOpenCase.arguments)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: now - 500,
+      expiresAtMs: now + 30_000
+    });
     for (const [index, item] of cases.entries()) {
       const result = await broker.handle(signRequest(makeRequest(now, index, item.tool, item.arguments), key));
       const contract = JSON.parse(await readFile(join(repositoryRoot, "tool-contracts", `${item.tool}.json`), "utf8")) as {
@@ -166,9 +203,9 @@ function makeRequest(now: number, index: number, tool: string, args: Record<stri
     contractVersion: "0.1",
     tool,
     arguments: args,
-      principal: {
+    principal: {
       principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer",
-      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_network_status" ? ["mac.network.read"] : []), ...(tool === "mac_service_status" ? ["mac.service.read"] : []), ...(tool === "mac_log_tail" ? ["mac.log.read"] : []), ...(tool === "mac_process_list" || tool === "mac_process_inspect" ? ["mac.process.read"] : []), ...(tool === "mac_app_list" ? ["mac.app.read"] : []), "mac.files.read", ...(tool === "mac_find_files" || tool === "mac_recent_files" || tool === "mac_search_text" ? ["mac.files.search"] : []), ...(tool === "mac_project_discover" || tool === "mac_project_summary" ? ["mac.project.read"] : []), ...(tool === "mac_git_status" || tool === "mac_git_branch_list" || tool === "mac_git_log" || tool === "mac_git_diff" ? ["mac.git.read"] : []), ...(tool === "mac_package_inspect" ? ["mac.package.read"] : []), ...(tool === "mac_docker_status" || tool === "mac_docker_inspect" || tool === "mac_docker_logs" ? ["mac.docker.read"] : []), ...(tool === "mac_storage_analysis" ? ["mac.storage.read"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
+      audience: "mac-operator-broker", scopes: ["mac.control.read", "mac.policy.explain", "mac.system.read", ...(tool === "mac_network_status" ? ["mac.network.read"] : []), ...(tool === "mac_service_status" ? ["mac.service.read"] : []), ...(tool === "mac_log_tail" ? ["mac.log.read"] : []), ...(tool === "mac_process_list" || tool === "mac_process_inspect" ? ["mac.process.read"] : []), ...(tool === "mac_app_list" ? ["mac.app.read"] : []), ...(tool === "mac_app_open" ? ["mac.app.control"] : []), "mac.files.read", ...(tool === "mac_find_files" || tool === "mac_recent_files" || tool === "mac_search_text" ? ["mac.files.search"] : []), ...(tool === "mac_project_discover" || tool === "mac_project_summary" ? ["mac.project.read"] : []), ...(tool === "mac_git_status" || tool === "mac_git_branch_list" || tool === "mac_git_log" || tool === "mac_git_diff" ? ["mac.git.read"] : []), ...(tool === "mac_package_inspect" ? ["mac.package.read"] : []), ...(tool === "mac_docker_status" || tool === "mac_docker_inspect" || tool === "mac_docker_logs" ? ["mac.docker.read"] : []), ...(tool === "mac_storage_analysis" ? ["mac.storage.read"] : []), ...(tool === "mac_hash_file" ? ["mac.files.hash"] : []), ...(tool === "mac_write_file_atomic" ? ["mac.files.write"] : []), "mac.job.read", "mac.job.cancel"] as Scope[],
       issuedAtMs: now - 1_000, expiresAtMs: now + 60_000, edgeId: "edge-1"
     },
     timestampMs: now,
