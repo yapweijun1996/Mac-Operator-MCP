@@ -41,3 +41,14 @@ process termination. Durable worker leases, prior-process ownership across
 restart, descendant cleanup, remote revocation propagation, and operator
 control authorization remain open. New queued tool families must extend the
 switch mapping before they can be enabled.
+
+## Authority-audit addendum
+
+Source revision `abe0409` extends the same SQLite transaction boundary so every
+generic revocation and kill-switch change records a hash-linked `intent` and
+`completion` event. Completion evidence includes the affected authority
+identity, the persisted state, and the number of queued Jobs cancelled by the
+change. Audit evidence is recursively redacted before hashing, and the tests
+verify that a switch or revocation cannot commit without its matching audit
+pair. This improves operator traceability but does not add an operator IPC
+command or prove active process termination.

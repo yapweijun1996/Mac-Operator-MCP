@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `684058c`.
+Current committed implementation baseline: `abe0409`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -62,6 +62,14 @@ deprecated `sandbox-exec` boundary for production or unblock `mac_task_run`:
 real credential stores, descendants/`setsid`, crash/restart cleanup, remounts,
 Docker, persistence, privilege, and allowlisted networking remain open.
 Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
+
+The latest implementation addendum is `abe0409`: generic runtime switches and
+revocations now persist a redacted, hash-linked `intent`/`completion` audit pair
+inside the same SQLite transaction as the authority update and queued-job
+cancellation. Completion evidence records the authority identity and cancelled
+queued-job count. This strengthens kill-switch/revocation traceability but does
+not add operator IPC controls or prove active process termination. Evidence:
+`evidence/2026-09-13-job-authority-lifecycle.md`.
 
 ## Completed work
 
@@ -234,6 +242,8 @@ There is no blocker to continued local implementation. Production enablement is 
 - Recorded initial real-Mac sandbox evidence in `SANDBOX_RESEARCH.md` and `evidence/2026-09-12-sandbox-research.json`; the result is explicitly partial and does not unblock `mac_task_run`.
 - Reran the full suite at 291 tests (289 passed, two default opt-in real-host tests skipped) on clean source commit `41e83c0`; `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` passed 6/6 on the Mac mini M4/macOS 26.2 host. The experimental runner smoke proves only Broker-rendered deny-default profile construction, default single-process/no-fork policy, explicit empty-environment filtering for four canaries, allowed temporary-root read/write, `/private/etc/passwd`/`.env`/symlink denial, curl DNS/network denial, child-launch denial, active sleep cancellation, and profile-matched process-tree proof validation. It does not prove real credential, descendant/`setsid`, crash/restart, remount, Docker, persistence, privilege, or allowlisted-network isolation. Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
+- Added atomic audit coverage for generic switch and revocation changes; focused persistence, Broker, and approval tests pass with the authority audit pair present.
+- On source revision `abe0409` plus the documentation addendum, the full suite passes 290 of 292 tests with two opt-in real-sandbox tests skipped by default; `npm run typecheck`, `npm run verify:contracts` (44 unique contracts), `npm audit --omit=dev --audit-level=high`, and `git diff --check` also pass.
 
 The passing tests prove only the local foundation, bounded filesystem workers/search, and initial persistent Request/Approval/Job Ledgers on the recorded clean revision. They do not satisfy a release gate or prove protected Keychain-backed secret storage, installed cross-process code identity, a human approval UI/channel, production unattended profiles, remote deployment, removable-volume remount identity, process-tree ownership/termination, credential isolation, sandbox, GUI, helper, packaging, or whole-service rollback.
 
