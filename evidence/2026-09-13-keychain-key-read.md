@@ -18,7 +18,9 @@ service/account values, duplicate matches, and invalid lengths fail closed.
 Commit `44c16ad` wires this source into Approval issuer configuration only when
 an entry explicitly sets `keySource: "keychain"`, `service`, and `account`;
 file-backed entries remain compatible, and mixed path/Keychain metadata is
-rejected.
+rejected. Commit `e9dd75e` applies the same explicit-source boundary to Edge
+authentication-key metadata and records separate overlapping-key rotation
+evidence in `evidence/2026-09-13-edge-key-source-rotation.md`.
 
 ## Host evidence
 
@@ -56,9 +58,9 @@ rejected.
 
 ## Limits and next gate
 
-This proves a non-interactive Keychain read boundary and explicit Approval
-issuer source selection, not protected Keychain provisioning, access-control
-policy, rotation, deletion, or Edge-key integration. A real secret item was
-intentionally not created during evidence capture. Developer ID
+This proves a non-interactive Keychain read boundary and explicit Approval and
+Edge-key source selection, not protected Keychain provisioning, access-control
+policy, real-item rotation, deletion, or cross-process distribution. A real
+secret item was intentionally not created during evidence capture. Developer ID
 signing/notarization, Keychain ACL review, live installed startup, remote
 issuer integration, and production capability enablement remain open.

@@ -86,6 +86,15 @@ remain compatible. This is an explicit startup/configuration source rather than
 an MCP capability; provisioning, ACLs, rotation, deletion, Edge-key wiring,
 and cross-process distribution remain separate decisions.
 
+Revision `e9dd75e` adds the same explicit-source boundary to Edge authentication
+key metadata. The owner-only versioned config accepts either a protected file
+source or the non-interactive Keychain source, rejects mixed metadata and target
+swaps, and requires BrokerStore `edge_key` revocation preflight before building
+the keyring. Overlapping validity windows are the supported rotation shape;
+request-time signed-policy validity and key-specific revocation remain the final
+authority. The loader is startup/configuration code only and does not imply
+installed hot reload or cross-process secret distribution.
+
 This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, session concurrency, canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
 
 ## Acceptance evidence

@@ -135,6 +135,16 @@ compatible. Production provisioning, ACL/rotation/deletion policy, Edge-key
 integration, and cross-process distribution remain open. Evidence:
 `evidence/2026-09-13-keychain-key-read.md`.
 
+The latest Edge-key addendum is `e9dd75e`: versioned owner-only Edge key
+metadata now requires an explicit `file` or `keychain` source per entry,
+rejects mixed or unsafe metadata, rechecks config device/inode identity, and
+requires BrokerStore revocation preflight before constructing the EdgeKeyring.
+Overlapping validity windows provide a tested rotation path while the Broker
+continues to enforce signed-policy validity and key-specific revocation on each
+request. This is still a startup/configuration primitive, not installed
+launchd or cross-process Keychain distribution. Evidence:
+`evidence/2026-09-13-edge-key-source-rotation.md`.
+
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 
 The latest implementation addendum is `6683344`: Broker, policy-signer, and approval IPC now share a native peer-accept transport. Supplying `peerPolicy` performs UID/GID/PID authorization before handler parsing; the legacy private-descriptor verifier remains compatibility-only.
