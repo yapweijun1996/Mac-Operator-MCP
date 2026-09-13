@@ -1,6 +1,10 @@
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { createMacOsNativeBrokerRuntime, type MacOsNativeBrokerRuntimeOptions } from "./runtime.js";
+import { EdgeAuthenticationKeyManager } from "./edge-keyring-config.js";
+import type { EdgeKeyring } from "./edge-keyring.js";
+import type { Broker } from "./broker.js";
+import type { BrokerStore } from "./persistence.js";
 
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const LAUNCHCTL_TIMEOUT_MS = 5_000;
@@ -101,6 +105,35 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdge(
       allowedProcessIdentity: identity
     }
   });
+}
+
+/**
+ * Startup assembly that restores the exact BrokerStore-approved Edge key
+ * configuration before constructing the Broker and native IPC listener.
+ * Callers must provide a Broker factory so the restored keyring is the one
+ * owned by the Broker; a pre-built Broker cannot be safely patched in place.
+ */
+export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig(
+  options: Omit<MacOsNativeBrokerRuntimeOptions, "peerPolicy" | "broker"> & {
+    edgeServiceId: string;
+    expectedEdgeUid: number;
+    expectedEdgeGid?: number;
+    commandExecutor?: LaunchdIdentityCommandExecutor;
+    edgeKeyConfigPath: string;
+    edgeKeyStore: BrokerStore;
+    createBroker: (edgeAuthenticationKeys: EdgeKeyring) => Broker;
+  }
+): Promise<ReturnType<typeof createMacOsNativeBrokerRuntime>> {
+  const {
+    edgeKeyConfigPath,
+    edgeKeyStore,
+    createBroker,
+    ...runtimeOptions
+  } = options;
+  const manager = new EdgeAuthenticationKeyManager(edgeKeyConfigPath, edgeKeyStore);
+  const loaded = await manager.restore();
+  const broker = createBroker(loaded.keyring);
+  return createMacOsNativeBrokerRuntimeForLaunchdEdge({ ...runtimeOptions, broker });
 }
 
 export function parseLaunchdEdgeProcessReadback(
