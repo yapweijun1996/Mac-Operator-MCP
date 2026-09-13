@@ -33,8 +33,14 @@
     },
     {
       "id": "file-descriptors",
-      "status": "UNKNOWN",
-      "result": "The sandbox-exec wrapper did not expose the test descriptor to the child, but this does not prove that a Broker-created executor cannot leak descriptors through another launch path."
+      "status": "PARTIAL",
+      "result": "The sandbox-exec wrapper did not expose the test descriptor. Separately, the Broker ProcessSupervisor uses explicit stdio and a temporary parent file-descriptor canary test confirms that a non-stdio canary is not visible in the child.",
+      "artifact": {
+        "source": "packages/broker/src/process-supervisor.test.ts",
+        "sha256": "b3a748e10a5616541f56e0b7b7b6658d86b1304e0ddd7d08cf8e135d581f08d2",
+        "test": "process supervisor does not leak a parent file-descriptor canary"
+      },
+      "limitation": "This proves the current Broker launch boundary on the tested host, not every future executor or OS sandbox profile; it is not credential isolation proof."
     },
     {
       "id": "process-tree",

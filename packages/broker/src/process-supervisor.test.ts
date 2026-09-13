@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,6 +23,39 @@ test("process supervisor uses an explicit environment and bounded output", async
   assert.equal(result.stderr, "");
   assert.equal(result.terminationObserved, true);
   assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor does not leak a parent file-descriptor canary", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("The Broker target platform uses POSIX descriptor semantics");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-fd-"));
+  const canaryPath = join(directory, "controller-secret-canary");
+  await writeFile(canaryPath, "synthetic-canary\n", { mode: 0o600 });
+  const canary = await open(canaryPath, "r");
+  try {
+    const canaryStat = await canary.stat();
+    const supervisor = new ProcessSupervisor();
+    const result = await supervisor.run({
+      executable: "/usr/bin/python3",
+      args: [
+        "-c",
+        "import os,sys; fd='/dev/fd/'+sys.argv[1]; print('leaked' if os.path.exists(fd) and (lambda s: s.st_dev == int(sys.argv[2]) and s.st_ino == int(sys.argv[3]))(os.stat(fd)) else 'not-leaked')",
+        String(canary.fd),
+        String(canaryStat.dev),
+        String(canaryStat.ino)
+      ],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 1_024
+    });
+    assert.equal(result.state, "completed");
+    assert.equal(result.stdout.trim(), "not-leaked");
+  } finally {
+    await canary.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("process supervisor rejects secret-shaped or non-allowlisted environment keys", async () => {
