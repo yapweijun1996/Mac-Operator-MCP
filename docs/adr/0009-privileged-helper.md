@@ -180,7 +180,9 @@ but incomplete work, timeout, transport loss, malformed/uncertain execution,
 or a post-dispatch authority change is persisted as `UNKNOWN_OUTCOME`. The
 executor never owns helper key material; the injected client obtains a
 short-lived key buffer and clears it after the bounded exchange. This remains
-an integration primitive: no privileged MCP route or adapter is enabled.
+an integration primitive: `Broker.executePrivilegedHelperJob()` is the only
+host seam and the default Broker constructor injects a disabled executor, so
+no privileged MCP route or adapter is enabled.
 
 ## Consequences and rollback
 

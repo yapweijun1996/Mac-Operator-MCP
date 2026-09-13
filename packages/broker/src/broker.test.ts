@@ -10,7 +10,7 @@ import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { FilesystemInspector } from "./filesystem-inspector.js";
-import { BrokerStore, redactEvidence } from "./persistence.js";
+import { BrokerStore, redactEvidence, type BrokerJob, type JobLease } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
@@ -99,6 +99,27 @@ test("authorized health request succeeds and writes decision plus completion aud
     assert.equal(result.ok, true);
     assert.equal(context.store.requestRecord("request-1")?.state, "SUCCEEDED");
     assert.equal(context.store.auditRows().length, 2);
+  } finally { await context.close(); }
+});
+
+test("Broker privileged helper seam remains disabled by default", async () => {
+  const context = await fixture();
+  try {
+    const request = signRequest(unsigned({ requestId: "request-helper-seam" }), context.key);
+    await assert.rejects(
+      () => context.broker.executePrivilegedHelperJob({
+        request,
+        requestId: request.requestId,
+        principalId: request.principal.principalId,
+        sessionId: request.principal.sessionId,
+        job: {} as BrokerJob,
+        lease: {} as JobLease,
+        operation: "power",
+        timeoutMs: 1_000,
+        target: { kind: "host", reference: "broker" }
+      }),
+      (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "PRIVILEGE_DENIED"
+    );
   } finally { await context.close(); }
 });
 

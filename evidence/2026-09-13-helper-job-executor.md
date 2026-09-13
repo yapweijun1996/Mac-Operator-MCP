@@ -19,11 +19,19 @@ The command-client binding delegates to the existing bounded authenticated
 helper client and zeroes the short-lived key buffer after use. Helper result
 evidence is schema-validated and redacted before it is returned or persisted.
 
+The `Broker` now owns this boundary through an optional
+`privilegedHelperExecutor` dependency and the host-only
+`executePrivilegedHelperJob()` seam. Broker authority is checked once before
+delegation and again by the executor before command issuance and after helper
+readback. The default Broker constructor supplies a disabled executor, so no
+MCP request path changes.
+
 ## Verification
 
 - `node --test packages/broker/dist/privileged-helper-executor.test.js`: 5/5
+- Broker regression including the disabled seam: 67/67
 - `npm run typecheck`: pass
-- `npm test`: 405 tests, 402 passed, 0 failed, 3 opt-in sandbox tests skipped
+- `npm test`: 406 tests, 403 passed, 0 failed, 3 opt-in sandbox tests skipped
 - `git diff --check`: pass
 
 ## Remaining boundary

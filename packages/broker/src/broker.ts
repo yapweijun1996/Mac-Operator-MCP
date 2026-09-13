@@ -44,6 +44,7 @@ import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
 import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, type UiActionName, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
+import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -71,6 +72,8 @@ export interface BrokerOptions {
   uiSnapshotRegistry?: UiSnapshotRegistry;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
+  /** Optional privileged helper Job boundary; disabled by default. */
+  privilegedHelperExecutor?: PrivilegedHelperJobExecutor;
 }
 
 const JOB_LEASE_DURATION_MS = 30_000;
@@ -98,6 +101,7 @@ export class Broker {
   private readonly uiSnapshotRegistry: UiSnapshotRegistry;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
+  private readonly privilegedHelperExecutor: PrivilegedHelperJobExecutor;
   private readonly jobLeaseOwnerId: string;
   private closing = false;
   private closePromise: Promise<void> | undefined;
@@ -130,6 +134,7 @@ export class Broker {
     this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
+    this.privilegedHelperExecutor = options.privilegedHelperExecutor ?? new PrivilegedHelperJobExecutor({ store: options.store });
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
   }
 
@@ -353,6 +358,34 @@ export class Broker {
       throw new Error("Edge identity is invalid");
     }
     this.options.store.revoke("edge", edgeId, reason, nowMs);
+  }
+
+  /**
+   * Host-only privileged Job seam. MCP dispatch does not call this method
+   * while privileged tools remain disabled; future L5 handlers must use this
+   * seam so active Broker authority is checked on both sides of helper IPC.
+   */
+  executePrivilegedHelperJob(
+    input: Omit<PrivilegedHelperJobExecutionInput, "assertAuthority"> & {
+      request: BrokerRequest;
+      target: NormalizedTarget;
+      additionalTargets?: readonly NormalizedTarget[];
+    }
+  ): Promise<PrivilegedHelperJobExecutionOutcome> {
+    if (this.closing) return Promise.reject(new BrokerError("CANCELLED", "Broker is shutting down"));
+    if (input.request.principal.principalId !== input.principalId || input.request.principal.sessionId !== input.sessionId ||
+        input.request.requestId !== input.requestId) {
+      return Promise.reject(new BrokerError("AUTH_INVALID", "Privileged helper Job request identity is not bound"));
+    }
+    const assertAuthority = () => this.ensureActiveAuthority(
+      input.request,
+      input.target,
+      input.additionalTargets ?? []
+    );
+    // The Broker owns the first authority decision; the executor repeats it
+    // immediately before command issuance and after helper readback.
+    assertAuthority();
+    return this.privilegedHelperExecutor.execute({ ...input, assertAuthority });
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {

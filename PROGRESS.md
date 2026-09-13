@@ -1151,5 +1151,10 @@ transport/timeout/accepted-but-incomplete/post-revocation uncertainty as
 retryable `UNKNOWN_OUTCOME`. The short-lived command key buffer is cleared by
 the client binding. The default policy and MCP dispatch still expose no
 privileged operation; helper installation, adapters, and root launchd remain
-disabled. The latest default suite is 405 tests (402 passed, 3 opt-in sandbox
+disabled. The latest default suite is 406 tests (403 passed, 3 opt-in sandbox
 tests skipped). Evidence: `evidence/2026-09-13-helper-job-executor.md`.
+
+The Broker now owns the executor through an explicit optional dependency and a
+host-only `executePrivilegedHelperJob()` seam. The seam performs an initial
+authority check, while the executor repeats it around helper IPC; the default
+constructor remains fail-closed and disabled.

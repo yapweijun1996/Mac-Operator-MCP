@@ -923,9 +923,12 @@ renews a persisted Job lease, binds command operation/target/payload/policy to
 the Job, rechecks authority before and after helper dispatch, and persists
 verified completion or conservative `UNKNOWN_OUTCOME`. Its command-client
 binding clears short-lived helper key buffers. The focused executor suite
-passes 5/5; the default suite passes 402/405 with 3 opt-in sandbox tests
+passes 5/5; the default suite passes 403/406 with 3 opt-in sandbox tests
 skipped. No privileged tool, adapter, root helper, or launchd service is
 enabled. Evidence: `evidence/2026-09-13-helper-job-executor.md`.
+
+The Broker integration seam is covered by a regression asserting that the
+default constructor rejects privileged execution without changing a Job.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.
 
