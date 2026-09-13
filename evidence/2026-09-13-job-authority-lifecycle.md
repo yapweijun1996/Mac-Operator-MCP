@@ -52,3 +52,28 @@ change. Audit evidence is recursively redacted before hashing, and the tests
 verify that a switch or revocation cannot commit without its matching audit
 pair. This improves operator traceability but does not add an operator IPC
 command or prove active process termination.
+
+## Authority Control IPC addendum
+
+Source revision `dd824b4` adds a separate Broker-local
+Authority Control IPC. The native Unix peer boundary checks the configured
+UID/GID/PID policy before handing a socket to the command parser. A 32-byte-or-
+longer HMAC key, protocol version `0.1`, bounded JSON envelope, timestamp and
+nonce-expiry window, strict operation/target allowlist, and durable
+request/nonce admission are required. Only `set_switch` and `revoke` are
+representable; there is no executable, shell, capability-grant, or MCP Edge
+route. Switch changes require an `expectedDisabled` precondition, so a stale
+operator command returns `CONFLICT` without overwriting newer authority state.
+
+The command request ID is reused for the transactional authority audit pair.
+Audit evidence contains a SHA-256 reason digest rather than operator reason
+text. Focused native tests cover successful disable/re-enable and revocation,
+queued-job cancellation, wrong-key rejection, stale-state rejection, denied
+peer pre-parse drop, and replay rejection after SQLite/Broker restart.
+The focused Authority Control IPC run passes 2/2 tests; the complete suite on
+`dd824b4` passes 292/294 tests, with the two opt-in real-sandbox tests skipped
+by default.
+
+This remains a source-level control boundary. Protected key distribution,
+installed startup/readback, active process-tree termination, remote propagation,
+and an executable operator recovery/re-enable procedure remain open.
