@@ -10,6 +10,8 @@ export interface ProcessExecutionControl {
 }
 
 export interface ProcessExecutor {
+  /** Stop accepting work and terminate owned worker threads during Broker shutdown. */
+  close?(): Promise<void>;
   list(limit: number, sort: "cpu" | "memory" | "pid" | "name", control: ProcessExecutionControl): Promise<SafeProcessInventory>;
   inspect(pid: number, control: ProcessExecutionControl): Promise<SafeProcessDetail>;
 }
@@ -29,6 +31,10 @@ export class WorkerProcessExecutor implements ProcessExecutor {
       }),
       maxConcurrent
     );
+  }
+
+  close(): Promise<void> {
+    return this.executor.close();
   }
 
   list(limit: number, sort: "cpu" | "memory" | "pid" | "name", control: ProcessExecutionControl): Promise<SafeProcessInventory> {

@@ -17,6 +17,8 @@ export interface WorkerFilesystemExecutorOptions {
 }
 
 export interface FilesystemExecutor {
+  /** Stop accepting work and terminate owned worker threads during Broker shutdown. */
+  close?(): Promise<void>;
   stat(plan: FilesystemPathPlan, followSymlink: boolean, control: FilesystemExecutionControl): Promise<FilesystemWorkerResult>;
   read(
     plan: FilesystemPathPlan,
@@ -107,6 +109,10 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
       }),
       maxConcurrent
     );
+  }
+
+  close(): Promise<void> {
+    return this.executor.close();
   }
 
   stat(plan: FilesystemPathPlan, followSymlink: boolean, control: FilesystemExecutionControl): Promise<FilesystemWorkerResult> {

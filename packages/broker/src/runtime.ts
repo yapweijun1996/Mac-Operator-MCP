@@ -11,6 +11,8 @@ export type LocalBrokerRuntimeState = "stopped" | "starting" | "running" | "stop
 export interface LocalBrokerRuntimeOptions {
   brokerChannel: RuntimeChannel;
   operatorChannels?: readonly RuntimeChannel[];
+  /** Close Broker-owned resources after all transport channels stop. */
+  closeResources?: () => Promise<void>;
 }
 
 export interface MacOsNativeBrokerRuntimeOptions extends Omit<NativeBrokerIpcServerOptions, "broker"> {
@@ -31,6 +33,7 @@ export interface MacOsNativeBrokerRuntimeOptions extends Omit<NativeBrokerIpcSer
  */
 export class LocalBrokerRuntime {
   private readonly channels: readonly RuntimeChannel[];
+  private readonly closeResources: (() => Promise<void>) | undefined;
   private stateValue: LocalBrokerRuntimeState = "stopped";
   private activeChannels: RuntimeChannel[] = [];
   private operation: Promise<void> = Promise.resolve();
@@ -48,6 +51,7 @@ export class LocalBrokerRuntime {
       throw new Error("Broker runtime channels must be unique");
     }
     this.channels = allChannels;
+    this.closeResources = options.closeResources;
   }
 
   get state(): LocalBrokerRuntimeState {
@@ -98,9 +102,10 @@ export class LocalBrokerRuntime {
       this.activeChannels = [];
     } catch (error) {
       firstError = error;
-    } finally {
-      this.stateValue = firstError === undefined ? "stopped" : "failed";
     }
+    try { await this.closeResources?.(); }
+    catch (error) { firstError ??= error; }
+    this.stateValue = firstError === undefined ? "stopped" : "failed";
     if (firstError !== undefined) throw firstError;
   }
 
@@ -138,7 +143,8 @@ export function createMacOsNativeBrokerRuntime(
   });
   const runtime = new LocalBrokerRuntime({
     brokerChannel,
-    ...(operatorChannels === undefined ? {} : { operatorChannels })
+    ...(operatorChannels === undefined ? {} : { operatorChannels }),
+    closeResources: () => options.broker.close()
   });
   return { runtime, brokerChannel };
 }

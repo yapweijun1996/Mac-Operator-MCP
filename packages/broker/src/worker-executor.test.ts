@@ -52,6 +52,20 @@ test("bounded worker executor releases capacity after an abrupt worker exit", as
   assert.equal(await executor.run({}, 1_000, () => false), "recovered");
 });
 
+test("bounded worker executor closes active workers and rejects new work", async () => {
+  const executor = slowExecutor(1);
+  const active = executor.run({ delayMs: 10_000 }, 20_000, () => false);
+  const closing = executor.close();
+  await assert.rejects(active, (error: unknown) => hasErrorClass(error, "EXECUTION_FAILED"));
+  await closing;
+  assert.equal(executor.activeCount(), 0);
+  await assert.rejects(
+    executor.run({ delayMs: 1 }, 1_000, () => false),
+    (error: unknown) => hasErrorClass(error, "CANCELLED")
+  );
+  await executor.close();
+});
+
 test("bounded worker executor releases cancelled capacity before accepting new work", async () => {
   const executor = slowExecutor(1);
   let cancelled = false;

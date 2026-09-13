@@ -27,6 +27,17 @@ test("local Broker runtime starts Broker IPC before operator channels and closes
   ]);
 });
 
+test("local Broker runtime closes owned resources after transport channels", async () => {
+  const events: string[] = [];
+  const runtime = new LocalBrokerRuntime({
+    brokerChannel: channel("broker", events),
+    closeResources: async () => { events.push("resources:close"); }
+  });
+  await runtime.start();
+  await runtime.close();
+  assert.deepEqual(events, ["broker:listen", "broker:close", "resources:close"]);
+});
+
 test("local Broker runtime rolls back a partial startup and remains restartable", async () => {
   const events: string[] = [];
   const broker = channel("broker", events);

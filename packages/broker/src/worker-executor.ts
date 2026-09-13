@@ -9,6 +9,9 @@ export type WorkerFactory<TCommand> = (command: TCommand) => Worker;
 
 export class BoundedWorkerExecutor<TCommand, TResult> {
   private activeWorkers = 0;
+  private readonly workers = new Set<Worker>();
+  private closing = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(
     private readonly workerFactory: WorkerFactory<TCommand>,
@@ -20,6 +23,9 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
   }
 
   run(command: TCommand, timeoutMs: number, shouldCancel: () => boolean): Promise<TResult> {
+    if (this.closing) {
+      return Promise.reject(new BrokerError("CANCELLED", "Worker executor is shutting down"));
+    }
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000) {
       return Promise.reject(new BrokerError("PRECONDITION_FAILED", "Worker timeout is outside the supported range"));
     }
@@ -32,6 +38,7 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
 
     const worker = this.workerFactory(command);
     this.activeWorkers += 1;
+    this.workers.add(worker);
     return new Promise<TResult>((resolve, reject) => {
       let settled = false;
       let released = false;
@@ -39,6 +46,7 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
         if (!released) {
           released = true;
           this.activeWorkers -= 1;
+          this.workers.delete(worker);
         }
       };
       const finish = (error?: BrokerError, value?: TResult) => {
@@ -84,6 +92,23 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
 
   activeCount(): number {
     return this.activeWorkers;
+  }
+
+  /**
+   * Stop accepting work and terminate every worker still owned by this
+   * executor. The promise resolves only after each Worker termination request
+   * settles; capacity is released from the Worker `exit` event, so callers can
+   * safely close persistence after this boundary.
+   */
+  close(): Promise<void> {
+    if (this.closePromise !== undefined) return this.closePromise;
+    this.closing = true;
+    const workers = [...this.workers];
+    this.closePromise = Promise.all(workers.map(async (worker) => {
+      try { await worker.terminate(); }
+      catch { /* the exit handler still owns capacity release */ }
+    })).then(() => undefined);
+    return this.closePromise;
   }
 
   private cancelled(check: () => boolean): boolean {

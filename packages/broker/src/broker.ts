@@ -95,6 +95,8 @@ export class Broker {
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
   private readonly jobLeaseOwnerId: string;
+  private closing = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -118,6 +120,27 @@ export class Broker {
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
+  }
+
+  /**
+   * Close Broker-owned worker resources after transport shutdown. Active
+   * worker-backed mutations fail through their existing UNKNOWN Job path;
+   * callers must await this boundary before closing the BrokerStore.
+   */
+  close(): Promise<void> {
+    if (this.closePromise !== undefined) return this.closePromise;
+    this.closing = true;
+    const resources = [this.filesystemExecutor, this.processExecutor];
+    this.closePromise = (async () => {
+      let firstError: unknown;
+      for (const resource of resources) {
+        if (typeof resource.close !== "function") continue;
+        try { await resource.close.call(resource); }
+        catch (error) { firstError ??= error; }
+      }
+      if (firstError !== undefined) throw firstError;
+    })();
+    return this.closePromise;
   }
 
   /**
@@ -240,6 +263,7 @@ export class Broker {
     let admitted = false;
     let authorized = false;
     try {
+      if (this.closing) throw new BrokerError("CANCELLED", "Broker is shutting down");
       request = parseBrokerRequest(rawRequest);
       this.authenticate(request, startedAt, policy);
       this.options.store.admitRequest({
@@ -3009,6 +3033,7 @@ export class Broker {
     target: NormalizedTarget,
     additionalTargets: readonly NormalizedTarget[] = []
   ): void {
+    if (this.closing) throw new BrokerError("CANCELLED", "Broker is shutting down");
     if (this.now() >= request.principal.expiresAtMs) {
       throw new BrokerError("CANCELLED", "Active work session expired");
     }
