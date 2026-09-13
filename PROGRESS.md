@@ -6,7 +6,18 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `df4ba85`.
+Current committed implementation baseline: `0ac3e15`.
+
+The latest atomic-write storage-error addendum is `0ac3e15`: the fault-test
+native module can deterministically inject `ENOSPC` at temporary-file write and
+`fsync` boundaries. Create and replace fixtures fail non-zero, preserve the
+prior target state, and remove the exact temporary artifact; the production
+native module does not expose the injection hook. Focused filesystem tests pass
+31/31; the full suite passes 370 tests (368 passed, 2 opt-in real-sandbox
+tests skipped). `MOPS_REAL_SANDBOX=1 npm test` has the same two
+environment-gated skips. This is error-path evidence, not physical disk-full,
+remount, kernel-blocked I/O, or restart-recovery evidence. Evidence:
+`evidence/2026-09-13-write-storage-error.md`.
 
 The latest filesystem-worker concurrency addendum is `df4ba85`: a real
 `WorkerFilesystemExecutor` fixture authorizes two independent roots, performs
