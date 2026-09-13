@@ -870,7 +870,7 @@ test("mac_app_open never publishes success after active session revocation", asy
       expiresAtMs: NOW + 1_000
     });
     const result = await broker.handle(signRequest(request, key));
-    assert.equal(result.result_class, "REVOKED");
+    assert.equal(result.result_class, "CANCELLED");
     assert.equal(store.ownedJobByIdempotencyKey("app-open:app-open-revoke", "principal-1")?.state, "unknown");
   } finally {
     store.close();

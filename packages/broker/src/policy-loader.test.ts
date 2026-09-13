@@ -198,7 +198,7 @@ test("policy verification rejects tampering, unknown fields, and unimplemented e
     scope: "mac.app.control",
     target: { kind: "app", reference: "com.example.Editor" }
   });
-  assert.throws(() => instance.verify(signedBundle(invalidApp, keys.privateKey)), /stable bundle identity/u);
+  assert.throws(() => instance.verify(signedBundle(invalidApp, keys.privateKey)), /schema validation failed/u);
 });
 
 test("policy verifier supports bounded signing-key rotation and revocation", async () => {
