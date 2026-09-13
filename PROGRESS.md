@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `d01cf95`.
+Current committed implementation baseline: `a447cb1`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -46,6 +46,13 @@ SHA-256 digest, rejecting later path replacement or in-place content changes
 before returning the cached adapter. This closes the loader's cache target-swap
 gap; code signing/provenance, ABI pinning, Keychain distribution, installed
 startup, and production enablement remain open.
+
+The latest implementation addendum is `a447cb1`: the shared loader now
+requires all 17 production native exports before any consumer receives the
+module, so incomplete or capability-truncated artifacts fail closed at load
+time instead of failing later during an operation. Native signing/provenance,
+ABI pinning, Keychain distribution, installed startup, and production
+enablement remain open.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 
@@ -299,7 +306,7 @@ There is no blocker to continued local implementation. Production enablement is 
 - Reran the full suite at 291 tests (289 passed, two default opt-in real-host tests skipped) on clean source commit `41e83c0`; `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` passed 6/6 on the Mac mini M4/macOS 26.2 host. The experimental runner smoke proves only Broker-rendered deny-default profile construction, default single-process/no-fork policy, explicit empty-environment filtering for four canaries, allowed temporary-root read/write, `/private/etc/passwd`/`.env`/symlink denial, curl DNS/network denial, child-launch denial, active sleep cancellation, and profile-matched process-tree proof validation. It does not prove real credential, descendant/`setsid`, crash/restart, remount, Docker, persistence, privilege, or allowlisted-network isolation. Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
 - Added atomic audit coverage for generic switch and revocation changes; focused persistence, Broker, and approval tests pass with the authority audit pair present.
-- On source revisions through `22881f9`, the ProcessSupervisor focused suite passes 8/8, including a detached `setsid` descendant fixture and root-PID identity binding; native peer credential/IPC focused tests pass 7/7, including native adapter artifact rejection. The full suite passes 295 of 297 tests with two opt-in real-sandbox tests skipped by default. The focused real-Mac sandbox run passes 7/7 with `MOPS_REAL_SANDBOX=1`; `npm run typecheck`, `npm run verify:contracts` (44 unique contracts), `npm audit --omit=dev --audit-level=high`, `git diff --check`, and the production native-loader bypass check also pass.
+- On source revisions through `a447cb1`, the ProcessSupervisor focused suite passes 8/8, including a detached `setsid` descendant fixture and root-PID identity binding; native peer credential/IPC focused tests pass 7/7, including native adapter artifact rejection and complete-export loading. The full suite passes 295 of 297 tests with two opt-in real-sandbox tests skipped by default. The focused real-Mac sandbox run passes 7/7 with `MOPS_REAL_SANDBOX=1`; `npm run typecheck`, `npm run verify:contracts` (44 unique contracts), `npm audit --omit=dev --audit-level=high`, `git diff --check`, and the production native-loader bypass check also pass.
 
 The passing tests prove only the local foundation, bounded filesystem workers/search, and initial persistent Request/Approval/Job Ledgers on the recorded clean revision. They do not satisfy a release gate or prove protected Keychain-backed secret storage, installed cross-process code identity, a human approval UI/channel, production unattended profiles, remote deployment, removable-volume remount identity, process-tree ownership/termination, credential isolation, sandbox, GUI, helper, packaging, or whole-service rollback.
 

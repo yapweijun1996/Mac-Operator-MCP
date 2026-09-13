@@ -1,6 +1,6 @@
 # Native adapter loading boundary evidence
 
-- Source commit: `d01cf95` (`fix: bind native adapter cache to artifact digest`)
+- Source commit: `a447cb1` (`fix: validate complete native adapter export set`)
 - Host: Mac mini M4, macOS `26.2` (`25C56`), arm64
 - Runtime: Node `v25.5.0`, npm `11.8.0`
 - Scope: unprivileged Broker native peer adapter loading; no privileged action
@@ -19,6 +19,10 @@ closed.
 The loader also remembers the first successfully loaded artifact and compares
 device, inode, size, and SHA-256 on every later load. A changed path therefore
 cannot cause Node's cached module to be reused for a different on-disk artifact.
+
+The loader rejects incomplete native modules at the same boundary: all 17
+production exports used by IPC, filesystem, process, network, and process-tree
+adapters must be functions before the module is returned.
 
 All production native consumers (filesystem, process, network, and process-tree
 inspection) now use this loader; no production TypeScript module directly
