@@ -26,6 +26,7 @@ export * from "./authority-control-ipc.js";
 export * from "./authority-control-keyring.js";
 export * from "./privileged-helper.js";
 export * from "./privileged-helper-keyring.js";
+export * from "./privileged-helper-runtime.js";
 export * from "./system-inspector.js";
 export * from "./network-inspector.js";
 export * from "./process-inspector.js";
