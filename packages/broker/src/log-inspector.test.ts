@@ -53,6 +53,16 @@ test("log inspector does not infer a result from an unresolved process outcome",
   );
 });
 
+test("log inspector rejects an output limit without observed termination", async () => {
+  const inspector = new MacLogInspector({
+    run: async () => ({ ...fakeResult("OUTPUT_LIMIT", "partial\n"), terminationObserved: false })
+  });
+  await assert.rejects(
+    inspector.tail("system", 5, 1, { timeoutMs: 10_000, shouldCancel: () => false }),
+    /termination could not be verified/u
+  );
+});
+
 test("log inspector rejects arbitrary sources and unbounded windows", () => {
   assert.doesNotThrow(() => validateLogRequest("system", 1, 0));
   assert.doesNotThrow(() => validateLogRequest("process/codex", 2000, 31_536_000));

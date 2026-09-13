@@ -78,6 +78,9 @@ function parseLogResult(
   // An output-limited log process has already been terminated by the
   // supervisor and its captured bytes are bounded. Parse that prefix and
   // expose the loss explicitly instead of discarding otherwise safe records.
+  if (result.resultClass === "OUTPUT_LIMIT" && !result.terminationObserved) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Log inspection termination could not be verified", true);
+  }
   if (result.resultClass === "UNKNOWN_OUTCOME") throw new BrokerError("UNKNOWN_OUTCOME", "Log inspection outcome could not be verified", true);
   if (result.resultClass !== "SUCCEEDED" && result.resultClass !== "OUTPUT_LIMIT") {
     throw new BrokerError("EXECUTION_FAILED", "Log inspection failed");
@@ -105,14 +108,15 @@ function parseLogResult(
   }
   const selected = entries.slice(Math.max(0, entries.length - lines));
   if (malformedLines > 0) warnings.push("Some log records were malformed and were omitted");
-  if (result.truncated) warnings.push("Log output was truncated by a fixed adapter budget");
+  const outputLimited = result.resultClass === "OUTPUT_LIMIT";
+  if (result.truncated || outputLimited) warnings.push("Log output was truncated by a fixed adapter budget");
   if (entries.length > lines) warnings.push("Log entries were limited to the requested line budget");
   if (requestedSinceSeconds > effectiveSinceSeconds) warnings.push("The requested log window was capped at 24 hours");
   if (entries.some((entry) => entry.message.includes("[REDACTED]"))) warnings.push("Sensitive log content was redacted");
   return {
     source,
     entries: selected,
-    truncated: result.truncated || malformedLines > 0 || entries.length > lines,
+    truncated: result.truncated || outputLimited || malformedLines > 0 || entries.length > lines,
     warnings: warnings.slice(0, 32)
   };
 }

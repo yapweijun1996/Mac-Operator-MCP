@@ -6,7 +6,7 @@ Scope: `mac_log_tail` bounded output and process-result handling
 
 ## Evidence
 
-- `node --test packages/broker/dist/log-inspector.test.js` passed 4/4.
+- `node --test packages/broker/dist/log-inspector.test.js` passed 5/5.
 - `MOPS_REAL_SANDBOX=1 node --test --test-concurrency=1` over all compiled
   package tests passed 438 tests with zero failures and one explicit skip.
 - The real system-source test exercised `/usr/bin/log` on the host; the

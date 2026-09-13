@@ -8,7 +8,7 @@ Latest bounded-log addendum: `mac_log_tail` now preserves a safe, redacted
 prefix when the Broker-owned process supervisor reaches its fixed 512 KiB
 output cap. The adapter exposes `truncated: true` and an explicit warning only
 after process termination has been observed; an unresolved supervisor outcome
-still fails closed as `UNKNOWN_OUTCOME`. Focused log tests pass 4/4, and the
+still fails closed as `UNKNOWN_OUTCOME`. Focused log tests pass 5/5, and the
 Darwin real-sandbox sequential suite passes 438/438 with one explicit skip.
 Evidence: `evidence/2026-09-14-log-output-budget.md`.
 
