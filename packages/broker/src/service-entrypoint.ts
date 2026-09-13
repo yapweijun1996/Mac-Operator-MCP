@@ -40,7 +40,7 @@ export class BrokerServiceEntrypoint {
     if (!/^[0-9a-f]{7,64}$/u.test(metadata.sourceRevision)) {
       throw new Error("Broker service source revision is invalid");
     }
-    if (!/^\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(metadata.policyVersion)) {
+    if (!/^(?:policy-[1-9][0-9]*|\d+\.\d+(?:\.\d+)?(?:[-+].*)?)$/u.test(metadata.policyVersion)) {
       throw new Error("Broker service policy version is invalid");
     }
     if (enabledCapabilities.some((capability) => typeof capability !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(capability))) {

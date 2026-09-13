@@ -44,6 +44,7 @@ export * from "./native-runtime-startup.js";
 export * from "./launchd.js";
 export * from "./launchd-readback.js";
 export * from "./service-entrypoint.js";
+export * from "./service-startup.js";
 export * from "./macos-install-plan.js";
 export * from "./macos-uninstall-plan.js";
 export * from "./app-inspector.js";

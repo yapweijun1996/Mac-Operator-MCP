@@ -54,6 +54,19 @@ test("unknown and expired Edge key identities fail closed", () => {
   assert.throws(() => keyring.keyFor(expired, NOW), (error: unknown) => errorClass(error) === "AUTH_EXPIRED");
 });
 
+test("Edge keyring disposal removes loaded authentication authority", () => {
+  const key = randomBytes(32);
+  const keyring = new EdgeKeyring([{
+    edgeId: "edge-1", keyId: "active-key", key,
+    notBeforeMs: NOW - 60_000, expiresAtMs: NOW + 60_000
+  }]);
+  const signed = signRequest(request("dispose", "active-key"), key);
+  assert.ok(keyring.keyFor(signed, NOW));
+  keyring.dispose();
+  assert.equal(keyring.keyByIdentity("edge-1", "active-key"), undefined);
+  assert.throws(() => keyring.keyFor(signed, NOW), (error: unknown) => errorClass(error) === "AUTH_INVALID");
+});
+
 function request(suffix: string, keyId: string): UnsignedBrokerRequest {
   return {
     protocolVersion: "0.1",

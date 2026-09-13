@@ -36,6 +36,12 @@ export class EdgeKeyring {
     const record = this.keys.get(keyIdentity(edgeId, keyId));
     return record ? Buffer.from(record.key) : undefined;
   }
+
+  /** Wipes loaded authentication keys when the owning Broker service stops. */
+  dispose(): void {
+    for (const record of this.keys.values()) record.key.fill(0);
+    this.keys.clear();
+  }
 }
 
 export function keyIdentity(edgeId: string, keyId: string): string {
