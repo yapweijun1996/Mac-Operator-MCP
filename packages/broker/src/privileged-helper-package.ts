@@ -211,6 +211,25 @@ export interface PrivilegedHelperFileAction {
   content?: string;
 }
 
+export interface PrivilegedHelperExistingServiceReadback {
+  present: boolean;
+  sourceRevision: string | null;
+}
+
+export type PrivilegedHelperPackageExecutionStep =
+  | { kind: "verify-signature"; command: CodeSignatureCommandSpec }
+  | { kind: "bootout"; command: LaunchdCommandSpec }
+  | { kind: "apply-plist"; action: PrivilegedHelperFileAction }
+  | { kind: "bootstrap"; command: LaunchdCommandSpec }
+  | { kind: "readback"; operation: PrivilegedHelperPackageOperation };
+
+export interface PrivilegedHelperPackageExecutionPlan {
+  operation: PrivilegedHelperPackageOperation;
+  existingService: PrivilegedHelperExistingServiceReadback;
+  steps: readonly PrivilegedHelperPackageExecutionStep[];
+  recoverySteps: readonly PrivilegedHelperPackageExecutionStep[];
+}
+
 /**
  * Builds a reviewable root LaunchDaemon plan without executing launchctl,
  * writing files, or enabling a helper adapter. The helper is native-only and
@@ -324,6 +343,42 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
     adapterAvailable: false
   };
   return plan;
+}
+
+/**
+ * Builds the host-only lifecycle sequence for a privileged-helper package.
+ * This is a dry-run contract: it validates the exact existing revision and
+ * returns fixed command/file steps, but it never invokes launchctl or mutates
+ * the filesystem. A future root-owned executor must consume this sequence and
+ * perform the listed readback/recovery steps without accepting new arguments.
+ */
+export function buildPrivilegedHelperPackageExecutionPlan(
+  plan: PrivilegedHelperPackagePlan,
+  existingService: PrivilegedHelperExistingServiceReadback
+): PrivilegedHelperPackageExecutionPlan {
+  validatePrivilegedHelperExistingService(plan, existingService);
+  const steps: PrivilegedHelperPackageExecutionStep[] = [];
+  if (plan.operation !== "uninstall") steps.push({ kind: "verify-signature", command: plan.signatureVerify });
+  if (plan.operation !== "install") steps.push({ kind: "bootout", command: plan.rollback.bootout });
+  const action = plan.operation === "install" ? plan.install.file : plan.operation === "uninstall" ? plan.uninstall.file : plan.rollback.file;
+  steps.push({ kind: "apply-plist", action });
+  if (plan.operation !== "uninstall") steps.push({ kind: "bootstrap", command: plan.install.bootstrap });
+  steps.push({ kind: "readback", operation: plan.operation });
+
+  const recoverySteps: PrivilegedHelperPackageExecutionStep[] = [];
+  if (plan.operation === "install") {
+    recoverySteps.push({ kind: "bootout", command: plan.rollback.bootout });
+    recoverySteps.push({ kind: "apply-plist", action: plan.uninstall.file });
+    recoverySteps.push({ kind: "readback", operation: "uninstall" });
+  } else if (plan.operation === "upgrade" || plan.operation === "rollback") {
+    recoverySteps.push({ kind: "bootout", command: plan.rollback.bootout });
+    recoverySteps.push({ kind: "apply-plist", action: plan.rollback.file });
+    recoverySteps.push({ kind: "bootstrap", command: plan.rollback.bootstrap });
+    recoverySteps.push({ kind: "readback", operation: "rollback" });
+  } else {
+    recoverySteps.push({ kind: "readback", operation: "uninstall" });
+  }
+  return { operation: plan.operation, existingService, steps, recoverySteps };
 }
 
 /**
@@ -772,6 +827,25 @@ function isDescendant(root: string, target: string, allowEqual: boolean): boolea
 
 function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&apos;");
+}
+
+function validatePrivilegedHelperExistingService(
+  plan: PrivilegedHelperPackagePlan,
+  existingService: PrivilegedHelperExistingServiceReadback
+): void {
+  if (existingService === null || typeof existingService !== "object" || typeof existingService.present !== "boolean" ||
+      (existingService.sourceRevision !== null && !REVISION_PATTERN.test(existingService.sourceRevision))) {
+    fail("SERVICE_MISMATCH", "privileged helper existing-service readback is malformed");
+  }
+  if (plan.operation === "install") {
+    if (existingService.present || existingService.sourceRevision !== null) {
+      fail("SERVICE_MISMATCH", "privileged helper install requires an absent existing service");
+    }
+    return;
+  }
+  if (!existingService.present || existingService.sourceRevision !== plan.expectedPreviousSourceRevision) {
+    fail("SERVICE_MISMATCH", "privileged helper operation requires the exact previous source revision");
+  }
 }
 
 function fail(code: PrivilegedHelperPackageErrorCode, message: string): never {

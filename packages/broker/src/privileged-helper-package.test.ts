@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import {
   applyPrivilegedHelperPlistPlan,
+  buildPrivilegedHelperPackageExecutionPlan,
   buildPrivilegedHelperPackagePlan,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
@@ -146,6 +147,36 @@ test("privileged helper package upgrades require an exact previous source revisi
     expectedPreviousSourceRevision: "abcdef0123456789abcdef0123456789abcdef01"
   });
   assert.equal(plan.expectedPreviousSourceRevision, "abcdef0123456789abcdef0123456789abcdef01");
+});
+
+test("privileged helper execution contract fixes preconditions, command order, and recovery", () => {
+  const install = buildPrivilegedHelperPackagePlan(base);
+  const installExecution = buildPrivilegedHelperPackageExecutionPlan(install, { present: false, sourceRevision: null });
+  assert.deepEqual(installExecution.steps.map((step) => step.kind), ["verify-signature", "apply-plist", "bootstrap", "readback"]);
+  assert.deepEqual(installExecution.recoverySteps.map((step) => step.kind), ["bootout", "apply-plist", "readback"]);
+  assert.equal(installExecution.steps[0]?.kind, "verify-signature");
+  if (installExecution.steps[0]?.kind === "verify-signature") {
+    assert.deepEqual(installExecution.steps[0].command.args, ["--verify", "--strict", "--deep", base.signedArtifactPath]);
+  }
+  assert.throws(
+    () => buildPrivilegedHelperPackageExecutionPlan(install, { present: true, sourceRevision: base.sourceRevision }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+
+  const previous = base.sourceRevision;
+  const upgrade = buildPrivilegedHelperPackagePlan({ ...base, operation: "upgrade", expectedPreviousSourceRevision: previous });
+  const upgradeExecution = buildPrivilegedHelperPackageExecutionPlan(upgrade, { present: true, sourceRevision: previous });
+  assert.deepEqual(upgradeExecution.steps.map((step) => step.kind), ["verify-signature", "bootout", "apply-plist", "bootstrap", "readback"]);
+  assert.deepEqual(upgradeExecution.recoverySteps.map((step) => step.kind), ["bootout", "apply-plist", "bootstrap", "readback"]);
+  assert.throws(
+    () => buildPrivilegedHelperPackageExecutionPlan(upgrade, { present: true, sourceRevision: "abcdef0123456789abcdef0123456789abcdef01" }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+
+  const uninstall = buildPrivilegedHelperPackagePlan({ ...base, operation: "uninstall", expectedPreviousSourceRevision: previous });
+  const uninstallExecution = buildPrivilegedHelperPackageExecutionPlan(uninstall, { present: true, sourceRevision: previous });
+  assert.deepEqual(uninstallExecution.steps.map((step) => step.kind), ["bootout", "apply-plist", "readback"]);
+  assert.deepEqual(uninstallExecution.recoverySteps.map((step) => step.kind), ["readback"]);
 });
 
 test("privileged helper package signature command verifies a real temporary macOS artifact", async (t) => {
