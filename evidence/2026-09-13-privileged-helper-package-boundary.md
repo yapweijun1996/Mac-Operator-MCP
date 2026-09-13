@@ -12,8 +12,9 @@ Policy version: policy-0.1
 
 This record covers the source-level packaging boundary for a separately
 authenticated privileged helper. It is a non-executing plan: no LaunchDaemon
-was installed, no `launchctl` mutation ran, no signing was performed, and no
-root or privileged operation was started.
+was installed, no `launchctl` mutation ran, no Developer ID signing or
+provenance operation was performed, and no root or privileged operation was
+started. The real-host smoke test used only a temporary ad-hoc signature.
 
 ## Implemented boundary
 

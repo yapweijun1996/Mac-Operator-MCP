@@ -38,7 +38,7 @@ opt-in suite passes 347/347. Evidence:
 
 The latest real-Mac sandbox readback was rerun from `eb9ee6a` with
 `MOPS_REAL_SANDBOX=1`: both opt-in sandbox tests passed, and the full suite
-passed 348/348 with no skipped tests. The smoke remains synthetic and
+passed 349/349 with no skipped tests. The smoke remains synthetic and
 disabled-by-default; it does not establish real credential/persistence
 isolation, descendant/`setsid` ownership, remount safety, or a production
 replacement for deprecated `sandbox-exec`. `mac_task_run` remains disabled.
