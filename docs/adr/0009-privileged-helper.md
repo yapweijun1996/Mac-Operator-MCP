@@ -118,6 +118,13 @@ readback must match the exact planned path, rendered byte count, SHA-256, and
 device/inode identity; the reader uses the internal protected filesystem
 inspector and rejects caller-supplied path or inspector substitution.
 
+Revision `1405b99` adds `composePrivilegedHelperPackageReadback`. The final
+helper readback is now constructed only from raw launchd, native process,
+descriptor-backed plist, helper-runtime, and signature sources. Exact service
+ID, domain, LaunchDaemon type, running state, PID, argv, plist path, and
+process-identity checks run before the planned fields are copied into the
+validated result.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

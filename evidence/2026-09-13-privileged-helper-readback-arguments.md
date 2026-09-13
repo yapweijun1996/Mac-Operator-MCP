@@ -1,7 +1,7 @@
 # Privileged Helper Exact-Arguments Readback Evidence
 
 Date: 2026-09-13
-Source commit: `d3efae1`
+Source commit: `1405b99`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -36,6 +36,14 @@ exact canonical path, rendered UTF-8 byte count, SHA-256, and device/inode.
 filesystem inspector and rejects truncation, target replacement, and content
 tampering before returning a source that can be composed into helper readiness.
 
+`composePrivilegedHelperPackageReadback` is the composition boundary. It
+accepts only raw `LaunchdJobReadback`, native process identity, plist,
+helper-runtime, and signature sources. It requires the exact system service
+ID, `LaunchDaemon` type, running state, PID, native argv, plist path, and
+PID/start-time binding before copying the planned launchd configuration into a
+validated package readback. A caller cannot promote a plan-shaped object into
+launchd evidence.
+
 ## Verification
 
 - `npm test`: 395 tests, 392 passed, 0 failed, 3 opt-in macOS sandbox tests skipped.
@@ -47,6 +55,8 @@ tampering before returning a source that can be composed into helper readiness.
 - Negative coverage: a substituted plist digest is rejected with stable
   `INVALID_READBACK`; the reader's filesystem failures map to stable
   `FILESYSTEM_MISMATCH`.
+- Negative coverage: a substituted launchd service ID is rejected with stable
+  `SERVICE_MISMATCH` before final helper validation.
 - No root-domain installation or live `launchctl` readback was attempted.
 
 ## Remaining gates
@@ -59,7 +69,7 @@ evidence only; it does not enable a privileged helper capability.
 
 ## Source hashes
 
-- `1664a70e42ee2677f5285d2b95087dd770a752a5c08eaed5b37d85295dd213ee`
+- `6b362414eb5fc536f40d29693d21ebfbe88057fc69033b09047825efc1e6d76d`
   `packages/broker/src/privileged-helper-package.ts`
-- `5bb4d0275944d5ce7f252cac48be6cb010ee5d1772ed6287edd9ad45f1da60f7`
+- `ee87f545031211095cf9fe2fb4b1901005bc27890589f4e7d22fe8810e73b3d7`
   `packages/broker/src/privileged-helper-package.test.ts`

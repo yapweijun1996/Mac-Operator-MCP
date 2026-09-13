@@ -6,6 +6,13 @@ Last verified: 2026-09-13
 
 Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires repository evidence. Current implementation, test, and working-tree state is owned by `PROGRESS.md`; this ledger records task status and acceptance evidence. `BLOCKED` is reserved for an evidenced unmet prerequisite, not merely future-phase placement. Every blocked task records `blocked_by`, `unblock_condition`, and `expected_evidence`.
 
+Privileged-helper source-composition addendum: commit `1405b99` adds an
+independent-source composition boundary for launchd, native process, plist,
+runtime, and signature readback. It rejects service identity, state, type,
+PID, argv, plist-path, and process-identity substitution before readiness.
+Real root installation remains open. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Privileged-helper plist addendum: commit `d3efae1` requires the exact
 root-domain plist path, rendered byte count, SHA-256, and descriptor
 device/inode identity in helper readback; descriptor-backed reads reject

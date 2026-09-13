@@ -34,6 +34,14 @@ host-only reader rejects target swaps, truncation, and tampered bytes; the full
 remain open.
 Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Latest privileged-helper source-composition addendum: source commit `1405b99`
+adds `composePrivilegedHelperPackageReadback`, which accepts only raw launchd,
+native process, plist, helper-runtime, and signature sources. It rejects
+service-ID, domain, state, type, PID, argv, plist-path, and identity
+substitution before final helper validation. The full 395-test suite passes;
+real root installation and live LaunchDaemon readback remain open.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,

@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `d3efae1`.
+Current committed implementation baseline: `1405b99`.
+
+The latest privileged-helper source-composition addendum is `1405b99`:
+`composePrivilegedHelperPackageReadback` accepts only independently observed
+launchd, native process, plist, helper-runtime, and code-signature sources. It
+requires the exact `system/com.mac-operator.privileged-helper` service ID,
+LaunchDaemon type, running state, PID, native argv, plist path, and
+process-identity binding before constructing the final readback. Caller-built
+plan fields are not treated as raw launchd evidence. Real root installation
+and live LaunchDaemon evidence remain open. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
 The latest privileged-helper plist addendum is `d3efae1`: final helper
 readback now requires the exact root-domain plist path, rendered byte count,
