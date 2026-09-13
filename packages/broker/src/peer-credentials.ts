@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { Socket } from "node:net";
 
@@ -26,6 +27,15 @@ interface SocketWithHandle extends Socket {
 
 const require = createRequire(import.meta.url);
 const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
+
+interface NativeAdapterArtifact {
+  device: number;
+  inode: number;
+  size: number;
+  digest: string;
+}
+
+let loadedNativeArtifact: NativeAdapterArtifact | undefined;
 
 export class MacOsPeerCredentialVerifier implements PeerCredentialVerifier {
   private readonly native: NativePeerCredentials;
@@ -56,11 +66,13 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
   if (process.platform !== "darwin") throw new Error("Peer credential verification requires macOS");
   try {
     const nativePath = require.resolve("./peer_credentials.node");
-    validateNativeAdapterPath(nativePath);
-    const before = statSync(nativePath);
+    const before = readNativeAdapterArtifact(nativePath);
+    if (loadedNativeArtifact !== undefined && !sameNativeAdapterArtifact(loadedNativeArtifact, before)) {
+      throw new Error("Native peer adapter changed after initial load");
+    }
     const native = require(nativePath) as Partial<NativePeerCredentials>;
-    const after = statSync(nativePath);
-    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size) {
+    const after = readNativeAdapterArtifact(nativePath);
+    if (!sameNativeAdapterArtifact(before, after)) {
       throw new Error("Native peer adapter changed while loading");
     }
     if (
@@ -71,10 +83,26 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
     ) {
       throw new Error("Native peer adapter exports are incomplete");
     }
+    loadedNativeArtifact = after;
     return native as NativePeerCredentials;
   } catch {
     throw new Error("Peer credential native adapter is unavailable");
   }
+}
+
+function readNativeAdapterArtifact(nativePath: string): NativeAdapterArtifact {
+  validateNativeAdapterPath(nativePath);
+  const stat = statSync(nativePath);
+  return {
+    device: stat.dev,
+    inode: stat.ino,
+    size: stat.size,
+    digest: createHash("sha256").update(readFileSync(nativePath)).digest("hex")
+  };
+}
+
+function sameNativeAdapterArtifact(left: NativeAdapterArtifact, right: NativeAdapterArtifact): boolean {
+  return left.device === right.device && left.inode === right.inode && left.size === right.size && left.digest === right.digest;
 }
 
 export function validateNativeAdapterPath(nativePath: string): void {
