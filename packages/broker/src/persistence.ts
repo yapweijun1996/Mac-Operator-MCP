@@ -4,7 +4,9 @@ import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
 export type SwitchName = "global" | "mutations" | "process" | "network" | "gui" | "destructive" | "privileged";
+const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
 export type RevocationKind = "principal" | "session" | "edge" | "edge_key" | "approval_key" | "policy_signer";
+const REVOCATION_KINDS: readonly RevocationKind[] = ["principal", "session", "edge", "edge_key", "approval_key", "policy_signer"];
 
 export interface AuditEvent {
   requestId: string;
@@ -960,9 +962,14 @@ export class BrokerStore {
   }
 
   revoke(kind: RevocationKind, subjectId: string, reason: string, nowMs = Date.now()): void {
-    this.database.prepare(
-      "INSERT INTO revocations(kind, subject_id, revoked_at_ms, reason) VALUES (?, ?, ?, ?) ON CONFLICT(kind, subject_id) DO UPDATE SET revoked_at_ms=excluded.revoked_at_ms, reason=excluded.reason"
-    ).run(kind, subjectId, nowMs, reason);
+    if (!REVOCATION_KINDS.includes(kind) || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(subjectId) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
+        !Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+    this.runTransaction(() => {
+      this.database.prepare(
+        "INSERT INTO revocations(kind, subject_id, revoked_at_ms, reason) VALUES (?, ?, ?, ?) ON CONFLICT(kind, subject_id) DO UPDATE SET revoked_at_ms=excluded.revoked_at_ms, reason=excluded.reason"
+      ).run(kind, subjectId, nowMs, reason);
+      this.cancelQueuedJobsInTransaction(`REVOCATION_${kind.toUpperCase()}`, nowMs, (row) => queuedJobAffectedByRevocation(kind, subjectId, row));
+    });
   }
 
   isRevoked(kind: RevocationKind, subjectId: string): boolean {
@@ -1028,10 +1035,48 @@ export class BrokerStore {
     }
   }
 
+  private cancelQueuedJobsInTransaction(
+    authority: string,
+    nowMs: number,
+    affected: (row: JobRow) => boolean
+  ): number {
+    const rows = this.database.prepare(
+      "SELECT * FROM jobs WHERE state = 'queued' ORDER BY created_at_ms, job_id"
+    ).all() as unknown as JobRow[];
+    let cancelled = 0;
+    for (const row of rows) {
+      if (!affected(row)) continue;
+      this.database.prepare(`
+        UPDATE jobs SET state = 'cancelled', result_class = 'denied', finished_at_ms = ?,
+          cancel_requested = 1, cancel_reason = ?, revision = revision + 1
+        WHERE job_id = ? AND state = 'queued' AND revision = ?
+      `).run(nowMs, authority, row.job_id, row.revision);
+      this.insertAudit({
+        requestId: `job-authority-${sha256(row.job_id).slice(0, 32)}-${row.revision + 1}`,
+        principalId: row.owner_principal_id,
+        tool: "internal_job_authority_reconcile",
+        eventType: "completion",
+        decision: "allow",
+        resultClass: "CANCELLED",
+        targetRef: `job:${row.job_id}`,
+        policyVersion: row.policy_version,
+        evidence: { priorState: "queued", nextState: "cancelled", authority },
+        timestampMs: nowMs
+      });
+      cancelled += 1;
+    }
+    return cancelled;
+  }
+
   setSwitch(name: SwitchName, disabled: boolean, reason: string, nowMs = Date.now()): void {
-    this.database.prepare(
-      "INSERT INTO switches(name, disabled, changed_at_ms, reason) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET disabled=excluded.disabled, changed_at_ms=excluded.changed_at_ms, reason=excluded.reason"
-    ).run(name, disabled ? 1 : 0, nowMs, reason);
+    if (!SWITCH_NAMES.includes(name) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
+        !Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+    this.runTransaction(() => {
+      this.database.prepare(
+        "INSERT INTO switches(name, disabled, changed_at_ms, reason) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET disabled=excluded.disabled, changed_at_ms=excluded.changed_at_ms, reason=excluded.reason"
+      ).run(name, disabled ? 1 : 0, nowMs, reason);
+      if (disabled) this.cancelQueuedJobsInTransaction(`SWITCH_${name.toUpperCase()}`, nowMs, (row) => queuedJobAffectedBySwitch(name, row.tool));
+    });
   }
 
   isSwitchDisabled(name: SwitchName): boolean {
@@ -2150,6 +2195,20 @@ function validTerminalOutcome(
   if (state === "failed") return resultClass === "failed" || resultClass === "denied" || resultClass === "verification_failed";
   if (state === "cancelled") return resultClass === "denied";
   return resultClass === "unknown";
+}
+
+function queuedJobAffectedBySwitch(name: SwitchName, tool: string): boolean {
+  if (name === "global" || name === "mutations") return true;
+  if (name === "process" || name === "network") return tool === "mac_task_run";
+  return false;
+}
+
+function queuedJobAffectedByRevocation(kind: RevocationKind, subjectId: string, row: JobRow): boolean {
+  if (kind === "principal") return row.owner_principal_id === subjectId;
+  if (kind === "session") return row.owner_session_id === subjectId;
+  // Jobs do not yet persist Edge/key provenance. Until that lease is added,
+  // revoking an upstream identity conservatively cancels every queued job.
+  return true;
 }
 
 function malformedJob(): BrokerError {

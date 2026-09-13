@@ -679,6 +679,48 @@ test("queued cancellation is immediate, owner-bound, and idempotent", async () =
   }
 });
 
+test("kill switches and revocations cancel queued jobs in the same persistence transaction", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-authority-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    store.createJob(jobInput("job:queued-task", "idem-queued-task"));
+    store.createJob({
+      ...jobInput("job:queued-write", "idem-queued-write"),
+      tool: "mac_write_file_atomic",
+      targetRef: "path:test-root"
+    });
+    store.setSwitch("mutations", true, "test", 2);
+    assert.equal(store.ownedJob("job:queued-task", "principal-1")?.state, "cancelled");
+    assert.equal(store.ownedJob("job:queued-write", "principal-1")?.state, "cancelled");
+    assert.equal(store.ownedJob("job:queued-task", "principal-1")?.cancelRequested, true);
+    assert.equal(store.auditRows().filter((row) => row.tool === "internal_job_authority_reconcile").length, 2);
+
+    store.setSwitch("mutations", false, "test", 3);
+    store.createJob(jobInput("job:queued-process", "idem-queued-process"));
+    store.createJob({
+      ...jobInput("job:queued-process-write", "idem-queued-process-write"),
+      tool: "mac_write_file_atomic",
+      targetRef: "path:test-root"
+    });
+    store.setSwitch("process", true, "test", 3);
+    assert.equal(store.ownedJob("job:queued-process", "principal-1")?.state, "cancelled");
+    assert.equal(store.ownedJob("job:queued-process-write", "principal-1")?.state, "queued");
+    store.setSwitch("process", false, "test", 3);
+    store.createJob({
+      ...jobInput("job:queued-other-principal", "idem-queued-other"),
+      ownerPrincipalId: "principal-2",
+      ownerSessionId: "session-2"
+    });
+    store.createJob(jobInput("job:queued-session", "idem-queued-session"));
+    store.revoke("session", "session-1", "test", 4);
+    assert.equal(store.ownedJob("job:queued-session", "principal-1")?.state, "cancelled");
+    assert.equal(store.ownedJob("job:queued-other-principal", "principal-2")?.state, "queued");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("restart reconciliation cancels queued jobs and marks running outcomes unknown", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-reconcile-"));
   const databasePath = join(directory, "broker.sqlite");

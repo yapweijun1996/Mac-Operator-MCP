@@ -358,12 +358,30 @@ export class Broker {
           ? { kind: "task" as const, job: execution.taskJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
-        const started = this.options.store.startJob(
-          pendingJob.job.jobId,
-          request.principal.principalId,
-          pendingJob.job.revision,
-          this.now()
-        );
+        let started: BrokerJob;
+        try {
+          this.ensureActiveAuthority(request, execution.target, execution.additionalTargets ?? []);
+          started = this.options.store.startJob(
+            pendingJob.job.jobId,
+            request.principal.principalId,
+            pendingJob.job.revision,
+            this.now()
+          );
+        } catch (error) {
+          try {
+            this.options.store.requestJobCancellation(
+              pendingJob.job.jobId,
+              request.principal.principalId,
+              "AUTHORITY_REVOKED_BEFORE_START",
+              this.now()
+            );
+          } catch {
+            // Preserve the authority failure; a concurrently cancelled Job is
+            // already fail-closed, and an unresolved queued Job is never
+            // dispatched without a later authority recheck.
+          }
+          throw error;
+        }
         if (pendingJob.kind === "write") execution.writeJob = started;
         else execution.taskJob = started;
       }

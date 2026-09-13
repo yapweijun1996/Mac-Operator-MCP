@@ -1,0 +1,43 @@
+# Job authority lifecycle evidence
+
+Date: 2026-09-13
+Host: macOS arm64 development host
+Scope: local synthetic Job Ledger and Broker admission fixtures; no production workers or user data
+
+## Boundary exercised
+
+The SQLite Job Ledger now applies authority changes and queued-job cancellation
+in one `BEGIN IMMEDIATE` transaction. Disabling `global` or `mutations`
+cancels all queued Jobs; disabling `process` or `network` cancels queued
+`mac_task_run` Jobs while leaving unrelated queued write Jobs intact. The
+current catalog has no queued GUI, destructive, or privileged executor, so
+those switches do not cancel unrelated rows. Principal/session revocation
+cancels matching queued ownership. Edge/key/approval/policy-signer revocation
+conservatively cancels every queued Job because upstream provenance is not yet
+stored in the Job row.
+
+Each automatic cancellation persists `cancel_requested`, terminal `cancelled`
+state, a stable authority reason, revision increment, and a hash-linked
+completion audit event. Repeated switch/revocation changes do not recancel
+terminal Jobs. Before a Broker starts a queued Job, it revalidates the current
+session, revocations, policy version, target authorization, and kill switches;
+an authority failure leaves the Job cancelled or queued-but-not-started and
+does not dispatch the stale execution plan.
+
+## Tests
+
+- A single mutation-switch transaction cancels queued task and write Jobs and
+  records one internal completion audit event per Job.
+- A process-switch transaction cancels a queued task but leaves a queued write
+  Job queued, demonstrating capability-family independence.
+- Session revocation cancels only the matching session's queued Job and leaves
+  another principal/session queued.
+- The focused run and full suite pass with 246 tests.
+
+## Limits and next gate
+
+This is persistence and pre-start admission evidence, not proof of active
+process termination. Durable worker leases, prior-process ownership across
+restart, descendant cleanup, remote revocation propagation, and operator
+control authorization remain open. New queued tool families must extend the
+switch mapping before they can be enabled.
