@@ -38,16 +38,19 @@ The current implementation addendum is `9bba3cd`: disabled-by-default `mac_ui_ac
 
 The current implementation addendum is `96acb1a`: the proposed L5 helper boundary now has a separately authenticated owner-only IPC server, HMAC command/response binding, durable BrokerStore nonce/request replay admission, strict target/operation and handler-map validation, no raw executable or argument fields, bounded redacted evidence, and a mandatory Broker-owned authority callback checked before dispatch, during active cancellation polling, and before response publication. A Broker-owned command factory derives helper operations only from the three `mac_priv_*` tools and requires a matching explicit approval, intent-linked running Job, payload/policy/target identity, principal/session ownership, active kill switches, and revocation checks before signing. Authority loss or expiry yields `UNKNOWN_OUTCOME`; no root process or privileged operation is enabled. Evidence: `evidence/2026-09-13-privileged-helper-boundary.md`.
 
-The current implementation addendum is `41e83c0`: an experimental,
+The current implementation addendum is `2e6cd57`: an experimental,
 disabled-by-default `SandboxExecTaskRunner` now renders a Broker-owned
 deny-default macOS Seatbelt profile from the resolved named TaskProfile and
 invokes only `/usr/bin/sandbox-exec` through the bounded ProcessSupervisor.
-The renderer rejects raw SBPL, broad roots, cwd escapes, and network
-allowlists; the runner requires a profile-matched `TaskIsolationProof`, an
+The renderer rejects raw SBPL, broad roots, cwd escapes, and non-loopback
+network destinations; loopback allowlists are rendered as exact
+`localhost:port` rules. The runner requires a profile-matched `TaskIsolationProof`, an
 explicit opt-in, and an external host-evidence gate. On the Mac mini M4/macOS
 26.2 host, the opt-in smoke passed allowed-root read/write, denied
 `/private/etc/passwd`, a root-contained `.env`, and an outside-file symlink, hid
-four synthetic inherited environment canaries, denied curl DNS/network access,
+four synthetic inherited environment canaries, allowed the selected loopback
+destination while denying an unlisted loopback port and external curl
+DNS/network access,
 and mapped active `/bin/sleep` cancellation to process-group termination; a
 Bash child-launch attempt was rejected by the default no-fork policy. The
 resolved profile defaults to `single_process` without `process-fork`; explicit

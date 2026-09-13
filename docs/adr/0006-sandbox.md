@@ -34,7 +34,8 @@ resolved `TaskProfile` and delegates bounded execution to `ProcessSupervisor`.
 Resolved profiles default to a single-process policy that omits
 `process-fork`; an explicit owned process-group policy remains a separate,
 unevidenced extension. The runner does not accept raw SBPL, caller-selected
-executables, or network allowlists.
+executables, or non-loopback network destinations; loopback allowlists are
+rendered as exact `localhost:port` rules.
 `TaskIsolationProof` binds this process-tree policy to the resolved profile so
 proofs cannot be replayed across policy variants.
 The real-host smoke is recorded in
