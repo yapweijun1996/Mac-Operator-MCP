@@ -69,7 +69,10 @@ Latest isolation-proof hardening: `TaskIsolationProof` now binds an explicit
 `sandboxMechanism` (`sandbox-exec` for the experimental runner) in addition to
 the profile and process-tree policy. Validation rejects unknown mechanisms, so
 future App Sandbox or Virtualization evidence cannot be reused accidentally by
-the deprecated runner. The runner remains opt-in and unavailable by default.
+the deprecated runner. The `TaskRunner` also declares its host mechanism, and
+Broker admission/dispatch reject missing or mismatched declarations before
+approval consumption or process launch. The runner remains opt-in and
+unavailable by default.
 
 Current committed implementation baseline: install-plan raw-readback hardening.
 

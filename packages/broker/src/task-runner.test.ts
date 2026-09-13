@@ -85,7 +85,15 @@ test("task runner isolation proof requires every boundary and the selected sandb
   const profile = {
     sandboxProfile: "deny-default-v0.1"
   } as ResolvedTaskProfile;
-  assert.deepEqual(requireTaskIsolationProof(proof, profile), proof);
+  assert.deepEqual(requireTaskIsolationProof(proof, profile, "sandbox-exec"), proof);
+  assert.throws(
+    () => requireTaskIsolationProof(proof, profile),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.throws(
+    () => requireTaskIsolationProof(proof, profile, null),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
   assert.throws(
     () => requireTaskIsolationProof({ ...proof, sandboxProfile: "other-profile" }, profile),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"

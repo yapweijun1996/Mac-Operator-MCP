@@ -112,6 +112,11 @@ deprecated-`sandbox-exec` production decision, post-snapshot descendants,
 remounts, credential contents, and `mac_task_run` enablement open. Evidence:
 `evidence/2026-09-14-real-sandbox-regression.md`.
 
+Current runner-binding addendum: `TaskRunner` now declares the exact host
+sandbox mechanism alongside `TaskIsolationProof`. Broker admission and task
+dispatch reject missing or mismatched declarations before consuming approval or
+launching a child process; `mac_task_run` remains disabled.
+
 Install-plan readback hardening is committed locally. The host-only install
 plan now has a physical-Mac package smoke that calls the
 real executor with only independent launchd, native PID/start-time, plist,

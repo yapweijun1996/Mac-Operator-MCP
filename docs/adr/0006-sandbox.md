@@ -26,6 +26,11 @@ A hostile fixture must fail to read controller and user credentials, escape allo
 
 The Broker admission contract additionally requires a versioned, profile-matched `TaskIsolationProof` that names the exact sandbox mechanism and attests to the sandbox, filesystem, network, credential, and process-tree dimensions. Binding the mechanism prevents evidence from being reused across `sandbox-exec`, App Sandbox, or Virtualization implementations. This gate prevents a runner's generic `available` flag from being treated as proof; it does not accept self-attestation as release evidence, and the default runner remains disabled until host evidence is independently reviewed.
 
+The `TaskRunner` interface also declares its host mechanism. Broker admission
+and dispatch require that declaration to match the proof before approval is
+consumed or a child process is launched; an absent or mismatched declaration
+fails closed.
+
 ## Experimental implementation addendum
 
 Commit `41e83c0` implements a narrow `SandboxExecTaskRunner` behind explicit

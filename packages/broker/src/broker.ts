@@ -2478,7 +2478,7 @@ export class Broker {
     }
     let terminalPersisted = false;
     try {
-      requireTaskIsolationProof(this.taskRunner.isolationProof, resolved);
+      requireTaskIsolationProof(this.taskRunner.isolationProof, resolved, this.taskRunner.mechanism);
       const persistTaskProcessSnapshot = (snapshot: ProcessOwnershipSnapshot, initial: boolean): void => {
         if (!execution.taskJob || !execution.jobLease) {
           throw new BrokerError("EXECUTION_FAILED", "Task process ownership cannot be linked to its Job");
@@ -2608,7 +2608,10 @@ export class Broker {
       if (!this.taskRunner.available) {
         throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
       }
-      validateTaskIsolationProof(this.taskRunner.isolationProof);
+      const isolationProof = validateTaskIsolationProof(this.taskRunner.isolationProof);
+      if (this.taskRunner.mechanism === null || isolationProof.sandboxMechanism !== this.taskRunner.mechanism) {
+        throw new BrokerError("POLICY_DENIED", "Task isolation proof does not match the selected runner");
+      }
       return {
         target: { kind: "task_profile", reference: parsed.profile },
         auditTarget: `task_profile:${parsed.profile}`,

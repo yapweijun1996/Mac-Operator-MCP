@@ -36,3 +36,7 @@ blocked pending a supported sandbox/process-ownership decision.
 The proof schema now records the exact `sandboxMechanism` (`sandbox-exec`) and
 rejects other mechanism values. This prevents this experimental evidence from
 being silently reused by a future App Sandbox or Virtualization runner.
+
+The `TaskRunner` must declare the same host mechanism. Broker admission and
+dispatch reject a missing or mismatched declaration before consuming approval
+or launching a child process.

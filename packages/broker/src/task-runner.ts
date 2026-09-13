@@ -6,6 +6,9 @@ import type { ResolvedTaskProfile } from "./task-profile.js";
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
 const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
+/** Mechanisms with an implemented runner and reviewable proof schema. */
+export type TaskIsolationMechanism = "sandbox-exec";
+
 export interface TaskExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
@@ -37,7 +40,7 @@ export interface TaskExecutionResult {
 export interface TaskIsolationProof {
   schemaVersion: "0.1";
   /** Explicit host mechanism; evidence cannot silently transfer to another runner. */
-  sandboxMechanism: "sandbox-exec";
+  sandboxMechanism: TaskIsolationMechanism;
   sandboxProfile: string;
   filesystem: "enforced";
   network: "enforced";
@@ -54,6 +57,8 @@ export interface TaskIsolationProof {
  */
 export interface TaskRunner {
   readonly available: boolean;
+  /** Host-owned mechanism used by this runner; null means no executable boundary. */
+  readonly mechanism: TaskIsolationMechanism | null;
   readonly isolationProof: TaskIsolationProof | null;
   /** Stop accepting work and drain any Broker-owned OS processes. */
   close?(): Promise<void>;
@@ -62,6 +67,7 @@ export interface TaskRunner {
 
 export class FailClosedTaskRunner implements TaskRunner {
   readonly available = false;
+  readonly mechanism = null;
   readonly isolationProof = null;
 
   async run(_profile: ResolvedTaskProfile, _control: TaskExecutionControl): Promise<TaskExecutionResult> {
@@ -87,6 +93,7 @@ export interface SandboxExecTaskRunnerOptions {
  */
 export class SandboxExecTaskRunner implements TaskRunner {
   readonly available: boolean;
+  readonly mechanism: TaskIsolationMechanism = "sandbox-exec";
   readonly isolationProof: TaskIsolationProof | null;
   private readonly supervisor: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
 
@@ -114,7 +121,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
     if (!this.available || this.isolationProof === null) {
       throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
     }
-    requireTaskIsolationProof(this.isolationProof, profile);
+    requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
     const args = buildSandboxExecArguments(profile);
     let result: ProcessExecutionResult;
     try {
@@ -174,9 +181,13 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
 
 export function requireTaskIsolationProof(
   proof: TaskIsolationProof | null | undefined,
-  profile: ResolvedTaskProfile
+  profile: ResolvedTaskProfile,
+  expectedMechanism: TaskIsolationMechanism | null = null
 ): TaskIsolationProof {
   const validated = validateTaskIsolationProof(proof);
+  if (expectedMechanism === null || validated.sandboxMechanism !== expectedMechanism) {
+    throw new BrokerError("POLICY_DENIED", "Task isolation proof does not match the selected runner");
+  }
   if (validated.sandboxProfile !== profile.sandboxProfile ||
       validated.processTreePolicy !== (profile.processTreePolicy ?? "single_process")) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof does not match the selected profile");

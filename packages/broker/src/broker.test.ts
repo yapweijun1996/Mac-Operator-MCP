@@ -1497,7 +1497,7 @@ test("mac_git_stage binds approval, explicit paths, Job lease, and staged readba
   }
 });
 
-test("mac_task_run fails closed before consuming approval when isolation proof is unavailable", async () => {
+test("mac_task_run fails closed before consuming approval when runner mechanism is unavailable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-fail-closed-"));
   const root = await realpath(directory);
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -1519,8 +1519,9 @@ test("mac_task_run fails closed before consuming approval when isolation proof i
     taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
     taskRunner: {
       available: true,
-      isolationProof: null,
-      async run() { throw new Error("must not execute without isolation proof"); }
+      mechanism: null,
+      isolationProof: testTaskIsolationProof(),
+      async run() { throw new Error("must not execute without a bound isolation mechanism"); }
     },
     now: () => NOW
   });
@@ -1576,6 +1577,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
   let runnerCalls = 0;
   const taskRunner: TaskRunner = {
     available: true,
+    mechanism: "sandbox-exec",
     isolationProof: testTaskIsolationProof(),
     async run(profile, control) {
       runnerCalls += 1;
@@ -1702,6 +1704,7 @@ test("mac_task_run does not publish success after active session revocation", as
   };
   const taskRunner: TaskRunner = {
     available: true,
+    mechanism: "sandbox-exec",
     isolationProof: testTaskIsolationProof(),
     async run(_profile, control) {
       store.revoke("session", "session-1", "active-revocation-test", NOW);

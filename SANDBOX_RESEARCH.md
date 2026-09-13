@@ -50,6 +50,10 @@ This evidence is insufficient to select `sandbox-exec` as the production task bo
 
 The Broker task admission boundary now also requires a versioned `TaskIsolationProof` before any runner marked available can consume approval or create a task Job. The proof must name the explicit sandbox mechanism and profile, then attest to enforced filesystem/network boundaries, isolated credentials, and owned process-tree cleanup. Binding the mechanism prevents evidence for deprecated `sandbox-exec` from being reused by a future App Sandbox or Virtualization runner. This is a fail-closed contract gate; the current default runner remains unavailable, and the test-only attestation is not production evidence.
 
+The `TaskRunner` boundary now declares the host mechanism alongside its proof.
+Broker admission and dispatch reject a runner whose declaration is absent or
+does not match the proof, before approval consumption or child-process launch.
+
 ## 2026-09-13 experimental runner evidence
 
 Source commit `1e3eb86` adds real-host secret-surface denial evidence on top of
