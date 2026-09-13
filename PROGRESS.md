@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `f12ab8a`.
+Current committed implementation baseline: `18a418a`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -59,6 +59,14 @@ compiled N-API version and the protected loader requires version 8 or newer,
 compatible with the active Node runtime. A real built-addon readback test
 passes; this narrows runtime ABI compatibility but does not prove code
 signing/provenance or package trust.
+
+The latest implementation addendum is `18a418a`: the macOS native adapter
+build invokes fixed `/usr/bin/codesign --verify --strict` immediately after
+compilation and fails closed if the emitted artifact cannot be verified. The
+current host readback is a valid ad-hoc linker-signed arm64 module with no Team
+ID; this is build-integrity evidence only and does not establish Developer ID
+provenance, notarization, Keychain distribution, installed startup, or
+production enablement. Evidence: `evidence/2026-09-13-native-adapter-code-signing.md`.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 

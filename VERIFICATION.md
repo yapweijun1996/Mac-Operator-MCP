@@ -152,6 +152,15 @@ compatibility evidence only; code signing/provenance, Keychain distribution,
 installed launchd startup, and production enablement remain open. Evidence:
 `evidence/2026-09-13-native-adapter-loading.md`.
 
+Latest native build-signature addendum: commit `18a418a` makes the macOS native
+adapter build run fixed `/usr/bin/codesign --verify --strict` immediately after
+compilation. The current Mac mini host build and direct readback pass, while a
+temporary unsigned copy is rejected. The observed module is `Signature=adhoc`
+with `TeamIdentifier=not set`, so this closes only build-time artifact
+verification; Developer ID identity/provenance, notarization, protected
+signing-key distribution, installed launchd startup, and production enablement
+remain open. Evidence: `evidence/2026-09-13-native-adapter-code-signing.md`.
+
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
 
 Latest lifecycle addendum: commit `10ef33a` records 214 passing tests and adds a fail-closed local Broker runtime boundary with ordered Broker-IPC/operator-channel startup, reverse cleanup, explicit recovery after cleanup failure, serialized lifecycle calls, idempotent close, and duplicate-channel rejection. The source evidence is `evidence/2026-09-13-local-runtime-lifecycle.md`; installed launchd startup, code signing, Keychain distribution, native caller identity, policy loading, store ownership, and production capability enablement remain open.
