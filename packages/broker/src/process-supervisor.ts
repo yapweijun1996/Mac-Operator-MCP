@@ -116,12 +116,16 @@ export class ProcessSupervisor {
   ): Promise<ProcessExecutionResult> {
     return new Promise((resolveResult) => {
       let settled = false;
-      let terminationReason: "cancelled" | "timed_out" | "output_limit" | null = null;
+      let terminationReason: "cancelled" | "timed_out" | "output_limit" | "orphaned" | null = null;
       let terminationRequested = false;
       let terminationTimer: NodeJS.Timeout | undefined;
-      let unknownTimer: NodeJS.Timeout | undefined;
+      let groupDrainTimer: NodeJS.Timeout | undefined;
+      let orphanReaperTimer: NodeJS.Timeout | undefined;
       let timeoutTimer: NodeJS.Timeout | undefined;
       let cancellationPoll: NodeJS.Timeout | undefined;
+      let groupDrainDeadlineMs: number | undefined;
+      let childExitCode: number | null = null;
+      let childExitSignal: NodeJS.Signals | null = null;
       let released = false;
       let stdoutBytes = 0;
       let stderrBytes = 0;
@@ -133,7 +137,7 @@ export class ProcessSupervisor {
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (cancellationPoll) clearInterval(cancellationPoll);
         if (terminationTimer) clearTimeout(terminationTimer);
-        if (unknownTimer) clearTimeout(unknownTimer);
+        if (groupDrainTimer) clearTimeout(groupDrainTimer);
       };
       const release = () => {
         if (released) return;
@@ -150,17 +154,30 @@ export class ProcessSupervisor {
           overflow: accepted.byteLength < chunk.byteLength
         };
       };
-      const terminate = (reason: "cancelled" | "timed_out" | "output_limit") => {
+      const terminate = (reason: "cancelled" | "timed_out" | "output_limit" | "orphaned") => {
         if (terminationReason === null) terminationReason = reason;
         if (terminationRequested) return;
         terminationRequested = true;
         signalProcessGroup(child, processId, "SIGTERM");
+        groupDrainDeadlineMs ??= Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
         terminationTimer = setTimeout(() => {
           signalProcessGroup(child, processId, "SIGKILL");
-          unknownTimer = setTimeout(finishUnknown, this.terminationGraceMs * 2);
-          unknownTimer.unref();
+          waitForGroupDrain();
         }, this.terminationGraceMs);
         terminationTimer.unref();
+      };
+      const waitForGroupDrain = () => {
+        if (settled) return;
+        if (!processGroupAlive(processId)) {
+          finish(childExitCode, childExitSignal);
+          return;
+        }
+        if (groupDrainDeadlineMs !== undefined && Date.now() >= groupDrainDeadlineMs) {
+          finishUnknown();
+          return;
+        }
+        groupDrainTimer = setTimeout(waitForGroupDrain, this.pollIntervalMs);
+        groupDrainTimer.unref();
       };
       const finish = (code: number | null, signal: NodeJS.Signals | null) => {
         if (settled) return;
@@ -170,10 +187,12 @@ export class ProcessSupervisor {
         const durationMs = Math.max(0, Date.now() - startedAtMs);
         const state = terminationReason === "cancelled" ? "cancelled" :
           terminationReason === "timed_out" ? "timed_out" :
+          terminationReason === "orphaned" ? "unknown" :
           terminationReason === "output_limit" ? "failed" :
           spawnError || code !== 0 ? "failed" : "completed";
         const resultClass = terminationReason === "cancelled" ? "CANCELLED" :
           terminationReason === "timed_out" ? "TIMEOUT" :
+          terminationReason === "orphaned" ? "UNKNOWN_OUTCOME" :
           terminationReason === "output_limit" ? "OUTPUT_LIMIT" :
           spawnError || code !== 0 ? "EXECUTION_FAILED" : "SUCCEEDED";
         resolveResult({
@@ -187,13 +206,25 @@ export class ProcessSupervisor {
           durationMs,
           processId,
           processGroupId: processId,
-          terminationObserved: terminationReason === null || code !== null || signal !== null
+          terminationObserved: true
         });
       };
       const finishUnknown = () => {
         if (settled) return;
         settled = true;
         clearTimers();
+        const groupAlive = processGroupAlive(processId);
+        if (!groupAlive) release();
+        else {
+          orphanReaperTimer = setInterval(() => {
+            if (!processGroupAlive(processId)) {
+              if (orphanReaperTimer) clearInterval(orphanReaperTimer);
+              orphanReaperTimer = undefined;
+              release();
+            }
+          }, this.pollIntervalMs);
+          orphanReaperTimer.unref();
+        }
         resolveResult({
           state: "unknown",
           resultClass: "UNKNOWN_OUTCOME",
@@ -227,8 +258,18 @@ export class ProcessSupervisor {
       });
       child.once("error", () => { spawnError = true; });
       child.once("close", (code, signal) => {
-        if (settled) release();
-        else finish(code, signal);
+        childExitCode = code;
+        childExitSignal = signal;
+        if (settled) return;
+        if (processGroupAlive(processId)) {
+          if (terminationReason === null) {
+            groupDrainDeadlineMs ??= Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
+            terminate("orphaned");
+          }
+          waitForGroupDrain();
+        } else {
+          finish(code, signal);
+        }
       });
 
       timeoutTimer = setTimeout(() => terminate("timed_out"), request.timeoutMs);
@@ -319,5 +360,15 @@ function signalProcessGroup(child: ChildProcess, processId: number, signal: Node
     else child.kill(signal);
   } catch {
     try { child.kill(signal); } catch { /* The child may have exited between observation and signalling. */ }
+  }
+}
+
+function processGroupAlive(processId: number): boolean {
+  if (process.platform === "win32") return false;
+  try {
+    process.kill(-processId, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
