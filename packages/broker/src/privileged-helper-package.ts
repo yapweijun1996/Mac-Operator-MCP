@@ -425,7 +425,8 @@ export async function applyPrivilegedHelperPlistPlan(
   if (options.confirmOperation !== plan.operation) {
     fail("CONFIRMATION_REQUIRED", "privileged helper plist apply requires an explicit matching operation");
   }
-  if (options.ownerUid !== 0) {
+  const currentUid = process.getuid?.();
+  if (options.ownerUid !== 0 || currentUid !== 0) {
     fail("INVALID_PEER_IDENTITY", "privileged helper plist apply requires root ownership");
   }
   await inspectPrivilegedHelperPackageFilesystem(plan, { requirePlist: plan.operation !== "install" });

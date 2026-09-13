@@ -243,3 +243,15 @@ test("privileged helper plist apply requires explicit operation confirmation and
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PEER_IDENTITY"
   );
 });
+
+test("privileged helper plist apply rejects a forged root UID before filesystem access", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("The test host is already root");
+    return;
+  }
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  await assert.rejects(
+    applyPrivilegedHelperPlistPlan(plan, { confirmOperation: "install", ownerUid: 0 }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PEER_IDENTITY"
+  );
+});
