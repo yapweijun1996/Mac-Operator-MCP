@@ -257,7 +257,8 @@ export interface PrivilegedHelperPackageExecutionOptions {
   /** Must be the root UID and is checked against the actual current process. */
   ownerUid: number;
   existingService: PrivilegedHelperExistingServiceReadback;
-  readback: () => Promise<PrivilegedHelperPackageReadback | null>;
+  /** Returns only independently observed sources; execution composes and validates them. */
+  readback: () => Promise<PrivilegedHelperPackageReadbackSources | null>;
   /** Injectable only for host tests; production defaults to ProcessSupervisor. */
   commandExecutor?: PrivilegedHelperPackageCommandExecutor;
 }
@@ -461,12 +462,14 @@ export async function executePrivilegedHelperPackagePlan(
   }
 
   try {
-    const readback = await options.readback();
+    const sources = await options.readback();
+    let readback: PrivilegedHelperPackageReadback | null;
     if (plan.operation === "uninstall") {
-      if (readback !== null) fail("READBACK_FAILED", "helper uninstall readback still reports an installed service");
+      if (sources !== null) fail("READBACK_FAILED", "helper uninstall readback still reports an installed service");
+      readback = null;
     } else {
-      if (readback === null) fail("READBACK_FAILED", "helper readback is absent after bootstrap");
-      validatePrivilegedHelperPackageReadback(plan, readback);
+      if (sources === null) fail("READBACK_FAILED", "helper readback is absent after bootstrap");
+      readback = composePrivilegedHelperPackageReadback(plan, sources);
     }
     return { operation: plan.operation, readback, plist: plist! };
   } catch (error) {
