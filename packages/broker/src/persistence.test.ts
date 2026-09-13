@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -179,6 +179,97 @@ test("BrokerStore rejects a tampered audit chain on reopen", async () => {
   try {
     assert.throws(() => new BrokerStore(databasePath), /Audit evidence chain failed integrity verification/u);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore creates an owner-only backup and restores it with integrity readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-restore-"));
+  const databasePath = join(directory, "broker.sqlite");
+  let store = new BrokerStore(databasePath);
+  store.appendAudit({
+    requestId: "backup-request",
+    principalId: "principal-1",
+    tool: "mac_health",
+    eventType: "completion",
+    decision: "allow",
+    resultClass: "SUCCEEDED",
+    targetRef: "host:broker",
+    policyVersion: "policy-0.1",
+    evidence: { persisted: true },
+    timestampMs: 1
+  });
+  try {
+    const manifest = await store.backupTo(directory, { nowMs: 1_700_000_000_000, retainCount: 2 });
+    assert.match(manifest.path, /broker-backup-1700000000000-[a-f0-9]{24}\.sqlite$/u);
+    assert.equal(manifest.auditEventCount, 1);
+    assert.notEqual(manifest.auditTailHash, "0".repeat(64));
+    assert.equal((await lstat(manifest.path)).mode & 0o777, 0o600);
+
+    store.close();
+    const restoredPath = join(directory, "restored.sqlite");
+    const restoredManifest = await BrokerStore.restoreBackup(manifest.path, restoredPath);
+    assert.equal(restoredManifest.sha256, manifest.sha256);
+    assert.equal(restoredManifest.auditTailHash, manifest.auditTailHash);
+    store = new BrokerStore(restoredPath);
+    assert.equal(store.auditRows().length, 1);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore retention is bounded and rejects symlink backup entries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-retention-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    await store.backupTo(directory, { nowMs: 100, retainCount: 3 });
+    await store.backupTo(directory, { nowMs: 200, retainCount: 3 });
+    await store.backupTo(directory, { nowMs: 300, retainCount: 3 });
+    const pruned = await store.pruneBackups(directory, 2);
+    assert.equal(pruned.removed.length, 1);
+    assert.equal(pruned.retained.length, 2);
+
+    const unsafe = join(directory, `broker-backup-999-${"a".repeat(24)}.sqlite`);
+    await symlink(databasePath, unsafe);
+    await assert.rejects(store.pruneBackups(directory, 2), /unsafe backup entry/u);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore restore rejects a backup whose audit chain was modified", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-corruption-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  let storeOpen = true;
+  store.appendAudit({
+    requestId: "backup-corruption-request",
+    principalId: "principal-1",
+    tool: "mac_health",
+    eventType: "completion",
+    decision: "allow",
+    resultClass: "SUCCEEDED",
+    targetRef: "host:broker",
+    policyVersion: "policy-0.1",
+    evidence: {},
+    timestampMs: 1
+  });
+  try {
+    const manifest = await store.backupTo(directory, { nowMs: 400, retainCount: 2 });
+    store.close();
+    storeOpen = false;
+    const tamper = new DatabaseSync(manifest.path);
+    tamper.prepare("UPDATE audit_events SET result_class = 'FORGED' WHERE sequence = 1").run();
+    tamper.close();
+    await assert.rejects(
+      BrokerStore.restoreBackup(manifest.path, join(directory, "corrupt-restored.sqlite")),
+      /audit (?:hash|integrity) verification/u
+    );
+  } finally {
+    if (storeOpen) store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

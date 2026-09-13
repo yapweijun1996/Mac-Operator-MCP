@@ -2,6 +2,14 @@ import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
+import {
+  createBrokerBackup,
+  pruneBrokerBackups,
+  restoreBrokerBackup,
+  type BrokerBackupManifest,
+  type BrokerBackupOptions,
+  type BrokerBackupPruneResult
+} from "./persistence-backup.js";
 
 export type SwitchName = "global" | "mutations" | "process" | "network" | "gui" | "destructive" | "privileged";
 const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
@@ -542,6 +550,21 @@ export class BrokerStore {
 
   close(): void {
     this.database.close();
+  }
+
+  /** Creates a verified, owner-only backup without exposing the live database handle. */
+  backupTo(directory: string, options: BrokerBackupOptions = {}): Promise<BrokerBackupManifest> {
+    return createBrokerBackup(this.database, directory, options);
+  }
+
+  /** Prunes only exact Broker backup names in a protected directory. */
+  pruneBackups(directory: string, retainCount?: number): Promise<BrokerBackupPruneResult> {
+    return pruneBrokerBackups(directory, retainCount);
+  }
+
+  /** Restores a verified backup into a fresh destination without replacing an existing database. */
+  static restoreBackup(backupPath: string, destinationPath: string): Promise<BrokerBackupManifest> {
+    return restoreBrokerBackup(backupPath, destinationPath);
   }
 
   admitRequest(input: AdmitRequestInput): RequestRecord {

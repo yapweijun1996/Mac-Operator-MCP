@@ -1170,11 +1170,22 @@ MOP-004 now has a versioned machine-readable ledger contract at
 `schemas/ledger-records.schema.json` for Request, Approval, Job, and Audit
 envelopes. The contract is compiled by `verify:contracts` and has positive and
 negative AJV coverage, including raw helper-authority rejection. It documents
-the persistence boundary without weakening the runtime Broker validators or
-claiming SQLite backup, retention, corruption, or stronger audit anchoring.
+the persistence boundary without weakening the runtime Broker validators. A
+host-only SQLite recovery slice now adds owner-only atomic backup publication,
+SQLite quick-check and audit-chain verification, fresh-target restore,
+numeric timestamp retention, and fail-closed symlink/ownership/mode/size/
+target-swap checks. Encrypted backup storage, disk exhaustion, general
+migrations, and stronger audit anchoring remain open.
 Evidence: `evidence/2026-09-13-ledger-record-contracts.md`.
 
 The ledger-contract revision reran the full suite at 409 tests (406 passed,
 3 opt-in sandbox tests skipped), with typecheck, contract verification,
 dependency audit, and diff checks passing. `verify:contracts` now reports both
 the 44 MCP contracts and the versioned ledger-record schema.
+
+The persistence recovery revision reran the full suite at 412 tests (409
+passed, 3 opt-in sandbox tests skipped). The focused Broker persistence suite
+passes 29/29, including owner-only backup/restore readback, numeric retention,
+symlink refusal, and modified-audit-chain rejection. Typecheck, contract
+verification, dependency audit, and diff checks are recorded after the local
+commit. Evidence: `evidence/2026-09-14-persistence-backup-restore.md`.

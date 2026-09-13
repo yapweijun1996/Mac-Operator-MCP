@@ -942,14 +942,25 @@ The persistence boundary now also has a versioned `ledger-records.schema.json`
 covering Request, Approval, Job, and Audit envelopes. AJV positive/negative
 tests reject malformed lifecycle values and raw helper authority fields, and
 `verify:contracts` compiles the schema alongside all 44 MCP contracts. Runtime
-cross-field checks remain in BrokerStore; SQLite durability, retention,
-backup/corruption recovery, and stronger audit anchoring remain open.
+cross-field checks remain in BrokerStore. Host-only Broker backup/restore/
+retention primitives now provide owner-only atomic snapshots, SQLite quick
+check and audit-chain verification, fresh-target restore, numeric retention,
+and symlink/ownership/mode/size/target-swap refusal. Encrypted backup storage,
+disk exhaustion, general migrations, and stronger audit anchoring remain open.
 Evidence: `evidence/2026-09-13-ledger-record-contracts.md`.
 
 The ledger-contract revision reran the full suite at 409 tests (406 passed,
 3 opt-in sandbox tests skipped). Typecheck, dependency audit, and diff checks
 also pass; contract verification reports the 44 MCP contracts plus the
 versioned ledger-record schema.
+
+The persistence recovery revision reran the full suite at 412 tests (409
+passed, 3 opt-in sandbox tests skipped). The focused Broker persistence suite
+passes 29/29, including owner-only backup/restore readback, numeric retention,
+symlink refusal, and modified-audit-chain rejection. Typecheck, contract
+verification, dependency audit, and diff checks are part of the local commit
+verification. Evidence:
+`evidence/2026-09-14-persistence-backup-restore.md`.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.
 

@@ -38,4 +38,15 @@ malformed lifecycle values and raw helper authority fields. This is a schema
 and compatibility guard; BrokerStore's runtime validators remain authoritative
 for cross-field target, digest, approval, and state-transition invariants.
 
-`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent access tests, stronger integrity or external anchoring, general versioned migrations, backup/restore, retention, access control, and disk exhaustion are implemented and tested.
+The Broker now has a host-only backup/recovery slice. `BrokerStore.backupTo`
+uses SQLite's backup API, publishes an owner-only `0600` file through a
+same-directory temporary rename, verifies `quick_check`, recomputes the audit
+hash chain, and returns a bounded SHA-256 manifest. `restoreBackup` validates
+the source again, copies to a protected temporary file, rechecks source
+device/inode/size/mtime, refuses an existing destination, and performs final
+integrity readback. `pruneBackups` accepts only the exact generated filename
+shape, retains the newest numeric timestamps, and refuses symlinks, foreign
+owners, unsafe modes, oversized files, and target swaps. These are not MCP
+tools and do not enable backup automation or external storage.
+
+`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, general versioned migrations, encrypted/Keychain-protected backup storage, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested.
