@@ -6,7 +6,20 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `9d6d6b0`.
+Current committed implementation baseline: `df4ba85`.
+
+The latest filesystem-worker concurrency addendum is `df4ba85`: a real
+`WorkerFilesystemExecutor` fixture authorizes two independent roots, performs
+a bounded multi-root search, rejects an overlapping request at the fixed
+concurrency cap, and verifies capacity recovery after worker exit. A separate
+worker-executor test proves active cancellation returns `CANCELLED` before the
+slot is released and that a later request succeeds only after termination.
+Focused filesystem/worker tests pass 36/36; the full suite passes 369 tests
+(367 passed, 2 opt-in real-sandbox tests skipped). `MOPS_REAL_SANDBOX=1 npm
+test` has the same two environment-gated skips. Production-scale exhaustion,
+kernel-blocked I/O interruption, restart recovery, and process isolation
+remain open. Evidence:
+`evidence/2026-09-13-filesystem-worker-concurrency.md`.
 
 The latest filesystem pressure-budget addendum is `9d6d6b0`: a bounded fixture
 creates 600 temporary files and verifies 500-entry listing pagination,
