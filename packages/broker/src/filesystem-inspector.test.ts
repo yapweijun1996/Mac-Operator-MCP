@@ -232,6 +232,48 @@ test("native atomic write survives syscall-level process crash boundaries withou
   }
 });
 
+test("native atomic write cleans temporary state on simulated ENOSPC", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-enospc-"));
+  const nativePath = require.resolve("./peer_credentials_fault.node");
+  const cases = [
+    { name: "create-write-error.txt", before: null, createOnly: true, faultPoint: "before_temp_write" },
+    { name: "create-fsync-error.txt", before: null, createOnly: true, faultPoint: "before_temp_fsync" },
+    { name: "replace-fsync-error.txt", before: "before", createOnly: false, faultPoint: "before_temp_fsync" }
+  ] as const;
+  try {
+    for (const current of cases) {
+      const target = join(directory, current.name);
+      if (current.before !== null) await writeFile(target, current.before, { mode: 0o600 });
+      const inspector = new FilesystemInspector([writeRoot(directory)]);
+      const prior = current.before === null ? undefined : inspector.statPath(target, false);
+      const temporaryName = `.mac-operator-write-enospc-${current.name}`;
+      const result = await runNativeFaultChild({
+        nativePath,
+        root: directory,
+        target,
+        content: "after",
+        createOnly: current.createOnly,
+        expectedPresent: prior !== undefined,
+        expectedDevice: prior?.device ?? "0",
+        expectedInode: prior?.inode ?? "0",
+        tempName: temporaryName,
+        faultPoint: current.faultPoint
+      }, directory);
+      assert.equal(result.signal, null);
+      assert.notEqual(result.code, 0);
+      if (current.before === null) {
+        await assert.rejects(readFile(target), /ENOENT/u);
+      } else {
+        assert.equal(await readFile(target, "utf8"), current.before);
+      }
+      assert.equal((await readdir(directory)).includes(temporaryName), false);
+      await rm(target, { force: true });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("descriptor-backed create-only write resists a concurrent target create and symlink swap", async () => {
   const parent = await mkdtemp(join(tmpdir(), "mac-operator-fs-create-race-"));
   const directory = join(parent, "allowed");

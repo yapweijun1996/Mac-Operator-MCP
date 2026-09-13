@@ -78,6 +78,14 @@ void MaybeInjectWriteCrash(const char* point) {
   }
 }
 
+bool MaybeInjectWriteError(const char* point) {
+  if (g_write_fault_point == point) {
+    errno = ENOSPC;
+    return true;
+  }
+  return false;
+}
+
 napi_value SetWriteFaultPoint(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -97,6 +105,7 @@ napi_value SetWriteFaultPoint(napi_env env, napi_callback_info info) {
 }
 #else
 void MaybeInjectWriteCrash(const char*) {}
+bool MaybeInjectWriteError(const char*) { return false; }
 #endif
 
 std::string Sha256Hex(const std::vector<unsigned char>& content) {
@@ -1457,6 +1466,14 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
   MaybeInjectWriteCrash("after_temp_create");
+  if (MaybeInjectWriteError("before_temp_write")) {
+    close(temporary_descriptor);
+    unlinkat(parent_descriptor, temporary_name, 0);
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem write failed");
+    return nullptr;
+  }
   const unsigned char* bytes = static_cast<const unsigned char*>(content_data);
   size_t written = 0;
   while (written < content_length) {
@@ -1473,6 +1490,14 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     written += static_cast<size_t>(result);
   }
   MaybeInjectWriteCrash("after_temp_write");
+  if (MaybeInjectWriteError("before_temp_fsync")) {
+    close(temporary_descriptor);
+    unlinkat(parent_descriptor, temporary_name, 0);
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem write could not be durably flushed");
+    return nullptr;
+  }
   if (fsync(temporary_descriptor) != 0) {
     close(temporary_descriptor);
     unlinkat(parent_descriptor, temporary_name, 0);
