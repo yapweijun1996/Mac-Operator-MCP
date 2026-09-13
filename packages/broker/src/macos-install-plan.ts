@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
+import type { PeerProcessIdentity } from "./peer-credentials.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -134,7 +135,9 @@ export interface MacOsInstallReadback {
   domain: string;
   label: string;
   plistPath: string;
-  pid: number | null;
+  /** PID from launchd, bound to the native start-time identity readback. */
+  pid: number;
+  processIdentity: PeerProcessIdentity;
   launchd: LaunchdServiceReadback;
   broker: BrokerServiceReadback;
   signature: CodeSignatureReadback;
@@ -325,12 +328,16 @@ export function validateCodeSignatureReadback(
  * transport requirement must all match before the service is considered ready.
  */
 export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: MacOsInstallReadback): void {
-  if (!isRecord(readback) || !isRecord(readback.launchd) || !isRecord(readback.broker) || !isRecord(readback.signature)) {
+  if (!isRecord(readback) || !isRecord(readback.launchd) || !isRecord(readback.broker) ||
+      !isRecord(readback.signature) || !isRecord(readback.processIdentity)) {
     fail("INVALID_READBACK", "service readback is malformed");
   }
   const expectedUid = plan.domain.slice("gui/".length);
   if (readback.domain !== plan.domain || readback.label !== plan.label || readback.plistPath !== plan.plistPath ||
-      !/^\d+$/.test(expectedUid) || (readback.pid !== null && (!Number.isSafeInteger(readback.pid) || readback.pid < 1))) {
+      !/^\d+$/.test(expectedUid) || !Number.isSafeInteger(readback.pid) || readback.pid < 1 ||
+      !Number.isSafeInteger(readback.processIdentity.pid) || readback.processIdentity.pid < 1 ||
+      !Number.isSafeInteger(readback.processIdentity.startTimeMicros) || readback.processIdentity.startTimeMicros < 1 ||
+      readback.processIdentity.pid !== readback.pid) {
     fail("SERVICE_MISMATCH", "launchd readback does not match the planned per-user service");
   }
   if (readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||

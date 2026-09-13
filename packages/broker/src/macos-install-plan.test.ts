@@ -91,6 +91,7 @@ test("readback requires matching signature, launchd identity, native transport, 
     label: plan.label,
     plistPath: plan.plistPath,
     pid: 1234,
+    processIdentity: { pid: 1234, startTimeMicros: 987654321 },
     launchd: plan.launchd,
     broker: {
       ...base.metadata,
@@ -109,6 +110,8 @@ test("readback requires matching signature, launchd identity, native transport, 
   };
   validateMacOsInstallReadback(plan, readback);
   validateCodeSignatureReadback(base.signature, readback.signature, base.signedArtifactPath);
+  assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, processIdentity: { pid: 4321, startTimeMicros: 987654321 } }), /launchd readback/u);
+  assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, pid: 1234, processIdentity: { pid: 1234, startTimeMicros: 0 } }), /launchd readback/u);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, broker: { ...readback.broker, nativeTransportRequired: false as never } }), /Broker service readback/u);
   assert.throws(() => validateCodeSignatureReadback(base.signature, { ...readback.signature, identifier: "com.attacker.broker" }, base.signedArtifactPath), /code signature readback/u);
 });
@@ -361,6 +364,7 @@ test("install executor requires explicit confirmation and verifies final Broker 
         label: plan.label,
         plistPath: plan.plistPath,
         pid: 1234,
+        processIdentity: { pid: 1234, startTimeMicros: 987654321 },
         launchd: plan.launchd,
         broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
         signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null }
