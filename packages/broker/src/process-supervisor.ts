@@ -187,7 +187,11 @@ export class ProcessSupervisor {
       stop: () => stopRun?.(),
       drained: drainedPromise
     };
-    const result = this.observe(
+    // Register before observing: an ownership callback can fail synchronously
+    // during the first sample, and release() must then be able to remove the
+    // run from the active set instead of leaving a close-time ghost entry.
+    this.activeRuns.add(activeRun);
+    return this.observe(
       child,
       request,
       processId,
@@ -201,8 +205,6 @@ export class ProcessSupervisor {
         this.activeRuns.delete(activeRun);
       }
     );
-    this.activeRuns.add(activeRun);
-    return result;
   }
 
   activeCount(): number {

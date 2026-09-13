@@ -268,6 +268,28 @@ test("process supervisor close drains owned processes and rejects new work", asy
   assert.strictEqual(supervisor.close(), closePromise);
 });
 
+test("process supervisor does not retain a synchronously aborted ownership run", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Synchronous ownership sampling uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const running = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["5"],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 100,
+    onOwnershipChanged: () => { throw new Error("ownership persistence failed"); }
+  });
+  const result = await running;
+  assert.equal(result.resultClass, "UNKNOWN_OUTCOME");
+  assert.equal(supervisor.activeCount(), 0);
+  const closePromise = supervisor.close();
+  await closePromise;
+  assert.strictEqual(supervisor.close(), closePromise);
+});
+
 test("process supervisor captures and recovers an exact persisted root identity", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Persisted root identity recovery is a macOS native boundary");

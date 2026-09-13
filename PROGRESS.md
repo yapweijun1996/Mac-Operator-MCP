@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest process-supervisor lifecycle addendum: active runs are now registered
+before the first ownership observation. A synchronous persistence failure can
+therefore terminate and remove its run without leaving a close-time ghost
+entry. The focused Darwin process-supervisor suite passes 14/14, including
+capacity release and close idempotency. Evidence:
+`evidence/2026-09-14-process-supervisor-registration.md`.
+
 Latest bounded-Git-log addendum: `mac_git_log` now preserves complete commit
 records from a supervisor-confirmed output prefix, marks the result truncated,
 and rejects output-limit reports without observed termination as retryable

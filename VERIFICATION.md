@@ -3,6 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest process-supervisor lifecycle addendum: registration now precedes the
+initial ownership callback, so synchronous ownership persistence failure cannot
+leave an active-run entry after capacity is released. Focused Darwin tests pass
+14/14. Evidence:
+`evidence/2026-09-14-process-supervisor-registration.md`.
+
 Latest bounded-Git-log addendum: the `mac_git_log` adapter parses complete
 records from a supervisor-confirmed bounded prefix, marks truncation, and
 fails closed when termination is not observed. Focused Git tests pass 17/17.
