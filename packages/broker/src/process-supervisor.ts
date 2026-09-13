@@ -295,10 +295,13 @@ export class ProcessSupervisor {
       }
       const groupAlive = processGroupAlive(identity.processGroupId);
       return {
-        outcome: groupAlive ? "unknown" : "absent",
+        // An empty persisted snapshot cannot prove that no descendant was
+        // created after the last observation and escaped the process group.
+        // Keep the outcome unresolved rather than inferring absence.
+        outcome: groupAlive || snapshot.descendants.length === 0 ? "unknown" : "absent",
         processId: identity.pid,
         processGroupId: identity.processGroupId,
-        terminationObserved: !groupAlive
+        terminationObserved: !groupAlive && snapshot.descendants.length > 0
       };
     }
     if (rootAlive !== true) {

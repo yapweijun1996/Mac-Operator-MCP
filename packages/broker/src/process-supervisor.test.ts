@@ -306,6 +306,37 @@ test("process supervisor refuses a swapped persisted root identity", async (t) =
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor keeps an empty snapshot unresolved after root exit", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Persisted process recovery is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  const running = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["10"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100,
+    onStarted: (value) => { snapshot = value; }
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(snapshot);
+    assert.deepEqual(snapshot!.descendants, []);
+    process.kill(snapshot!.identity.pid, "SIGKILL");
+    await running;
+    const recovered = await supervisor.recoverOwnedProcess(snapshot!, 250);
+    assert.equal(recovered.outcome, "unknown");
+    assert.equal(recovered.terminationObserved, false);
+  } finally {
+    await running;
+    await supervisor.close();
+  }
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor recovers a persisted detached descendant after root exit", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Persisted descendant recovery is a macOS native boundary");
