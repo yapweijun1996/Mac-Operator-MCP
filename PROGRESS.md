@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `8061254`.
+Current committed implementation baseline: `f24b506`.
+
+The latest security addendum is `f24b506`: host-only uninstall coordination now
+requires global kill-switch disable and selected Edge revocation through the
+separately authenticated authority channel before exact-revision plist/launchd
+removal, then verifies service absence and authority state again. It never
+re-enables authority after a failed removal. Callback, temporary-root, and
+full-regression tests pass; installed packaging, key cleanup, and live
+launchd/readback evidence remain open. Evidence:
+`evidence/2026-09-13-uninstall-authority-gate.md`.
 
 The current revision also reruns the host-only macOS install-plan boundary:
 10 focused tests pass for fixed LaunchAgent planning, owner-only temporary-root
