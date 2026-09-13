@@ -1932,13 +1932,14 @@ test("write completion failure leaves an atomic postcondition and an UNKNOWN Job
   const executor: FilesystemExecutor = {
     stat: async () => { throw new Error("Unexpected stat"); },
     read: async () => { throw new Error("Unexpected read"); },
-    write: async (plan, requestedContent, expectedSha256, createOnly) => {
+    write: async (plan, requestedContent, expectedSha256, createOnly, _control, temporaryName) => {
+      assert.match(temporaryName ?? "", /^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u);
       const committed = new FilesystemInspector([root]).writePlanned(
         plan,
         requestedContent,
         expectedSha256,
         createOnly,
-        ".mac-operator-write-crash-window"
+        temporaryName!
       );
       assert.equal(committed.sha256, sha256(requestedContent));
       throw new Error("simulated completion persistence crash");
@@ -1989,6 +1990,59 @@ test("write completion failure leaves an atomic postcondition and an UNKNOWN Job
       resolution: "remains_unknown",
       observed_at: new Date(NOW).toISOString()
     });
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("restart write recovery cleans only the recorded temporary artifact", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-cleanup-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const target = join(directory, "target.txt");
+  const temporaryName = ".mac-operator-write-restart-cleanup";
+  const temporaryPath = join(directory, temporaryName);
+  await writeFile(temporaryPath, "orphan", { mode: 0o600 });
+  let store = new BrokerStore(databasePath);
+  store.createJob({
+    jobId: "job:write-cleanup",
+    ownerPrincipalId: "principal-1",
+    ownerSessionId: "session-1",
+    tool: "mac_write_file_atomic",
+    targetRef: "path:test-root",
+    policyVersion: "policy-0.1",
+    payloadDigest: "a".repeat(64),
+    idempotencyKey: "write-cleanup",
+    createdAtMs: 1,
+    writeMetadata: {
+      rootId: "test-root",
+      path: target,
+      bytes: 6,
+      desiredSha256: sha256(Buffer.from("orphan")),
+      expectedSha256: null,
+      createOnly: true,
+      temporaryName
+    }
+  });
+  store.startJob("job:write-cleanup", "principal-1", 0, 2);
+  store.close();
+  store = new BrokerStore(databasePath);
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    assert.deepEqual(broker.reconcileRestartedWriteArtifacts(), { inspected: 1, removed: 1, absent: 0, skipped: 0 });
+    await assert.rejects(readFile(temporaryPath), /ENOENT/u);
+    assert.deepEqual(
+      store.auditRows().filter((row) => row.tool === "internal_write_temporary_cleanup").map((row) => [row.event_type, row.result_class]),
+      [["intent", "INTENT_RECORDED"], ["completion", "TEMPORARY_REMOVED"]]
+    );
+    assert.deepEqual(broker.reconcileRestartedWriteArtifacts(), { inspected: 1, removed: 0, absent: 1, skipped: 0 });
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

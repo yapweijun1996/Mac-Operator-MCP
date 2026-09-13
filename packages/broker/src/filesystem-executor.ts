@@ -81,7 +81,8 @@ export interface FilesystemExecutor {
     content: Buffer,
     expectedSha256: string | undefined,
     createOnly: boolean,
-    control: FilesystemExecutionControl
+    control: FilesystemExecutionControl,
+    temporaryName?: string
   ): Promise<FilesystemWorkerResult>;
 }
 
@@ -215,7 +216,8 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     content: Buffer,
     expectedSha256: string | undefined,
     createOnly: boolean,
-    control: FilesystemExecutionControl
+    control: FilesystemExecutionControl,
+    temporaryName?: string
   ): Promise<FilesystemWorkerResult> {
     return this.executor.run({
       operation: "write",
@@ -223,7 +225,7 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
       content,
       expectedSha256,
       createOnly,
-      tempName: `.mac-operator-write-${randomUUID()}`
+      tempName: temporaryName ?? `.mac-operator-write-${randomUUID()}`
     }, control.timeoutMs, control.shouldCancel).then(validateFilesystemWorkerResult);
   }
 }

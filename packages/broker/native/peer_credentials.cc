@@ -1449,10 +1449,17 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
   struct stat target_stat;
   if (fstatat(parent_descriptor, base_name, &target_stat, AT_SYMLINK_NOFOLLOW) != 0) {
     if (errno == ENOENT && !expected_present) {
+      char resolved_target[PATH_MAX];
+      if (snprintf(resolved_target, sizeof(resolved_target), "%s/%s", resolved_parent, base_name) >= static_cast<int>(sizeof(resolved_target))) {
+        close(parent_descriptor);
+        close(root_descriptor);
+        ThrowSystemError(env, "Filesystem unlink result path is too long");
+        return nullptr;
+      }
       napi_value result;
       napi_create_object(env, &result);
       SetString(env, result, "rootPath", resolved_root);
-      SetString(env, result, "path", requested_target);
+      SetString(env, result, "path", resolved_target);
       SetBoolean(env, result, "removed", false);
       SetString(env, result, "device", "0");
       SetString(env, result, "inode", "0");

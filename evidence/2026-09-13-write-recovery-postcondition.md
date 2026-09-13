@@ -19,8 +19,8 @@ When startup reconciliation marks a running write `UNKNOWN`, `mac_job_status` ma
 - Persistence restart: the non-secret descriptor survives a BrokerStore close/reopen while stdout remains empty and the Job reconciles to `unknown`.
 - Contract validation: the optional recovery object is bounded and schema-valid under `mac_job_status`.
 
-Observed verification on this revision: `npm test` passed with 243 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed.
+Observed verification on this revision: `npm test` passed with 245 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed. Exact temporary-name persistence and restart cleanup evidence is recorded separately in `evidence/2026-09-13-write-temporary-cleanup.md`.
 
 ## Limits and next gate
 
-The crash fixture is test-only and injects `SIGKILL` at selected native syscall boundaries; it is not exhaustive arbitrary-instruction crash coverage and does not prove post-crash filesystem durability across remount. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Filesystem remount identity, orphan-temporary cleanup policy, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.
+The crash fixture is test-only and injects `SIGKILL` at selected native syscall boundaries; it is not exhaustive arbitrary-instruction crash coverage and does not prove post-crash filesystem durability across remount. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Exact recorded-temporary cleanup now has a bounded, explicit host hook, but prior-worker/process ownership, filesystem remount identity, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.

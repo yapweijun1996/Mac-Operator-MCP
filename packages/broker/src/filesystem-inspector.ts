@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
 
@@ -180,6 +180,13 @@ export interface SafeWritePostcondition {
   inode: string | null;
 }
 
+export interface TemporaryWriteCleanupResult {
+  status: "removed" | "absent";
+  path: string;
+  device: string | null;
+  inode: string | null;
+}
+
 interface NativePathMetadata {
   rootPath: string;
   path: string;
@@ -252,6 +259,7 @@ const MAX_PROJECT_SUMMARY_TREE_ENTRIES = 1_000;
 const MAX_STORAGE_DEPTH = 8;
 const MAX_STORAGE_ENTRIES = 50_000;
 const MAX_STORAGE_DIRECTORIES = 10_000;
+const TEMPORARY_WRITE_NAME_PATTERN = /^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u;
 const PROJECT_SUMMARY_MANIFESTS = new Set([
   "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "tsconfig.json",
   "pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
@@ -1140,6 +1148,51 @@ export class FilesystemInspector {
       throw new BrokerError("VERIFICATION_FAILED", "Filesystem unlink postcondition did not match the request");
     }
     return unlink;
+  }
+
+  /**
+   * Remove one Broker-recorded write temporary, never a directory prefix.
+   * The first no-op unlink distinguishes a missing artifact without treating
+   * arbitrary stat failures as absence. If the artifact exists, its current
+   * descriptor identity must match the immediately-following unlink.
+   */
+  cleanupWriteTemporary(plan: FilesystemPathPlan, temporaryName: string): TemporaryWriteCleanupResult {
+    if (!TEMPORARY_WRITE_NAME_PATTERN.test(temporaryName)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem temporary name is malformed");
+    }
+    const parentPath = dirname(plan.requestedPath);
+    const temporaryPath = join(parentPath, temporaryName);
+    if (resolve(temporaryPath) !== temporaryPath || dirname(temporaryPath) !== parentPath) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem temporary path is malformed");
+    }
+    const temporaryPlan = this.planPath(temporaryPath, "write");
+    try {
+      const absent = this.unlinkPlanned(temporaryPlan, { present: false, device: "0", inode: "0" });
+      if (!absent.removed) {
+        return { status: "absent", path: temporaryPlan.requestedPath, device: null, inode: null };
+      }
+    } catch {
+      // A present artifact fails the expected-absent precondition. Inspect it
+      // below; policy or parent-identity failures still fail closed there.
+    }
+    let metadata: SafePathMetadata;
+    try {
+      metadata = this.statPlanned(temporaryPlan, false);
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem temporary artifact could not be inspected safely");
+    }
+    if (metadata.type !== "file" || metadata.isSymlink) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem temporary artifact is not a regular non-symlink file");
+    }
+    const removed = this.unlinkPlanned(temporaryPlan, {
+      present: true,
+      device: metadata.device,
+      inode: metadata.inode
+    });
+    if (!removed.removed) {
+      throw new BrokerError("VERIFICATION_FAILED", "Filesystem temporary cleanup did not remove the recorded artifact");
+    }
+    return { status: "removed", path: removed.path, device: removed.device, inode: removed.inode };
   }
 }
 

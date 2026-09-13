@@ -53,6 +53,11 @@ export interface WriteJobMetadata {
   desiredSha256: string;
   expectedSha256: string | null;
   createOnly: boolean;
+  /**
+   * Exact same-directory temporary name allocated for this write. Older
+   * ledger rows may omit it and therefore cannot participate in cleanup.
+   */
+  temporaryName?: string;
 }
 
 export interface BrokerJob {
@@ -1079,6 +1084,25 @@ export class BrokerStore {
     return row ? mapJob(row) : undefined;
   }
 
+  /**
+   * Return only restart-reconciled unknown write jobs with persisted
+   * descriptors. This is intentionally narrower than a prefix scan: callers
+   * must prove the Broker restart boundary before attempting artifact cleanup.
+   */
+  restartUnknownWriteJobs(limit = 100): BrokerJob[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
+    const rows = this.database.prepare(`
+      SELECT * FROM jobs
+      WHERE tool = 'mac_write_file_atomic'
+        AND state = 'unknown'
+        AND cancel_reason = 'BROKER_RESTART'
+        AND write_metadata_json <> ''
+      ORDER BY created_at_ms, job_id
+      LIMIT ?
+    `).all(limit) as unknown as JobRow[];
+    return rows.map(mapJob);
+  }
+
   linkRequestJob(requestId: string, jobId: string, nowMs: number): RequestRecord {
     if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(jobId) || !Number.isSafeInteger(nowMs) || nowMs < 0) {
       throw malformedRequest();
@@ -1550,6 +1574,21 @@ export class BrokerStore {
     return this.database.prepare("SELECT * FROM audit_events ORDER BY sequence").all() as Array<Record<string, unknown>>;
   }
 
+  auditEventExists(requestId: string, eventType: AuditEvent["eventType"]): boolean {
+    if (!/^[A-Za-z0-9._:@/-]{1,256}$/u.test(requestId)) throw new BrokerError("PRECONDITION_FAILED", "Audit request identity is malformed");
+    return this.database.prepare(
+      "SELECT 1 FROM audit_events WHERE request_id = ? AND event_type = ? LIMIT 1"
+    ).get(requestId, eventType) !== undefined;
+  }
+
+  auditEventResult(requestId: string, eventType: AuditEvent["eventType"]): string | undefined {
+    if (!/^[A-Za-z0-9._:@/-]{1,256}$/u.test(requestId)) throw new BrokerError("PRECONDITION_FAILED", "Audit request identity is malformed");
+    const row = this.database.prepare(
+      "SELECT result_class FROM audit_events WHERE request_id = ? AND event_type = ? ORDER BY sequence DESC LIMIT 1"
+    ).get(requestId, eventType) as { result_class: string } | undefined;
+    return row?.result_class;
+  }
+
   verifyAuditIntegrity(): void {
     const rows = this.auditRows();
     let previousHash = "0".repeat(64);
@@ -1928,7 +1967,12 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   const keys = Object.keys(parsed).sort();
-  if (keys.length !== 6 || keys.join(",") !== "bytes,createOnly,desiredSha256,expectedSha256,path,rootId") {
+  const legacyKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId";
+  const currentKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId,temporaryName";
+  if (keys.length !== 6 && keys.length !== 7) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  }
+  if (keys.join(",") !== (keys.length === 6 ? legacyKeys : currentKeys)) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   }
   const metadata = parsed as Partial<WriteJobMetadata>;
@@ -1939,7 +1983,8 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
     typeof metadata.bytes !== "number" ||
     typeof metadata.desiredSha256 !== "string" ||
     (typeof metadata.expectedSha256 !== "string" && metadata.expectedSha256 !== null) ||
-    typeof metadata.createOnly !== "boolean"
+    typeof metadata.createOnly !== "boolean" ||
+    (metadata.temporaryName !== undefined && typeof metadata.temporaryName !== "string")
   ) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   if (metadata.expectedSha256 === undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   const normalized: WriteJobMetadata = {
@@ -1948,7 +1993,8 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
     bytes: metadata.bytes,
     desiredSha256: metadata.desiredSha256,
     expectedSha256: metadata.expectedSha256,
-    createOnly: metadata.createOnly
+    createOnly: metadata.createOnly,
+    ...(metadata.temporaryName !== undefined ? { temporaryName: metadata.temporaryName } : {})
   };
   validateWriteJobMetadata(normalized);
   return normalized;
@@ -1960,7 +2006,8 @@ function validateWriteJobMetadata(metadata: WriteJobMetadata): void {
       !Number.isSafeInteger(metadata.bytes) || metadata.bytes < 0 || metadata.bytes > 1_048_576 ||
       !/^[a-f0-9]{64}$/u.test(metadata.desiredSha256) ||
       (metadata.expectedSha256 !== null && !/^[a-f0-9]{64}$/u.test(metadata.expectedSha256)) ||
-      typeof metadata.createOnly !== "boolean") {
+      typeof metadata.createOnly !== "boolean" ||
+      (metadata.temporaryName !== undefined && !/^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u.test(metadata.temporaryName))) {
     throw malformedJob();
   }
 }

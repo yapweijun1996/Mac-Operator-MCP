@@ -9,6 +9,7 @@ import {
   type BrokerRequest,
   type BrokerResult
 } from "@mac-operator/contracts";
+import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { BrokerJob, BrokerStore, WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, keyIdentity } from "./edge-keyring.js";
@@ -24,7 +25,7 @@ import {
 } from "./policy.js";
 import { PolicyManager } from "./policy-loader.js";
 import { parseBrokerRequest } from "./request-validator.js";
-import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition } from "./filesystem-inspector.js";
+import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition, type TemporaryWriteCleanupResult } from "./filesystem-inspector.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
@@ -92,6 +93,106 @@ export class Broker {
     this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
+  }
+
+  /**
+   * Reconcile exact temporary artifacts left by writes interrupted at a
+   * Broker restart. This is deliberately an explicit host-startup hook, not
+   * an MCP tool: the caller must establish that the prior Broker instance no
+   * longer owns active workers before invoking it.
+   */
+  reconcileRestartedWriteArtifacts(limit = 100): {
+    inspected: number;
+    removed: number;
+    absent: number;
+    skipped: number;
+  } {
+    const policy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+    const jobs = this.options.store.restartUnknownWriteJobs(limit);
+    if (jobs.length === 0) return { inspected: 0, removed: 0, absent: 0, skipped: 0 };
+    if (policy.killSwitches.global || policy.killSwitches.mutations) {
+      return { inspected: jobs.length, removed: 0, absent: 0, skipped: jobs.length };
+    }
+    const inspector = new FilesystemInspector(policy.filesystemRoots);
+    let removed = 0;
+    let absent = 0;
+    let skipped = 0;
+    for (const job of jobs) {
+      const metadata = job.writeMetadata;
+      const auditRequestId = `job-temp-cleanup-${job.jobId}-${job.revision}`;
+      if (metadata?.temporaryName === undefined) {
+        skipped += 1;
+        continue;
+      }
+      const targetRef = `path:${metadata.path}`;
+      const priorCompletion = this.options.store.auditEventResult(auditRequestId, "completion");
+      if (priorCompletion !== undefined) {
+        if (priorCompletion === "TEMPORARY_REMOVED" || priorCompletion === "TEMPORARY_ABSENT") absent += 1;
+        else skipped += 1;
+        continue;
+      }
+      if (!this.options.store.auditEventExists(auditRequestId, "intent")) {
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_write_temporary_cleanup",
+          eventType: "intent",
+          decision: "allow",
+          resultClass: "INTENT_RECORDED",
+          targetRef,
+          policyVersion: job.policyVersion,
+          evidence: { jobId: job.jobId, jobRevision: job.revision, rootId: metadata.rootId, temporaryName: metadata.temporaryName },
+          timestampMs: this.now()
+        });
+      }
+      let result: TemporaryWriteCleanupResult;
+      try {
+        const plan = inspector.planPath(metadata.path, "write");
+        if (plan.rootId !== metadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary root identity no longer matches");
+        result = inspector.cleanupWriteTemporary(plan, metadata.temporaryName);
+      } catch (error) {
+        skipped += 1;
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_write_temporary_cleanup",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: "TEMPORARY_CLEANUP_SKIPPED",
+          targetRef,
+          policyVersion: job.policyVersion,
+          evidence: {
+            jobId: job.jobId,
+            jobRevision: job.revision,
+            errorClass: error instanceof BrokerError ? error.errorClass : "EXECUTION_FAILED"
+          },
+          timestampMs: this.now()
+        });
+        continue;
+      }
+      if (result.status === "removed") removed += 1;
+      else absent += 1;
+      this.options.store.appendAudit({
+        requestId: auditRequestId,
+        principalId: job.ownerPrincipalId,
+        tool: "internal_write_temporary_cleanup",
+        eventType: "completion",
+        decision: "allow",
+        resultClass: result.status === "removed" ? "TEMPORARY_REMOVED" : "TEMPORARY_ABSENT",
+        targetRef,
+        policyVersion: job.policyVersion,
+        evidence: {
+          jobId: job.jobId,
+          jobRevision: job.revision,
+          rootId: metadata.rootId,
+          temporaryName: metadata.temporaryName,
+          path: result.path,
+          ...(result.device !== null ? { device: result.device, inode: result.inode } : {})
+        },
+        timestampMs: this.now()
+      });
+    }
+    return { inspected: jobs.length, removed, absent, skipped };
   }
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
@@ -1462,7 +1563,8 @@ export class Broker {
         execution.write.content,
         execution.write.expectedSha256,
         execution.write.createOnly,
-        this.executionControl(request, execution.target, timeoutMs, job.jobId)
+        this.executionControl(request, execution.target, timeoutMs, job.jobId),
+        execution.write.temporaryName
       );
       if (workerResult.operation !== "write") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
       // Revalidate authority after the adapter returns and before committing a
@@ -1949,7 +2051,8 @@ export class Broker {
         content,
         expectedSha256: request.arguments.expected_sha256 as string | undefined,
         createOnly: (request.arguments.create_only ?? false) as boolean,
-        idempotencyKey: request.arguments.idempotency_key as string
+        idempotencyKey: request.arguments.idempotency_key as string,
+        temporaryName: `.mac-operator-write-${randomUUID()}`
       };
     }
     const inspector = new FilesystemInspector(policy.filesystemRoots);
@@ -2260,6 +2363,7 @@ interface ExecutionPlan {
     expectedSha256: string | undefined;
     createOnly: boolean;
     idempotencyKey: string;
+    temporaryName: string;
   };
   writeJob?: BrokerJob;
   writeJobNew?: boolean;
@@ -2301,7 +2405,8 @@ function writeJobMetadata(plan: FilesystemPathPlan, write: NonNullable<Execution
     bytes: write.content.length,
     desiredSha256: sha256(write.content),
     expectedSha256: write.expectedSha256?.toLowerCase() ?? null,
-    createOnly: write.createOnly
+    createOnly: write.createOnly,
+    temporaryName: write.temporaryName
   };
 }
 

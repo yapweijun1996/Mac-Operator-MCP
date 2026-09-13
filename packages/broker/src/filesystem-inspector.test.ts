@@ -151,6 +151,41 @@ test("write postcondition probe distinguishes match, mismatch, and unavailable",
   }
 });
 
+test("write temporary cleanup removes only an exact regular artifact and fails closed on symlinks", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-cleanup-"));
+  const target = join(directory, "target.txt");
+  const temporaryName = ".mac-operator-write-cleanup";
+  const temporaryPath = join(directory, temporaryName);
+  const outside = join(directory, "outside.txt");
+  try {
+    await writeFile(temporaryPath, "orphan", { mode: 0o600 });
+    const canonicalTemporaryPath = await realpath(temporaryPath);
+    const inspector = new FilesystemInspector([writeRoot(directory)]);
+    const plan = inspector.planPath(target, "write");
+    const removed = inspector.cleanupWriteTemporary(plan, temporaryName);
+    assert.equal(removed.status, "removed");
+    assert.equal(removed.path, canonicalTemporaryPath);
+    await assert.rejects(readFile(temporaryPath), /ENOENT/u);
+    assert.deepEqual(inspector.cleanupWriteTemporary(plan, temporaryName), {
+      status: "absent",
+      path: temporaryPath,
+      device: null,
+      inode: null
+    });
+
+    await writeFile(outside, "outside", { mode: 0o600 });
+    await symlink(outside, temporaryPath);
+    assert.throws(
+      () => inspector.cleanupWriteTemporary(plan, temporaryName),
+      /regular non-symlink file/u
+    );
+    assert.equal(await readFile(outside, "utf8"), "outside");
+    assert.equal(await readlink(temporaryPath), outside);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("native atomic write survives syscall-level process crash boundaries without partial target state", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-crash-boundary-"));
   const nativePath = require.resolve("./peer_credentials_fault.node");

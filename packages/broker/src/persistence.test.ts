@@ -734,16 +734,23 @@ test("unresolved write metadata survives restart without storing content", async
     bytes: 4,
     desiredSha256: "a".repeat(64),
     expectedSha256: null,
-    createOnly: true
+    createOnly: true,
+    temporaryName: ".mac-operator-write-restart"
   } as const;
   let store = new BrokerStore(databasePath);
-  store.createJob({ ...jobInput("job:write-metadata", "write-metadata"), writeMetadata: metadata });
+  store.createJob({
+    ...jobInput("job:write-metadata", "write-metadata"),
+    tool: "mac_write_file_atomic",
+    targetRef: "path:test-root",
+    writeMetadata: metadata
+  });
   store.startJob("job:write-metadata", "principal-1", 0, 2);
   store.close();
   store = new BrokerStore(databasePath);
   try {
     const recovered = store.ownedJob("job:write-metadata", "principal-1");
     assert.deepEqual(recovered?.writeMetadata, metadata);
+    assert.deepEqual(store.restartUnknownWriteJobs().map((job) => job.jobId), ["job:write-metadata"]);
     assert.equal(recovered?.stdout, "");
     assert.equal(recovered?.state, "unknown");
   } finally {
