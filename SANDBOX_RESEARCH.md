@@ -52,7 +52,7 @@ The Broker task admission boundary now also requires a versioned `TaskIsolationP
 
 ## 2026-09-13 experimental runner evidence
 
-Source commit `684058c` adds `renderTaskSandboxProfile` and an opt-in
+Source commit `a50b999` adds `renderTaskSandboxProfile` and an opt-in
 `SandboxExecTaskRunner`. The renderer emits only a Broker-owned deny-default
 Seatbelt subset, allows a resolved executable and explicit filesystem roots,
 denies global and representative project secret zones, and rejects network
@@ -65,8 +65,10 @@ present.
 The exact host smoke record is [`evidence/2026-09-13-sandbox-profile-runner.md`](evidence/2026-09-13-sandbox-profile-runner.md).
 On the Mac mini M4/macOS 26.2 host, the synthetic child could read/write the
 allowed temporary root, could not read `/private/etc/passwd`, did not inherit a
-parent controller-canary environment variable, and could not resolve an HTTP
-destination through curl (exit 6, empty stdout). This is `PARTIAL` evidence:
+parent controller/`HOME`/SSH-agent/AWS-profile canaries, and could not resolve
+an HTTP destination through curl (exit 6, empty stdout). It also maps a real
+`/bin/sleep` cancellation through detached process-group termination. This is
+`PARTIAL` evidence:
 real credential surfaces, descendants/`setsid`, crash/restart cleanup,
 allowlisted networking, Docker, persistence, privilege, and remount behavior
 remain unproven. `sandbox-exec` is deprecated, so this does not select it for

@@ -1,11 +1,11 @@
 # Experimental sandbox profile runner evidence
 
-Date: 2026-09-13  
-Source commit: `684058c` (`feat: add experimental macOS sandbox task runner`)  
-Working tree: clean before evidence commands  
-Host: Mac mini `Mac16,10`, Apple M4, 16 GB, arm64  
-OS: macOS `26.2`, build `25C56`  
-Runtime: Node `v25.5.0`  
+Date: 2026-09-13
+Source commit: `a50b999` (`test: expand sandbox credential and cancellation fixtures`)
+Working tree: clean before evidence commands
+Host: Mac mini `Mac16,10`, Apple M4, 16 GB, arm64
+OS: macOS `26.2`, build `25C56`
+Runtime: Node `v25.5.0`
 Scope: disabled-by-default `SandboxExecTaskRunner`, synthetic temporary fixture only; no real credentials or production task profile
 
 ## Boundary exercised
@@ -22,31 +22,35 @@ and cancellation callback.
 
 ## Automated checks
 
-- `npm test`: 290 tests, 289 passed, 1 default opt-in real-host test skipped.
+- `npm test`: 291 tests, 289 passed, 2 default opt-in real-host tests skipped.
 - `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js`:
-  5 passed, 0 failed, 0 skipped.
+  6 passed, 0 failed, 0 skipped.
 - Renderer tests reject `/`, `/System`, `/Users`, `/private`, cwd escapes, and
   network allowlists; runner tests verify the supervisor receives only
   Broker-rendered sandbox arguments and remains unavailable without explicit
-  host evidence and opt-in.
+  host evidence and opt-in. The real runner also maps active cancellation to
+  detached process-group termination.
 
 ## Real-host smoke results
 
 The opt-in fixture ran `/bin/bash` with an explicitly empty environment and a
-temporary allowed root. The child reported the parent controller-canary
-variable as unset, could read an allowed fixture, could not read
-`/private/etc/passwd`, and created/read back a file inside the allowed root.
-An independent `/usr/bin/curl` probe to `http://example.com` returned a
-non-success result with empty stdout (DNS resolution was denied, exit 6).
+temporary allowed root. The child reported the parent controller, `HOME`, SSH
+agent, and AWS profile canaries as unset; it could read an allowed fixture,
+could not read `/private/etc/passwd`, a root-contained `.env`, or a symlink to
+the protected file, and created/read back a file inside the allowed root. An
+independent `/usr/bin/curl` probe to `http://example.com` returned a
+non-success result with empty stdout (DNS resolution was denied, exit 6). A
+second `/bin/sleep` fixture was cancelled through the runner and returned
+`CANCELLED` after process-group termination.
 
 | Dimension | Result | Evidence | Residual risk |
 |---|---|---|---|
 | Broker-owned profile construction | `ENFORCED` for tested inputs | Deny-default deterministic renderer; arbitrary SBPL is never accepted; broad roots/cwd escapes/network declarations fail closed. | Renderer is a narrow Seatbelt subset; complete macOS policy semantics and future profile changes still need review. |
-| Allowed-root read/write | `PARTIAL` | Allowed fixture read and create/readback inside a temporary root succeeded. | Remount identity, hardlinks, mount escapes, and concurrent target swaps are not covered by this runner smoke. |
-| Protected system/secret paths | `PARTIAL` | `/private/etc/passwd` read failed; global and project secret deny rules are rendered. | Real Keychain, SSH, browser, cloud, package, Git, and signing stores were not opened. |
-| Environment isolation | `PARTIAL` | Explicit empty environment prevented the synthetic parent canary from appearing. | This is ProcessSupervisor/profile evidence, not proof that every future profile or launcher has no secret inputs. |
+| Allowed-root read/write | `PARTIAL` | Allowed fixture read and create/readback inside a temporary root succeeded; a root-contained `.env` and symlink to `/private/etc/passwd` were denied. | Remount identity, hardlinks, mount escapes, and concurrent target swaps are not covered by this runner smoke. |
+| Protected system/secret paths | `PARTIAL` | `/private/etc/passwd`, a root-contained `.env`, and a protected-file symlink were denied; global and project secret deny rules are rendered. | Real Keychain, SSH, browser, cloud, package, Git, and signing stores were not opened. |
+| Environment isolation | `PARTIAL` | Explicit empty environment hid controller, `HOME`, SSH-agent, and AWS-profile canaries. | This is ProcessSupervisor/profile evidence, not proof that every future profile or launcher has no secret inputs. |
 | Network deny | `PARTIAL` | Curl DNS/network probe returned exit 6 and no stdout. | Network allowlists are intentionally unsupported; non-DNS addresses and broader egress controls remain untested. |
-| Process-tree ownership | `UNKNOWN` | ProcessSupervisor has controlled process-group tests, but this smoke did not exercise descendants, `setsid`, timeout, crash, or restart cleanup. | A real task Job lease and hostile descendant harness remain required. |
+| Process-tree ownership | `PARTIAL` | A real `/bin/sleep` fixture was cancelled through the runner and returned `CANCELLED` after detached process-group termination. | Descendants, `setsid`, timeout, crash, restart cleanup, and a real task Job lease remain untested. |
 | Credential/Docker/persistence/privilege isolation | `UNKNOWN` | No real credential, Docker socket, launchd, privilege, or persistence surface was accessed. | `mac_task_run` remains disabled. |
 
 ## Decision
