@@ -4,7 +4,7 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { MacOsPeerCredentialVerifier, validateNativeAdapterPath } from "./peer-credentials.js";
+import { loadNativePeerAdapter, MacOsPeerCredentialVerifier, validateNativeAdapterPath } from "./peer-credentials.js";
 
 test("macOS peer credentials bind an accepted UDS connection to uid, gid, and pid", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-peer-"));
@@ -64,6 +64,13 @@ test("macOS peer credential policy rejects an unlisted process identity", async 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("native adapter binds its compiled N-API version to the runtime", () => {
+  const native = loadNativePeerAdapter();
+  const runtimeNapiVersion = Number.parseInt(process.versions.napi ?? "", 10);
+  assert.ok(native.nativeNapiVersion >= 8);
+  assert.ok(native.nativeNapiVersion <= runtimeNapiVersion);
 });
 
 test("native adapter path validation rejects symlinks and writable artifacts", async () => {

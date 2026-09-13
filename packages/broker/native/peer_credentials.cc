@@ -1867,6 +1867,9 @@ napi_value ListProcesses(napi_env env, napi_callback_info info) {
 
 napi_value Initialize(napi_env env, napi_value exports) {
   napi_value function;
+  napi_value napi_version;
+  napi_create_uint32(env, NAPI_VERSION, &napi_version);
+  napi_set_named_property(env, exports, "nativeNapiVersion", napi_version);
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);
   napi_set_named_property(env, exports, "getPeerCredentials", function);
   napi_create_function(env, "createUnixListener", NAPI_AUTO_LENGTH, CreateUnixListener, nullptr, &function);

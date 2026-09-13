@@ -15,6 +15,7 @@ export interface PeerCredentialVerifier {
 }
 
 interface NativePeerCredentials {
+  nativeNapiVersion: number;
   getPeerCredentials(descriptor: number): unknown;
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
@@ -33,6 +34,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot",
   "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity"
 ] as const;
+const MIN_SUPPORTED_NAPI_VERSION = 8;
 
 interface NativeAdapterArtifact {
   device: number;
@@ -83,6 +85,13 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
     }
     if (REQUIRED_NATIVE_EXPORTS.some((name) => typeof (native as Record<string, unknown>)[name] !== "function")) {
       throw new Error("Native peer adapter exports are incomplete");
+    }
+    const runtimeNapiVersion = Number.parseInt(process.versions.napi ?? "", 10);
+    const nativeNapiVersion = native.nativeNapiVersion;
+    if (!Number.isSafeInteger(runtimeNapiVersion) || runtimeNapiVersion < MIN_SUPPORTED_NAPI_VERSION ||
+        typeof nativeNapiVersion !== "number" || !Number.isSafeInteger(nativeNapiVersion) || nativeNapiVersion < MIN_SUPPORTED_NAPI_VERSION ||
+        nativeNapiVersion > runtimeNapiVersion) {
+      throw new Error("Native peer adapter N-API version is incompatible");
     }
     loadedNativeArtifact = after;
     return native as NativePeerCredentials;
