@@ -254,7 +254,7 @@ test("descriptor-backed create-only write resists a concurrent target create and
       remove();
       setImmediate(cycle);
     }
-    cycle();
+    setTimeout(cycle, 5);
   `, { eval: true, workerData: { target, outside } });
   await new Promise<void>((resolve, reject) => {
     attacker.once("message", () => resolve());
