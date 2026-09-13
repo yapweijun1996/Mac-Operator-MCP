@@ -28,3 +28,8 @@ xcrun clang++ \
   -I"$node_headers" \
   "$source_file" \
   -o "$output_directory/peer_credentials.node"
+
+# Refuse to leave an un-verifiable native artifact in the build output. This
+# checks the artifact produced by the current build; it does not establish
+# Developer ID provenance or notarization.
+/usr/bin/codesign --verify --strict "$output_directory/peer_credentials.node"
