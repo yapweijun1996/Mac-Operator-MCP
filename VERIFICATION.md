@@ -238,17 +238,20 @@ provisioning, ACL/rotation/deletion evidence, Edge-key integration, live
 installed use, or production enablement.
 Evidence: `evidence/2026-09-13-keychain-key-read.md`.
 
-Latest Edge-key source addendum: commit `e9dd75e` adds a versioned owner-only
-Edge authentication-key config loader and atomic writer. Each entry explicitly
-selects a file or Keychain source; mixed metadata, duplicate identities,
+Latest Edge-key source addendum: commits `e9dd75e` and `7d91c8f` add a
+versioned owner-only Edge authentication-key config loader and atomic writer.
+Each entry explicitly selects a file or Keychain source and binds an expected
+secret-byte SHA-256 digest; mixed metadata, duplicate identities,
 unsafe/canonical-path violations, config target swaps, and invalid validity
 windows fail closed. A BrokerStore is required for load-time `edge_key`
-revocation preflight, and overlapping file-backed validity windows prove the
-rotation path. Three focused Edge-key tests pass; the full regression is
-312/314 with two opt-in real-sandbox tests skipped. This remains startup
-configuration evidence only: Keychain provisioning/ACLs, real-item rotation or
-deletion, cross-process distribution, installed launchd startup, and
-production capability enablement remain open. Evidence:
+revocation preflight. `EdgeAuthenticationKeyManager` persists audited
+monotonic revision/digest activation and requires exact restart restore;
+overlapping file-backed validity windows prove the rotation path. Five focused
+Edge-key tests pass; the full regression is 314/316 with two opt-in
+real-sandbox tests skipped. This remains startup configuration evidence only:
+Keychain provisioning/ACLs, real-item rotation or deletion, cross-process
+distribution, installed launchd startup, and production capability enablement
+remain open. Evidence:
 `evidence/2026-09-13-edge-key-source-rotation.md`.
 
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
