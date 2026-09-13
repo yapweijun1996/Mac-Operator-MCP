@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `2371eba`.
+Current committed implementation baseline: `42268d2`.
+
+The latest Broker real-worker post-rename addendum is `42268d2`: a controlled
+test-only worker URL and fault native adapter drive a real descriptor-relative
+write through `WorkerFilesystemExecutor`, inject `ENOSPC` after rename before
+parent `fsync`, and verify the target is committed while the worker fails.
+Broker preserves the mutation Job as `UNKNOWN`; `mac_job_status` reads
+`matches / remains_unknown`. The production default worker/native paths remain
+fixed. Focused Broker tests pass 62/62; the full suite passes 372 tests (370
+passed, 2 opt-in real-sandbox tests skipped). `MOPS_REAL_SANDBOX=1 npm test`
+passes 372/372. Physical disk-full, remount, kernel-blocked I/O, and worker
+restart ownership remain open. Evidence:
+`evidence/2026-09-13-broker-worker-post-rename.md`.
 
 The latest Broker real-worker write-failure addendum is `2371eba`: a real
 `WorkerFilesystemExecutor` fails to create a temporary file under a

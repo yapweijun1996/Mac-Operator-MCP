@@ -112,6 +112,10 @@ prove production-scale exhaustion or kernel-level I/O interruption.
 Broker integration also runs a real filesystem worker against a mode-`0500`
 parent and verifies that a pre-commit worker failure leaves the mutation Job
 `UNKNOWN`, with an unavailable postcondition rather than a false success.
+A separate controlled test-only worker URL and fault adapter drive the same
+real worker boundary through atomic rename and force a post-rename `ENOSPC`; the
+committed target is read back while the Job remains `UNKNOWN`. Production
+construction omits the override and retains the fixed worker/native paths.
 
 The fault-test-only native module also injects deterministic `ENOSPC` before
 temporary-file write and `fsync` boundaries, and after atomic rename before
