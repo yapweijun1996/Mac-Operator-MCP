@@ -16,6 +16,16 @@ authenticated status-channel binding, Developer ID/notarization, remote Edge,
 upgrade/rollback, and helper installation remain open. Evidence:
 `evidence/2026-09-14-live-install-plan.md`.
 
+Latest separate Edge-process addendum: the compiled Edge package now has a
+Darwin-only cross-process HTTPS smoke. A spawned Edge loads protected key/TLS
+material and contracts, while the parent native Broker accepts only its exact
+UID/GID and PID/start-time identity. Official MCP negotiation and `mac_health`
+complete successfully, signed local IPC remains in force, and the bearer token
+is absent from the audit ledger. Focused Edge tests pass 2/2. This is temporary
+process-boundary evidence; launchd installation/readback, Developer ID,
+remote OAuth/JWKS, and production key rotation remain open. Evidence:
+`evidence/2026-09-14-separate-edge-process.md`.
+
 Latest exact-arguments readback addendum: source commit `9d90138` parses the
 bounded launchd `arguments` block and requires the exact planned Node binary
 plus JavaScript entrypoint during Broker service composition. Missing,

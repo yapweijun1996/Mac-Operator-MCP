@@ -6,6 +6,17 @@ Last verified: 2026-09-14
 
 ## Current situation
 
+Latest transport addendum: commit `a4bb152` adds a Darwin-only cross-process
+HTTPS smoke. A separately spawned Edge process loads the compiled Edge package,
+protected authentication key, contracts, TLS material, and local JWT verifier;
+the parent native Broker binds the child by exact UID/GID and PID/start-time.
+The official MCP client completes version negotiation and `mac_health`, while
+the Broker audit ledger excludes the bearer token. This extends the earlier
+same-process HTTPS/native-UDS evidence but remains a temporary process fixture;
+launchd installation/readback, Developer ID/notarization, remote OAuth/JWKS,
+and production key rotation remain open. Evidence:
+`evidence/2026-09-14-separate-edge-process.md`.
+
 Current committed implementation baseline: install-plan raw-readback hardening.
 
 The current install-plan readback hardening adds a raw-source observer boundary:
