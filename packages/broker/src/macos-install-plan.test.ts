@@ -13,6 +13,7 @@ import {
   validateMacOsInstallReadback,
   type MacOsInstallPlanInput
 } from "./macos-install-plan.js";
+import { ProcessSupervisor } from "./process-supervisor.js";
 
 const base: MacOsInstallPlanInput = {
   uid: 501,
@@ -122,6 +123,76 @@ test("upgrade and uninstall plans bind an exact existing revision and fail close
 test("malformed nested readback is rejected with a stable plan error", () => {
   const plan = buildMacOsInstallPlan(base);
   assert.throws(() => validateMacOsInstallReadback(plan, { launchd: null } as never), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_READBACK");
+});
+
+test("signature verification plan accepts a real temporary ad-hoc signed artifact", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("The production packaging target is macOS");
+    return;
+  }
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-codesign-"));
+  try {
+    const userHome = join(root, "home");
+    const installRoot = join(userHome, "MacOperator");
+    const artifact = join(installRoot, "MacOperatorBroker.app");
+    const contents = join(artifact, "Contents");
+    const executable = join(contents, "MacOS", "broker");
+    await mkdir(join(contents, "MacOS"), { recursive: true, mode: 0o700 });
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await writeFile(join(contents, "Info.plist"), [
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+      "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+      "<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.mac-operator.broker</string><key>CFBundleExecutable</key><string>broker</string></dict></plist>"
+    ].join("\n"), { mode: 0o600 });
+
+    const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+    const signed = await supervisor.run({
+      executable: "/usr/bin/codesign",
+      args: ["--force", "--deep", "--sign", "-", "--timestamp=none", artifact],
+      cwd: "/",
+      environment: {},
+      timeoutMs: 5_000,
+      outputCapBytes: 131_072
+    });
+    assert.equal(signed.state, "completed");
+    assert.equal(signed.resultClass, "SUCCEEDED");
+
+    const uid = process.getuid?.();
+    if (uid === undefined) throw new Error("POSIX identity is unavailable");
+    const plan = buildMacOsInstallPlan({
+      ...base,
+      uid,
+      userHome,
+      installRoot,
+      plistPath: join(userHome, "Library", "LaunchAgents", "com.mac-operator.broker.plist"),
+      signedArtifactPath: artifact,
+      service: {
+        ...base.service,
+        program: join(installRoot, "bin", "node"),
+        programArguments: [join(installRoot, "bin", "node"), join(installRoot, "service-entrypoint.js")],
+        workingDirectory: installRoot,
+        stdoutPath: join(installRoot, "logs", "broker.out.log"),
+        stderrPath: join(installRoot, "logs", "broker.err.log")
+      },
+      signature: { identifier: "com.mac-operator.broker" }
+    });
+    const verified = await supervisor.run(plan.signatureVerify);
+    assert.equal(verified.state, "completed");
+    assert.equal(verified.resultClass, "SUCCEEDED");
+    const details = await supervisor.run({
+      executable: "/usr/bin/codesign",
+      args: ["-dv", "--verbose=4", artifact],
+      cwd: "/",
+      environment: {},
+      timeoutMs: 5_000,
+      outputCapBytes: 131_072
+    });
+    assert.equal(details.state, "completed");
+    assert.match(`${details.stdout}\n${details.stderr}`, /Identifier=com\.mac-operator\.broker/u);
+    assert.match(`${details.stdout}\n${details.stderr}`, /CDHash=[0-9a-f]{20,64}/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("filesystem preflight rejects symlinks and writable paths, then returns stable identity readback", async () => {
