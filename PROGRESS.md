@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `12a1ac3`.
+Current committed implementation baseline: `e0c1e17`.
+
+The latest helper-package addendum is `e0c1e17`: a separate non-executing
+system LaunchDaemon plan now fixes the helper label/domain, native-only argv,
+root-owned plist actions, exact helper signature identity, protected helper
+root/key/socket paths, Broker peer UID/GID binding, and exact upgrade/rollback/
+uninstall commands. Readback rejects an enabled adapter or any capability
+advertisement. This is packaging-boundary evidence only; no launchd mutation,
+root process, signing, or privileged action was performed. The full suite
+passes 341 tests (339 passed, 2 opt-in real-sandbox tests skipped). Evidence:
+`evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 The latest helper-runtime addendum is `12a1ac3`: an independent helper
 runtime now restores the exact active `helper_key` configuration before

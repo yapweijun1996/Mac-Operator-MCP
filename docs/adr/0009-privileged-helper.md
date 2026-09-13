@@ -35,6 +35,14 @@ socket paths, and owns serialized start/close rollback. Its default adapter
 remains fail-closed; this is lifecycle wiring only and does not launch a root
 process or enable a privileged operation.
 
+Revision `e0c1e17` adds a separate, non-executing root-domain package plan. The
+plan fixes the system LaunchDaemon identity, native-only argv, exact helper
+signature identifier, root-owned plist actions, protected helper-root/key/
+socket paths, Broker peer UID/GID binding, and exact rollback/readback
+invariants. It rejects capability advertisement and enabled adapters. This is
+not installation, signing, caller-provenance approval, or acceptance of a
+root process.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
@@ -44,4 +52,7 @@ process or enable a privileged operation.
 
 ## Open evidence
 
-Caller identity, separate helper/root-domain packaging, code signing/notarization, approved Keychain ACLs, service/package/power adapters, crash recovery, real-host caller-spoof tests, and independent P0/P1 review remain open. This ADR is not an acceptance of privileged capability.
+Caller identity provenance, separate helper/root-domain installation, Developer
+ID code signing/notarization, approved Keychain ACLs, service/package/power
+adapters, crash recovery, real-host caller-spoof/readback tests, and independent
+P0/P1 review remain open. This ADR is not an acceptance of privileged capability.
