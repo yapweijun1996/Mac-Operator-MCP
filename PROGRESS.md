@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `0ac3e15`.
+Current committed implementation baseline: `93eeaf8`.
+
+The latest atomic-write post-commit-error addendum is `93eeaf8`: the
+fault-test-only native module injects `ENOSPC` after atomic rename and before
+parent-directory `fsync`. The target contains the new bytes, the temporary
+artifact is absent, and the call fails non-zero, modelling the ambiguous
+post-commit window that must remain `UNKNOWN`. Focused filesystem tests pass
+31/31; the full suite passes 370 tests (368 passed, 2 opt-in real-sandbox
+tests skipped). `MOPS_REAL_SANDBOX=1 npm test` passes 370/370. Physical
+disk-full, remount, kernel-blocked I/O, and restart evidence remain open.
+Evidence: `evidence/2026-09-13-write-post-commit-error.md`.
 
 The latest atomic-write storage-error addendum is `0ac3e15`: the fault-test
 native module can deterministically inject `ENOSPC` at temporary-file write and
