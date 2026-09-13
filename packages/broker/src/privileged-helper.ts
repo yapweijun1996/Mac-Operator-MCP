@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
+import { connect, createServer, type Server, type Socket } from "node:net";
+import { isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
@@ -9,6 +10,8 @@ import { redactLogText } from "./secret-policy.js";
 
 const HELPER_COMMAND_DOMAIN = "mac-operator-privileged-helper-command-v0.1\0";
 const HELPER_RESPONSE_DOMAIN = "mac-operator-privileged-helper-response-v0.1\0";
+const HELPER_STATUS_REQUEST_DOMAIN = "mac-operator-privileged-helper-status-request-v0.1\0";
+const HELPER_STATUS_RESPONSE_DOMAIN = "mac-operator-privileged-helper-status-response-v0.1\0";
 const MAX_COMMAND_AGE_MS = 600_000;
 const MAX_COMMAND_BYTES = 256 * 1024;
 const MAX_RESPONSE_BYTES = 1 * 1024 * 1024;
@@ -98,6 +101,55 @@ export type PrivilegedHelperFailureResponse = {
 };
 
 export type PrivilegedHelperResponse = PrivilegedHelperSuccessResponse | PrivilegedHelperFailureResponse;
+
+export interface PrivilegedHelperStatusReadback {
+  component: "mac-operator-privileged-helper";
+  state: "running";
+  runtimeState: "running";
+  nativeTransportRequired: true;
+  adapterAvailable: false;
+  helperSocketPath: string;
+  brokerSocketPath: string;
+  brokerPeerUid: number;
+  brokerPeerGid: number | null;
+  sourceRevision: string;
+  contractVersion: string;
+  policyVersion: string;
+  enabledCapabilities: readonly [];
+}
+
+export interface UnsignedPrivilegedHelperStatusRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  contractVersion: typeof CONTRACT_VERSION;
+  requestId: string;
+  nonce: string;
+  timestampMs: number;
+  expiresAtMs: number;
+  kind: "status";
+}
+
+export interface SignedPrivilegedHelperStatusRequest extends UnsignedPrivilegedHelperStatusRequest {
+  authenticationProof: string;
+}
+
+export type PrivilegedHelperStatusSuccessResponse = {
+  ok: true;
+  kind: "status";
+  requestId: string;
+  status: PrivilegedHelperStatusReadback;
+  responseProof: string;
+};
+
+export type PrivilegedHelperStatusFailureResponse = {
+  ok: false;
+  kind: "status";
+  requestId: string;
+  resultClass: ErrorClass;
+  error: { message: string; retryable: boolean };
+  responseProof: string;
+};
+
+export type PrivilegedHelperStatusResponse = PrivilegedHelperStatusSuccessResponse | PrivilegedHelperStatusFailureResponse;
 
 export interface PrivilegedHelperReplayGuard {
   admit(command: Pick<UnsignedPrivilegedHelperCommand, "requestId" | "nonce" | "timestampMs" | "nonceExpiresAtMs">): void;
@@ -367,6 +419,10 @@ export interface PrivilegedHelperIpcServerOptions {
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
   /** Optional dynamic helper-key validity and active-configuration check. */
   keyAuthorityCheck?: () => void;
+  /** Host-only authenticated status source; never exposed as an MCP operation. */
+  readStatus?: () => PrivilegedHelperStatusReadback;
+  /** Final Broker/helper authority gate for status requests. */
+  authorizeStatus?: () => void;
   peerCredentialVerifier?: { verify(socket: Socket): unknown };
   peerPolicy?: NativePeerPolicy;
   maxRequestBytes?: number;
@@ -496,10 +552,41 @@ export class PrivilegedHelperIpcServer {
       if (newline === -1) return;
       handled = true;
       socket.pause();
+      let raw: unknown;
+      try {
+        raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+      } catch {
+        writeResponse(socket, this.failure("PRECONDITION_FAILED", "Privileged helper request is not valid JSON", "invalid-command", "invalid-request"));
+        return;
+      }
+      if (isStatusRequestEnvelope(raw)) {
+        let statusRequest: UnsignedPrivilegedHelperStatusRequest | undefined;
+        let statusResponse: PrivilegedHelperStatusResponse;
+        try {
+          statusRequest = authenticatePrivilegedHelperStatusRequest(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+          this.options.keyAuthorityCheck?.();
+          this.options.replayGuard.admit({
+            requestId: statusRequest.requestId,
+            nonce: statusRequest.nonce,
+            timestampMs: statusRequest.timestampMs,
+            nonceExpiresAtMs: statusRequest.expiresAtMs
+          });
+          if (!this.options.readStatus || !this.options.authorizeStatus) {
+            throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper status readback is not enabled");
+          }
+          this.options.authorizeStatus();
+          statusResponse = statusSuccess(statusRequest, validatePrivilegedHelperStatusReadback(this.options.readStatus()), this.authenticationKey);
+        } catch (error) {
+          const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper status request is invalid");
+          const fallback = statusRequest ?? fallbackStatusRequest();
+          statusResponse = this.statusFailure(brokerError.errorClass, brokerError.message, fallback.requestId, brokerError.retryable, statusRequest);
+        }
+        writeStatusResponse(socket, statusResponse);
+        return;
+      }
       let response: PrivilegedHelperResponse;
       let command: UnsignedPrivilegedHelperCommand | undefined;
       try {
-        const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
         command = authenticatePrivilegedHelperCommand(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
         this.options.keyAuthorityCheck?.();
         this.options.replayGuard.admit(command);
@@ -549,11 +636,214 @@ export class PrivilegedHelperIpcServer {
     const body = { ok: false as const, commandId, requestId, resultClass: errorClass, error: { message: boundedMessage(message), retryable } };
     return { ...body, responseProof: responseProof(command, body, this.authenticationKey) };
   }
+
+  private statusFailure(
+    errorClass: ErrorClass,
+    message: string,
+    requestId: string,
+    retryable = false,
+    request?: UnsignedPrivilegedHelperStatusRequest
+  ): PrivilegedHelperStatusFailureResponse {
+    const body = { ok: false as const, kind: "status" as const, requestId, resultClass: errorClass, error: { message: boundedMessage(message), retryable } };
+    return { ...body, responseProof: statusResponseProof(request, body, this.authenticationKey) };
+  }
 }
 
 export function signPrivilegedHelperCommand(command: UnsignedPrivilegedHelperCommand, authenticationKey: Buffer): SignedPrivilegedHelperCommand {
   validateUnsignedPrivilegedHelperCommand(command);
   return { ...command, authenticationProof: commandProof(command, authenticationKey) };
+}
+
+export function signPrivilegedHelperStatusRequest(
+  request: UnsignedPrivilegedHelperStatusRequest,
+  authenticationKey: Buffer
+): SignedPrivilegedHelperStatusRequest {
+  validateUnsignedPrivilegedHelperStatusRequest(request);
+  if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Privileged helper key is invalid");
+  return { ...request, authenticationProof: statusRequestProof(request, authenticationKey) };
+}
+
+export function authenticatePrivilegedHelperStatusRequest(
+  raw: unknown,
+  authenticationKey: Buffer,
+  nowMs: number,
+  maxRequestAgeMs = MAX_COMMAND_AGE_MS,
+  allowedClockSkewMs = 5_000
+): UnsignedPrivilegedHelperStatusRequest {
+  if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Privileged helper key is invalid");
+  const parsed = parseSignedStatusRequest(raw);
+  const request = parsed.unsigned;
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || request.timestampMs > nowMs + allowedClockSkewMs ||
+      nowMs - request.timestampMs > maxRequestAgeMs || request.expiresAtMs <= request.timestampMs ||
+      request.expiresAtMs > request.timestampMs + maxRequestAgeMs + allowedClockSkewMs) {
+    throw new BrokerError("AUTH_EXPIRED", "Privileged helper status timestamp is outside the accepted window");
+  }
+  if (!safeEqualHex(parsed.authenticationProof, statusRequestProof(request, authenticationKey))) {
+    throw new BrokerError("AUTH_INVALID", "Privileged helper status authentication failed");
+  }
+  return request;
+}
+
+export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedPrivilegedHelperStatusRequest): void {
+  if (request === null || typeof request !== "object" || Array.isArray(request) ||
+      request.protocolVersion !== PROTOCOL_VERSION || request.contractVersion !== CONTRACT_VERSION ||
+      !/^request:status-[A-Za-z0-9._:-]{1,240}$/u.test(request.requestId) || !NONCE_PATTERN.test(request.nonce) ||
+      !Number.isSafeInteger(request.timestampMs) || request.timestampMs < 0 ||
+      !Number.isSafeInteger(request.expiresAtMs) || request.expiresAtMs <= request.timestampMs ||
+      request.kind !== "status") {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status request fields are malformed");
+  }
+}
+
+export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperStatusReadback): PrivilegedHelperStatusReadback {
+  if (status === null || typeof status !== "object" || Array.isArray(status) ||
+      status.component !== "mac-operator-privileged-helper" || status.state !== "running" ||
+      status.runtimeState !== "running" || status.nativeTransportRequired !== true ||
+      status.adapterAvailable !== false || !canonicalStatusPath(status.helperSocketPath) ||
+      !canonicalStatusPath(status.brokerSocketPath) || status.helperSocketPath === status.brokerSocketPath ||
+      !Number.isSafeInteger(status.brokerPeerUid) || status.brokerPeerUid < 1 ||
+      (status.brokerPeerGid !== null && (!Number.isSafeInteger(status.brokerPeerGid) || status.brokerPeerGid < 0)) ||
+      !/^[a-f0-9]{40}$/u.test(status.sourceRevision) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/u.test(status.contractVersion) ||
+      !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(status.policyVersion) ||
+      !Array.isArray(status.enabledCapabilities) || status.enabledCapabilities.length !== 0) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper status readback is malformed");
+  }
+  return status;
+}
+
+export function authenticatePrivilegedHelperStatusResponse(
+  raw: unknown,
+  request: UnsignedPrivilegedHelperStatusRequest,
+  authenticationKey: Buffer
+): PrivilegedHelperStatusResponse {
+  validateUnsignedPrivilegedHelperStatusRequest(request);
+  if (authenticationKey.byteLength < 32 || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new BrokerError("AUTH_INVALID", "Privileged helper status response is invalid");
+  }
+  const response = raw as Record<string, unknown>;
+  if (response.kind !== "status" || response.requestId !== request.requestId || typeof response.responseProof !== "string") {
+    throw new BrokerError("AUTH_INVALID", "Privileged helper status response identity is invalid");
+  }
+  const keys = new Set(Object.keys(response));
+  const successKeys = ["ok", "kind", "requestId", "status", "responseProof"];
+  const failureKeys = ["ok", "kind", "requestId", "resultClass", "error", "responseProof"];
+  const expectedKeys = response.ok === true ? successKeys : response.ok === false ? failureKeys : [];
+  if (expectedKeys.length === 0 || keys.size !== expectedKeys.length || expectedKeys.some((key) => !keys.has(key))) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper status response fields are malformed");
+  }
+  const body = { ...response };
+  delete body.responseProof;
+  if (!safeEqualHex(response.responseProof as string, statusResponseProof(request, body, authenticationKey))) {
+    throw new BrokerError("AUTH_INVALID", "Privileged helper status response authentication failed");
+  }
+  if (response.ok === true) {
+    return {
+      ...(response as unknown as PrivilegedHelperStatusSuccessResponse),
+      status: validatePrivilegedHelperStatusReadback(response.status as PrivilegedHelperStatusReadback)
+    };
+  }
+  if (response.ok !== false || typeof response.resultClass !== "string" || !isHelperErrorClass(response.resultClass) ||
+      response.error === null || typeof response.error !== "object" ||
+      typeof (response.error as Record<string, unknown>).message !== "string" ||
+      typeof (response.error as Record<string, unknown>).retryable !== "boolean" ||
+      !boundedStatusMessage((response.error as Record<string, unknown>).message as string)) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper status failure is malformed");
+  }
+  return response as unknown as PrivilegedHelperStatusFailureResponse;
+}
+
+/**
+ * Reads helper-owned runtime metadata over the separately authenticated local
+ * channel. The client fences the socket identity before and after the read so
+ * a replacement socket cannot be mistaken for the configured helper.
+ */
+export interface PrivilegedHelperStatusClientOptions {
+  socketPath: string;
+  authenticationKey: Buffer;
+  now?: () => number;
+  timeoutMs?: number;
+}
+
+export async function readPrivilegedHelperStatus(options: PrivilegedHelperStatusClientOptions): Promise<PrivilegedHelperStatusReadback> {
+  if (options === null || typeof options !== "object" || !canonicalStatusPath(options.socketPath) ||
+      options.authenticationKey.byteLength < 32) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status client options are invalid");
+  }
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 15_000) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status timeout is invalid");
+  }
+  const now = options.now ?? Date.now;
+  const timestampMs = now();
+  if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status clock is invalid");
+  }
+  const request: UnsignedPrivilegedHelperStatusRequest = {
+    protocolVersion: PROTOCOL_VERSION,
+    contractVersion: CONTRACT_VERSION,
+    requestId: `request:status-${randomBytes(16).toString("hex")}`,
+    nonce: `status-nonce-${randomBytes(16).toString("hex")}`,
+    timestampMs,
+    expiresAtMs: timestampMs + Math.min(timeoutMs, MAX_COMMAND_AGE_MS),
+    kind: "status"
+  };
+  const signed = signPrivilegedHelperStatusRequest(request, options.authenticationKey);
+  let before: SocketPathIdentity;
+  try {
+    before = await captureSocketPathIdentity(options.socketPath);
+  } catch {
+    throw new BrokerError("TARGET_NOT_FOUND", "Privileged helper status socket is unavailable");
+  }
+  const key = Buffer.from(options.authenticationKey);
+  try {
+    const response = await new Promise<unknown>((resolvePromise, reject) => {
+      const socket = connect(options.socketPath);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      let settled = false;
+      const fail = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        reject(error);
+      };
+      socket.setTimeout(timeoutMs, () => fail(new BrokerError("TIMEOUT", "Privileged helper status readback timed out", true)));
+      socket.once("error", fail);
+      socket.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        total += chunk.byteLength;
+        if (total > MAX_RESPONSE_BYTES) {
+          fail(new BrokerError("OUTPUT_LIMIT", "Privileged helper status response exceeded the byte limit"));
+          return;
+        }
+        chunks.push(chunk);
+        const combined = Buffer.concat(chunks);
+        const newline = combined.indexOf(0x0a);
+        if (newline === -1) return;
+        settled = true;
+        socket.destroy();
+        try {
+          resolvePromise(JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown);
+        } catch {
+          reject(new BrokerError("EXECUTION_FAILED", "Privileged helper status response is not valid JSON"));
+        }
+      });
+      socket.on("close", () => {
+        if (!settled) fail(new BrokerError("EXECUTION_FAILED", "Privileged helper status channel closed without a response", true));
+      });
+      socket.once("connect", () => socket.write(`${JSON.stringify(signed)}\n`));
+    });
+    const after = await captureSocketPathIdentity(options.socketPath);
+    if (before.device !== after.device || before.inode !== after.inode) {
+      throw new BrokerError("CONFLICT", "Privileged helper status socket identity changed during readback");
+    }
+    const verified = authenticatePrivilegedHelperStatusResponse(response, request, key);
+    if (!verified.ok) throw new BrokerError(verified.resultClass, verified.error.message, verified.error.retryable);
+    return verified.status;
+  } finally {
+    key.fill(0);
+  }
 }
 
 export function authenticatePrivilegedHelperCommand(
@@ -711,6 +1001,99 @@ function responseProof(command: UnsignedPrivilegedHelperCommand | undefined, bod
     .digest("hex");
 }
 
+function isStatusRequestEnvelope(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    (value as { kind?: unknown }).kind === "status";
+}
+
+function statusRequestProof(request: UnsignedPrivilegedHelperStatusRequest, key: Buffer): string {
+  if (key.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
+  return createHmac("sha256", key)
+    .update(HELPER_STATUS_REQUEST_DOMAIN, "utf8")
+    .update(sha256(canonicalJson(request)), "utf8")
+    .digest("hex");
+}
+
+function statusResponseProof(
+  request: UnsignedPrivilegedHelperStatusRequest | undefined,
+  body: object,
+  key: Buffer
+): string {
+  if (key.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
+  return createHmac("sha256", key)
+    .update(HELPER_STATUS_RESPONSE_DOMAIN, "utf8")
+    .update(request ? sha256(canonicalJson(request)) : "invalid-status-request", "utf8")
+    .update(canonicalJson(body), "utf8")
+    .digest("hex");
+}
+
+function statusSuccess(
+  request: UnsignedPrivilegedHelperStatusRequest,
+  status: PrivilegedHelperStatusReadback,
+  key: Buffer
+): PrivilegedHelperStatusSuccessResponse {
+  const body = { ok: true as const, kind: "status" as const, requestId: request.requestId, status };
+  return { ...body, responseProof: statusResponseProof(request, body, key) };
+}
+
+function writeStatusResponse(socket: Socket, response: PrivilegedHelperStatusResponse): void {
+  if (!socket.destroyed) {
+    const serialized = `${JSON.stringify(response)}\n`;
+    if (Buffer.byteLength(serialized, "utf8") <= MAX_RESPONSE_BYTES) socket.end(serialized);
+    else socket.destroy();
+  }
+}
+
+function fallbackStatusRequest(): UnsignedPrivilegedHelperStatusRequest {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    contractVersion: CONTRACT_VERSION,
+    requestId: "request:status-invalid",
+    nonce: "invalid-invalid-invalid",
+    timestampMs: 0,
+    expiresAtMs: 1,
+    kind: "status"
+  };
+}
+
+function canonicalStatusPath(value: unknown): value is string {
+  return typeof value === "string" && isAbsolute(value) && resolve(value) === value && !value.includes("\0");
+}
+
+function isHelperErrorClass(value: string): value is ErrorClass {
+  return (Object.values([
+    "AUTH_REQUIRED", "AUTH_INVALID", "AUTH_EXPIRED", "REPLAY_DENIED", "REVOKED", "SCOPE_DENIED",
+    "SECRET_BOUNDARY_DENIED", "PATH_DENIED", "NETWORK_DENIED", "PRIVILEGE_DENIED", "POLICY_DENIED",
+    "TARGET_NOT_FOUND", "PRECONDITION_FAILED", "CONFLICT", "TIMEOUT", "OUTPUT_LIMIT", "CANCELLED",
+    "EXECUTION_FAILED", "VERIFICATION_FAILED", "AUDIT_UNAVAILABLE", "UNKNOWN_OUTCOME", "UNSUPPORTED_CAPABILITY"
+  ] as const) as readonly string[]).includes(value);
+}
+
+function parseSignedStatusRequest(value: unknown): { unsigned: UnsignedPrivilegedHelperStatusRequest; authenticationProof: string } {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status envelope is malformed");
+  }
+  const record = value as Record<string, unknown>;
+  const allowed = new Set([
+    "protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "authenticationProof"
+  ]);
+  if (Object.keys(record).some((key) => !allowed.has(key)) || typeof record.authenticationProof !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(record.authenticationProof)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status envelope is malformed");
+  }
+  const unsigned = {
+    protocolVersion: record.protocolVersion as typeof PROTOCOL_VERSION,
+    contractVersion: record.contractVersion as typeof CONTRACT_VERSION,
+    requestId: record.requestId as string,
+    nonce: record.nonce as string,
+    timestampMs: record.timestampMs as number,
+    expiresAtMs: record.expiresAtMs as number,
+    kind: record.kind as "status"
+  } satisfies UnsignedPrivilegedHelperStatusRequest;
+  validateUnsignedPrivilegedHelperStatusRequest(unsigned);
+  return { unsigned, authenticationProof: record.authenticationProof as string };
+}
+
 function success(command: UnsignedPrivilegedHelperCommand, result: PrivilegedHelperExecutionResult, key: Buffer): PrivilegedHelperSuccessResponse {
   const body = { ok: true as const, commandId: command.commandId, requestId: command.requestId, result };
   return { ...body, responseProof: responseProof(command, body, key) };
@@ -753,6 +1136,10 @@ function safeEqualHex(actual: string, expected: string): boolean {
 
 function boundedMessage(value: string): string {
   return value.length <= 512 && !value.includes("\0") ? value : "Privileged helper request failed";
+}
+
+function boundedStatusMessage(value: string): boolean {
+  return value.length <= 512 && !value.includes("\0") && !/[\r\n]/u.test(value);
 }
 
 function fallbackCommand(): UnsignedPrivilegedHelperCommand {

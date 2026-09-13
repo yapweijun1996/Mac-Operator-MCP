@@ -153,7 +153,13 @@ export class PrivilegedHelperKeyManager {
         authorizeCommand: (command) => {
           this.assertBindingUsable(binding);
           options.authorizeCommand(command);
-        }
+        },
+        ...(options.authorizeStatus === undefined ? {} : {
+          authorizeStatus: () => {
+            this.assertBindingUsable(binding);
+            options.authorizeStatus!();
+          }
+        })
       });
     } finally {
       key.fill(0);

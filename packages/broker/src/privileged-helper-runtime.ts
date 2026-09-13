@@ -7,6 +7,7 @@ import {
   type PrivilegedHelperAdapter,
   type PrivilegedHelperIpcServerOptions,
   type PrivilegedHelperReplayGuard,
+  type PrivilegedHelperStatusReadback,
   type UnsignedPrivilegedHelperCommand
 } from "./privileged-helper.js";
 import type { BrokerStore } from "./persistence.js";
@@ -46,7 +47,11 @@ export interface PrivilegedHelperRuntimeOptions {
   replayGuard: PrivilegedHelperReplayGuard;
   adapter: PrivilegedHelperAdapter;
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
-  serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "replayGuard" | "adapter" | "authorizeCommand">;
+  /** Helper-owned runtime metadata source; never inferred from launchd. */
+  readStatus?: () => PrivilegedHelperStatusReadback;
+  /** Broker-owned final authority gate for status reads. */
+  authorizeStatus?: () => void;
+  serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "replayGuard" | "adapter" | "authorizeCommand" | "readStatus" | "authorizeStatus">;
 }
 
 export interface LaunchdHelperIdentityCommandExecutor {
@@ -213,7 +218,9 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
       peerPolicy: options.peerPolicy,
       replayGuard: options.replayGuard,
       adapter: options.adapter,
-      authorizeCommand: options.authorizeCommand
+      authorizeCommand: options.authorizeCommand,
+      ...(options.readStatus === undefined ? {} : { readStatus: options.readStatus }),
+      ...(options.authorizeStatus === undefined ? {} : { authorizeStatus: options.authorizeStatus })
     });
     manager.dispose();
     return new PrivilegedHelperRuntime(server);
