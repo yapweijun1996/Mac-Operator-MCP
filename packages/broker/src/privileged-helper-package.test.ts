@@ -9,6 +9,7 @@ import {
   applyPrivilegedHelperPlistPlan,
   buildPrivilegedHelperPackageExecutionPlan,
   buildPrivilegedHelperPackagePlan,
+  composePrivilegedHelperPackageReadback,
   executePrivilegedHelperPackagePlan,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
@@ -137,6 +138,48 @@ test("privileged helper package readback binds root service, Broker peer, and di
     }
   };
   validatePrivilegedHelperPackageReadback(plan, readback);
+  const composed = composePrivilegedHelperPackageReadback(plan, {
+    launchd: {
+      serviceId: "system/com.mac-operator.privileged-helper",
+      domain: "system",
+      label: plan.label,
+      state: "running",
+      pid: 1234,
+      program: plan.launchd.program,
+      arguments: plan.launchd.programArguments,
+      plistPath: plan.plistPath,
+      type: "LaunchDaemon",
+      lastExitCode: null,
+      truncated: false
+    },
+    processIdentity: readback.processIdentity,
+    plist: readback.plist,
+    helper: readback.helper,
+    signature: readback.signature
+  });
+  assert.deepEqual(composed, readback);
+  assert.throws(
+    () => composePrivilegedHelperPackageReadback(plan, {
+      launchd: {
+        serviceId: "system/com.attacker.helper",
+        domain: "system",
+        label: plan.label,
+        state: "running",
+        pid: 1234,
+        program: plan.launchd.program,
+        arguments: plan.launchd.programArguments,
+        plistPath: plan.plistPath,
+        type: "LaunchDaemon",
+        lastExitCode: null,
+        truncated: false
+      },
+      processIdentity: readback.processIdentity,
+      plist: readback.plist,
+      helper: readback.helper,
+      signature: readback.signature
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
   assert.throws(
     () => validatePrivilegedHelperPackageReadback(plan, { ...readback, pid: null as never }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_READBACK"

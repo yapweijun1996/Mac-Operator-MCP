@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec, MacOsPlistReadback } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
+import type { LaunchdJobReadback } from "./launchd-readback.js";
 import type { PeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -136,6 +137,14 @@ export interface PrivilegedHelperPackageReadback {
   processIdentity: PeerProcessIdentity;
   plist: MacOsPlistReadback;
   launchd: PrivilegedHelperLaunchdReadback;
+  helper: PrivilegedHelperRuntimeReadback;
+  signature: CodeSignatureReadback;
+}
+
+export interface PrivilegedHelperPackageReadbackSources {
+  launchd: LaunchdJobReadback;
+  processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
   helper: PrivilegedHelperRuntimeReadback;
   signature: CodeSignatureReadback;
 }
@@ -830,6 +839,51 @@ export function validatePrivilegedHelperPackageReadback(
   } catch {
     fail("SIGNATURE_MISMATCH", "privileged helper code signature readback does not match the plan");
   }
+}
+
+/**
+ * Composes helper readiness only from independently observed launchd,
+ * process, plist, runtime, and signature sources. The launchd parser remains
+ * authoritative for service identity, state, PID, argv, plist path, and
+ * LaunchDaemon type; planned fields are copied only after those observations
+ * match the exact root-domain helper plan.
+ */
+export function composePrivilegedHelperPackageReadback(
+  plan: PrivilegedHelperPackagePlan,
+  sources: PrivilegedHelperPackageReadbackSources
+): PrivilegedHelperPackageReadback {
+  if (sources === null || typeof sources !== "object" ||
+      sources.launchd === null || typeof sources.launchd !== "object" ||
+      sources.processIdentity === null || typeof sources.processIdentity !== "object" ||
+      sources.plist === null || typeof sources.plist !== "object" ||
+      sources.helper === null || typeof sources.helper !== "object" ||
+      sources.signature === null || typeof sources.signature !== "object") {
+    fail("INVALID_READBACK", "privileged helper readback sources are malformed");
+  }
+  const expectedServiceId = `${plan.domain}/${plan.label}`;
+  const launchd = sources.launchd;
+  if (launchd.serviceId !== expectedServiceId || launchd.domain !== "system" ||
+      launchd.label !== plan.label || launchd.state !== "running" ||
+      launchd.type !== "LaunchDaemon" || launchd.pid === null ||
+      launchd.program !== plan.launchd.program ||
+      !sameStrings(launchd.arguments, plan.launchd.programArguments) ||
+      launchd.plistPath !== plan.plistPath || launchd.truncated !== false ||
+      launchd.pid !== sources.processIdentity.pid) {
+    fail("SERVICE_MISMATCH", "launchd readback sources do not match the planned privileged helper");
+  }
+  const readback: PrivilegedHelperPackageReadback = {
+    domain: plan.domain,
+    label: plan.label,
+    plistPath: plan.plistPath,
+    pid: launchd.pid,
+    processIdentity: sources.processIdentity,
+    plist: sources.plist,
+    launchd: plan.launchd,
+    helper: sources.helper,
+    signature: sources.signature
+  };
+  validatePrivilegedHelperPackageReadback(plan, readback);
+  return readback;
 }
 
 /**
