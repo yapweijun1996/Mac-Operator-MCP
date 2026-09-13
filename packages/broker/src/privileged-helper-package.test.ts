@@ -102,6 +102,7 @@ test("privileged helper package readback binds root service, Broker peer, and di
     label: plan.label,
     plistPath: plan.plistPath,
     pid: 1234,
+    processIdentity: { pid: 1234, startTimeMicros: 987654321 },
     launchd: plan.launchd,
     helper: {
       component: "mac-operator-privileged-helper" as const,
@@ -127,6 +128,17 @@ test("privileged helper package readback binds root service, Broker peer, and di
     }
   };
   validatePrivilegedHelperPackageReadback(plan, readback);
+  assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, { ...readback, pid: null as never }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_READBACK"
+  );
+  assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, {
+      ...readback,
+      processIdentity: { ...readback.processIdentity, startTimeMicros: 0 }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_READBACK"
+  );
   assert.throws(
     () => validatePrivilegedHelperPackageReadback(plan, { ...readback, helper: { ...readback.helper, adapterAvailable: true as never } }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"

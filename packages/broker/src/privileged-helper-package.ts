@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
+import type { PeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const HELPER_LABEL = "com.mac-operator.privileged-helper" as const;
@@ -130,7 +131,8 @@ export interface PrivilegedHelperPackageReadback {
   domain: "system";
   label: typeof HELPER_LABEL;
   plistPath: typeof HELPER_PLIST_PATH;
-  pid: number | null;
+  pid: number;
+  processIdentity: PeerProcessIdentity;
   launchd: PrivilegedHelperLaunchdReadback;
   helper: PrivilegedHelperRuntimeReadback;
   signature: CodeSignatureReadback;
@@ -791,7 +793,11 @@ export function validatePrivilegedHelperPackageReadback(
 ): void {
   if (readback === null || typeof readback !== "object" || readback.domain !== "system" ||
       readback.label !== HELPER_LABEL || readback.plistPath !== HELPER_PLIST_PATH ||
-      (readback.pid !== null && (!Number.isSafeInteger(readback.pid) || readback.pid < 1))) {
+      !Number.isSafeInteger(readback.pid) || readback.pid < 1 ||
+      readback.processIdentity === null || typeof readback.processIdentity !== "object" ||
+      !Number.isSafeInteger(readback.processIdentity.pid) || readback.processIdentity.pid < 1 ||
+      !Number.isSafeInteger(readback.processIdentity.startTimeMicros) || readback.processIdentity.startTimeMicros < 1 ||
+      readback.processIdentity.pid !== readback.pid) {
     fail("INVALID_READBACK", "privileged helper readback identity is malformed");
   }
   if (readback.launchd === null || typeof readback.launchd !== "object" ||
