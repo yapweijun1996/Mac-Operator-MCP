@@ -119,6 +119,21 @@ test("SandboxExecTaskRunner refuses the unevidenced owned-group policy", async (
   );
 });
 
+test("SandboxExecTaskRunner exposes its supervisor close boundary", async () => {
+  let closeCalls = 0;
+  const runner = new SandboxExecTaskRunner({
+    isolationProof: proof(),
+    supervisor: {
+      run: async () => {
+        throw new Error("not expected");
+      },
+      close: async () => { closeCalls += 1; }
+    }
+  });
+  await runner.close?.();
+  assert.equal(closeCalls, 1);
+});
+
 test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervisor", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-runner-"));
   const root = await realpath(directory);

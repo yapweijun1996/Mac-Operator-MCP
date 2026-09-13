@@ -227,6 +227,36 @@ test("process supervisor cancellation kills descendants and releases capacity", 
   assert.equal(second.stdout, "capacity-released");
 });
 
+test("process supervisor close drains owned processes and rejects new work", async () => {
+  const supervisor = new ProcessSupervisor({ maxConcurrent: 1, pollIntervalMs: 5, terminationGraceMs: 50 });
+  const running = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["10"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const closePromise = supervisor.close();
+  await assert.rejects(
+    supervisor.run({
+      executable: "/usr/bin/printf",
+      args: ["closed"],
+      cwd: CWD,
+      timeoutMs: 1_000,
+      outputCapBytes: 100
+    }),
+    /authority is closed/u
+  );
+  const result = await running;
+  await closePromise;
+  assert.equal(result.state, "cancelled");
+  assert.equal(result.resultClass, "CANCELLED");
+  assert.equal(result.terminationObserved, true);
+  assert.equal(supervisor.activeCount(), 0);
+  assert.strictEqual(supervisor.close(), closePromise);
+});
+
 async function assertProcessGone(pid: number): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (Date.now() < deadline) {

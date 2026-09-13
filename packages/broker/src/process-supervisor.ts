@@ -24,6 +24,11 @@ interface ProcessTreeIdentity {
   startTimeMicros: number;
 }
 
+interface ActiveProcessRun {
+  stop: () => void;
+  drained: Promise<void>;
+}
+
 export interface ProcessExecutionRequest {
   /** Broker-resolved executable; shell strings and relative paths are rejected. */
   executable: string;
@@ -64,10 +69,13 @@ export interface ProcessExecutionResult {
 
 export class ProcessSupervisor {
   private activeProcesses = 0;
+  private readonly activeRuns = new Set<ActiveProcessRun>();
   private readonly maxConcurrent: number;
   private readonly pollIntervalMs: number;
   private readonly terminationGraceMs: number;
   private readonly allowedEnvironmentKeys: ReadonlySet<string>;
+  private closing = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(options: ProcessSupervisorOptions = {}) {
     this.maxConcurrent = options.maxConcurrent ?? 4;
@@ -84,6 +92,9 @@ export class ProcessSupervisor {
 
   async run(request: ProcessExecutionRequest): Promise<ProcessExecutionResult> {
     await validateRequest(request, this.allowedEnvironmentKeys);
+    if (this.closing) {
+      throw new BrokerError("CANCELLED", "Process authority is closed");
+    }
     if (this.cancelled(request.shouldCancel)) {
       throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
     }
@@ -117,11 +128,47 @@ export class ProcessSupervisor {
       throw new BrokerError("POLICY_DENIED", "Process tree observer is unavailable");
     }
     this.activeProcesses += 1;
-    return this.observe(child, request, processId, startedAtMs, processTree);
+    let stopRun: (() => void) | undefined;
+    let resolveDrained!: () => void;
+    let drained = false;
+    const drainedPromise = new Promise<void>((resolve) => { resolveDrained = resolve; });
+    const activeRun: ActiveProcessRun = {
+      stop: () => stopRun?.(),
+      drained: drainedPromise
+    };
+    const result = this.observe(
+      child,
+      request,
+      processId,
+      startedAtMs,
+      processTree,
+      (stop) => { stopRun = stop; },
+      () => {
+        if (drained) return;
+        drained = true;
+        resolveDrained();
+        this.activeRuns.delete(activeRun);
+      }
+    );
+    this.activeRuns.add(activeRun);
+    return result;
   }
 
   activeCount(): number {
     return this.activeProcesses;
+  }
+
+  /**
+   * Stop accepting new child processes, terminate all owned process groups,
+   * and wait until every owned process tree has drained.
+   */
+  close(): Promise<void> {
+    if (this.closePromise !== undefined) return this.closePromise;
+    this.closing = true;
+    const activeRuns = [...this.activeRuns];
+    for (const run of activeRuns) run.stop();
+    this.closePromise = Promise.all(activeRuns.map((run) => run.drained)).then(() => undefined);
+    return this.closePromise;
   }
 
   private observe(
@@ -129,7 +176,9 @@ export class ProcessSupervisor {
     request: ProcessExecutionRequest,
     processId: number,
     startedAtMs: number,
-    processTree: ProcessTreeTracker | undefined
+    processTree: ProcessTreeTracker | undefined,
+    registerStop: (stop: () => void) => void,
+    onDrained: () => void
   ): Promise<ProcessExecutionResult> {
     return new Promise((resolveResult) => {
       let settled = false;
@@ -162,6 +211,7 @@ export class ProcessSupervisor {
         if (released) return;
         released = true;
         this.activeProcesses -= 1;
+        onDrained();
       };
       const append = (current: Buffer, chunk: Buffer, currentBytes: number): { value: Buffer; bytes: number; overflow: boolean } => {
         const remaining = request.outputCapBytes - stdoutBytes - stderrBytes;
@@ -200,6 +250,7 @@ export class ProcessSupervisor {
         }, this.terminationGraceMs);
         terminationTimer.unref();
       };
+      registerStop(() => terminate("cancelled"));
       const waitForGroupDrain = () => {
         if (settled) return;
         processTree?.sample();

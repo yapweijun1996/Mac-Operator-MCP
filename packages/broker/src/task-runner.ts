@@ -51,6 +51,8 @@ export interface TaskIsolationProof {
 export interface TaskRunner {
   readonly available: boolean;
   readonly isolationProof: TaskIsolationProof | null;
+  /** Stop accepting work and drain any Broker-owned OS processes. */
+  close?(): Promise<void>;
   run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult>;
 }
 
@@ -70,7 +72,7 @@ export interface SandboxExecTaskRunnerOptions {
   hostEvidenceAccepted?: boolean;
   isolationProof?: TaskIsolationProof | null;
   allowedEnvironmentKeys?: readonly string[];
-  supervisor?: Pick<ProcessSupervisor, "run">;
+  supervisor?: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
 }
 
 /**
@@ -82,7 +84,7 @@ export interface SandboxExecTaskRunnerOptions {
 export class SandboxExecTaskRunner implements TaskRunner {
   readonly available: boolean;
   readonly isolationProof: TaskIsolationProof | null;
-  private readonly supervisor: Pick<ProcessSupervisor, "run">;
+  private readonly supervisor: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
 
   constructor(options: SandboxExecTaskRunnerOptions = {}) {
     const proof = options.isolationProof === null || options.isolationProof === undefined
@@ -97,6 +99,10 @@ export class SandboxExecTaskRunner implements TaskRunner {
     // process-tree ownership and escape-resistance proof is accepted.
     this.available = options.enabled === true && options.hostEvidenceAccepted === true &&
       proof?.processTreePolicy === "single_process" && process.platform === "darwin";
+  }
+
+  close(): Promise<void> {
+    return this.supervisor.close?.() ?? Promise.resolve();
   }
 
   async run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult> {

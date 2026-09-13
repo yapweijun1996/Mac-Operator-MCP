@@ -123,14 +123,15 @@ export class Broker {
   }
 
   /**
-   * Close Broker-owned worker resources after transport shutdown. Active
-   * worker-backed mutations fail through their existing UNKNOWN Job path;
-   * callers must await this boundary before closing the BrokerStore.
+   * Close Broker-owned execution resources after transport shutdown. Active
+   * worker-backed mutations fail through their existing UNKNOWN Job path and
+   * task-runner processes are terminated and drained; callers must await this
+   * boundary before closing the BrokerStore.
    */
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closing = true;
-    const resources = [this.filesystemExecutor, this.processExecutor];
+    const resources = [this.filesystemExecutor, this.processExecutor, this.taskRunner];
     this.closePromise = (async () => {
       let firstError: unknown;
       for (const resource of resources) {
