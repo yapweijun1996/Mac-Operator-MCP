@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `018565d`.
+Current committed implementation baseline: `8ac5fe0`.
+
+The latest governed service-entrypoint addendum is `8ac5fe0`: the packaged
+Broker now has a fixed `service-main.js` entrypoint and strict owner-only
+`broker-service.json` loader. Startup restores the exact persisted signed
+Policy and Edge-key activations, checks that policy trusts the configured Edge,
+captures the launchd Edge PID/start-time identity, and only then constructs the
+native Broker runtime. Package/data/runtime roots and every state path are
+canonical and root-bound; startup closes by wiping loaded Edge keys. Focused
+startup tests pass 3/3, the full suite passes 358 tests (356 passed, 2 opt-in
+real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes 358/358.
+No live LaunchAgent state was changed. Evidence:
+`evidence/2026-09-13-governed-broker-service-entrypoint.md`.
 
 The latest packaged-process/readback addendum is `018565d`: a bounded,
 read-only `/bin/launchctl print` adapter now validates service identity, state,

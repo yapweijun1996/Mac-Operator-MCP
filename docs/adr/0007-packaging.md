@@ -63,3 +63,12 @@ evidence only; they do not install a LaunchAgent, bootstrap a service, or
 establish Developer ID provenance, notarization, Keychain ACLs, or live
 upgrade/rollback acceptance. Evidence:
 `evidence/2026-09-13-packaged-process-and-launchd-readback.md`.
+
+Revision `8ac5fe0` adds the fixed packaged `service-main.js` entrypoint and an
+owner-only, root-bound `broker-service.json` loader. Startup restores exact
+persisted signed Policy and Edge-key activations, captures the launchd Edge
+PID/start-time identity before native listener construction, and wipes loaded
+Edge keys on close. This is governed startup assembly evidence only; no live
+LaunchAgent bootstrap, production signing, Keychain ACL, or upgrade/rollback
+acceptance is claimed. Evidence:
+`evidence/2026-09-13-governed-broker-service-entrypoint.md`.
