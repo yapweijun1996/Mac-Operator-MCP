@@ -1,6 +1,6 @@
 # Native adapter loading boundary evidence
 
-- Source commit: `22881f9` (`fix: route native consumers through protected loader`)
+- Source commit: `d01cf95` (`fix: bind native adapter cache to artifact digest`)
 - Host: Mac mini M4, macOS `26.2` (`25C56`), arm64
 - Runtime: Node `v25.5.0`, npm `11.8.0`
 - Scope: unprivileged Broker native peer adapter loading; no privileged action
@@ -15,6 +15,10 @@ module is stat-checked again after `require` for stable device, inode, and size
 identity, and the required peer IPC exports are checked before the adapter is
 returned. Any failure maps to the same unavailable error and callers fail
 closed.
+
+The loader also remembers the first successfully loaded artifact and compares
+device, inode, size, and SHA-256 on every later load. A changed path therefore
+cannot cause Node's cached module to be reused for a different on-disk artifact.
 
 All production native consumers (filesystem, process, network, and process-tree
 inspection) now use this loader; no production TypeScript module directly
@@ -40,8 +44,8 @@ and native syscall fixtures.
   `16a074851be4b9cca9204135b39ef057ff96c4c97029ecfa8c7fc0ea61e2d8fe`
 
 This protects the local load boundary against accidental or simple package
-replacement and prevents consumer-specific loading paths from bypassing it. It
-does not prove native code
+replacement, cached-module target swaps, and consumer-specific loading paths
+that would otherwise bypass it. It does not prove native code
 signing/notarization, Developer ID identity, package provenance, runtime ABI
 pinning across Node versions, Keychain-backed key distribution, or installed
 launchd startup; those remain open under MOP-081 and VT-AUTH-01/VT-COMP-01.

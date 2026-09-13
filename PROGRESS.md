@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `22881f9`.
+Current committed implementation baseline: `d01cf95`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -39,6 +39,13 @@ loader. A source boundary check finds no production direct `.node` requires,
 closing the consumer-side bypass of canonical path, ownership, permission, and
 load-identity checks. Native signing/provenance, ABI pinning, Keychain
 distribution, installed startup, and production enablement remain open.
+
+The latest implementation addendum is `d01cf95`: the protected native loader
+binds Node's cached module to the first artifact's device, inode, size, and
+SHA-256 digest, rejecting later path replacement or in-place content changes
+before returning the cached adapter. This closes the loader's cache target-swap
+gap; code signing/provenance, ABI pinning, Keychain distribution, installed
+startup, and production enablement remain open.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 

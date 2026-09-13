@@ -128,6 +128,14 @@ signing/provenance, runtime ABI pinning, Keychain distribution, installed
 launchd startup, and production enablement remain open. Evidence:
 `evidence/2026-09-13-native-adapter-loading.md`.
 
+Latest native loader cache addendum: commit `d01cf95` binds the cached native
+module to the first loaded artifact's device, inode, size, and SHA-256 digest;
+subsequent loads fail closed if the on-disk artifact changes, preventing a
+Node-module-cache target swap. Full regression remains 295/297 with two
+opt-in sandbox tests skipped. Code signing/provenance, runtime ABI pinning,
+Keychain distribution, installed launchd startup, and production enablement
+remain open. Evidence: `evidence/2026-09-13-native-adapter-loading.md`.
+
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
 
 Latest lifecycle addendum: commit `10ef33a` records 214 passing tests and adds a fail-closed local Broker runtime boundary with ordered Broker-IPC/operator-channel startup, reverse cleanup, explicit recovery after cleanup failure, serialized lifecycle calls, idempotent close, and duplicate-channel rejection. The source evidence is `evidence/2026-09-13-local-runtime-lifecycle.md`; installed launchd startup, code signing, Keychain distribution, native caller identity, policy loading, store ownership, and production capability enablement remain open.
