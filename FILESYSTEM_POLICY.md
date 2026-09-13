@@ -109,6 +109,10 @@ terminated worker releases its capacity slot. These tests verify bounded
 dispatch and capacity recovery without widening root authority; they do not
 prove production-scale exhaustion or kernel-level I/O interruption.
 
+Broker integration also runs a real filesystem worker against a mode-`0500`
+parent and verifies that a pre-commit worker failure leaves the mutation Job
+`UNKNOWN`, with an unavailable postcondition rather than a false success.
+
 The fault-test-only native module also injects deterministic `ENOSPC` before
 temporary-file write and `fsync` boundaries, and after atomic rename before
 parent-directory `fsync`. Create and replace fixtures fail closed, preserve the

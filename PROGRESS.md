@@ -6,7 +6,18 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `4d18b31`.
+Current committed implementation baseline: `2371eba`.
+
+The latest Broker real-worker write-failure addendum is `2371eba`: a real
+`WorkerFilesystemExecutor` fails to create a temporary file under a
+read-only parent after policy authorization and plan capture. Broker returns a
+stable failure, persists the mutation Job as `UNKNOWN`, leaves the target
+absent, and `mac_job_status` reads `unavailable / remains_unknown`. Focused
+Broker tests pass 61/61; the full suite passes 371 tests (369 passed, 2
+opt-in real-sandbox tests skipped). `MOPS_REAL_SANDBOX=1 npm test` passes
+371/371. Post-rename failure through the real worker, physical disk-full,
+kernel-blocked I/O, worker restart ownership, and remount evidence remain open.
+Evidence: `evidence/2026-09-13-broker-worker-write-failure.md`.
 
 The latest current-revision sandbox readback is `4d18b31`: the opt-in
 `SandboxExecTaskRunner` smoke passes 7/7 on the Mac mini M4, and the complete
