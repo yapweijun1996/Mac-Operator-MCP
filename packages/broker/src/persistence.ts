@@ -316,7 +316,7 @@ export class BrokerStore {
   constructor(path: string, options: BrokerStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
     this.database = new DatabaseSync(path);
-    this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
+    this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS nonces (
         edge_id TEXT NOT NULL,

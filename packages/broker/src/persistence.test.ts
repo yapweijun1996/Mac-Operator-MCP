@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, rm, symlink } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { lstat, mkdtemp, readdir, rm, symlink, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -236,6 +237,98 @@ test("BrokerStore retention is bounded and rejects symlink backup entries", asyn
     await assert.rejects(store.pruneBackups(directory, 2), /unsafe backup entry/u);
   } finally {
     store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore removes stale backup temporaries left by a hard-crashed backup process", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-crash-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    const backupModule = new URL("./persistence-backup.js", import.meta.url).href;
+    const childScript = `
+      const [directory, databasePath, backupModule] = process.argv.slice(1);
+      const { createBrokerBackup } = await import(backupModule);
+      const { DatabaseSync } = await import("node:sqlite");
+      const database = new DatabaseSync(databasePath);
+      await createBrokerBackup(database, directory, {
+        faultInjector: (point) => { if (point === "after_backup") process.kill(process.pid, "SIGKILL"); }
+      });
+    `;
+    child = spawn(process.execPath, ["--input-type=module", "-e", childScript, directory, databasePath, backupModule], {
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    const result = await waitForChild(child);
+    assert.equal(result.code, null);
+    assert.equal(result.signal, "SIGKILL");
+    const temporaryName = (await readdir(directory)).find((name) => /^\.broker-backup-.*\.sqlite\.tmp-[a-f0-9]{24}$/u.test(name));
+    assert.ok(temporaryName, "the hard-crashed process should leave a temporary artifact");
+    const temporaryPath = join(directory, temporaryName);
+    const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await utimes(temporaryPath, stale, stale);
+    const pruned = await store.pruneBackups(directory, 2);
+    assert.equal(pruned.removed.includes(temporaryPath), true);
+    await assert.rejects(lstat(temporaryPath), { code: "ENOENT" });
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore serializes concurrent process writers without breaking the audit chain", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-persistence-concurrency-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const initial = new BrokerStore(databasePath);
+  initial.close();
+  const persistenceModule = new URL("./persistence.js", import.meta.url).href;
+  const childScript = `
+    const [databasePath, prefix, persistenceModule] = process.argv.slice(1);
+    const { BrokerStore } = await import(persistenceModule);
+    const store = new BrokerStore(databasePath);
+    try {
+      for (let index = 0; index < 8; index += 1) {
+        store.appendAudit({
+          requestId: prefix + "-" + index,
+          principalId: prefix,
+          tool: "mac_health",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: "SUCCEEDED",
+          targetRef: "host:broker",
+          policyVersion: "policy-0.1",
+          evidence: { index },
+          timestampMs: index + 1
+        });
+      }
+    } finally {
+      store.close();
+    }
+  `;
+  const children = ["writer-a", "writer-b"].map((prefix) => spawn(
+    process.execPath,
+    ["--input-type=module", "-e", childScript, databasePath, prefix, persistenceModule],
+    { stdio: ["ignore", "ignore", "pipe"] }
+  ));
+  try {
+    const results = await Promise.all(children.map(waitForChild));
+    for (const result of results) {
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.signal, null, result.stderr);
+    }
+    const reopened = new BrokerStore(databasePath);
+    try {
+      reopened.verifyAuditIntegrity();
+      assert.equal(reopened.auditRows().length, 16);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -1169,6 +1262,23 @@ function requestEvent(
     evidence: {},
     timestampMs
   };
+}
+
+function waitForChild(child: ReturnType<typeof spawn>): Promise<{
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const stderr: Buffer[] = [];
+    child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({
+      code,
+      signal,
+      stderr: Buffer.concat(stderr).toString("utf8")
+    }));
+  });
 }
 
 function approvalInput(approvalId: string) {

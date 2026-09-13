@@ -1,14 +1,19 @@
 import { createHash, randomBytes } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, type Dirent } from "node:fs";
 import { chmod, copyFile, lstat, open, readdir, rename, unlink } from "node:fs/promises";
 import { backup, DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 
 const BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite$/u;
+const BACKUP_TEMP_NAME_PATTERN = /^\.broker-backup-(\d{1,16})-[a-f0-9]{24}\.sqlite\.tmp-[a-f0-9]{24}$/u;
 const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 const MAX_BACKUP_FILES = 256;
+const MAX_BACKUP_TEMP_FILES = 256;
+const BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
 const DEFAULT_RETAIN_COUNT = 7;
+
+export type BrokerBackupFaultPoint = "after_backup" | "after_temp_verify";
 
 export interface BrokerBackupManifest {
   path: string;
@@ -22,6 +27,8 @@ export interface BrokerBackupManifest {
 export interface BrokerBackupOptions {
   retainCount?: number;
   nowMs?: number;
+  /** @internal Test-only crash-boundary hook; production callers must leave unset. */
+  faultInjector?: (point: BrokerBackupFaultPoint) => void;
 }
 
 export interface BrokerBackupPruneResult {
@@ -52,9 +59,11 @@ export async function createBrokerBackup(
   let moved = false;
   try {
     await backup(source, temporary, { rate: 64 });
+    options.faultInjector?.("after_backup");
     await chmod(temporary, 0o600);
     await syncFile(temporary);
     const verified = await inspectSnapshot(temporary);
+    options.faultInjector?.("after_temp_verify");
     await rename(temporary, destination);
     moved = true;
     await syncDirectory(protectedDirectory);
@@ -125,6 +134,11 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
   validateRetainCount(retainCount);
   const protectedDirectory = await validateProtectedDirectory(directory);
   const entries = await readdir(protectedDirectory, { withFileTypes: true });
+  const temporaryEntries = entries.filter((entry) => BACKUP_TEMP_NAME_PATTERN.test(entry.name));
+  if (temporaryEntries.length > MAX_BACKUP_TEMP_FILES) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory exceeds the bounded temporary-file budget");
+  }
+  const removed: string[] = await cleanupStaleBackupTemps(protectedDirectory, temporaryEntries);
   const candidates = entries.filter((entry) => BACKUP_NAME_PATTERN.test(entry.name));
   if (candidates.length > MAX_BACKUP_FILES) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory exceeds the bounded file budget");
@@ -145,7 +159,6 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
     return rightTimestamp - leftTimestamp || right.name.localeCompare(left.name);
   });
   const retained = files.slice(0, retainCount).map((file) => file.path);
-  const removed: string[] = [];
   for (const file of files.slice(retainCount)) {
     const current = await lstat(file.path);
     if (!sameFileIdentity(file.stat, current)) throw new BrokerError("CONFLICT", "Broker backup changed during retention cleanup", true);
@@ -154,6 +167,28 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
   }
   if (removed.length > 0) await syncDirectory(protectedDirectory);
   return { directory: protectedDirectory, retained, removed };
+}
+
+async function cleanupStaleBackupTemps(
+  directory: string,
+  entries: readonly Dirent[]
+): Promise<string[]> {
+  const removed: string[] = [];
+  const nowMs = Date.now();
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || !isOwnedByCurrentUser(stat.uid)) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory contains an unsafe temporary entry");
+    }
+    if (nowMs - stat.mtimeMs < BACKUP_TEMP_STALE_MS) continue;
+    const current = await lstat(path);
+    if (!sameFileIdentity(stat, current)) throw new BrokerError("CONFLICT", "Broker backup temporary entry changed during cleanup", true);
+    await unlink(path);
+    removed.push(path);
+  }
+  if (removed.length > 0) await syncDirectory(directory);
+  return removed;
 }
 
 interface ProtectedFile {

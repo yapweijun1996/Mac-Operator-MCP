@@ -33,11 +33,18 @@ does not select external storage, encryption, or automatic scheduling.
 1. owner-only backup mode, audit-tail manifest, restore into a fresh target,
    restart readback, and matching SHA-256;
 2. numeric retention and symlink-entry rejection; and
-3. audit-chain modification rejection during restore.
+3. audit-chain modification rejection during restore;
+4. a child process killed after SQLite backup publication, followed by stale
+   temporary-artifact cleanup; and
+5. two independent Broker processes appending audit events concurrently while
+   preserving the hash chain.
 
-The focused persistence suite passes 29/29 tests after this slice. Full-suite
+The focused persistence suite passes 31/31 tests after this slice. Full-suite
 counts and the exact local commit are recorded in `PROGRESS.md` and
 `VERIFICATION.md` after the final verification run.
+
+The final default suite reports 414 tests: 411 passed, 0 failed, and 3 opt-in
+sandbox tests skipped.
 
 ## Remaining acceptance work
 

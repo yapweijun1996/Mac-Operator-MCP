@@ -1189,3 +1189,13 @@ passes 29/29, including owner-only backup/restore readback, numeric retention,
 symlink refusal, and modified-audit-chain rejection. Typecheck, contract
 verification, dependency audit, and diff checks are recorded after the local
 commit. Evidence: `evidence/2026-09-14-persistence-backup-restore.md`.
+
+The persistence crash/concurrency addendum adds stale temporary-artifact
+cleanup after a hard-killed backup child, a five-second SQLite busy timeout,
+and a two-process audit-writer test that preserves the hash chain. The focused
+Broker persistence suite now passes 31/31; disk-quota/exhaustion behavior and
+explicit single-owner service policy remain open. Evidence:
+`evidence/2026-09-14-persistence-backup-restore.md`.
+
+The crash/concurrency addendum reran the full suite at 414 tests (411 passed,
+3 opt-in sandbox tests skipped), with no failures.
