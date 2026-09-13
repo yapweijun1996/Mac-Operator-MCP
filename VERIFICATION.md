@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest startup-recovery wiring addendum: source commit `9c96605` runs the
+bounded task-process and write-artifact restart reconciliation pass during
+Broker service assembly, before native IPC runtime startup, and closes
+Broker-owned resources on failed or unstarted assembly disposal. `npm test`
+passes 387 tests (384 passed, 3 opt-in sandbox tests skipped), typecheck and
+diff checks pass. This is startup ordering evidence only; installed launchd
+singleton enforcement, stale-socket ownership fencing, post-snapshot
+descendant cleanup, credential isolation, and production task-runner
+enablement remain open. Evidence:
+`evidence/2026-09-13-startup-recovery-wiring.md`.
+
 ## Evidence contract
 
 Each evidence record must identify source commit, dirty-state status, tool contract version, policy version, test command or manual procedure, target macOS/hardware profile, relevant component versions, timestamp, result, and artifact hashes. A later source revision cannot inherit earlier evidence without rerunning affected checks.

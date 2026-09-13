@@ -20,10 +20,12 @@ revision fence; later snapshots are monotonic and cannot replace the root
 identity. The metadata is not exposed through MCP job status or output.
 
 On a new `BrokerStore`, an interrupted running task becomes `UNKNOWN` and
-retains only the process identity metadata. The explicit host-startup hook
+retains only the process identity metadata. The host-startup hook
 `reconcileRestartedTaskProcesses()` selects only those restart-reconciled task
 Jobs, records redacted recovery intent, and calls the Broker-owned recovery
-primitive. Recovery signals only when exact PID/start-time identities are
+primitive. Packaged service assembly invokes this hook before native IPC
+startup; controlled hosts may still call the explicit hook directly. Recovery
+signals only when exact PID/start-time identities are
 still alive, including persisted descendants after the root has exited, drains
 the verified process group/descendants, and records a completion result.
 Identity mismatch, observer failure, and unresolved group state remain

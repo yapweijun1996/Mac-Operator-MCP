@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `a20fed7`.
+Current committed implementation baseline: `9c96605`.
+
+The latest Broker startup-recovery wiring addendum is `9c96605`: the packaged
+service assembly now reconciles restart-unknown task processes and write
+artifacts before native IPC runtime startup, so no listener is exposed while
+the bounded recovery pass is pending. Failed assembly and disposal-before-
+start paths close Broker-owned resources before key and store disposal. The
+default suite remains 387 tests (384 passed, 3 opt-in sandbox tests skipped),
+and the native service-startup boundary remains covered on the supported Mac
+profile. This does not prove installed launchd singleton enforcement,
+stale-socket ownership fencing, post-snapshot descendant cleanup, credential
+isolation, or production task-runner enablement. Evidence:
+`evidence/2026-09-13-startup-recovery-wiring.md`.
 
 The latest Broker restart-recovery addendum is `a20fed7`: task Jobs now retain
 bounded non-secret PID/process-group/start-time identities for the root and
@@ -841,7 +853,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Hardened the disabled `ProcessSupervisor` termination boundary to verify detached process-group disappearance with bounded `kill(-pgid, 0)` polling for normal completion, timeout, cancellation, output overflow, and orphan detection. Unresolved groups return `UNKNOWN_OUTCOME` and retain the capacity slot until an unref'd reaper observes group disappearance; `setsid` escape resistance, sandbox enforcement, credential isolation, and production enablement remain open.
 - Added a real macOS packaging smoke test that creates and ad-hoc signs a synthetic temporary app bundle, then verifies it through the install plan's fixed `/usr/bin/codesign --verify --strict --deep` boundary. It is host command-wiring evidence only; production Developer ID identity, notarization, and installed-service readback remain open.
 - Added a 500-iteration hostile create-only write fixture that races a temporary target against attacker-created regular files and symlinks. Native `renameatx_np(RENAME_EXCL)` plus descriptor identity checks either commit the Broker's own file or fail closed; the outside canary remains unchanged. Controlled-write recovery and release evidence remain open.
-- Added durable, non-secret write-job descriptors (root/path/size/digests/preconditions and exact generated temporary name) with schema migration and restart readback. `mac_job_status` now probes an unresolved write's current postcondition as `matches`, `mismatch`, or `unavailable` while retaining `UNKNOWN`; a matching digest is evidence only and cannot be promoted to success without actor attribution. An explicit host-startup hook now selects only restart-reconciled unknown write Jobs and cleans one recorded temporary artifact with descriptor-relative identity checks, audited intent/completion, no prefix scan, and kill-switch skip behavior; legacy descriptors without a temporary name remain untouched. Synthetic restart/readback/cleanup tests and a test-only native `SIGKILL` fixture at selected syscall boundaries for create/replace writes pass; remount durability, prior-worker/process ownership proof, and broader partial-mutation evidence remain open.
+- Added durable, non-secret write-job descriptors (root/path/size/digests/preconditions and exact generated temporary name) with schema migration and restart readback. `mac_job_status` now probes an unresolved write's current postcondition as `matches`, `mismatch`, or `unavailable` while retaining `UNKNOWN`; a matching digest is evidence only and cannot be promoted to success without actor attribution. The host-startup recovery pass now selects only restart-reconciled unknown write Jobs and cleans one recorded temporary artifact with descriptor-relative identity checks, audited intent/completion, no prefix scan, and kill-switch skip behavior; service assembly invokes it before native IPC startup, while the explicit Broker hook remains available to controlled hosts. Legacy descriptors without a temporary name remain untouched. Synthetic restart/readback/cleanup tests and a test-only native `SIGKILL` fixture at selected syscall boundaries for create/replace writes pass; remount durability, prior-worker/process ownership proof, and broader partial-mutation evidence remain open.
 - Added final authority revalidation before a filesystem write Job is marked completed. If the mutations kill switch trips while the adapter is active, the request fails closed as `CANCELLED` and the Job remains `UNKNOWN`; an integration test covers this active-work boundary.
 - Added a Broker-owned `TaskProfileRegistry` boundary for named L2 tasks and connected it to a disabled-by-default `mac_task_run` handler. The handler requires a profile-owned canonical executable/cwd/args/environment/network declaration, exact `mac.task.run` target authorization, a single-use `trusted_profile` approval, Broker Job creation/status linkage, bounded redacted output, verified postconditions, and fail-closed unknown outcomes. The default `FailClosedTaskRunner` rejects execution until a separately evidenced sandbox runner is supplied.
 - Added a versioned `TaskIsolationProof` gate: an available runner must attest to the selected sandbox profile plus enforced filesystem/network boundaries, isolated credentials, and owned process-tree cleanup before Broker admission can consume approval or create a task Job. Missing, malformed, extra-field, or profile-mismatched proof fails closed; test-only proof fixtures remain explicitly non-production evidence.
