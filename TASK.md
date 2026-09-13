@@ -31,6 +31,14 @@ Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires 
 
 Authority-control note: generic runtime switches and revocations now append redacted hash-linked `intent`/`completion` audit pairs in the same persistence transaction as the authority change and queued-job cancellation. A separate owner-only, native-peer/HMAC/replay-bound Authority Control IPC now admits only switch and revocation commands and carries its request ID into those audit pairs. Its operator key is selected by a protected, digest-bound, monotonic activation manager with a dedicated revocation kind and exact restart restore, and the uninstall coordinator constructs its client from that manager. This does not close active process-tree termination, installed startup, or operator recovery evidence.
 
+IPC ownership addendum: source revision `44cae6a` now probes configured Unix
+socket paths before stale cleanup, rejects active listeners without unlinking
+them, binds generic close cleanup to device/inode identity with a temporary
+symlink barrier, limits native cleanup to the recorded listener identity, and
+preflights the Broker socket before startup Job recovery. Repository-level
+tests pass; installed launchd singleton enforcement and physical crash/remount
+readback remain open.
+
 ## P1 — Local Broker vertical slice
 
 - `MOP-010` — `IN_PROGRESS` — Broker core plus local `mac_health`, `mac_capabilities`, `mac_policy_explain`, `mac_system_summary`, `mac_process_list`, `mac_process_inspect`, `mac_network_status`, `mac_service_status`, `mac_log_tail`, exact-target `mac_git_status`/`mac_git_branch_list`/`mac_git_log`, `mac_stat_path`, bounded `mac_read_file`, descriptor-backed `mac_hash_file`, bounded descriptor-backed `mac_list_directory`, bounded `mac_directory_tree`, metadata-only `mac_find_files`, metadata-only `mac_recent_files`, bounded secret-filtered `mac_search_text`, bounded `mac_project_discover`, bounded `mac_project_summary`, and bounded `mac_storage_analysis` handlers exist and pass tests. A fail-closed `LocalBrokerRuntime` now orders Broker IPC before operator channels, rolls back partial startup, retains failed cleanup for explicit recovery, and `createMacOsNativeBrokerRuntime` binds that lifecycle to the native Broker channel. The launchd startup assembly now restores the protected Authority key and places its separate native-peer channel under the same lifecycle. Installed launchd lifecycle, operator startup, listener ABI pinning, and production enablement remain open.

@@ -6,7 +6,20 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `9c96605`.
+Current committed implementation baseline: `44cae6a`.
+
+The latest IPC ownership-hardening addendum is `44cae6a`: all local Unix IPC
+servers now probe existing socket paths before stale cleanup, bind close to a
+recorded device/inode identity, and use a temporary symlink barrier around
+generic Node listener shutdown. Broker service assembly performs the active
+socket preflight before opening the Job Ledger or reconciling restart-unknown
+work. Active-listener refusal, startup preflight, replacement-listener close
+fencing, native IPC, and authenticated operator-channel tests pass; the
+default suite passes 390 tests (387 passed, 3 opt-in sandbox tests skipped),
+and `MOPS_REAL_SANDBOX=1 npm test` passes 390/390. This does not prove
+installed launchd singleton enforcement, a kernel lock against arbitrary
+non-cooperating processes, or physical crash/remount behavior. Evidence:
+`evidence/2026-09-13-ipc-socket-ownership.md`.
 
 The latest Broker startup-recovery wiring addendum is `9c96605`: the packaged
 service assembly now reconciles restart-unknown task processes and write

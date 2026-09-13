@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest IPC ownership-hardening addendum: source commit `44cae6a` rejects live
+Unix listeners before stale cleanup, fences generic Node listener close with
+device/inode identity and a temporary symlink barrier, limits native cleanup
+to the recorded socket identity, and performs Broker startup preflight before
+Job Ledger recovery. The default suite passes 390 tests (387 passed, 3
+opt-in sandbox tests skipped); `MOPS_REAL_SANDBOX=1 npm test` passes 390/390,
+contract validation and dependency audit pass. Installed launchd singleton
+enforcement, non-cooperating-process kernel locking, and physical
+crash/remount evidence remain open. Evidence:
+`evidence/2026-09-13-ipc-socket-ownership.md`.
+
 Latest startup-recovery wiring addendum: source commit `9c96605` runs the
 bounded task-process and write-artifact restart reconciliation pass during
 Broker service assembly, before native IPC runtime startup, and closes
