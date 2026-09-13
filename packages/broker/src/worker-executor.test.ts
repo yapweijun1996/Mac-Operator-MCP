@@ -34,6 +34,24 @@ test("bounded worker executor enforces deadline and active cancellation", async 
   await assert.rejects(cancellation, (error: unknown) => hasErrorClass(error, "CANCELLED"));
 });
 
+test("bounded worker executor releases capacity after an abrupt worker exit", async () => {
+  let crash = true;
+  const executor = new BoundedWorkerExecutor<Record<string, never>, string>(
+    () => new Worker(
+      crash
+        ? "throw new Error('test-only worker crash');"
+        : "const { parentPort } = require('node:worker_threads'); parentPort.postMessage({ ok: true, value: 'recovered' });",
+      { eval: true, env: {}, argv: [], execArgv: [] }
+    ),
+    1
+  );
+  await assert.rejects(executor.run({}, 1_000, () => false), (error: unknown) =>
+    hasErrorClass(error, "EXECUTION_FAILED"));
+  await waitFor(() => executor.activeCount() === 0, 2_000);
+  crash = false;
+  assert.equal(await executor.run({}, 1_000, () => false), "recovered");
+});
+
 test("bounded worker executor releases cancelled capacity before accepting new work", async () => {
   const executor = slowExecutor(1);
   let cancelled = false;

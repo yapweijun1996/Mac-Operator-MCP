@@ -2789,6 +2789,79 @@ test("real filesystem worker post-rename failure leaves the Broker write Job UNK
   }
 });
 
+test("real filesystem worker crash after commit leaves the Broker write Job UNKNOWN", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-worker-crash-"));
+  const path = join(directory, "worker-crash.txt");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  const argumentsValue = { path, content: "crashed", idempotency_key: "worker-crash", encoding: "utf8", create_only: true };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    filesystemExecutor: new WorkerFilesystemExecutor(1, {
+      workerUrl: new URL("./filesystem-crash-worker.js", import.meta.url)
+    }),
+    now: () => NOW
+  });
+  try {
+    store.issueApproval({
+      approvalId: "approval:worker-crash",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const request = unsigned({
+      requestId: "write-worker-crash-request",
+      nonce: "write-worker-crash-nonce",
+      tool: "mac_write_file_atomic",
+      arguments: argumentsValue
+    }, ["mac.files.write", "mac.job.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "EXECUTION_FAILED");
+    const jobId = store.requestRecord(request.requestId)?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
+    assert.equal(await readFile(path, "utf8"), "crashed");
+
+    const statusRequest = unsigned({
+      requestId: "write-worker-crash-status",
+      nonce: "write-worker-crash-status-nonce",
+      tool: "mac_job_status",
+      arguments: { job_id: jobId, tail_bytes: 128 }
+    }, ["mac.job.read"]);
+    const status = await broker.handle(signRequest(statusRequest, key));
+    assert.equal(status.ok, true, JSON.stringify(status));
+    assert.ok(status.ok);
+    assert.deepEqual((status.data as { state: string; recovery?: unknown }).recovery, {
+      postcondition: "matches",
+      resolution: "remains_unknown",
+      observed_at: new Date(NOW).toISOString()
+    });
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("restart write recovery cleans only the recorded temporary artifact", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-cleanup-"));
   const databasePath = join(directory, "broker.sqlite");
