@@ -75,7 +75,7 @@ signed package provenance, or protected cross-process key distribution.
 
 An Edge keyring supports overlapping validity windows for rotation. The Ed25519-signed policy separately authorizes exact `(edge_id, key_id, not_before, expires_at)` metadata, while secret bytes come only from protected local key files. A request must pass both signed-policy metadata and local-key validity. Key-specific revocation is persisted and overrides both. Rotation, unknown key, local expiry, signed-policy expiry, and old-key revocation tests pass.
 
-Key-file lifecycle primitives use an owner-only non-symlink directory, exclusive `0600` creation, file and directory fsync, and an expected-digest precondition. Retirement refuses an Edge key until its exact identity is durably revoked, then uses a unique same-directory quarantine rename and unlink. APFS/SSD physical overwrite is outside this guarantee; cross-process delivery should move to an approved Keychain or packaging mechanism before production acceptance.
+Key-file lifecycle primitives use an owner-only non-symlink directory, exclusive `0600` creation, file and directory fsync, and an expected-digest precondition. Retirement refuses an Edge key until its exact identity is durably revoked, then uses a unique same-directory quarantine rename and unlink. APFS/SSD physical overwrite is outside this guarantee; production acceptance still requires an approved Keychain delivery or packaging review.
 
 Revisions `ef5e336`, `44c16ad`, `be02907`, and `26cc667` add Security.framework
 generic-password read and provisioning primitives for an exact
@@ -86,8 +86,7 @@ Provisioning rejects duplicates, returns only a digest, binds
 and disables synchronizable replication. Approval issuer metadata can select
 the source only with an explicit `keySource: "keychain"` entry; file-backed
 entries remain compatible. These are explicit startup/operator operations, not
-MCP capabilities; live-item ACL review, rotation/deletion, Edge-side delivery,
-and cross-process distribution remain open.
+MCP capabilities; live-item ACL review and rotation/deletion remain open.
 
 Revisions `e9dd75e` and `7d91c8f` add the same explicit-source boundary to Edge
 authentication-key metadata. The owner-only versioned config accepts either a
@@ -100,9 +99,12 @@ windows are the supported rotation shape. Request-time signed-policy validity
 and key-specific revocation remain the final authority. The manager is
 startup/configuration code only and does not imply installed hot reload or
 cross-process secret distribution. The Edge request factory now provides a
-matching protected-file loader bound to the same expected digest. A Keychain
-source selected by the Broker still needs an approved Edge-side delivery
-mechanism; no environment-variable or MCP-argument fallback is permitted.
+matching protected-file loader bound to the same expected digest. An opt-in
+native peer-authenticated Keychain delivery channel now provides a separate
+challenge-bound, replay-rejecting path for one selected key, with fixed
+service/account startup binding and launchd gating; no environment-variable or
+MCP-argument fallback is permitted. It remains disabled and uninstalled pending
+live ACL, packaging, and cross-process evidence.
 The LaunchAgent startup assembly restores that exact active config before
 launchd identity capture and native Broker construction, injecting the restored
 keyring through a Broker factory; an unactivated or changed config fails before

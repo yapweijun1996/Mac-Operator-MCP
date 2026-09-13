@@ -9,3 +9,4 @@ export * from "./request-factory.js";
 export * from "./rate-limiter.js";
 export * from "./tls-material.js";
 export * from "./authentication-key.js";
+export * from "./keychain-delivery-client.js";

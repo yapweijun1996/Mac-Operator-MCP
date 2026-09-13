@@ -11,6 +11,7 @@ import {
   type BrokerResult,
   type UnsignedBrokerRequest
 } from "./index.js";
+import { parseKeychainDeliveryChallenge, parseKeychainDeliveryRequest, parseKeychainDeliveryResponse } from "./keychain-delivery.js";
 
 function request(): UnsignedBrokerRequest {
   const now = 1_700_000_000_000;
@@ -71,4 +72,42 @@ test("Broker response authentication binds the request and full response", () =>
   assert.equal(verifyBrokerResponse(signedRequest, altered, key), false);
   const malformed = { ...envelope, response: { data: BigInt(1) } };
   assert.equal(verifyBrokerResponse(signedRequest, malformed as never, key), false);
+});
+
+test("Keychain delivery contract is strict and binds the request identity", () => {
+  const request = parseKeychainDeliveryRequest({
+    protocolVersion: "0.1",
+    challenge: "challenge-1",
+    requestId: "request-1",
+    nonce: "nonce-1",
+    keyId: "edge-key-1"
+  });
+  assert.equal(parseKeychainDeliveryChallenge({
+    protocolVersion: "0.1",
+    type: "challenge",
+    challenge: "challenge-1"
+  }).challenge, "challenge-1");
+  assert.equal(request.keyId, "edge-key-1");
+  assert.throws(() => parseKeychainDeliveryRequest({ ...request, service: "com.mac-operator.test" }), /unexpected fields/u);
+  const response = parseKeychainDeliveryResponse({
+    protocolVersion: "0.1",
+    ok: true,
+    challenge: request.challenge,
+    requestId: request.requestId,
+    nonce: request.nonce,
+    keyId: request.keyId,
+    keyDigest: "a".repeat(64),
+    keyBase64: randomBytes(32).toString("base64")
+  });
+  assert.equal(response.ok, true);
+  assert.throws(() => parseKeychainDeliveryResponse({ ...response, keyDigest: "A".repeat(64) }), /success is malformed/u);
+  assert.throws(() => parseKeychainDeliveryResponse({
+    protocolVersion: "0.1",
+    ok: false,
+    challenge: request.challenge,
+    requestId: "request-1",
+    nonce: "nonce-1",
+    errorCode: "REPLAY_DENIED",
+    detail: "secret"
+  }), /unexpected fields/u);
 });

@@ -186,10 +186,7 @@ export function capturePeerProcessIdentity(pid: number): PeerProcessIdentity {
  * namespace and never log or persist the returned bytes.
  */
 export function readKeychainGenericPassword(service: string, account: string): Buffer {
-  if (!/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(service) ||
-      !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
-    throw new Error("Keychain service or account is invalid");
-  }
+  validateKeychainCoordinates(service, account);
   const value = loadNativePeerAdapter().readKeychainGenericPassword(service, account);
   if (!Buffer.isBuffer(value) || value.byteLength !== 32) {
     throw new Error("Keychain generic password has an invalid length");
@@ -203,14 +200,18 @@ export function readKeychainGenericPassword(service: string, account: string): B
  * operator configuration work; MCP request arguments never select it.
  */
 export function writeKeychainGenericPassword(service: string, account: string, key: Buffer): void {
-  if (!/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(service) ||
-      !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
-    throw new Error("Keychain service or account is invalid");
-  }
+  validateKeychainCoordinates(service, account);
   if (!Buffer.isBuffer(key) || key.byteLength !== 32) {
     throw new Error("Keychain generic password must contain exactly 32 bytes");
   }
   loadNativePeerAdapter().writeKeychainGenericPassword(service, account, Buffer.from(key));
+}
+
+export function validateKeychainCoordinates(service: string, account: string): void {
+  if (!/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(service) ||
+      !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
+    throw new Error("Keychain service or account is invalid");
+  }
 }
 
 export function authorizePeerCredentials(

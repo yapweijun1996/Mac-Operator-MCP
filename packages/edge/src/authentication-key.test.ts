@@ -7,6 +7,7 @@ import test from "node:test";
 import { sha256, verifyRequestAuthentication } from "@mac-operator/contracts";
 import { loadProtectedEdgeAuthenticationKey } from "./authentication-key.js";
 import { EdgeRequestFactory } from "./request-factory.js";
+import { loadEdgeAuthenticationKeyFromBroker } from "./keychain-delivery-client.js";
 
 test("Edge authentication key loader binds protected file bytes to a digest", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-edge-auth-key-"));
@@ -125,4 +126,34 @@ test("Edge request factory copies injected key bytes and validates key IDs", () 
     brokerAudience: "mac-operator-broker",
     policyVersion: () => "policy-1"
   }), /key ID is malformed/u);
+});
+
+test("Edge Keychain delivery client fails closed before transport for malformed startup bindings", async () => {
+  await assert.rejects(
+    loadEdgeAuthenticationKeyFromBroker({
+      socketPath: "/tmp/not-used.sock",
+      keyId: "../bad",
+      expectedDigest: "0".repeat(64)
+    }),
+    /key ID is malformed/u
+  );
+  await assert.rejects(
+    loadEdgeAuthenticationKeyFromBroker({
+      socketPath: "/tmp/not-used.sock",
+      keyId: "edge-key-1",
+      expectedDigest: "A".repeat(64)
+    }),
+    /digest is malformed/u
+  );
+  await assert.rejects(
+    EdgeRequestFactory.fromKeychainDelivery({
+      socketPath: "/tmp/not-used.sock",
+      keyId: "edge-key-1",
+      expectedDigest: "0".repeat(64),
+      authenticationKeyId: "other-key",
+      brokerAudience: "mac-operator-broker",
+      policyVersion: () => "policy-1"
+    }),
+    /IDs must match/u
+  );
 });

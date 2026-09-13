@@ -136,8 +136,11 @@ compatible. Explicit provisioning now generates one random 32-byte item,
 rejects duplicates, binds `kSecAttrAccessControl` to
 `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, disables synchronizable
 replication, and returns only a digest. No MCP tool exposes provisioning, and
-live-item ACL/rotation/deletion and Edge-side cross-process delivery remain
-open. Evidence:
+live-item ACL/rotation/deletion remain open. An opt-in native peer-authenticated
+Edge-side Keychain delivery channel is now implemented with a fresh challenge,
+strict bounded messages, replay rejection, fixed service/account startup
+binding, Edge digest verification, and launchd startup gating; it is not
+enabled or installed. Evidence:
 `evidence/2026-09-13-keychain-key-read.md`.
 
 The latest Edge-key addendum is `e9dd75e`, `7d91c8f`, `49843cc`, `a0b31fe`,
@@ -165,8 +168,8 @@ called.
 Overlapping validity windows provide a tested rotation path while the Broker
 continues to enforce signed-policy validity and key-specific revocation on each
 request. This is still a startup/configuration primitive, not installed
-launchd or cross-process Keychain distribution; a Broker-side Keychain source
-still needs an approved Edge-side delivery mechanism. Evidence:
+launchd or production enablement; the implemented delivery boundary is
+documented separately. Evidence:
 `evidence/2026-09-13-edge-key-source-rotation.md`.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.

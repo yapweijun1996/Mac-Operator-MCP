@@ -56,6 +56,13 @@ and restores only an exact matching config after restart. The resulting
 signed-policy validity and key-specific revocation on every request, so
 retiring the old key is a separate revoke-before-retire operation.
 
+The follow-on `KeychainDeliveryServer` and Edge client add an opt-in native
+peer-authenticated channel for one selected Keychain entry. It uses a fresh
+per-connection challenge, strict versioned messages, request/nonce replay
+rejection, fixed service/account startup binding, expected digest verification,
+a separate socket, and launchd startup gating. Details and limits are recorded
+in `evidence/2026-09-13-edge-keychain-delivery.md`.
+
 ## Host evidence
 
 - Host: Darwin arm64, macOS `26.2` build `25C56`.
@@ -100,14 +107,14 @@ retiring the old key is a separate revoke-before-retire operation.
 
 This proves explicit source selection, protected metadata loading, secret-byte
 digest binding on both Broker and Edge file boundaries, durable revocation
-preflight, monotonic activation, exact restart restore, and overlapping
-rotation. It does not prove Keychain provisioning, ACL/access-control review,
-secret rotation or deletion on a real item, a shared Edge-side Keychain
-reader, signed package provenance, installed Edge/launchd startup, remote
-issuer integration, or production capability enablement. If Broker startup
-selects a Keychain-backed Edge key, Edge-side distribution still needs an
-approved cross-process mechanism; the Edge loader intentionally fails closed
-instead of falling back to environment variables or raw MCP arguments. The
+preflight, monotonic activation, exact restart restore, overlapping rotation,
+and the implemented-but-disabled Edge-side delivery boundary. It does not
+prove Keychain provisioning, ACL/access-control review, secret rotation or
+deletion on a real item, signed package provenance, installed Edge/launchd
+startup, remote issuer integration, or production capability enablement. The
+delivery channel still requires live installed evidence; the Edge loader
+intentionally fails closed instead of falling back to environment variables or
+raw MCP arguments. The
 IPC checks reduce socket target-swap exposure but do not replace native caller
 identity, code signing, or confidentiality guarantees. The manager intentionally has no hot-reload or rollback bypass; operators must
 activate a strictly newer revision and use the existing revocation path to

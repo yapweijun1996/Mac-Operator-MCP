@@ -2,6 +2,7 @@ import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionR
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { createMacOsNativeBrokerRuntime, type MacOsNativeBrokerRuntimeOptions } from "./runtime.js";
 import { EdgeAuthenticationKeyManager } from "./edge-keyring-config.js";
+import { KeychainDeliveryServer } from "./keychain-delivery.js";
 import type { EdgeKeyring } from "./edge-keyring.js";
 import type { Broker } from "./broker.js";
 import type { BrokerStore } from "./persistence.js";
@@ -123,12 +124,17 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
     edgeKeyConfigPath: string;
     edgeKeyStore: BrokerStore;
     createBroker: (edgeAuthenticationKeys: EdgeKeyring) => Broker;
+    keychainDelivery?: {
+      socketPath: string;
+      keyId: string;
+    };
   }
 ): Promise<ReturnType<typeof createMacOsNativeBrokerRuntime>> {
   const {
     edgeKeyConfigPath,
     edgeKeyStore,
     createBroker,
+    keychainDelivery,
     ...runtimeOptions
   } = options;
   const manager = new EdgeAuthenticationKeyManager(edgeKeyConfigPath, edgeKeyStore);
@@ -139,8 +145,59 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
       "Active Edge key configuration does not match the requested Edge identity"
     );
   }
+  const keychainEntries = loaded.document.keys.filter((entry) => entry.keySource === "keychain");
+  if (keychainEntries.length > 0 && keychainDelivery === undefined) {
+    throw new NativeRuntimeStartupError(
+      "EDGE_KEY_CONFIG_UNAVAILABLE",
+      "Keychain-backed Edge configuration requires an explicit delivery channel"
+    );
+  }
+  if (keychainDelivery === undefined) {
+    const broker = createBroker(loaded.keyring);
+    return createMacOsNativeBrokerRuntimeForLaunchdEdge({ ...runtimeOptions, broker });
+  }
+  if (keychainDelivery.socketPath === runtimeOptions.socketPath) {
+    throw new NativeRuntimeStartupError(
+      "EDGE_KEY_CONFIG_UNAVAILABLE",
+      "Keychain delivery socket must be separate from the Broker IPC socket"
+    );
+  }
+  const selected = keychainEntries.find((entry) => entry.keyId === keychainDelivery.keyId);
+  if (selected === undefined || selected.service === undefined || selected.account === undefined) {
+    throw new NativeRuntimeStartupError(
+      "EDGE_KEY_CONFIG_UNAVAILABLE",
+      "Requested Keychain delivery key is not active for the Edge"
+    );
+  }
   const broker = createBroker(loaded.keyring);
-  return createMacOsNativeBrokerRuntimeForLaunchdEdge({ ...runtimeOptions, broker });
+  const identity = await captureLaunchdEdgeProcessIdentity({
+    edgeServiceId: runtimeOptions.edgeServiceId,
+    expectedUid: runtimeOptions.expectedEdgeUid,
+    ...(runtimeOptions.commandExecutor === undefined ? {} : { commandExecutor: runtimeOptions.commandExecutor })
+  });
+  const peerPolicy = {
+    expectedUid: runtimeOptions.expectedEdgeUid,
+    ...(runtimeOptions.expectedEdgeGid === undefined ? {} : { expectedGid: runtimeOptions.expectedEdgeGid }),
+    allowedProcessIdentity: identity
+  };
+  const delivery = new KeychainDeliveryServer({
+    socketPath: keychainDelivery.socketPath,
+    peerPolicy,
+    service: selected.service,
+    account: selected.account,
+    keyId: selected.keyId,
+    keyDigest: selected.keyDigest,
+    onPeerIdentityLost: (lostIdentity) => {
+      broker.revokeEdge(runtimeOptions.edgeId);
+      runtimeOptions.onPeerIdentityLost?.(lostIdentity);
+    }
+  });
+  return createMacOsNativeBrokerRuntime({
+    ...runtimeOptions,
+    broker,
+    peerPolicy,
+    operatorChannels: [...(runtimeOptions.operatorChannels ?? []), delivery]
+  });
 }
 
 export function parseLaunchdEdgeProcessReadback(

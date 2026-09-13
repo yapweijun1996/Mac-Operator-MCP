@@ -8,6 +8,7 @@ export * from "./default-policy.js";
 export * from "./ipc-server.js";
 export * from "./native-ipc-server.js";
 export * from "./native-peer-ipc-server.js";
+export * from "./keychain-delivery.js";
 export * from "./persistence.js";
 export * from "./peer-credentials.js";
 export * from "./policy.js";

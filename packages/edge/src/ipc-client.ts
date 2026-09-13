@@ -28,7 +28,7 @@ export class BrokerIpcClient {
   }
 
   async call(request: BrokerRequest, signal?: AbortSignal): Promise<BrokerResult> {
-    const socketIdentity = await validateSocketTarget(this.socketPath);
+    const socketIdentity = await validateBrokerSocketTarget(this.socketPath);
     const rawResponse = await this.exchange(`${JSON.stringify(request)}\n`, signal, socketIdentity);
     let parsed: unknown;
     try {
@@ -91,7 +91,7 @@ export class BrokerIpcClient {
   }
 }
 
-async function validateSocketTarget(socketPath: string): Promise<{ dev: number; ino: number }> {
+export async function validateBrokerSocketTarget(socketPath: string): Promise<{ dev: number; ino: number }> {
   if (!isAbsolute(socketPath) || resolve(socketPath) !== socketPath || socketPath.includes("\0")) {
     throw new BrokerError("AUTH_INVALID", "Broker IPC socket path is not canonical");
   }

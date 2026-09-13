@@ -9,6 +9,7 @@ import {
   type PrincipalContext
 } from "@mac-operator/contracts";
 import { loadProtectedEdgeAuthenticationKey } from "./authentication-key.js";
+import { loadEdgeAuthenticationKeyFromBroker, type KeychainDeliveryClientOptions } from "./keychain-delivery-client.js";
 
 export interface EdgeRequestFactoryOptions {
   authenticationKey: Buffer;
@@ -55,6 +56,27 @@ export class EdgeRequestFactory {
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(options.randomId === undefined ? {} : { randomId: options.randomId })
     });
+  }
+
+  static async fromKeychainDelivery(
+    options: Omit<EdgeRequestFactoryOptions, "authenticationKey"> & KeychainDeliveryClientOptions
+  ): Promise<EdgeRequestFactory> {
+    if (options.authenticationKeyId !== options.keyId) {
+      throw new Error("Edge authentication key IDs must match Keychain delivery configuration");
+    }
+    const authenticationKey = await loadEdgeAuthenticationKeyFromBroker(options);
+    try {
+      return new EdgeRequestFactory({
+        authenticationKey,
+        authenticationKeyId: options.authenticationKeyId,
+        brokerAudience: options.brokerAudience,
+        policyVersion: options.policyVersion,
+        ...(options.now === undefined ? {} : { now: options.now }),
+        ...(options.randomId === undefined ? {} : { randomId: options.randomId })
+      });
+    } finally {
+      authenticationKey.fill(0);
+    }
   }
 
   create(tool: string, argumentsValue: Readonly<Record<string, unknown>>, principal: PrincipalContext): BrokerRequest {

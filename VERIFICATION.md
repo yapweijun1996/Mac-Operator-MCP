@@ -261,9 +261,11 @@ PID/start-time capture and native Broker construction, refusing to call
 `launchctl` for an unactivated, mismatched, or cross-Edge config. Twelve focused
 Edge/Broker key-source/startup tests pass; the full regression is 321/323 with
 two opt-in real-sandbox tests skipped. This remains startup configuration
-evidence only: Keychain provisioning/ACLs, real-item rotation or deletion, an
-approved Edge-side Keychain delivery mechanism, installed launchd startup, and
-production capability enablement remain open. Evidence:
+evidence only: Keychain provisioning/ACLs, real-item rotation or deletion,
+installed launchd startup, and production capability enablement remain open.
+An opt-in native peer-authenticated Edge-side Keychain delivery boundary is
+implemented and separately documented, but is not enabled or installed.
+Evidence:
 `evidence/2026-09-13-edge-key-source-rotation.md`.
 
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
