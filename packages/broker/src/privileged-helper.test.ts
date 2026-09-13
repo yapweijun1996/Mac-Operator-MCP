@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 import {
   AllowlistedPrivilegedHelper,
@@ -105,6 +105,7 @@ test("privileged helper IPC authenticates the peer and command, rejects replay, 
     socketPath,
     authenticationKey: key,
     replayGuard: new BrokerStorePrivilegedHelperReplayGuard(store),
+    authorizeCommand: () => undefined,
     peerCredentialVerifier: { verify: () => undefined },
     adapter: new AllowlistedPrivilegedHelper({
       service_control: async (request) => ({
@@ -179,6 +180,55 @@ test("privileged helper replay admission survives BrokerStore reopen", async () 
   }
 });
 
+test("privileged helper does not publish success after active authority revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-revoke-"));
+  const socketPath = join(directory, "helper.sock");
+  const key = randomBytes(32);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  let active = true;
+  let calls = 0;
+  const server = new PrivilegedHelperIpcServer({
+    socketPath,
+    authenticationKey: key,
+    replayGuard: new BrokerStorePrivilegedHelperReplayGuard(store),
+    authorizeCommand: () => {
+      if (!active) throw new BrokerError("REVOKED", "Privileged helper authority was revoked");
+    },
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter: new AllowlistedPrivilegedHelper({
+      service_control: async (request) => {
+        calls += 1;
+        active = false;
+        return {
+          operation: request.operation,
+          targetRef: request.targetRef,
+          state: "completed",
+          resultClass: "SUCCEEDED",
+          evidence: {}, warnings: [], truncated: false,
+          verification: { status: "verified", strategy: "allowlisted_postcondition" }
+        };
+      }
+    }),
+    now: () => NOW
+  });
+  try {
+    await server.listen();
+    const request = command(6);
+    const response = await sendCommand(socketPath, signPrivilegedHelperCommand(request, key));
+    const verified = authenticatePrivilegedHelperResponse(response, request, key);
+    assert.equal(calls, 1);
+    assert.equal(verified.ok, false);
+    if (!verified.ok) {
+      assert.equal(verified.resultClass, "UNKNOWN_OUTCOME");
+      assert.equal(verified.error.retryable, true);
+    }
+  } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("privileged helper rejects a denied peer before parsing", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-peer-"));
   const socketPath = join(directory, "helper.sock");
@@ -186,6 +236,7 @@ test("privileged helper rejects a denied peer before parsing", async () => {
     socketPath,
     authenticationKey: randomBytes(32),
     replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+    authorizeCommand: () => undefined,
     peerCredentialVerifier: { verify: () => { throw new Error("denied"); } },
     adapter: new AllowlistedPrivilegedHelper({}),
     now: () => NOW

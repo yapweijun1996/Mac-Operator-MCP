@@ -191,6 +191,8 @@ export interface PrivilegedHelperIpcServerOptions {
   authenticationKey: Buffer;
   replayGuard: PrivilegedHelperReplayGuard;
   adapter: PrivilegedHelperAdapter;
+  /** Broker-owned kill-switch/revocation check; absence is unsafe. */
+  authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
   peerCredentialVerifier?: { verify(socket: Socket): unknown };
   peerPolicy?: NativePeerPolicy;
   maxRequestBytes?: number;
@@ -219,6 +221,7 @@ export class PrivilegedHelperIpcServer {
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
     if (!options.replayGuard) throw new Error("Privileged helper replay guard is required");
+    if (typeof options.authorizeCommand !== "function") throw new Error("Privileged helper authority check is required");
     this.maxRequestBytes = options.maxRequestBytes ?? MAX_COMMAND_BYTES;
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_COMMAND_AGE_MS;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
@@ -310,12 +313,31 @@ export class PrivilegedHelperIpcServer {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
         command = authenticatePrivilegedHelperCommand(raw, this.options.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
         this.options.replayGuard.admit(command);
+        this.options.authorizeCommand(command);
+        let authorityRevoked = false;
         const control: PrivilegedHelperExecutionControl = {
           timeoutMs: Math.max(1, command.expiresAtMs - this.now()),
-          shouldCancel: () => socket.destroyed || this.now() >= command!.expiresAtMs
+          shouldCancel: () => {
+            if (socket.destroyed || this.now() >= command!.expiresAtMs) return true;
+            try {
+              this.options.authorizeCommand(command!);
+              return false;
+            } catch {
+              authorityRevoked = true;
+              return true;
+            }
+          }
         };
         if (!this.options.adapter.available) throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not enabled");
         const result = await this.options.adapter.execute(command, control);
+        try {
+          this.options.authorizeCommand(command);
+        } catch {
+          authorityRevoked = true;
+        }
+        if (authorityRevoked || this.now() >= command.expiresAtMs) {
+          throw new BrokerError("UNKNOWN_OUTCOME", "Privileged helper authority changed during execution", true);
+        }
         response = success(command, validatePrivilegedHelperExecutionResult(result, command), this.options.authenticationKey);
       } catch (error) {
         const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper command is invalid");
