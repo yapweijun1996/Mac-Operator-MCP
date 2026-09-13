@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `e0c1e17`.
+Current committed implementation baseline: `7af182e`.
+
+The latest helper-caller addendum is `7af182e`: helper startup can now derive
+the caller from the exact per-user `gui/<uid>/com.mac-operator.broker`
+LaunchAgent readback, use fixed empty-environment `launchctl print`, and bind
+the returned PID to native start-time identity before constructing the helper.
+Service-label smuggling and non-running readbacks fail closed. The full suite
+passes 342 tests (340 passed, 2 opt-in real-sandbox tests skipped). No launchd
+mutation or root process was run. Evidence:
+`evidence/2026-09-13-privileged-helper-caller-identity.md`.
 
 The latest helper-package addendum is `e0c1e17`: a separate non-executing
 system LaunchDaemon plan now fixes the helper label/domain, native-only argv,

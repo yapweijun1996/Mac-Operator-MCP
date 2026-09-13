@@ -43,6 +43,13 @@ invariants. It rejects capability advertisement and enabled adapters. This is
 not installation, signing, caller-provenance approval, or acceptance of a
 root process.
 
+Revision `7af182e` adds a caller-capture startup entrypoint. It accepts only
+the exact per-user Broker LaunchAgent identity, runs a bounded empty-environment
+`launchctl print`, and binds the returned PID to native PID/start-time identity
+before helper construction. The helper still refuses to start without that
+identity; this is caller-authentication evidence, not installed launchd or
+root-domain evidence.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
