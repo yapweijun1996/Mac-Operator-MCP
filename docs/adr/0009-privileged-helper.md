@@ -164,6 +164,8 @@ the production-shaped package observer. The observer now fails closed when no
 runtime source is selected, while the callback form remains available only for
 controlled host/test adapters. Package readiness still composes helper status
 with independent launchd, process, plist, and signature readback sources.
+Revision `a1bd63c` verifies that an already-created key-manager server fences
+status reads immediately after helper-key revocation.
 
 ## Consequences and rollback
 

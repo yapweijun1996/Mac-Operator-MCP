@@ -220,6 +220,11 @@ exchange through the production-shaped observer. Root installation and live
 launchd evidence remain blocked. Evidence:
 `evidence/2026-09-13-helper-observer-ipc-integration.md`.
 
+Source revision `a1bd63c` additionally verifies that an already-created
+key-manager server rejects status reads immediately after helper-key revocation;
+the latest default suite is 400 tests with 397 passed and 3 sandbox tests
+skipped.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.

@@ -900,13 +900,14 @@ skipped). This is a fail-closed package gate, not evidence that a Developer ID
 artifact is currently signed/notarized or installed. Evidence:
 `evidence/2026-09-13-helper-signature-gate.md`.
 
-Latest helper observer integration addendum: commit `3b24604` wires the
+Latest helper observer integration addendum: commits `3b24604` and `a1bd63c` wire the
 authenticated helper status client into the production-shaped package
 observer. Construction now requires either that explicit socket/key client or
 a controlled test callback; the observer cannot silently accept a missing
 runtime source. A real local signed status exchange passes through the observer
-integration test. The latest default suite is 399 tests (396 passed, 3 opt-in
-sandbox tests skipped), with typecheck passing. Evidence:
+integration test, and an already-created key-manager server rejects status
+reads after helper-key revocation. The latest default suite is 400 tests (397
+passed, 3 opt-in sandbox tests skipped), with typecheck passing. Evidence:
 `evidence/2026-09-13-helper-observer-ipc-integration.md`.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.

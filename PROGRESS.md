@@ -1128,5 +1128,7 @@ helper socket/key client or a controlled test callback; no runtime source means
 observer construction fails closed. The observer integration test completes a
 real local signed status exchange and feeds the result through package
 readback. The latest default suite reports 399 tests, 396 passed, 3 opt-in
-sandbox tests skipped. Evidence:
+sandbox tests skipped. An already-created key-manager server also rejects status
+reads immediately after helper-key revocation. The latest suite is now 400
+tests, 397 passed, 3 opt-in sandbox tests skipped. Evidence:
 `evidence/2026-09-13-helper-observer-ipc-integration.md`.
