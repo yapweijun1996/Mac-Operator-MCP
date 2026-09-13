@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import {
 } from "./privileged-helper-package.js";
 import type { LaunchdJobReadback } from "./launchd-readback.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
+import { AllowlistedPrivilegedHelper, InMemoryPrivilegedHelperReplayGuard, PrivilegedHelperIpcServer } from "./privileged-helper.js";
 
 const root = "/Library/Application Support/MacOperator/PrivilegedHelper";
 const base: PrivilegedHelperPackagePlanInput = {
@@ -342,6 +343,51 @@ test("privileged helper host observer wires bounded launchd and native readback 
   assert.equal(readback.pid, 1234);
   assert.equal(readback.launchd.programArguments[0], plan.launchd.program);
   assert.equal(launchdCommands, 2);
+});
+
+test("privileged helper host observer can read runtime metadata through authenticated helper IPC", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-helper-status-observer-"));
+  const socketPath = join(directory, "helper.sock");
+  const key = randomBytes(32);
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  const server = new PrivilegedHelperIpcServer({
+    socketPath,
+    authenticationKey: key,
+    replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+    authorizeCommand: () => undefined,
+    authorizeStatus: () => undefined,
+    readStatus: () => ({
+      component: "mac-operator-privileged-helper" as const,
+      state: "running" as const,
+      runtimeState: "running" as const,
+      nativeTransportRequired: true as const,
+      adapterAvailable: false as const,
+      helperSocketPath: plan.helperSocketPath,
+      brokerSocketPath: plan.brokerSocketPath,
+      brokerPeerUid: plan.brokerPeer.uid,
+      brokerPeerGid: plan.brokerPeer.gid ?? null,
+      sourceRevision: plan.sourceRevision,
+      contractVersion: plan.contractVersion,
+      policyVersion: plan.policyVersion,
+      enabledCapabilities: [] as const
+    }),
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter: new AllowlistedPrivilegedHelper({}),
+    now: () => 1_700_000_000_000
+  });
+  try {
+    await server.listen();
+    const observer = createPrivilegedHelperPackageHostObserver(plan, {
+      helperStatusClient: { socketPath, authenticationKey: key, now: () => 1_700_000_000_000 }
+    });
+    const runtime = await observer.readRuntime();
+    assert.equal(runtime.sourceRevision, plan.sourceRevision);
+    assert.equal(runtime.helperSocketPath, plan.helperSocketPath);
+    assert.deepEqual(runtime.enabledCapabilities, []);
+  } finally {
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("privileged helper codesign observer parses only bounded identity fields", async () => {

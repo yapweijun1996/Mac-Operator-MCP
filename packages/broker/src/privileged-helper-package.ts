@@ -7,6 +7,7 @@ import { FilesystemInspector, type FilesystemIdentityPrecondition, type Filesyst
 import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
+import { readPrivilegedHelperStatus, type PrivilegedHelperStatusClientOptions } from "./privileged-helper.js";
 
 const HELPER_LABEL = "com.mac-operator.privileged-helper" as const;
 const HELPER_PLIST_PATH = "/Library/LaunchDaemons/com.mac-operator.privileged-helper.plist" as const;
@@ -158,7 +159,10 @@ export interface PrivilegedHelperPackageReadbackObserver {
 }
 
 export interface PrivilegedHelperPackageHostObserverOptions {
-  readRuntime(): Promise<PrivilegedHelperRuntimeReadback>;
+  /** Test-only or host-adapter injection; production callers should use helperStatusClient. */
+  readRuntime?: () => Promise<PrivilegedHelperRuntimeReadback>;
+  /** Authenticated helper-owned runtime source for production readback. */
+  helperStatusClient?: PrivilegedHelperStatusClientOptions;
   launchdExecutor?: LaunchdReadbackExecutor;
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
   readPlist?: (plan: PrivilegedHelperPackagePlan) => Promise<MacOsPlistReadback>;
@@ -962,14 +966,16 @@ export function createPrivilegedHelperPackageHostObserver(
   plan: PrivilegedHelperPackagePlan,
   options: PrivilegedHelperPackageHostObserverOptions
 ): PrivilegedHelperPackageReadbackObserver {
-  if (options === null || typeof options !== "object" || typeof options.readRuntime !== "function") {
-    fail("INVALID_ARGUMENT", "privileged helper host observer runtime source is required");
+  if (options === null || typeof options !== "object" ||
+      (typeof options.readRuntime !== "function" && options.helperStatusClient === undefined)) {
+    fail("INVALID_ARGUMENT", "privileged helper host observer requires an authenticated runtime source");
   }
+  const readRuntime = options.readRuntime ?? (() => readPrivilegedHelperStatus(options.helperStatusClient!));
   return {
     readLaunchd: async (serviceId) => readLaunchdJobReadback(serviceId, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor }),
     readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? capturePeerProcessIdentity(pid),
     readPlist: options.readPlist ?? (async (candidate) => readPrivilegedHelperPlistReadback(candidate)),
-    readRuntime: options.readRuntime,
+    readRuntime,
     readSignature: options.readSignature === undefined
       ? async () => readPrivilegedHelperCodeSignature(plan, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor })
       : async () => options.readSignature!(plan)
