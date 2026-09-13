@@ -6,9 +6,9 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `37388f9`.
+Current committed implementation baseline: `1fecf5b`.
 
-The latest local layered Edge/Broker addendum is `37388f9`: a real RS256
+The latest local layered Edge/Broker addendum is `1fecf5b`: a real RS256
 JWT-authenticated MCP client now reaches the Broker through the signed,
 peer-checked local UDS, discovers only the scope- and policy-enabled
 `mac_capabilities`/`mac_health` tools, and receives a verified `mac_health`

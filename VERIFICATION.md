@@ -52,7 +52,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
-Latest local Edge/Broker layered addendum: source commit `37388f9` adds a
+Latest local Edge/Broker layered addendum: source commit `1fecf5b` adds a
 real RS256-authenticated MCP client test that completes pinned `2026-07-28`
 HTTPS discovery, receives Broker-filtered `mac_capabilities`, and calls
 `mac_health` through the signed, peer-checked local UDS. The full suite passes

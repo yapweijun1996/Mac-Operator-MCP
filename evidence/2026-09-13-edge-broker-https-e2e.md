@@ -5,7 +5,7 @@ Recorded: 2026-09-13 (Asia/Kuala_Lumpur)
 
 ## Source identity
 
-- Exact source commit: `37388f991da19ffe66c12180cb66c45929f1f780`
+- Exact source commit: `1fecf5ba2dcb19046caf3bc55905a06515d6df96`
 - Working tree: clean before this evidence document was added
 - Host: macOS 26.2, arm64
 - Runtime: Node.js v25.5.0
