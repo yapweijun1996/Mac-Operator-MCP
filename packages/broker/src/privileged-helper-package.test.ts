@@ -8,6 +8,7 @@ import {
   applyPrivilegedHelperPlistPlan,
   buildPrivilegedHelperPackageExecutionPlan,
   buildPrivilegedHelperPackagePlan,
+  executePrivilegedHelperPackagePlan,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
   validatePrivilegedHelperFilesystemReadback,
@@ -177,6 +178,28 @@ test("privileged helper execution contract fixes preconditions, command order, a
   const uninstallExecution = buildPrivilegedHelperPackageExecutionPlan(uninstall, { present: true, sourceRevision: previous });
   assert.deepEqual(uninstallExecution.steps.map((step) => step.kind), ["bootout", "apply-plist", "readback"]);
   assert.deepEqual(uninstallExecution.recoverySteps.map((step) => step.kind), ["readback"]);
+});
+
+test("privileged helper executor rejects non-root callers before commands or readback", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("The test host is already root");
+    return;
+  }
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  let commands = 0;
+  let readbacks = 0;
+  await assert.rejects(
+    executePrivilegedHelperPackagePlan(plan, {
+      confirmOperation: "install",
+      ownerUid: 0,
+      existingService: { present: false, sourceRevision: null },
+      commandExecutor: { run: async () => { commands += 1; throw new Error("must not run"); } },
+      readback: async () => { readbacks += 1; return null; }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PEER_IDENTITY"
+  );
+  assert.equal(commands, 0);
+  assert.equal(readbacks, 0);
 });
 
 test("privileged helper package signature command verifies a real temporary macOS artifact", async (t) => {

@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
+import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const HELPER_LABEL = "com.mac-operator.privileged-helper" as const;
 const HELPER_PLIST_PATH = "/Library/LaunchDaemons/com.mac-operator.privileged-helper.plist" as const;
@@ -45,7 +46,9 @@ export type PrivilegedHelperPackageErrorCode =
   | "INVALID_READBACK"
   | "CONFIRMATION_REQUIRED"
   | "FILESYSTEM_MISMATCH"
-  | "RECOVERY_FAILED";
+  | "RECOVERY_FAILED"
+  | "COMMAND_FAILED"
+  | "READBACK_FAILED";
 
 export class PrivilegedHelperPackageError extends Error {
   readonly code: PrivilegedHelperPackageErrorCode;
@@ -230,6 +233,27 @@ export interface PrivilegedHelperPackageExecutionPlan {
   recoverySteps: readonly PrivilegedHelperPackageExecutionStep[];
 }
 
+export interface PrivilegedHelperPackageCommandExecutor {
+  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec): Promise<ProcessExecutionResult>;
+}
+
+export interface PrivilegedHelperPackageExecutionOptions {
+  /** Host-only confirmation; this function is not exposed through MCP. */
+  confirmOperation: PrivilegedHelperPackageOperation;
+  /** Must be the root UID and is checked against the actual current process. */
+  ownerUid: number;
+  existingService: PrivilegedHelperExistingServiceReadback;
+  readback: () => Promise<PrivilegedHelperPackageReadback | null>;
+  /** Injectable only for host tests; production defaults to ProcessSupervisor. */
+  commandExecutor?: PrivilegedHelperPackageCommandExecutor;
+}
+
+export interface PrivilegedHelperPackageExecutionResult {
+  operation: PrivilegedHelperPackageOperation;
+  readback: PrivilegedHelperPackageReadback | null;
+  plist: PrivilegedHelperPlistApplyResult;
+}
+
 /**
  * Builds a reviewable root LaunchDaemon plan without executing launchctl,
  * writing files, or enabling a helper adapter. The helper is native-only and
@@ -382,6 +406,63 @@ export function buildPrivilegedHelperPackageExecutionPlan(
 }
 
 /**
+ * Executes the host-only helper package lifecycle after an explicit root
+ * confirmation. This wrapper is not an MCP tool: it accepts only the fixed
+ * plan, uses bounded Broker-owned command specs, and requires final launchd/
+ * helper readback before reporting success. Non-root callers fail before any
+ * filesystem or child-process access.
+ */
+export async function executePrivilegedHelperPackagePlan(
+  plan: PrivilegedHelperPackagePlan,
+  options: PrivilegedHelperPackageExecutionOptions
+): Promise<PrivilegedHelperPackageExecutionResult> {
+  if (options.confirmOperation !== plan.operation) {
+    fail("CONFIRMATION_REQUIRED", "privileged helper execution requires an explicit matching operation");
+  }
+  assertPrivilegedHelperRootOwner(options.ownerUid);
+  buildPrivilegedHelperPackageExecutionPlan(plan, options.existingService);
+  const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+  let bootoutSucceeded = false;
+  let plistApplied = false;
+  let bootstrapAttempted = false;
+  let plist: PrivilegedHelperPlistApplyResult | undefined;
+  try {
+    if (plan.operation !== "uninstall") await runPrivilegedHelperCommand(executor, plan.signatureVerify, "helper signature verification failed");
+    if (plan.operation !== "install") {
+      await runPrivilegedHelperCommand(executor, plan.rollback.bootout, "existing helper service could not be stopped");
+      bootoutSucceeded = true;
+    }
+    plist = await applyPrivilegedHelperPlistPlan(plan, { confirmOperation: plan.operation, ownerUid: 0 });
+    plistApplied = true;
+    if (plan.operation !== "uninstall") {
+      bootstrapAttempted = true;
+      await runPrivilegedHelperCommand(executor, plan.install.bootstrap, "helper service could not be bootstrapped");
+    }
+  } catch (error) {
+    await recoverPrivilegedHelperPackage(plan, executor, { bootoutSucceeded, plistApplied, bootstrapAttempted }).catch(() => {
+      fail("RECOVERY_FAILED", "privileged helper execution failed and recovery was not verified");
+    });
+    throw normalizePrivilegedHelperExecutionError(error, "privileged helper execution failed");
+  }
+
+  try {
+    const readback = await options.readback();
+    if (plan.operation === "uninstall") {
+      if (readback !== null) fail("READBACK_FAILED", "helper uninstall readback still reports an installed service");
+    } else {
+      if (readback === null) fail("READBACK_FAILED", "helper readback is absent after bootstrap");
+      validatePrivilegedHelperPackageReadback(plan, readback);
+    }
+    return { operation: plan.operation, readback, plist: plist! };
+  } catch (error) {
+    await recoverPrivilegedHelperPackage(plan, executor, { bootoutSucceeded, plistApplied, bootstrapAttempted }).catch(() => {
+      fail("RECOVERY_FAILED", "privileged helper readback failed and recovery was not verified");
+    });
+    throw normalizePrivilegedHelperExecutionError(error, "privileged helper readback failed");
+  }
+}
+
+/**
  * Performs a read-only root-owned preflight for helper package paths. Every
  * path is lstat'ed twice; the caller must still use descriptor-relative,
  * identity-bound writes for any later installation.
@@ -479,10 +560,7 @@ export async function applyPrivilegedHelperPlistPlan(
   if (options.confirmOperation !== plan.operation) {
     fail("CONFIRMATION_REQUIRED", "privileged helper plist apply requires an explicit matching operation");
   }
-  const currentUid = process.getuid?.();
-  if (options.ownerUid !== 0 || currentUid !== 0) {
-    fail("INVALID_PEER_IDENTITY", "privileged helper plist apply requires root ownership");
-  }
+  assertPrivilegedHelperRootOwner(options.ownerUid);
   await inspectPrivilegedHelperPackageFilesystem(plan, { requirePlist: plan.operation !== "install" });
   const inspector = createPrivilegedHelperInspector();
   const targetPlan = inspector.planPath(plan.plistPath, "write");
@@ -827,6 +905,60 @@ function isDescendant(root: string, target: string, allowEqual: boolean): boolea
 
 function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;").replaceAll("'", "&apos;");
+}
+
+function assertPrivilegedHelperRootOwner(ownerUid: number): void {
+  const currentUid = process.getuid?.();
+  if (ownerUid !== 0 || currentUid !== 0) {
+    fail("INVALID_PEER_IDENTITY", "privileged helper execution requires root ownership");
+  }
+}
+
+async function runPrivilegedHelperCommand(
+  executor: PrivilegedHelperPackageCommandExecutor,
+  command: LaunchdCommandSpec | CodeSignatureCommandSpec,
+  message: string
+): Promise<void> {
+  let result: ProcessExecutionResult;
+  try {
+    result = await executor.run(command);
+  } catch {
+    fail("COMMAND_FAILED", message);
+  }
+  if (result.resultClass !== "SUCCEEDED") fail("COMMAND_FAILED", message);
+}
+
+async function recoverPrivilegedHelperPackage(
+  plan: PrivilegedHelperPackagePlan,
+  executor: PrivilegedHelperPackageCommandExecutor,
+  state: { bootoutSucceeded: boolean; plistApplied: boolean; bootstrapAttempted: boolean }
+): Promise<void> {
+  if (!state.bootoutSucceeded && !state.plistApplied && !state.bootstrapAttempted) return;
+  if (state.bootstrapAttempted) {
+    await runPrivilegedHelperCommand(executor, plan.rollback.bootout, "helper recovery could not stop the mismatched service");
+  }
+  if (!state.plistApplied) {
+    if (state.bootoutSucceeded && plan.operation !== "install") {
+      await runPrivilegedHelperCommand(executor, plan.install.bootstrap, "helper recovery could not restore the previous service");
+    }
+    return;
+  }
+  if (plan.operation === "uninstall") return;
+  const recoveryOperation = plan.operation === "install" ? "uninstall" : "rollback";
+  const recoveryPlan = {
+    ...plan,
+    operation: recoveryOperation,
+    expectedPreviousSourceRevision: plan.sourceRevision
+  } as PrivilegedHelperPackagePlan;
+  await applyPrivilegedHelperPlistPlan(recoveryPlan, { confirmOperation: recoveryOperation, ownerUid: 0 });
+  if (recoveryOperation === "rollback") {
+    await runPrivilegedHelperCommand(executor, plan.rollback.bootstrap, "helper recovery could not bootstrap the previous service");
+  }
+}
+
+function normalizePrivilegedHelperExecutionError(error: unknown, message: string): PrivilegedHelperPackageError {
+  if (error instanceof PrivilegedHelperPackageError) return error;
+  return new PrivilegedHelperPackageError("READBACK_FAILED", message);
 }
 
 function validatePrivilegedHelperExistingService(
