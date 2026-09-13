@@ -171,6 +171,13 @@ evidence only. The installed Edge startup must still capture the intended
 identity, survive Edge restart by failing closed, and provide signed package
 provenance. Evidence: `evidence/2026-09-13-native-peer-process-identity.md`.
 
+Latest native runtime assembly addendum: commit `752f73a` makes
+`createMacOsNativeBrokerRuntime` reject a PID-only policy before constructing a
+listener. The focused negative test proves the production assembly cannot
+silently select the compatibility policy; installed Edge identity capture,
+restart handling, signed caller provenance, and launchd readback remain open.
+Evidence: `evidence/2026-09-13-native-peer-process-identity.md`.
+
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.
 
 Latest lifecycle addendum: commit `10ef33a` records 214 passing tests and adds a fail-closed local Broker runtime boundary with ordered Broker-IPC/operator-channel startup, reverse cleanup, explicit recovery after cleanup failure, serialized lifecycle calls, idempotent close, and duplicate-channel rejection. The source evidence is `evidence/2026-09-13-local-runtime-lifecycle.md`; installed launchd startup, code signing, Keychain distribution, native caller identity, policy loading, store ownership, and production capability enablement remain open.

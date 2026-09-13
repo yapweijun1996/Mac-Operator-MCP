@@ -76,6 +76,12 @@ PID-only compatibility mode; installed Edge startup still must capture and
 configure the intended caller identity. Evidence:
 `evidence/2026-09-13-native-peer-process-identity.md`.
 
+The latest implementation addendum is `752f73a`: the production
+`createMacOsNativeBrokerRuntime` assembly rejects a PID-only peer policy before
+constructing the native listener. The lower-level compatibility server remains
+available for migration/tests, but the documented production assembly cannot
+silently fall back to numeric-PID authorization.
+
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 
 The latest implementation addendum is `6683344`: Broker, policy-signer, and approval IPC now share a native peer-accept transport. Supplying `peerPolicy` performs UID/GID/PID authorization before handler parsing; the legacy private-descriptor verifier remains compatibility-only.
