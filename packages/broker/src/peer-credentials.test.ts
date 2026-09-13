@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { MacOsPeerCredentialVerifier } from "./peer-credentials.js";
+import { MacOsPeerCredentialVerifier, validateNativeAdapterPath } from "./peer-credentials.js";
 
 test("macOS peer credentials bind an accepted UDS connection to uid, gid, and pid", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-peer-"));
@@ -61,6 +61,24 @@ test("macOS peer credential policy rejects an unlisted process identity", async 
   });
   try {
     await observed;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native adapter path validation rejects symlinks and writable artifacts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-native-path-"));
+  const canonicalDirectory = await realpath(directory);
+  const regularPath = join(canonicalDirectory, "peer_credentials.node");
+  const symlinkPath = join(canonicalDirectory, "peer_credentials-link.node");
+  try {
+    await writeFile(regularPath, "native-placeholder", { mode: 0o600 });
+    validateNativeAdapterPath(regularPath);
+    await symlink(regularPath, symlinkPath);
+    assert.throws(() => validateNativeAdapterPath(symlinkPath), /canonical/u);
+    await chmod(regularPath, 0o622);
+    assert.throws(() => validateNativeAdapterPath(regularPath), /protected/u);
+    assert.throws(() => validateNativeAdapterPath(`${regularPath}/..`), /canonical/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

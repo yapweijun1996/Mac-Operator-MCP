@@ -56,7 +56,7 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
   if (process.platform !== "darwin") throw new Error("Peer credential verification requires macOS");
   try {
     const nativePath = require.resolve("./peer_credentials.node");
-    assertNativeAdapterFile(nativePath);
+    validateNativeAdapterPath(nativePath);
     const before = statSync(nativePath);
     const native = require(nativePath) as Partial<NativePeerCredentials>;
     const after = statSync(nativePath);
@@ -77,7 +77,7 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
   }
 }
 
-function assertNativeAdapterFile(nativePath: string): void {
+export function validateNativeAdapterPath(nativePath: string): void {
   if (!isAbsolute(nativePath) || resolve(nativePath) !== nativePath || realpathSync(nativePath) !== nativePath) {
     throw new Error("Native peer adapter path is not canonical");
   }
