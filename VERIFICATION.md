@@ -82,7 +82,7 @@ no root process or privileged action was run. The full suite passes 337 tests
 (335 passed, 2 opt-in real-sandbox tests skipped). Evidence:
 `evidence/2026-09-13-privileged-helper-runtime.md`.
 
-Latest helper-package addendum: source commit `7f8f285` adds a separate
+Latest helper-package addendum: source commit `4afbe75` adds a separate
 non-executing system LaunchDaemon plan. It fixes the root-domain plist path,
 native-only helper argv, exact helper signature identifier, protected helper
 root/key/socket paths, Broker peer UID/GID binding, root-owned plist actions,
@@ -93,8 +93,13 @@ test executes the fixed ad-hoc signing/verification command and reads back
 the exact helper identifier; this does not prove Developer ID provenance. The
 package now also has a double-`lstat` root-owned filesystem preflight with
 symlink/type/mode/owner and device/inode checks, including owner-only key/plist
-files and an owner-executable helper. The full suite passes 344 tests (342
-passed, 2 opt-in real-sandbox tests skipped). Evidence:
+files and an owner-executable helper. The package now also exposes a
+host-only, explicitly confirmed descriptor-relative plist apply/upgrade/
+rollback/uninstall primitive with exact identity preconditions and restoration
+on failed upgrade/uninstall; it rejects non-root callers before filesystem
+access and never calls launchctl. Successful root-owned execution remains
+unverified. The full suite passes 345 tests (343 passed, 2 opt-in real-sandbox
+tests skipped). Evidence:
 `evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 Latest helper-caller addendum: source commit `7af182e` binds helper startup to

@@ -68,6 +68,13 @@ validity window expires. The factory checks before issuing; the IPC server
 checks before replay admission and authority/dispatch. This remains disabled
 helper lifecycle evidence and does not enable privileged operations.
 
+Revision `4afbe75` adds a host-only plist apply primitive for the helper
+package. It requires explicit operation confirmation and root ownership,
+reuses the descriptor-relative native writer, binds target device/inode
+preconditions, and restores content when upgrade/uninstall recovery fails. It
+never invokes launchctl; successful root-owned installation and readback remain
+open evidence.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

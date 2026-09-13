@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `72a3284`.
+Current committed implementation baseline: `4afbe75`.
+
+The latest helper-plist apply addendum is `4afbe75`: the root-domain package
+now exposes a host-only, explicitly confirmed descriptor-relative plist
+apply/upgrade/rollback/uninstall primitive backed by the native filesystem
+writer, exact device/inode preconditions, and restoration on failed upgrade or
+uninstall. It rejects non-root callers before filesystem access and never runs
+launchctl. Successful root-owned host execution remains unverified. The full
+suite passes 345 tests (343 passed, 2 opt-in real-sandbox tests skipped).
+Evidence: `evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 The latest helper-key lifecycle addendum is `72a3284`: already-constructed
 helper factories and IPC servers now recheck helper-key revocation, active
