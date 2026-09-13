@@ -9,6 +9,7 @@ import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 import {
   AllowlistedPrivilegedHelper,
+  BrokerPrivilegedHelperCommandFactory,
   BrokerStorePrivilegedHelperReplayGuard,
   InMemoryPrivilegedHelperReplayGuard,
   PrivilegedHelperIpcServer,
@@ -257,3 +258,236 @@ test("privileged helper rejects a denied peer before parsing", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("Broker helper command factory binds a running approved Job without raw authority", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-factory-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  try {
+    const identity = admitRunningPrivilegedJob(store, {
+      requestId: "request-factory-service",
+      jobId: "job:factory-service",
+      tool: "mac_priv_service_control",
+      targetRef: "service:system/com.example.factory",
+      payloadDigest: sha256(canonicalJson({ service: "com.example.factory", action: "start" }))
+    });
+    const authorized: UnsignedPrivilegedHelperCommand[] = [];
+    const factory = new BrokerPrivilegedHelperCommandFactory({
+      store,
+      authenticationKey: key,
+      authorizeCommand: (candidate) => authorized.push(candidate),
+      now: () => NOW + 4,
+      maxLifetimeMs: 20_000
+    });
+    const signed = factory.issue(identity);
+    const unsigned = authenticatePrivilegedHelperCommand(signed, key, NOW + 4);
+    assert.equal(unsigned.operation, "service_control");
+    assert.equal(unsigned.targetRef, "service:system/com.example.factory");
+    assert.equal(unsigned.payloadDigest, identity.payloadDigest);
+    assert.equal(unsigned.policyVersion, "policy-0.1");
+    assert.equal(unsigned.approvalId, "approval:factory-service");
+    assert.match(unsigned.intentId, /^intent:[a-f0-9]{48}$/u);
+    assert.match(unsigned.commandId, /^priv-command:[a-f0-9]{48}$/u);
+    assert.match(unsigned.requestId, /^request:[a-f0-9]{48}$/u);
+    assert.match(unsigned.nonce, /^helper-nonce:[a-f0-9]{48}$/u);
+    assert.equal(authorized.length, 1);
+    const rawKeys = Object.keys(unsigned);
+    assert.equal(rawKeys.includes("executable"), false);
+    assert.equal(rawKeys.includes("args"), false);
+    assert.equal(rawKeys.includes("payload"), false);
+
+    const second = new BrokerPrivilegedHelperCommandFactory({
+      store,
+      authenticationKey: key,
+      authorizeCommand: () => undefined,
+      now: () => NOW + 4,
+      maxLifetimeMs: 20_000
+    }).issue(identity);
+    assert.equal(second.commandId, signed.commandId);
+    assert.equal(second.requestId, signed.requestId);
+    assert.notEqual(second.nonce, signed.nonce);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Broker helper command factory fails closed on operation mismatch, queued work, and revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-factory-deny-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  try {
+    const identity = admitRunningPrivilegedJob(store, {
+      requestId: "request-factory-deny",
+      jobId: "job:factory-deny",
+      tool: "mac_priv_power",
+      targetRef: "host:local",
+      payloadDigest: sha256(canonicalJson({ operation: "reboot", confirmation: "operator" }))
+    });
+    const factory = new BrokerPrivilegedHelperCommandFactory({
+      store,
+      authenticationKey: key,
+      authorizeCommand: () => undefined,
+      now: () => NOW + 4
+    });
+    assert.throws(
+      () => factory.issue({ ...identity, operation: "service_control" }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+
+    const queuedIdentity = admitApprovedPrivilegedJob(store, {
+      requestId: "request-factory-queued",
+      jobId: "job:factory-queued",
+      tool: "mac_priv_power",
+      targetRef: "host:local",
+      payloadDigest: sha256(canonicalJson({ operation: "shutdown" }))
+    });
+    const queuedFactory = new BrokerPrivilegedHelperCommandFactory({
+      store,
+      authenticationKey: key,
+      authorizeCommand: () => undefined,
+      now: () => NOW + 4
+    });
+    assert.throws(
+      () => queuedFactory.issue(queuedIdentity),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+
+    const originalApprovalRecord = store.approvalRecord.bind(store);
+    const patchedStore = store as unknown as {
+      approvalRecord: typeof store.approvalRecord;
+    };
+    patchedStore.approvalRecord = (approvalId) => {
+      const approval = originalApprovalRecord(approvalId);
+      return approval ? { ...approval, targetRef: "host:other" } : approval;
+    };
+    assert.throws(
+      () => factory.issue(identity),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    patchedStore.approvalRecord = (approvalId) => {
+      const approval = originalApprovalRecord(approvalId);
+      return approval ? { ...approval, payloadDigest: "f".repeat(64) } : approval;
+    };
+    assert.throws(
+      () => factory.issue(identity),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    patchedStore.approvalRecord = originalApprovalRecord;
+
+    store.setSwitch("privileged", true, "TEST_KILL_SWITCH", NOW + 1);
+    assert.throws(
+      () => factory.issue(identity),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REVOKED"
+    );
+    store.setSwitch("privileged", false, "TEST_REENABLE", NOW + 2);
+    store.revoke("session", "session-1", "TEST_REVOKED", NOW + 3);
+    assert.throws(
+      () => factory.issue(identity),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REVOKED"
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+type PrivilegedJobSetup = {
+  requestId: string;
+  jobId: string;
+  tool: "mac_priv_service_control" | "mac_priv_package_install" | "mac_priv_power";
+  targetRef: string;
+  payloadDigest: string;
+};
+
+function admitRunningPrivilegedJob(store: BrokerStore, setup: PrivilegedJobSetup) {
+  const identity = admitApprovedPrivilegedJob(store, setup);
+  const runningRequest = store.markRequestRunning(setup.requestId, NOW + 4);
+  const runningJob = store.startJob(setup.jobId, "principal-1", identity.jobRevision, NOW + 4);
+  assert.equal(runningRequest.state, "RUNNING");
+  assert.equal(runningJob.state, "running");
+  return identity;
+}
+
+function admitApprovedPrivilegedJob(store: BrokerStore, setup: PrivilegedJobSetup) {
+  const targetKind = setup.tool === "mac_priv_service_control" ? "service" : setup.tool === "mac_priv_package_install" ? "package" : "host";
+  const approvalId = `approval:${setup.requestId.replace(/^request-/u, "")}`;
+  store.admitRequest({
+    requestId: setup.requestId,
+    edgeId: "edge-1",
+    nonce: `nonce-${setup.requestId}`,
+    nonceExpiresAtMs: NOW + 60_000,
+    principalId: "principal-1",
+    sessionId: "session-1",
+    tool: setup.tool,
+    policyVersion: "policy-0.1",
+    payloadDigest: setup.payloadDigest,
+    mutation: true,
+    receivedAtMs: NOW
+  });
+  store.recordRequestDecision({
+    requestId: setup.requestId,
+    principalId: "principal-1",
+    tool: setup.tool,
+    eventType: "decision",
+    decision: "allow",
+    resultClass: "AUTHORIZED",
+    targetRef: setup.targetRef,
+    policyVersion: "policy-0.1",
+    evidence: {},
+    timestampMs: NOW + 1
+  });
+  store.issueApproval({
+    approvalId,
+    approverPrincipalId: "operator-1",
+    requestingPrincipalId: "principal-1",
+    tool: setup.tool,
+    contractVersion: "0.1",
+    targetKind,
+    targetRef: setup.targetRef,
+    payloadDigest: setup.payloadDigest,
+    policyVersion: "policy-0.1",
+    approvalClass: "explicit_privileged_policy",
+    unattended: false,
+    issuedAtMs: NOW + 1,
+    expiresAtMs: NOW + 60_000
+  });
+  store.recordRequestIntent({
+    requestId: setup.requestId,
+    principalId: "principal-1",
+    tool: setup.tool,
+    eventType: "intent",
+    decision: "allow",
+    resultClass: "INTENT_RECORDED",
+    targetRef: setup.targetRef,
+    policyVersion: "policy-0.1",
+    evidence: {},
+    timestampMs: NOW + 2
+  }, {
+    contractVersion: "0.1",
+    targetKind,
+    targetRef: setup.targetRef,
+    payloadDigest: setup.payloadDigest,
+    approvalClass: "explicit_privileged_policy",
+    unattended: false
+  });
+  const created = store.createJob({
+    jobId: setup.jobId,
+    ownerPrincipalId: "principal-1",
+    ownerSessionId: "session-1",
+    tool: setup.tool,
+    targetRef: setup.targetRef,
+    policyVersion: "policy-0.1",
+    payloadDigest: setup.payloadDigest,
+    idempotencyKey: `idem-${setup.jobId.replace(/^job:/u, "")}`,
+    createdAtMs: NOW + 2
+  });
+  store.linkRequestJob(setup.requestId, setup.jobId, NOW + 3);
+  return {
+    ...setup,
+    payloadDigest: setup.payloadDigest,
+    jobRevision: created.job.revision,
+    principalId: "principal-1",
+    sessionId: "session-1"
+  };
+}

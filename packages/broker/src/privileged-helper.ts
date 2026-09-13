@@ -1,10 +1,10 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
-import type { BrokerStore } from "./persistence.js";
+import type { ApprovalRecord, BrokerJob, BrokerStore, RequestRecord } from "./persistence.js";
 import { redactLogText } from "./secret-policy.js";
 
 const HELPER_COMMAND_DOMAIN = "mac-operator-privileged-helper-command-v0.1\0";
@@ -142,6 +142,159 @@ export class BrokerStorePrivilegedHelperReplayGuard implements PrivilegedHelperR
       acceptedAtMs: command.timestampMs,
       expiresAtMs: command.nonceExpiresAtMs
     });
+  }
+}
+
+const PRIVILEGED_TOOL_BINDINGS = {
+  mac_priv_service_control: { operation: "service_control", targetKind: "service" },
+  mac_priv_package_install: { operation: "package_install", targetKind: "package" },
+  mac_priv_power: { operation: "power", targetKind: "host" }
+} as const satisfies Readonly<Record<string, { operation: PrivilegedHelperOperation; targetKind: string }>>;
+
+export interface PrivilegedHelperCommandIssueInput {
+  requestId: string;
+  principalId: string;
+  sessionId: string;
+  jobId: string;
+  /** Optional testable clock value. Production callers should use the factory clock. */
+  nowMs?: number;
+  /** Optional assertion that the request maps to this exact helper operation. */
+  operation?: PrivilegedHelperOperation;
+}
+
+export interface BrokerPrivilegedHelperCommandFactoryOptions {
+  store: BrokerStore;
+  authenticationKey: Buffer;
+  /** Required final Broker authority gate; it may include dynamic kill-switch state. */
+  authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
+  now?: () => number;
+  maxLifetimeMs?: number;
+}
+
+/**
+ * Converts one persisted, approved, running mutation Job into a signed helper
+ * envelope. This is intentionally separate from the helper IPC server: the
+ * Broker remains the authority that proves request, approval, intent, Job,
+ * principal, session, target, and switch identity before a command is signed.
+ */
+export class BrokerPrivilegedHelperCommandFactory {
+  private readonly now: () => number;
+  private readonly maxLifetimeMs: number;
+
+  constructor(private readonly options: BrokerPrivilegedHelperCommandFactoryOptions) {
+    if (!options.store) throw new Error("Privileged helper command factory requires a BrokerStore");
+    if (options.authenticationKey.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
+    if (typeof options.authorizeCommand !== "function") throw new Error("Privileged helper authority check is required");
+    this.now = options.now ?? Date.now;
+    this.maxLifetimeMs = options.maxLifetimeMs ?? 30_000;
+    if (!Number.isSafeInteger(this.maxLifetimeMs) || this.maxLifetimeMs < 1 || this.maxLifetimeMs > MAX_COMMAND_AGE_MS) {
+      throw new Error("Privileged helper command lifetime is invalid");
+    }
+  }
+
+  issue(input: PrivilegedHelperCommandIssueInput): SignedPrivilegedHelperCommand {
+    const nowMs = input.nowMs ?? this.now();
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0 ||
+        !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(input.requestId) ||
+        !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.principalId) ||
+        !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.sessionId) ||
+        !/^job:[A-Za-z0-9._-]{1,240}$/u.test(input.jobId)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command issue identity is malformed");
+    }
+
+    const request = this.options.store.requestRecord(input.requestId);
+    if (!request) throw new BrokerError("TARGET_NOT_FOUND", "Privileged helper request record was not found");
+    const job = this.options.store.ownedJob(input.jobId, input.principalId);
+    if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Privileged helper Job was not found");
+    const binding = PRIVILEGED_TOOL_BINDINGS[request.tool as keyof typeof PRIVILEGED_TOOL_BINDINGS];
+    if (!binding) throw new BrokerError("UNSUPPORTED_CAPABILITY", "Request tool is not an allowlisted privileged operation");
+    if (input.operation !== undefined && input.operation !== binding.operation) {
+      throw new BrokerError("PRECONDITION_FAILED", "Requested helper operation does not match the Broker tool");
+    }
+
+    this.assertRunningIdentity(request, job, input, binding.operation);
+    if (this.options.store.isSwitchDisabled("global") ||
+        this.options.store.isSwitchDisabled("mutations") ||
+        this.options.store.isSwitchDisabled("privileged")) {
+      throw new BrokerError("REVOKED", "Privileged helper dispatch is disabled by a Broker kill switch");
+    }
+    if (this.options.store.isRevoked("principal", request.principalId) ||
+        this.options.store.isRevoked("session", request.sessionId)) {
+      throw new BrokerError("REVOKED", "Privileged helper dispatch identity has been revoked");
+    }
+
+    const approval = this.requireApproval(request, binding, job, nowMs);
+    const expiresAtMs = Math.min(nowMs + this.maxLifetimeMs, approval.expiresAtMs);
+    if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= nowMs) {
+      throw new BrokerError("AUTH_EXPIRED", "Privileged helper approval does not leave an executable lifetime");
+    }
+    const identityDigest = sha256(canonicalJson({
+      requestId: request.requestId,
+      jobId: job.jobId,
+      operation: binding.operation,
+      targetRef: job.targetRef,
+      policyVersion: request.policyVersion
+    }));
+    const intentDigest = sha256(canonicalJson({
+      requestId: request.requestId,
+      jobId: job.jobId,
+      targetRef: job.targetRef,
+      approvalId: approval.approvalId
+    }));
+    const unsigned: UnsignedPrivilegedHelperCommand = {
+      protocolVersion: "0.1",
+      commandId: `priv-command:${identityDigest.slice(0, 48)}`,
+      requestId: `request:${identityDigest.slice(0, 48)}`,
+      nonce: `helper-nonce:${randomBytes(24).toString("hex")}`,
+      nonceExpiresAtMs: expiresAtMs,
+      timestampMs: nowMs,
+      expiresAtMs,
+      operation: binding.operation,
+      targetRef: job.targetRef,
+      payloadDigest: job.payloadDigest,
+      policyVersion: request.policyVersion,
+      approvalId: approval.approvalId,
+      intentId: `intent:${intentDigest.slice(0, 48)}`
+    };
+    validateUnsignedPrivilegedHelperCommand(unsigned);
+    this.options.authorizeCommand(unsigned);
+    return signPrivilegedHelperCommand(unsigned, this.options.authenticationKey);
+  }
+
+  private assertRunningIdentity(
+    request: RequestRecord,
+    job: BrokerJob,
+    input: PrivilegedHelperCommandIssueInput,
+    operation: PrivilegedHelperOperation
+  ): void {
+    if (request.principalId !== input.principalId || request.sessionId !== input.sessionId ||
+        request.mutation !== true || request.state !== "RUNNING" || request.jobId !== job.jobId ||
+        request.targetRef === null || request.targetRef !== job.targetRef ||
+        request.tool !== job.tool || request.policyVersion !== job.policyVersion ||
+        request.payloadDigest !== job.payloadDigest || job.ownerSessionId !== input.sessionId ||
+        job.state !== "running" || job.tool !== `mac_priv_${operation === "service_control" ? "service_control" : operation === "package_install" ? "package_install" : "power"}` ||
+        !validTarget(operation, job.targetRef)) {
+      throw new BrokerError("CONFLICT", "Privileged helper request and running Job identity do not match");
+    }
+  }
+
+  private requireApproval(
+    request: RequestRecord,
+    binding: { operation: PrivilegedHelperOperation; targetKind: string },
+    job: BrokerJob,
+    nowMs: number
+  ): ApprovalRecord {
+    if (!request.approvalId) throw new BrokerError("POLICY_DENIED", "Privileged helper request has no approval binding");
+    const approval = this.options.store.approvalRecord(request.approvalId);
+    if (!approval || approval.revokedAtMs !== null || approval.expiresAtMs <= nowMs || approval.issuedAtMs > nowMs ||
+        approval.approvalClass !== "explicit_privileged_policy" || approval.unattended ||
+        approval.usedCount !== 1 || approval.lastRequestId !== request.requestId ||
+        approval.requestingPrincipalId !== request.principalId || approval.tool !== request.tool ||
+        approval.targetKind !== binding.targetKind || approval.targetRef !== job.targetRef ||
+        approval.payloadDigest !== job.payloadDigest || approval.policyVersion !== request.policyVersion) {
+      throw new BrokerError("POLICY_DENIED", "Privileged helper approval is missing, expired, revoked, or mismatched");
+    }
+    return approval;
   }
 }
 
