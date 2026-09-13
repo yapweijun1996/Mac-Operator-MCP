@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { sha256 } from "@mac-operator/contracts";
 import {
+  captureLaunchdBrokerProcessIdentity,
+  createPrivilegedHelperRuntimeForLaunchdBroker,
   createPrivilegedHelperRuntimeFromActiveKeyConfig,
   PrivilegedHelperStartupError
 } from "./privileged-helper-runtime.js";
@@ -13,6 +15,23 @@ import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials
 import { BrokerStore } from "./persistence.js";
 import { PrivilegedHelperKeyManager, writePrivilegedHelperKeyConfig, type PrivilegedHelperKeyConfig } from "./privileged-helper-keyring.js";
 import { capturePeerProcessIdentity } from "./peer-credentials.js";
+import type { ProcessExecutionResult } from "./process-supervisor.js";
+
+function success(stdout: string): ProcessExecutionResult {
+  return {
+    state: "completed",
+    resultClass: "SUCCEEDED",
+    exitCode: 0,
+    signal: null,
+    stdout,
+    stderr: "",
+    truncated: false,
+    durationMs: 1,
+    processId: process.pid,
+    processGroupId: process.pid,
+    terminationObserved: true
+  };
+}
 
 test("privileged helper startup restores an activated key and owns a separate native runtime", async () => {
   const uid = process.getuid?.();
@@ -46,15 +65,20 @@ test("privileged helper startup restores an activated key and owns a separate na
     await manager.activate();
     manager.dispose();
 
-    const runtime = await createPrivilegedHelperRuntimeFromActiveKeyConfig({
+    const brokerServiceId = `gui/${uid}/com.mac-operator.broker`;
+    const runtime = await createPrivilegedHelperRuntimeForLaunchdBroker({
       helperKeyConfigPath: configPath,
       helperKeyStore: store,
       socketPath: helperSocketPath,
       brokerSocketPath,
-      peerPolicy: {
-        expectedUid: uid,
-        expectedGid: gid,
-        allowedProcessIdentity: capturePeerProcessIdentity(process.pid)
+      brokerServiceId,
+      expectedBrokerUid: uid,
+      expectedBrokerGid: gid,
+      commandExecutor: {
+        async run(command): Promise<ProcessExecutionResult> {
+          assert.deepEqual(command.args, ["print", brokerServiceId]);
+          return success(`${brokerServiceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`);
+        }
       },
       replayGuard: { admit: () => undefined },
       adapter: new FailClosedPrivilegedHelper(),
@@ -71,6 +95,35 @@ test("privileged helper startup restores an activated key and owns a separate na
     store.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("privileged helper caller capture binds the exact Broker LaunchAgent and rejects smuggled services", async () => {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  const serviceId = `gui/${uid}/com.mac-operator.broker`;
+  const identity = await captureLaunchdBrokerProcessIdentity({
+    brokerServiceId: serviceId,
+    expectedBrokerUid: uid,
+    commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`); } }
+  });
+  assert.equal(identity.pid, process.pid);
+  assert.ok(identity.startTimeMicros > 0);
+  await assert.rejects(
+    captureLaunchdBrokerProcessIdentity({
+      brokerServiceId: `gui/${uid}/com.mac-operator.attacker`,
+      expectedBrokerUid: uid,
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(""); } }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "INVALID_HELPER_SERVICE"
+  );
+  await assert.rejects(
+    captureLaunchdBrokerProcessIdentity({
+      brokerServiceId: serviceId,
+      expectedBrokerUid: uid,
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = not running\n}`); } }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PROCESS_NOT_RUNNING"
+  );
 });
 
 test("privileged helper startup fails closed before key restore for invalid boundary inputs", async () => {
