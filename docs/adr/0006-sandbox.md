@@ -28,7 +28,7 @@ The Broker admission contract additionally requires a versioned, profile-matched
 
 ## Experimental implementation addendum
 
-Commit `22dd190` implements a narrow `SandboxExecTaskRunner` behind explicit
+Commit `0fe07ee` implements a narrow `SandboxExecTaskRunner` behind explicit
 opt-in and host-evidence gates. It renders deny-default policy from the
 resolved `TaskProfile` and delegates bounded execution to `ProcessSupervisor`.
 Resolved profiles default to a single-process policy that omits

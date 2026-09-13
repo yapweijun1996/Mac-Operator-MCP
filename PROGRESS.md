@@ -38,7 +38,7 @@ The current implementation addendum is `9bba3cd`: disabled-by-default `mac_ui_ac
 
 The current implementation addendum is `96acb1a`: the proposed L5 helper boundary now has a separately authenticated owner-only IPC server, HMAC command/response binding, durable BrokerStore nonce/request replay admission, strict target/operation and handler-map validation, no raw executable or argument fields, bounded redacted evidence, and a mandatory Broker-owned authority callback checked before dispatch, during active cancellation polling, and before response publication. A Broker-owned command factory derives helper operations only from the three `mac_priv_*` tools and requires a matching explicit approval, intent-linked running Job, payload/policy/target identity, principal/session ownership, active kill switches, and revocation checks before signing. Authority loss or expiry yields `UNKNOWN_OUTCOME`; no root process or privileged operation is enabled. Evidence: `evidence/2026-09-13-privileged-helper-boundary.md`.
 
-The current implementation addendum is `22dd190`: an experimental,
+The current implementation addendum is `0fe07ee`: an experimental,
 disabled-by-default `SandboxExecTaskRunner` now renders a Broker-owned
 deny-default macOS Seatbelt profile from the resolved named TaskProfile and
 invokes only `/usr/bin/sandbox-exec` through the bounded ProcessSupervisor.
@@ -48,7 +48,8 @@ explicit opt-in, and an external host-evidence gate. On the Mac mini M4/macOS
 26.2 host, the opt-in smoke passed allowed-root read/write, denied
 `/private/etc/passwd`, a root-contained `.env`, and an outside-file symlink, hid
 four synthetic inherited environment canaries, denied curl DNS/network access,
-and mapped active `/bin/sleep` cancellation to process-group termination. The
+and mapped active `/bin/sleep` cancellation to process-group termination; a
+Bash child-launch attempt was rejected by the default no-fork policy. The
 resolved profile defaults to `single_process` without `process-fork`; explicit
 `owned_group` remains a separate unevidenced extension.
 Evidence is partial and does not select the
@@ -226,7 +227,7 @@ There is no blocker to continued local implementation. Production enablement is 
 - A later source revision `6683344` reran the full suite at 221 passing tests and moved operator-channel peer checks onto the shared native transport; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-native-operator-ipc.md`.
 - A later source revision `fde7341` reran the full suite at 225 passing tests and added the launchd/service-entrypoint boundary; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-launchd-service-boundary.md`.
 - Recorded initial real-Mac sandbox evidence in `SANDBOX_RESEARCH.md` and `evidence/2026-09-12-sandbox-research.json`; the result is explicitly partial and does not unblock `mac_task_run`.
-- Reran the full suite at 291 tests (289 passed, two default opt-in real-host tests skipped) on clean source commit `22dd190`; `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` passed 6/6 on the Mac mini M4/macOS 26.2 host. The experimental runner smoke proves only Broker-rendered deny-default profile construction, default single-process/no-fork policy, explicit empty-environment filtering for four canaries, allowed temporary-root read/write, `/private/etc/passwd`/`.env`/symlink denial, curl DNS/network denial, and active sleep cancellation. It does not prove real credential, descendant/`setsid`, crash/restart, remount, Docker, persistence, privilege, or allowlisted-network isolation. Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
+- Reran the full suite at 291 tests (289 passed, two default opt-in real-host tests skipped) on clean source commit `0fe07ee`; `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` passed 6/6 on the Mac mini M4/macOS 26.2 host. The experimental runner smoke proves only Broker-rendered deny-default profile construction, default single-process/no-fork policy, explicit empty-environment filtering for four canaries, allowed temporary-root read/write, `/private/etc/passwd`/`.env`/symlink denial, curl DNS/network denial, child-launch denial, and active sleep cancellation. It does not prove real credential, descendant/`setsid`, crash/restart, remount, Docker, persistence, privilege, or allowlisted-network isolation. Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
 
 The passing tests prove only the local foundation, bounded filesystem workers/search, and initial persistent Request/Approval/Job Ledgers on the recorded clean revision. They do not satisfy a release gate or prove protected Keychain-backed secret storage, installed cross-process code identity, a human approval UI/channel, production unattended profiles, remote deployment, removable-volume remount identity, process-tree ownership/termination, credential isolation, sandbox, GUI, helper, packaging, or whole-service rollback.

@@ -71,7 +71,7 @@ Latest Job lease addendum: the current revision persists a per-Broker owner ID, 
 
 Latest ProcessSupervisor addendum: the disabled child-process boundary now treats the POSIX detached process group, rather than only the direct child, as the termination unit. Normal completion, timeout, cancellation, output overflow, and orphan detection perform bounded `kill(-pgid, 0)` drain readback before returning `terminationObserved`; if the group remains past the deadline, the result is `UNKNOWN_OUTCOME` and the capacity slot remains held until an unref'd reaper observes disappearance. This is controlled host evidence only: it does not prove sandbox enforcement, credential isolation, `setsid` escape resistance, or production task-runner enablement. Evidence: `evidence/2026-09-13-process-group-drain.md`.
 
-Latest sandbox runner addendum: commit `22dd190` records the experimental,
+Latest sandbox runner addendum: commit `0fe07ee` records the experimental,
 opt-in `SandboxExecTaskRunner` and Broker-owned deny-default Seatbelt profile
 renderer. The renderer rejects raw SBPL, broad roots, cwd escapes, and network
 allowlists; resolved profiles default to a single-process policy without
@@ -82,7 +82,8 @@ passes only explicit cwd/environment/timeout/output/cancellation controls to
 smoke allowed temporary-root read/write, denied `/private/etc/passwd`, a
 root-contained `.env`, and an outside-file symlink, hid four synthetic parent
 environment canaries, denied curl DNS/network access, and mapped active
-`/bin/sleep` cancellation to process-group termination. This is `PARTIAL`
+`/bin/sleep` cancellation to process-group termination, and denies a Bash
+child-launch attempt under the default no-fork policy. This is `PARTIAL`
 evidence only: real credential stores, descendants/`setsid`,
 crash/restart cleanup, remounts, Docker, persistence, privilege, and
 allowlisted networking remain unproven; `sandbox-exec` is deprecated and the

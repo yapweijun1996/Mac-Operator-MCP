@@ -1,7 +1,7 @@
 # Experimental sandbox profile runner evidence
 
 Date: 2026-09-13
-Source commit: `22dd190` (`feat: default task sandbox to single-process execution`)
+Source commit: `0fe07ee` (`test: prove sandbox denies child process launch`)
 Working tree: clean before evidence commands
 Host: Mac mini `Mac16,10`, Apple M4, 16 GB, arm64
 OS: macOS `26.2`, build `25C56`
@@ -43,8 +43,10 @@ could not read `/private/etc/passwd`, a root-contained `.env`, or a symlink to
 the protected file, and created/read back a file inside the allowed root. An
 independent `/usr/bin/curl` probe to `http://example.com` returned a
 non-success result with empty stdout (DNS resolution was denied, exit 6). A
-second `/bin/sleep` fixture was cancelled through the runner and returned
-`CANCELLED` after process-group termination.
+script attempt to launch `/bin/sleep` as a child was rejected with a fork
+permission error and only its pre-attempt output; a separate direct
+`/bin/sleep` fixture was cancelled through the runner and returned `CANCELLED`
+after process-group termination.
 
 | Dimension | Result | Evidence | Residual risk |
 |---|---|---|---|
@@ -53,7 +55,7 @@ second `/bin/sleep` fixture was cancelled through the runner and returned
 | Protected system/secret paths | `PARTIAL` | `/private/etc/passwd`, a root-contained `.env`, and a protected-file symlink were denied; global and project secret deny rules are rendered. | Real Keychain, SSH, browser, cloud, package, Git, and signing stores were not opened. |
 | Environment isolation | `PARTIAL` | Explicit empty environment hid controller, `HOME`, SSH-agent, and AWS-profile canaries. | This is ProcessSupervisor/profile evidence, not proof that every future profile or launcher has no secret inputs. |
 | Network deny | `PARTIAL` | Curl DNS/network probe returned exit 6 and no stdout. | Network allowlists are intentionally unsupported; non-DNS addresses and broader egress controls remain untested. |
-| Process-tree ownership | `PARTIAL` | The default profile omits `process-fork`; a built-in-only Bash fixture completed without descendants, and a real `/bin/sleep` fixture was cancelled through the runner with detached process-group termination. | `owned_group`, `setsid`, timeout/crash/restart cleanup, and a real task Job lease remain untested. |
+| Process-tree ownership | `PARTIAL` | The default profile omits `process-fork`; a child-launch attempt was denied, a built-in-only Bash fixture completed without descendants, and a real `/bin/sleep` fixture was cancelled through the runner with detached process-group termination. | `owned_group`, `setsid`, timeout/crash/restart cleanup, and a real task Job lease remain untested. |
 | Credential/Docker/persistence/privilege isolation | `UNKNOWN` | No real credential, Docker socket, launchd, privilege, or persistence surface was accessed. | `mac_task_run` remains disabled. |
 
 ## Decision
