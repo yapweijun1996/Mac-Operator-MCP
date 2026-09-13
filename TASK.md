@@ -77,6 +77,18 @@ remains compatible when launchd omits arguments. Real LaunchAgent bootstrap and
 installed-service evidence remain open. Evidence:
 `evidence/2026-09-13-installed-readback-identity.md`.
 
+Live launchd readback addendum: a reversible physical-macOS smoke bootstrapped
+and booted out a unique temporary user LaunchAgent running only `/bin/sleep`.
+The production readback adapter parsed the live service and exposed a real
+macOS transient `state = xpcproxy`; that value is now normalized to
+`launching` without claiming `running`. The separate service inspector applies
+the same conservative mapping to `loaded`. Strict Edge/helper readiness still
+requires `running` plus native PID/start-time identity. Focused launchd tests
+pass 7/7 and the full real-sandbox suite passes 418/418. This does not close
+signed production artifacts, installed Broker/Edge handshake, or real-package
+upgrade/rollback/uninstall evidence. Evidence:
+`evidence/2026-09-14-live-launchd-readback.md`.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.

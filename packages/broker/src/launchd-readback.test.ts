@@ -77,6 +77,15 @@ test("launchd readback rejects identity, traversal, path, and state substitution
   );
 });
 
+test("launchd readback normalizes macOS xpcproxy bootstrap state without claiming running", () => {
+  const serviceId = "gui/501/com.mac-operator.broker";
+  const readback = parseLaunchdJobReadback(serviceId, `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = xpcproxy\n\tprogram = /bin/sleep\n\targuments = {\n\t/bin/sleep\n\t30\n\t}\n\tpid = 4123\n}`);
+  assert.equal(readback.state, "launching");
+  assert.equal(readback.pid, 4123);
+  assert.equal(readback.type, "LaunchAgent");
+  assert.deepEqual(readback.arguments, ["/bin/sleep", "30"]);
+});
+
 test("launchd readback smoke reads an existing system service on macOS", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("launchd readback is a macOS host boundary");

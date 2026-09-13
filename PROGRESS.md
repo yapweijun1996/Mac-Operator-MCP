@@ -1209,3 +1209,15 @@ read-only, and authenticated Edge/Broker integration checks for the current
 revision. Kernel-level disk-quota exhaustion, installed production launchd
 readback, encrypted/Keychain backup storage, external audit anchoring, and
 rollback/runbook decisions remain open.
+
+Live launchd smoke evidence then exposed and fixed a transient-state parser
+gap: macOS reports `state = xpcproxy` immediately after a user LaunchAgent is
+bootstrapped. The bounded readback adapter now maps that state to `launching`
+without claiming `running`; strict Edge/helper startup paths still require
+`running` plus native PID/start-time identity. A unique temporary `/bin/sleep`
+LaunchAgent was bootstrapped, read through the production adapter, booted out,
+and confirmed absent. Focused launchd readback and service-inspector tests pass
+7/7. Evidence:
+`evidence/2026-09-14-live-launchd-readback.md`. The updated default suite is
+418 tests (415 passed, 3 opt-in sandbox tests skipped), and the
+`MOPS_REAL_SANDBOX=1` suite is 418/418 with no skips.

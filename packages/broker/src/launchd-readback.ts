@@ -172,6 +172,10 @@ function parseState(value: string | undefined): LaunchdJobReadback["state"] {
     case "launching":
     case "loaded":
     case "failed": return value;
+    // macOS reports this transient proxy state immediately after a
+    // LaunchAgent bootstrap. It is not proof that the requested program is
+    // running, so preserve the strict running check at higher boundaries.
+    case "xpcproxy": return "launching";
     case undefined:
     case "": return "unknown";
     default: throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd returned an unsupported service state");

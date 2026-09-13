@@ -15,6 +15,12 @@ The renderer intentionally emits no `EnvironmentVariables`, `UserName`, `Shell`,
 
 `validateExistingServicePrecondition` binds upgrade, rollback, and uninstall to an exact previous source revision; install requires the service to be absent. `validateMacOsInstallReadback` requires the exact `gui/<uid>` domain, plist/program/**ProgramArguments**/log identity, native PID/start-time identity, descriptor-backed plist device/inode/digest, unprivileged/no-shell/no-environment launchd facts, running native Broker runtime, matching source/contract/policy metadata, capability set, and code-signature identity before readiness is accepted. `composeMacOsInstallReadback` accepts only a bounded `launchctl print` readback whose argument list exactly matches the planned Node binary and Broker entrypoint.
 
+macOS can report a freshly bootstrapped LaunchAgent as `state = xpcproxy`
+before it reaches `running`. The generic readback adapter normalizes this
+transient value to `launching`; production Edge/helper readiness remains
+strict and accepts only `running` plus a matching native PID/start-time
+identity.
+
 `inspectMacOsInstallFilesystem` is the read-only filesystem preflight. It checks the complete user-home parent chain plus package root, working directory, executable, entrypoint, signed artifact, log directory, and (when required) plist with `lstat` twice. It rejects symlinks, foreign owners, group/other write bits, unexpected types, and device/inode changes; the eventual writer must still use descriptor-relative atomic operations.
 
 `applyMacOsPlistPlan` is the bounded mutation primitive for `install`, `upgrade`, `rollback`, and exact-target `uninstall` in a testable package root. It binds the target device/inode precondition, uses the native `openat`/`renameat`/`fsync` writer or `unlinkat` remover, verifies postconditions, and restores the previous bytes if an upgrade/uninstall step fails. It never exposes recursive deletion and never invokes `launchctl`.

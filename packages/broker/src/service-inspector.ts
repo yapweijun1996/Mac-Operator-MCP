@@ -99,7 +99,10 @@ function normalizeState(value: string): SafeServiceStatus["state"] {
     case "failed": return "failed";
     case "waiting":
     case "launching":
-    case "loaded": return "loaded";
+    case "loaded":
+    // A freshly bootstrapped macOS job can expose its XPC proxy before the
+    // target program is running. Keep the public status conservative.
+    case "xpcproxy": return "loaded";
     case "": return "unknown";
     default: return "unknown";
   }
