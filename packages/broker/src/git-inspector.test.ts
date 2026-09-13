@@ -115,12 +115,12 @@ test("Git branch listing uses the fixed command boundary", async () => {
   const canonicalTarget = await realpath(target);
   const result = await inspector.branches(canonicalTarget, false, { timeoutMs: 1_000, shouldCancel: () => false });
   assert.equal(result.branches.length, 0);
-    assert.ok(observed);
-    assert.ok(observed.args.includes("for-each-ref"));
-    assert.equal(observed.args.includes("refs/remotes"), false);
-    assert.equal(observed.environment?.GIT_CONFIG_NOSYSTEM, "1");
-    assert.equal(observed.environment?.GIT_NO_REPLACE_OBJECTS, "1");
-    assert.equal(observed.environment?.GIT_TERMINAL_PROMPT, "0");
+  assert.ok(observed);
+  assert.ok(observed.args.includes("for-each-ref"));
+  assert.equal(observed.args.includes("refs/remotes"), false);
+  assert.equal(observed.environment?.GIT_CONFIG_NOSYSTEM, "1");
+  assert.equal(observed.environment?.GIT_NO_REPLACE_OBJECTS, "1");
+  assert.equal(observed.environment?.GIT_TERMINAL_PROMPT, "0");
 });
 
 test("Git log parser returns bounded commit metadata and rejects revision injection", () => {
