@@ -29,6 +29,11 @@ test("macOS runtime factory selects the native Broker IPC channel", async () => 
     }]),
     now: () => now
   });
+  const { allowedProcessIdentity: _identity, ...pidOnlyPolicy } = currentProcessPeerPolicy();
+  assert.throws(
+    () => createMacOsNativeBrokerRuntime({ socketPath, broker, peerPolicy: pidOnlyPolicy }),
+    /explicit peer process identity/u
+  );
   const { runtime, brokerChannel } = createMacOsNativeBrokerRuntime({
     socketPath,
     broker,
@@ -201,11 +206,21 @@ test("native IPC refuses an unsafe parent directory", async () => {
   }
 });
 
-function currentProcessPeerPolicy(): { expectedUid: number; expectedGid: number; allowedProcessIds: ReadonlySet<number> } {
+function currentProcessPeerPolicy(): {
+  expectedUid: number;
+  expectedGid: number;
+  allowedProcessIds: ReadonlySet<number>;
+  allowedProcessIdentity: ReturnType<typeof capturePeerProcessIdentity>;
+} {
   const uid = process.getuid?.();
   const gid = process.getgid?.();
   if (uid === undefined || gid === undefined) throw new Error("POSIX identity is unavailable");
-  return { expectedUid: uid, expectedGid: gid, allowedProcessIds: new Set([process.pid]) };
+  return {
+    expectedUid: uid,
+    expectedGid: gid,
+    allowedProcessIds: new Set([process.pid]),
+    allowedProcessIdentity: capturePeerProcessIdentity(process.pid)
+  };
 }
 
 function send(socketPath: string, body: string): Promise<string> {

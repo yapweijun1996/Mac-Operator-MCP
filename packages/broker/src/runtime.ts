@@ -121,6 +121,9 @@ export function createMacOsNativeBrokerRuntime(
   options: MacOsNativeBrokerRuntimeOptions
 ): { runtime: LocalBrokerRuntime; brokerChannel: MacOsNativeBrokerIpcServer } {
   const { operatorChannels, ...nativeOptions } = options;
+  if (nativeOptions.peerPolicy.allowedProcessIdentity === undefined) {
+    throw new Error("macOS native Broker runtime requires an explicit peer process identity");
+  }
   const brokerChannel = new MacOsNativeBrokerIpcServer(nativeOptions);
   const runtime = new LocalBrokerRuntime({
     brokerChannel,
