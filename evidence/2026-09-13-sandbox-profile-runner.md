@@ -1,7 +1,7 @@
 # Experimental sandbox profile runner evidence
 
 Date: 2026-09-13
-Source commit: `0fe07ee` (`test: prove sandbox denies child process launch`)
+Source commit: `41e83c0` (`feat: bind task isolation proof to process tree policy`)
 Working tree: clean before evidence commands
 Host: Mac mini `Mac16,10`, Apple M4, 16 GB, arm64
 OS: macOS `26.2`, build `25C56`
@@ -23,6 +23,10 @@ only `/usr/bin/sandbox-exec` through `ProcessSupervisor`, with an explicit cwd,
 profile-owned executable/arguments, profile environment, timeout, output cap,
 and cancellation callback.
 
+`TaskIsolationProof` includes the selected `processTreePolicy`; Broker
+admission rejects a proof whose process policy differs from the resolved task
+profile.
+
 ## Automated checks
 
 - `npm test`: 291 tests, 289 passed, 2 default opt-in real-host tests skipped.
@@ -32,7 +36,8 @@ and cancellation callback.
   network allowlists; runner tests verify the supervisor receives only
   Broker-rendered sandbox arguments and remains unavailable without explicit
   host evidence and opt-in. The real runner also maps active cancellation to
-  detached process-group termination.
+  detached process-group termination, and proof validation rejects a
+  single-process/owned-group policy mismatch.
 
 ## Real-host smoke results
 

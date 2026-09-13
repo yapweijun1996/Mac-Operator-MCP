@@ -71,7 +71,7 @@ Latest Job lease addendum: the current revision persists a per-Broker owner ID, 
 
 Latest ProcessSupervisor addendum: the disabled child-process boundary now treats the POSIX detached process group, rather than only the direct child, as the termination unit. Normal completion, timeout, cancellation, output overflow, and orphan detection perform bounded `kill(-pgid, 0)` drain readback before returning `terminationObserved`; if the group remains past the deadline, the result is `UNKNOWN_OUTCOME` and the capacity slot remains held until an unref'd reaper observes disappearance. This is controlled host evidence only: it does not prove sandbox enforcement, credential isolation, `setsid` escape resistance, or production task-runner enablement. Evidence: `evidence/2026-09-13-process-group-drain.md`.
 
-Latest sandbox runner addendum: commit `0fe07ee` records the experimental,
+Latest sandbox runner addendum: commit `41e83c0` records the experimental,
 opt-in `SandboxExecTaskRunner` and Broker-owned deny-default Seatbelt profile
 renderer. The renderer rejects raw SBPL, broad roots, cwd escapes, and network
 allowlists; resolved profiles default to a single-process policy without
