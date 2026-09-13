@@ -939,7 +939,7 @@ test("task process ownership metadata survives restart as UNKNOWN", async () => 
     pid: 1234,
     processGroupId: 1234,
     startTimeMicros: 987654321,
-    recordedAtMs: 3
+    recordedAtMs: 2
   } as const;
   const lease = {
     ownerId: "broker:test",

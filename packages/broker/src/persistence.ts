@@ -1414,6 +1414,10 @@ export class BrokerStore {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
     validateJobLease(lease, nowMs, false);
     return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
+      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+          metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs) {
+        throw new BrokerError("PRECONDITION_FAILED", "Task process ownership metadata is outside the active Job window");
+      }
       if (current.processMetadata !== undefined) throw new BrokerError("CONFLICT", "Process ownership was already recorded");
       this.database.prepare(`
         UPDATE jobs SET process_metadata_json = ?, revision = revision + 1
