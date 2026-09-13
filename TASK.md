@@ -199,6 +199,13 @@ Verification: 398 tests (395 passed, 3 opt-in sandbox tests skipped),
 typecheck, contract verification, audit, and diff checks pass. Evidence:
 `evidence/2026-09-13-privileged-helper-status-ipc.md`.
 
+`MOP-086` host-evidence addendum: source revision `a8d9007` passed the full
+`MOPS_REAL_SANDBOX=1 npm test` run at 398/398 and the focused sandbox suite at
+9/9 on the Mac mini host. This strengthens, but does not close, the sandbox
+gate; real credential/Docker/persistence isolation, remount identity,
+owned-group/post-snapshot process ownership, UDP, external allowlisted
+networking, and production packaging remain open.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.

@@ -1098,3 +1098,14 @@ No helper operation, root service, launchd mutation, or remote deployment is
 enabled. The full suite now reports 398 tests (395 passed, 3 opt-in sandbox
 tests skipped), with typecheck, contract verification, audit, and diff checks
 passing.
+
+## Latest real-Mac sandbox addendum
+
+On source revision `a8d9007`, `MOPS_REAL_SANDBOX=1 npm test` passed 398/398 on
+the Mac mini host, including the focused sandbox suite at 9/9. The run covers
+empty child environment, protected-file and symlink denial, selected local
+network allow/deny behavior, fork/`setsid` escape denial, and active
+cancellation. It is host evidence only: real credential/Docker/persistence
+isolation, remount identity, owned-group semantics, post-snapshot descendants,
+UDP, external allowlisted networking, and production packaging remain open.
+Evidence: `evidence/2026-09-13-real-sandbox-regression.md`.
