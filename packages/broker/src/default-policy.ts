@@ -303,6 +303,32 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_git_stage",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.git.write"],
+    capabilityFamilies: ["write"],
+    targetType: "project",
+    mutation: true,
+    approvalPolicy: "trusted_write",
+    outputCapBytes: 262_144,
+    timeoutMs: 15_000,
+    implemented: true,
+    enabled: false
+  },
+  {
+    tool: "mac_git_commit",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.git.write"],
+    capabilityFamilies: ["write"],
+    targetType: "project",
+    mutation: true,
+    approvalPolicy: "trusted_write",
+    outputCapBytes: 524_288,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_package_inspect",
     contractVersion: "0.1",
     requiredScopes: ["mac.package.read"],
@@ -504,7 +530,7 @@ export function createDefaultPolicy(
       }));
       return;
     }
-    if (scope === "mac.git.read" || scope === "mac.package.read") {
+    if (scope === "mac.git.read" || scope === "mac.git.write" || scope === "mac.package.read") {
       projectRoots.forEach((projectRoot, projectIndex) => targetRules.push({
         ruleId: `test-project-${index}-${projectIndex}`,
         effect: "allow",

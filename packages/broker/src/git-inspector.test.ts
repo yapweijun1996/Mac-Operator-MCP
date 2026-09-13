@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, parseGitBranchResult, parseGitDiffResult, parseGitLogResult, parseGitStatusOutput, validateGitDiffRequest, validateGitLogRequest, validateGitStatusRequest } from "./git-inspector.js";
+import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, parseGitBranchResult, parseGitDiffResult, parseGitLogResult, parseGitStatusOutput, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest } from "./git-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 function success(stdout: string): ProcessExecutionResult {
@@ -190,6 +190,99 @@ test("Git diff inspector binds staged, revision, literal paths, and fixed enviro
   assert.equal(observed.args.at(-2), "--");
   assert.equal(observed.args.at(-1), "src/file.ts");
   assert.equal(observed.environment?.GIT_CONFIG_SYSTEM, "/dev/null");
+});
+
+test("Git write validators reject traversal, secret, and unsafe commit inputs", () => {
+  assert.throws(() => validateGitStageRequest("/tmp/project", ["../outside"]), BrokerError);
+  assert.throws(() => validateGitStageRequest("/tmp/project", [".git/config"]), BrokerError);
+  assert.throws(() => validateGitStageRequest("/tmp/project", [".env"]), BrokerError);
+  assert.throws(() => validateGitCommitRequest("/tmp/project", "\u0001unsafe"), BrokerError);
+  assert.throws(() => validateGitCommitRequest("/tmp/project", "message", "not-a-digest"), BrokerError);
+});
+
+test("Git stage uses explicit literal paths and verifies the staged index hash", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-stage-"));
+  const target = join(directory, "target");
+  await mkdir(join(target, ".git"), { recursive: true });
+  await mkdir(join(target, "src"), { recursive: true });
+  await writeFile(join(target, ".git", "config"), "[core]\n\tbare = false\n");
+  await writeFile(join(target, "src", "main.ts"), "export {}\n", { mode: 0o600 });
+  let staged = false;
+  const commands: readonly string[][] = [];
+  const inspector = new GitWriteInspectorImpl({
+    run: async (request) => {
+      (commands as string[][]).push([...request.args]);
+      if (request.args.includes("add")) {
+        staged = true;
+        return success("");
+      }
+      if (request.args.includes("--raw")) return success(staged ? "raw-after" : "raw-before");
+      if (request.args.includes("--text")) return success("safe staged content");
+      if (request.args.includes("--name-only")) return success(staged ? "src/main.ts\0" : "");
+      throw new Error(`unexpected Git command: ${request.args.join(" ")}`);
+    }
+  });
+  try {
+    const result = await inspector.stage(await realpath(target), ["src/main.ts"], { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.deepEqual(result.stagedPaths, ["src/main.ts"]);
+    assert.deepEqual(result.skippedPaths, []);
+    assert.equal(result.indexChanged, true);
+    assert.match(result.stagedDiffSha256, /^[a-f0-9]{64}$/u);
+    const add = commands.find((args) => args.includes("add"));
+    assert.ok(add);
+    assert.equal(add?.includes("--all"), false);
+    assert.equal(add?.includes("reset"), false);
+    assert.equal(add?.includes("push"), false);
+    assert.equal(add?.at(-2), "--");
+    assert.equal(add?.at(-1), "src/main.ts");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Git commit binds staged digest and reads back HEAD parents and a clean index", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-commit-"));
+  const target = join(directory, "target");
+  await mkdir(join(target, ".git"), { recursive: true });
+  await mkdir(join(target, "src"), { recursive: true });
+  await writeFile(join(target, ".git", "config"), "[core]\n\tbare = false\n");
+  await writeFile(join(target, "src", "main.ts"), "export {}\n", { mode: 0o600 });
+  const firstHead = "a".repeat(40);
+  const secondHead = "b".repeat(40);
+  let commitRan = false;
+  const commands: readonly string[][] = [];
+  const inspector = new GitWriteInspectorImpl({
+    run: async (request) => {
+      (commands as string[][]).push([...request.args]);
+      if (request.args.includes("rev-parse")) return success(`${commitRan ? secondHead : firstHead}\n`);
+      if (request.args.includes("rev-list")) return success(`${commitRan ? secondHead : firstHead} ${firstHead}\n`);
+      if (request.args.includes("--raw")) return success(commitRan ? "" : "raw-staged");
+      if (request.args.includes("--text")) return success("safe staged content");
+      if (request.args.includes("--name-only")) return success(commitRan ? "" : "src/main.ts\0");
+      if (request.args.includes("commit")) {
+        commitRan = true;
+        return success("[main bbbbbbb] safe commit\n");
+      }
+      if (request.args.includes("status")) return success(`# branch.oid ${secondHead}\0# branch.head main\0`);
+      throw new Error(`unexpected Git command: ${request.args.join(" ")}`);
+    }
+  });
+  try {
+    const result = await inspector.commit(await realpath(target), "safe commit", undefined, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.equal(result.commitId, secondHead);
+    assert.deepEqual(result.parentIds, [firstHead]);
+    assert.equal(result.precondition.expectedSha256, null);
+    assert.equal(result.precondition.matched, true);
+    assert.equal(result.workingTreeState, "clean");
+    const commit = commands.find((args) => args.includes("commit"));
+    assert.ok(commit);
+    assert.ok(commit?.includes("--no-verify"));
+    assert.ok(commit?.includes("--no-gpg-sign"));
+    assert.equal(commit?.includes("push"), false);
+    assert.equal(commit?.includes("reset"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("Git status rejects a symlink project root before child execution", async () => {

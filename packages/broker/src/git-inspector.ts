@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import {
   ProcessSupervisor,
   type ProcessExecutionResult
 } from "./process-supervisor.js";
-import { redactBoundedText, redactLogText } from "./secret-policy.js";
+import { assertContentPathAllowed, redactBoundedText, redactLogText } from "./secret-policy.js";
 
 const GIT_EXECUTABLE = "/usr/bin/git";
 const MAX_PROJECT_ROOT_LENGTH = 4_096;
@@ -19,6 +19,11 @@ const MAX_CONFIG_BYTES = 262_144;
 const MAX_DIFF_BYTES = 1_048_576;
 const MAX_DIFF_PROCESS_OUTPUT_BYTES = 1_200_000;
 const MAX_DIFF_TIMEOUT_MS = 15_000;
+const MAX_STAGE_PATHS = 512;
+const MAX_STAGE_PATH_BYTES = 32 * 1024;
+const MAX_COMMIT_MESSAGE_BYTES = 4 * 1024;
+const MAX_WRITE_PROCESS_OUTPUT_BYTES = 1_200_000;
+const MAX_WRITE_TIMEOUT_MS = 30_000;
 const PROJECT_ROOT_PATTERN = /^\/[^\u0000\n]*$/u;
 const SAFE_GIT_ENVIRONMENT = {
   GIT_CONFIG_NOSYSTEM: "1",
@@ -107,6 +112,36 @@ export interface GitDiffInspector {
     maxBytes: number,
     control: GitExecutionControl
   ): Promise<SafeGitDiff>;
+}
+
+export interface SafeGitStage {
+  projectRoot: string;
+  stagedPaths: readonly string[];
+  skippedPaths: readonly string[];
+  stagedDiffSha256: string;
+  indexChanged: boolean;
+  warnings: readonly string[];
+  truncated: boolean;
+}
+
+export interface SafeGitCommitResult {
+  projectRoot: string;
+  commitId: string;
+  parentIds: readonly string[];
+  stagedDiffSha256: string;
+  precondition: {
+    expectedSha256: string | null;
+    actualSha256: string;
+    matched: boolean;
+  };
+  workingTreeState: "clean" | "dirty";
+  warnings: readonly string[];
+  truncated: boolean;
+}
+
+export interface GitWriteInspector {
+  stage(projectRoot: string, paths: readonly string[], control: GitExecutionControl): Promise<SafeGitStage>;
+  commit(projectRoot: string, message: string, expectedStagedDiffSha256: string | undefined, control: GitExecutionControl): Promise<SafeGitCommitResult>;
 }
 
 export class GitStatusInspector implements GitInspector {
@@ -288,11 +323,245 @@ export class GitDiffInspectorImpl implements GitDiffInspector {
   }
 }
 
+/**
+ * Fixed-surface Git mutations. The caller supplies only a canonical project
+ * root and explicit path/message values; this class never accepts a shell
+ * command, a revision, a remote, or an implicit all-files selector.
+ */
+export class GitWriteInspectorImpl implements GitWriteInspector {
+  private readonly supervisor: Pick<ProcessSupervisor, "run">;
+
+  constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
+    maxConcurrent: 1,
+    allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
+  })) {
+    this.supervisor = supervisor;
+  }
+
+  async stage(projectRoot: string, paths: readonly string[], control: GitExecutionControl): Promise<SafeGitStage> {
+    validateGitStageRequest(projectRoot, paths);
+    const identity = canonicalProjectRoot(projectRoot);
+    const pathIdentities = captureGitWritePathIdentities(identity.path, paths);
+    const before = await this.readStagedSnapshot(identity.path, identity.identity, control);
+    const result = await this.runGit(identity.path, [
+      "--no-pager",
+      "--no-optional-locks",
+      "--literal-pathspecs",
+      "--git-dir=.git",
+      "--work-tree=.",
+      "-c", "core.fsmonitor=false",
+      "-c", "core.hooksPath=/dev/null",
+      "add",
+      "--",
+      ...paths
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    assertGitMutationResult(result, "Git staging");
+    assertProjectIdentity(identity.path, identity.identity);
+    assertGitWritePathIdentitiesUnchanged(identity.path, pathIdentities);
+    const after = await this.readStagedSnapshot(identity.path, identity.identity, control);
+    const stagedPathSet = new Set(after.paths);
+    const stagedPaths = paths.filter((path) => stagedPathSet.has(path));
+    const skippedPaths = paths.filter((path) => !stagedPathSet.has(path));
+    return {
+      projectRoot: identity.path,
+      stagedPaths,
+      skippedPaths,
+      stagedDiffSha256: after.sha256,
+      indexChanged: before.sha256 !== after.sha256,
+      warnings: after.warnings,
+      truncated: after.truncated
+    };
+  }
+
+  async commit(
+    projectRoot: string,
+    message: string,
+    expectedStagedDiffSha256: string | undefined,
+    control: GitExecutionControl
+  ): Promise<SafeGitCommitResult> {
+    validateGitCommitRequest(projectRoot, message, expectedStagedDiffSha256);
+    const identity = canonicalProjectRoot(projectRoot);
+    const beforeHead = await this.readHead(identity.path, control);
+    const before = await this.readStagedSnapshot(identity.path, identity.identity, control);
+    if (before.paths.length === 0) throw new BrokerError("PRECONDITION_FAILED", "Git commit requires staged content");
+    const expected = expectedStagedDiffSha256 ?? null;
+    if (expected !== null && expected.toLowerCase() !== before.sha256) {
+      throw new BrokerError("PRECONDITION_FAILED", "Staged Git content does not match the expected digest");
+    }
+    const result = await this.runGit(identity.path, [
+      "--no-pager",
+      "--no-optional-locks",
+      "--git-dir=.git",
+      "--work-tree=.",
+      "-c", "core.fsmonitor=false",
+      "-c", "core.hooksPath=/dev/null",
+      "-c", "commit.gpgsign=false",
+      "commit",
+      "--no-verify",
+      "--no-gpg-sign",
+      "-m", message
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    assertGitMutationResult(result, "Git commit");
+    assertProjectIdentity(identity.path, identity.identity);
+    const afterHead = await this.readHead(identity.path, control);
+    if (afterHead.commitId === beforeHead.commitId) {
+      throw new BrokerError("VERIFICATION_FAILED", "Git commit did not advance HEAD");
+    }
+    const after = await this.readStagedSnapshot(identity.path, identity.identity, control);
+    if (after.paths.length > 0) {
+      throw new BrokerError("VERIFICATION_FAILED", "Git commit left staged content after readback");
+    }
+    const status = await this.readStatus(identity.path, identity.identity, control);
+    return {
+      projectRoot: identity.path,
+      commitId: afterHead.commitId,
+      parentIds: afterHead.parentIds,
+      stagedDiffSha256: before.sha256,
+      precondition: {
+        expectedSha256: expected,
+        actualSha256: before.sha256,
+        matched: true
+      },
+      workingTreeState: status.dirty ? "dirty" : "clean",
+      warnings: [...before.warnings, ...after.warnings, ...status.warnings].filter((warning, index, all) => all.indexOf(warning) === index).slice(0, 32),
+      truncated: before.truncated || after.truncated || status.truncated
+    };
+  }
+
+  private async readStagedSnapshot(projectRoot: string, expectedIdentity: string, control: GitExecutionControl): Promise<GitStagedSnapshot> {
+    assertProjectIdentity(projectRoot, expectedIdentity);
+    const raw = await this.runGit(projectRoot, [
+      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+      "diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv", "--"
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    assertGitMutationResult(raw, "Git staged snapshot");
+    const text = await this.runGit(projectRoot, [
+      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=false",
+      "diff", "--cached", "--text", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--full-index", "--"
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    assertGitMutationResult(text, "Git staged content snapshot");
+    const names = await this.runGit(projectRoot, [
+      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--"
+    ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    assertGitMutationResult(names, "Git staged path snapshot");
+    const warnings: string[] = [];
+    const redacted = redactBoundedText(text.stdout, MAX_WRITE_PROCESS_OUTPUT_BYTES);
+    if (redacted.redacted) {
+      throw new BrokerError("POLICY_DENIED", "Staged Git content matched a protected secret signature");
+    }
+    if (redacted.truncated || raw.truncated || names.truncated) {
+      throw new BrokerError("OUTPUT_LIMIT", "Staged Git content exceeded its bounded snapshot");
+    }
+    const paths = names.stdout.split("\0").filter((path) => path.length > 0);
+    for (const path of paths) {
+      if (!isSafeGitPath(path) || path.split("/")[0] === ".git") {
+        throw new BrokerError("POLICY_DENIED", "Git staged path is outside the allowed project surface");
+      }
+      assertContentPathAllowed(join(projectRoot, path));
+    }
+    const digest = createHash("sha256")
+      .update(raw.stdout, "utf8")
+      .update("\0", "utf8")
+      .update(text.stdout, "utf8")
+      .digest("hex");
+    assertProjectIdentity(projectRoot, expectedIdentity);
+    return { sha256: digest, paths, warnings, truncated: false };
+  }
+
+  private async readHead(projectRoot: string, control: GitExecutionControl): Promise<GitHeadIdentity> {
+    const head = await this.runGit(projectRoot, ["--git-dir=.git", "--work-tree=.", "rev-parse", "--verify", "--end-of-options", "HEAD"], control, 16_384);
+    assertGitMutationResult(head, "Git HEAD readback");
+    const commitId = head.stdout.trim();
+    if (!/^[A-Fa-f0-9]{40,64}$/u.test(commitId)) throw new BrokerError("VERIFICATION_FAILED", "Git HEAD readback was malformed");
+    const parents = await this.runGit(projectRoot, ["--git-dir=.git", "--work-tree=.", "rev-list", "--parents", "-n", "1", "--end-of-options", "HEAD"], control, 16_384);
+    assertGitMutationResult(parents, "Git parent readback");
+    const fields = parents.stdout.trim().split(/\s+/u).filter((field) => field.length > 0);
+    if (fields.length < 1 || fields[0]!.toLowerCase() !== commitId.toLowerCase() || fields.slice(1).some((field) => !/^[A-Fa-f0-9]{40,64}$/u.test(field)) || fields.length > 3) {
+      throw new BrokerError("VERIFICATION_FAILED", "Git commit parent readback was malformed");
+    }
+    return { commitId, parentIds: fields.slice(1) };
+  }
+
+  private async readStatus(projectRoot: string, expectedIdentity: string, control: GitExecutionControl): Promise<SafeGitStatus> {
+    const result = await this.runGit(projectRoot, [
+      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
+      "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"
+    ], control, MAX_OUTPUT_BYTES);
+    assertGitMutationResult(result, "Git working-tree readback");
+    assertProjectIdentity(projectRoot, expectedIdentity);
+    return parseGitStatusOutput(projectRoot, result);
+  }
+
+  private runGit(projectRoot: string, args: readonly string[], control: GitExecutionControl, outputCapBytes: number): Promise<ProcessExecutionResult> {
+    return this.supervisor.run({
+      executable: GIT_EXECUTABLE,
+      args,
+      cwd: projectRoot,
+      environment: SAFE_GIT_ENVIRONMENT,
+      timeoutMs: Math.min(control.timeoutMs, MAX_WRITE_TIMEOUT_MS),
+      outputCapBytes,
+      shouldCancel: control.shouldCancel
+    });
+  }
+}
+
+interface GitStagedSnapshot {
+  sha256: string;
+  paths: readonly string[];
+  warnings: readonly string[];
+  truncated: boolean;
+}
+
+interface GitHeadIdentity {
+  commitId: string;
+  parentIds: readonly string[];
+}
+
+interface GitWritePathIdentity {
+  path: string;
+  exists: boolean;
+  device: number;
+  inode: number;
+  parentDevice: number;
+  parentInode: number;
+}
+
 export function validateGitStatusRequest(projectRoot: string, includeUntracked = true): void {
   if (typeof projectRoot !== "string" || projectRoot.length < 1 || projectRoot.length > MAX_PROJECT_ROOT_LENGTH ||
       !PROJECT_ROOT_PATTERN.test(projectRoot) || !isAbsolute(projectRoot) || resolve(projectRoot) !== projectRoot ||
       typeof includeUntracked !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Git status arguments are outside the supported range");
+  }
+}
+
+export function validateGitStageRequest(projectRoot: string, paths: readonly string[]): void {
+  validateGitStatusRequest(projectRoot, true);
+  if (!Array.isArray(paths) || paths.length < 1 || paths.length > MAX_STAGE_PATHS) {
+    throw new BrokerError("PRECONDITION_FAILED", "Git stage paths are outside the supported range");
+  }
+  let bytes = 0;
+  for (const path of paths) {
+    if (!isSafeGitPath(path) || path.split("/")[0] === ".git") {
+      throw new BrokerError("PRECONDITION_FAILED", "Git stage paths are outside the supported range");
+    }
+    assertContentPathAllowed(join(projectRoot, path));
+    bytes += Buffer.byteLength(path, "utf8") + 1;
+    if (bytes > MAX_STAGE_PATH_BYTES) throw new BrokerError("PRECONDITION_FAILED", "Git stage paths exceed the supported size");
+  }
+}
+
+export function validateGitCommitRequest(projectRoot: string, message: string, expectedStagedDiffSha256?: string): void {
+  validateGitStatusRequest(projectRoot, true);
+  if (typeof message !== "string" || message.length < 1 || Buffer.byteLength(message, "utf8") > MAX_COMMIT_MESSAGE_BYTES ||
+      message.includes("\0") || /[\u0001-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(message)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Git commit message is outside the supported range");
+  }
+  if (expectedStagedDiffSha256 !== undefined && !/^[A-Fa-f0-9]{64}$/u.test(expectedStagedDiffSha256)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Expected staged Git digest is malformed");
   }
 }
 
@@ -338,6 +607,97 @@ function isSafeGitPath(path: string): boolean {
   if (/[\u0000-\u001f\u007f\\]/u.test(path)) return false;
   const segments = path.split("/");
   return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function assertGitMutationResult(result: ProcessExecutionResult, operation: string): void {
+  if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", `${operation} was cancelled`);
+  if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", `${operation} timed out`);
+  if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", `${operation} exceeded its output limit`);
+  if (result.resultClass === "UNKNOWN_OUTCOME") throw new BrokerError("UNKNOWN_OUTCOME", `${operation} outcome is unresolved`, true);
+  if (result.resultClass !== "SUCCEEDED") {
+    if (/not a git repository|pathspec .* did not match/u.test(result.stderr)) {
+      throw new BrokerError("TARGET_NOT_FOUND", `${operation} target was not found`);
+    }
+    throw new BrokerError("EXECUTION_FAILED", `${operation} failed`);
+  }
+}
+
+function captureGitWritePathIdentities(projectRoot: string, paths: readonly string[]): readonly GitWritePathIdentity[] {
+  return paths.map((path) => {
+    const candidate = join(projectRoot, path);
+    const parent = dirname(candidate);
+    let parentStat;
+    try {
+      parentStat = statSync(parent);
+    } catch {
+      throw new BrokerError("TARGET_NOT_FOUND", "Git stage parent directory was not found");
+    }
+    if (!parentStat.isDirectory() || realpathSync.native(parent) !== parent) {
+      throw new BrokerError("POLICY_DENIED", "Git stage path contains a symlinked parent");
+    }
+    try {
+      const lexical = lstatSync(candidate);
+      if (lexical.isSymbolicLink()) throw new BrokerError("POLICY_DENIED", "Git stage does not accept symlink paths");
+      if (!lexical.isFile()) throw new BrokerError("POLICY_DENIED", "Git stage path must be a regular file");
+      if (realpathSync.native(candidate) !== candidate || !isContainedPath(projectRoot, candidate)) {
+        throw new BrokerError("POLICY_DENIED", "Git stage path is outside the canonical project root");
+      }
+      assertContentPathAllowed(candidate);
+      return {
+        path,
+        exists: true,
+        device: lexical.dev,
+        inode: lexical.ino,
+        parentDevice: parentStat.dev,
+        parentInode: parentStat.ino
+      };
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        assertContentPathAllowed(candidate);
+        return {
+          path,
+          exists: false,
+          device: 0,
+          inode: 0,
+          parentDevice: parentStat.dev,
+          parentInode: parentStat.ino
+        };
+      }
+      throw new BrokerError("POLICY_DENIED", "Git stage path could not be inspected safely");
+    }
+  });
+}
+
+function assertGitWritePathIdentitiesUnchanged(projectRoot: string, identities: readonly GitWritePathIdentity[]): void {
+  for (const expected of identities) {
+    const candidate = join(projectRoot, expected.path);
+    const parent = dirname(candidate);
+    try {
+      const parentStat = statSync(parent);
+      if (!parentStat.isDirectory() || realpathSync.native(parent) !== parent ||
+          parentStat.dev !== expected.parentDevice || parentStat.ino !== expected.parentInode) {
+        throw new BrokerError("POLICY_DENIED", "Git stage parent changed during mutation");
+      }
+      const lexical = lstatSync(candidate);
+      if (!expected.exists) {
+        throw new BrokerError("POLICY_DENIED", "Git stage target appeared during mutation");
+      }
+      if (lexical.isSymbolicLink() || !lexical.isFile() || lexical.dev !== expected.device || lexical.ino !== expected.inode ||
+          realpathSync.native(candidate) !== candidate) {
+        throw new BrokerError("POLICY_DENIED", "Git stage target changed during mutation");
+      }
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && !expected.exists) continue;
+      throw new BrokerError("POLICY_DENIED", "Git stage target changed during mutation");
+    }
+  }
+}
+
+function isContainedPath(root: string, target: string): boolean {
+  const child = relative(root, target);
+  return child === "" || (!child.startsWith(`..${sep}`) && child !== ".." && !isAbsolute(child));
 }
 
 function sanitizeGitValue(value: string, maxLength: number, allowEmpty = false): { value: string | null; redacted: boolean } {

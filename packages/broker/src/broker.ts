@@ -32,7 +32,7 @@ import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
-import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, validateGitBranchRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector } from "./git-inspector.js";
+import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
@@ -54,6 +54,7 @@ export interface BrokerOptions {
   gitBranchInspector?: GitBranchInspector;
   gitLogInspector?: GitLogInspector;
   gitDiffInspector?: GitDiffInspector;
+  gitWriteInspector?: GitWriteInspector;
   packageInspector?: PackageInspector;
   dockerInspector?: DockerInspector;
   taskProfileRegistry?: TaskProfileRegistry;
@@ -75,6 +76,7 @@ export class Broker {
   private readonly gitBranchInspector: GitBranchInspector;
   private readonly gitLogInspector: GitLogInspector;
   private readonly gitDiffInspector: GitDiffInspector;
+  private readonly gitWriteInspector: GitWriteInspector;
   private readonly packageInspector: PackageInspector;
   private readonly dockerInspector: DockerInspector;
   private readonly taskProfileRegistry: TaskProfileRegistry;
@@ -93,6 +95,7 @@ export class Broker {
     this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector();
     this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl();
     this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl();
+    this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl();
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
     this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
@@ -354,6 +357,24 @@ export class Broker {
             execution.writeJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
+          if (request.tool === "mac_git_stage" || request.tool === "mac_git_commit") {
+            const jobInput = {
+              jobId: `job:git-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: `git:${request.tool}:${request.requestId}`,
+              createdAtMs: this.now()
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            if (request.tool === "mac_git_stage") execution.gitStageJob = created.job;
+            else execution.gitCommitJob = created.job;
+            execution.gitWriteJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
         }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
@@ -361,6 +382,10 @@ export class Broker {
         ? { kind: "write" as const, job: execution.writeJob }
         : execution.taskJob && execution.taskJobNew
           ? { kind: "task" as const, job: execution.taskJob }
+          : execution.gitStageJob && execution.gitWriteJobNew
+            ? { kind: "git_stage" as const, job: execution.gitStageJob }
+            : execution.gitCommitJob && execution.gitWriteJobNew
+              ? { kind: "git_commit" as const, job: execution.gitCommitJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
         const leaseStartedAtMs = this.now();
@@ -392,7 +417,9 @@ export class Broker {
         }
         execution.jobLease = lease;
         if (pendingJob.kind === "write") execution.writeJob = started;
-        else execution.taskJob = started;
+        else if (pendingJob.kind === "task") execution.taskJob = started;
+        else if (pendingJob.kind === "git_stage") execution.gitStageJob = started;
+        else execution.gitCommitJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       this.ensureActiveAuthority(request, execution.target);
@@ -793,6 +820,12 @@ export class Broker {
             warningCount: diff.warnings.length
           }
         };
+      }
+      case "mac_git_stage": {
+        return this.dispatchGitStage(request, execution, toolPolicy.timeoutMs);
+      }
+      case "mac_git_commit": {
+        return this.dispatchGitCommit(request, execution, toolPolicy.timeoutMs);
       }
       case "mac_package_inspect": {
         if (!execution.packageInspect) throw new BrokerError("EXECUTION_FAILED", "Package inspection execution plan is unavailable");
@@ -1632,6 +1665,156 @@ export class Broker {
     }
   }
 
+  private async dispatchGitStage(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.gitStage || !execution.gitStageJob) {
+      throw new BrokerError("EXECUTION_FAILED", "Git stage job execution plan is unavailable");
+    }
+    const job = execution.gitStageJob;
+    if (job.state === "queued") throw new BrokerError("CONFLICT", "Git stage is already queued", true);
+    if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Git stage outcome is unresolved; inspect its Broker job", true);
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "Git stage was cancelled before execution");
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "Git stage job is not running");
+    try {
+      const stage = await this.gitWriteInspector.stage(
+        execution.gitStage.projectRoot,
+        execution.gitStage.paths,
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+      );
+      this.ensureActiveAuthority(request, execution.target);
+      const data = {
+        project_root: stage.projectRoot,
+        staged_paths: [...stage.stagedPaths],
+        skipped_paths: [...stage.skippedPaths],
+        staged_diff_sha256: stage.stagedDiffSha256,
+        index_changed: stage.indexChanged
+      };
+      execution.gitStageJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: this.now(),
+        stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return {
+        data,
+        verification: {
+          required: true,
+          status: "verified",
+          strategy: "staged_diff_hash",
+          evidence: {
+            summary: "Explicit Git paths were staged and the resulting index snapshot was hashed after repository/path identity readback",
+            readback_hash: stage.stagedDiffSha256,
+            observed_at: new Date(this.now()).toISOString()
+          }
+        },
+        warnings: [...stage.warnings],
+        truncated: stage.truncated,
+        auditTarget: `project:${stage.projectRoot}`,
+        auditEvidence: {
+          stagedPathCount: stage.stagedPaths.length,
+          skippedPathCount: stage.skippedPaths.length,
+          indexChanged: stage.indexChanged,
+          stagedDiffSha256: stage.stagedDiffSha256,
+          warningCount: stage.warnings.length,
+          truncated: stage.truncated
+        }
+      };
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Git stage failed");
+      try {
+        execution.gitStageJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          state: "unknown",
+          resultClass: "unknown",
+          finishedAtMs: this.now()
+        }, execution.jobLease, this.now());
+      } catch {
+        // Preserve the original error; the index mutation has no trusted terminal readback.
+      }
+      throw brokerError;
+    }
+  }
+
+  private async dispatchGitCommit(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.gitCommit || !execution.gitCommitJob) {
+      throw new BrokerError("EXECUTION_FAILED", "Git commit job execution plan is unavailable");
+    }
+    const job = execution.gitCommitJob;
+    if (job.state === "queued") throw new BrokerError("CONFLICT", "Git commit is already queued", true);
+    if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "Git commit outcome is unresolved; inspect its Broker job", true);
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "Git commit was cancelled before execution");
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "Git commit job is not running");
+    try {
+      const commit = await this.gitWriteInspector.commit(
+        execution.gitCommit.projectRoot,
+        execution.gitCommit.message,
+        execution.gitCommit.expectedStagedDiffSha256,
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+      );
+      this.ensureActiveAuthority(request, execution.target);
+      const data = {
+        project_root: commit.projectRoot,
+        commit_id: commit.commitId,
+        parent_ids: [...commit.parentIds],
+        staged_diff_sha256: commit.stagedDiffSha256,
+        precondition: {
+          expected_sha256: commit.precondition.expectedSha256,
+          actual_sha256: commit.precondition.actualSha256,
+          matched: commit.precondition.matched
+        },
+        working_tree_state: commit.workingTreeState
+      };
+      execution.gitCommitJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: this.now(),
+        stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return {
+        data,
+        verification: {
+          required: true,
+          status: "verified",
+          strategy: "commit_id_parent_and_staged_precondition",
+          evidence: {
+            summary: "Local commit advanced HEAD, matched the staged digest precondition, and read back commit parents and index state",
+            readback_hash: commit.stagedDiffSha256,
+            observed_at: new Date(this.now()).toISOString()
+          }
+        },
+        warnings: [...commit.warnings],
+        truncated: commit.truncated,
+        auditTarget: `project:${commit.projectRoot}`,
+        auditEvidence: {
+          commitId: commit.commitId,
+          parentCount: commit.parentIds.length,
+          stagedDiffSha256: commit.stagedDiffSha256,
+          workingTreeState: commit.workingTreeState,
+          warningCount: commit.warnings.length,
+          truncated: commit.truncated
+        }
+      };
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Git commit failed");
+      try {
+        execution.gitCommitJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          state: "unknown",
+          resultClass: "unknown",
+          finishedAtMs: this.now()
+        }, execution.jobLease, this.now());
+      } catch {
+        // Preserve the original error; the commit may have occurred without a trusted readback.
+      }
+      throw brokerError;
+    }
+  }
+
   private inspectWritePostcondition(job: BrokerJob, policy: BrokerPolicy): WriteRecoveryStatus | undefined {
     const metadata = job.writeMetadata;
     if (job.tool !== "mac_write_file_atomic" || metadata === undefined) return undefined;
@@ -1977,6 +2160,35 @@ export class Broker {
         target: { kind: "project", reference: projectRoot },
         auditTarget: `project:${projectRoot}`,
         gitDiff: { projectRoot, paths: [...paths] as string[], staged, ...(base !== undefined ? { base } : {}), maxBytes }
+      };
+    }
+    if (request.tool === "mac_git_stage") {
+      assertExactArguments(request.arguments, ["project_root", "paths"]);
+      const projectRoot = request.arguments.project_root;
+      const paths = request.arguments.paths;
+      if (typeof projectRoot !== "string" || !Array.isArray(paths)) {
+        throw new BrokerError("PRECONDITION_FAILED", "project_root and paths must have supported types");
+      }
+      validateGitStageRequest(projectRoot, paths as readonly string[]);
+      return {
+        target: { kind: "project", reference: projectRoot },
+        auditTarget: `project:${projectRoot}`,
+        gitStage: { projectRoot, paths: [...paths] as string[] }
+      };
+    }
+    if (request.tool === "mac_git_commit") {
+      assertExactArguments(request.arguments, ["project_root", "message", "expected_staged_diff_sha256"]);
+      const projectRoot = request.arguments.project_root;
+      const message = request.arguments.message;
+      const expectedStagedDiffSha256 = request.arguments.expected_staged_diff_sha256 as string | undefined;
+      if (typeof projectRoot !== "string" || typeof message !== "string") {
+        throw new BrokerError("PRECONDITION_FAILED", "project_root and message must have supported types");
+      }
+      validateGitCommitRequest(projectRoot, message, expectedStagedDiffSha256);
+      return {
+        target: { kind: "project", reference: projectRoot },
+        auditTarget: `project:${projectRoot}`,
+        gitCommit: { projectRoot, message, ...(expectedStagedDiffSha256 !== undefined ? { expectedStagedDiffSha256 } : {}) }
       };
     }
     if (request.tool === "mac_package_inspect") {
@@ -2381,6 +2593,15 @@ interface ExecutionPlan {
     base?: string;
     maxBytes: number;
   };
+  gitStage?: {
+    projectRoot: string;
+    paths: readonly string[];
+  };
+  gitCommit?: {
+    projectRoot: string;
+    message: string;
+    expectedStagedDiffSha256?: string;
+  };
   packageInspect?: {
     projectRoot: string;
     manager: PackageManagerRequest;
@@ -2416,6 +2637,9 @@ interface ExecutionPlan {
   writeJobNew?: boolean;
   taskJob?: BrokerJob;
   taskJobNew?: boolean;
+  gitStageJob?: BrokerJob;
+  gitCommitJob?: BrokerJob;
+  gitWriteJobNew?: boolean;
   jobLease?: JobLease;
 }
 

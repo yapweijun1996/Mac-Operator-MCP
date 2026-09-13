@@ -702,8 +702,93 @@ test("capability discovery separates planned, implemented, and enabled", async (
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 32);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 34);
   assert.deepEqual(policy.filesystemRoots, []);
+});
+
+test("mac_git_stage binds approval, explicit paths, Job lease, and staged readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-git-stage-"));
+  const projectRoot = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.git.write"], ["edge-key-1"], [], [], [], [projectRoot]
+  );
+  const gitTool = basePolicy.tools.get("mac_git_stage")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_git_stage", { ...gitTool, enabled: true })
+  };
+  let calls = 0;
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    gitWriteInspector: {
+      async stage(root, paths, control) {
+        calls += 1;
+        assert.equal(root, projectRoot);
+        assert.deepEqual(paths, ["src/main.ts"]);
+        assert.equal(control.shouldCancel(), false);
+        return {
+          projectRoot,
+          stagedPaths: ["src/main.ts"],
+          skippedPaths: [],
+          stagedDiffSha256: "a".repeat(64),
+          indexChanged: true,
+          warnings: [],
+          truncated: false
+        };
+      },
+      async commit() { throw new Error("commit must not run in stage test"); }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { project_root: projectRoot, paths: ["src/main.ts"] };
+  const request = unsigned({
+    requestId: "git-stage-request",
+    nonce: "git-stage-nonce",
+    tool: "mac_git_stage",
+    arguments: argumentsValue
+  }, ["mac.git.write"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:git-stage",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_git_stage",
+      contractVersion: "0.1",
+      targetKind: "project",
+      targetRef: `project:${projectRoot}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(calls, 1);
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        project_root: projectRoot,
+        staged_paths: ["src/main.ts"],
+        skipped_paths: [],
+        staged_diff_sha256: "a".repeat(64),
+        index_changed: true
+      });
+    }
+    const job = store.ownedJobByIdempotencyKey("git:mac_git_stage:git-stage-request", "principal-1");
+    assert.equal(job?.state, "completed");
+    assert.equal(store.approvalRecord("approval:git-stage")?.usedCount, 1);
+    assert.deepEqual(store.auditRows()
+      .filter((row) => row.request_id === "git-stage-request")
+      .map((row) => row.event_type), ["decision", "intent", "completion"]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("mac_task_run fails closed before consuming approval when isolation proof is unavailable", async () => {
