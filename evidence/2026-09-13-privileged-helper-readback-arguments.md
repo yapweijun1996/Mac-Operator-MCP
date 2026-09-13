@@ -1,7 +1,7 @@
 # Privileged Helper Exact-Arguments Readback Evidence
 
 Date: 2026-09-13
-Source commit: `30b69df`
+Source commit: `a3d7765`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -56,9 +56,17 @@ device/inode, digest, or byte-count replacement between snapshots fails closed
 before final composition. The fixture proves a stable two-snapshot success and
 rejects a second-snapshot PID substitution.
 
+`createPrivilegedHelperPackageHostObserver` wires the real read-only host
+adapters: `readLaunchdJobReadback` with a bounded empty-environment executor,
+native `capturePeerProcessIdentity`, the internal descriptor-backed plist
+reader, and strict `codesign --verify --strict --deep` plus bounded
+`codesign -dv --verbose=4` field parsing. Runtime metadata remains an explicit
+helper-owned callback, so launchd state or request arguments cannot fabricate
+the helper's policy/version/capability readback.
+
 ## Verification
 
-- `npm test`: 395 tests, 392 passed, 0 failed, 3 opt-in macOS sandbox tests skipped.
+- `npm test`: 397 tests, 394 passed, 0 failed, 3 opt-in macOS sandbox tests skipped.
 - `npm run typecheck`: passed.
 - Negative coverage: a helper readback with an attacker-supplied extra
   argument is rejected with stable `SERVICE_MISMATCH`.
@@ -73,6 +81,9 @@ rejects a second-snapshot PID substitution.
   readback from being supplied to the lifecycle callback.
 - Observer coverage performs two launchd/process/plist reads and rejects a
   PID replacement between snapshots with stable `SERVICE_MISMATCH`.
+- Host-adapter coverage verifies the fixed launchd command, native identity
+  binding, and bounded codesign detail parsing; malformed signature details
+  fail with stable `SIGNATURE_MISMATCH`.
 - No root-domain installation or live `launchctl` readback was attempted.
 
 ## Remaining gates
@@ -85,7 +96,7 @@ evidence only; it does not enable a privileged helper capability.
 
 ## Source hashes
 
-- `8a0d148fd1fc12ef58188e00f7e370204ec199293a3a9d4efb45476e51654622`
+- `cc8102ddc21b83b787cdd3df3711bb2232bc27dd6b8ab6b90356443a549267e4`
   `packages/broker/src/privileged-helper-package.ts`
-- `65abbdc460decc3764bd754d1ddedd8fa72e6610f3df84373daff28749e1432f`
+- `5351b9a4de349b7ec0df321fc53fce8103b2e6c97da4a8e26e302101d132d2c5`
   `packages/broker/src/privileged-helper-package.test.ts`

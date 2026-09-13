@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `30b69df`.
+Current committed implementation baseline: `a3d7765`.
+
+The latest privileged-helper host-adapter addendum is `a3d7765`: the
+production-shaped observer now wires bounded `launchctl print`, native
+PID/start-time capture, descriptor-backed plist readback, and strict bounded
+`codesign` verification/details parsing. Helper runtime metadata remains an
+explicit helper-owned source; no root service is installed. The full suite
+passes 397 tests (394 passed, 3 opt-in sandbox tests skipped). Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
 The latest privileged-helper observer addendum is `30b69df`: the host-only
 observer reads launchd, PID/start-time, and plist identities twice and rejects

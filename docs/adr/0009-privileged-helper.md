@@ -134,6 +134,12 @@ and plist identity snapshots and rejects replacement during collection before
 composition. The boundary is host-only and injectable for tests; it does not
 install or enable the helper.
 
+Revision `a3d7765` adds the production-shaped host adapter: bounded
+`launchctl print`, native PID/start-time capture, descriptor-backed plist
+reading, and strict `codesign` verification/details parsing. Runtime metadata is
+still supplied by the helper-owned runtime source and is never inferred from
+launchd or request arguments.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

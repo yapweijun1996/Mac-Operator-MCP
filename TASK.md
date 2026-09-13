@@ -19,6 +19,12 @@ readback internally, preventing a preassembled-readback bypass. Root-owned
 installation remains open. Evidence:
 `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Privileged-helper host-adapter addendum: commit `a3d7765` wires bounded
+`launchctl print`, native PID/start-time capture, descriptor plist reading, and
+strict `codesign` verify/details parsing into the observer factory. Runtime
+metadata remains helper-owned input; no root service is installed. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Privileged-helper observer addendum: commit `30b69df` re-reads launchd,
 PID/start-time, and plist identities before composition and rejects replacement
 during collection. The observer fixture covers success and PID-swap failure;

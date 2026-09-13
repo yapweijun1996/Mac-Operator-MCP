@@ -56,6 +56,14 @@ snapshots fails closed; the full 395-test suite passes. No root service was
 installed, and live LaunchDaemon evidence remains open.
 Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Latest privileged-helper host-adapter addendum: source commit `a3d7765` wires
+bounded `launchctl print`, native PID/start-time capture, descriptor-backed
+plist reading, and strict bounded `codesign` verify/details parsing into the
+observer factory. Runtime metadata remains explicit helper-owned input. The
+full suite passes 397 tests (394 passed, 3 opt-in sandbox tests skipped); no
+root service was installed.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,
