@@ -152,6 +152,13 @@ applies expiry, revocation, and activation-identity fencing to that gate. This
 remains read-only contract/test evidence; it does not install or enable the
 helper.
 
+Revision `46a3167` makes the root-domain package signature expectation
+Developer ID-shaped: the exact helper identifier, ten-character TeamIdentifier,
+and CDHash are all mandatory and must match final codesign readback. An ad-hoc
+or partially bound artifact therefore fails before filesystem or launchd action.
+This is a package gate only; it does not assert that a signed/notarized helper
+artifact exists or authorize installation.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

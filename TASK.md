@@ -206,6 +206,13 @@ gate; real credential/Docker/persistence isolation, remount identity,
 owned-group/post-snapshot process ownership, UDP, external allowlisted
 networking, and production packaging remain open.
 
+`MOP-061` signature addendum: source revision `46a3167` requires the exact
+helper identifier, Developer ID TeamIdentifier, and CDHash in the root-domain
+package plan and final codesign readback. Missing fields fail closed before
+filesystem or launchd actions. Developer ID signing/notarization, installation,
+live readback, and independent review remain blocked. Evidence:
+`evidence/2026-09-13-helper-signature-gate.md`.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.

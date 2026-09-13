@@ -1109,3 +1109,13 @@ cancellation. It is host evidence only: real credential/Docker/persistence
 isolation, remount identity, owned-group semantics, post-snapshot descendants,
 UDP, external allowlisted networking, and production packaging remain open.
 Evidence: `evidence/2026-09-13-real-sandbox-regression.md`.
+
+## Latest helper signature addendum
+
+Source revision `46a3167` makes the root-domain helper package reject any
+signature expectation without the exact helper identifier, a ten-character
+Developer ID TeamIdentifier, and a CDHash. Codesign readback must match all
+three values before package readiness can be accepted. This closes the
+incomplete/ad-hoc identity path but does not claim a Developer ID-signed or
+notarized artifact, installed root helper, or live launchd evidence.
+Evidence: `evidence/2026-09-13-helper-signature-gate.md`.
