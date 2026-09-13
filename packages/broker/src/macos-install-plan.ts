@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
 import type { PeerProcessIdentity } from "./peer-credentials.js";
+import type { LaunchdJobReadback } from "./launchd-readback.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -139,6 +140,13 @@ export interface MacOsInstallReadback {
   pid: number;
   processIdentity: PeerProcessIdentity;
   launchd: LaunchdServiceReadback;
+  broker: BrokerServiceReadback;
+  signature: CodeSignatureReadback;
+}
+
+export interface MacOsInstallReadbackSources {
+  launchd: LaunchdJobReadback;
+  processIdentity: PeerProcessIdentity;
   broker: BrokerServiceReadback;
   signature: CodeSignatureReadback;
 }
@@ -358,6 +366,43 @@ export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: M
     fail("SERVICE_MISMATCH", "Broker service readback does not match the planned identity or capability set");
   }
   validateCodeSignatureReadback(plan.signature, readback.signature, plan.signedArtifactPath);
+}
+
+/**
+ * Composes the final install readback only from independently observed
+ * launchd, native process, Broker, and code-signature sources. The launchd
+ * parser is the authority for service identity, state, PID, program, plist,
+ * and LaunchAgent type; the planned launch configuration remains the source
+ * for fields that launchctl does not expose in its stable print format.
+ */
+export function composeMacOsInstallReadback(
+  plan: MacOsInstallPlan,
+  sources: MacOsInstallReadbackSources
+): MacOsInstallReadback {
+  if (!isRecord(sources) || !isRecord(sources.launchd) || !isRecord(sources.processIdentity) ||
+      !isRecord(sources.broker) || !isRecord(sources.signature)) {
+    fail("INVALID_READBACK", "install readback sources are malformed");
+  }
+  const expectedServiceId = `${plan.domain}/${plan.label}`;
+  const launchd = sources.launchd;
+  if (launchd.serviceId !== expectedServiceId || launchd.domain !== plan.domain || launchd.label !== plan.label ||
+      launchd.state !== "running" || launchd.type !== "LaunchAgent" || launchd.pid === null ||
+      launchd.program !== plan.launchd.program || launchd.plistPath !== plan.plistPath ||
+      launchd.pid !== sources.processIdentity.pid) {
+    fail("SERVICE_MISMATCH", "launchd readback sources do not match the planned Broker service");
+  }
+  const readback: MacOsInstallReadback = {
+    domain: plan.domain,
+    label: plan.label,
+    plistPath: plan.plistPath,
+    pid: launchd.pid,
+    processIdentity: sources.processIdentity,
+    launchd: plan.launchd,
+    broker: sources.broker,
+    signature: sources.signature
+  };
+  validateMacOsInstallReadback(plan, readback);
+  return readback;
 }
 
 export function validateExistingServicePrecondition(plan: MacOsInstallPlan, readback: ExistingServiceReadback): void {

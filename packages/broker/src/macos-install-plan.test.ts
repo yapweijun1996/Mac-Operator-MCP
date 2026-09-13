@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import {
   buildMacOsInstallPlan,
   applyMacOsPlistPlan,
+  composeMacOsInstallReadback,
   executeMacOsInstallPlan,
   inspectMacOsInstallFilesystem,
   MacOsInstallPlanError,
@@ -114,6 +115,47 @@ test("readback requires matching signature, launchd identity, native transport, 
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, pid: 1234, processIdentity: { pid: 1234, startTimeMicros: 0 } }), /launchd readback/u);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, broker: { ...readback.broker, nativeTransportRequired: false as never } }), /Broker service readback/u);
   assert.throws(() => validateCodeSignatureReadback(base.signature, { ...readback.signature, identifier: "com.attacker.broker" }, base.signedArtifactPath), /code signature readback/u);
+});
+
+test("readback composition binds launchd service identity to native process and Broker sources", () => {
+  const plan = buildMacOsInstallPlan(base);
+  const composed = composeMacOsInstallReadback(plan, {
+    launchd: {
+      serviceId: `${plan.domain}/${plan.label}`,
+      domain: plan.domain as `gui/${number}`,
+      label: plan.label,
+      state: "running",
+      pid: 1234,
+      program: plan.launchd.program,
+      plistPath: plan.plistPath,
+      type: "LaunchAgent",
+      lastExitCode: null,
+      truncated: false
+    },
+    processIdentity: { pid: 1234, startTimeMicros: 987654321 },
+    broker: {
+      ...base.metadata,
+      state: "running",
+      runtimeState: "running",
+      nativeTransportRequired: true,
+      enabledCapabilities: []
+    },
+    signature: {
+      artifactPath: base.signedArtifactPath,
+      valid: true,
+      identifier: base.signature.identifier,
+      teamIdentifier: base.signature.teamIdentifier ?? null,
+      cdHash: base.signature.cdHash ?? null
+    }
+  });
+  assert.equal(composed.pid, 1234);
+  assert.equal(composed.processIdentity.startTimeMicros, 987654321);
+  assert.throws(() => composeMacOsInstallReadback(plan, {
+    launchd: { ...composed.launchd, serviceId: "gui/501/com.mac-operator.attacker" } as never,
+    processIdentity: composed.processIdentity,
+    broker: composed.broker,
+    signature: composed.signature
+  }), /launchd readback sources/u);
 });
 
 test("upgrade and uninstall plans bind an exact existing revision and fail closed on precondition mismatch", () => {
