@@ -7,6 +7,7 @@ import { approvalKeyIdentity, type ApprovalIssuerKey } from "./approval-authorit
 import {
   assertProtectedSecretDirectory,
   loadApprovalIssuerKey,
+  loadKeychainAuthenticationKey,
   syncProtectedDirectory
 } from "./credentials.js";
 import type { ApprovalKeyConfigActivationIdentity, BrokerStore } from "./persistence.js";
@@ -16,7 +17,10 @@ const MAX_CONFIG_BYTES = 128 * 1024;
 export interface ApprovalIssuerKeyConfigEntry {
   issuerId: string;
   keyId: string;
-  path: string;
+  keySource?: "file" | "keychain";
+  path?: string;
+  service?: string;
+  account?: string;
   notBeforeMs: number;
   expiresAtMs: number;
   allowUnattended: boolean;
@@ -101,14 +105,24 @@ export async function loadApprovalIssuerKeyConfig(
     if (store.isRevoked("approval_key", identity)) {
       throw new Error(`Approval issuer key is revoked: ${identity}`);
     }
-    keys.push(await loadApprovalIssuerKey(
-      entry.path,
-      entry.issuerId,
-      entry.keyId,
-      entry.notBeforeMs,
-      entry.expiresAtMs,
-      entry.allowUnattended
-    ));
+    const loaded = entry.keySource === "keychain"
+      ? { key: await loadKeychainAuthenticationKey(entry.service!, entry.account!) }
+      : await loadApprovalIssuerKey(
+        entry.path!,
+        entry.issuerId,
+        entry.keyId,
+        entry.notBeforeMs,
+        entry.expiresAtMs,
+        entry.allowUnattended
+      );
+    keys.push({
+      issuerId: entry.issuerId,
+      keyId: entry.keyId,
+      key: loaded.key,
+      notBeforeMs: entry.notBeforeMs,
+      expiresAtMs: entry.expiresAtMs,
+      allowUnattended: entry.allowUnattended
+    });
   }
   return { document, keys, payloadDigest: sha256(canonicalJson(document)) };
 }
@@ -212,11 +226,17 @@ function validateConfig(value: unknown): void {
 function validateEntry(value: unknown): void {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Approval issuer key config entry is malformed");
   const record = value as Record<string, unknown>;
-  const keys = new Set(["issuerId", "keyId", "path", "notBeforeMs", "expiresAtMs", "allowUnattended"]);
+  const keys = new Set(["issuerId", "keyId", "keySource", "path", "service", "account", "notBeforeMs", "expiresAtMs", "allowUnattended"]);
+  const keySource = record.keySource ?? "file";
+  const fileSource = keySource === "file" && typeof record.path === "string" && isAbsolute(record.path) && resolve(record.path) === record.path && !record.path.includes("\0") &&
+    record.service === undefined && record.account === undefined;
+  const keychainSource = keySource === "keychain" && record.path === undefined &&
+    typeof record.service === "string" && /^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(record.service) &&
+    typeof record.account === "string" && /^[A-Za-z0-9._:-]{1,128}$/u.test(record.account);
   if (Object.keys(record).some((key) => !keys.has(key)) ||
       typeof record.issuerId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(record.issuerId) ||
       typeof record.keyId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(record.keyId) ||
-      typeof record.path !== "string" || !isAbsolute(record.path) || resolve(record.path) !== record.path || record.path.includes("\0") ||
+      (keySource !== "file" && keySource !== "keychain") || (!fileSource && !keychainSource) ||
       !Number.isSafeInteger(record.notBeforeMs) || (record.notBeforeMs as number) < 0 ||
       !Number.isSafeInteger(record.expiresAtMs) || (record.expiresAtMs as number) <= (record.notBeforeMs as number) ||
       typeof record.allowUnattended !== "boolean") {

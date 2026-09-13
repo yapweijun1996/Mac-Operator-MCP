@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -119,6 +119,41 @@ test("approval issuer key config rejects unsafe replacement targets", async () =
     await symlink(keyPath, configPath);
     await assert.rejects(writeApprovalIssuerKeyConfig(configPath, document), /Existing approval issuer key config is not protected/u);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("approval issuer key config requires an explicit Keychain source shape", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-keyring-keychain-"));
+  const configPath = join(directory, "approval-keys.json");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const account = `approval:missing:${randomUUID()}`;
+  try {
+    const document: ApprovalIssuerKeyConfig = {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        issuerId: "operator-1",
+        keyId: "operator-key-1",
+        keySource: "keychain",
+        service: "com.mac-operator.test",
+        account,
+        notBeforeMs: NOW - 1_000,
+        expiresAtMs: NOW + 60_000,
+        allowUnattended: false
+      }]
+    };
+    await writeApprovalIssuerKeyConfig(configPath, document);
+    await assert.rejects(loadApprovalIssuerKeyConfig(configPath, store), /Keychain generic password is unavailable/u);
+    await assert.rejects(
+      writeApprovalIssuerKeyConfig(configPath, {
+        ...document,
+        keys: [{ ...document.keys[0]!, keySource: "keychain", path: join(directory, "forbidden.key") }]
+      }),
+      /Approval issuer key config entry is malformed/u
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("approval issuer key manager persists monotonic activation and exact restart restore", async () => {
