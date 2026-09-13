@@ -72,3 +72,14 @@ Edge keys on close. This is governed startup assembly evidence only; no live
 LaunchAgent bootstrap, production signing, Keychain ACL, or upgrade/rollback
 acceptance is claimed. Evidence:
 `evidence/2026-09-13-governed-broker-service-entrypoint.md`.
+
+The current revision supersedes the earlier non-installing limitation
+for the unprivileged temporary package slice. The executor now receives only
+raw host observations and composes final readback internally; its observer
+waits through launchd startup, double-reads launchd/native/plist identities,
+and reads strict signature details. A physical-Mac temporary package started
+the real zero-capability Broker under a LaunchAgent and completed exact
+uninstall. This remains partial: the Broker status callback is an explicit
+owner-only fixture, and Developer ID/notarization, production persistence,
+upgrade/rollback, remote Edge, and root-domain helper evidence remain open.
+Evidence: `evidence/2026-09-14-live-install-plan.md`.

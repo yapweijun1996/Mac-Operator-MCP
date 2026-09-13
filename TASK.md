@@ -103,12 +103,15 @@ observation proves the child stale. Focused lock tests pass 5/5. This does not
 claim launchd singleton enforcement or remount durability. Evidence:
 `evidence/2026-09-14-service-instance-lock-process.md`.
 
-The host-only install plan has a real reversible lifecycle smoke covering
-ad-hoc signature verification, filesystem preflight, atomic plist publication,
-fixed bootstrap, live LaunchAgent/PID-start-time readback, bootout, exact
-uninstall, and final absence. The temporary waiting process was not treated as
-Broker readiness; Developer ID, installed Broker/Edge identity, production
-upgrade/rollback, and helper installation remain open. Evidence:
+Install-plan readback hardening is committed locally. The host-only install
+plan now has a physical-Mac package smoke that calls the
+real executor with only independent launchd, native PID/start-time, plist,
+Broker-status, and signature sources. It waits through transient `launching`,
+double-reads mutable identities, starts a temporary zero-capability Broker
+under a user LaunchAgent, and completes exact uninstall with final absence.
+The package uses ad-hoc signing and an explicit owner-only status fixture;
+Developer ID, production artifact provenance, upgrade/rollback, remote Edge,
+and helper installation remain open. Evidence:
 `evidence/2026-09-14-live-install-plan.md`.
 
 The real Broker startup assembly now has a physical-host smoke: a temporary

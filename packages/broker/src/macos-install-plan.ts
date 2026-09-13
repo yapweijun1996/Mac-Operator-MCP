@@ -4,8 +4,8 @@ import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
-import type { PeerProcessIdentity } from "./peer-credentials.js";
-import type { LaunchdJobReadback } from "./launchd-readback.js";
+import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
+import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -72,6 +72,15 @@ export interface LaunchdCommandSpec {
 export interface CodeSignatureCommandSpec {
   executable: "/usr/bin/codesign";
   args: readonly ["--verify", "--strict", "--deep", string];
+  cwd: "/";
+  environment: Readonly<Record<string, string>>;
+  timeoutMs: 5_000;
+  outputCapBytes: 131_072;
+}
+
+export interface CodeSignatureDetailsCommandSpec {
+  executable: "/usr/bin/codesign";
+  args: readonly ["-dv", "--verbose=4", string];
   cwd: "/";
   environment: Readonly<Record<string, string>>;
   timeoutMs: 5_000;
@@ -154,6 +163,27 @@ export interface MacOsInstallReadbackSources {
   signature: CodeSignatureReadback;
 }
 
+export interface MacOsInstallReadbackObserver {
+  readLaunchd(serviceId: string): Promise<LaunchdJobReadback>;
+  readProcessIdentity(pid: number): Promise<PeerProcessIdentity> | PeerProcessIdentity;
+  readPlist(plan: MacOsInstallPlan): Promise<MacOsPlistReadback>;
+  readBroker(): Promise<BrokerServiceReadback>;
+  readSignature(): Promise<CodeSignatureReadback>;
+}
+
+export interface MacOsInstallHostObserverOptions {
+  /**
+   * Must be an authenticated or same-process Broker-owned status source. A
+   * preassembled install readback is intentionally not accepted.
+   */
+  readBroker: () => Promise<BrokerServiceReadback>;
+  launchdExecutor?: LaunchdReadbackExecutor;
+  signatureExecutor?: MacOsInstallCommandExecutor;
+  processIdentityReader?: (pid: number) => PeerProcessIdentity;
+  readPlist?: (plan: MacOsInstallPlan) => Promise<MacOsPlistReadback>;
+  readSignature?: (plan: MacOsInstallPlan) => Promise<CodeSignatureReadback>;
+}
+
 export interface ExistingServiceReadback {
   present: boolean;
   sourceRevision: string | null;
@@ -204,7 +234,7 @@ export interface MacOsPlistReadback {
 }
 
 export interface MacOsInstallCommandExecutor {
-  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec): Promise<ProcessExecutionResult>;
+  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec | CodeSignatureDetailsCommandSpec): Promise<ProcessExecutionResult>;
 }
 
 export interface MacOsInstallExecutionOptions extends MacOsPlistApplyOptions {
@@ -212,7 +242,8 @@ export interface MacOsInstallExecutionOptions extends MacOsPlistApplyOptions {
   confirmOperation: MacOsInstallOperation;
   existingService: ExistingServiceReadback;
   commandExecutor?: MacOsInstallCommandExecutor;
-  readback: () => Promise<MacOsInstallReadback | null>;
+  /** Returns only independently observed sources; execution composes them. */
+  readback: () => Promise<MacOsInstallReadbackSources | null>;
 }
 
 export interface MacOsInstallExecutionResult {
@@ -425,6 +456,101 @@ export function composeMacOsInstallReadback(
 }
 
 /**
+ * Collects raw install readback sources with replacement-resistant identity
+ * checks. Launchd, process, and plist sources are sampled twice; the Broker
+ * status and signature are kept as separate observations and are never
+ * accepted as a caller-assembled final readback.
+ */
+export async function collectMacOsInstallReadbackSources(
+  plan: MacOsInstallPlan,
+  observer: MacOsInstallReadbackObserver
+): Promise<MacOsInstallReadbackSources> {
+  try {
+    if (observer === null || typeof observer !== "object") {
+      fail("INVALID_READBACK", "install readback observer is malformed");
+    }
+    const serviceId = `${plan.domain}/${plan.label}`;
+    const launchdBefore = await readRunningLaunchd(observer, serviceId);
+    if (launchdBefore.pid === null) fail("SERVICE_MISMATCH", "install launchd readback has no running PID");
+    const launchdBeforePid = launchdBefore.pid;
+    const processBefore = await observer.readProcessIdentity(launchdBeforePid);
+    const plistBefore = await observer.readPlist(plan);
+    const broker = await observer.readBroker();
+    const signature = await observer.readSignature();
+    const launchdAfter = await readRunningLaunchd(observer, serviceId);
+    if (launchdAfter.pid === null) fail("SERVICE_MISMATCH", "install launchd readback has no running PID");
+    if (!sameLaunchdIdentity(launchdBefore, launchdAfter)) {
+      fail("SERVICE_MISMATCH", "install launchd identity changed during readback");
+    }
+    const launchdAfterPid = launchdAfter.pid;
+    const processAfter = await observer.readProcessIdentity(launchdAfterPid);
+    if (!sameProcessIdentity(processBefore, processAfter)) {
+      fail("SERVICE_MISMATCH", "install process identity changed during readback");
+    }
+    const plistAfter = await observer.readPlist(plan);
+    if (!samePlistIdentity(plistBefore, plistAfter)) {
+      fail("FILESYSTEM_MISMATCH", "install plist identity changed during readback");
+    }
+    return {
+      launchd: launchdAfter,
+      processIdentity: processAfter,
+      plist: plistAfter,
+      broker,
+      signature
+    };
+  } catch (error) {
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("READBACK_FAILED", "macOS install host readback failed");
+  }
+}
+
+async function readRunningLaunchd(
+  observer: MacOsInstallReadbackObserver,
+  serviceId: string
+): Promise<LaunchdJobReadback> {
+  let latest: LaunchdJobReadback | undefined;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    latest = await observer.readLaunchd(serviceId);
+    if (latest.state === "running" && latest.pid !== null) return latest;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  fail("SERVICE_MISMATCH", latest?.pid === null ? "install launchd readback has no running PID" : "install launchd service did not reach running state");
+}
+
+/** Collects and composes the final install readback for host-only callers. */
+export async function observeMacOsInstallReadback(
+  plan: MacOsInstallPlan,
+  observer: MacOsInstallReadbackObserver
+): Promise<MacOsInstallReadback> {
+  return composeMacOsInstallReadback(plan, await collectMacOsInstallReadbackSources(plan, observer));
+}
+
+/**
+ * Creates the production-shaped host observer. Launchd and codesign use the
+ * bounded empty-environment supervisor; process identity uses the native
+ * Darwin adapter; plist content uses the descriptor-backed installer reader.
+ * Broker status remains an explicit authenticated or same-process source.
+ */
+export function createMacOsInstallHostObserver(
+  plan: MacOsInstallPlan,
+  options: MacOsInstallHostObserverOptions
+): MacOsInstallReadbackObserver {
+  if (options === null || typeof options !== "object" || typeof options.readBroker !== "function") {
+    fail("INVALID_ARGUMENT", "install host observer requires a Broker-owned status source");
+  }
+  const ownerUid = parseUid(plan.domain);
+  return {
+    readLaunchd: async (serviceId) => readLaunchdJobReadback(serviceId, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor }),
+    readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? readStableProcessIdentity(pid),
+    readPlist: options.readPlist ?? (async (candidate) => readMacOsPlistReadback(candidate, { ownerUid })),
+    readBroker: options.readBroker,
+    readSignature: options.readSignature === undefined
+      ? async () => readMacOsCodeSignature(plan, options.signatureExecutor)
+      : async () => options.readSignature!(plan)
+  };
+}
+
+/**
  * Reads the exact planned plist through the descriptor-backed filesystem
  * boundary and returns only its stable path, identity, size, and digest. The
  * expected rendered bytes are checked before this source can participate in a
@@ -453,6 +579,45 @@ export function readMacOsPlistReadback(
     fail("FILESYSTEM_MISMATCH", "planned plist content does not match the rendered plan");
   }
   return { path: read.path, bytes: read.content.byteLength, sha256, device: read.device, inode: read.inode };
+}
+
+/** Reads only the bounded identity fields from the exact planned artifact. */
+export async function readMacOsCodeSignature(
+  plan: MacOsInstallPlan,
+  executor: MacOsInstallCommandExecutor = new ProcessSupervisor({ allowedEnvironmentKeys: [] })
+): Promise<CodeSignatureReadback> {
+  let verification: ProcessExecutionResult;
+  let details: ProcessExecutionResult;
+  try {
+    verification = await executor.run(plan.signatureVerify);
+    if (verification.resultClass !== "SUCCEEDED" || verification.truncated) {
+      fail("SIGNATURE_MISMATCH", "code signature verification failed");
+    }
+    details = await executor.run({
+      executable: "/usr/bin/codesign",
+      args: ["-dv", "--verbose=4", plan.signedArtifactPath],
+      cwd: "/",
+      environment: {},
+      timeoutMs: SERVICE_TIMEOUT_MS,
+      outputCapBytes: SERVICE_OUTPUT_CAP_BYTES
+    });
+  } catch (error) {
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("SIGNATURE_MISMATCH", "code signature readback failed");
+  }
+  if (details.resultClass !== "SUCCEEDED" || details.truncated) {
+    fail("SIGNATURE_MISMATCH", "code signature details failed");
+  }
+  const output = `${details.stdout}\n${details.stderr}`;
+  const readback: CodeSignatureReadback = {
+    artifactPath: plan.signedArtifactPath,
+    valid: true,
+    identifier: readCodeSignatureField(output, "Identifier", /^[A-Za-z0-9._:-]{1,128}$/u),
+    teamIdentifier: readCodeSignatureField(output, "TeamIdentifier", /^[A-Z0-9]{5,32}$/u),
+    cdHash: readCodeSignatureField(output, "CDHash", /^[a-f0-9]{20,64}$/u)
+  };
+  validateCodeSignatureReadback(plan.signature, readback, plan.signedArtifactPath);
+  return readback;
 }
 
 export function validateExistingServicePrecondition(plan: MacOsInstallPlan, readback: ExistingServiceReadback): void {
@@ -636,10 +801,11 @@ export async function applyMacOsPlistPlan(
  * an exact operation confirmation and an authoritative existing-service
  * readback. Commands use fixed argv, empty environments, and the same bounded
  * ProcessSupervisor contract as other Broker child processes. A successful
- * launchctl command is never treated as success without the caller's final
- * readback. If readback fails after bootstrap, the exact service is booted out
- * and the plist is left for an explicit rollback plan; no uncertain repair can
- * overwrite a target that may have changed under an external actor.
+ * launchctl command is never treated as success without independent raw-source
+ * readback; the executor composes the final readback itself. If readback fails
+ * after bootstrap, the exact service is booted out and the plist is left for an
+ * explicit rollback plan; no uncertain repair can overwrite a target that may
+ * have changed under an external actor.
  */
 export async function executeMacOsInstallPlan(
   plan: MacOsInstallPlan,
@@ -680,12 +846,13 @@ export async function executeMacOsInstallPlan(
   }
   let readback: MacOsInstallReadback | null;
   try {
-    readback = await options.readback();
+    const sources = await options.readback();
     if (plan.operation === "uninstall") {
-      if (readback !== null) fail("READBACK_FAILED", "uninstall readback still reports an installed service");
+      if (sources !== null) fail("READBACK_FAILED", "uninstall readback still reports an installed service");
+      readback = null;
     } else {
-      if (readback === null) fail("READBACK_FAILED", "service readback is absent after bootstrap");
-      validateMacOsInstallReadback(plan, readback);
+      if (sources === null) fail("READBACK_FAILED", "service readback is absent after bootstrap");
+      readback = composeMacOsInstallReadback(plan, sources);
     }
   } catch (error) {
     if (bootstrapped) {
@@ -877,7 +1044,7 @@ function normalizeMetadata(value: BrokerServiceMetadata): BrokerServiceMetadata 
   if (value === null || typeof value !== "object" || value.component !== "mac-operator-broker" ||
       !/^[0-9a-f]{7,64}$/u.test(value.sourceRevision) ||
       !/^v?\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(value.contractVersion) ||
-      !/^\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(value.policyVersion)) {
+      !/^(?:policy-[1-9][0-9]*|\d+\.\d+(?:\.\d+)?(?:[-+].*)?)$/u.test(value.policyVersion)) {
     fail("INVALID_METADATA", "Broker service metadata is invalid");
   }
   return { ...value };
@@ -920,6 +1087,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameLaunchdIdentity(left: LaunchdJobReadback, right: LaunchdJobReadback): boolean {
+  return left.serviceId === right.serviceId && left.domain === right.domain && left.label === right.label &&
+    left.state === right.state && left.pid === right.pid && left.program === right.program &&
+    sameNullableStrings(left.arguments, right.arguments) && left.plistPath === right.plistPath &&
+    left.type === right.type && left.lastExitCode === right.lastExitCode && left.truncated === right.truncated;
+}
+
+async function readStableProcessIdentity(pid: number): Promise<PeerProcessIdentity> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      return capturePeerProcessIdentity(pid);
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Process identity could not be read");
+}
+
+function sameNullableStrings(left: readonly string[] | null, right: readonly string[] | null): boolean {
+  if (left === null || right === null) return left === right;
+  return sameStrings(left, right);
+}
+
+function sameProcessIdentity(left: PeerProcessIdentity, right: PeerProcessIdentity): boolean {
+  return left.pid === right.pid && left.startTimeMicros === right.startTimeMicros;
+}
+
+function samePlistIdentity(left: MacOsPlistReadback, right: MacOsPlistReadback): boolean {
+  return left.path === right.path && left.bytes === right.bytes && left.sha256 === right.sha256 &&
+    left.device === right.device && left.inode === right.inode;
+}
+
+function readCodeSignatureField(output: string, fieldName: string, pattern: RegExp): string | null {
+  const matches = [...output.matchAll(new RegExp(`^${fieldName}=([^\\r\\n]+)$`, "gmu"))];
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) fail("SIGNATURE_MISMATCH", `code signature returned duplicate ${fieldName}`);
+  const value = matches[0]?.[1]?.trim();
+  if (value === "not set" && fieldName === "TeamIdentifier") return null;
+  if (value === undefined || !pattern.test(value)) fail("SIGNATURE_MISMATCH", `code signature returned malformed ${fieldName}`);
+  return value;
 }
 
 function fail(code: MacOsInstallPlanErrorCode, message: string): never {

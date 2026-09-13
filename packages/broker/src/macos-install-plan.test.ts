@@ -8,9 +8,13 @@ import { tmpdir } from "node:os";
 import {
   buildMacOsInstallPlan,
   applyMacOsPlistPlan,
+  collectMacOsInstallReadbackSources,
   composeMacOsInstallReadback,
+  createMacOsInstallHostObserver,
   executeMacOsInstallPlan,
   inspectMacOsInstallFilesystem,
+  observeMacOsInstallReadback,
+  readMacOsCodeSignature,
   readMacOsPlistReadback,
   MacOsInstallPlanError,
   validateCodeSignatureReadback,
@@ -79,6 +83,7 @@ test("install plan uses a per-user domain, fixed argv, and explicit rollback act
   assert.equal(plan.rollback.file.kind, "restore-plist");
   assert.equal(plan.uninstall.file.kind, "remove-plist");
   assert.doesNotMatch(plan.renderedPlist, /EnvironmentVariables|UserName|Shell/u);
+  assert.equal(buildMacOsInstallPlan({ ...base, metadata: { ...base.metadata, policyVersion: "policy-1" } }).metadata.policyVersion, "policy-1");
 });
 
 test("install plan rejects root domains, daemon paths, escapes, and script-like argv", () => {
@@ -133,7 +138,7 @@ test("readback composition binds launchd service identity to native process and 
       pid: 1234,
       program: plan.launchd.program,
       arguments: [...plan.launchd.programArguments],
-      plistPath: plan.plistPath,
+      plistPath: plistReadback(plan).path,
       type: "LaunchAgent",
       lastExitCode: null,
       truncated: false
@@ -166,7 +171,7 @@ test("readback composition binds launchd service identity to native process and 
       pid: 1234,
       program: plan.launchd.program,
       arguments: [...plan.launchd.programArguments],
-      plistPath: plan.plistPath,
+      plistPath: plistReadback(plan).path,
       type: "LaunchAgent",
       lastExitCode: null,
       truncated: false
@@ -176,6 +181,90 @@ test("readback composition binds launchd service identity to native process and 
     broker: composed.broker,
     signature: composed.signature
   }), /launchd readback sources/u);
+});
+
+test("install readback collection double-reads mutable identities before composition", async () => {
+  const plan = buildMacOsInstallPlan(base);
+  const source = readbackSources(plan);
+  let launchdReads = 0;
+  let processReads = 0;
+  let plistReads = 0;
+  const observer = {
+    readLaunchd: async () => { launchdReads += 1; return source.launchd; },
+    readProcessIdentity: (pid: number) => { processReads += 1; return { pid, startTimeMicros: 987654321 }; },
+    readPlist: async () => { plistReads += 1; return source.plist; },
+    readBroker: async () => source.broker,
+    readSignature: async () => source.signature
+  };
+  const collected = await collectMacOsInstallReadbackSources(plan, observer);
+  assert.equal(collected.launchd.pid, 1234);
+  assert.equal(launchdReads, 2);
+  assert.equal(processReads, 2);
+  assert.equal(plistReads, 2);
+  const composed = await observeMacOsInstallReadback(plan, observer);
+  assert.equal(composed.broker.state, "running");
+});
+
+test("install readback collection rejects a launchd target swap", async () => {
+  const plan = buildMacOsInstallPlan(base);
+  const source = readbackSources(plan);
+  let launchdReads = 0;
+  const observer = {
+    readLaunchd: async () => {
+      launchdReads += 1;
+      return launchdReads === 1 ? source.launchd : { ...source.launchd, pid: 4321 };
+    },
+    readProcessIdentity: (pid: number) => ({ pid, startTimeMicros: 987654321 }),
+    readPlist: async () => source.plist,
+    readBroker: async () => source.broker,
+    readSignature: async () => source.signature
+  };
+  await assert.rejects(
+    collectMacOsInstallReadbackSources(plan, observer),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SERVICE_MISMATCH"
+  );
+});
+
+test("install host observer binds real adapter sources without accepting a final readback", async () => {
+  const plan = buildMacOsInstallPlan(base);
+  const output = [
+    `${plan.domain}/${plan.label} = {`,
+    "\tstate = running",
+    "\tpid = 1234",
+    `\tprogram = ${plan.launchd.program}`,
+    "\targuments = {",
+    `\t\t${plan.launchd.program}`,
+    `\t\t${plan.launchd.programArguments[1]}`,
+    "\t}",
+    `\tpath = ${plan.plistPath}`,
+    "\ttype = LaunchAgent",
+    "\tlast exit code = (never exited)",
+    "}"
+  ].join("\n");
+  const observer = createMacOsInstallHostObserver(plan, {
+    readBroker: async () => readbackSources(plan).broker,
+    launchdExecutor: {
+      run: async () => ({
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        signal: null,
+        stdout: output,
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
+        processId: 1,
+        processGroupId: 1,
+        terminationObserved: true
+      })
+    },
+    processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
+    readPlist: async () => readbackSources(plan).plist,
+    readSignature: async () => readbackSources(plan).signature
+  });
+  const sources = await collectMacOsInstallReadbackSources(plan, observer);
+  assert.equal(sources.launchd.type, "LaunchAgent");
+  assert.equal(sources.processIdentity.startTimeMicros, 987654321);
 });
 
 test("upgrade and uninstall plans bind an exact existing revision and fail closed on precondition mismatch", () => {
@@ -259,6 +348,9 @@ test("signature verification plan accepts a real temporary ad-hoc signed artifac
     assert.equal(details.state, "completed");
     assert.match(`${details.stdout}\n${details.stderr}`, /Identifier=com\.mac-operator\.broker/u);
     assert.match(`${details.stdout}\n${details.stderr}`, /CDHash=[0-9a-f]{20,64}/u);
+    const signatureReadback = await readMacOsCodeSignature(plan, supervisor);
+    assert.equal(signatureReadback.identifier, "com.mac-operator.broker");
+    assert.equal(signatureReadback.teamIdentifier, null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -428,17 +520,7 @@ test("install executor requires explicit confirmation and verifies final Broker 
       existingService: { present: false, sourceRevision: null },
       ownerUid: uid,
       commandExecutor: executor,
-      readback: async () => ({
-        domain: plan.domain,
-        label: plan.label,
-        plistPath: plan.plistPath,
-        pid: 1234,
-        processIdentity: { pid: 1234, startTimeMicros: 987654321 },
-        plist: plistReadback(plan),
-        launchd: plan.launchd,
-        broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
-        signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null }
-      })
+      readback: async () => readbackSources(plan)
     });
     assert.equal(result.operation, "install");
     assert.equal(result.readback?.broker.nativeTransportRequired, true);
@@ -604,6 +686,28 @@ function plistReadback(plan: Pick<MacOsInstallPlan, "plistPath" | "renderedPlist
     sha256: createHash("sha256").update(rendered, "utf8").digest("hex"),
     device: "1",
     inode: "2"
+  };
+}
+
+function readbackSources(plan: MacOsInstallPlan) {
+  return {
+    launchd: {
+      serviceId: `${plan.domain}/${plan.label}`,
+      domain: plan.domain as `gui/${number}`,
+      label: plan.label,
+      state: "running" as const,
+      pid: 1234,
+      program: plan.launchd.program,
+      arguments: [...plan.launchd.programArguments],
+      plistPath: plistReadback(plan).path,
+      type: "LaunchAgent" as const,
+      lastExitCode: null,
+      truncated: false as const
+    },
+    processIdentity: { pid: 1234, startTimeMicros: 987654321 },
+    plist: plistReadback(plan),
+    broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
+    signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null }
   };
 }
 

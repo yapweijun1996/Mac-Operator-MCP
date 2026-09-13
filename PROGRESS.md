@@ -2,11 +2,24 @@
 
 Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
-Last verified: 2026-09-13
+Last verified: 2026-09-14
 
 ## Current situation
 
-Current committed implementation baseline: `a3d7765`.
+Current committed implementation baseline: install-plan raw-readback hardening.
+
+The current install-plan readback hardening adds a raw-source observer boundary:
+`executeMacOsInstallPlan` no longer accepts a caller-preassembled final
+`MacOsInstallReadback`. A production-shaped host observer reads bounded
+launchd/codesign data, native PID/start-time identity, descriptor-backed plist
+identity, and a Broker-owned status source; collection waits through transient
+`launching`, double-reads mutable identities, and composes the final readback
+inside the executor. A physical-Mac temporary package smoke starts the real
+zero-capability Broker assembly under LaunchAgent, verifies running readback,
+and completes exact uninstall. Ad-hoc signing, production status-channel
+binding, Developer ID/notarization, remote Edge, upgrade/rollback, and helper
+installation remain open. Evidence:
+`evidence/2026-09-14-live-install-plan.md`.
 
 The latest privileged-helper host-adapter addendum is `a3d7765`: the
 production-shaped observer now wires bounded `launchctl print`, native
@@ -1236,13 +1249,14 @@ proven stale. Focused lock tests pass 5/5. This does not claim launchd
 singleton enforcement or remount durability. Evidence:
 `evidence/2026-09-14-service-instance-lock-process.md`.
 
-The host-only macOS install plan now has a real reversible lifecycle smoke:
-ad-hoc signature verification, nine-entry filesystem preflight, atomic plist
-publication, fixed `launchctl bootstrap`, live LaunchAgent readback with native
-PID/start-time capture, exact bootout, exact uninstall, and final service/plist
-absence all passed for a temporary waiting process. The process was not
-represented as a Broker, so final Broker readiness remains closed. Evidence:
-`evidence/2026-09-14-live-install-plan.md`.
+The host-only macOS install plan now has a physical-Mac package smoke:
+ad-hoc signature verification, owner-only package layout, atomic plist
+publication, fixed `launchctl bootstrap`, real zero-capability Broker startup,
+independent double-read launchd/native/plist/Broker/signature verification,
+exact uninstall, and final service/plist absence all passed. The package used
+an explicit owner-only status fixture; production authenticated status-channel
+binding, Developer ID, upgrade/rollback, and helper gates remain open.
+Evidence: `evidence/2026-09-14-live-install-plan.md`.
 
 The physical host now also exercises `createBrokerServiceFromStartupConfig`
 against a real temporary per-user LaunchAgent without a synthetic launchd

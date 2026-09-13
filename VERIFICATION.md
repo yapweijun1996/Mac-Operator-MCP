@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest live install/readback addendum: the current source makes the macOS
+install executor accept
+only independent raw launchd, native PID/start-time, plist, Broker-status, and
+signature sources, then composes the final `MacOsInstallReadback` internally.
+The collector waits through the real launchd `launching` transition and
+double-reads mutable identities before readiness. A physical-Mac temporary
+package smoke started the real zero-capability Broker assembly under a user
+LaunchAgent, verified running readback, and completed exact uninstall. The
+focused install-plan suite passes 16/16. Ad-hoc signing, production
+authenticated status-channel binding, Developer ID/notarization, remote Edge,
+upgrade/rollback, and helper installation remain open. Evidence:
+`evidence/2026-09-14-live-install-plan.md`.
+
 Latest exact-arguments readback addendum: source commit `9d90138` parses the
 bounded launchd `arguments` block and requires the exact planned Node binary
 plus JavaScript entrypoint during Broker service composition. Missing,
@@ -1005,13 +1018,14 @@ proven stale. Focused lock tests pass 5/5. This does not claim launchd
 singleton enforcement or remount durability. Evidence:
 `evidence/2026-09-14-service-instance-lock-process.md`.
 
-The host-only macOS install plan also has a real reversible lifecycle smoke:
-ad-hoc signature verification, filesystem preflight, atomic plist publication,
-fixed `launchctl bootstrap`, live LaunchAgent readback with native
-PID/start-time capture, exact bootout, exact uninstall, and final
-service/plist absence passed for a temporary waiting process. It was not
-represented as a Broker, so final Broker readiness remains closed. Evidence:
-`evidence/2026-09-14-live-install-plan.md`.
+The host-only macOS install plan also has a physical-Mac package smoke:
+ad-hoc signature verification, owner-only package layout, atomic plist
+publication, fixed `launchctl bootstrap`, real zero-capability Broker startup,
+independent double-read launchd/native/plist/Broker/signature verification,
+exact uninstall, and final service/plist absence all passed. The package used
+an explicit owner-only status fixture; production authenticated status-channel
+binding, Developer ID, upgrade/rollback, and helper gates remain open.
+Evidence: `evidence/2026-09-14-live-install-plan.md`.
 
 The live startup-assembly smoke then called
 `createBrokerServiceFromStartupConfig` with the real launchd command path. A
