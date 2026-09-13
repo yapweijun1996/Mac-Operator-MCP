@@ -9,6 +9,7 @@ import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import type { FilesystemExecutor } from "./filesystem-executor.js";
+import { FilesystemInspector } from "./filesystem-inspector.js";
 import { BrokerStore, redactEvidence } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
@@ -1907,6 +1908,87 @@ test("unknown write status probes the postcondition but never infers Broker succ
     assert.deepEqual(data.recovery, { postcondition: "matches", resolution: "remains_unknown", observed_at: new Date(NOW).toISOString() });
     assert.equal(store.ownedJob(job.jobId, "principal-1")?.state, "unknown");
     assert.equal(JSON.stringify(result).includes("safe"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("write completion failure leaves an atomic postcondition and an UNKNOWN Job", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-crash-window-"));
+  const path = join(directory, "crash-window.txt");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  const content = "after";
+  const argumentsValue = { path, content, idempotency_key: "crash-window", encoding: "utf8", create_only: true };
+  const executor: FilesystemExecutor = {
+    stat: async () => { throw new Error("Unexpected stat"); },
+    read: async () => { throw new Error("Unexpected read"); },
+    write: async (plan, requestedContent, expectedSha256, createOnly) => {
+      const committed = new FilesystemInspector([root]).writePlanned(
+        plan,
+        requestedContent,
+        expectedSha256,
+        createOnly,
+        ".mac-operator-write-crash-window"
+      );
+      assert.equal(committed.sha256, sha256(requestedContent));
+      throw new Error("simulated completion persistence crash");
+    }
+  };
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), filesystemExecutor: executor, now: () => NOW });
+  try {
+    store.issueApproval({
+      approvalId: "approval:crash-window",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const request = unsigned({
+      requestId: "write-crash-window-request",
+      nonce: "write-crash-window-nonce",
+      tool: "mac_write_file_atomic",
+      arguments: argumentsValue
+    }, ["mac.files.write", "mac.job.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "EXECUTION_FAILED");
+    const jobId = store.requestRecord(request.requestId)?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
+    assert.equal(await readFile(path, "utf8"), content);
+
+    const statusRequest = unsigned({
+      requestId: "write-crash-window-status",
+      nonce: "write-crash-window-status-nonce",
+      tool: "mac_job_status",
+      arguments: { job_id: jobId, tail_bytes: 128 }
+    }, ["mac.job.read"]);
+    const status = await broker.handle(signRequest(statusRequest, key));
+    assert.equal(status.ok, true, JSON.stringify(status));
+    assert.ok(status.ok);
+    assert.deepEqual((status.data as { recovery?: unknown }).recovery, {
+      postcondition: "matches",
+      resolution: "remains_unknown",
+      observed_at: new Date(NOW).toISOString()
+    });
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

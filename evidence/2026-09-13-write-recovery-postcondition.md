@@ -13,11 +13,12 @@ When startup reconciliation marks a running write `UNKNOWN`, `mac_job_status` ma
 ## Tests
 
 - Broker integration: an unknown write with a matching target returns `recovery.postcondition = matches`, `resolution = remains_unknown`, and no file content; the Job remains `unknown`.
+- Broker crash-window simulation: the native atomic write commits in a temporary test executor, completion then fails, and the Broker records `UNKNOWN`; the target is fully committed and status readback reports `matches` without promoting the Job.
 - Persistence restart: the non-secret descriptor survives a BrokerStore close/reopen while stdout remains empty and the Job reconciles to `unknown`.
 - Contract validation: the optional recovery object is bounded and schema-valid under `mac_job_status`.
 
-Observed verification on this revision: `npm test` passed with 240 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed.
+Observed verification on this revision: `npm test` passed with 241 tests; `npm run typecheck` passed; `npm run verify:contracts` validated 44 contracts; `git diff --check` passed.
 
 ## Limits and next gate
 
-This is safe postcondition evidence, not crash injection. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Real crash-window injection, filesystem remount identity, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.
+This is a Broker completion-failure simulation, not an OS process kill at every native syscall boundary. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Native crash-window injection, filesystem remount identity, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.
