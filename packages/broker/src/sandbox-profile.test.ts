@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
@@ -177,6 +177,7 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
   await mkdir(join(root, "nested"), { mode: 0o700 });
   await writeFile(join(root, "nested", ".env"), "synthetic-secret=redacted", { mode: 0o600 });
   await symlink("/private/etc/passwd", join(root, "passwd-link"));
+  const keychainPath = `/Users/${userInfo().username}/Library/Keychains`;
   const runner = new SandboxExecTaskRunner({
     enabled: true,
     hostEvidenceAccepted: true,
@@ -197,11 +198,11 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
       process: {
         ...resolvedProfile(root).process,
         executable: "/bin/bash",
-        args: ["-c", "printf '%s:%s:%s:%s:' \"${MOP_CONTROLLER_SECRET-unset}\" \"${HOME-unset}\" \"${SSH_AUTH_SOCK-unset}\" \"${AWS_PROFILE-unset}\"; if [ -r /private/etc/passwd ]; then printf leaked; else printf denied; fi; printf ':'; if [ -r ./fixture.txt ]; then printf allowed; else printf denied; fi; printf ':'; if [ -r ./nested/.env ]; then printf leaked; else printf denied; fi; if [ -r ./passwd-link ]; then printf ':link-leaked'; else printf ':link-denied'; fi; printf created > ./created.txt"]
+        args: ["-c", `printf '%s:%s:%s:%s:' "\${MOP_CONTROLLER_SECRET-unset}" "\${HOME-unset}" "\${SSH_AUTH_SOCK-unset}" "\${AWS_PROFILE-unset}"; if [ -r /private/etc/passwd ]; then printf leaked; else printf denied; fi; printf ':'; if [ -r ./fixture.txt ]; then printf allowed; else printf denied; fi; printf ':'; if [ -r ./nested/.env ]; then printf leaked; else printf denied; fi; if [ -r ./passwd-link ]; then printf ':link-leaked'; else printf ':link-denied'; fi; printf ':'; if [ -d "${keychainPath}" ] && [ -r "${keychainPath}" ]; then printf keychain-leaked; else printf keychain-denied; fi; printf ':'; if [ -e /var/run/docker.sock ] && [ -r /var/run/docker.sock ]; then printf docker-leaked; else printf docker-denied; fi; printf created > ./created.txt`]
       }
     }, { timeoutMs: 2_000, shouldCancel: () => false });
     assert.equal(canary.resultClass, "SUCCEEDED");
-    assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied");
+    assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied:keychain-denied:docker-denied");
     assert.equal(await readFile(join(root, "created.txt"), "utf8"), "created");
 
     const allowedServer = await startHttpServer("network-allowed");
