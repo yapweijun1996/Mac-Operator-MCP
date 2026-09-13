@@ -239,7 +239,7 @@ installed use, or production enablement.
 Evidence: `evidence/2026-09-13-keychain-key-read.md`.
 
 Latest Edge-key source addendum: commits `e9dd75e`, `7d91c8f`, `49843cc`,
-`a0b31fe`, `ad781c2`, and `5d5d2ce` add a versioned owner-only Edge
+`a0b31fe`, `ad781c2`, `5d5d2ce`, and `e47137a` add a versioned owner-only Edge
 authentication-key config loader and atomic writer. Each entry explicitly
 selects a file or Keychain source and binds an expected secret-byte SHA-256
 digest; mixed metadata, duplicate identities, unsafe/canonical-path
@@ -255,7 +255,7 @@ owner-only socket parent and revalidates socket device/inode identity after
 connect before sending request bytes. The request factory copies signing bytes
 and validates key IDs. LaunchAgent startup restores the active key config before
 PID/start-time capture and native Broker construction, refusing to call
-`launchctl` for an unactivated or mismatched config. Twelve focused
+`launchctl` for an unactivated, mismatched, or cross-Edge config. Twelve focused
 Edge/Broker key-source/startup tests pass; the full regression is 321/323 with
 two opt-in real-sandbox tests skipped. This remains startup configuration
 evidence only: Keychain provisioning/ACLs, real-item rotation or deletion, an

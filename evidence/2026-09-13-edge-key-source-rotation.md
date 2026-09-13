@@ -4,7 +4,7 @@ Status: PARTIAL protected Edge-key distribution boundary for MOP-081 / VT-AUTH-0
 
 ## Boundary exercised
 
-Commits `e9dd75e`, `7d91c8f`, `49843cc`, `a0b31fe`, `ad781c2`, and `5d5d2ce` add an owner-only, versioned Edge
+Commits `e9dd75e`, `7d91c8f`, `49843cc`, `a0b31fe`, `ad781c2`, `5d5d2ce`, and `e47137a` add an owner-only, versioned Edge
 authentication-key metadata loader, atomic writer, and BrokerStore-backed
 activation manager. Every entry must explicitly select
 `keySource: "file"` or `keySource: "keychain"`; a Keychain entry must contain
@@ -38,7 +38,8 @@ before it performs launchd PID/start-time capture or constructs the native
 Broker runtime. It accepts a Broker factory rather than a pre-built Broker, so
 the restored keyring is injected at construction and cannot be silently
 patched later. An unactivated or changed config fails before `launchctl` is
-called.
+called; a config containing another Edge identity is also rejected before
+`launchctl` readback.
 
 The config reader requires an owner-only regular non-symlink file and rechecks
 device/inode identity after opening. File-backed key bytes use the existing
@@ -87,9 +88,9 @@ retiring the old key is a separate revoke-before-retire operation.
 - `packages/edge/src/ipc-client.test.ts` SHA-256:
   `721c1b29200ed111786f21ac89379f97103461f056ed9f32344260a6f927ea04`
 - `packages/broker/src/native-runtime-startup.ts` SHA-256:
-  `23fd726487de2ad4566625ba137e139d07c3b7c7b0376f685c6f9ed1de9a4e7b`
+  `33b874bf17bcdabe946aa1cdbadaaed62bcafeac3d119ef0c89cb58d81a6f2d7`
 - `packages/broker/src/native-runtime-startup.test.ts` SHA-256:
-  `b6c0aa655c334dafbdd52d05cfe23b0637fb8a628aa69cfb01f94fb060ce6145`
+  `b8bb4d4c59bf3ffd83be64525e1743cef2480c33bbe5c04d8eeb0d1f6c60ec8b`
 - `packages/broker/src/index.ts` SHA-256:
   `7f3581bdb41d8fac8509c4f8e1ab5d17130a9e5282f3e3f590e888496fc3cbd0`
 - Existing native Keychain reader source remains covered by

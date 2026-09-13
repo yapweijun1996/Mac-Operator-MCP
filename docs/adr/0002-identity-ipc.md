@@ -103,7 +103,8 @@ mechanism; no environment-variable or MCP-argument fallback is permitted.
 The LaunchAgent startup assembly restores that exact active config before
 launchd identity capture and native Broker construction, injecting the restored
 keyring through a Broker factory; an unactivated or changed config fails before
-`launchctl` readback.
+`launchctl` readback, and a config containing another Edge identity is rejected
+for this per-Edge runtime.
 The Edge IPC client also checks its owner-only socket parent and revalidates
 socket device/inode identity after connect before sending a signed request;
 this complements, but does not replace, native peer identity and response HMAC
