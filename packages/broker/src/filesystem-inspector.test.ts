@@ -544,6 +544,36 @@ test("descriptor-backed directory tree bounds depth and filters protected entrie
   }
 });
 
+test("filesystem traversal stays within bounded pressure budgets", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-pressure-"));
+  const files = Array.from({ length: 600 }, (_, index) => join(directory, `entry-${String(index).padStart(4, "0")}.txt`));
+  await Promise.all(files.map((file) => writeFile(file, "needle\n", { mode: 0o600 })));
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    const metadataPlan = inspector.planPath(directory, "metadata");
+    const contentPlan = inspector.planPath(directory, "content_read");
+    assert.throws(() => inspector.listPlanned(metadataPlan, undefined, 501, false), /entry limit/u);
+    assert.throws(() => inspector.treePlanned(metadataPlan, 8, 5001), /entry limit/u);
+    assert.throws(() => inspector.findFilesPlanned([metadataPlan], "entry-", 1001), /result limit/u);
+    assert.throws(() => inspector.searchTextPlanned([contentPlan], "needle", undefined, 1001), /result limit/u);
+
+    const listing = inspector.listPlanned(metadataPlan, undefined, 500, false);
+    assert.equal(listing.entries.length, 500);
+    assert.notEqual(listing.nextCursor, null);
+    const tree = inspector.treePlanned(metadataPlan, 0, 128);
+    assert.equal(tree.entries.length, 128);
+    assert.equal(tree.truncated, true);
+    const fileMatches = inspector.findFilesPlanned([metadataPlan], "entry-", 100);
+    assert.equal(fileMatches.matches.length, 100);
+    assert.equal(fileMatches.truncated, true);
+    const textMatches = inspector.searchTextPlanned([contentPlan], "needle", undefined, 100);
+    assert.equal(textMatches.matches.length, 100);
+    assert.equal(textMatches.truncated, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("content read requires independent root enablement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-read-scope-"));
   const file = join(directory, "file.txt");
