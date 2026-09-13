@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,7 +9,7 @@ import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
-import { BrokerIpcServer } from "./ipc-server.js";
+import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket } from "./ipc-server.js";
 import { MacOsPeerCredentialVerifier } from "./peer-credentials.js";
 import { BrokerStore } from "./persistence.js";
 
@@ -76,6 +76,58 @@ test("IPC startup rejects a group-writable socket directory", async () => {
   }
 });
 
+test("IPC startup refuses to unlink an active socket", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-active-"));
+  const socketPath = join(directory, "active.sock");
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    await assert.rejects(removeStaleSocket(socketPath), /already active/u);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("IPC startup preflight rejects an active listener without unlinking it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-preflight-"));
+  const socketPath = join(directory, "active.sock");
+  const server = createServer();
+  await listenServer(server, socketPath);
+  try {
+    await assert.rejects(assertSocketNotActive(socketPath), /already active/u);
+    assert.equal((await stat(socketPath)).isSocket(), true);
+  } finally {
+    await closeServer(server);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("IPC close fences a replacement listener while closing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-replacement-"));
+  const socketPath = join(directory, "replacement.sock");
+  const first = createServer();
+  const blocked = createServer();
+  const second = createServer();
+  await listenServer(first, socketPath);
+  const firstIdentity = await captureSocketPathIdentity(socketPath);
+  const detached = await detachOwnedSocket(socketPath, firstIdentity);
+  try {
+    await assert.rejects(listenServer(blocked, socketPath), /EADDRINUSE/u);
+    await closeServer(first);
+    await listenServer(second, socketPath);
+    assert.equal((await stat(socketPath)).isSocket(), true);
+    await removeDetachedSocket(detached);
+  } finally {
+    await closeServer(blocked).catch(() => undefined);
+    await closeServer(second);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("IPC server drops a connection when OS peer credential policy denies it", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-peer-deny-"));
   const socketPath = join(directory, "broker.sock");
@@ -135,4 +187,15 @@ function currentProcessVerifier(): MacOsPeerCredentialVerifier {
     expectedGid: gid,
     allowedProcessIds: new Set([process.pid])
   });
+}
+
+function listenServer(server: ReturnType<typeof createServer>, socketPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+}
+
+function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }

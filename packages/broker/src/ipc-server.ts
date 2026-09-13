@@ -1,6 +1,7 @@
-import { chmod, lstat, stat, unlink } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
-import { dirname } from "node:path";
+import { chmod, lstat, rename, stat, symlink, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { dirname, join } from "node:path";
 import { BrokerError, type AuthenticatedBrokerResponse, type BrokerResult } from "@mac-operator/contracts";
 import type { Broker } from "./broker.js";
 import type { PeerCredentialVerifier } from "./peer-credentials.js";
@@ -12,8 +13,19 @@ export interface IpcServerOptions {
   maxRequestBytes?: number;
 }
 
+export interface SocketPathIdentity {
+  device: number;
+  inode: number;
+}
+
+export interface DetachedSocketPath {
+  path: string;
+  identity: SocketPathIdentity;
+}
+
 export class BrokerIpcServer {
   private server: Server | undefined;
+  private socketIdentity: SocketPathIdentity | undefined;
   private readonly maxRequestBytes: number;
 
   constructor(private readonly options: IpcServerOptions) {
@@ -29,15 +41,25 @@ export class BrokerIpcServer {
       this.server!.once("error", reject);
       this.server!.listen(this.options.socketPath, resolve);
     });
-    await chmod(this.options.socketPath, 0o600);
+    try {
+      await chmod(this.options.socketPath, 0o600);
+      this.socketIdentity = await captureSocketPathIdentity(this.options.socketPath);
+    } catch (error) {
+      await this.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
     const server = this.server;
     this.server = undefined;
-    if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    try { await unlink(this.options.socketPath); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
+    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
+    try {
+      if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    } finally {
+      await removeDetachedSocket(detached);
     }
   }
 
@@ -92,13 +114,128 @@ function failure(errorClass: "AUTH_INVALID" | "OUTPUT_LIMIT", message: string): 
 }
 
 export async function removeStaleSocket(path: string): Promise<void> {
+  const initial = await readSocketIdentity(path);
+  if (initial === undefined) return;
+  const active = await probeSocket(path);
+  const current = await readSocketIdentity(path);
+  if (current === undefined) return;
+  if (current.device !== initial.device || current.inode !== initial.inode) {
+    throw new Error("IPC socket changed while checking ownership");
+  }
+  if (active) throw new Error("IPC socket is already active");
   try {
-    const stat = await lstat(path);
-    if (!stat.isSocket()) throw new Error("Refusing to replace a non-socket IPC path");
     await unlink(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+}
+
+/** Fails closed when a live listener already owns the configured pathname. */
+export async function assertSocketNotActive(path: string): Promise<void> {
+  const initial = await readSocketIdentity(path);
+  if (initial === undefined) return;
+  const active = await probeSocket(path);
+  const current = await readSocketIdentity(path);
+  if (current === undefined) return;
+  if (current.device !== initial.device || current.inode !== initial.inode) {
+    throw new Error("IPC socket changed while checking startup ownership");
+  }
+  if (active) throw new Error("IPC socket is already active");
+}
+
+async function readSocketIdentity(path: string): Promise<SocketPathIdentity | undefined> {
+  try {
+    const value = await lstat(path);
+    if (!value.isSocket()) throw new Error("Refusing to replace a non-socket IPC path");
+    return { device: value.dev, inode: value.ino };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export async function captureSocketPathIdentity(path: string): Promise<SocketPathIdentity> {
+  const identity = await readSocketIdentity(path);
+  if (identity === undefined) throw new Error("IPC socket disappeared after startup");
+  return identity;
+}
+
+export async function unlinkOwnedSocket(path: string, expected: SocketPathIdentity | undefined): Promise<void> {
+  if (expected === undefined) return;
+  const current = await readSocketIdentity(path);
+  if (current === undefined) return;
+  if (current.device !== expected.device || current.inode !== expected.inode) {
+    throw new Error("IPC socket ownership changed before close");
+  }
+  try {
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+/**
+ * Moves a generic Node Unix listener away from its public path before
+ * `server.close()`. Node's close implementation unlinks the path itself, so
+ * a temporary symlink barrier prevents it from deleting a replacement
+ * listener that races into the original pathname.
+ */
+export async function detachOwnedSocket(path: string, expected: SocketPathIdentity | undefined): Promise<DetachedSocketPath | undefined> {
+  if (expected === undefined) return undefined;
+  const current = await readSocketIdentity(path);
+  if (current === undefined) return undefined;
+  if (current.device !== expected.device || current.inode !== expected.inode) {
+    throw new Error("IPC socket ownership changed before close");
+  }
+  const detachedPath = join(dirname(path), `.mac-operator-closing-${randomUUID()}.sock`);
+  await renameSocket(path, detachedPath);
+  const detachedIdentity = await captureSocketPathIdentity(detachedPath);
+  try {
+    await createSocketBarrier(path, detachedPath);
+  } catch (error) {
+    await renameSocket(detachedPath, path).catch(() => undefined);
+    throw error;
+  }
+  return { path: detachedPath, identity: detachedIdentity };
+}
+
+export async function removeDetachedSocket(detached: DetachedSocketPath | undefined): Promise<void> {
+  if (detached === undefined) return;
+  await unlinkOwnedSocket(detached.path, detached.identity);
+}
+
+async function renameSocket(path: string, target: string): Promise<void> {
+  await rename(path, target);
+}
+
+async function createSocketBarrier(path: string, target: string): Promise<void> {
+  await symlink(target, path);
+}
+
+/**
+ * Distinguishes an active listener from a stale pathname before unlinking it.
+ * Any result other than a definitive refused/missing connection fails closed.
+ */
+function probeSocket(path: string): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(path);
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      callback();
+    };
+    socket.once("connect", () => finish(() => resolve(true)));
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ECONNREFUSED" || error.code === "ENOENT") {
+        finish(() => resolve(false));
+        return;
+      }
+      finish(() => reject(new Error("IPC socket liveness probe failed")));
+    });
+    socket.setTimeout(250, () => finish(() => reject(new Error("IPC socket liveness probe timed out"))));
+  });
 }
 
 export async function validateSocketParent(socketPath: string): Promise<void> {

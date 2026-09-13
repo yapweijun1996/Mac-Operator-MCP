@@ -1,7 +1,7 @@
-import { chmod, unlink } from "node:fs/promises";
+import { chmod } from "node:fs/promises";
 import { Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
+import { captureSocketPathIdentity, removeStaleSocket, unlinkOwnedSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import {
   authorizePeerCredentials,
   loadNativePeerAdapter,
@@ -42,6 +42,7 @@ export class MacOsNativePeerIpcServer {
   private readonly pollIntervalMs: number;
   private readonly peerIdentityMonitorIntervalMs: number;
   private listenerFd: number | undefined;
+  private socketIdentity: SocketPathIdentity | undefined;
   private acceptLoopPromise: Promise<void> | undefined;
   private peerIdentityMonitor: NodeJS.Timeout | undefined;
   private peerIdentityFailure: Promise<void> | undefined;
@@ -75,10 +76,11 @@ export class MacOsNativePeerIpcServer {
     this.listenerFd = descriptor;
     try {
       await chmod(this.options.socketPath, 0o600);
+      this.socketIdentity = await captureSocketPathIdentity(this.options.socketPath);
     } catch (error) {
       this.listenerFd = undefined;
       this.native.closeUnixDescriptor(descriptor);
-      await unlink(this.options.socketPath).catch(() => undefined);
+      this.socketIdentity = undefined;
       throw error;
     }
     this.acceptLoopPromise = this.acceptLoop();
@@ -91,17 +93,15 @@ export class MacOsNativePeerIpcServer {
     if (peerIdentityFailure) await peerIdentityFailure;
     const descriptor = this.listenerFd;
     this.listenerFd = undefined;
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
     if (descriptor !== undefined) this.native.closeUnixDescriptor(descriptor);
     const loop = this.acceptLoopPromise;
     this.acceptLoopPromise = undefined;
     if (loop) await loop;
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
-    try {
-      await unlink(this.options.socketPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    await unlinkOwnedSocket(this.options.socketPath, socketIdentity);
   }
 
   private async acceptLoop(): Promise<void> {
@@ -141,10 +141,12 @@ export class MacOsNativePeerIpcServer {
   private async failClosed(error: unknown): Promise<void> {
     const descriptor = this.listenerFd;
     this.listenerFd = undefined;
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
     if (descriptor !== undefined) this.native.closeUnixDescriptor(descriptor);
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
-    try { await unlink(this.options.socketPath); } catch { /* fail-closed cleanup is best effort */ }
+    await unlinkOwnedSocket(this.options.socketPath, socketIdentity).catch(() => undefined);
     try { this.options.onError?.(error); } catch { /* caller errors cannot reopen the listener */ }
   }
 

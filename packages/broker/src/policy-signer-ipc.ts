@@ -1,9 +1,9 @@
-import { chmod, unlink } from "node:fs/promises";
+import { chmod } from "node:fs/promises";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
-import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
+import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { PolicySignerKeyManager } from "./policy-signer-keyring.js";
 import type { BrokerStore } from "./persistence.js";
 
@@ -55,6 +55,7 @@ export interface PolicySignerIpcServerOptions {
 export class PolicySignerIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
+  private socketIdentity: SocketPathIdentity | undefined;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
@@ -100,7 +101,13 @@ export class PolicySignerIpcServer {
       this.server!.once("error", reject);
       this.server!.listen(this.options.socketPath, resolve);
     });
-    await chmod(this.options.socketPath, 0o600);
+    try {
+      await chmod(this.options.socketPath, 0o600);
+      this.socketIdentity = await captureSocketPathIdentity(this.options.socketPath);
+    } catch (error) {
+      await this.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -112,13 +119,14 @@ export class PolicySignerIpcServer {
     }
     const server = this.server;
     this.server = undefined;
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
+    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
     if (server) await new Promise<void>((resolve, reject) => server.close((error) => {
       if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
       else resolve();
     }));
-    try { await unlink(this.options.socketPath); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    await removeDetachedSocket(detached);
   }
 
   private handleSocket(socket: Socket): void {

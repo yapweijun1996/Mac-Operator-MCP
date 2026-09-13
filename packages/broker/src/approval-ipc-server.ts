@@ -1,9 +1,9 @@
-import { chmod, unlink } from "node:fs/promises";
+import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { BrokerError, type ErrorClass } from "@mac-operator/contracts";
 import type { ApprovalAuthority } from "./approval-authority.js";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
-import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
+import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 
 export interface ApprovalIpcServerOptions {
   socketPath: string;
@@ -26,6 +26,7 @@ export type ApprovalIpcResponse =
 export class ApprovalIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
+  private socketIdentity: SocketPathIdentity | undefined;
   private readonly maxRequestBytes: number;
 
   constructor(private readonly options: ApprovalIpcServerOptions) {
@@ -62,7 +63,13 @@ export class ApprovalIpcServer {
       this.server!.once("error", reject);
       this.server!.listen(this.options.socketPath, resolve);
     });
-    await chmod(this.options.socketPath, 0o600);
+    try {
+      await chmod(this.options.socketPath, 0o600);
+      this.socketIdentity = await captureSocketPathIdentity(this.options.socketPath);
+    } catch (error) {
+      await this.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -74,9 +81,13 @@ export class ApprovalIpcServer {
     }
     const server = this.server;
     this.server = undefined;
-    if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-    try { await unlink(this.options.socketPath); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
+    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
+    try {
+      if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    } finally {
+      await removeDetachedSocket(detached);
     }
   }
 

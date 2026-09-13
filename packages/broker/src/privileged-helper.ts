@@ -1,9 +1,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, unlink } from "node:fs/promises";
+import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
-import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
+import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { ApprovalRecord, BrokerJob, BrokerStore, RequestRecord } from "./persistence.js";
 import { redactLogText } from "./secret-policy.js";
 
@@ -384,6 +384,7 @@ export interface PrivilegedHelperIpcServerOptions {
 export class PrivilegedHelperIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
+  private socketIdentity: SocketPathIdentity | undefined;
   private readonly authenticationKey: Buffer;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
@@ -433,7 +434,13 @@ export class PrivilegedHelperIpcServer {
       this.server!.once("error", reject);
       this.server!.listen(this.options.socketPath, resolvePromise);
     });
-    await chmod(this.options.socketPath, 0o600);
+    try {
+      await chmod(this.options.socketPath, 0o600);
+      this.socketIdentity = await captureSocketPathIdentity(this.options.socketPath);
+    } catch (error) {
+      await this.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -446,12 +453,15 @@ export class PrivilegedHelperIpcServer {
     }
     const server = this.server;
     this.server = undefined;
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
+    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
     if (server) await new Promise<void>((resolvePromise, reject) => server.close((error) => {
       if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
       else resolvePromise();
     }));
-    try { await unlink(this.options.socketPath); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    try {
+      await removeDetachedSocket(detached);
     } finally {
       this.authenticationKey.fill(0);
     }

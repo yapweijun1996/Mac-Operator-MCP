@@ -12,6 +12,7 @@ import {
   type LaunchdIdentityCommandExecutor
 } from "./native-runtime-startup.js";
 import { BrokerServiceEntrypoint, type BrokerServiceMetadata } from "./service-entrypoint.js";
+import { assertSocketNotActive } from "./ipc-server.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -140,6 +141,9 @@ export async function createBrokerServiceFromStartupConfig(options: {
 }): Promise<BrokerServiceAssembly> {
   const config = validateBrokerServiceStartupConfig(options.config);
   await assertStartupDirectories(config);
+  // Do not reconcile a shared Job Ledger until the configured Broker socket
+  // proves that no prior Broker instance is still serving requests.
+  await assertSocketNotActive(config.brokerSocketPath);
   const now = options.now ?? Date.now;
   const store = new BrokerStore(config.brokerDatabasePath);
   let edgeKeyring: EdgeKeyring | undefined;

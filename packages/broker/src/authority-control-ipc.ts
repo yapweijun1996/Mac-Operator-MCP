@@ -1,10 +1,10 @@
-import { lstat, realpath, chmod, unlink } from "node:fs/promises";
+import { lstat, realpath, chmod } from "node:fs/promises";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
-import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
+import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
 
 const AUTHORITY_CONTROL_DOMAIN = "mac-operator-authority-control-v0.1\0";
@@ -71,6 +71,7 @@ export interface AuthorityControlIpcServerOptions {
 export class AuthorityControlIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
+  private socketIdentity: SocketPathIdentity | undefined;
   private readonly authenticationKey: Buffer;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
@@ -119,7 +120,13 @@ export class AuthorityControlIpcServer {
       this.server!.once("error", reject);
       this.server!.listen(this.options.socketPath, resolvePromise);
     });
-    await chmod(this.options.socketPath, 0o600);
+    try {
+      await chmod(this.options.socketPath, 0o600);
+      this.socketIdentity = await captureSocketPathIdentity(this.options.socketPath);
+    } catch (error) {
+      await this.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -132,16 +139,19 @@ export class AuthorityControlIpcServer {
     }
     const server = this.server;
     this.server = undefined;
-    if (server) {
-      await new Promise<void>((resolvePromise, reject) => server.close((error) => {
-        if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
-        else resolvePromise();
-      }));
-    }
-    try { await unlink(this.options.socketPath); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const socketIdentity = this.socketIdentity;
+    this.socketIdentity = undefined;
+    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
+    try {
+      if (server) {
+        await new Promise<void>((resolvePromise, reject) => server.close((error) => {
+          if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
+          else resolvePromise();
+        }));
+      }
     } finally {
-      this.authenticationKey.fill(0);
+      try { await removeDetachedSocket(detached); }
+      finally { this.authenticationKey.fill(0); }
     }
   }
 
