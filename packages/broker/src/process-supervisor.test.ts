@@ -76,6 +76,17 @@ test("process supervisor rejects secret-shaped or non-allowlisted environment ke
       executable: "/usr/bin/printf",
       args: ["ok"],
       cwd: CWD,
+      environment: { NODE_OPTIONS: "--require=/tmp/untrusted.js" },
+      timeoutMs: 1_000,
+      outputCapBytes: 100
+    }),
+    /environment key is not safe/u
+  );
+  await assert.rejects(
+    supervisor.run({
+      executable: "/usr/bin/printf",
+      args: ["ok"],
+      cwd: CWD,
       environment: { OTHER_PROFILE: "not-allowlisted" },
       timeoutMs: 1_000,
       outputCapBytes: 100

@@ -3,6 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
+import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
@@ -12,7 +13,6 @@ const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_TERMINATION_GRACE_MS = 250;
-const SECRET_ENV_KEY = /(?:API|AUTH|COOKIE|CREDENTIAL|KEY|PASSWORD|PASSWD|SECRET|TOKEN|AWS|GITHUB|OPENAI|SSH)/iu;
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
   isProcessIdentityAlive(pid: number, startTimeMicros: number): unknown;
@@ -698,7 +698,7 @@ async function validateDirectory(path: string): Promise<void> {
 }
 
 function validateEnvironmentKey(key: string): void {
-  if (!/^[A-Z_][A-Z0-9_]{0,63}$/u.test(key) || SECRET_ENV_KEY.test(key)) {
+  if (!isSafeProcessEnvironmentKey(key, true)) {
     throw new BrokerError("POLICY_DENIED", "Process environment key is not safe");
   }
 }

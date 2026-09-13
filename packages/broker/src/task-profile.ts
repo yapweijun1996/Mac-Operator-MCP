@@ -2,6 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import type { ProcessExecutionRequest } from "./process-supervisor.js";
+import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MAX_PROFILE_ARGUMENTS = 64;
@@ -11,8 +12,6 @@ const MAX_ENVIRONMENT_KEYS = 32;
 const MAX_ENVIRONMENT_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
-const SAFE_ENVIRONMENT_KEY = /^[A-Z_][A-Z0-9_]{0,63}$/u;
-const SECRET_ENVIRONMENT_KEY = /(?:API|AUTH|COOKIE|CREDENTIAL|KEY|PASSWORD|PASSWD|SECRET|TOKEN|AWS|GITHUB|OPENAI|SSH)/iu;
 const NETWORK_DESTINATION_PATTERN = /^(tcp|udp):\/\/(localhost|127\.0\.0\.1):(\d{1,5})$/u;
 
 export type TaskNetworkPolicy = "none" | "allowlist";
@@ -211,7 +210,7 @@ function validateProfileDocument(profile: TaskProfile): void {
   if (environmentEntries.length > MAX_ENVIRONMENT_KEYS) throw new Error("Task profile environment is too large");
   let environmentBytes = 0;
   for (const [key, value] of environmentEntries) {
-    if (!SAFE_ENVIRONMENT_KEY.test(key) || SECRET_ENVIRONMENT_KEY.test(key) || typeof value !== "string" ||
+    if (!isSafeProcessEnvironmentKey(key) || typeof value !== "string" ||
         value.includes("\0") || value.includes("\n") || value.length > 4_096) {
       throw new Error("Task profile environment contains an unsafe entry");
     }
