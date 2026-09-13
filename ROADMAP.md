@@ -2,11 +2,11 @@
 
 Status: Active planning
 Version: 0.1
-Last verified: 2026-09-12
+Last verified: 2026-09-13
 
 ## Current position
 
-The repository has a committed TypeScript/Node implementation baseline. Work spans Phase 1 and the early Phase 2/4 slices: the authenticated Edge/Broker foundation, MCP discovery/error mapping, bounded post-authentication rate limiting, and bounded L0/L1 plus Git/package/Docker inspection slices are implemented locally, while production enablement remains closed.
+The repository has a committed TypeScript/Node implementation baseline. Work spans Phase 1 and the early Phase 2/4/5 slices: the authenticated Edge/Broker foundation, MCP discovery/error mapping, bounded post-authentication rate limiting, bounded L0/L1 plus Git/package/Docker inspection, and read-only app inventory are implemented locally, while production enablement remains closed.
 
 ## Phase 0 — Foundation and contracts
 
@@ -50,9 +50,9 @@ Exit: approved real-project workflows pass without exposing a generic shell or c
 
 ## Phase 5 — L3/L4 apps and GUI
 
-Status: `PLANNED`
+Status: `IN_PROGRESS`
 
-Add app inventory/open/focus and structured native automation, followed by Accessibility observation and actions. Implement target identity, freshness, focus, app/action scopes, sensitive-surface rules, and macOS permission recovery.
+App inventory is implemented as a bounded read-only slice with stable bundle identities and an `app_set:all` authority target. Add app open/focus and structured native automation next, followed by Accessibility observation and actions. Implement target identity, freshness, focus, app/action scopes, sensitive-surface rules, and macOS permission recovery.
 
 Exit: approved workflows pass real-application tests and sensitive or stale targets fail closed.
 
