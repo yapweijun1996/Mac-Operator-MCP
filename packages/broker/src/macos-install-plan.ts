@@ -8,6 +8,7 @@ import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-cre
 import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { readBrokerStatus, type BrokerStatusClientOptions } from "./broker-status-ipc.js";
 
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const SERVICE_TIMEOUT_MS = 5_000;
@@ -176,7 +177,8 @@ export interface MacOsInstallHostObserverOptions {
    * Must be an authenticated or same-process Broker-owned status source. A
    * preassembled install readback is intentionally not accepted.
    */
-  readBroker: () => Promise<BrokerServiceReadback>;
+  readBroker?: () => Promise<BrokerServiceReadback>;
+  brokerStatusClient?: BrokerStatusClientOptions;
   launchdExecutor?: LaunchdReadbackExecutor;
   signatureExecutor?: MacOsInstallCommandExecutor;
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
@@ -535,15 +537,17 @@ export function createMacOsInstallHostObserver(
   plan: MacOsInstallPlan,
   options: MacOsInstallHostObserverOptions
 ): MacOsInstallReadbackObserver {
-  if (options === null || typeof options !== "object" || typeof options.readBroker !== "function") {
+  if (options === null || typeof options !== "object" ||
+      (typeof options.readBroker !== "function" && options.brokerStatusClient === undefined)) {
     fail("INVALID_ARGUMENT", "install host observer requires a Broker-owned status source");
   }
+  const readBroker = options.readBroker ?? (() => readBrokerStatus(options.brokerStatusClient!));
   const ownerUid = parseUid(plan.domain);
   return {
     readLaunchd: async (serviceId) => readLaunchdJobReadback(serviceId, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor }),
     readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? readStableProcessIdentity(pid),
     readPlist: options.readPlist ?? (async (candidate) => readMacOsPlistReadback(candidate, { ownerUid })),
-    readBroker: options.readBroker,
+    readBroker,
     readSignature: options.readSignature === undefined
       ? async () => readMacOsCodeSignature(plan, options.signatureExecutor)
       : async () => options.readSignature!(plan)

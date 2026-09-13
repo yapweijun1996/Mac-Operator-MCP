@@ -1022,10 +1022,14 @@ The host-only macOS install plan also has a physical-Mac package smoke:
 ad-hoc signature verification, owner-only package layout, atomic plist
 publication, fixed `launchctl bootstrap`, real zero-capability Broker startup,
 independent double-read launchd/native/plist/Broker/signature verification,
-exact uninstall, and final service/plist absence all passed. The package used
-an explicit owner-only status fixture; production authenticated status-channel
-binding, Developer ID, upgrade/rollback, and helper gates remain open.
-Evidence: `evidence/2026-09-14-live-install-plan.md`.
+exact uninstall, and final service/plist absence all passed. The package smoke
+used its historical owner-only fixture; the current startup assembly now
+provides a separate HMAC-authenticated Broker status socket with native peer
+credentials and durable replay rejection, exercised by the focused physical
+host startup test. Developer ID, upgrade/rollback, and helper gates remain
+open.
+Evidence: `evidence/2026-09-14-live-install-plan.md` and
+`evidence/2026-09-14-broker-status-ipc.md`.
 
 The live startup-assembly smoke then called
 `createBrokerServiceFromStartupConfig` with the real launchd command path. A

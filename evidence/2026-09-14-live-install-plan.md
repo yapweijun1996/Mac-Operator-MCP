@@ -47,9 +47,11 @@ the separate filesystem-preflight contract remains covered by focused tests.
 It does not prove Developer ID provenance, notarization, persistent production
 installation, remote Edge request exchange, upgrade/rollback of a released
 artifact, root-domain helper installation, Keychain ACL review, or capability
-enablement. The Broker status source used by the host observer is an explicit
-owner-only fixture for this host smoke; production deployment must bind it to
-an authenticated or same-process Broker-owned status channel.
+enablement. This historical package run used an explicit owner-only fixture;
+the current startup assembly has since added a separate HMAC-authenticated
+Broker status socket with native peer credentials and durable replay rejection.
+That channel is covered by the focused startup test and separate evidence, but
+this package smoke was not retroactively rerun with it.
 
 ## Verification context
 

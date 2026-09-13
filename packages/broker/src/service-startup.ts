@@ -14,10 +14,14 @@ import {
 import { BrokerServiceEntrypoint, type BrokerServiceMetadata } from "./service-entrypoint.js";
 import { assertSocketNotActive } from "./ipc-server.js";
 import { BrokerServiceInstanceLock } from "./service-instance-lock.js";
+import { BrokerStatusIpcServer, BrokerStoreBrokerStatusReplayGuard } from "./broker-status-ipc.js";
+import { loadAuthenticationKey } from "./credentials.js";
+import { BrokerError, sha256 } from "@mac-operator/contracts";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
   "schemaVersion", "packageRoot", "dataRoot", "runtimeRoot", "brokerDatabasePath", "brokerSocketPath",
+  "statusSocketPath", "statusKeyPath", "statusKeyDigest",
   "edgeId", "edgeServiceId", "expectedEdgeUid", "expectedEdgeGid", "edgeKeyConfigPath",
   "policyBundlePath", "policySchemaDirectory", "policyVerificationKeyId", "policyVerificationKeyPath",
   "sourceRevision", "contractVersion"
@@ -33,6 +37,9 @@ export interface BrokerServiceStartupConfig {
   runtimeRoot: string;
   brokerDatabasePath: string;
   brokerSocketPath: string;
+  statusSocketPath: string;
+  statusKeyPath: string;
+  statusKeyDigest: string;
   edgeId: string;
   edgeServiceId: string;
   expectedEdgeUid: number;
@@ -84,7 +91,7 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
   }
   if (record.schemaVersion !== "0.1") throw new Error("Broker service startup config schema version is unsupported");
   const pathValues = [
-    "packageRoot", "dataRoot", "runtimeRoot", "brokerDatabasePath", "brokerSocketPath", "edgeKeyConfigPath",
+    "packageRoot", "dataRoot", "runtimeRoot", "brokerDatabasePath", "brokerSocketPath", "statusSocketPath", "statusKeyPath", "edgeKeyConfigPath",
     "policyBundlePath", "policySchemaDirectory", "policyVerificationKeyPath"
   ].map((key) => [key, record[key]] as const);
   for (const [key, pathValue] of pathValues) validateCanonicalPath(pathValue, key);
@@ -96,7 +103,13 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
   }
   const brokerDatabasePath = record.brokerDatabasePath as string;
   const brokerSocketPath = record.brokerSocketPath as string;
-  if (!isDescendant(dataRoot, brokerDatabasePath) || !isDescendant(runtimeRoot, brokerSocketPath)) {
+  const statusSocketPath = record.statusSocketPath as string;
+  const statusKeyPath = record.statusKeyPath as string;
+  if (!isDescendant(dataRoot, brokerDatabasePath) || !isDescendant(runtimeRoot, brokerSocketPath) ||
+      !isDescendant(runtimeRoot, statusSocketPath) || !isDescendant(dataRoot, statusKeyPath) ||
+      brokerSocketPath === statusSocketPath || !statusSocketPath.endsWith(".sock") ||
+      Buffer.byteLength(statusSocketPath, "utf8") >= 104 ||
+      typeof record.statusKeyDigest !== "string" || !/^[a-f0-9]{64}$/u.test(record.statusKeyDigest)) {
     throw new Error("Broker service state paths must remain inside their configured roots");
   }
   if (!isDescendant(dataRoot, record.edgeKeyConfigPath as string) || !isDescendant(dataRoot, record.policyBundlePath as string) ||
@@ -121,6 +134,9 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
     runtimeRoot,
     brokerDatabasePath,
     brokerSocketPath,
+    statusSocketPath,
+    statusKeyPath,
+    statusKeyDigest: record.statusKeyDigest as string,
     edgeId: record.edgeId as string,
     edgeServiceId: record.edgeServiceId as string,
     expectedEdgeUid,
@@ -154,6 +170,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
   let edgeKeyring: EdgeKeyring | undefined;
   let broker: Broker | undefined;
   let service: BrokerServiceEntrypoint | undefined;
+  let statusChannel: BrokerStatusIpcServer | undefined;
   try {
     // Acquire the per-runtime owner lock before checking the Broker socket or
     // touching the Job Ledger. This closes the pre-listener recovery race
@@ -176,6 +193,32 @@ export async function createBrokerServiceFromStartupConfig(options: {
     }
     const policyManager = new PolicyManager(verifiedPolicy.policy, activeStore, now);
     policyManager.restore(verifiedPolicy);
+    const statusKey = await loadAuthenticationKey(config.statusKeyPath);
+    try {
+      if (sha256(statusKey) !== config.statusKeyDigest) {
+        throw new Error("Broker status key digest precondition failed");
+      }
+      statusChannel = new BrokerStatusIpcServer({
+        socketPath: config.statusSocketPath,
+        authenticationKey: statusKey,
+        replayGuard: new BrokerStoreBrokerStatusReplayGuard(activeStore),
+        peerPolicy: {
+          expectedUid: config.expectedEdgeUid,
+          ...(config.expectedEdgeGid === undefined ? {} : { expectedGid: config.expectedEdgeGid })
+        },
+        readStatus: () => {
+          if (!service) throw new BrokerError("PRECONDITION_FAILED", "Broker service status is unavailable");
+          return service.readback();
+        },
+        authorizeStatus: () => {
+          if (!service || service.state !== "running") {
+            throw new BrokerError("PRECONDITION_FAILED", "Broker service status is not ready");
+          }
+        }
+      });
+    } finally {
+      statusKey.fill(0);
+    }
     const assembled = await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig({
       socketPath: config.brokerSocketPath,
       edgeId: config.edgeId,
@@ -185,6 +228,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
       ...(options.commandExecutor === undefined ? {} : { commandExecutor: options.commandExecutor }),
       edgeKeyConfigPath: config.edgeKeyConfigPath,
       edgeKeyStore: activeStore,
+      operatorChannels: [statusChannel],
       createBroker: (edgeAuthenticationKeys) => {
         edgeKeyring = edgeAuthenticationKeys;
         broker = new Broker({ store: activeStore, policy: policyManager, edgeAuthenticationKeys, now });
@@ -260,6 +304,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
       }
     };
   } catch (error) {
+    await statusChannel?.close().catch(() => undefined);
     await broker?.close().catch(() => undefined);
     try { edgeKeyring?.dispose(); } catch { /* preserve the startup error */ }
     try { store?.close(); } catch { /* preserve the startup error */ }
@@ -304,6 +349,8 @@ async function assertStartupDirectories(config: BrokerServiceStartupConfig): Pro
   await assertDirectory(config.policySchemaDirectory, false);
   await assertStartupTarget(config.dataRoot, config.brokerDatabasePath);
   await assertStartupTarget(config.runtimeRoot, config.brokerSocketPath);
+  await assertStartupTarget(config.runtimeRoot, config.statusSocketPath);
+  await assertStartupTarget(config.dataRoot, config.statusKeyPath);
   await assertStartupTarget(config.runtimeRoot, brokerServiceInstanceLockPath(config.runtimeRoot));
   await assertStartupTarget(config.dataRoot, config.edgeKeyConfigPath);
   await assertStartupTarget(config.dataRoot, config.policyBundlePath);

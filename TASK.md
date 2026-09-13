@@ -109,10 +109,13 @@ real executor with only independent launchd, native PID/start-time, plist,
 Broker-status, and signature sources. It waits through transient `launching`,
 double-reads mutable identities, starts a temporary zero-capability Broker
 under a user LaunchAgent, and completes exact uninstall with final absence.
-The package uses ad-hoc signing and an explicit owner-only status fixture;
-Developer ID, production artifact provenance, upgrade/rollback, remote Edge,
-and helper installation remain open. Evidence:
-`evidence/2026-09-14-live-install-plan.md`.
+The package uses ad-hoc signing and the host observer now supports a distinct,
+HMAC-authenticated Broker status socket with native peer credentials and
+durable replay rejection. The recorded package smoke still used its historical
+owner-only fixture; Developer ID, production artifact provenance,
+upgrade/rollback, remote Edge, and helper installation remain open. Evidence:
+`evidence/2026-09-14-live-install-plan.md` and
+`evidence/2026-09-14-broker-status-ipc.md`.
 
 The real Broker startup assembly now has a physical-host smoke: a temporary
 user LaunchAgent supplied the native PID/start-time identity, signed policy and

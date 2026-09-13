@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ import {
   validateBrokerServiceStartupConfig,
   type BrokerServiceStartupConfig
 } from "./service-startup.js";
+import { readBrokerStatus } from "./broker-status-ipc.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -32,7 +33,7 @@ test("Broker service startup config is strict, canonical, and root-bound", () =>
 });
 
 test("Broker service startup config loader rejects weak and symlinked files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "mac-service-config-loader-"));
+  const root = await mkdtemp(join(tmpdir(), "mscl-"));
   const configPath = join(root, "service.json");
   const config = baseConfig(root, join(root, "data"), join(root, "runtime"));
   try {
@@ -53,13 +54,13 @@ test("Broker service startup restores signed authority before native runtime sta
     t.skip("native Broker service startup is a macOS boundary");
     return;
   }
-  const root = await mkdtemp(join(tmpdir(), "mac-service-startup-"));
+  const root = await mkdtemp(join(tmpdir(), "mss-"));
   const dataRoot = join(root, "data");
   const runtimeRoot = join(root, "runtime");
   await mkdir(dataRoot, { mode: 0o700 });
   await mkdir(runtimeRoot, { mode: 0o700 });
   const now = Date.now();
-  const config = baseConfig(repositoryRoot, await realpath(dataRoot), await realpath(runtimeRoot));
+  let config = baseConfig(repositoryRoot, await realpath(dataRoot), await realpath(runtimeRoot));
   const keyPath = join(dataRoot, "edge.key");
   const edgeConfigPath = join(dataRoot, "edge-keys.json");
   const policyKeyPath = join(dataRoot, "policy-key.pem");
@@ -69,6 +70,8 @@ test("Broker service startup restores signed authority before native runtime sta
   let assembly: Awaited<ReturnType<typeof createBrokerServiceFromStartupConfig>> | undefined;
   try {
     await provisionAuthenticationKey(keyPath);
+    const statusKey = await provisionAuthenticationKey(config.statusKeyPath);
+    config = { ...config, statusKeyDigest: statusKey.digest };
     const edgeKey = await loadAuthenticationKey(keyPath);
     const edgeConfig: EdgeAuthenticationKeyConfig = {
       schemaVersion: "0.1",
@@ -108,6 +111,15 @@ test("Broker service startup restores signed authority before native runtime sta
     assert.ok(assembly.service.readback().enabledCapabilities.includes("mac_health"));
     await assembly.service.start();
     assert.equal(assembly.service.readback().runtimeState, "running");
+    assert.equal((await stat(config.statusSocketPath)).isSocket(), true);
+    const statusAuthenticationKey = await loadAuthenticationKey(config.statusKeyPath);
+    try {
+      const statusReadback = await readBrokerStatus({ socketPath: config.statusSocketPath, authenticationKey: statusAuthenticationKey, now: () => now });
+      assert.equal(statusReadback.state, "running");
+      assert.equal(statusReadback.runtimeState, "running");
+    } finally {
+      statusAuthenticationKey.fill(0);
+    }
   } finally {
     if (assembly) await assembly.close();
     activationStore?.close();
@@ -124,6 +136,9 @@ function baseConfig(packageRoot: string, dataRoot: string, runtimeRoot: string):
     runtimeRoot: resolve(runtimeRoot),
     brokerDatabasePath: resolve(join(dataRoot, "broker.sqlite")),
     brokerSocketPath: resolve(join(runtimeRoot, "broker.sock")),
+    statusSocketPath: resolve(join(runtimeRoot, "broker-status.sock")),
+    statusKeyPath: resolve(join(dataRoot, "broker-status.key")),
+    statusKeyDigest: "0".repeat(64),
     edgeId: "edge-1",
     edgeServiceId: `gui/${uid}/com.mac-operator.edge`,
     expectedEdgeUid: uid,

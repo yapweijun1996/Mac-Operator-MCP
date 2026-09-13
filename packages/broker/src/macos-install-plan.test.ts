@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import test from "node:test";
@@ -27,6 +27,7 @@ import {
 } from "./macos-install-plan.js";
 import { createAuthorityControlUninstallActions, executeMacOsUninstallPlan } from "./macos-uninstall-plan.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { BrokerStatusIpcServer } from "./broker-status-ipc.js";
 
 const base: MacOsInstallPlanInput = {
   uid: 501,
@@ -265,6 +266,36 @@ test("install host observer binds real adapter sources without accepting a final
   const sources = await collectMacOsInstallReadbackSources(plan, observer);
   assert.equal(sources.launchd.type, "LaunchAgent");
   assert.equal(sources.processIdentity.startTimeMicros, 987654321);
+});
+
+test("install host observer can read through the authenticated Broker status client", async () => {
+  const plan = buildMacOsInstallPlan(base);
+  const directory = await mkdtemp(join(tmpdir(), "mobs-"));
+  const socketPath = join(directory, "status.sock");
+  const authenticationKey = randomBytes(32);
+  const storeReplay = new Set<string>();
+  const server = new BrokerStatusIpcServer({
+    socketPath,
+    authenticationKey,
+    replayGuard: { admit: ({ nonce }) => {
+      if (storeReplay.has(nonce)) throw new Error("replay");
+      storeReplay.add(nonce);
+    } },
+    peerCredentialVerifier: { verify: () => undefined },
+    authorizeStatus: () => undefined,
+    readStatus: () => readbackSources(plan).broker
+  });
+  try {
+    await server.listen();
+    const observer = createMacOsInstallHostObserver(plan, {
+      brokerStatusClient: { socketPath, authenticationKey }
+    });
+    assert.deepEqual(await observer.readBroker(), readbackSources(plan).broker);
+  } finally {
+    await server.close();
+    authenticationKey.fill(0);
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("upgrade and uninstall plans bind an exact existing revision and fail closed on precondition mismatch", () => {
