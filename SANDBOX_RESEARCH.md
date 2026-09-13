@@ -49,3 +49,25 @@ The first hostile boundary probe ran on a Mac mini `Mac16,10` (Apple M4, 16 GB),
 This evidence is insufficient to select `sandbox-exec` as the production task boundary. It does not unblock `MOP-043` or `MOP-045`; the next research slice must test hostile credentials, process-tree ownership, cleanup after timeout/crash, and a real network policy or move execution to a stronger boundary. The Broker-side canary closes only one previously unknown launch invariant: `ProcessSupervisor` does not inherit arbitrary parent descriptors. It must not be interpreted as credential isolation or as proof that `sandbox-exec` itself enforces descriptor policy.
 
 The Broker task admission boundary now also requires a versioned `TaskIsolationProof` before any runner marked available can consume approval or create a task Job. The proof must name the selected profile sandbox and attest to enforced filesystem/network boundaries, isolated credentials, and owned process-tree cleanup. This is a fail-closed contract gate; the current default runner remains unavailable, and the test-only attestation is not production evidence.
+
+## 2026-09-13 experimental runner evidence
+
+Source commit `684058c` adds `renderTaskSandboxProfile` and an opt-in
+`SandboxExecTaskRunner`. The renderer emits only a Broker-owned deny-default
+Seatbelt subset, allows a resolved executable and explicit filesystem roots,
+denies global and representative project secret zones, and rejects network
+allowlists. The runner invokes `/usr/bin/sandbox-exec` through the bounded
+`ProcessSupervisor` with an explicit environment, cwd, timeout, output cap, and
+cancellation callback. It remains unavailable unless macOS, explicit opt-in,
+an external host-evidence gate, and a matching `TaskIsolationProof` are all
+present.
+
+The exact host smoke record is [`evidence/2026-09-13-sandbox-profile-runner.md`](evidence/2026-09-13-sandbox-profile-runner.md).
+On the Mac mini M4/macOS 26.2 host, the synthetic child could read/write the
+allowed temporary root, could not read `/private/etc/passwd`, did not inherit a
+parent controller-canary environment variable, and could not resolve an HTTP
+destination through curl (exit 6, empty stdout). This is `PARTIAL` evidence:
+real credential surfaces, descendants/`setsid`, crash/restart cleanup,
+allowlisted networking, Docker, persistence, privilege, and remount behavior
+remain unproven. `sandbox-exec` is deprecated, so this does not select it for
+production or unblock `mac_task_run`.

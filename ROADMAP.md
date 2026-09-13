@@ -44,7 +44,7 @@ Exit: the Mac can be diagnosed safely through released read-only tools with exac
 
 Status: `IN_PROGRESS`
 
-Bounded Git, package, and fixed local-only Docker inspection are implemented with independent scopes and target authorization. Continue with named test/build profiles and Broker-owned jobs only after sandbox evidence; prove filesystem, network, environment, process-tree, and credential isolation before enabling controlled writes. Add atomic file writes, patching, explicit staging, and local commits with preconditions and verification.
+Bounded Git, package, and fixed local-only Docker inspection are implemented with independent scopes and target authorization. An experimental, disabled-by-default macOS `SandboxExecTaskRunner` now renders a Broker-owned deny-default profile and passes explicit execution limits through `ProcessSupervisor`; its real-host evidence is partial. Continue with named test/build profiles and Broker-owned jobs only after sandbox evidence; prove filesystem, network, environment, process-tree, and credential isolation before enabling controlled writes. Add atomic file writes, patching, explicit staging, and local commits with preconditions and verification.
 
 Exit: approved real-project workflows pass without exposing a generic shell or controller credentials.
 
@@ -98,7 +98,7 @@ Authority and credential defects take priority over functional expansion. Then a
 - Accept identity and Edge-to-Broker IPC through ADR-0002.
 - Accept remote authentication through ADR-0003.
 - Freeze policy/config and audit persistence through ADR-0004 and ADR-0005.
-- Select an enforceable macOS child-process sandbox.
+- Select an enforceable macOS child-process sandbox; the current deprecated `sandbox-exec` experiment is not a production selection.
 - Close scope and approval semantics through `MOP-080` and `MOP-082`.
 - Complete input/output schema detail and automated validation for all 44 machine-readable tool contracts; the mandatory audit/postcondition fields and delivery-wave naming are already closed.
 - Decide read-only behavior during audit-store failure.

@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `96acb1a`.
+Current committed implementation baseline: `684058c`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -37,6 +37,21 @@ The latest implementation addendum is `53a6550`: the disabled-by-default `mac_ap
 The current implementation addendum is `9bba3cd`: disabled-by-default `mac_ui_action` binds an exact observed Accessibility element to an owner/session-scoped 30-second snapshot, parent app-window authority, `trusted_gui` approval, a Broker Job ID, fixed Broker-owned JXA, and exact before/after window/index/role/label reobservation. The fixed action allowlist is `press`, `select`, `increment`, `decrement`, `show_menu`, and `focus`; secure, redacted, sensitive, stale, mismatched, cancelled, and permission-denied paths fail closed. Credential typing, real permission-granted GUI evidence, structured automation, and capability enablement remain open. Evidence: `evidence/2026-09-13-ui-action-boundary.md`.
 
 The current implementation addendum is `96acb1a`: the proposed L5 helper boundary now has a separately authenticated owner-only IPC server, HMAC command/response binding, durable BrokerStore nonce/request replay admission, strict target/operation and handler-map validation, no raw executable or argument fields, bounded redacted evidence, and a mandatory Broker-owned authority callback checked before dispatch, during active cancellation polling, and before response publication. A Broker-owned command factory derives helper operations only from the three `mac_priv_*` tools and requires a matching explicit approval, intent-linked running Job, payload/policy/target identity, principal/session ownership, active kill switches, and revocation checks before signing. Authority loss or expiry yields `UNKNOWN_OUTCOME`; no root process or privileged operation is enabled. Evidence: `evidence/2026-09-13-privileged-helper-boundary.md`.
+
+The current implementation addendum is `684058c`: an experimental,
+disabled-by-default `SandboxExecTaskRunner` now renders a Broker-owned
+deny-default macOS Seatbelt profile from the resolved named TaskProfile and
+invokes only `/usr/bin/sandbox-exec` through the bounded ProcessSupervisor.
+The renderer rejects raw SBPL, broad roots, cwd escapes, and network
+allowlists; the runner requires a profile-matched `TaskIsolationProof`, an
+explicit opt-in, and an external host-evidence gate. On the Mac mini M4/macOS
+26.2 host, the opt-in smoke passed allowed-root read/write, denied
+`/private/etc/passwd`, hid a synthetic inherited environment canary, and
+denied curl DNS/network access. Evidence is partial and does not select the
+deprecated `sandbox-exec` boundary for production or unblock `mac_task_run`:
+real credential stores, descendants/`setsid`, crash/restart cleanup, remounts,
+Docker, persistence, privilege, and allowlisted networking remain open.
+Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
 ## Completed work
 
@@ -207,6 +222,7 @@ There is no blocker to continued local implementation. Production enablement is 
 - A later source revision `6683344` reran the full suite at 221 passing tests and moved operator-channel peer checks onto the shared native transport; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-native-operator-ipc.md`.
 - A later source revision `fde7341` reran the full suite at 225 passing tests and added the launchd/service-entrypoint boundary; the exact addendum is recorded separately in `VERIFICATION.md` and `evidence/2026-09-13-launchd-service-boundary.md`.
 - Recorded initial real-Mac sandbox evidence in `SANDBOX_RESEARCH.md` and `evidence/2026-09-12-sandbox-research.json`; the result is explicitly partial and does not unblock `mac_task_run`.
+- Reran the full suite at 290 tests (289 passed, one default opt-in test skipped) on clean source commit `684058c`; `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` passed 5/5 on the Mac mini M4/macOS 26.2 host. The experimental runner smoke proves only Broker-rendered deny-default profile construction, explicit empty-environment filtering, allowed temporary-root read/write, `/private/etc/passwd` denial, and curl DNS/network denial; it does not prove real credential, descendant/`setsid`, crash/restart, remount, Docker, persistence, privilege, or allowlisted-network isolation. Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
 
 The passing tests prove only the local foundation, bounded filesystem workers/search, and initial persistent Request/Approval/Job Ledgers on the recorded clean revision. They do not satisfy a release gate or prove protected Keychain-backed secret storage, installed cross-process code identity, a human approval UI/channel, production unattended profiles, remote deployment, removable-volume remount identity, process-tree ownership/termination, credential isolation, sandbox, GUI, helper, packaging, or whole-service rollback.
