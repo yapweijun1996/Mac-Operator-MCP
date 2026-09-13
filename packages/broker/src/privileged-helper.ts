@@ -166,6 +166,8 @@ export interface PrivilegedHelperCommandIssueInput {
 export interface BrokerPrivilegedHelperCommandFactoryOptions {
   store: BrokerStore;
   authenticationKey: Buffer;
+  /** Optional dynamic check used for key-specific revocation. */
+  keyRevocationCheck?: () => boolean;
   /** Required final Broker authority gate; it may include dynamic kill-switch state. */
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
   now?: () => number;
@@ -200,6 +202,9 @@ export class BrokerPrivilegedHelperCommandFactory {
 
   issue(input: PrivilegedHelperCommandIssueInput): SignedPrivilegedHelperCommand {
     const nowMs = input.nowMs ?? this.now();
+    if (this.options.keyRevocationCheck?.()) {
+      throw new BrokerError("REVOKED", "Privileged helper key has been revoked");
+    }
     if (!Number.isSafeInteger(nowMs) || nowMs < 0 ||
         !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(input.requestId) ||
         !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.principalId) ||

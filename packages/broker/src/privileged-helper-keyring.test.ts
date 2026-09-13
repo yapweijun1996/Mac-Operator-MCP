@@ -59,7 +59,6 @@ test("privileged helper key config is protected, digest-bound, and restart-resto
       store,
       authorizeCommand: () => undefined
     });
-    factory.dispose();
     const server = manager.createServer({
       socketPath: join(directory, "helper.sock"),
       replayGuard: { admit: () => undefined },
@@ -68,6 +67,7 @@ test("privileged helper key config is protected, digest-bound, and restart-resto
       peerCredentialVerifier: { verify() { return undefined; } }
     });
     await server.close();
+    factory.dispose();
 
     store.close();
     store = new BrokerStore(databasePath);
@@ -78,6 +78,13 @@ test("privileged helper key config is protected, digest-bound, and restart-resto
     await writePrivilegedHelperKeyConfig(configPath, document(secondKeyPath, secondDigest, 2));
     await manager.activate(1);
     assert.equal(manager.current().document.revision, 2);
+    const revokedFactory = manager.createCommandFactory({ store, authorizeCommand: () => undefined });
+    store.revoke("helper_key", "helper-key-2", "COMPROMISED", NOW);
+    assert.throws(
+      () => revokedFactory.issue({ requestId: "request:test", principalId: "principal-1", sessionId: "session-1", jobId: "job:test" }),
+      (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "REVOKED"
+    );
+    revokedFactory.dispose();
     await writePrivilegedHelperKeyConfig(configPath, first);
     await assert.rejects(manager.activate(), /revision must increase/u);
     const audits = store.auditRows().filter((row) => row.tool === "internal_helper_key_config_activate");

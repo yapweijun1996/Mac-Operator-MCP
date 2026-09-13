@@ -123,8 +123,19 @@ export class PrivilegedHelperKeyManager {
     options: Omit<BrokerPrivilegedHelperCommandFactoryOptions, "authenticationKey">
   ): BrokerPrivilegedHelperCommandFactory {
     const key = this.assertUsable();
+    const keyId = this.current().key.keyId;
     try {
-      return new BrokerPrivilegedHelperCommandFactory({ ...options, authenticationKey: key });
+      return new BrokerPrivilegedHelperCommandFactory({
+        ...options,
+        authenticationKey: key,
+        keyRevocationCheck: () => this.store.isRevoked("helper_key", keyId),
+        authorizeCommand: (command) => {
+          if (this.store.isRevoked("helper_key", keyId)) {
+            throw new BrokerError("REVOKED", "Privileged helper key has been revoked");
+          }
+          options.authorizeCommand(command);
+        }
+      });
     } finally {
       key.fill(0);
     }
@@ -134,8 +145,18 @@ export class PrivilegedHelperKeyManager {
     options: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey">
   ): PrivilegedHelperIpcServer {
     const key = this.assertUsable();
+    const keyId = this.current().key.keyId;
     try {
-      return new PrivilegedHelperIpcServer({ ...options, authenticationKey: key });
+      return new PrivilegedHelperIpcServer({
+        ...options,
+        authenticationKey: key,
+        authorizeCommand: (command) => {
+          if (this.store.isRevoked("helper_key", keyId)) {
+            throw new BrokerError("REVOKED", "Privileged helper key has been revoked");
+          }
+          options.authorizeCommand(command);
+        }
+      });
     } finally {
       key.fill(0);
     }
