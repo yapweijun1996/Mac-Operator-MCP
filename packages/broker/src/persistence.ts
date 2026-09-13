@@ -44,6 +44,16 @@ export interface PolicySignerConfigActivationIdentity {
 export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled" | "unknown";
 export type JobResultClass = "success" | "denied" | "failed" | "verification_failed" | "queued" | "accepted" | "unknown";
 
+export interface JobLease {
+  ownerId: string;
+  token: string;
+  expiresAtMs: number;
+}
+
+const JOB_LEASE_OWNER_PATTERN = /^[A-Za-z0-9._:@/-]{1,128}$/u;
+const JOB_LEASE_TOKEN_PATTERN = /^lease:[A-Za-z0-9._:-]{16,128}$/u;
+const MAX_JOB_LEASE_MS = 120_000;
+
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
  * after restart without persisting the requested bytes.
@@ -353,6 +363,11 @@ export class BrokerStore {
         output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
         cancel_requested INTEGER NOT NULL CHECK (cancel_requested IN (0, 1)),
         cancel_reason TEXT,
+        lease_owner_id TEXT,
+        lease_token TEXT,
+        lease_acquired_at_ms INTEGER,
+        lease_heartbeat_at_ms INTEGER,
+        lease_expires_at_ms INTEGER,
         write_metadata_json TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL,
         UNIQUE (owner_principal_id, idempotency_key)
@@ -1165,15 +1180,27 @@ export class BrokerStore {
     });
   }
 
-  startJob(jobId: string, principalId: string, expectedRevision: number, startedAtMs: number): BrokerJob {
+  startJob(jobId: string, principalId: string, expectedRevision: number, startedAtMs: number, lease?: JobLease): BrokerJob {
     if (!Number.isSafeInteger(startedAtMs) || startedAtMs < 0) throw malformedJob();
+    if (lease !== undefined) validateJobLease(lease, startedAtMs, false);
     return this.transitionJob(jobId, principalId, expectedRevision, ["queued"], (current) => {
       if (startedAtMs < current.createdAtMs) throw malformedJob();
       this.database.prepare(`
-        UPDATE jobs SET state = 'running', result_class = 'accepted', started_at_ms = ?, revision = revision + 1
+        UPDATE jobs SET state = 'running', result_class = 'accepted', started_at_ms = ?,
+          lease_owner_id = ?, lease_token = ?, lease_acquired_at_ms = ?,
+          lease_heartbeat_at_ms = ?, lease_expires_at_ms = ?, revision = revision + 1
         WHERE job_id = ? AND owner_principal_id = ?
-      `).run(startedAtMs, jobId, principalId);
-    });
+      `).run(
+        startedAtMs,
+        lease?.ownerId ?? null,
+        lease?.token ?? null,
+        lease ? startedAtMs : null,
+        lease ? startedAtMs : null,
+        lease?.expiresAtMs ?? null,
+        jobId,
+        principalId
+      );
+    }, undefined, startedAtMs);
   }
 
   finishJob(
@@ -1187,10 +1214,14 @@ export class BrokerStore {
       exitCode?: number | null;
       stdout?: string;
       stderr?: string;
-    }
+    },
+    lease?: JobLease,
+    leaseNowMs = Date.now()
   ): BrokerJob {
     if (!Number.isSafeInteger(outcome.finishedAtMs) || outcome.finishedAtMs < 0) throw malformedJob();
     if (!validTerminalOutcome(outcome.state, outcome.resultClass)) throw malformedJob();
+    if (!Number.isSafeInteger(leaseNowMs) || leaseNowMs < 0) throw malformedJob();
+    if (lease !== undefined) validateJobLease(lease, leaseNowMs, true);
     const stdout = sanitizeJobOutput(outcome.stdout ?? "");
     const stderr = sanitizeJobOutput(outcome.stderr ?? "");
     const exitCode = outcome.exitCode ?? null;
@@ -1201,12 +1232,37 @@ export class BrokerStore {
       if (current.startedAtMs === null || outcome.finishedAtMs < current.startedAtMs) throw malformedJob();
       this.database.prepare(`
         UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = ?,
-          stdout_text = ?, stderr_text = ?, output_truncated = ?, revision = revision + 1
+          stdout_text = ?, stderr_text = ?, output_truncated = ?,
+          lease_owner_id = NULL, lease_token = NULL, lease_acquired_at_ms = NULL,
+          lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL, revision = revision + 1
         WHERE job_id = ? AND owner_principal_id = ?
       `).run(
         outcome.state, outcome.resultClass, outcome.finishedAtMs, exitCode,
         stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0, jobId, principalId
       );
+    }, lease, leaseNowMs, outcome.state === "unknown");
+  }
+
+  renewJobLease(jobId: string, principalId: string, lease: JobLease, nowMs: number, leaseDurationMs = 30_000): JobLease {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0 || !Number.isSafeInteger(leaseDurationMs) ||
+        leaseDurationMs < 1_000 || leaseDurationMs > MAX_JOB_LEASE_MS) {
+      throw malformedJob();
+    }
+    validateJobLease(lease, nowMs, false);
+    return this.runTransaction(() => {
+      const row = this.requireOwnedJobRow(jobId, principalId);
+      assertActiveJobLease(row, lease, nowMs);
+      const expiresAtMs = nowMs + leaseDurationMs;
+      if (!Number.isSafeInteger(expiresAtMs)) throw malformedJob();
+      const updated = this.database.prepare(`
+        UPDATE jobs SET lease_heartbeat_at_ms = ?, lease_expires_at_ms = ?
+        WHERE job_id = ? AND owner_principal_id = ? AND state = 'running'
+          AND cancel_requested = 0 AND lease_owner_id = ? AND lease_token = ?
+          AND lease_expires_at_ms > ?
+      `).run(nowMs, expiresAtMs, jobId, principalId, lease.ownerId, lease.token, nowMs);
+      if (updated.changes !== 1) throw new BrokerError("CANCELLED", "Job lease is no longer active");
+      lease.expiresAtMs = expiresAtMs;
+      return lease;
     });
   }
 
@@ -1254,7 +1310,9 @@ export class BrokerStore {
         const resultClass: JobResultClass = priorState === "queued" ? "denied" : "unknown";
         this.database.prepare(`
           UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, cancel_requested = 1,
-            cancel_reason = 'BROKER_RESTART', revision = revision + 1 WHERE job_id = ? AND revision = ?
+            cancel_reason = 'BROKER_RESTART', lease_owner_id = NULL, lease_token = NULL,
+            lease_acquired_at_ms = NULL, lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL,
+            revision = revision + 1 WHERE job_id = ? AND revision = ?
         `).run(nextState, resultClass, nowMs, row.job_id, row.revision);
         if (priorState === "queued") queuedCancelled += 1;
         else runningUnknown += 1;
@@ -1672,13 +1730,23 @@ export class BrokerStore {
     principalId: string,
     expectedRevision: number,
     allowedStates: readonly JobState[],
-    update: (current: BrokerJob) => void
+    update: (current: BrokerJob) => void,
+    lease?: JobLease,
+    leaseNowMs = Date.now(),
+    allowExpiredLease = false
   ): BrokerJob {
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw malformedJob();
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
+        !Number.isSafeInteger(leaseNowMs) || leaseNowMs < 0) throw malformedJob();
     return this.runTransaction(() => {
-      const current = this.requireOwnedJob(jobId, principalId);
+      const currentRow = this.requireOwnedJobRow(jobId, principalId);
+      const current = mapJob(currentRow);
       if (current.revision !== expectedRevision || !allowedStates.includes(current.state)) {
         throw new BrokerError("CONFLICT", "Job state or revision changed concurrently");
+      }
+      if (lease !== undefined) {
+        assertActiveJobLease(currentRow, lease, leaseNowMs, allowExpiredLease);
+      } else if (currentRow.lease_token !== null) {
+        throw new BrokerError("CONFLICT", "Job lease is required for this transition");
       }
       update(current);
       return this.requireOwnedJob(jobId, principalId);
@@ -1768,9 +1836,15 @@ export class BrokerStore {
   }
 
   private requireOwnedJob(jobId: string, principalId: string): BrokerJob {
-    const job = this.ownedJob(jobId, principalId);
-    if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
-    return job;
+    return mapJob(this.requireOwnedJobRow(jobId, principalId));
+  }
+
+  private requireOwnedJobRow(jobId: string, principalId: string): JobRow {
+    const row = this.database.prepare(
+      "SELECT * FROM jobs WHERE job_id = ? AND owner_principal_id = ?"
+    ).get(jobId, principalId) as JobRow | undefined;
+    if (!row) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
+    return row;
   }
 
   private insertAudit(event: AuditEvent): string {
@@ -1834,6 +1908,21 @@ export class BrokerStore {
     if (!names.has("write_metadata_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN write_metadata_json TEXT NOT NULL DEFAULT ''");
     }
+    if (!names.has("lease_owner_id")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN lease_owner_id TEXT");
+    }
+    if (!names.has("lease_token")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN lease_token TEXT");
+    }
+    if (!names.has("lease_acquired_at_ms")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN lease_acquired_at_ms INTEGER");
+    }
+    if (!names.has("lease_heartbeat_at_ms")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN lease_heartbeat_at_ms INTEGER");
+    }
+    if (!names.has("lease_expires_at_ms")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN lease_expires_at_ms INTEGER");
+    }
   }
 }
 
@@ -1864,6 +1953,11 @@ interface JobRow {
   stderr_text: string;
   output_truncated: number;
   cancel_requested: number;
+  lease_owner_id: string | null;
+  lease_token: string | null;
+  lease_acquired_at_ms: number | null;
+  lease_heartbeat_at_ms: number | null;
+  lease_expires_at_ms: number | null;
   write_metadata_json: string;
   revision: number;
 }
@@ -1994,6 +2088,26 @@ function validateJobCreation(input: CreateJobInput): void {
     throw malformedJob();
   }
   if (input.writeMetadata !== undefined) validateWriteJobMetadata(input.writeMetadata);
+}
+
+function validateJobLease(lease: JobLease, nowMs: number, allowExpired: boolean): void {
+  if (lease === null || typeof lease !== "object" ||
+      !JOB_LEASE_OWNER_PATTERN.test(lease.ownerId) ||
+      !JOB_LEASE_TOKEN_PATTERN.test(lease.token) ||
+      !Number.isSafeInteger(lease.expiresAtMs) || lease.expiresAtMs < 0 ||
+      (!allowExpired && lease.expiresAtMs <= nowMs) ||
+      lease.expiresAtMs - nowMs > MAX_JOB_LEASE_MS) {
+    throw malformedJob();
+  }
+}
+
+function assertActiveJobLease(row: JobRow, lease: JobLease, nowMs: number, allowExpired = false): void {
+  if (row.lease_owner_id !== lease.ownerId || row.lease_token !== lease.token ||
+      row.lease_acquired_at_ms === null || row.lease_heartbeat_at_ms === null ||
+      row.lease_expires_at_ms === null ||
+      (!allowExpired && row.lease_expires_at_ms <= nowMs)) {
+    throw new BrokerError("CONFLICT", "Job lease is no longer active");
+  }
 }
 
 function serializeWriteJobMetadata(metadata: WriteJobMetadata | undefined): string {

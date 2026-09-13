@@ -11,7 +11,7 @@ import {
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
-import type { BrokerJob, BrokerStore, WriteJobMetadata } from "./persistence.js";
+import type { BrokerJob, BrokerStore, JobLease, WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -60,6 +60,9 @@ export interface BrokerOptions {
   taskRunner?: TaskRunner;
 }
 
+const JOB_LEASE_DURATION_MS = 30_000;
+const JOB_LEASE_RENEW_INTERVAL_MS = 5_000;
+
 export class Broker {
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
@@ -76,6 +79,7 @@ export class Broker {
   private readonly dockerInspector: DockerInspector;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
+  private readonly jobLeaseOwnerId: string;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -93,6 +97,7 @@ export class Broker {
     this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
+    this.jobLeaseOwnerId = `broker:${randomUUID()}`;
   }
 
   /**
@@ -358,6 +363,8 @@ export class Broker {
           ? { kind: "task" as const, job: execution.taskJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
+        const leaseStartedAtMs = this.now();
+        const lease = this.newJobLease(leaseStartedAtMs);
         let started: BrokerJob;
         try {
           this.ensureActiveAuthority(request, execution.target, execution.additionalTargets ?? []);
@@ -365,7 +372,8 @@ export class Broker {
             pendingJob.job.jobId,
             request.principal.principalId,
             pendingJob.job.revision,
-            this.now()
+            leaseStartedAtMs,
+            lease
           );
         } catch (error) {
           try {
@@ -382,6 +390,7 @@ export class Broker {
           }
           throw error;
         }
+        execution.jobLease = lease;
         if (pendingJob.kind === "write") execution.writeJob = started;
         else execution.taskJob = started;
       }
@@ -1581,7 +1590,7 @@ export class Broker {
         execution.write.content,
         execution.write.expectedSha256,
         execution.write.createOnly,
-        this.executionControl(request, execution.target, timeoutMs, job.jobId),
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease),
         execution.write.temporaryName
       );
       if (workerResult.operation !== "write") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
@@ -1606,7 +1615,7 @@ export class Broker {
         resultClass: "success",
         finishedAtMs: this.now(),
         stdout: canonicalJson(data)
-      });
+      }, execution.jobLease, this.now());
       return writeDispatchResult(execution.writeJob, data, false);
     } catch (error) {
       const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Filesystem write job failed");
@@ -1615,7 +1624,7 @@ export class Broker {
           state: "unknown",
           resultClass: "unknown",
           finishedAtMs: this.now()
-        });
+        }, execution.jobLease, this.now());
       } catch {
         // Preserve the original error; a running job without a terminal readback is unresolved.
       }
@@ -1670,7 +1679,7 @@ export class Broker {
           state: "failed",
           resultClass: "failed",
           finishedAtMs: this.now()
-        });
+        }, execution.jobLease, this.now());
       } catch {
         // Preserve the original profile error when terminal persistence fails.
       }
@@ -1681,7 +1690,7 @@ export class Broker {
       requireTaskIsolationProof(this.taskRunner.isolationProof, resolved);
       const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
         resolved,
-        this.executionControl(request, execution.target, timeoutMs, job.jobId)
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
       ));
       // A runner may return after cancellation or revocation without observing
       // the control callback. Never publish a success after the Broker lost
@@ -1703,7 +1712,7 @@ export class Broker {
         exitCode: taskResult.exitCode,
         stdout: stdout.text,
         stderr: stderr.text
-      });
+      }, execution.jobLease, this.now());
       terminalPersisted = true;
       if (!finished) {
         if (terminalState === "cancelled") throw new BrokerError("CANCELLED", "Task was cancelled under active authority");
@@ -1741,7 +1750,7 @@ export class Broker {
             state: "unknown",
             resultClass: "unknown",
             finishedAtMs: this.now()
-          });
+          }, execution.jobLease, this.now());
         } catch {
           // Preserve the original error; the running task has no trusted terminal readback.
         }
@@ -2190,18 +2199,38 @@ export class Broker {
     throw new BrokerError("POLICY_DENIED", "No filesystem root is authorized for this tool");
   }
 
+  private newJobLease(acquiredAtMs: number): JobLease {
+    if (!Number.isSafeInteger(acquiredAtMs) || acquiredAtMs < 0 || acquiredAtMs > Number.MAX_SAFE_INTEGER - JOB_LEASE_DURATION_MS) {
+      throw new BrokerError("PRECONDITION_FAILED", "Job lease timestamp is malformed");
+    }
+    return {
+      ownerId: this.jobLeaseOwnerId,
+      token: `lease:${randomUUID()}`,
+      expiresAtMs: acquiredAtMs + JOB_LEASE_DURATION_MS
+    };
+  }
+
   private executionControl(
     request: BrokerRequest,
     target: NormalizedTarget,
     timeoutMs: number,
     jobId?: string,
-    additionalTargets: readonly NormalizedTarget[] = []
+    additionalTargets: readonly NormalizedTarget[] = [],
+    jobLease?: JobLease
   ) {
+    let lastLeaseHeartbeatMs = Number.NEGATIVE_INFINITY;
     return {
       timeoutMs,
       shouldCancel: () => {
         try {
           this.ensureActiveAuthority(request, target, additionalTargets);
+          if (jobId && jobLease) {
+            const nowMs = this.now();
+            if (nowMs - lastLeaseHeartbeatMs >= JOB_LEASE_RENEW_INTERVAL_MS) {
+              this.options.store.renewJobLease(jobId, request.principal.principalId, jobLease, nowMs, JOB_LEASE_DURATION_MS);
+              lastLeaseHeartbeatMs = nowMs;
+            }
+          }
           if (jobId && this.options.store.ownedJob(jobId, request.principal.principalId)?.cancelRequested) return true;
           return false;
         } catch {
@@ -2387,6 +2416,7 @@ interface ExecutionPlan {
   writeJobNew?: boolean;
   taskJob?: BrokerJob;
   taskJobNew?: boolean;
+  jobLease?: JobLease;
 }
 
 interface DispatchResult {

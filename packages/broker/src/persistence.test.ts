@@ -110,6 +110,16 @@ test("BrokerStore adds write metadata storage to an existing Job Ledger", async 
   const store = new BrokerStore(databasePath);
   try {
     assert.equal(store.ownedJob("job:legacy", "principal-1")?.writeMetadata, undefined);
+    const migrated = new DatabaseSync(databasePath);
+    try {
+      const columns = migrated.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+      const names = new Set(columns.map((column) => column.name));
+      for (const name of ["lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms"]) {
+        assert.equal(names.has(name), true, `expected migrated Job lease column ${name}`);
+      }
+    } finally {
+      migrated.close();
+    }
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -654,6 +664,77 @@ test("job transitions enforce revisions and redact secret-shaped output", async 
     assert.equal(completed.state, "completed");
     assert.equal(completed.stdout, "[REDACTED: SECRET CONTENT]");
     assert.equal(completed.truncated, true);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("job leases heartbeat, fence stale completion, and are cleared on restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-lease-"));
+  const databasePath = join(directory, "broker.sqlite");
+  let store = new BrokerStore(databasePath);
+  try {
+    const lease = {
+      ownerId: "broker:test",
+      token: "lease:token-1234567890",
+      expiresAtMs: 30
+    };
+    store.createJob(jobInput("job:lease", "idem-lease"));
+    const running = store.startJob("job:lease", "principal-1", 0, 1, lease);
+    assert.equal(running.state, "running");
+    store.renewJobLease("job:lease", "principal-1", lease, 10, 1_000);
+    assert.equal(lease.expiresAtMs, 1_010);
+    const inspected = new DatabaseSync(databasePath);
+    try {
+      const row = inspected.prepare("SELECT lease_owner_id, lease_token, lease_heartbeat_at_ms, lease_expires_at_ms FROM jobs WHERE job_id = ?").get("job:lease") as {
+        lease_owner_id: string;
+        lease_token: string;
+        lease_heartbeat_at_ms: number;
+        lease_expires_at_ms: number;
+      };
+      assert.deepEqual({ ...row }, {
+        lease_owner_id: lease.ownerId,
+        lease_token: lease.token,
+        lease_heartbeat_at_ms: 10,
+        lease_expires_at_ms: 1_010
+      });
+    } finally {
+      inspected.close();
+    }
+    assert.throws(
+      () => store.finishJob("job:lease", "principal-1", 1, {
+        state: "completed", resultClass: "success", finishedAtMs: 20
+      }, { ...lease, token: "lease:stale-token-123456" }, 20),
+      /Job lease is no longer active/u
+    );
+    assert.throws(
+      () => store.finishJob("job:lease", "principal-1", 1, {
+        state: "completed", resultClass: "success", finishedAtMs: 1_011
+      }, lease, 1_011),
+      /Job lease is no longer active/u
+    );
+    const unknown = store.finishJob("job:lease", "principal-1", 1, {
+      state: "unknown", resultClass: "unknown", finishedAtMs: 1_011
+    }, lease, 1_011);
+    assert.equal(unknown.state, "unknown");
+
+    const restartLease = {
+      ownerId: "broker:test",
+      token: "lease:restart-token-1234",
+      expiresAtMs: 30
+    };
+    store.createJob(jobInput("job:restart-lease", "idem-restart-lease"));
+    store.startJob("job:restart-lease", "principal-1", 0, 1, restartLease);
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.equal(store.ownedJob("job:restart-lease", "principal-1")?.state, "unknown");
+    assert.throws(
+      () => store.finishJob("job:restart-lease", "principal-1", 1, {
+        state: "completed", resultClass: "success", finishedAtMs: 2
+      }, restartLease, 2),
+      /state or revision changed concurrently/u
+    );
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
