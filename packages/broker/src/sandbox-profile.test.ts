@@ -36,6 +36,7 @@ function resolvedProfile(root: string, overrides: Partial<ResolvedTaskProfile> =
     filesystemRoots: [root],
     networkPolicy: "none",
     networkAllowlist: [],
+    processTreePolicy: "single_process",
     sandboxProfile: "deny-default-v0.1",
     verificationStrategy: "exit_status_and_declared_task_verification",
     ...overrides
@@ -49,12 +50,15 @@ test("sandbox profile renderer emits a deterministic deny-default no-network pol
     const profile = resolvedProfile(root);
     const rendered = renderTaskSandboxProfile(profile);
     assert.match(rendered, /^\(version 1\)\n\(import "system\.sb"\)\n\(deny default\)\n/u);
+    assert.equal(rendered.includes("(allow process-fork)"), false);
     assert.match(rendered, /\(allow process-exec \(literal "\/usr\/bin\/printf"\)\)/u);
     assert.match(rendered, new RegExp(`\\(allow file-write\\* \\(subpath "${escapeRegExp(root)}"\\)\\)`));
     assert.equal(rendered.includes("network-outbound"), false);
     assert.match(rendered, /\(deny file-read\* \(regex #/u);
     assert.deepEqual(buildSandboxExecArguments(profile).slice(0, 2), ["-p", rendered]);
     assert.deepEqual(buildSandboxExecArguments(profile).slice(-1), ["sandboxed"]);
+    const groupProfile = renderTaskSandboxProfile({ ...profile, processTreePolicy: "owned_group" });
+    assert.match(groupProfile, /\(allow process-fork\)/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -168,7 +172,7 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
       process: {
         ...resolvedProfile(root).process,
         executable: "/bin/bash",
-        args: ["-c", "printf '%s:%s:%s:%s:%s:%s:%s' \"${MOP_CONTROLLER_SECRET-unset}\" \"${HOME-unset}\" \"${SSH_AUTH_SOCK-unset}\" \"${AWS_PROFILE-unset}\" \"$(test -r /private/etc/passwd && echo leaked || echo denied)\" \"$(test -r ./fixture.txt && echo allowed || echo denied)\" \"$(test -r ./nested/.env && echo leaked || echo denied)\"; test -r ./passwd-link && printf ':link-leaked' || printf ':link-denied'; printf created > ./created.txt"]
+        args: ["-c", "printf '%s:%s:%s:%s:' \"${MOP_CONTROLLER_SECRET-unset}\" \"${HOME-unset}\" \"${SSH_AUTH_SOCK-unset}\" \"${AWS_PROFILE-unset}\"; if [ -r /private/etc/passwd ]; then printf leaked; else printf denied; fi; printf ':'; if [ -r ./fixture.txt ]; then printf allowed; else printf denied; fi; printf ':'; if [ -r ./nested/.env ]; then printf leaked; else printf denied; fi; if [ -r ./passwd-link ]; then printf ':link-leaked'; else printf ':link-denied'; fi; printf created > ./created.txt"]
       }
     }, { timeoutMs: 2_000, shouldCancel: () => false });
     assert.equal(canary.resultClass, "SUCCEEDED");

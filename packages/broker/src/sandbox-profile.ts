@@ -37,6 +37,10 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
   if (profile.networkPolicy !== "none" || profile.networkAllowlist.length !== 0) {
     throw new BrokerError("NETWORK_DENIED", "Task sandbox network allowlists are not supported by this boundary");
   }
+  const processTreePolicy = profile.processTreePolicy ?? "single_process";
+  if (processTreePolicy !== "single_process" && processTreePolicy !== "owned_group") {
+    throw new BrokerError("POLICY_DENIED", "Task process-tree policy is not supported by the Broker boundary");
+  }
 
   const roots = [...new Set(profile.filesystemRoots)].sort();
   if (!roots.some((root) => isContained(root, profile.cwd))) {
@@ -47,7 +51,6 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
     "(version 1)",
     '(import "system.sb")',
     "(deny default)",
-    "(allow process-fork)",
     `(allow process-exec (literal ${quote(profile.process.executable)}))`,
     `(allow file-read* (literal ${quote(profile.process.executable)}))`,
     "(allow file-read* (subpath \"/System/Library\"))",
@@ -57,6 +60,7 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
     "(allow file-read* (literal \"/private/etc/hosts\"))",
     "(allow file-read* (literal \"/private/etc/resolv.conf\"))",
   ];
+  if (processTreePolicy === "owned_group") lines.splice(3, 0, "(allow process-fork)");
   for (const root of roots) {
     lines.push(`(allow file-read* (subpath ${quote(root)}))`);
     lines.push(`(allow file-write* (subpath ${quote(root)}))`);

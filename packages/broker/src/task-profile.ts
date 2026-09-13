@@ -15,6 +15,7 @@ const SAFE_ENVIRONMENT_KEY = /^[A-Z_][A-Z0-9_]{0,63}$/u;
 const SECRET_ENVIRONMENT_KEY = /(?:API|AUTH|COOKIE|CREDENTIAL|KEY|PASSWORD|PASSWD|SECRET|TOKEN|AWS|GITHUB|OPENAI|SSH)/iu;
 
 export type TaskNetworkPolicy = "none" | "allowlist";
+export type TaskProcessTreePolicy = "single_process" | "owned_group";
 
 export interface TaskProfile {
   schemaVersion: "0.1";
@@ -28,6 +29,8 @@ export interface TaskProfile {
   filesystemRoots: readonly string[];
   networkPolicy: TaskNetworkPolicy;
   networkAllowlist?: readonly string[];
+  /** Defaults to single_process; owned_group requires separate process-tree evidence. */
+  processTreePolicy?: TaskProcessTreePolicy;
   sandboxProfile: string;
   timeoutMs: number;
   outputCapBytes: number;
@@ -74,6 +77,7 @@ export interface ResolvedTaskProfile {
   filesystemRoots: readonly string[];
   networkPolicy: TaskNetworkPolicy;
   networkAllowlist: readonly string[];
+  processTreePolicy: TaskProcessTreePolicy;
   sandboxProfile: string;
   verificationStrategy: "exit_status_and_declared_task_verification";
 }
@@ -131,6 +135,7 @@ export class TaskProfileRegistry {
       filesystemRoots: [...profile.filesystemRoots],
       networkPolicy: profile.networkPolicy,
       networkAllowlist: [...(profile.networkAllowlist ?? [])],
+      processTreePolicy: profile.processTreePolicy ?? "single_process",
       sandboxProfile: profile.sandboxProfile,
       verificationStrategy: profile.verificationStrategy
     };
@@ -162,6 +167,7 @@ function validateProfileDocument(profile: TaskProfile): void {
       (profile.fixedArgs !== undefined && !Array.isArray(profile.fixedArgs)) ||
       (profile.environment !== undefined && !isPlainRecord(profile.environment)) ||
       (profile.networkAllowlist !== undefined && !Array.isArray(profile.networkAllowlist)) ||
+      (profile.processTreePolicy !== undefined && profile.processTreePolicy !== "single_process" && profile.processTreePolicy !== "owned_group") ||
       (profile.networkPolicy !== "none" && profile.networkPolicy !== "allowlist")) {
     throw new Error("Task profile document is malformed");
   }

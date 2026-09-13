@@ -44,6 +44,7 @@ test("named task resolution fixes executable, environment, roots, and budgets", 
     assert.deepEqual(resolved.filesystemRoots, [canonicalRoot]);
     assert.equal(resolved.networkPolicy, "none");
     assert.deepEqual(resolved.networkAllowlist, []);
+    assert.equal(resolved.processTreePolicy, "single_process");
     assert.equal(resolved.sandboxProfile, "deny-default-v0.1");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -111,5 +112,6 @@ test("task profile documents reject secret environments, unanchored arguments, a
     assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: "echo" })]), /anchored/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { networkPolicy: "none", networkAllowlist: ["example.com"] })]), /no-network/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { networkPolicy: "allowlist", networkAllowlist: ["https://example.com"] })]), /allowlist is malformed/u);
+    assert.throws(() => new TaskProfileRegistry([profile(root, { processTreePolicy: "unbounded" as never })]), /malformed/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
