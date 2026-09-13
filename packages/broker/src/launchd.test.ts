@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { launchdReadback, normalizeLaunchdServiceConfig, renderLaunchdPlist } from "./launchd.js";
 
@@ -43,4 +46,20 @@ test("launchd renderer escapes XML and rejects unsafe command boundaries", () =>
   assert.throws(() => normalizeLaunchdServiceConfig({ ...valid, programArguments: ["/bin/sh", "-c", "unsafe"] }), /begin with/u);
   assert.throws(() => normalizeLaunchdServiceConfig({ ...valid, workingDirectory: "/tmp/../tmp" }), /canonical absolute/u);
   assert.throws(() => normalizeLaunchdServiceConfig({ ...valid, stdoutPath: valid.stderrPath }), /must differ/u);
+});
+
+test("reviewed Edge and Broker LaunchAgent templates stay unprivileged", async () => {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const templates = [
+    { file: "com.mac-operator.edge.plist.in", label: "com.mac-operator.edge", entrypoint: "@EDGE_ENTRYPOINT@", stdout: "edge.out.log", stderr: "edge.err.log" },
+    { file: "com.mac-operator.broker.plist.in", label: "com.mac-operator.broker", entrypoint: "@BROKER_ENTRYPOINT@", stdout: "broker.out.log", stderr: "broker.err.log" }
+  ] as const;
+  for (const template of templates) {
+    const plist = await readFile(join(repositoryRoot, "packaging/macos", template.file), "utf8");
+    assert.match(plist, new RegExp(`<string>${template.label}<\\/string>`, "u"));
+    assert.match(plist, new RegExp(`<string>${template.entrypoint.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}<\\/string>`, "u"));
+    assert.match(plist, new RegExp(template.stdout.replaceAll(".", "\\."), "u"));
+    assert.match(plist, new RegExp(template.stderr.replaceAll(".", "\\."), "u"));
+    assert.doesNotMatch(plist, /EnvironmentVariables|UserName|Shell|Privileged/u);
+  }
 });

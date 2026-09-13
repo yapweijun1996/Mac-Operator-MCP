@@ -8,7 +8,13 @@ Status: Draft plan
 2. Run Edge and Broker as separate unprivileged local processes over authenticated IPC. The packaged macOS service must select the native Broker UDS transport, not the legacy private-Node-descriptor compatibility path.
 3. Verify the L0/L1 slice on the physical Mac.
 4. Select and configure remote authentication and HTTPS/tunnel transport.
-5. Render the reviewed LaunchAgent template through `renderLaunchdPlist`, build a non-executing `buildMacOsInstallPlan`, verify its fixed `codesign`/`launchctl` argv and rollback preconditions, use `BrokerServiceEntrypoint` with `createMacOsNativeBrokerRuntime`, then add signed/package-managed launch, including the separate policy-signer operator socket and protected operator key, only after ADR-0007 is accepted.
+5. Render the reviewed Edge and Broker LaunchAgent templates through
+   `renderLaunchdPlist`, build non-executing `buildMacOsInstallPlan` plans for
+   both agents, verify their fixed `codesign`/`launchctl` argv and rollback
+   preconditions, start Edge first, then use `BrokerServiceEntrypoint` with
+   `createMacOsNativeBrokerRuntime` bound to the Edge launchd identity. Add
+   signed/package-managed launch, including the separate policy-signer
+   operator socket and protected operator key, only after ADR-0007 is accepted.
 6. Add the privileged helper only after lower-boundary gates pass.
 
 ## Required deployment inputs

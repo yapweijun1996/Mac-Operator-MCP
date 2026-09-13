@@ -17,6 +17,15 @@ launchd installation/readback, Developer ID/notarization, remote OAuth/JWKS,
 and production key rotation remain open. Evidence:
 `evidence/2026-09-14-separate-edge-process.md`.
 
+Latest packaging-shape addendum: commit `a83c2f7` adds a reviewable
+`com.mac-operator.edge.plist.in` to the macOS packaging boundary alongside the
+Broker template. The
+documented order is Edge launchd identity/readback first, Broker startup second,
+and reverse order for authority-disabled uninstall. A template regression test
+keeps both agents free of shell, environment, user, and privileged launchd
+fields. This is a packaging artifact and static boundary check; it does not
+claim persistent installation, signing provenance, or remote deployment.
+
 Current committed implementation baseline: install-plan raw-readback hardening.
 
 The current install-plan readback hardening adds a raw-source observer boundary:

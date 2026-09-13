@@ -126,6 +126,13 @@ startup-assembly evidence, not installed-package, Edge request-exchange,
 Developer ID, or privileged-helper evidence. Evidence:
 `evidence/2026-09-14-live-broker-startup.md`.
 
+Packaging-shape addendum: the repository now carries a reviewable Edge
+LaunchAgent template beside the Broker template. The deployment notes bind
+Edge launchd identity/readback before Broker startup and keep the Broker status
+socket as a separate authenticated operator/readback channel. A static
+template regression rejects shell, environment, user, and privileged fields;
+this does not claim persistent installation or signing provenance.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.
