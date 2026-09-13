@@ -52,6 +52,17 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
+Latest install-plan readback addendum: the focused macOS install-plan suite was
+rerun from clean source revision `c1defff` with 10 tests passed and 0 failed.
+It covers fixed per-user LaunchAgent argv, owner-only temporary-root preflight,
+symlink/writable-path rejection, ad-hoc signature verification, atomic plist
+install/upgrade/rollback/uninstall, exact previous-revision preconditions,
+explicit host confirmation, final Broker/signature readback, and mismatch
+recovery. No live LaunchAgent or installed service was touched. Evidence:
+`evidence/2026-09-13-install-plan-executor.md`. Live launchd, Developer ID,
+notarization, installed Edge identity, and production rollback gates remain
+open.
+
 Latest capability compatibility addendum: source commit `8061254` adds
 protocol/contract version fields to Broker capability readback and the
 versioned `mac_capabilities` output schema. The MCP Edge validates the shared

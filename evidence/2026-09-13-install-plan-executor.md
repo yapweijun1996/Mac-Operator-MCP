@@ -51,3 +51,18 @@ uninstalled on the host. Developer ID signing/notarization, protected signing
 key distribution, live launchd readback, an installed Edge-to-Broker identity
 handshake, Keychain distribution, and production capability enablement remain
 open.
+
+## Fresh current-revision readback
+
+The focused suite was rerun from clean source revision `c1defff` after the
+capability compatibility changes. Result: 10 passed, 0 failed, 0 skipped.
+The source hashes remain unchanged from the original boundary evidence:
+
+- `packages/broker/src/macos-install-plan.ts`:
+  `e80439dd74404b44efbb28c9de767e662a173d0724c9f8c6e1e66808623b8571`
+- `packages/broker/src/macos-install-plan.test.ts`:
+  `5978a886cb1e70a21ba3e4a46386a9f8899b0f40af4f3fdd10d75fc84b954603`
+
+This readback confirms the install-plan boundary is still valid at the current
+revision. It does not change the partial status or provide live launchd,
+Developer ID, notarization, installed Edge identity, or rollback evidence.

@@ -8,6 +8,14 @@ Last verified: 2026-09-13
 
 Current committed implementation baseline: `8061254`.
 
+The current revision also reruns the host-only macOS install-plan boundary:
+10 focused tests pass for fixed LaunchAgent planning, owner-only temporary-root
+preflight, signature readback, atomic plist install/upgrade/rollback/uninstall,
+explicit confirmation, exact revision preconditions, and mismatch recovery.
+No live LaunchAgent or installed service was touched. Evidence:
+`evidence/2026-09-13-install-plan-executor.md`; live launchd, signing,
+installed identity, and production rollback gates remain open.
+
 The latest implementation addendum is `8061254`: Broker capability discovery
 now returns shared protocol/contract versions and per-tool contract versions;
 the versioned `mac_capabilities` schema requires those fields. The MCP Edge
