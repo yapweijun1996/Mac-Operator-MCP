@@ -167,6 +167,11 @@ with independent launchd, process, plist, and signature readback sources.
 Revision `a1bd63c` verifies that an already-created key-manager server fences
 status reads immediately after helper-key revocation.
 
+Revision `6d6087d` adds the Broker-side bounded client for already-signed helper
+commands. It authenticates complete responses, fences socket identity, caps
+transport, and maps connection loss to retryable `UNKNOWN_OUTCOME`; it cannot
+create a command or elevate authority.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

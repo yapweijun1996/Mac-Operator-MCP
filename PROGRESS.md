@@ -1132,3 +1132,11 @@ sandbox tests skipped. An already-created key-manager server also rejects status
 reads immediately after helper-key revocation. The latest suite is now 400
 tests, 397 passed, 3 opt-in sandbox tests skipped. Evidence:
 `evidence/2026-09-13-helper-observer-ipc-integration.md`.
+
+## Latest helper command client addendum
+
+Source revision `6d6087d` adds the Broker-side bounded client for already-signed
+helper commands. It authenticates the complete response, caps bytes and time,
+fences socket device/inode identity, returns stable helper failures, and maps
+transport loss to retryable `UNKNOWN_OUTCOME` without inferring privileged
+success. Evidence: `evidence/2026-09-13-helper-command-client.md`.

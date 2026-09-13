@@ -225,6 +225,11 @@ key-manager server rejects status reads immediately after helper-key revocation;
 the latest default suite is 400 tests with 397 passed and 3 sandbox tests
 skipped.
 
+Source revision `6d6087d` adds the bounded Broker-side client for already-signed
+helper commands. It authenticates complete responses and maps transport loss
+to retryable `UNKNOWN_OUTCOME`; no privileged adapter or root service is
+enabled. Evidence: `evidence/2026-09-13-helper-command-client.md`.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.
