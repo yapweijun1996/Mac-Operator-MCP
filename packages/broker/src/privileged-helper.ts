@@ -674,7 +674,8 @@ export function authenticatePrivilegedHelperStatusRequest(
   const parsed = parseSignedStatusRequest(raw);
   const request = parsed.unsigned;
   if (!Number.isSafeInteger(nowMs) || nowMs < 0 || request.timestampMs > nowMs + allowedClockSkewMs ||
-      nowMs - request.timestampMs > maxRequestAgeMs || request.expiresAtMs <= request.timestampMs ||
+      nowMs - request.timestampMs > maxRequestAgeMs || request.expiresAtMs <= nowMs ||
+      request.expiresAtMs <= request.timestampMs ||
       request.expiresAtMs > request.timestampMs + maxRequestAgeMs + allowedClockSkewMs) {
     throw new BrokerError("AUTH_EXPIRED", "Privileged helper status timestamp is outside the accepted window");
   }
@@ -685,7 +686,10 @@ export function authenticatePrivilegedHelperStatusRequest(
 }
 
 export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedPrivilegedHelperStatusRequest): void {
-  if (request === null || typeof request !== "object" || Array.isArray(request) ||
+  const keys = request !== null && typeof request === "object" && !Array.isArray(request) ? Object.keys(request) : [];
+  const allowed = ["protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind"];
+  if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
+      request === null || typeof request !== "object" || Array.isArray(request) ||
       request.protocolVersion !== PROTOCOL_VERSION || request.contractVersion !== CONTRACT_VERSION ||
       !/^request:status-[A-Za-z0-9._:-]{1,240}$/u.test(request.requestId) || !NONCE_PATTERN.test(request.nonce) ||
       !Number.isSafeInteger(request.timestampMs) || request.timestampMs < 0 ||
@@ -696,13 +700,16 @@ export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedP
 }
 
 export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperStatusReadback): PrivilegedHelperStatusReadback {
-  if (status === null || typeof status !== "object" || Array.isArray(status) ||
+  const keys = status !== null && typeof status === "object" && !Array.isArray(status) ? Object.keys(status) : [];
+  const allowed = ["component", "state", "runtimeState", "nativeTransportRequired", "adapterAvailable", "helperSocketPath", "brokerSocketPath", "brokerPeerUid", "brokerPeerGid", "sourceRevision", "contractVersion", "policyVersion", "enabledCapabilities"];
+  if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
+      status === null || typeof status !== "object" || Array.isArray(status) ||
       status.component !== "mac-operator-privileged-helper" || status.state !== "running" ||
       status.runtimeState !== "running" || status.nativeTransportRequired !== true ||
       status.adapterAvailable !== false || !canonicalStatusPath(status.helperSocketPath) ||
       !canonicalStatusPath(status.brokerSocketPath) || status.helperSocketPath === status.brokerSocketPath ||
-      !Number.isSafeInteger(status.brokerPeerUid) || status.brokerPeerUid < 1 ||
-      (status.brokerPeerGid !== null && (!Number.isSafeInteger(status.brokerPeerGid) || status.brokerPeerGid < 0)) ||
+      !Number.isSafeInteger(status.brokerPeerUid) || status.brokerPeerUid < 1 || status.brokerPeerUid > 2_147_483_647 ||
+      (status.brokerPeerGid !== null && (!Number.isSafeInteger(status.brokerPeerGid) || status.brokerPeerGid < 0 || status.brokerPeerGid > 2_147_483_647)) ||
       !/^[a-f0-9]{40}$/u.test(status.sourceRevision) ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/u.test(status.contractVersion) ||
       !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(status.policyVersion) ||
@@ -767,7 +774,7 @@ export interface PrivilegedHelperStatusClientOptions {
 
 export async function readPrivilegedHelperStatus(options: PrivilegedHelperStatusClientOptions): Promise<PrivilegedHelperStatusReadback> {
   if (options === null || typeof options !== "object" || !canonicalStatusPath(options.socketPath) ||
-      options.authenticationKey.byteLength < 32) {
+      !Buffer.isBuffer(options.authenticationKey) || options.authenticationKey.byteLength < 32) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status client options are invalid");
   }
   const timeoutMs = options.timeoutMs ?? 5_000;
