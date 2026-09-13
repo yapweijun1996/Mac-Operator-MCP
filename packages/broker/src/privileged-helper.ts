@@ -172,7 +172,11 @@ export class AllowlistedPrivilegedHelper implements PrivilegedHelperAdapter {
     package_install?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
     power?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
   }>) {
-    this.available = Object.values(handlers).some((handler) => typeof handler === "function");
+    const allowed = new Set(["service_control", "package_install", "power"]);
+    if (Object.keys(handlers).some((key) => !allowed.has(key))) {
+      throw new Error("Privileged helper handler map contains an unsupported operation");
+    }
+    this.available = Object.keys(handlers).some((key) => typeof handlers[key as keyof typeof handlers] === "function");
   }
 
   async execute(command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperExecutionResult> {
