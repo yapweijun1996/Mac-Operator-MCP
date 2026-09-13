@@ -37,6 +37,18 @@ already loaded. This is temporary host evidence, not production signing or
 persistent installation. Evidence:
 `evidence/2026-09-14-packaged-edge-broker-launchd.md`.
 
+Latest component-plan addendum: the packaging boundary now exposes separate
+`buildMacOsEdgeInstallPlan` and `buildMacOsInstallPlan` contracts. Edge plans
+bind the exact Edge label and expected listener, while Edge readback is
+composed from independently sampled launchd, PID/start-time, plist, signature,
+and process-owned listener sources; Broker plans retain their native transport
+and capability checks. Both host-only executors require exact operation
+confirmation and existing-service preconditions before atomic plist mutation,
+and Edge has no Broker-status fallback. Focused and full tests cover listener
+substitution, target swaps, and pre-confirmation rejection. Production signed
+artifacts, unattended installer authorization, and upgrade/rollback evidence
+remain open.
+
 Current committed implementation baseline: install-plan raw-readback hardening.
 
 The current install-plan readback hardening adds a raw-source observer boundary:

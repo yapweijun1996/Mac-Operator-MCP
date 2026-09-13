@@ -7,23 +7,31 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   buildMacOsInstallPlan,
+  buildMacOsEdgeInstallPlan,
   applyMacOsPlistPlan,
   collectMacOsInstallReadbackSources,
+  collectMacOsEdgeInstallReadbackSources,
   composeMacOsInstallReadback,
+  composeMacOsEdgeInstallReadback,
   createMacOsInstallHostObserver,
+  createMacOsEdgeInstallHostObserver,
   executeMacOsInstallPlan,
+  executeMacOsEdgeInstallPlan,
   inspectMacOsInstallFilesystem,
   observeMacOsInstallReadback,
+  observeMacOsEdgeInstallReadback,
   readMacOsCodeSignature,
   readMacOsPlistReadback,
   MacOsInstallPlanError,
   validateCodeSignatureReadback,
   validateExistingServicePrecondition,
   validateMacOsInstallReadback,
+  validateMacOsEdgeInstallReadback,
   type CodeSignatureCommandSpec,
   type LaunchdCommandSpec,
   type MacOsInstallPlan,
-  type MacOsInstallPlanInput
+  type MacOsInstallPlanInput,
+  type MacOsEdgeInstallPlanInput
 } from "./macos-install-plan.js";
 import { createAuthorityControlUninstallActions, executeMacOsUninstallPlan } from "./macos-uninstall-plan.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
@@ -60,6 +68,29 @@ const base: MacOsInstallPlanInput = {
   enabledCapabilities: []
 };
 
+const edgeBase: MacOsEdgeInstallPlanInput = {
+  ...base,
+  plistPath: "/Users/operator/Library/LaunchAgents/com.mac-operator.edge.plist",
+  service: {
+    label: "com.mac-operator.edge",
+    program: base.service.program,
+    programArguments: [base.service.program, "/Users/operator/Library/Application Support/MacOperator/edge-service-entrypoint.js"],
+    workingDirectory: base.service.workingDirectory,
+    stdoutPath: "/Users/operator/Library/Application Support/MacOperator/logs/edge.out.log",
+    stderrPath: "/Users/operator/Library/Application Support/MacOperator/logs/edge.err.log"
+  },
+  metadata: {
+    component: "mac-operator-edge",
+    sourceRevision: base.metadata.sourceRevision,
+    contractVersion: base.metadata.contractVersion,
+    policyVersion: base.metadata.policyVersion
+  },
+  signature: { ...base.signature, identifier: "com.mac-operator.edge" },
+  signedArtifactPath: "/Users/operator/Library/Application Support/MacOperator/MacOperatorEdge.app",
+  bindHost: "127.0.0.1",
+  bindPort: 9443
+};
+
 test("install plan uses a per-user domain, fixed argv, and explicit rollback actions", () => {
   const plan = buildMacOsInstallPlan(base);
   assert.equal(plan.domain, "gui/501");
@@ -93,6 +124,99 @@ test("install plan rejects root domains, daemon paths, escapes, and script-like 
   assert.throws(() => buildMacOsInstallPlan({ ...base, service: { ...base.service, program: "/usr/local/bin/node", programArguments: ["/usr/local/bin/node", base.service.programArguments[1]!] } }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_PACKAGE_PATH");
   assert.throws(() => buildMacOsInstallPlan({ ...base, service: { ...base.service, programArguments: [base.service.program, "-e", "process.exit()"] } }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_PACKAGE_PATH");
   assert.throws(() => buildMacOsInstallPlan({ ...base, installRoot: "/Users/operator/Library/Application Support/MacOperator/../Other" }), /canonical absolute path/u);
+});
+
+test("Edge install plan binds the reviewed LaunchAgent to the Edge listener", async () => {
+  const plan = buildMacOsEdgeInstallPlan(edgeBase);
+  assert.equal(plan.component, "mac-operator-edge");
+  assert.equal(plan.label, "com.mac-operator.edge");
+  assert.deepEqual(plan.edgeListener, { bindHost: "127.0.0.1", bindPort: 9443 });
+  assert.deepEqual(plan.install.bootstrap.args, ["bootstrap", "gui/501", edgeBase.plistPath]);
+  const source = {
+    launchd: {
+      serviceId: `${plan.domain}/${plan.label}`,
+      domain: plan.domain as `gui/${number}`,
+      label: plan.label,
+      state: "running" as const,
+      pid: 1234,
+      program: plan.launchd.program,
+      arguments: [...plan.launchd.programArguments],
+      plistPath: plistReadback(plan).path,
+      type: "LaunchAgent" as const,
+      lastExitCode: null,
+      truncated: false as const
+    },
+    processIdentity: { pid: 1234, startTimeMicros: 987654321 },
+    plist: plistReadback(plan),
+    edge: {
+      component: "mac-operator-edge" as const,
+      state: "running" as const,
+      sourceRevision: edgeBase.metadata.sourceRevision,
+      contractVersion: edgeBase.metadata.contractVersion,
+      policyVersion: edgeBase.metadata.policyVersion,
+      bindHost: "127.0.0.1",
+      bindPort: 9443,
+      listening: true
+    },
+    signature: {
+      artifactPath: plan.signedArtifactPath,
+      valid: true,
+      identifier: plan.signature.identifier,
+      teamIdentifier: plan.signature.teamIdentifier ?? null,
+      cdHash: plan.signature.cdHash ?? null
+    }
+  };
+  const composed = composeMacOsEdgeInstallReadback(plan, source);
+  validateMacOsEdgeInstallReadback(plan, composed);
+  assert.equal(composed.edge.bindPort, 9443);
+  assert.throws(() => validateMacOsEdgeInstallReadback(plan, {
+    ...composed,
+    edge: { ...composed.edge, listening: false }
+  }), /Edge service readback/u);
+  let edgeReads = 0;
+  const observer = createMacOsEdgeInstallHostObserver(plan, {
+    readEdge: async () => { edgeReads += 1; return source.edge; },
+    processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
+    readSignature: async () => source.signature
+  });
+  const collected = await collectMacOsEdgeInstallReadbackSources(plan, {
+    ...observer,
+    readLaunchd: async () => source.launchd,
+    readPlist: async () => source.plist
+  });
+  assert.equal(collected.edge.bindHost, "127.0.0.1");
+  const observed = await observeMacOsEdgeInstallReadback(plan, {
+    ...observer,
+    readLaunchd: async () => source.launchd,
+    readPlist: async () => source.plist
+  });
+  assert.equal(observed.edge.component, "mac-operator-edge");
+  assert.equal(edgeReads, 2);
+  let launchdReads = 0;
+  await assert.rejects(collectMacOsEdgeInstallReadbackSources(plan, {
+    ...observer,
+    readLaunchd: async () => {
+      launchdReads += 1;
+      return launchdReads === 1 ? source.launchd : { ...source.launchd, pid: 4321 };
+    },
+    readPlist: async () => source.plist
+  }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SERVICE_MISMATCH");
+});
+
+test("Edge install plan rejects component or listener substitution", () => {
+  assert.throws(() => buildMacOsEdgeInstallPlan({ ...edgeBase, service: { ...edgeBase.service, label: "com.mac-operator.broker" } }), /service label/u);
+  assert.throws(() => buildMacOsEdgeInstallPlan({ ...edgeBase, bindPort: 0 }), /listener binding/u);
+  assert.throws(() => buildMacOsEdgeInstallPlan({ ...edgeBase, metadata: { ...edgeBase.metadata, component: "mac-operator-broker" as never } }), /metadata/u);
+});
+
+test("Edge executor requires explicit host confirmation before any mutation", async () => {
+  const plan = buildMacOsEdgeInstallPlan(edgeBase);
+  await assert.rejects(executeMacOsEdgeInstallPlan(plan, {
+    ownerUid: 501,
+    confirmOperation: "upgrade",
+    existingService: { present: false, sourceRevision: null },
+    readback: async () => null
+  }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "CONFIRMATION_REQUIRED");
 });
 
 test("readback requires matching signature, launchd identity, native transport, and Broker metadata", () => {

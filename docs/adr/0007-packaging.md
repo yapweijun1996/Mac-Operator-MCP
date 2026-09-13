@@ -109,3 +109,14 @@ installed-package boundary. Persistent installation, production signing,
 remote issuer interoperability, Keychain ACLs, and privileged helper
 installation remain open. Evidence:
 `evidence/2026-09-14-packaged-edge-broker-launchd.md`.
+
+The subsequent packaging boundary adds component-specific Edge plan and
+readback contracts: `buildMacOsEdgeInstallPlan` binds the reviewed Edge label
+and expected listener, while `composeMacOsEdgeInstallReadback` and
+`validateMacOsEdgeInstallReadback` require an independently observed running,
+listening Edge plus exact launchd, PID/start-time, plist, and signature
+identity. `executeMacOsEdgeInstallPlan` reuses the bounded atomic plist and
+launchd recovery flow and rejects mismatched host confirmation before any
+mutation. Edge readback has no Broker-status fallback. These are still
+host-only APIs; production installer authorization and signed release
+provenance remain open.

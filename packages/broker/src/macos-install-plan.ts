@@ -110,8 +110,31 @@ export interface MacOsInstallPlanInput {
   expectedPreviousSourceRevision?: string;
 }
 
-export interface MacOsInstallPlan {
+/** Metadata emitted by the packaged Edge process. Kept structural here so the
+ * Broker package does not depend on the Edge package at runtime. */
+export interface MacOsEdgeServiceMetadata {
+  component: "mac-operator-edge";
+  sourceRevision: string;
+  contractVersion: string;
+  policyVersion: string;
+}
+
+export interface MacOsEdgeInstallPlanInput extends Omit<MacOsInstallPlanInput, "metadata"> {
+  metadata: MacOsEdgeServiceMetadata;
+  bindHost: string;
+  bindPort: number;
+}
+
+export type MacOsServiceMetadata = BrokerServiceMetadata | MacOsEdgeServiceMetadata;
+
+type MacOsServiceInstallPlanInput = Omit<MacOsInstallPlanInput, "metadata"> & {
+  metadata: MacOsServiceMetadata;
+};
+
+/** Common, component-neutral LaunchAgent plan fields. */
+export interface MacOsServiceInstallPlanBase {
   operation: MacOsInstallOperation;
+  component: MacOsServiceMetadata["component"];
   domain: string;
   label: string;
   userHome: string;
@@ -119,7 +142,8 @@ export interface MacOsInstallPlan {
   plistPath: string;
   entrypointPath: string;
   backupPath: string;
-  metadata: BrokerServiceMetadata;
+  metadata: MacOsServiceMetadata;
+  edgeListener?: { bindHost: string; bindPort: number };
   signature: CodeSignatureExpectation;
   signedArtifactPath: string;
   enabledCapabilities: readonly string[];
@@ -142,6 +166,16 @@ export interface MacOsInstallPlan {
     file: InstallFileAction;
   };
 }
+
+export interface MacOsInstallPlan extends MacOsServiceInstallPlanBase {
+  component: "mac-operator-broker";
+  metadata: BrokerServiceMetadata;
+}
+
+export type MacOsEdgeInstallPlan = MacOsServiceInstallPlanBase & {
+  component: "mac-operator-edge";
+  metadata: MacOsEdgeServiceMetadata;
+};
 
 export interface MacOsInstallReadback {
   domain: string;
@@ -172,6 +206,45 @@ export interface MacOsInstallReadbackObserver {
   readSignature(): Promise<CodeSignatureReadback>;
 }
 
+export interface MacOsEdgeServiceReadback {
+  component: "mac-operator-edge";
+  state: "stopped" | "starting" | "running" | "stopping" | "failed";
+  sourceRevision: string;
+  contractVersion: string;
+  policyVersion: string;
+  bindHost: string;
+  bindPort: number;
+  listening: boolean;
+}
+
+export interface MacOsEdgeInstallReadback {
+  domain: string;
+  label: string;
+  plistPath: string;
+  pid: number;
+  processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
+  launchd: LaunchdServiceReadback;
+  edge: MacOsEdgeServiceReadback;
+  signature: CodeSignatureReadback;
+}
+
+export interface MacOsEdgeInstallReadbackSources {
+  launchd: LaunchdJobReadback;
+  processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
+  edge: MacOsEdgeServiceReadback;
+  signature: CodeSignatureReadback;
+}
+
+export interface MacOsEdgeInstallReadbackObserver {
+  readLaunchd(serviceId: string): Promise<LaunchdJobReadback>;
+  readProcessIdentity(pid: number): Promise<PeerProcessIdentity> | PeerProcessIdentity;
+  readPlist(plan: MacOsEdgeInstallPlan): Promise<MacOsPlistReadback>;
+  readEdge(): Promise<MacOsEdgeServiceReadback>;
+  readSignature(): Promise<CodeSignatureReadback>;
+}
+
 export interface MacOsInstallHostObserverOptions {
   /**
    * Must be an authenticated or same-process Broker-owned status source. A
@@ -184,6 +257,17 @@ export interface MacOsInstallHostObserverOptions {
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
   readPlist?: (plan: MacOsInstallPlan) => Promise<MacOsPlistReadback>;
   readSignature?: (plan: MacOsInstallPlan) => Promise<CodeSignatureReadback>;
+}
+
+export interface MacOsEdgeInstallHostObserverOptions {
+  /** Edge readback must come from the same Edge process or an authenticated
+   * owner-only channel; a caller-supplied final readback is not accepted. */
+  readEdge: () => Promise<MacOsEdgeServiceReadback>;
+  launchdExecutor?: LaunchdReadbackExecutor;
+  signatureExecutor?: MacOsInstallCommandExecutor;
+  processIdentityReader?: (pid: number) => PeerProcessIdentity;
+  readPlist?: (plan: MacOsEdgeInstallPlan) => Promise<MacOsPlistReadback>;
+  readSignature?: (plan: MacOsEdgeInstallPlan) => Promise<CodeSignatureReadback>;
 }
 
 export interface ExistingServiceReadback {
@@ -254,6 +338,19 @@ export interface MacOsInstallExecutionResult {
   plist: MacOsPlistApplyResult;
 }
 
+export interface MacOsEdgeInstallExecutionOptions extends MacOsPlistApplyOptions {
+  confirmOperation: MacOsInstallOperation;
+  existingService: ExistingServiceReadback;
+  commandExecutor?: MacOsInstallCommandExecutor;
+  readback: () => Promise<MacOsEdgeInstallReadbackSources | null>;
+}
+
+export interface MacOsEdgeInstallExecutionResult {
+  operation: MacOsInstallOperation;
+  readback: MacOsEdgeInstallReadback | null;
+  plist: MacOsPlistApplyResult;
+}
+
 type ExpectedFilesystemKind = "file" | "directory" | "file-or-directory";
 
 /**
@@ -263,6 +360,18 @@ type ExpectedFilesystemKind = "file" | "directory" | "file-or-directory";
  * launchctl, writes a plist, signs code, or changes launchd state.
  */
 export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstallPlan {
+  return buildMacOsServiceInstallPlan(input, "mac-operator-broker") as MacOsInstallPlan;
+}
+
+/** Builds the reviewed LaunchAgent plan for the HTTPS Edge component. */
+export function buildMacOsEdgeInstallPlan(input: MacOsEdgeInstallPlanInput): MacOsEdgeInstallPlan {
+  return buildMacOsServiceInstallPlan(input, "mac-operator-edge") as MacOsEdgeInstallPlan;
+}
+
+function buildMacOsServiceInstallPlan(
+  input: MacOsServiceInstallPlanInput,
+  component: MacOsServiceMetadata["component"]
+): MacOsServiceInstallPlanBase {
   if (input === null || typeof input !== "object") fail("INVALID_ARGUMENT", "macOS install plan input is malformed");
   const operation = input.operation ?? "install";
   if (!["install", "upgrade", "rollback", "uninstall"].includes(operation)) {
@@ -272,6 +381,10 @@ export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstal
     fail("INVALID_USER_DOMAIN", "a positive non-root launchd uid is required");
   }
   const service = normalizeLaunchdServiceConfig(input.service);
+  const expectedLabel = component === "mac-operator-broker" ? "com.mac-operator.broker" : "com.mac-operator.edge";
+  if (service.label !== expectedLabel) {
+    fail("INVALID_METADATA", `service label must be ${expectedLabel} for ${component}`);
+  }
   const userHome = canonicalPath(input.userHome, "user home");
   const installRoot = canonicalPath(input.installRoot, "install root");
   if (userHome === "/" || installRoot === "/" || !isDescendant(userHome, installRoot)) {
@@ -299,7 +412,8 @@ export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstal
     fail("INVALID_PACKAGE_PATH", "launchd must invoke exactly one package-owned JavaScript entrypoint");
   }
   const capabilities = normalizeCapabilities(input.enabledCapabilities ?? []);
-  const metadata = normalizeMetadata(input.metadata);
+  const metadata = normalizeServiceMetadata(input.metadata, component);
+  const edgeListener = component === "mac-operator-edge" ? normalizeEdgeListener(input) : undefined;
   const signature = normalizeSignatureExpectation(input.signature);
   const expectedPreviousSourceRevision = normalizePreviousRevision(input.expectedPreviousSourceRevision, operation);
   const renderedPlist = renderLaunchdPlist(service);
@@ -330,6 +444,7 @@ export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstal
   } satisfies LaunchdServiceReadback;
   return {
     operation,
+    component,
     domain,
     label: service.label,
     userHome,
@@ -338,6 +453,7 @@ export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstal
     entrypointPath: entrypoint,
     backupPath,
     metadata,
+    ...(edgeListener === undefined ? {} : { edgeListener }),
     signature,
     signedArtifactPath,
     enabledCapabilities: capabilities,
@@ -351,7 +467,7 @@ export function buildMacOsInstallPlan(input: MacOsInstallPlanInput): MacOsInstal
       operation === "install" ? "verify existing service readback is absent before installation" :
         operation === "uninstall" ? "verify existing service readback matches the approved uninstall target" :
           `verify existing service readback matches prior source revision ${expectedPreviousSourceRevision}`,
-      "write the plist atomically, bootstrap the exact per-user domain, then verify launchd and Broker readback",
+      `write the plist atomically, bootstrap the exact per-user domain, then verify launchd and ${component === "mac-operator-broker" ? "Broker" : "Edge"} readback`,
       "on any mismatch, bootout the exact label, restore the previous plist, and verify the service is absent or restored"
     ],
     install: { file, bootstrap },
@@ -381,7 +497,8 @@ export function validateCodeSignatureReadback(
  * transport requirement must all match before the service is considered ready.
  */
 export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: MacOsInstallReadback): void {
-  if (!isRecord(readback) || !isRecord(readback.launchd) || !isRecord(readback.broker) ||
+  if (plan.component !== "mac-operator-broker" || plan.metadata.component !== "mac-operator-broker" ||
+      !isRecord(readback) || !isRecord(readback.launchd) || !isRecord(readback.broker) ||
       !isRecord(readback.signature) || !isRecord(readback.processIdentity) || !isRecord(readback.plist)) {
     fail("INVALID_READBACK", "service readback is malformed");
   }
@@ -472,14 +589,14 @@ export async function collectMacOsInstallReadbackSources(
       fail("INVALID_READBACK", "install readback observer is malformed");
     }
     const serviceId = `${plan.domain}/${plan.label}`;
-    const launchdBefore = await readRunningLaunchd(observer, serviceId);
+    const launchdBefore = await readRunningLaunchd(observer.readLaunchd, serviceId);
     if (launchdBefore.pid === null) fail("SERVICE_MISMATCH", "install launchd readback has no running PID");
     const launchdBeforePid = launchdBefore.pid;
     const processBefore = await observer.readProcessIdentity(launchdBeforePid);
     const plistBefore = await observer.readPlist(plan);
     const broker = await observer.readBroker();
     const signature = await observer.readSignature();
-    const launchdAfter = await readRunningLaunchd(observer, serviceId);
+    const launchdAfter = await readRunningLaunchd(observer.readLaunchd, serviceId);
     if (launchdAfter.pid === null) fail("SERVICE_MISMATCH", "install launchd readback has no running PID");
     if (!sameLaunchdIdentity(launchdBefore, launchdAfter)) {
       fail("SERVICE_MISMATCH", "install launchd identity changed during readback");
@@ -507,12 +624,12 @@ export async function collectMacOsInstallReadbackSources(
 }
 
 async function readRunningLaunchd(
-  observer: MacOsInstallReadbackObserver,
+  readLaunchd: (serviceId: string) => Promise<LaunchdJobReadback>,
   serviceId: string
 ): Promise<LaunchdJobReadback> {
   let latest: LaunchdJobReadback | undefined;
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    latest = await observer.readLaunchd(serviceId);
+    latest = await readLaunchd(serviceId);
     if (latest.state === "running" && latest.pid !== null) return latest;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
   }
@@ -525,6 +642,116 @@ export async function observeMacOsInstallReadback(
   observer: MacOsInstallReadbackObserver
 ): Promise<MacOsInstallReadback> {
   return composeMacOsInstallReadback(plan, await collectMacOsInstallReadbackSources(plan, observer));
+}
+
+export function validateMacOsEdgeInstallReadback(
+  plan: MacOsEdgeInstallPlan,
+  readback: MacOsEdgeInstallReadback
+): void {
+  if (plan.component !== "mac-operator-edge" || plan.metadata.component !== "mac-operator-edge" ||
+      plan.edgeListener === undefined ||
+      !isRecord(readback) || !isRecord(readback.launchd) || !isRecord(readback.edge) ||
+      !isRecord(readback.signature) || !isRecord(readback.processIdentity) || !isRecord(readback.plist)) {
+    fail("INVALID_READBACK", "Edge service readback is malformed");
+  }
+  const expectedUid = plan.domain.slice("gui/".length);
+  if (readback.domain !== plan.domain || readback.label !== plan.label || readback.plistPath !== plan.plistPath ||
+      !/^\d+$/.test(expectedUid) || !Number.isSafeInteger(readback.pid) || readback.pid < 1 ||
+      !Number.isSafeInteger(readback.processIdentity.pid) || readback.processIdentity.pid < 1 ||
+      !Number.isSafeInteger(readback.processIdentity.startTimeMicros) || readback.processIdentity.startTimeMicros < 1 ||
+      readback.processIdentity.pid !== readback.pid || readback.plist.path !== expectedPlistReadbackPath(plan) ||
+      !Number.isSafeInteger(readback.plist.bytes) || readback.plist.bytes !== Buffer.byteLength(plan.renderedPlist, "utf8") ||
+      typeof readback.plist.sha256 !== "string" || readback.plist.sha256 !== renderedPlistSha256(plan) ||
+      typeof readback.plist.device !== "string" || !/^\d+$/u.test(readback.plist.device) ||
+      typeof readback.plist.inode !== "string" || !/^\d+$/u.test(readback.plist.inode)) {
+    fail("SERVICE_MISMATCH", "Edge launchd readback does not match the planned per-user service");
+  }
+  if (readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
+      !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
+      readback.launchd.workingDirectory !== plan.launchd.workingDirectory ||
+      readback.launchd.stdoutPath !== plan.launchd.stdoutPath || readback.launchd.stderrPath !== plan.launchd.stderrPath ||
+      readback.launchd.runsAsUnprivilegedUser !== true || readback.launchd.usesEnvironmentVariables !== false ||
+      readback.launchd.usesShell !== false || readback.launchd.runAtLoad !== plan.launchd.runAtLoad ||
+      readback.launchd.keepAlive !== plan.launchd.keepAlive ||
+      readback.launchd.throttleIntervalSeconds !== plan.launchd.throttleIntervalSeconds) {
+    fail("SERVICE_MISMATCH", "Edge launchd configuration readback does not match the plan");
+  }
+  if (readback.edge.component !== "mac-operator-edge" || readback.edge.state !== "running" ||
+      readback.edge.listening !== true || readback.edge.sourceRevision !== plan.metadata.sourceRevision ||
+      readback.edge.contractVersion !== plan.metadata.contractVersion ||
+      readback.edge.policyVersion !== plan.metadata.policyVersion ||
+      readback.edge.bindHost !== plan.edgeListener.bindHost ||
+      readback.edge.bindPort !== plan.edgeListener.bindPort) {
+    fail("SERVICE_MISMATCH", "Edge service readback does not match the planned identity or listener");
+  }
+  validateCodeSignatureReadback(plan.signature, readback.signature, plan.signedArtifactPath);
+}
+
+export function composeMacOsEdgeInstallReadback(
+  plan: MacOsEdgeInstallPlan,
+  sources: MacOsEdgeInstallReadbackSources
+): MacOsEdgeInstallReadback {
+  if (!isRecord(sources) || !isRecord(sources.launchd) || !isRecord(sources.processIdentity) ||
+      !isRecord(sources.plist) || !isRecord(sources.edge) || !isRecord(sources.signature)) {
+    fail("INVALID_READBACK", "Edge install readback sources are malformed");
+  }
+  const expectedServiceId = `${plan.domain}/${plan.label}`;
+  const launchd = sources.launchd;
+  if (launchd.serviceId !== expectedServiceId || launchd.domain !== plan.domain || launchd.label !== plan.label ||
+      launchd.state !== "running" || launchd.type !== "LaunchAgent" || launchd.pid === null ||
+      launchd.program !== plan.launchd.program || launchd.plistPath !== expectedPlistReadbackPath(plan) ||
+      !sameStrings(launchd.arguments ?? [], plan.launchd.programArguments) ||
+      launchd.pid !== sources.processIdentity.pid) {
+    fail("SERVICE_MISMATCH", "launchd readback sources do not match the planned Edge service");
+  }
+  const readback: MacOsEdgeInstallReadback = {
+    domain: plan.domain,
+    label: plan.label,
+    plistPath: plan.plistPath,
+    pid: launchd.pid,
+    processIdentity: sources.processIdentity,
+    plist: sources.plist,
+    launchd: plan.launchd,
+    edge: sources.edge,
+    signature: sources.signature
+  };
+  validateMacOsEdgeInstallReadback(plan, readback);
+  return readback;
+}
+
+export async function collectMacOsEdgeInstallReadbackSources(
+  plan: MacOsEdgeInstallPlan,
+  observer: MacOsEdgeInstallReadbackObserver
+): Promise<MacOsEdgeInstallReadbackSources> {
+  try {
+    if (observer === null || typeof observer !== "object") fail("INVALID_READBACK", "Edge install readback observer is malformed");
+    const serviceId = `${plan.domain}/${plan.label}`;
+    const launchdBefore = await readRunningLaunchd(observer.readLaunchd, serviceId);
+    if (launchdBefore.pid === null) fail("SERVICE_MISMATCH", "Edge launchd readback has no running PID");
+    const processBefore = await observer.readProcessIdentity(launchdBefore.pid);
+    const plistBefore = await observer.readPlist(plan);
+    const edge = await observer.readEdge();
+    const signature = await observer.readSignature();
+    const launchdAfter = await readRunningLaunchd(observer.readLaunchd, serviceId);
+    if (launchdAfter.pid === null || !sameLaunchdIdentity(launchdBefore, launchdAfter)) {
+      fail("SERVICE_MISMATCH", "Edge launchd identity changed during readback");
+    }
+    const processAfter = await observer.readProcessIdentity(launchdAfter.pid);
+    if (!sameProcessIdentity(processBefore, processAfter)) fail("SERVICE_MISMATCH", "Edge process identity changed during readback");
+    const plistAfter = await observer.readPlist(plan);
+    if (!samePlistIdentity(plistBefore, plistAfter)) fail("FILESYSTEM_MISMATCH", "Edge plist identity changed during readback");
+    return { launchd: launchdAfter, processIdentity: processAfter, plist: plistAfter, edge, signature };
+  } catch (error) {
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("READBACK_FAILED", "macOS Edge install host readback failed");
+  }
+}
+
+export async function observeMacOsEdgeInstallReadback(
+  plan: MacOsEdgeInstallPlan,
+  observer: MacOsEdgeInstallReadbackObserver
+): Promise<MacOsEdgeInstallReadback> {
+  return composeMacOsEdgeInstallReadback(plan, await collectMacOsEdgeInstallReadbackSources(plan, observer));
 }
 
 /**
@@ -554,6 +781,28 @@ export function createMacOsInstallHostObserver(
   };
 }
 
+/** Creates a production-shaped Edge observer. Unlike Broker readback there is
+ * no status IPC fallback: the caller must provide an authenticated, process-
+ * owned Edge lifecycle source. */
+export function createMacOsEdgeInstallHostObserver(
+  plan: MacOsEdgeInstallPlan,
+  options: MacOsEdgeInstallHostObserverOptions
+): MacOsEdgeInstallReadbackObserver {
+  if (options === null || typeof options !== "object" || typeof options.readEdge !== "function") {
+    fail("INVALID_ARGUMENT", "Edge install host observer requires an Edge-owned readback source");
+  }
+  const ownerUid = parseUid(plan.domain);
+  return {
+    readLaunchd: async (serviceId) => readLaunchdJobReadback(serviceId, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor }),
+    readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? readStableProcessIdentity(pid),
+    readPlist: options.readPlist ?? (async (candidate) => readMacOsPlistReadback(candidate, { ownerUid })),
+    readEdge: options.readEdge,
+    readSignature: options.readSignature === undefined
+      ? async () => readMacOsCodeSignature(plan, options.signatureExecutor)
+      : async () => options.readSignature!(plan)
+  };
+}
+
 /**
  * Reads the exact planned plist through the descriptor-backed filesystem
  * boundary and returns only its stable path, identity, size, and digest. The
@@ -561,7 +810,7 @@ export function createMacOsInstallHostObserver(
  * final launchd/Broker readback.
  */
 export function readMacOsPlistReadback(
-  plan: MacOsInstallPlan,
+  plan: MacOsServiceInstallPlanBase,
   options: MacOsPlistApplyOptions
 ): MacOsPlistReadback {
   if (!Number.isSafeInteger(options.ownerUid) || options.ownerUid !== parseUid(plan.domain)) {
@@ -587,7 +836,7 @@ export function readMacOsPlistReadback(
 
 /** Reads only the bounded identity fields from the exact planned artifact. */
 export async function readMacOsCodeSignature(
-  plan: MacOsInstallPlan,
+  plan: MacOsServiceInstallPlanBase,
   executor: MacOsInstallCommandExecutor = new ProcessSupervisor({ allowedEnvironmentKeys: [] })
 ): Promise<CodeSignatureReadback> {
   let verification: ProcessExecutionResult;
@@ -624,7 +873,7 @@ export async function readMacOsCodeSignature(
   return readback;
 }
 
-export function validateExistingServicePrecondition(plan: MacOsInstallPlan, readback: ExistingServiceReadback): void {
+export function validateExistingServicePrecondition(plan: MacOsServiceInstallPlanBase, readback: ExistingServiceReadback): void {
   if (!isRecord(readback) || typeof readback.present !== "boolean" ||
       (readback.sourceRevision !== null && typeof readback.sourceRevision !== "string")) {
     fail("INVALID_READBACK", "existing service readback is malformed");
@@ -646,7 +895,7 @@ export function validateExistingServicePrecondition(plan: MacOsInstallPlan, read
  * the actual installation step.
  */
 export async function inspectMacOsInstallFilesystem(
-  plan: MacOsInstallPlan,
+  plan: MacOsServiceInstallPlanBase,
   options: InstallFilesystemOptions
 ): Promise<InstallFilesystemReadback> {
   if (!Number.isSafeInteger(options.ownerUid) || options.ownerUid < 1 || options.ownerUid !== parseUid(plan.domain)) {
@@ -691,7 +940,7 @@ export async function inspectMacOsInstallFilesystem(
  * command is executed here.
  */
 export async function applyMacOsPlistPlan(
-  plan: MacOsInstallPlan,
+  plan: MacOsServiceInstallPlanBase,
   options: MacOsPlistApplyOptions
 ): Promise<MacOsPlistApplyResult> {
   await inspectMacOsInstallFilesystem(plan, { ownerUid: options.ownerUid, requirePlist: plan.operation !== "install" });
@@ -872,6 +1121,67 @@ export async function executeMacOsInstallPlan(
   return { operation: plan.operation, readback, plist };
 }
 
+/** Executes the bounded host-side Edge install flow using the same atomic plist
+ * and launchd recovery boundary as Broker installation. Edge success requires
+ * an independently observed running listener; launchctl success alone is not
+ * sufficient. */
+export async function executeMacOsEdgeInstallPlan(
+  plan: MacOsEdgeInstallPlan,
+  options: MacOsEdgeInstallExecutionOptions
+): Promise<MacOsEdgeInstallExecutionResult> {
+  if (options.confirmOperation !== plan.operation) fail("CONFIRMATION_REQUIRED", "installation requires an explicit matching host operation confirmation");
+  validateExistingServicePrecondition(plan, options.existingService);
+  const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+  if (plan.operation !== "uninstall") await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
+  let bootedOut = false;
+  let plistApplied = false;
+  let bootstrapped = false;
+  let plist: MacOsPlistApplyResult;
+  try {
+    if (plan.operation !== "install") {
+      await runInstallCommand(executor, plan.rollback.bootout, "existing launchd service could not be stopped");
+      bootedOut = true;
+    }
+    plist = await applyMacOsPlistPlan(plan, options);
+    plistApplied = true;
+    if (plan.operation !== "uninstall") {
+      await runInstallCommand(executor, plan.install.bootstrap, "launchd service could not be bootstrapped");
+      bootstrapped = true;
+    }
+  } catch (error) {
+    if (bootedOut && !plistApplied) {
+      try {
+        await runInstallCommand(executor, plan.install.bootstrap, "previous launchd service could not be restored");
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], "installation failed and launchd recovery also failed");
+      }
+    }
+    throw error;
+  }
+  let readback: MacOsEdgeInstallReadback | null;
+  try {
+    const sources = await options.readback();
+    if (plan.operation === "uninstall") {
+      if (sources !== null) fail("READBACK_FAILED", "uninstall readback still reports an installed Edge service");
+      readback = null;
+    } else {
+      if (sources === null) fail("READBACK_FAILED", "Edge service readback is absent after bootstrap");
+      readback = composeMacOsEdgeInstallReadback(plan, sources);
+    }
+  } catch (error) {
+    if (bootstrapped) {
+      try {
+        await runInstallCommand(executor, plan.rollback.bootout, "mismatched Edge launchd service could not be stopped");
+      } catch (stopError) {
+        throw new AggregateError([error, stopError], "Edge installation readback failed and launchd recovery also failed");
+      }
+    }
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("READBACK_FAILED", "Edge service readback failed after installation");
+  }
+  return { operation: plan.operation, readback, plist };
+}
+
 async function runInstallCommand(
   executor: MacOsInstallCommandExecutor,
   command: LaunchdCommandSpec | CodeSignatureCommandSpec,
@@ -945,7 +1255,7 @@ function parseUid(domain: string): number {
   return Number.isSafeInteger(value) ? value : -1;
 }
 
-function createInstallInspector(plan: MacOsInstallPlan): FilesystemInspector {
+function createInstallInspector(plan: MacOsServiceInstallPlanBase): FilesystemInspector {
   return new FilesystemInspector([{
     rootId: "macos-install-user-home",
     path: plan.userHome,
@@ -1044,14 +1354,24 @@ function normalizeSignatureExpectation(value: CodeSignatureExpectation): CodeSig
   return { identifier: value.identifier, ...(value.teamIdentifier === undefined ? {} : { teamIdentifier: value.teamIdentifier }), ...(value.cdHash === undefined ? {} : { cdHash: value.cdHash }) };
 }
 
-function normalizeMetadata(value: BrokerServiceMetadata): BrokerServiceMetadata {
-  if (value === null || typeof value !== "object" || value.component !== "mac-operator-broker" ||
+function normalizeServiceMetadata(value: MacOsServiceMetadata, component: MacOsServiceMetadata["component"]): MacOsServiceMetadata {
+  if (value === null || typeof value !== "object" || value.component !== component ||
       !/^[0-9a-f]{7,64}$/u.test(value.sourceRevision) ||
       !/^v?\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(value.contractVersion) ||
       !/^(?:policy-[1-9][0-9]*|\d+\.\d+(?:\.\d+)?(?:[-+].*)?)$/u.test(value.policyVersion)) {
-    fail("INVALID_METADATA", "Broker service metadata is invalid");
+    fail("INVALID_METADATA", `${component === "mac-operator-broker" ? "Broker" : "Edge"} service metadata is invalid`);
   }
   return { ...value };
+}
+
+function normalizeEdgeListener(input: MacOsServiceInstallPlanInput): { bindHost: string; bindPort: number } {
+  const candidate = input as MacOsEdgeInstallPlanInput;
+  if (typeof candidate.bindHost !== "string" || candidate.bindHost.length < 1 || candidate.bindHost.length > 255 ||
+      candidate.bindHost.includes("\0") || /[\r\n/\\]/u.test(candidate.bindHost) ||
+      !Number.isSafeInteger(candidate.bindPort) || candidate.bindPort < 1 || candidate.bindPort > 65_535) {
+    fail("INVALID_METADATA", "Edge listener binding is invalid");
+  }
+  return { bindHost: candidate.bindHost, bindPort: candidate.bindPort };
 }
 
 function normalizeCapabilities(value: readonly string[]): readonly string[] {
@@ -1073,11 +1393,11 @@ function normalizePreviousRevision(value: string | undefined, operation: MacOsIn
   return value;
 }
 
-function renderedPlistSha256(plan: MacOsInstallPlan): string {
+function renderedPlistSha256(plan: MacOsServiceInstallPlanBase): string {
   return createHash("sha256").update(plan.renderedPlist, "utf8").digest("hex");
 }
 
-function expectedPlistReadbackPath(plan: MacOsInstallPlan): string {
+function expectedPlistReadbackPath(plan: MacOsServiceInstallPlanBase): string {
   try {
     return realpathSync(plan.plistPath);
   } catch {

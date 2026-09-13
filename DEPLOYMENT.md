@@ -9,8 +9,9 @@ Status: Draft plan
 3. Verify the L0/L1 slice on the physical Mac.
 4. Select and configure remote authentication and HTTPS/tunnel transport.
 5. Render the reviewed Edge and Broker LaunchAgent templates through
-   `renderLaunchdPlist`, build non-executing `buildMacOsInstallPlan` plans for
-   both agents, verify their fixed `codesign`/`launchctl` argv and rollback
+   `renderLaunchdPlist`, build non-executing `buildMacOsEdgeInstallPlan` and
+   `buildMacOsInstallPlan` plans for both agents, verify their fixed
+   `codesign`/`launchctl` argv and rollback
    preconditions, start Edge first, then use `BrokerServiceEntrypoint` with
    `createMacOsNativeBrokerRuntime` bound to the Edge launchd identity. Add
    signed/package-managed launch, including the separate policy-signer
@@ -24,7 +25,7 @@ Status: Draft plan
 
 Supported macOS/hardware versions, component identities, install paths, permissions, launch ownership, protected TLS certificate/private-key references, other secret references, policy version, persistence location, audit retention, port/socket ownership, health checks, upgrade and rollback compatibility, and uninstall procedure.
 
-The source template, renderer, and install plan are not installation authorization. A future installer must run `inspectMacOsInstallFilesystem`, use `applyMacOsPlistPlan` for descriptor-relative plist install/upgrade/rollback/uninstall, verify the exact package signature, owner/mode/symlink state, native module identity, source/contract/policy readback, exact existing-service revision, and rollback backup before any `launchctl bootstrap` call. These APIs do not invoke `codesign` or `launchctl`, and the uninstall primitive accepts only the exact planned plist plus its exact backup.
+The source template, renderer, and install plans are not installation authorization. A future installer must run `inspectMacOsInstallFilesystem`, use `applyMacOsPlistPlan` for descriptor-relative plist install/upgrade/rollback/uninstall, verify the exact package signature, owner/mode/symlink state, native module identity, source/contract/policy readback, exact Edge listener or Broker native-transport identity, exact existing-service revision, and rollback backup before any `launchctl bootstrap` call. `validateMacOsEdgeInstallReadback` and `validateMacOsInstallReadback` keep the component boundaries separate; Edge has no Broker status-channel fallback. These APIs do not invoke `codesign` or `launchctl`, and the uninstall primitive accepts only the exact planned plist plus its exact backup.
 
 ## Release rule
 

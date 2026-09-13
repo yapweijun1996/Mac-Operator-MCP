@@ -45,6 +45,17 @@ skip. Persistent installation, Developer ID/notarization, remote OAuth/JWKS,
 Keychain ACLs, and helper installation remain open. Evidence:
 `evidence/2026-09-14-packaged-edge-broker-launchd.md`.
 
+Latest component-plan addendum: `buildMacOsEdgeInstallPlan` now provides an
+Edge-specific reviewed plan with an exact listener binding, and
+`composeMacOsEdgeInstallReadback`/`validateMacOsEdgeInstallReadback` require
+the independently observed Edge process to be running and listening while
+binding launchd, PID/start-time, plist, and signature identity. The separate
+Edge executor reuses the bounded atomic plist and launchd recovery flow and
+rejects operation-confirmation mismatches before filesystem access. Edge
+readback cannot fall back to the Broker status channel. The full suite passes
+431 tests (427 passed, 4 explicit opt-in skips); production installer and
+signed-release evidence remain open.
+
 Latest exact-arguments readback addendum: source commit `9d90138` parses the
 bounded launchd `arguments` block and requires the exact planned Node binary
 plus JavaScript entrypoint during Broker service composition. Missing,
