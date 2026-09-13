@@ -1842,6 +1842,69 @@ test("mac_write_file_atomic requires a bound approval and verifies atomic readba
   }
 });
 
+test("unknown write status probes the postcondition but never infers Broker success", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-recovery-status-"));
+  const path = join(directory, "recovered.txt");
+  const content = Buffer.from("safe");
+  await writeFile(path, content, { mode: 0o600 });
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  const argumentsValue = { path, content: content.toString("utf8"), idempotency_key: "recovery-status", encoding: "utf8", create_only: true };
+  const job = store.createJob({
+    jobId: "job:write-recovery-status",
+    ownerPrincipalId: "principal-1",
+    ownerSessionId: "session-1",
+    tool: "mac_write_file_atomic",
+    targetRef: "path:test-root",
+    policyVersion: "policy-0.1",
+    payloadDigest: sha256(canonicalJson(argumentsValue)),
+    idempotencyKey: "recovery-status",
+    createdAtMs: NOW - 2_000,
+    writeMetadata: {
+      rootId: "test-root",
+      path,
+      bytes: content.length,
+      desiredSha256: sha256(content),
+      expectedSha256: null,
+      createOnly: true
+    }
+  }).job;
+  store.startJob(job.jobId, "principal-1", job.revision, NOW - 1_000);
+  store.finishJob(job.jobId, "principal-1", job.revision + 1, {
+    state: "unknown",
+    resultClass: "unknown",
+    finishedAtMs: NOW - 500
+  });
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  try {
+    const request = unsigned({
+      requestId: "write-recovery-status-request",
+      nonce: "write-recovery-status-nonce",
+      tool: "mac_job_status",
+      arguments: { job_id: job.jobId, tail_bytes: 128 }
+    }, ["mac.job.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.ok);
+    const data = result.data as { state: string; recovery?: { postcondition: string; resolution: string } };
+    assert.equal(data.state, "unknown");
+    assert.deepEqual(data.recovery, { postcondition: "matches", resolution: "remains_unknown", observed_at: new Date(NOW).toISOString() });
+    assert.equal(store.ownedJob(job.jobId, "principal-1")?.state, "unknown");
+    assert.equal(JSON.stringify(result).includes("safe"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Broker discards a filesystem result when session authority is revoked during execution", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-active-revoke-"));
   const path = join(directory, "sample.txt");

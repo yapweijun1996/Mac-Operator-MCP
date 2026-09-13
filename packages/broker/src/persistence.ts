@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 
@@ -41,6 +42,19 @@ export interface PolicySignerConfigActivationIdentity {
 export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled" | "unknown";
 export type JobResultClass = "success" | "denied" | "failed" | "verification_failed" | "queued" | "accepted" | "unknown";
 
+/**
+ * Non-secret write facts retained so an unresolved mutation can be inspected
+ * after restart without persisting the requested bytes.
+ */
+export interface WriteJobMetadata {
+  rootId: string;
+  path: string;
+  bytes: number;
+  desiredSha256: string;
+  expectedSha256: string | null;
+  createOnly: boolean;
+}
+
 export interface BrokerJob {
   jobId: string;
   ownerPrincipalId: string;
@@ -61,6 +75,7 @@ export interface BrokerJob {
   truncated: boolean;
   cancelRequested: boolean;
   revision: number;
+  writeMetadata?: WriteJobMetadata;
 }
 
 export interface CreateJobInput {
@@ -73,6 +88,7 @@ export interface CreateJobInput {
   payloadDigest: string;
   idempotencyKey: string;
   createdAtMs: number;
+  writeMetadata?: WriteJobMetadata;
 }
 
 export type RequestState =
@@ -330,6 +346,7 @@ export class BrokerStore {
         output_truncated INTEGER NOT NULL CHECK (output_truncated IN (0, 1)),
         cancel_requested INTEGER NOT NULL CHECK (cancel_requested IN (0, 1)),
         cancel_reason TEXT,
+        write_metadata_json TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL,
         UNIQUE (owner_principal_id, idempotency_key)
       ) STRICT;
@@ -385,6 +402,7 @@ export class BrokerStore {
     `);
     this.migrateRevocationsSchema();
     this.migrateRequestsSchema();
+    this.migrateJobsSchema();
     this.verifyAuditIntegrity();
     this.reconcileInterruptedRequests(Date.now());
     this.reconcileInterruptedJobs(Date.now());
@@ -521,12 +539,12 @@ export class BrokerStore {
             job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
             payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
             finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-            cancel_requested, cancel_reason, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, 0)
+            cancel_requested, cancel_reason, write_metadata_json, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
         `).run(
           input.job.jobId, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
-          input.job.createdAtMs
+          input.job.createdAtMs, serializeWriteJobMetadata(input.job.writeMetadata)
         );
         this.injectFault("admit_approved_job.after_job");
         const transitioned = this.database.prepare(`
@@ -1033,11 +1051,12 @@ export class BrokerStore {
           job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
           payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
           finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-          cancel_requested, cancel_reason, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, 0)
+          cancel_requested, cancel_reason, write_metadata_json, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
       `).run(
         input.jobId, input.ownerPrincipalId, input.ownerSessionId, input.tool, input.targetRef,
-        input.policyVersion, input.payloadDigest, input.idempotencyKey, input.createdAtMs
+        input.policyVersion, input.payloadDigest, input.idempotencyKey, input.createdAtMs,
+        serializeWriteJobMetadata(input.writeMetadata)
       );
       return { job: this.requireOwnedJob(input.jobId, input.ownerPrincipalId), reused: false };
     });
@@ -1724,6 +1743,14 @@ export class BrokerStore {
     if (!names.has("approval_id")) this.database.exec("ALTER TABLE requests ADD COLUMN approval_id TEXT");
     if (!names.has("job_id")) this.database.exec("ALTER TABLE requests ADD COLUMN job_id TEXT");
   }
+
+  private migrateJobsSchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("write_metadata_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN write_metadata_json TEXT NOT NULL DEFAULT ''");
+    }
+  }
 }
 
 function validateConfigActivationIdentity(identity: PolicySignerConfigActivationIdentity, label: string): void {
@@ -1753,6 +1780,7 @@ interface JobRow {
   stderr_text: string;
   output_truncated: number;
   cancel_requested: number;
+  write_metadata_json: string;
   revision: number;
 }
 
@@ -1864,7 +1892,8 @@ function mapJob(row: JobRow): BrokerJob {
     stderr: row.stderr_text,
     truncated: row.output_truncated === 1,
     cancelRequested: row.cancel_requested === 1,
-    revision: row.revision
+    revision: row.revision,
+    ...(row.write_metadata_json ? { writeMetadata: parseWriteJobMetadata(row.write_metadata_json) } : {})
   };
 }
 
@@ -1878,6 +1907,60 @@ function validateJobCreation(input: CreateJobInput): void {
       !/^[a-f0-9]{64}$/u.test(input.payloadDigest) ||
       !/^[A-Za-z0-9._:-]{1,128}$/u.test(input.idempotencyKey) ||
       !Number.isSafeInteger(input.createdAtMs) || input.createdAtMs < 0) {
+    throw malformedJob();
+  }
+  if (input.writeMetadata !== undefined) validateWriteJobMetadata(input.writeMetadata);
+}
+
+function serializeWriteJobMetadata(metadata: WriteJobMetadata | undefined): string {
+  if (metadata === undefined) return "";
+  validateWriteJobMetadata(metadata);
+  return canonicalJson(metadata);
+}
+
+function parseWriteJobMetadata(value: string): WriteJobMetadata {
+  if (value.length < 1 || value.length > 20_000) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  const keys = Object.keys(parsed).sort();
+  if (keys.length !== 6 || keys.join(",") !== "bytes,createOnly,desiredSha256,expectedSha256,path,rootId") {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  }
+  const metadata = parsed as Partial<WriteJobMetadata>;
+  if (
+    typeof metadata.rootId !== "string" ||
+    typeof metadata.path !== "string" ||
+    !isAbsolute(metadata.path) ||
+    typeof metadata.bytes !== "number" ||
+    typeof metadata.desiredSha256 !== "string" ||
+    (typeof metadata.expectedSha256 !== "string" && metadata.expectedSha256 !== null) ||
+    typeof metadata.createOnly !== "boolean"
+  ) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  if (metadata.expectedSha256 === undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  const normalized: WriteJobMetadata = {
+    rootId: metadata.rootId,
+    path: metadata.path,
+    bytes: metadata.bytes,
+    desiredSha256: metadata.desiredSha256,
+    expectedSha256: metadata.expectedSha256,
+    createOnly: metadata.createOnly
+  };
+  validateWriteJobMetadata(normalized);
+  return normalized;
+}
+
+function validateWriteJobMetadata(metadata: WriteJobMetadata): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(metadata.rootId) ||
+      !isAbsolute(metadata.path) || resolve(metadata.path) !== metadata.path || metadata.path.length > 4096 || metadata.path.includes("\0") ||
+      !Number.isSafeInteger(metadata.bytes) || metadata.bytes < 0 || metadata.bytes > 1_048_576 ||
+      !/^[a-f0-9]{64}$/u.test(metadata.desiredSha256) ||
+      (metadata.expectedSha256 !== null && !/^[a-f0-9]{64}$/u.test(metadata.expectedSha256)) ||
+      typeof metadata.createOnly !== "boolean") {
     throw malformedJob();
   }
 }

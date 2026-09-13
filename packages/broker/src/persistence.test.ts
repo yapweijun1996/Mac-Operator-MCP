@@ -73,6 +73,49 @@ test("BrokerStore adds approval linkage to an existing request ledger", async ()
   }
 });
 
+test("BrokerStore adds write metadata storage to an existing Job Ledger", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-migration-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE jobs (
+      job_id TEXT PRIMARY KEY,
+      owner_principal_id TEXT NOT NULL,
+      owner_session_id TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      target_ref TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      payload_digest TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      state TEXT NOT NULL,
+      result_class TEXT NOT NULL,
+      created_at_ms INTEGER NOT NULL,
+      started_at_ms INTEGER,
+      finished_at_ms INTEGER,
+      exit_code INTEGER,
+      stdout_text TEXT NOT NULL,
+      stderr_text TEXT NOT NULL,
+      output_truncated INTEGER NOT NULL,
+      cancel_requested INTEGER NOT NULL,
+      cancel_reason TEXT,
+      revision INTEGER NOT NULL,
+      UNIQUE (owner_principal_id, idempotency_key)
+    ) STRICT;
+    INSERT INTO jobs VALUES (
+      'job:legacy', 'principal-1', 'session-1', 'mac_task_run', 'task:test', 'policy-0.1',
+      '${"a".repeat(64)}', 'legacy-job', 'completed', 'success', 1, 1, 2, 0, '', '', 0, 0, NULL, 1
+    );
+  `);
+  legacy.close();
+  const store = new BrokerStore(databasePath);
+  try {
+    assert.equal(store.ownedJob("job:legacy", "principal-1")?.writeMetadata, undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("policy signer command nonce replay remains denied after store reopen", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-policy-signer-nonce-"));
   const databasePath = join(directory, "broker.sqlite");
@@ -676,6 +719,33 @@ test("write job idempotency identity survives restart and unresolved work become
     assert.equal(recovered?.tool, "mac_write_file_atomic");
     assert.equal(recovered?.state, "unknown");
     assert.equal(recovered?.resultClass, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("unresolved write metadata survives restart without storing content", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-write-metadata-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const metadata = {
+    rootId: "test-root",
+    path: join(directory, "target.txt"),
+    bytes: 4,
+    desiredSha256: "a".repeat(64),
+    expectedSha256: null,
+    createOnly: true
+  } as const;
+  let store = new BrokerStore(databasePath);
+  store.createJob({ ...jobInput("job:write-metadata", "write-metadata"), writeMetadata: metadata });
+  store.startJob("job:write-metadata", "principal-1", 0, 2);
+  store.close();
+  store = new BrokerStore(databasePath);
+  try {
+    const recovered = store.ownedJob("job:write-metadata", "principal-1");
+    assert.deepEqual(recovered?.writeMetadata, metadata);
+    assert.equal(recovered?.stdout, "");
+    assert.equal(recovered?.state, "unknown");
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

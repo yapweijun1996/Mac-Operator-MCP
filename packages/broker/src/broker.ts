@@ -10,7 +10,7 @@ import {
   type BrokerResult
 } from "@mac-operator/contracts";
 import { isAbsolute } from "node:path";
-import type { BrokerJob, BrokerStore } from "./persistence.js";
+import type { BrokerJob, BrokerStore, WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -24,7 +24,7 @@ import {
 } from "./policy.js";
 import { PolicyManager } from "./policy-loader.js";
 import { parseBrokerRequest } from "./request-validator.js";
-import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan } from "./filesystem-inspector.js";
+import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition } from "./filesystem-inspector.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
@@ -240,7 +240,8 @@ export class Broker {
               policyVersion: request.policyVersion,
               payloadDigest: sha256(canonicalJson(request.arguments)),
               idempotencyKey: execution.write!.idempotencyKey,
-              createdAtMs: this.now()
+              createdAtMs: this.now(),
+              writeMetadata: writeJobMetadata(execution.filesystem!.plan, execution.write!)
             } as const;
             const created = this.options.store.createJob(jobInput);
             execution.writeJob = created.job;
@@ -1370,12 +1371,26 @@ export class Broker {
         if (!execution.job) throw new BrokerError("EXECUTION_FAILED", "Job execution plan is unavailable");
         const tailBytes = (request.arguments.tail_bytes ?? 65_536) as number;
         const output = boundedJobOutput(execution.job, tailBytes);
+        const recovery = execution.job.state === "unknown"
+          ? this.inspectWritePostcondition(execution.job, policy)
+          : undefined;
         return {
-          data: jobStatusData(execution.job, output),
+          data: jobStatusData(execution.job, output, recovery),
           verification: { required: false, status: "verified", strategy: "job_result_validation" },
           truncated: output.truncated,
           auditTarget: `job:${execution.job.jobId}`,
-          auditEvidence: { jobState: execution.job.state, jobRevision: execution.job.revision }
+          auditEvidence: {
+            jobState: execution.job.state,
+            jobRevision: execution.job.revision,
+            ...(recovery ? { writePostcondition: recovery.postcondition, writeRecoveryResolution: recovery.resolution } : {})
+          },
+          ...(recovery?.postcondition === "matches"
+            ? { warnings: ["Write postcondition matches, but the job remains UNKNOWN because the actor in the crash window cannot be proven"] }
+            : recovery?.postcondition === "mismatch"
+              ? { warnings: ["Write postcondition does not match; the job remains UNKNOWN and must not be retried automatically"] }
+              : recovery?.postcondition === "unavailable"
+                ? { warnings: ["Write postcondition could not be verified; the job remains UNKNOWN"] }
+                : {})
         };
       }
       case "mac_job_cancel": {
@@ -1480,6 +1495,24 @@ export class Broker {
         // Preserve the original error; a running job without a terminal readback is unresolved.
       }
       throw brokerError;
+    }
+  }
+
+  private inspectWritePostcondition(job: BrokerJob, policy: BrokerPolicy): WriteRecoveryStatus | undefined {
+    const metadata = job.writeMetadata;
+    if (job.tool !== "mac_write_file_atomic" || metadata === undefined) return undefined;
+    const writeTool = policy.tools.get("mac_write_file_atomic");
+    if (!writeTool || writeTool.enabled !== true || policy.killSwitches.global || policy.killSwitches.mutations) {
+      return unavailableWriteRecovery(this.now());
+    }
+    try {
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const plan = inspector.planPath(metadata.path, "write");
+      if (plan.rootId !== metadata.rootId) return unavailableWriteRecovery(this.now());
+      const postcondition = inspector.verifyWritePostcondition(plan, metadata.desiredSha256, metadata.bytes);
+      return writeRecoveryStatus(postcondition, this.now());
+    } catch {
+      return unavailableWriteRecovery(this.now());
     }
   }
 
@@ -2250,6 +2283,39 @@ interface WriteResultData {
   };
 }
 
+interface WriteRecoveryStatus {
+  postcondition: SafeWritePostcondition["status"];
+  resolution: "remains_unknown";
+  observed_at: string;
+}
+
+function writeJobMetadata(plan: FilesystemPathPlan, write: NonNullable<ExecutionPlan["write"]>): WriteJobMetadata {
+  return {
+    rootId: plan.rootId,
+    path: plan.requestedPath,
+    bytes: write.content.length,
+    desiredSha256: sha256(write.content),
+    expectedSha256: write.expectedSha256?.toLowerCase() ?? null,
+    createOnly: write.createOnly
+  };
+}
+
+function writeRecoveryStatus(postcondition: SafeWritePostcondition, nowMs: number): WriteRecoveryStatus {
+  return {
+    postcondition: postcondition.status,
+    resolution: "remains_unknown",
+    observed_at: new Date(nowMs).toISOString()
+  };
+}
+
+function unavailableWriteRecovery(nowMs: number): WriteRecoveryStatus {
+  return {
+    postcondition: "unavailable",
+    resolution: "remains_unknown",
+    observed_at: new Date(nowMs).toISOString()
+  };
+}
+
 function writeDispatchResult(job: BrokerJob, data: WriteResultData, reused: boolean): DispatchResult {
   return {
     data: { ...data, job_id: job.jobId },
@@ -2602,7 +2668,11 @@ function boundedJobOutput(job: BrokerJob, tailBytes: number): { stdout: string; 
   };
 }
 
-function jobStatusData(job: BrokerJob, output: { stdout: string; stderr: string; truncated: boolean }) {
+function jobStatusData(
+  job: BrokerJob,
+  output: { stdout: string; stderr: string; truncated: boolean },
+  recovery?: WriteRecoveryStatus
+) {
   return {
     job_id: job.jobId,
     state: job.state,
@@ -2613,7 +2683,8 @@ function jobStatusData(job: BrokerJob, output: { stdout: string; stderr: string;
     result_class: job.resultClass,
     stdout: output.stdout,
     stderr: output.stderr,
-    truncated: output.truncated
+    truncated: output.truncated,
+    ...(recovery ? { recovery } : {})
   };
 }
 

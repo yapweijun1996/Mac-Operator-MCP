@@ -172,6 +172,14 @@ export interface FilesystemIdentityPrecondition {
   inode: string;
 }
 
+export interface SafeWritePostcondition {
+  status: "matches" | "mismatch" | "unavailable";
+  path: string | null;
+  bytes: number | null;
+  device: string | null;
+  inode: string | null;
+}
+
 interface NativePathMetadata {
   rootPath: string;
   path: string;
@@ -1067,6 +1075,39 @@ export class FilesystemInspector {
       device: write.device,
       inode: write.inode
     };
+  }
+
+  /**
+   * Inspect only the durable postcondition of an unresolved write. This does
+   * not change Job state: a matching file can still have been produced by an
+   * external actor during the crash window, so the Broker must not infer that
+   * its own mutation completed.
+   */
+  verifyWritePostcondition(
+    plan: FilesystemPathPlan,
+    desiredSha256: string,
+    expectedBytes: number
+  ): SafeWritePostcondition {
+    if (!/^[a-f0-9]{64}$/u.test(desiredSha256) || !Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > 1_048_576) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem write postcondition is malformed");
+    }
+    let metadata: SafePathMetadata;
+    try {
+      metadata = this.statPlanned(plan, false);
+    } catch {
+      return { status: "unavailable", path: null, bytes: null, device: null, inode: null };
+    }
+    if (metadata.type !== "file" || metadata.isSymlink) {
+      return { status: "unavailable", path: metadata.path, bytes: metadata.sizeBytes, device: metadata.device, inode: metadata.inode };
+    }
+    let hash: SafeFileHash;
+    try {
+      hash = this.hashPlanned(plan, "sha256");
+    } catch {
+      return { status: "unavailable", path: metadata.path, bytes: metadata.sizeBytes, device: metadata.device, inode: metadata.inode };
+    }
+    const status = hash.sizeBytes === expectedBytes && hash.digest === desiredSha256 ? "matches" : "mismatch";
+    return { status, path: hash.path, bytes: hash.sizeBytes, device: hash.device, inode: hash.inode };
   }
 
   unlinkPlanned(

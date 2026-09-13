@@ -77,6 +77,23 @@ test("descriptor-backed atomic write enforces expected hash and create-only prec
   }
 });
 
+test("write postcondition probe distinguishes match, mismatch, and unavailable", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-postcondition-"));
+  const file = join(directory, "target.txt");
+  await writeFile(file, "safe", { mode: 0o600 });
+  try {
+    const inspector = new FilesystemInspector([writeRoot(directory)]);
+    const plan = inspector.planPath(file, "write");
+    const desired = createHash("sha256").update("safe").digest("hex");
+    assert.equal(inspector.verifyWritePostcondition(plan, desired, 4).status, "matches");
+    assert.equal(inspector.verifyWritePostcondition(plan, "0".repeat(64), 4).status, "mismatch");
+    await rm(file);
+    assert.equal(inspector.verifyWritePostcondition(plan, desired, 4).status, "unavailable");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("descriptor-backed create-only write resists a concurrent target create and symlink swap", async () => {
   const parent = await mkdtemp(join(tmpdir(), "mac-operator-fs-create-race-"));
   const directory = join(parent, "allowed");
