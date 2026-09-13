@@ -141,6 +141,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
   const supervisor = {
     run: async (request: ProcessExecutionRequest) => {
       observed = request;
+      request.onStarted?.({ pid: 42, processGroupId: 42, startTimeMicros: 123456 });
       return {
         state: "completed" as const,
         resultClass: "SUCCEEDED" as const,
@@ -156,6 +157,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
       };
     }
   };
+  let startedIdentity: { pid: number; processGroupId: number; startTimeMicros: number } | undefined;
   try {
     const runner = new SandboxExecTaskRunner({
       enabled: true,
@@ -167,7 +169,11 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
       assert.equal(runner.available, false);
       return;
     }
-    const result = await runner.run(resolvedProfile(root), { timeoutMs: 500, shouldCancel: () => false });
+    const result = await runner.run(resolvedProfile(root), {
+      timeoutMs: 500,
+      shouldCancel: () => false,
+      onProcessStarted: (identity) => { startedIdentity = identity; }
+    });
     assert.equal(result.resultClass, "SUCCEEDED");
     assert.equal(result.verification.status, "verified");
     assert.equal(observed?.executable, "/usr/bin/sandbox-exec");
@@ -175,6 +181,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
     assert.deepEqual(observed?.environment, {});
     assert.equal(observed?.timeoutMs, 500);
     assert.equal(observed?.outputCapBytes, 1_024);
+    assert.deepEqual(startedIdentity, { pid: 42, processGroupId: 42, startTimeMicros: 123456 });
     assert.equal(observed?.args[0], "-p");
     assert.equal(observed?.args[2], "/usr/bin/printf");
     assert.equal(observed?.args.includes("/bin/sh"), false);

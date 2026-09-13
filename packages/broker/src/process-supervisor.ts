@@ -40,6 +40,23 @@ export interface ProcessExecutionRequest {
   timeoutMs: number;
   outputCapBytes: number;
   shouldCancel?: () => boolean;
+  /** Synchronous hook used to persist the verified root identity before work proceeds. */
+  onStarted?: (identity: ProcessOwnershipIdentity) => void;
+}
+
+export interface ProcessOwnershipIdentity {
+  pid: number;
+  processGroupId: number;
+  startTimeMicros: number;
+}
+
+export type ProcessRecoveryOutcome = "drained" | "absent" | "identity_mismatch" | "unknown";
+
+export interface ProcessRecoveryResult {
+  outcome: ProcessRecoveryOutcome;
+  processId: number;
+  processGroupId: number;
+  terminationObserved: boolean;
 }
 
 export interface ProcessSupervisorOptions {
@@ -127,6 +144,20 @@ export class ProcessSupervisor {
       signalProcessGroup(child, processId, "SIGKILL");
       throw new BrokerError("POLICY_DENIED", "Process tree observer is unavailable");
     }
+    if (request.onStarted !== undefined) {
+      const startTimeMicros = processTree?.rootStartTimeMicros;
+      if (startTimeMicros === undefined) {
+        signalProcessGroup(child, processId, "SIGKILL");
+        throw new BrokerError("POLICY_DENIED", "Process identity could not be captured");
+      }
+      try {
+        request.onStarted({ pid: processId, processGroupId: processId, startTimeMicros });
+      } catch (error) {
+        signalProcessGroup(child, processId, "SIGKILL");
+        if (error instanceof BrokerError) throw error;
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Process identity could not be persisted");
+      }
+    }
     this.activeProcesses += 1;
     let stopRun: (() => void) | undefined;
     let resolveDrained!: () => void;
@@ -156,6 +187,134 @@ export class ProcessSupervisor {
 
   activeCount(): number {
     return this.activeProcesses;
+  }
+
+  /**
+   * Recover a process owned by a prior Broker instance. Recovery is deliberately
+   * identity-bound and never infers success from a missing process.
+   */
+  async recoverOwnedProcess(identity: ProcessOwnershipIdentity, timeoutMs = 5_000): Promise<ProcessRecoveryResult> {
+    validateProcessOwnershipIdentity(identity);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 25 || timeoutMs > MAX_TIMEOUT_MS) {
+      throw new BrokerError("PRECONDITION_FAILED", "Process recovery timeout is outside the supported range");
+    }
+    if (process.platform !== "darwin") {
+      return {
+        outcome: "unknown",
+        processId: identity.pid,
+        processGroupId: identity.processGroupId,
+        terminationObserved: false
+      };
+    }
+    let native: NativeProcessTreeAdapter;
+    try {
+      native = loadNativePeerAdapter() as unknown as NativeProcessTreeAdapter;
+      if (typeof native.listDescendantProcesses !== "function" ||
+          typeof native.isProcessIdentityAlive !== "function" ||
+          typeof native.getProcessIdentity !== "function") {
+        throw new Error("Process tree observer is unavailable");
+      }
+    } catch {
+      return {
+        outcome: "unknown",
+        processId: identity.pid,
+        processGroupId: identity.processGroupId,
+        terminationObserved: false
+      };
+    }
+
+    let rootAlive: unknown;
+    try { rootAlive = native.isProcessIdentityAlive(identity.pid, identity.startTimeMicros); }
+    catch { rootAlive = undefined; }
+    if (rootAlive === false) {
+      try {
+        const currentIdentity = parseProcessIdentity(native.getProcessIdentity(identity.pid));
+        if (currentIdentity.startTimeMicros !== identity.startTimeMicros) {
+          return {
+            outcome: "identity_mismatch",
+            processId: identity.pid,
+            processGroupId: identity.processGroupId,
+            terminationObserved: false
+          };
+        }
+      } catch {
+        // The process may have exited; group state below distinguishes absence
+        // from an unresolved descendant group.
+      }
+      const groupAlive = processGroupAlive(identity.processGroupId);
+      return {
+        outcome: groupAlive ? "unknown" : "absent",
+        processId: identity.pid,
+        processGroupId: identity.processGroupId,
+        terminationObserved: !groupAlive
+      };
+    }
+    if (rootAlive !== true) {
+      return {
+        outcome: "unknown",
+        processId: identity.pid,
+        processGroupId: identity.processGroupId,
+        terminationObserved: false
+      };
+    }
+
+    const processTree = new ProcessTreeTracker(native, identity.pid, identity);
+    processTree.sample();
+    if (processTree.observationFailed) {
+      return {
+        outcome: "unknown",
+        processId: identity.pid,
+        processGroupId: identity.processGroupId,
+        terminationObserved: false
+      };
+    }
+    if (processTree.rootState() !== "alive") {
+      return {
+        outcome: "unknown",
+        processId: identity.pid,
+        processGroupId: identity.processGroupId,
+        terminationObserved: false
+      };
+    }
+    signalProcessGroupId(identity.processGroupId, "SIGTERM");
+    processTree.signal("SIGTERM");
+    const killAt = Date.now() + this.terminationGraceMs;
+    const deadline = Date.now() + timeoutMs;
+    let killSent = false;
+    while (Date.now() < deadline) {
+      processTree.sample();
+      const rootState = processTree.rootState();
+      const descendantState = processTree.aliveState();
+      const groupAlive = processGroupAlive(identity.processGroupId);
+      if (rootState === "unknown" || descendantState === "unknown" || processTree.observationFailed) {
+        return {
+          outcome: "unknown",
+          processId: identity.pid,
+          processGroupId: identity.processGroupId,
+          terminationObserved: false
+        };
+      }
+      if (rootState === "dead" && descendantState === "none" && !groupAlive) {
+        return {
+          outcome: "drained",
+          processId: identity.pid,
+          processGroupId: identity.processGroupId,
+          terminationObserved: true
+        };
+      }
+      if (!killSent && Date.now() >= killAt) {
+        killSent = true;
+        if (rootState === "alive") signalProcessGroupId(identity.processGroupId, "SIGKILL");
+        processTree.signal("SIGKILL");
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+    }
+    return {
+      outcome: "unknown",
+      processId: identity.pid,
+      processGroupId: identity.processGroupId,
+      terminationObserved: false
+    };
   }
 
   /**
@@ -463,11 +622,15 @@ function validateEnvironmentKey(key: string): void {
 
 function signalProcessGroup(child: ChildProcess, processId: number, signal: NodeJS.Signals): void {
   try {
-    if (process.platform !== "win32") process.kill(-processId, signal);
+    if (process.platform !== "win32") signalProcessGroupId(processId, signal);
     else child.kill(signal);
   } catch {
     try { child.kill(signal); } catch { /* The child may have exited between observation and signalling. */ }
   }
+}
+
+function signalProcessGroupId(processGroupId: number, signal: NodeJS.Signals): void {
+  if (process.platform !== "win32") process.kill(-processGroupId, signal);
 }
 
 function processGroupAlive(processId: number): boolean {
@@ -477,6 +640,15 @@ function processGroupAlive(processId: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function validateProcessOwnershipIdentity(identity: ProcessOwnershipIdentity): void {
+  if (identity === null || typeof identity !== "object" ||
+      !Number.isSafeInteger(identity.pid) || identity.pid < 1 || identity.pid > 99_999_999 ||
+      !Number.isSafeInteger(identity.processGroupId) || identity.processGroupId !== identity.pid ||
+      !Number.isSafeInteger(identity.startTimeMicros) || identity.startTimeMicros < 1) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process ownership identity is malformed");
   }
 }
 
@@ -497,7 +669,18 @@ class ProcessTreeTracker {
   private failed = false;
   private readonly rootIdentity: ProcessTreeIdentity | undefined;
 
-  constructor(private readonly native: NativeProcessTreeAdapter, private readonly processId: number) {
+  constructor(
+    private readonly native: NativeProcessTreeAdapter,
+    private readonly processId: number,
+    expectedRootIdentity?: ProcessOwnershipIdentity
+  ) {
+    if (expectedRootIdentity !== undefined) {
+      this.rootIdentity = {
+        pid: expectedRootIdentity.pid,
+        startTimeMicros: expectedRootIdentity.startTimeMicros
+      };
+      return;
+    }
     try {
       const identity = parseProcessIdentity(native.getProcessIdentity(processId));
       if (identity.pid === processId) this.rootIdentity = identity;
@@ -506,6 +689,10 @@ class ProcessTreeTracker {
       // Descendant tracking remains useful, but group signalling must stay disabled.
       this.rootIdentity = undefined;
     }
+  }
+
+  get rootStartTimeMicros(): number | undefined {
+    return this.rootIdentity?.startTimeMicros;
   }
 
   get observationFailed(): boolean {

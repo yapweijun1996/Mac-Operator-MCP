@@ -32,7 +32,7 @@ import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-
 import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
 import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.js";
-import { ProcessSupervisor } from "./process-supervisor.js";
+import { ProcessSupervisor, type ProcessOwnershipIdentity } from "./process-supervisor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
@@ -253,6 +253,83 @@ export class Broker {
       });
     }
     return { inspected: jobs.length, removed, absent, skipped };
+  }
+
+  /**
+   * Host-startup hook for task processes left by a prior Broker instance.
+   * Every candidate is already UNKNOWN; recovery may only terminate an exact
+   * persisted PID/start-time identity and never promotes the Job to success.
+   */
+  async reconcileRestartedTaskProcesses(limit = 100): Promise<{
+    inspected: number;
+    drained: number;
+    absent: number;
+    identityMismatch: number;
+    unknown: number;
+  }> {
+    const jobs = this.options.store.restartUnknownProcessJobs(limit);
+    if (jobs.length === 0) return { inspected: 0, drained: 0, absent: 0, identityMismatch: 0, unknown: 0 };
+    let drained = 0;
+    let absent = 0;
+    let identityMismatch = 0;
+    let unknown = 0;
+    for (const job of jobs) {
+      const metadata = job.processMetadata;
+      const auditRequestId = `job-process-recovery-${job.jobId}-${job.revision}`;
+      if (metadata === undefined) {
+        unknown += 1;
+        continue;
+      }
+      const targetRef = `job:${job.jobId}`;
+      const priorCompletion = this.options.store.auditEventResult(auditRequestId, "completion");
+      if (priorCompletion !== undefined) {
+        if (priorCompletion === "PROCESS_DRAINED") drained += 1;
+        else if (priorCompletion === "PROCESS_ABSENT") absent += 1;
+        else if (priorCompletion === "PROCESS_IDENTITY_MISMATCH") identityMismatch += 1;
+        else unknown += 1;
+        continue;
+      }
+      if (!this.options.store.auditEventExists(auditRequestId, "intent")) {
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_task_process_recovery",
+          eventType: "intent",
+          decision: "allow",
+          resultClass: "INTENT_RECORDED",
+          targetRef,
+          policyVersion: job.policyVersion,
+          evidence: { jobId: job.jobId, jobRevision: job.revision, pid: metadata.pid, processGroupId: metadata.processGroupId },
+          timestampMs: this.now()
+        });
+      }
+      let outcome: "PROCESS_DRAINED" | "PROCESS_ABSENT" | "PROCESS_IDENTITY_MISMATCH" | "PROCESS_RECOVERY_UNKNOWN";
+      try {
+        const result = await this.processSupervisor.recoverOwnedProcess(metadata, 5_000);
+        outcome = result.outcome === "drained" ? "PROCESS_DRAINED" :
+          result.outcome === "absent" ? "PROCESS_ABSENT" :
+            result.outcome === "identity_mismatch" ? "PROCESS_IDENTITY_MISMATCH" : "PROCESS_RECOVERY_UNKNOWN";
+      } catch {
+        outcome = "PROCESS_RECOVERY_UNKNOWN";
+      }
+      if (outcome === "PROCESS_DRAINED") drained += 1;
+      else if (outcome === "PROCESS_ABSENT") absent += 1;
+      else if (outcome === "PROCESS_IDENTITY_MISMATCH") identityMismatch += 1;
+      else unknown += 1;
+      this.options.store.appendAudit({
+        requestId: auditRequestId,
+        principalId: job.ownerPrincipalId,
+        tool: "internal_task_process_recovery",
+        eventType: "completion",
+        decision: "allow",
+        resultClass: outcome,
+        targetRef,
+        policyVersion: job.policyVersion,
+        evidence: { jobId: job.jobId, jobRevision: job.revision, pid: metadata.pid, processGroupId: metadata.processGroupId },
+        timestampMs: this.now()
+      });
+    }
+    return { inspected: jobs.length, drained, absent, identityMismatch, unknown };
   }
 
   /**
@@ -2359,9 +2436,36 @@ export class Broker {
     let terminalPersisted = false;
     try {
       requireTaskIsolationProof(this.taskRunner.isolationProof, resolved);
+      const taskControl = this.executionControl(
+        request,
+        execution.target,
+        timeoutMs,
+        job.jobId,
+        [],
+        execution.jobLease,
+        (identity) => {
+          if (!execution.taskJob || !execution.jobLease) {
+            throw new BrokerError("EXECUTION_FAILED", "Task process ownership cannot be linked to its Job");
+          }
+          const recordedAtMs = this.now();
+          execution.taskJob = this.options.store.recordJobProcessOwnership(
+            execution.taskJob.jobId,
+            request.principal.principalId,
+            execution.taskJob.revision,
+            {
+              pid: identity.pid,
+              processGroupId: identity.processGroupId,
+              startTimeMicros: identity.startTimeMicros,
+              recordedAtMs
+            },
+            execution.jobLease,
+            recordedAtMs
+          );
+        }
+      );
       const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
         resolved,
-        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+        taskControl
       ));
       // A runner may return after cancellation or revocation without observing
       // the control callback. Never publish a success after the Broker lost
@@ -3016,7 +3120,8 @@ export class Broker {
     timeoutMs: number,
     jobId?: string,
     additionalTargets: readonly NormalizedTarget[] = [],
-    jobLease?: JobLease
+    jobLease?: JobLease,
+    onProcessStarted?: (identity: ProcessOwnershipIdentity) => void
   ) {
     let lastLeaseHeartbeatMs = Number.NEGATIVE_INFINITY;
     return {
@@ -3036,7 +3141,8 @@ export class Broker {
         } catch {
           return true;
         }
-      }
+      },
+      ...(onProcessStarted === undefined ? {} : { onProcessStarted })
     };
   }
 

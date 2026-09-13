@@ -118,7 +118,7 @@ test("BrokerStore adds write metadata storage to an existing Job Ledger", async 
     try {
       const columns = migrated.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
       const names = new Set(columns.map((column) => column.name));
-      for (const name of ["lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms"]) {
+      for (const name of ["lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms", "process_metadata_json"]) {
         assert.equal(names.has(name), true, `expected migrated Job lease column ${name}`);
       }
     } finally {
@@ -926,6 +926,46 @@ test("unresolved write metadata survives restart without storing content", async
     assert.deepEqual(store.restartUnknownWriteJobs().map((job) => job.jobId), ["job:write-metadata"]);
     assert.equal(recovered?.stdout, "");
     assert.equal(recovered?.state, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("task process ownership metadata survives restart as UNKNOWN", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-process-metadata-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const metadata = {
+    pid: 1234,
+    processGroupId: 1234,
+    startTimeMicros: 987654321,
+    recordedAtMs: 3
+  } as const;
+  const lease = {
+    ownerId: "broker:test",
+    token: "lease:process-metadata-1234",
+    expiresAtMs: 30
+  };
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:task-process-metadata", "task-process-metadata"));
+    const running = store.startJob("job:task-process-metadata", "principal-1", 0, 1, lease);
+    const recorded = store.recordJobProcessOwnership(
+      "job:task-process-metadata",
+      "principal-1",
+      running.revision,
+      metadata,
+      lease,
+      2
+    );
+    assert.deepEqual(recorded.processMetadata, metadata);
+    assert.equal(recorded.revision, 2);
+    store.close();
+    store = new BrokerStore(databasePath);
+    const recovered = store.ownedJob("job:task-process-metadata", "principal-1");
+    assert.equal(recovered?.state, "unknown");
+    assert.deepEqual(recovered?.processMetadata, metadata);
+    assert.deepEqual(store.restartUnknownProcessJobs().map((job) => job.jobId), ["job:task-process-metadata"]);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

@@ -134,6 +134,92 @@ test("Broker close drains its shared OS process supervisor", async () => {
   }
 });
 
+test("restarted Broker recovers an exact task process identity without resolving the Job", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Cross-Broker task process recovery is a macOS native boundary");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-process-recovery-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const key = randomBytes(32);
+  let store = new BrokerStore(databasePath);
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const recoverySupervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const policy = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), processSupervisor: supervisor, now: () => Date.now() });
+  let restartedBroker: Broker | undefined;
+  let running: Promise<unknown> | undefined;
+  try {
+    const nowMs = Date.now();
+    const lease = {
+      ownerId: "broker:test-recovery",
+      token: "lease:task-process-recovery-1234",
+      expiresAtMs: nowMs + 30_000
+    };
+    store.createJob({
+      jobId: "job:task-process-recovery",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task_profile:tests.echo",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "task-process-recovery",
+      createdAtMs: nowMs
+    });
+    const started = store.startJob("job:task-process-recovery", "principal-1", 0, nowMs, lease);
+    let capturedIdentity: import("./process-supervisor.js").ProcessOwnershipIdentity | undefined;
+    running = supervisor.run({
+      executable: "/bin/sleep",
+      args: ["10"],
+      cwd: process.cwd(),
+      timeoutMs: 5_000,
+      outputCapBytes: 100,
+      onStarted: (identity) => {
+        capturedIdentity = identity;
+        const recordedAtMs = Date.now();
+        store.recordJobProcessOwnership(
+          "job:task-process-recovery",
+          "principal-1",
+          started.revision,
+          { ...identity, recordedAtMs },
+          lease,
+          recordedAtMs
+        );
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.ok(capturedIdentity);
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.equal(store.ownedJob("job:task-process-recovery", "principal-1")?.state, "unknown");
+    restartedBroker = new Broker({
+      store,
+      policy,
+      edgeAuthenticationKeys: testKeyring(key),
+      processSupervisor: recoverySupervisor,
+      now: () => Date.now()
+    });
+    assert.deepEqual(await restartedBroker.reconcileRestartedTaskProcesses(), {
+      inspected: 1,
+      drained: 1,
+      absent: 0,
+      identityMismatch: 0,
+      unknown: 0
+    });
+    assert.equal(store.ownedJob("job:task-process-recovery", "principal-1")?.state, "unknown");
+    assert.equal(store.auditEventResult("job-process-recovery-job:task-process-recovery-3", "completion"), "PROCESS_DRAINED");
+    await running;
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await restartedBroker?.close();
+    await broker.close();
+    await running?.catch(() => undefined);
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_process_list returns bounded redacted process metadata", async () => {
   const key = randomBytes(32);
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-list-"));

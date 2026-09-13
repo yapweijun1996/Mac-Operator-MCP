@@ -257,6 +257,55 @@ test("process supervisor close drains owned processes and rejects new work", asy
   assert.strictEqual(supervisor.close(), closePromise);
 });
 
+test("process supervisor captures and recovers an exact persisted root identity", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Persisted root identity recovery is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let identity: import("./process-supervisor.js").ProcessOwnershipIdentity | undefined;
+  const running = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["10"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100,
+    onStarted: (value) => { identity = value; }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(identity);
+  const recovered = await supervisor.recoverOwnedProcess(identity!, 1_000);
+  assert.equal(recovered.outcome, "drained");
+  assert.equal(recovered.terminationObserved, true);
+  await running;
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor refuses a swapped persisted root identity", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Persisted root identity recovery is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let identity: import("./process-supervisor.js").ProcessOwnershipIdentity | undefined;
+  const running = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["10"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100,
+    onStarted: (value) => { identity = value; }
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(identity);
+  const swapped = await supervisor.recoverOwnedProcess({ ...identity!, startTimeMicros: identity!.startTimeMicros + 1 }, 250);
+  assert.equal(swapped.outcome, "identity_mismatch");
+  assert.equal(swapped.terminationObserved, false);
+  await supervisor.close();
+  await running;
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 async function assertProcessGone(pid: number): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (Date.now() < deadline) {

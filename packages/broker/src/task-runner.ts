@@ -1,5 +1,5 @@
 import { BrokerError } from "@mac-operator/contracts";
-import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipIdentity } from "./process-supervisor.js";
 import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 
@@ -9,6 +9,7 @@ const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 export interface TaskExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
+  onProcessStarted?: (identity: ProcessOwnershipIdentity) => void;
 }
 
 export type TaskVerificationStatus = "verified" | "failed" | "unknown" | "not_run";
@@ -120,7 +121,8 @@ export class SandboxExecTaskRunner implements TaskRunner {
         ...(profile.process.environment === undefined ? {} : { environment: profile.process.environment }),
         timeoutMs: Math.min(control.timeoutMs, profile.process.timeoutMs),
         outputCapBytes: profile.process.outputCapBytes,
-        shouldCancel: control.shouldCancel
+        shouldCancel: control.shouldCancel,
+        ...(control.onProcessStarted === undefined ? {} : { onStarted: control.onProcessStarted })
       });
     } catch (error) {
       if (error instanceof BrokerError) throw error;

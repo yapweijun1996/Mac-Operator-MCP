@@ -90,6 +90,14 @@ export interface WriteJobMetadata {
   temporaryName?: string;
 }
 
+/** Non-secret OS identity needed to recover an interrupted task process. */
+export interface ProcessJobMetadata {
+  pid: number;
+  processGroupId: number;
+  startTimeMicros: number;
+  recordedAtMs: number;
+}
+
 export interface BrokerJob {
   jobId: string;
   ownerPrincipalId: string;
@@ -111,6 +119,7 @@ export interface BrokerJob {
   cancelRequested: boolean;
   revision: number;
   writeMetadata?: WriteJobMetadata;
+  processMetadata?: ProcessJobMetadata;
 }
 
 export interface CreateJobInput {
@@ -435,6 +444,7 @@ export class BrokerStore {
         lease_heartbeat_at_ms INTEGER,
         lease_expires_at_ms INTEGER,
         write_metadata_json TEXT NOT NULL DEFAULT '',
+        process_metadata_json TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL,
         UNIQUE (owner_principal_id, idempotency_key)
       ) STRICT;
@@ -1290,8 +1300,8 @@ export class BrokerStore {
           job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
           payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
           finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-          cancel_requested, cancel_reason, write_metadata_json, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
+          cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', 0)
       `).run(
         input.jobId, input.ownerPrincipalId, input.ownerSessionId, input.tool, input.targetRef,
         input.policyVersion, input.payloadDigest, input.idempotencyKey, input.createdAtMs,
@@ -1331,6 +1341,21 @@ export class BrokerStore {
         AND state = 'unknown'
         AND cancel_reason = 'BROKER_RESTART'
         AND write_metadata_json <> ''
+      ORDER BY created_at_ms, job_id
+      LIMIT ?
+    `).all(limit) as unknown as JobRow[];
+    return rows.map(mapJob);
+  }
+
+  /** Return restart-reconciled task Jobs that retain a verified process identity. */
+  restartUnknownProcessJobs(limit = 100): BrokerJob[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
+    const rows = this.database.prepare(`
+      SELECT * FROM jobs
+      WHERE tool = 'mac_task_run'
+        AND state = 'unknown'
+        AND cancel_reason = 'BROKER_RESTART'
+        AND process_metadata_json <> ''
       ORDER BY created_at_ms, job_id
       LIMIT ?
     `).all(limit) as unknown as JobRow[];
@@ -1377,6 +1402,26 @@ export class BrokerStore {
     }, undefined, startedAtMs);
   }
 
+  recordJobProcessOwnership(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    metadata: ProcessJobMetadata,
+    lease: JobLease,
+    nowMs: number
+  ): BrokerJob {
+    validateProcessJobMetadata(metadata);
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+    validateJobLease(lease, nowMs, false);
+    return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
+      if (current.processMetadata !== undefined) throw new BrokerError("CONFLICT", "Process ownership was already recorded");
+      this.database.prepare(`
+        UPDATE jobs SET process_metadata_json = ?, revision = revision + 1
+        WHERE job_id = ? AND owner_principal_id = ?
+      `).run(serializeProcessJobMetadata(metadata), jobId, principalId);
+    }, lease, nowMs);
+  }
+
   finishJob(
     jobId: string,
     principalId: string,
@@ -1406,13 +1451,13 @@ export class BrokerStore {
       if (current.startedAtMs === null || outcome.finishedAtMs < current.startedAtMs) throw malformedJob();
       this.database.prepare(`
         UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = ?,
-          stdout_text = ?, stderr_text = ?, output_truncated = ?,
+          stdout_text = ?, stderr_text = ?, output_truncated = ?, process_metadata_json = CASE WHEN ? = 'unknown' THEN process_metadata_json ELSE '' END,
           lease_owner_id = NULL, lease_token = NULL, lease_acquired_at_ms = NULL,
           lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL, revision = revision + 1
         WHERE job_id = ? AND owner_principal_id = ?
       `).run(
         outcome.state, outcome.resultClass, outcome.finishedAtMs, exitCode,
-        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0, jobId, principalId
+        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0, outcome.state, jobId, principalId
       );
     }, lease, leaseNowMs, outcome.state === "unknown");
   }
@@ -2313,6 +2358,9 @@ export class BrokerStore {
     if (!names.has("lease_expires_at_ms")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN lease_expires_at_ms INTEGER");
     }
+    if (!names.has("process_metadata_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN process_metadata_json TEXT NOT NULL DEFAULT ''");
+    }
   }
 }
 
@@ -2349,6 +2397,7 @@ interface JobRow {
   lease_heartbeat_at_ms: number | null;
   lease_expires_at_ms: number | null;
   write_metadata_json: string;
+  process_metadata_json: string;
   revision: number;
 }
 
@@ -2461,7 +2510,8 @@ function mapJob(row: JobRow): BrokerJob {
     truncated: row.output_truncated === 1,
     cancelRequested: row.cancel_requested === 1,
     revision: row.revision,
-    ...(row.write_metadata_json ? { writeMetadata: parseWriteJobMetadata(row.write_metadata_json) } : {})
+    ...(row.write_metadata_json ? { writeMetadata: parseWriteJobMetadata(row.write_metadata_json) } : {}),
+    ...(row.process_metadata_json ? { processMetadata: parseProcessJobMetadata(row.process_metadata_json) } : {})
   };
 }
 
@@ -2504,6 +2554,38 @@ function serializeWriteJobMetadata(metadata: WriteJobMetadata | undefined): stri
   if (metadata === undefined) return "";
   validateWriteJobMetadata(metadata);
   return canonicalJson(metadata);
+}
+
+function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {
+  if (metadata === null || typeof metadata !== "object" ||
+      !Number.isSafeInteger(metadata.pid) || metadata.pid < 1 || metadata.pid > 99_999_999 ||
+      !Number.isSafeInteger(metadata.processGroupId) || metadata.processGroupId !== metadata.pid ||
+      !Number.isSafeInteger(metadata.startTimeMicros) || metadata.startTimeMicros < 1 ||
+      !Number.isSafeInteger(metadata.recordedAtMs) || metadata.recordedAtMs < 0) {
+    throw malformedJob();
+  }
+}
+
+function serializeProcessJobMetadata(metadata: ProcessJobMetadata): string {
+  validateProcessJobMetadata(metadata);
+  return canonicalJson(metadata);
+}
+
+function parseProcessJobMetadata(value: string): ProcessJobMetadata {
+  if (value.length < 1 || value.length > 2_000) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; }
+  catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
+  }
+  const keys = Object.keys(parsed).sort();
+  if (keys.join(",") !== "pid,processGroupId,recordedAtMs,startTimeMicros") {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
+  }
+  const metadata = parsed as Partial<ProcessJobMetadata>;
+  validateProcessJobMetadata(metadata as ProcessJobMetadata);
+  return metadata as ProcessJobMetadata;
 }
 
 function parseWriteJobMetadata(value: string): WriteJobMetadata {
