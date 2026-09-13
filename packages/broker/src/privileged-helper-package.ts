@@ -1,7 +1,9 @@
 import { lstat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
+import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 
 const HELPER_LABEL = "com.mac-operator.privileged-helper" as const;
 const HELPER_PLIST_PATH = "/Library/LaunchDaemons/com.mac-operator.privileged-helper.plist" as const;
@@ -40,7 +42,10 @@ export type PrivilegedHelperPackageErrorCode =
   | "INVALID_SIGNATURE"
   | "SERVICE_MISMATCH"
   | "SIGNATURE_MISMATCH"
-  | "INVALID_READBACK";
+  | "INVALID_READBACK"
+  | "CONFIRMATION_REQUIRED"
+  | "FILESYSTEM_MISMATCH"
+  | "RECOVERY_FAILED";
 
 export class PrivilegedHelperPackageError extends Error {
   readonly code: PrivilegedHelperPackageErrorCode;
@@ -176,6 +181,26 @@ export interface PrivilegedHelperFilesystemEntryReadback {
 export interface PrivilegedHelperFilesystemReadback {
   ownerUid: 0;
   entries: readonly PrivilegedHelperFilesystemEntryReadback[];
+}
+
+export interface PrivilegedHelperPlistApplyOptions {
+  /** Host-only confirmation; this function is not exposed through MCP. */
+  confirmOperation: PrivilegedHelperPackageOperation;
+  /** Root ownership is mandatory; non-root callers fail before filesystem access. */
+  ownerUid: number;
+  inspector?: FilesystemInspector;
+}
+
+export interface PrivilegedHelperPlistApplyResult {
+  operation: PrivilegedHelperPackageOperation;
+  path: typeof HELPER_PLIST_PATH;
+  bytesWritten: number;
+  sha256: string | null;
+  created: boolean;
+  backupPath: string | null;
+  backupSha256: string | null;
+  device: string;
+  inode: string;
 }
 
 export interface PrivilegedHelperFileAction {
@@ -388,6 +413,119 @@ export function requiredPrivilegedHelperFilesystemPaths(
   return [...paths.entries()].map(([path, kind]) => [path, kind] as const).sort(([left], [right]) => left.localeCompare(right));
 }
 
+/**
+ * Applies only the helper plist file action through the descriptor-relative
+ * native writer. It never invokes launchctl; callers must separately execute
+ * and verify the fixed bootstrap/bootout commands from the plan.
+ */
+export async function applyPrivilegedHelperPlistPlan(
+  plan: PrivilegedHelperPackagePlan,
+  options: PrivilegedHelperPlistApplyOptions
+): Promise<PrivilegedHelperPlistApplyResult> {
+  if (options.confirmOperation !== plan.operation) {
+    fail("CONFIRMATION_REQUIRED", "privileged helper plist apply requires an explicit matching operation");
+  }
+  if (options.ownerUid !== 0) {
+    fail("INVALID_PEER_IDENTITY", "privileged helper plist apply requires root ownership");
+  }
+  await inspectPrivilegedHelperPackageFilesystem(plan, { requirePlist: plan.operation !== "install" });
+  const inspector = options.inspector ?? createPrivilegedHelperInspector();
+  const targetPlan = inspector.planPath(plan.plistPath, "write");
+  const current = optionalPrivilegedHelperStat(inspector, targetPlan);
+  if (plan.operation === "install") {
+    if (current !== undefined) fail("FILESYSTEM_MISMATCH", "helper plist install requires an absent target");
+    const result = inspector.writePlanned(
+      targetPlan,
+      Buffer.from(plan.renderedPlist, "utf8"),
+      undefined,
+      true,
+      temporaryHelperPlistName("install"),
+      identity(false)
+    );
+    return toPrivilegedHelperApplyResult(plan.operation, result, null, null);
+  }
+  if (current === undefined) fail("FILESYSTEM_MISMATCH", "helper plist operation requires an existing target");
+  const currentIdentity = identityFromPrivilegedHelperMetadata(current);
+  if (plan.operation === "uninstall") {
+    const original = readExistingPrivilegedHelperPlist(inspector, plan.plistPath);
+    const backupPlan = inspector.planPath(`${plan.plistPath}.previous`, "write");
+    const backupCurrent = optionalPrivilegedHelperStat(inspector, backupPlan);
+    let backupRemoved = false;
+    try {
+      const removed = inspector.unlinkPlanned(targetPlan, currentIdentity);
+      if (backupCurrent !== undefined) {
+        inspector.unlinkPlanned(backupPlan, identityFromPrivilegedHelperMetadata(backupCurrent));
+        backupRemoved = true;
+      }
+      if (optionalPrivilegedHelperStat(inspector, targetPlan) !== undefined) {
+        fail("FILESYSTEM_MISMATCH", "helper plist uninstall postcondition did not remove the target");
+      }
+      return {
+        operation: "uninstall",
+        path: HELPER_PLIST_PATH,
+        bytesWritten: 0,
+        sha256: null,
+        created: false,
+        backupPath: backupRemoved ? `${plan.plistPath}.previous` : null,
+        backupSha256: null,
+        device: removed.device,
+        inode: removed.inode
+      };
+    } catch (error) {
+      if (optionalPrivilegedHelperStat(inspector, targetPlan) === undefined) {
+        try {
+          inspector.writePlanned(targetPlan, original.content, undefined, true, temporaryHelperPlistName("uninstall-restore"), identity(false));
+        } catch (restoreError) {
+          throw new AggregateError([error, restoreError], "helper plist uninstall failed and restoration also failed");
+        }
+      }
+      throw error;
+    }
+  }
+  const backupPath = `${plan.plistPath}.previous`;
+  if (plan.operation === "upgrade") {
+    const original = readExistingPrivilegedHelperPlist(inspector, plan.plistPath);
+    const backupPlan = inspector.planPath(backupPath, "write");
+    const backupCurrent = optionalPrivilegedHelperStat(inspector, backupPlan);
+    const backupResult = inspector.writePlanned(
+      backupPlan,
+      original.content,
+      undefined,
+      false,
+      temporaryHelperPlistName("backup"),
+      backupCurrent === undefined ? identity(false) : identityFromPrivilegedHelperMetadata(backupCurrent)
+    );
+    try {
+      const result = inspector.writePlanned(
+        targetPlan,
+        Buffer.from(plan.renderedPlist, "utf8"),
+        undefined,
+        false,
+        temporaryHelperPlistName("upgrade"),
+        currentIdentity
+      );
+      return toPrivilegedHelperApplyResult(plan.operation, result, backupPath, backupResult.sha256);
+    } catch (error) {
+      try {
+        inspector.writePlanned(targetPlan, original.content, undefined, false, temporaryHelperPlistName("upgrade-restore"), currentIdentity);
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], "helper plist upgrade failed and restoration also failed");
+      }
+      throw error;
+    }
+  }
+  const backup = readExistingPrivilegedHelperPlist(inspector, backupPath);
+  const result = inspector.writePlanned(
+    targetPlan,
+    backup.content,
+    undefined,
+    false,
+    temporaryHelperPlistName("rollback"),
+    currentIdentity
+  );
+  return toPrivilegedHelperApplyResult(plan.operation, result, backupPath, null);
+}
+
 async function readPrivilegedHelperFilesystemEntry(
   path: string,
   expectedKind: PrivilegedHelperExpectedFilesystemKind
@@ -425,6 +563,63 @@ function ancestorsToRoot(target: string): readonly string[] {
     current = parent;
   }
   return result;
+}
+
+function createPrivilegedHelperInspector(): FilesystemInspector {
+  return new FilesystemInspector([{
+    rootId: "mac-operator-privileged-helper-system-root",
+    path: "/",
+    metadata: true,
+    contentRead: true,
+    write: true,
+    denyRelativePaths: []
+  }]);
+}
+
+function optionalPrivilegedHelperStat(inspector: FilesystemInspector, plan: FilesystemPathPlan) {
+  try {
+    return inspector.statPlanned(plan, false);
+  } catch {
+    return undefined;
+  }
+}
+
+function readExistingPrivilegedHelperPlist(inspector: FilesystemInspector, path: string): { content: Buffer; device: string; inode: string } {
+  const plan = inspector.planPath(path, "content_read");
+  const read = inspector.readPlanned(plan, 0, 1_048_576);
+  if (read.truncated) fail("FILESYSTEM_MISMATCH", "helper plist content exceeds the bounded rollback budget");
+  return { content: read.content, device: read.device, inode: read.inode };
+}
+
+function identity(present: boolean, device = "0", inode = "0"): FilesystemIdentityPrecondition {
+  return { present, device, inode };
+}
+
+function identityFromPrivilegedHelperMetadata(metadata: { device: string; inode: string }): FilesystemIdentityPrecondition {
+  return identity(true, metadata.device, metadata.inode);
+}
+
+function temporaryHelperPlistName(kind: string): string {
+  return `.mac-operator-write-helper-${kind}-${randomBytes(12).toString("hex")}`;
+}
+
+function toPrivilegedHelperApplyResult(
+  operation: PrivilegedHelperPackageOperation,
+  result: { path: string; bytesWritten: number; sha256: string; created: boolean; device: string; inode: string },
+  backupPath: string | null,
+  backupSha256: string | null
+): PrivilegedHelperPlistApplyResult {
+  return {
+    operation,
+    path: HELPER_PLIST_PATH,
+    bytesWritten: result.bytesWritten,
+    sha256: result.sha256,
+    created: result.created,
+    backupPath,
+    backupSha256,
+    device: result.device,
+    inode: result.inode
+  };
 }
 
 export function renderPrivilegedHelperLaunchdPlist(config: PrivilegedHelperLaunchdConfig): string {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import {
+  applyPrivilegedHelperPlistPlan,
   buildPrivilegedHelperPackagePlan,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
@@ -228,5 +229,17 @@ test("privileged helper filesystem readback rejects ownership, mode, and target 
   assert.throws(
     () => validatePrivilegedHelperFilesystemReadback(plan, { ownerUid: 0, entries: entries.map((entry) => entry.path === plan.helperRoot ? { ...entry, ownerUid: 501 } : entry) }, false),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PACKAGE_PATH"
+  );
+});
+
+test("privileged helper plist apply requires explicit operation confirmation and root ownership", async () => {
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  await assert.rejects(
+    applyPrivilegedHelperPlistPlan(plan, { confirmOperation: "upgrade", ownerUid: 501 }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "CONFIRMATION_REQUIRED"
+  );
+  await assert.rejects(
+    applyPrivilegedHelperPlistPlan(plan, { confirmOperation: "install", ownerUid: 501 }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PEER_IDENTITY"
   );
 });
