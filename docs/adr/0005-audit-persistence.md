@@ -55,5 +55,8 @@ Broker SQLite connections use a bounded busy timeout, and two independent
 process writers have been verified to preserve the audit hash chain under
 `BEGIN IMMEDIATE`. A simulated `ENOSPC` at publication maps to retryable
 `AUDIT_UNAVAILABLE` and leaves no temporary artifacts.
+Before the copy begins, the source page count/size and destination-volume
+`statfs` available bytes are checked with bounded headroom for sidecars; an
+insufficient-capacity preflight fails before creating a temporary file.
 
 `node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, general versioned migrations, encrypted/Keychain-protected backup storage, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested.

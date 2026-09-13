@@ -360,6 +360,27 @@ test("BrokerStore maps a simulated ENOSPC publication failure to retryable audit
   }
 });
 
+test("BrokerStore fails closed on an insufficient backup-capacity preflight", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-capacity-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    await assert.rejects(
+      store.backupTo(directory, { capacityProbe: async () => 0 }),
+      (error: unknown) => {
+        assert.equal(error instanceof BrokerError, true);
+        assert.equal((error as BrokerError).errorClass, "AUDIT_UNAVAILABLE");
+        assert.equal((error as BrokerError).retryable, true);
+        return true;
+      }
+    );
+    assert.equal((await readdir(directory)).some((name) => name.includes(".tmp-")), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore restore rejects a backup whose audit chain was modified", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-corruption-"));
   const databasePath = join(directory, "broker.sqlite");

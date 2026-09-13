@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants, createReadStream, type Dirent } from "node:fs";
-import { chmod, copyFile, lstat, open, readdir, rename, unlink } from "node:fs/promises";
+import { chmod, copyFile, lstat, open, readdir, rename, statfs, unlink } from "node:fs/promises";
 import { backup, DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
@@ -11,6 +11,7 @@ const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 const MAX_BACKUP_FILES = 256;
 const MAX_BACKUP_TEMP_FILES = 256;
 const BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
+const BACKUP_HEADROOM_BYTES = 4 * 1024 * 1024;
 const DEFAULT_RETAIN_COUNT = 7;
 
 export type BrokerBackupFaultPoint = "after_backup" | "after_temp_verify";
@@ -29,6 +30,8 @@ export interface BrokerBackupOptions {
   nowMs?: number;
   /** @internal Test-only crash-boundary hook; production callers must leave unset. */
   faultInjector?: (point: BrokerBackupFaultPoint) => void;
+  /** @internal Test-only capacity probe; production callers must leave unset. */
+  capacityProbe?: (directory: string) => Promise<number>;
 }
 
 export interface BrokerBackupPruneResult {
@@ -57,6 +60,7 @@ export async function createBrokerBackup(
   const destination = join(protectedDirectory, name);
   const temporary = join(protectedDirectory, `.${name}.tmp-${randomBytes(12).toString("hex")}`);
   try {
+    await assertBackupCapacity(protectedDirectory, source, options.capacityProbe);
     await backup(source, temporary, { rate: 64 });
     options.faultInjector?.("after_backup");
     await chmod(temporary, 0o600);
@@ -77,6 +81,42 @@ export async function createBrokerBackup(
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence backup could not be created", true);
   } finally {
     await cleanupTemporaryBackupFiles(temporary).catch(() => undefined);
+  }
+}
+
+async function assertBackupCapacity(
+  directory: string,
+  source: DatabaseSync,
+  capacityProbe?: (directory: string) => Promise<number>
+): Promise<void> {
+  const pageCount = (source.prepare("PRAGMA page_count").get() as { page_count?: unknown } | undefined)?.page_count;
+  const pageSize = (source.prepare("PRAGMA page_size").get() as { page_size?: unknown } | undefined)?.page_size;
+  if (!Number.isSafeInteger(pageCount) || !Number.isSafeInteger(pageSize) || (pageCount as number) < 0 || (pageSize as number) < 1) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence size could not be measured", true);
+  }
+  const databaseBytes = (pageCount as number) * (pageSize as number);
+  if (!Number.isSafeInteger(databaseBytes) || databaseBytes > MAX_BACKUP_BYTES) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence exceeds the backup byte budget");
+  }
+  const requiredBytes = Math.min(MAX_BACKUP_BYTES, databaseBytes * 2 + BACKUP_HEADROOM_BYTES);
+  let availableBytes: number;
+  if (capacityProbe !== undefined) {
+    try {
+      availableBytes = await capacityProbe(directory);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup capacity could not be measured", true);
+    }
+  } else {
+    try {
+      const filesystem = await statfs(directory);
+      availableBytes = filesystem.bavail * filesystem.bsize;
+    } catch {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup capacity could not be measured", true);
+    }
+  }
+  if (!Number.isSafeInteger(availableBytes) || availableBytes < requiredBytes) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup destination lacks bounded free space", true);
   }
 }
 

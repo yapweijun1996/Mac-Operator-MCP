@@ -39,13 +39,15 @@ does not select external storage, encryption, or automatic scheduling.
 5. two independent Broker processes appending audit events concurrently while
    preserving the hash chain; and
 6. a simulated `ENOSPC` publication failure mapping to retryable
-   `AUDIT_UNAVAILABLE` without leaving temporary files.
+   `AUDIT_UNAVAILABLE` without leaving temporary files; and
+7. a deterministic insufficient-capacity preflight that fails before any
+   temporary file is created.
 
-The focused persistence suite passes 32/32 tests after this slice. Full-suite
+The focused persistence suite passes 33/33 tests after this slice. Full-suite
 counts and the exact local commit are recorded in `PROGRESS.md` and
 `VERIFICATION.md` after the final verification run.
 
-The final default suite reports 415 tests: 412 passed, 0 failed, and 3 opt-in
+The final default suite reports 416 tests: 413 passed, 0 failed, and 3 opt-in
 sandbox tests skipped.
 
 ## Remaining acceptance work

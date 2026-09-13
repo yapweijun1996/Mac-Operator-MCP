@@ -1193,10 +1193,11 @@ commit. Evidence: `evidence/2026-09-14-persistence-backup-restore.md`.
 The persistence crash/concurrency addendum adds stale temporary-artifact and
 SQLite WAL/SHM/journal sidecar cleanup after a hard-killed backup child, a
 five-second SQLite busy timeout, a simulated ENOSPC retryable-failure test,
-and a two-process audit-writer test that preserves the hash chain. The focused
-Broker persistence suite now passes 32/32; real disk-quota/exhaustion behavior
-and explicit single-owner service policy remain open. Evidence:
+an insufficient-capacity preflight, and a two-process audit-writer test that
+preserves the hash chain. The focused Broker persistence suite now passes
+33/33; real kernel/disk-quota exhaustion and explicit single-owner service
+policy remain open. Evidence:
 `evidence/2026-09-14-persistence-backup-restore.md`.
 
-The crash/concurrency addendum reran the full suite at 415 tests (412 passed,
+The crash/concurrency addendum reran the full suite at 416 tests (413 passed,
 3 opt-in sandbox tests skipped), with no failures.

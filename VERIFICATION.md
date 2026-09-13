@@ -965,13 +965,13 @@ verification. Evidence:
 The persistence crash/concurrency addendum adds a hard-killed child-process
 backup test with stale temporary and SQLite WAL/SHM/journal sidecar cleanup, a
 five-second SQLite busy timeout, a simulated ENOSPC retryable-failure test,
-and two independent Broker writers whose final audit chain verifies after
-reopen. The focused persistence suite now passes 32/32; real
-disk-quota/exhaustion and explicit single-owner service evidence remain open.
-Evidence:
+an insufficient-capacity preflight, and two independent Broker writers whose
+final audit chain verifies after reopen. The focused persistence suite now
+passes 33/33; real kernel/disk-quota exhaustion and explicit single-owner
+service evidence remain open. Evidence:
 `evidence/2026-09-14-persistence-backup-restore.md`.
 
-The crash/concurrency addendum reran the full suite at 415 tests (412 passed,
+The crash/concurrency addendum reran the full suite at 416 tests (413 passed,
 3 opt-in sandbox tests skipped), with no failures.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.
