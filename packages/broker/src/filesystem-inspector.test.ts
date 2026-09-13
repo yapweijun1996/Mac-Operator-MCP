@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { appendFileSync } from "node:fs";
-import { link, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, mkdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -74,6 +74,73 @@ test("descriptor-backed atomic write enforces expected hash and create-only prec
     assert.equal(await readFile(file, "utf8"), "after");
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("descriptor-backed create-only write resists a concurrent target create and symlink swap", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-fs-create-race-"));
+  const directory = join(parent, "allowed");
+  const target = join(directory, "target.txt");
+  const outside = join(parent, "outside.txt");
+  await mkdir(directory);
+  await writeFile(outside, "outside");
+  const attacker = new Worker(`
+    const { parentPort, workerData } = require("node:worker_threads");
+    const fs = require("node:fs");
+    let running = true;
+    parentPort.on("message", message => { if (message === "stop") running = false; });
+    parentPort.postMessage("ready");
+    function remove() { try { fs.unlinkSync(workerData.target); } catch {} }
+    function cycle() {
+      if (!running) return;
+      remove();
+      try { fs.writeFileSync(workerData.target, "attacker"); } catch {}
+      remove();
+      try { fs.symlinkSync(workerData.outside, workerData.target); } catch {}
+      remove();
+      setImmediate(cycle);
+    }
+    cycle();
+  `, { eval: true, workerData: { target, outside } });
+  await new Promise<void>((resolve, reject) => {
+    attacker.once("message", () => resolve());
+    attacker.once("error", reject);
+  });
+  const inspector = new FilesystemInspector([writeRoot(directory)]);
+  const plan = inspector.planPath(target, "write");
+  let accepted = 0;
+  try {
+    for (let index = 0; index < 500; index += 1) {
+      try {
+        const result = inspector.writePlanned(
+          plan,
+          Buffer.from("safe", "utf8"),
+          undefined,
+          true,
+          `.mac-operator-write-race-${index}`
+        );
+        assert.equal(result.created, true);
+        accepted += 1;
+      } catch (error) {
+        assert.match(String(error), /create-only precondition failed|authorized root or changed|regular file or absent/u);
+      }
+    }
+    assert.ok(accepted > 0);
+  } finally {
+    attacker.postMessage("stop");
+    await attacker.terminate();
+    assert.equal(await readFile(outside, "utf8"), "outside");
+    try {
+      const stat = await lstat(target);
+      if (stat.isSymbolicLink()) {
+        assert.equal(await readlink(target), outside);
+      } else {
+        assert.ok(["safe", "attacker"].includes(await readFile(target, "utf8")));
+      }
+    } catch (error) {
+      assert.match(String(error), /ENOENT/u);
+    }
+    await rm(parent, { recursive: true, force: true });
   }
 });
 
