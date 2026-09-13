@@ -76,7 +76,7 @@ Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires 
 
 ## P5 — L3/L4 applications and GUI
 
-- `MOP-050` — `IN_PROGRESS` — Implemented the read-only `mac_app_list` inventory slice with stable `bundle:<bundle_id>` identities, fixed Broker-owned JXA, bounded installed/running filters, app-set target authorization, metadata redaction, and real-host running-app verification. Launch, focus, app/window identity freshness, and GUI actions remain planned.
+- `MOP-050` — `IN_PROGRESS` — Implemented the read-only `mac_app_list` inventory slice and a disabled-by-default `mac_app_open` launch slice. Both use stable `bundle:<bundle_id>` identities; launch additionally requires exact app target authorization, `trusted_gui` approval, a Broker Job lease, fixed `/usr/bin/open -b`, and running-state reobservation. Document/URL launch, focus, app/window identity freshness, Accessibility, sensitive-surface policy, and GUI actions remain planned.
 - `MOP-051` — `PLANNED` — Implement structured AppleScript/JXA/Shortcuts adapters without raw script input.
 - `MOP-052` — `PLANNED` — Implement Accessibility-tree observation and freshness-bound target identities.
 - `MOP-053` — `BLOCKED` — Implement UI actions and typing. `blocked_by: MOP-052, MOP-054`; `unblock_condition: fresh-target, focus, sensitive-target, credential-UI, and security-setting protections pass`; `expected_evidence: stale-reference, focus-race, sensitive-dialog, secure-input, and permission tests (VT-UI-01, VT-UI-02)`.

@@ -52,7 +52,7 @@ Exit: approved real-project workflows pass without exposing a generic shell or c
 
 Status: `IN_PROGRESS`
 
-App inventory is implemented as a bounded read-only slice with stable bundle identities and an `app_set:all` authority target. Add app open/focus and structured native automation next, followed by Accessibility observation and actions. Implement target identity, freshness, focus, app/action scopes, sensitive-surface rules, and macOS permission recovery.
+App inventory and a disabled-by-default, approval-bound app launch slice are implemented with stable bundle identities and exact app targets. Add focus and structured native automation next, followed by Accessibility observation and actions. Implement target identity, freshness, focus, app/action scopes, sensitive-surface rules, and macOS permission recovery.
 
 Exit: approved workflows pass real-application tests and sensitive or stale targets fail closed.
 
