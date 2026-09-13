@@ -52,6 +52,20 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
+Latest governed HTTPS Edge service-entrypoint addendum: source commit
+`0e8612d` adds a fixed `service-main.js` and strict owner-only
+`edge-service.json` loader. Startup binds canonical package/data/runtime roots,
+protected TLS and digest-bound Edge HMAC files, the contract directory, fixed
+HTTPS/OAuth/JWKS/IPC/rate-limit budgets, and the existing signed Broker gateway
+without accepting MCP arguments or ambient environment authority. Listener
+host/port readback is required before readiness; shutdown wipes HMAC/TLS
+buffers. Focused startup tests pass 3/3; the full suite passes 361 tests (359
+passed, 2 opt-in real-sandbox tests skipped); `MOPS_REAL_SANDBOX=1 npm test`
+passes 361/361; typecheck, 44-contract validation, and high-severity dependency
+audit pass. This does not prove installed LaunchAgent bootstrap, production
+signing, Keychain ACLs, external OAuth issuer rotation, or remote deployment.
+Evidence: `evidence/2026-09-13-governed-edge-service-entrypoint.md`.
+
 Latest governed service-entrypoint addendum: source commit `8ac5fe0` adds a
 fixed `service-main.js` entrypoint and strict owner-only `broker-service.json`
 loader. Startup restores exact persisted signed Policy and Edge-key

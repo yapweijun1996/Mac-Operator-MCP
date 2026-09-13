@@ -28,6 +28,14 @@ The current Edge candidate uses the official MCP TypeScript SDK v2 and serves on
 
 No external/deployed OAuth issuer, authorization-code/token issuance flow, certificate-chain deployment, tunnel, public listener, or revocation propagation evidence exists. The rotated-key test uses an in-process JWKS fetch harness; it is not live issuer rotation evidence. The local self-signed certificate and official-client probe are prototype evidence only. This ADR remains Proposed and the Edge must not be deployed publicly from this prototype evidence.
 
+The packaged Edge now has a fixed `service-main.js` entrypoint and strict
+owner-only `edge-service.json` startup document. It assembles the existing
+HTTPS/JWT/contract/signed-IPC boundary only from canonical root-bound paths,
+requires listener host/port readback, and wipes in-memory authentication/TLS
+buffers on close. This improves local process-boundary evidence but does not
+change the decision: external issuer operations, certificate provenance,
+remote deployment, and launchd installation remain unproven.
+
 ## Acceptance evidence
 
 Metadata discovery, authorization flow, valid connection, invalid token, expiry, revocation, scope reduction, rate limits, tunnel outage, and Broker-unavailable behavior must be verified without recording secrets.

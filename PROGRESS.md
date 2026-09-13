@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `8ac5fe0`.
+Current committed implementation baseline: `0e8612d`.
+
+The latest governed HTTPS Edge service-entrypoint addendum is `0e8612d`:
+the packaged Edge now has a fixed `service-main.js` and strict owner-only
+`edge-service.json` loader. Startup binds canonical package/data/runtime roots,
+protected TLS and digest-bound Edge HMAC files, the contract directory, fixed
+HTTPS/OAuth/JWKS/IPC/rate-limit budgets, and a Broker gateway without accepting
+MCP arguments or ambient environment authority. Listener host/port readback is
+required before readiness; shutdown wipes HMAC/TLS buffers. Focused startup
+tests pass 3/3, the full suite passes 361 tests (359 passed, 2 opt-in
+real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes 361/361.
+No LaunchAgent, public listener, production credential, or Keychain item was
+used. Evidence: `evidence/2026-09-13-governed-edge-service-entrypoint.md`.
 
 The latest governed service-entrypoint addendum is `8ac5fe0`: the packaged
 Broker now has a fixed `service-main.js` entrypoint and strict owner-only
