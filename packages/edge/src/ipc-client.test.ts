@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
+import type { BrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "@mac-operator/broker";
 import {
   BrokerIpcServer,
@@ -120,6 +122,28 @@ test("Edge rejects a forged response from a replaced local socket", async () => 
   } finally {
     await server.close();
     store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Edge IPC client rejects an unsafe socket directory before connecting", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-edge-ipc-directory-"));
+  const socketPath = join(directory, "broker.sock");
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  try {
+    await chmod(directory, 0o750);
+    const client = new BrokerIpcClient(socketPath, () => false);
+    await assert.rejects(
+      client.call({} as BrokerRequest),
+      /socket directory failed ownership or permission checks/u
+    );
+  } finally {
+    await chmod(directory, 0o700);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
   }
 });

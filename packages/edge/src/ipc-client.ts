@@ -1,6 +1,6 @@
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import {
   BrokerError,
   type AuthenticatedBrokerResponse,
@@ -28,18 +28,8 @@ export class BrokerIpcClient {
   }
 
   async call(request: BrokerRequest, signal?: AbortSignal): Promise<BrokerResult> {
-    const socketStat = await lstat(this.socketPath);
-    const currentUid = process.getuid?.();
-    if (
-      !socketStat.isSocket() ||
-      socketStat.isSymbolicLink() ||
-      currentUid === undefined ||
-      socketStat.uid !== currentUid ||
-      (socketStat.mode & 0o177) !== 0
-    ) {
-      throw new BrokerError("AUTH_INVALID", "Broker IPC target failed ownership or permission checks");
-    }
-    const rawResponse = await this.exchange(`${JSON.stringify(request)}\n`, signal);
+    const socketIdentity = await validateSocketTarget(this.socketPath);
+    const rawResponse = await this.exchange(`${JSON.stringify(request)}\n`, signal, socketIdentity);
     let parsed: unknown;
     try {
       parsed = JSON.parse(rawResponse) as unknown;
@@ -59,7 +49,11 @@ export class BrokerIpcClient {
     return parsed.response;
   }
 
-  private exchange(body: string, signal?: AbortSignal): Promise<string> {
+  private exchange(
+    body: string,
+    signal: AbortSignal | undefined,
+    expectedIdentity: { dev: number; ino: number }
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket = createConnection(this.socketPath);
       let settled = false;
@@ -77,7 +71,15 @@ export class BrokerIpcClient {
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted) return onAbort();
       socket.setTimeout(this.timeoutMs, () => finish(new BrokerError("TIMEOUT", "Broker IPC request timed out", true)));
-      socket.on("connect", () => socket.write(body));
+      socket.on("connect", () => {
+        void lstat(this.socketPath).then((after) => {
+          if (!after.isSocket() || after.isSymbolicLink() || after.dev !== expectedIdentity.dev || after.ino !== expectedIdentity.ino) {
+            finish(new BrokerError("AUTH_INVALID", "Broker IPC target changed while connecting"));
+            return;
+          }
+          socket.write(body);
+        }).catch(() => finish(new BrokerError("AUTH_INVALID", "Broker IPC target could not be revalidated")));
+      });
       socket.on("data", (chunk: Buffer) => {
         total += chunk.byteLength;
         if (total > this.maxResponseBytes) return finish(new BrokerError("OUTPUT_LIMIT", "Broker IPC response exceeded the byte limit"));
@@ -87,6 +89,33 @@ export class BrokerIpcClient {
       socket.on("error", () => finish(new BrokerError("EXECUTION_FAILED", "Broker IPC transport failed", true)));
     });
   }
+}
+
+async function validateSocketTarget(socketPath: string): Promise<{ dev: number; ino: number }> {
+  if (!isAbsolute(socketPath) || resolve(socketPath) !== socketPath || socketPath.includes("\0")) {
+    throw new BrokerError("AUTH_INVALID", "Broker IPC socket path is not canonical");
+  }
+  const parentPath = dirname(socketPath);
+  const parent = await lstat(parentPath);
+  const currentUid = process.getuid?.();
+  if (!parent.isDirectory() || parent.isSymbolicLink() || currentUid === undefined || parent.uid !== currentUid || (parent.mode & 0o077) !== 0) {
+    throw new BrokerError("AUTH_INVALID", "Broker IPC socket directory failed ownership or permission checks");
+  }
+  let canonicalParent: string;
+  try {
+    canonicalParent = await realpath(parentPath);
+  } catch {
+    throw new BrokerError("AUTH_INVALID", "Broker IPC socket directory could not be canonicalized");
+  }
+  const canonicalParentStat = await lstat(canonicalParent);
+  if (!canonicalParentStat.isDirectory() || canonicalParentStat.dev !== parent.dev || canonicalParentStat.ino !== parent.ino) {
+    throw new BrokerError("AUTH_INVALID", "Broker IPC socket directory target changed while canonicalizing");
+  }
+  const socket = await lstat(socketPath);
+  if (!socket.isSocket() || socket.isSymbolicLink() || currentUid === undefined || socket.uid !== currentUid || (socket.mode & 0o177) !== 0) {
+    throw new BrokerError("AUTH_INVALID", "Broker IPC target failed ownership or permission checks");
+  }
+  return { dev: socket.dev, ino: socket.ino };
 }
 
 function isAuthenticatedResponse(value: unknown): value is AuthenticatedBrokerResponse {
