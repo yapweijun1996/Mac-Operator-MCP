@@ -1201,3 +1201,11 @@ policy remain open. Evidence:
 
 The crash/concurrency addendum reran the full suite at 416 tests (413 passed,
 3 opt-in sandbox tests skipped), with no failures.
+
+The physical macOS host evidence reran the same suite with
+`MOPS_REAL_SANDBOX=1`: 416 tests passed, 0 failed, and 0 skipped. This closes
+the opt-in host sandbox, process-group cancellation, service-lock, launchd
+read-only, and authenticated Edge/Broker integration checks for the current
+revision. Kernel-level disk-quota exhaustion, installed production launchd
+readback, encrypted/Keychain backup storage, external audit anchoring, and
+rollback/runbook decisions remain open.

@@ -48,7 +48,11 @@ counts and the exact local commit are recorded in `PROGRESS.md` and
 `VERIFICATION.md` after the final verification run.
 
 The final default suite reports 416 tests: 413 passed, 0 failed, and 3 opt-in
-sandbox tests skipped.
+sandbox tests skipped. On the physical macOS host, `MOPS_REAL_SANDBOX=1 npm
+test` reports 416 passed, 0 failed, and 0 skipped, including the real macOS
+sandbox, process-group cancellation, service-lock, launchd read-only, and
+authenticated Edge/Broker integration checks. This host run does not claim
+kernel-level quota exhaustion or an installed production launchd service.
 
 ## Remaining acceptance work
 
