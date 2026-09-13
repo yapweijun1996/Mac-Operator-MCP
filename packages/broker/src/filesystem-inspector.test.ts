@@ -400,10 +400,24 @@ test("FIFO and pseudo-device targets cannot block or enter generic content tools
     );
 
     const hostInspector = new FilesystemInspector([root("/")]);
-    assert.throws(
-      () => hostInspector.statPath("/dev/null", false),
-      /escaped its authorized root or volume/u
-    );
+    for (const characterDevice of ["/dev/null", "/dev/tty", "/dev/random"]) {
+      assert.throws(
+        () => hostInspector.statPath(characterDevice, false),
+        /escaped its authorized root or volume/u
+      );
+    }
+    let blockDevicePresent = true;
+    try {
+      await lstat("/dev/disk0");
+    } catch {
+      blockDevicePresent = false;
+    }
+    if (blockDevicePresent) {
+      assert.throws(
+        () => hostInspector.statPath("/dev/disk0", false),
+        /escaped its authorized root or volume/u
+      );
+    }
     assert.throws(
       () => hostInspector.listPlanned(hostInspector.planPath("/dev", "metadata"), undefined, 8, false),
       /escaped its authorized root, type, or volume/u
