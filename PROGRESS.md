@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `4afbe75`.
+Current committed implementation baseline: `7a4a788`.
+
+The latest helper caller-boundary addendum is `7a4a788`: a real macOS
+cross-process test starts a separately spawned Broker fixture, captures its
+native PID/start-time identity before helper construction, proves the bound
+caller reaches the helper parser, and proves a second spawned caller is
+dropped before parsing. The test uses a temporary socket only; it installs no
+launchd service and starts no root process. The full suite passes 346 tests
+(344 passed, 2 opt-in real-sandbox tests skipped). Evidence:
+`evidence/2026-09-13-privileged-helper-native-caller.md`.
 
 The latest helper-plist apply addendum is `4afbe75`: the root-domain package
 now exposes a host-only, explicitly confirmed descriptor-relative plist

@@ -75,6 +75,13 @@ preconditions, and restores content when upgrade/uninstall recovery fails. It
 never invokes launchctl; successful root-owned installation and readback remain
 open evidence.
 
+Revision `7a4a788` adds a real macOS cross-process caller-spoof test. The test
+captures the separately spawned Broker fixture's PID/start-time identity before
+constructing the helper listener, confirms that bound caller traffic reaches
+the parser, and confirms a second spawned caller is dropped before parsing.
+The fixture uses a temporary socket only and does not install launchd or start
+a root process.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
