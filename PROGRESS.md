@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `01a26ba`.
+Current committed implementation baseline: `61b0865`.
+
+The latest worker-crash addendum is `61b0865`: a test-only filesystem worker
+performs a real atomic write and then exits without returning a result. The
+Broker maps the abrupt worker exit to `EXECUTION_FAILED`, preserves the Job as
+`UNKNOWN`, and `mac_job_status` reports `matches / remains_unknown`; a separate
+executor test proves the capacity slot is released only after the worker exits
+and the next request can run. Production construction remains fixed to
+`filesystem-worker.js`. This proves worker-thread crash ambiguity and capacity
+recovery, not Broker-process restart fencing or OS-process ownership. Evidence:
+`evidence/2026-09-13-worker-crash-unknown.md`.
 
 The latest sandbox hostile-descendant addendum is `01a26ba`: the opt-in
 real-Mac `single_process` profile runs a Broker-resolved `/usr/bin/perl`
@@ -27,8 +37,8 @@ Broker preserves the mutation Job as `UNKNOWN`; `mac_job_status` reads
 `matches / remains_unknown`. The production default worker/native paths remain
 fixed. Focused Broker tests pass 62/62; the full suite passes 372 tests (370
 passed, 2 opt-in real-sandbox tests skipped). `MOPS_REAL_SANDBOX=1 npm test`
-passes 372/372. Physical disk-full, remount, kernel-blocked I/O, and worker
-restart ownership remain open. Evidence:
+passes 372/372. Physical disk-full, remount, kernel-blocked I/O, and
+Broker-process restart fencing remain open. Evidence:
 `evidence/2026-09-13-broker-worker-post-rename.md`.
 
 The latest Broker real-worker write-failure addendum is `2371eba`: a real
@@ -39,7 +49,7 @@ absent, and `mac_job_status` reads `unavailable / remains_unknown`. Focused
 Broker tests pass 61/61; the full suite passes 371 tests (369 passed, 2
 opt-in real-sandbox tests skipped). `MOPS_REAL_SANDBOX=1 npm test` passes
 371/371. Post-rename failure through the real worker, physical disk-full,
-kernel-blocked I/O, worker restart ownership, and remount evidence remain open.
+kernel-blocked I/O, Broker-process restart fencing, and remount evidence remain open.
 Evidence: `evidence/2026-09-13-broker-worker-write-failure.md`.
 
 The latest current-revision sandbox readback is `4d18b31`: the opt-in
