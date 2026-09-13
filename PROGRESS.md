@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest real active-revocation addendum: an opt-in Darwin Broker integration
+revokes the session while a real sandboxed `/bin/sleep` task is running. The
+ProcessSupervisor observes the authority loss, drains the detached process
+group, returns `CANCELLED`, and the Broker keeps the Job `unknown` rather than
+publishing success. The run records decision/intent/completion audit events.
+The full `MOPS_REAL_SANDBOX=1 npm test` suite passes 444/445 with one explicit
+host-boundary/opt-in skip; focused Broker tests pass 70/70. Evidence:
+`evidence/2026-09-14-real-broker-task-revocation.md`.
+
 Latest real Broker task-path addendum: an opt-in Darwin integration now
 exercises the signed `mac_task_run` request through Broker policy admission,
 single-use approval, Job creation, `SandboxExecTaskRunner`, and verified

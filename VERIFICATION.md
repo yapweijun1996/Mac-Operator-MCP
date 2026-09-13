@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest real active-revocation addendum: an opt-in Darwin integration revokes
+the session while `/bin/sleep` is running inside the experimental sandbox.
+The ProcessSupervisor drains the process group, Broker returns `CANCELLED`,
+the Job remains `unknown`, and decision/intent/completion audit events remain
+present. `MOPS_REAL_SANDBOX=1 npm test` passes 444/445 with one explicit
+host-boundary/opt-in skip; the focused Broker suite passes 70/70. Evidence:
+`evidence/2026-09-14-real-broker-task-revocation.md`.
+
 Latest real Broker task-path addendum: an opt-in Darwin integration exercises
 the signed `mac_task_run` path through policy admission, single-use approval,
 Broker Job linkage, `SandboxExecTaskRunner`, and verified completion/readback.
