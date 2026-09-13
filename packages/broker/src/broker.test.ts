@@ -12,7 +12,7 @@ import type { FilesystemExecutor } from "./filesystem-executor.js";
 import { BrokerStore, redactEvidence } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
-import type { TaskRunner } from "./task-runner.js";
+import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -72,6 +72,18 @@ function taskProfile(root: string): TaskProfile {
     outputCapBytes: 1_024,
     verificationStrategy: "exit_status_and_declared_task_verification",
     enabled: true
+  };
+}
+
+function testTaskIsolationProof(): TaskIsolationProof {
+  return {
+    schemaVersion: "0.1",
+    sandboxProfile: "deny-default-v0.1",
+    filesystem: "enforced",
+    network: "enforced",
+    credentials: "isolated",
+    processTree: "owned",
+    evidenceRef: "test://task-runner-isolation"
   };
 }
 
@@ -685,7 +697,7 @@ test("production-default policy enables no tool or filesystem root", () => {
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
-test("mac_task_run fails closed before consuming approval when no isolation runner is available", async () => {
+test("mac_task_run fails closed before consuming approval when isolation proof is unavailable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-fail-closed-"));
   const root = await realpath(directory);
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -705,6 +717,11 @@ test("mac_task_run fails closed before consuming approval when no isolation runn
     policy,
     edgeAuthenticationKeys: testKeyring(key),
     taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
+    taskRunner: {
+      available: true,
+      isolationProof: null,
+      async run() { throw new Error("must not execute without isolation proof"); }
+    },
     now: () => NOW
   });
   const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
@@ -759,6 +776,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
   let runnerCalls = 0;
   const taskRunner: TaskRunner = {
     available: true,
+    isolationProof: testTaskIsolationProof(),
     async run(profile, control) {
       runnerCalls += 1;
       assert.equal(profile.process.executable, "/bin/echo");
@@ -880,6 +898,7 @@ test("mac_task_run does not publish success after active session revocation", as
   };
   const taskRunner: TaskRunner = {
     available: true,
+    isolationProof: testTaskIsolationProof(),
     async run(_profile, control) {
       store.revoke("session", "session-1", "active-revocation-test", NOW);
       assert.equal(control.shouldCancel(), true);

@@ -23,3 +23,5 @@ Evaluate macOS sandbox profiles and current platform support, dedicated users, c
 ## Acceptance evidence
 
 A hostile fixture must fail to read controller and user credentials, escape allowed roots, reach denied network targets, detach unowned processes, access Docker/root-equivalent interfaces, persist launch items, or survive cancellation. Results must identify exact macOS/hardware/runtime versions.
+
+The Broker admission contract additionally requires a versioned, profile-matched `TaskIsolationProof` attesting to the sandbox, filesystem, network, credential, and process-tree dimensions. This gate prevents a runner's generic `available` flag from being treated as proof; it does not accept self-attestation as release evidence, and the default runner remains disabled until host evidence is independently reviewed.

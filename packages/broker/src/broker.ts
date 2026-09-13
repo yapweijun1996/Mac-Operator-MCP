@@ -35,7 +35,7 @@ import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitS
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
-import { FailClosedTaskRunner, validateTaskExecutionResult, type TaskRunner } from "./task-runner.js";
+import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRunner } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 
 export interface BrokerOptions {
@@ -1520,6 +1520,7 @@ export class Broker {
     }
     let terminalPersisted = false;
     try {
+      requireTaskIsolationProof(this.taskRunner.isolationProof, resolved);
       const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
         resolved,
         this.executionControl(request, execution.target, timeoutMs, job.jobId)
@@ -1606,6 +1607,7 @@ export class Broker {
       if (!this.taskRunner.available) {
         throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
       }
+      validateTaskIsolationProof(this.taskRunner.isolationProof);
       return {
         target: { kind: "task_profile", reference: parsed.profile },
         auditTarget: `task_profile:${parsed.profile}`,
