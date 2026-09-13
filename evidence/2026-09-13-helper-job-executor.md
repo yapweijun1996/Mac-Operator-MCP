@@ -26,13 +26,25 @@ delegation and again by the executor before command issuance and after helper
 readback. The default Broker constructor supplies a disabled executor, so no
 MCP request path changes.
 
+The helper command boundary also carries a strict, persisted payload descriptor
+in addition to its digest. `BrokerStore` accepts only typed service-control,
+package-install, and power shapes; extra fields, secret-shaped content,
+unbounded strings, target mismatches, and digest mismatches fail before Job
+creation. The signed envelope repeats the descriptor and verifies operation,
+target, and canonical digest binding before the adapter receives it. Shell text,
+executable paths, environments, credentials, and arbitrary argument maps are
+not representable.
+
 ## Verification
 
 - `node --test packages/broker/dist/privileged-helper-executor.test.js`: 5/5
 - Broker regression including the disabled seam: 67/67
 - `npm run typecheck`: pass
-- `npm test`: 406 tests, 403 passed, 0 failed, 3 opt-in sandbox tests skipped
+- `npm test`: 407 tests, 404 passed, 0 failed, 3 opt-in sandbox tests skipped
 - `git diff --check`: pass
+
+The payload persistence regression passes across a BrokerStore restart, and
+the legacy Job migration adds the descriptor column with an empty default.
 
 ## Remaining boundary
 
@@ -41,6 +53,11 @@ not registered in the default policy/dispatch path, the helper adapter remains
 disabled, no privileged key is provisioned, and no root helper or launchd
 service was installed. Real-Mac helper IPC, package identity, crash/restart,
 rollback, and independent P0/P1 review remain open gates.
+
+This descriptor is not enablement: the default policy still contains no
+privileged ToolPolicy entries, the helper adapter remains unavailable, and no
+MCP route accepts these payloads. The Broker must construct and persist an
+approved descriptor before it can ever sign a helper command.
 
 ## Rollback
 

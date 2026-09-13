@@ -30,6 +30,11 @@ import {
 const NOW = 1_700_000_000_000;
 
 function command(sequence: number, operation: UnsignedPrivilegedHelperCommand["operation"] = "service_control"): UnsignedPrivilegedHelperCommand {
+  const payload = operation === "service_control"
+    ? { operation: "service_control" as const, service_id: "system/com.example.test", action: "start" as const }
+    : operation === "package_install"
+      ? { operation: "package_install" as const, package_id: "example", version: "1.2.3" }
+      : { operation: "power" as const, action: "reboot" as const };
   return {
     protocolVersion: "0.1",
     contractVersion: CONTRACT_VERSION,
@@ -40,8 +45,9 @@ function command(sequence: number, operation: UnsignedPrivilegedHelperCommand["o
     timestampMs: NOW,
     expiresAtMs: NOW + 30_000,
     operation,
-    targetRef: operation === "service_control" ? "service:system/com.example.test" : operation === "package_install" ? "package:example@1.2.3" : "host:local",
-    payloadDigest: sha256(canonicalJson({ operation, sequence })),
+    targetRef: operation === "service_control" ? "service:system/com.example.test" : operation === "package_install" ? "package:example" : "host:local",
+    payload,
+    payloadDigest: sha256(canonicalJson(payload)),
     policyVersion: "policy-test-1",
     approvalId: `approval:test-${sequence}`,
     intentId: `intent:test-${sequence}`
@@ -121,7 +127,7 @@ test("privileged helper command is signed, bounded, and excludes raw execution a
   assert.deepEqual(authenticatePrivilegedHelperCommand(signed, key, NOW), unsigned);
   assert.throws(
     () => authenticatePrivilegedHelperCommand({ ...signed, operation: "power", targetRef: "host:local" }, key, NOW),
-    (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "AUTH_INVALID"
+    (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
   );
   assert.throws(
     () => authenticatePrivilegedHelperCommand({ ...signed, executable: "/bin/sh" }, key, NOW),
@@ -209,7 +215,7 @@ test("privileged helper IPC authenticates the peer and command, rejects replay, 
 
     assert.throws(
       () => authenticatePrivilegedHelperResponse(response, { ...first, targetRef: "service:system/com.example.other" }, key),
-      (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "AUTH_INVALID"
+      (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
     );
 
     const replay = await sendCommand(socketPath, firstSigned);
@@ -401,7 +407,8 @@ test("Broker helper command factory binds a running approved Job without raw aut
       jobId: "job:factory-service",
       tool: "mac_priv_service_control",
       targetRef: "service:system/com.example.factory",
-      payloadDigest: sha256(canonicalJson({ service: "com.example.factory", action: "start" }))
+      privilegedPayload: { operation: "service_control", service_id: "system/com.example.factory", action: "start" },
+      payloadDigest: sha256(canonicalJson({ operation: "service_control", service_id: "system/com.example.factory", action: "start" }))
     });
     const authorized: UnsignedPrivilegedHelperCommand[] = [];
     const factory = new BrokerPrivilegedHelperCommandFactory({
@@ -427,7 +434,7 @@ test("Broker helper command factory binds a running approved Job without raw aut
     const rawKeys = Object.keys(unsigned);
     assert.equal(rawKeys.includes("executable"), false);
     assert.equal(rawKeys.includes("args"), false);
-    assert.equal(rawKeys.includes("payload"), false);
+    assert.equal(rawKeys.includes("payload"), true);
 
     const second = new BrokerPrivilegedHelperCommandFactory({
       store,
@@ -455,7 +462,8 @@ test("Broker helper command factory fails closed on operation mismatch, queued w
       jobId: "job:factory-deny",
       tool: "mac_priv_power",
       targetRef: "host:local",
-      payloadDigest: sha256(canonicalJson({ operation: "reboot", confirmation: "operator" }))
+      privilegedPayload: { operation: "power", action: "reboot", reason: "operator" },
+      payloadDigest: sha256(canonicalJson({ operation: "power", action: "reboot", reason: "operator" }))
     });
     const factory = new BrokerPrivilegedHelperCommandFactory({
       store,
@@ -473,7 +481,8 @@ test("Broker helper command factory fails closed on operation mismatch, queued w
       jobId: "job:factory-queued",
       tool: "mac_priv_power",
       targetRef: "host:local",
-      payloadDigest: sha256(canonicalJson({ operation: "shutdown" }))
+      privilegedPayload: { operation: "power", action: "shutdown" },
+      payloadDigest: sha256(canonicalJson({ operation: "power", action: "shutdown" }))
     });
     const queuedFactory = new BrokerPrivilegedHelperCommandFactory({
       store,
@@ -530,6 +539,7 @@ type PrivilegedJobSetup = {
   jobId: string;
   tool: "mac_priv_service_control" | "mac_priv_package_install" | "mac_priv_power";
   targetRef: string;
+  privilegedPayload: import("./persistence.js").PrivilegedHelperPayload;
   payloadDigest: string;
 };
 
@@ -613,7 +623,8 @@ function admitApprovedPrivilegedJob(store: BrokerStore, setup: PrivilegedJobSetu
     policyVersion: "policy-0.1",
     payloadDigest: setup.payloadDigest,
     idempotencyKey: `idem-${setup.jobId.replace(/^job:/u, "")}`,
-    createdAtMs: NOW + 2
+    createdAtMs: NOW + 2,
+    privilegedPayload: setup.privilegedPayload
   });
   store.linkRequestJob(setup.requestId, setup.jobId, NOW + 3);
   return {

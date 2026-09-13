@@ -5,8 +5,10 @@ import { isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
-import type { ApprovalRecord, BrokerJob, BrokerStore, RequestRecord } from "./persistence.js";
+import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ApprovalRecord, type BrokerJob, type BrokerStore, type PrivilegedHelperPayload, type RequestRecord } from "./persistence.js";
 import { redactLogText } from "./secret-policy.js";
+
+export type { PrivilegedHelperPayload } from "./persistence.js";
 
 const HELPER_COMMAND_DOMAIN = "mac-operator-privileged-helper-command-v0.1\0";
 const HELPER_RESPONSE_DOMAIN = "mac-operator-privileged-helper-response-v0.1\0";
@@ -50,6 +52,7 @@ export interface UnsignedPrivilegedHelperCommand {
   expiresAtMs: number;
   operation: PrivilegedHelperOperation;
   targetRef: string;
+  payload: PrivilegedHelperPayload;
   payloadDigest: string;
   policyVersion: string;
   approvalId: string;
@@ -277,6 +280,11 @@ export class BrokerPrivilegedHelperCommandFactory {
     if (input.operation !== undefined && input.operation !== binding.operation) {
       throw new BrokerError("PRECONDITION_FAILED", "Requested helper operation does not match the Broker tool");
     }
+    const payload = job.privilegedPayload;
+    if (payload === undefined || payload.operation !== binding.operation || privilegedHelperPayloadTarget(payload) !== job.targetRef ||
+        sha256(canonicalJson(payload)) !== job.payloadDigest) {
+      throw new BrokerError("PRECONDITION_FAILED", "Privileged helper Job payload descriptor is missing or mismatched");
+    }
 
     this.assertRunningIdentity(request, job, input, binding.operation);
     if (this.options.store.isSwitchDisabled("global") ||
@@ -318,6 +326,7 @@ export class BrokerPrivilegedHelperCommandFactory {
       expiresAtMs,
       operation: binding.operation,
       targetRef: job.targetRef,
+      payload,
       payloadDigest: job.payloadDigest,
       policyVersion: request.policyVersion,
       approvalId: approval.approvalId,
@@ -957,6 +966,15 @@ export function validateUnsignedPrivilegedHelperCommand(command: UnsignedPrivile
       command.nonceExpiresAtMs <= command.timestampMs) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command fields are malformed");
   }
+  try {
+    validatePrivilegedHelperPayload(command.payload);
+  } catch {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command payload is malformed");
+  }
+  if (command.payload.operation !== command.operation || privilegedHelperPayloadTarget(command.payload) !== command.targetRef ||
+      sha256(canonicalJson(command.payload)) !== command.payloadDigest) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command payload binding is invalid");
+  }
 }
 
 export function validatePrivilegedHelperExecutionResult(
@@ -1035,7 +1053,7 @@ function parseSignedCommand(value: unknown): { unsigned: UnsignedPrivilegedHelpe
   const record = value as Record<string, unknown>;
   const allowed = new Set([
     "protocolVersion", "contractVersion", "commandId", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs",
-    "operation", "targetRef", "payloadDigest", "policyVersion", "approvalId", "intentId", "authenticationProof"
+    "operation", "targetRef", "payload", "payloadDigest", "policyVersion", "approvalId", "intentId", "authenticationProof"
   ]);
   if (Object.keys(record).some((key) => !allowed.has(key)) || typeof record.authenticationProof !== "string" || !/^[a-f0-9]{64}$/u.test(record.authenticationProof)) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper envelope is malformed");
@@ -1051,6 +1069,7 @@ function parseSignedCommand(value: unknown): { unsigned: UnsignedPrivilegedHelpe
     expiresAtMs: record.expiresAtMs as number,
     operation: record.operation as PrivilegedHelperOperation,
     targetRef: record.targetRef as string,
+    payload: record.payload as PrivilegedHelperPayload,
     payloadDigest: record.payloadDigest as string,
     policyVersion: record.policyVersion as string,
     approvalId: record.approvalId as string,
@@ -1267,7 +1286,8 @@ function fallbackCommand(): UnsignedPrivilegedHelperCommand {
     expiresAtMs: 1,
     operation: "power",
     targetRef: "host:local",
-    payloadDigest: "0".repeat(64),
+    payload: { operation: "power", action: "reboot" },
+    payloadDigest: sha256(canonicalJson({ operation: "power", action: "reboot" })),
     policyVersion: "policy-invalid",
     approvalId: "approval:invalid",
     intentId: "intent:invalid"

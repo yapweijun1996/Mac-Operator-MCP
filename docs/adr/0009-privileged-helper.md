@@ -184,11 +184,22 @@ an integration primitive: `Broker.executePrivilegedHelperJob()` is the only
 host seam and the default Broker constructor injects a disabled executor, so
 no privileged MCP route or adapter is enabled.
 
+The signed command now contains a Broker-persisted typed payload descriptor,
+not only a digest. The descriptor is a strict union for service control,
+package installation, and power handoff. Persistence rejects unknown fields,
+secret-shaped values, unbounded strings, operation/target mismatches, and a
+canonical digest mismatch. Command validation repeats the operation, target,
+and digest checks, so a helper handler receives no shell text, executable path,
+environment, credential, or arbitrary argument map. The descriptor column is
+optional for legacy non-privileged Jobs and has an empty migration default.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
 - Replay state is separate from Edge and Broker request replay so a helper socket cannot be reused after restart.
 - Helper failure, timeout, cancellation, or unverifiable postcondition must remain a stable failure or `UNKNOWN_OUTCOME`; the Broker must not infer privileged success from connection loss.
+- A privileged command cannot be signed from a digest alone: a persisted,
+  allowlisted descriptor must match the Job target and canonical payload digest.
 - Rollback is to remove the helper channel and revoke the `privileged` kill switch/authority; the MCP Edge has no direct helper route.
 
 ## Open evidence

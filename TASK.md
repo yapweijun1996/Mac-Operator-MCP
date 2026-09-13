@@ -241,6 +241,14 @@ The Broker owns the seam through an optional `privilegedHelperExecutor`
 dependency and `executePrivilegedHelperJob()`; the default constructor injects
 the disabled implementation and performs no privileged dispatch.
 
+The helper command boundary also persists a strict typed payload descriptor and
+includes it in the signed envelope. Only Broker-owned service, package, and
+power descriptors can cross the helper boundary; raw shell text, executable
+paths, environments, credentials, and arbitrary maps remain unrepresentable.
+Target, operation, secret-policy, and canonical digest checks run at Job
+creation and command validation. This is still disabled and does not unblock
+the privileged capability rows.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.

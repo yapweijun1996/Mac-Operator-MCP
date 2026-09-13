@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 
 test("BrokerStore migrates the legacy revocation constraint without losing data", async () => {
@@ -118,7 +119,7 @@ test("BrokerStore adds write metadata storage to an existing Job Ledger", async 
     try {
       const columns = migrated.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
       const names = new Set(columns.map((column) => column.name));
-      for (const name of ["lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms", "process_metadata_json"]) {
+      for (const name of ["lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms", "process_metadata_json", "privileged_payload_json"]) {
         assert.equal(names.has(name), true, `expected migrated Job lease column ${name}`);
       }
     } finally {
@@ -638,6 +639,47 @@ test("job creation is principal-scoped and payload-bound idempotent", async () =
       ownerPrincipalId: "principal-2"
     });
     assert.equal(otherPrincipal.reused, false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("privileged helper payload descriptors persist across BrokerStore restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-privileged-payload-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const privilegedPayload = { operation: "service_control" as const, service_id: "system/com.example.test", action: "start" as const };
+  const payloadDigest = sha256(canonicalJson(privilegedPayload));
+  let store = new BrokerStore(databasePath);
+  try {
+    const created = store.createJob({
+      jobId: "job:privileged-payload",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_priv_service_control",
+      targetRef: "service:system/com.example.test",
+      policyVersion: "policy-0.1",
+      payloadDigest,
+      idempotencyKey: "privileged-payload",
+      createdAtMs: 1,
+      privilegedPayload
+    });
+    assert.deepEqual(created.job.privilegedPayload, privilegedPayload);
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.deepEqual(store.ownedJob("job:privileged-payload", "principal-1")?.privilegedPayload, privilegedPayload);
+    assert.throws(() => store.createJob({
+      jobId: "job:privileged-payload-invalid",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_priv_service_control",
+      targetRef: "service:system/com.example.test",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "privileged-payload-invalid",
+      createdAtMs: 1,
+      privilegedPayload: { operation: "service_control", service_id: "system/com.example.test", action: "start" }
+    }), /malformed/u);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

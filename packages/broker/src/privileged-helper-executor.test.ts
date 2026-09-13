@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { BrokerError, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
 import { BrokerStore, type BrokerJob, type JobLease } from "./persistence.js";
 import {
   createPrivilegedHelperCommandClient,
@@ -18,6 +18,8 @@ import type {
 import { signPrivilegedHelperCommand } from "./privileged-helper.js";
 
 const NOW = 1_700_000_000_000;
+const SERVICE_PAYLOAD = { operation: "service_control" as const, service_id: "system/com.example.test", action: "start" as const };
+const SERVICE_PAYLOAD_DIGEST = sha256(canonicalJson(SERVICE_PAYLOAD));
 
 test("privileged helper Job executor is disabled by default without changing the Job", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-disabled-"));
@@ -147,7 +149,7 @@ test("helper acceptance without completion stays UNKNOWN_OUTCOME", async () => {
 
 test("command client binding zeroes the short-lived authentication key", async () => {
   const key = randomBytes(32);
-  const { authenticationProof: _placeholder, ...unsigned } = signedCommand("service:system/com.example.test", sha256("executor-test"));
+  const { authenticationProof: _placeholder, ...unsigned } = signedCommand("service:system/com.example.test", SERVICE_PAYLOAD_DIGEST);
   const signed = signPrivilegedHelperCommand(unsigned, key);
   const client = createPrivilegedHelperCommandClient(() => ({
     socketPath: "/private/var/empty/mac-operator-helper.sock",
@@ -190,6 +192,7 @@ function signedCommand(targetRef: string, payloadDigest: string): SignedPrivileg
     expiresAtMs: NOW + 30_000,
     operation: "service_control",
     targetRef,
+    payload: SERVICE_PAYLOAD,
     payloadDigest,
     policyVersion: "policy-0.1",
     approvalId: "approval:executor-test",
@@ -200,7 +203,7 @@ function signedCommand(targetRef: string, payloadDigest: string): SignedPrivileg
 
 function admitRunningJob(store: BrokerStore, jobId: string, requestId: string): { job: BrokerJob; lease: JobLease } {
   const targetRef = "service:system/com.example.test";
-  const payloadDigest = sha256("executor-payload");
+  const payloadDigest = SERVICE_PAYLOAD_DIGEST;
   store.admitRequest({
     requestId,
     edgeId: "edge-1",
@@ -269,7 +272,8 @@ function admitRunningJob(store: BrokerStore, jobId: string, requestId: string): 
     policyVersion: "policy-0.1",
     payloadDigest,
     idempotencyKey: `idem-${jobId.replace(/^job:/u, "")}`,
-    createdAtMs: NOW + 2
+    createdAtMs: NOW + 2,
+    privilegedPayload: SERVICE_PAYLOAD
   });
   store.linkRequestJob(requestId, jobId, NOW + 3);
   store.markRequestRunning(requestId, NOW + 4);

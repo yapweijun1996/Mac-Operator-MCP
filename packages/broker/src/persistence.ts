@@ -104,6 +104,31 @@ export interface ProcessDescendantMetadata {
   startTimeMicros: number;
 }
 
+/**
+ * Non-secret, allowlisted arguments that may cross the helper boundary.
+ * Generic shell text, executable paths, and arbitrary maps are intentionally
+ * not representable here.
+ */
+export type PrivilegedHelperPayload =
+  | {
+      operation: "service_control";
+      service_id: string;
+      action: "start" | "stop" | "restart" | "enable" | "disable";
+      expected_state?: "running" | "stopped" | "enabled" | "disabled";
+    }
+  | {
+      operation: "package_install";
+      package_id: string;
+      version?: string;
+      source_profile?: string;
+    }
+  | {
+      operation: "power";
+      action: "reboot" | "shutdown";
+      reason?: string;
+      not_before?: string;
+    };
+
 export interface BrokerJob {
   jobId: string;
   ownerPrincipalId: string;
@@ -126,6 +151,7 @@ export interface BrokerJob {
   revision: number;
   writeMetadata?: WriteJobMetadata;
   processMetadata?: ProcessJobMetadata;
+  privilegedPayload?: PrivilegedHelperPayload;
 }
 
 export interface CreateJobInput {
@@ -139,6 +165,7 @@ export interface CreateJobInput {
   idempotencyKey: string;
   createdAtMs: number;
   writeMetadata?: WriteJobMetadata;
+  privilegedPayload?: PrivilegedHelperPayload;
 }
 
 export type RequestState =
@@ -451,6 +478,7 @@ export class BrokerStore {
         lease_expires_at_ms INTEGER,
         write_metadata_json TEXT NOT NULL DEFAULT '',
         process_metadata_json TEXT NOT NULL DEFAULT '',
+        privileged_payload_json TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL,
         UNIQUE (owner_principal_id, idempotency_key)
       ) STRICT;
@@ -643,12 +671,12 @@ export class BrokerStore {
             job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
             payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
             finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-            cancel_requested, cancel_reason, write_metadata_json, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
+            cancel_requested, cancel_reason, write_metadata_json, privileged_payload_json, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, ?, 0)
         `).run(
           input.job.jobId, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
-          input.job.createdAtMs, serializeWriteJobMetadata(input.job.writeMetadata)
+          input.job.createdAtMs, serializeWriteJobMetadata(input.job.writeMetadata), serializePrivilegedHelperPayload(input.job.privilegedPayload)
         );
         this.injectFault("admit_approved_job.after_job");
         const transitioned = this.database.prepare(`
@@ -941,12 +969,12 @@ export class BrokerStore {
             job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
             payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
             finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-            cancel_requested, cancel_reason, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, 0)
+            cancel_requested, cancel_reason, privileged_payload_json, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
         `).run(
           input.job.jobId, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
-          input.job.createdAtMs
+          input.job.createdAtMs, serializePrivilegedHelperPayload(input.job.privilegedPayload)
         );
         this.injectFault("admit_approved_job_after_decision.after_job");
         const transitioned = this.database.prepare(`
@@ -1306,12 +1334,12 @@ export class BrokerStore {
           job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
           payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
           finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-          cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', 0)
+          cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, privileged_payload_json, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', ?, 0)
       `).run(
         input.jobId, input.ownerPrincipalId, input.ownerSessionId, input.tool, input.targetRef,
         input.policyVersion, input.payloadDigest, input.idempotencyKey, input.createdAtMs,
-        serializeWriteJobMetadata(input.writeMetadata)
+        serializeWriteJobMetadata(input.writeMetadata), serializePrivilegedHelperPayload(input.privilegedPayload)
       );
       return { job: this.requireOwnedJob(input.jobId, input.ownerPrincipalId), reused: false };
     });
@@ -2422,6 +2450,9 @@ export class BrokerStore {
     if (!names.has("process_metadata_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN process_metadata_json TEXT NOT NULL DEFAULT ''");
     }
+    if (!names.has("privileged_payload_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN privileged_payload_json TEXT NOT NULL DEFAULT ''");
+    }
   }
 }
 
@@ -2459,6 +2490,7 @@ interface JobRow {
   lease_expires_at_ms: number | null;
   write_metadata_json: string;
   process_metadata_json: string;
+  privileged_payload_json: string;
   revision: number;
 }
 
@@ -2572,7 +2604,8 @@ function mapJob(row: JobRow): BrokerJob {
     cancelRequested: row.cancel_requested === 1,
     revision: row.revision,
     ...(row.write_metadata_json ? { writeMetadata: parseWriteJobMetadata(row.write_metadata_json) } : {}),
-    ...(row.process_metadata_json ? { processMetadata: parseProcessJobMetadata(row.process_metadata_json) } : {})
+    ...(row.process_metadata_json ? { processMetadata: parseProcessJobMetadata(row.process_metadata_json) } : {}),
+    ...(row.privileged_payload_json ? { privilegedPayload: parsePrivilegedHelperPayload(row.privileged_payload_json) } : {})
   };
 }
 
@@ -2589,6 +2622,15 @@ function validateJobCreation(input: CreateJobInput): void {
     throw malformedJob();
   }
   if (input.writeMetadata !== undefined) validateWriteJobMetadata(input.writeMetadata);
+  const privilegedTool = input.tool === "mac_priv_service_control" || input.tool === "mac_priv_package_install" || input.tool === "mac_priv_power";
+  if (privilegedTool) {
+    if (input.privilegedPayload === undefined || privilegedHelperPayloadTarget(input.privilegedPayload) !== input.targetRef ||
+        sha256(canonicalJson(input.privilegedPayload)) !== input.payloadDigest) {
+      throw malformedJob();
+    }
+  } else if (input.privilegedPayload !== undefined) {
+    throw malformedJob();
+  }
 }
 
 function validateJobLease(lease: JobLease, nowMs: number, allowExpired: boolean): void {
@@ -2615,6 +2657,72 @@ function serializeWriteJobMetadata(metadata: WriteJobMetadata | undefined): stri
   if (metadata === undefined) return "";
   validateWriteJobMetadata(metadata);
   return canonicalJson(metadata);
+}
+
+export function serializePrivilegedHelperPayload(payload: PrivilegedHelperPayload | undefined): string {
+  if (payload === undefined) return "";
+  validatePrivilegedHelperPayload(payload);
+  return canonicalJson(payload);
+}
+
+function parsePrivilegedHelperPayload(value: string): PrivilegedHelperPayload {
+  if (value.length < 1 || value.length > 4_096) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker privileged payload is malformed");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value) as unknown;
+  } catch {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker privileged payload is malformed");
+  }
+  try {
+    validatePrivilegedHelperPayload(parsed as PrivilegedHelperPayload);
+  } catch {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker privileged payload is malformed");
+  }
+  return parsed as PrivilegedHelperPayload;
+}
+
+export function validatePrivilegedHelperPayload(payload: PrivilegedHelperPayload): void {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) throw malformedJob();
+  const record = payload as unknown as Record<string, unknown>;
+  const keys = Object.keys(record).sort().join(",");
+  const isBoundedToken = (value: unknown, pattern: RegExp, maxLength = 255): value is string =>
+    typeof value === "string" && value.length >= 1 && value.length <= maxLength && !value.includes("\0") && pattern.test(value);
+  if (payload.operation === "service_control") {
+    if (keys !== "action,operation,service_id" && keys !== "action,expected_state,operation,service_id" ||
+        !isBoundedToken(payload.service_id, /^[A-Za-z0-9._:@/+\-]+$/u) ||
+        !["start", "stop", "restart", "enable", "disable"].includes(payload.action) ||
+        (payload.expected_state !== undefined && !["running", "stopped", "enabled", "disabled"].includes(payload.expected_state))) {
+      throw malformedJob();
+    }
+  } else if (payload.operation === "package_install") {
+    if (keys !== "operation,package_id" && keys !== "operation,package_id,source_profile" && keys !== "operation,package_id,version" && keys !== "operation,package_id,source_profile,version" ||
+        !isBoundedToken(payload.package_id, /^[A-Za-z0-9._:@/+\-]+$/u) ||
+        (payload.version !== undefined && !isBoundedToken(payload.version, /^[A-Za-z0-9._:+\-]+$/u, 128)) ||
+        (payload.source_profile !== undefined && !isBoundedToken(payload.source_profile, /^[A-Za-z0-9._:-]+$/u, 128))) {
+      throw malformedJob();
+    }
+  } else if (payload.operation === "power") {
+    if (keys !== "action,operation" && keys !== "action,operation,reason" && keys !== "action,not_before,operation" && keys !== "action,not_before,operation,reason" ||
+        !["reboot", "shutdown"].includes(payload.action) ||
+        (payload.reason !== undefined && (typeof payload.reason !== "string" || payload.reason.length > 200 || payload.reason.includes("\0") || /[\r\n]/u.test(payload.reason))) ||
+        (payload.not_before !== undefined && (typeof payload.not_before !== "string" || payload.not_before.length > 64 || payload.not_before.includes("\0") || /[\r\n]/u.test(payload.not_before)))) {
+      throw malformedJob();
+    }
+  } else {
+    throw malformedJob();
+  }
+  try {
+    assertContentDoesNotContainSecrets(Buffer.from(canonicalJson(payload), "utf8"));
+  } catch {
+    throw malformedJob();
+  }
+}
+
+export function privilegedHelperPayloadTarget(payload: PrivilegedHelperPayload): string {
+  validatePrivilegedHelperPayload(payload);
+  if (payload.operation === "service_control") return `service:${payload.service_id}`;
+  if (payload.operation === "package_install") return `package:${payload.package_id}`;
+  return "host:local";
 }
 
 function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {

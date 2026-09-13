@@ -1151,10 +1151,17 @@ transport/timeout/accepted-but-incomplete/post-revocation uncertainty as
 retryable `UNKNOWN_OUTCOME`. The short-lived command key buffer is cleared by
 the client binding. The default policy and MCP dispatch still expose no
 privileged operation; helper installation, adapters, and root launchd remain
-disabled. The latest default suite is 406 tests (403 passed, 3 opt-in sandbox
+disabled. The latest default suite is 407 tests (404 passed, 3 opt-in sandbox
 tests skipped). Evidence: `evidence/2026-09-13-helper-job-executor.md`.
 
 The Broker now owns the executor through an explicit optional dependency and a
 host-only `executePrivilegedHelperJob()` seam. The seam performs an initial
 authority check, while the executor repeats it around helper IPC; the default
 constructor remains fail-closed and disabled.
+
+The helper envelope now carries a persisted typed payload descriptor as well as
+its digest. Strict service-control, package-install, and power shapes reject
+unknown fields, secret-shaped content, unbounded text, target mismatches, and
+digest mismatches. No MCP route accepts these descriptors and privileged policy
+and adapters remain disabled. Persistence/restart and command-binding tests
+cover the new boundary.
