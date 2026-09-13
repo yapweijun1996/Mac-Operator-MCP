@@ -19,6 +19,12 @@ process identity before Broker/signature validation. It remains a non-installing
 host composition boundary; real LaunchAgent bootstrap and final service evidence
 remain open. Evidence: `evidence/2026-09-13-installed-readback-identity.md`.
 
+Final plist readback addendum: commit `70ca1e9` requires descriptor-backed
+plist identity and SHA-256 content matching the rendered plan, with canonical
+`/var`/`/private/var` path handling and tamper/truncation rejection. Real
+LaunchAgent bootstrap and installed-service evidence remain open. Evidence:
+`evidence/2026-09-13-installed-readback-identity.md`.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.

@@ -1,6 +1,6 @@
 # Installed Broker readback identity evidence
 
-- Source commit: `4cb4e1a`
+- Source commit: `70ca1e9`
 - Working tree: clean before this evidence document update
 - Host: Mac mini M4, `Darwin yaps-Mac-mini.local 25.2.0`, arm64
 - Runtime: Node `v25.5.0`; macOS platform reported by Node as `darwin`
@@ -26,6 +26,13 @@ readback. It does not manufacture a launchd observation: the caller must supply
 the bounded `LaunchdJobReadback` produced by the fixed `launchctl print`
 adapter.
 
+The composition now also requires a descriptor-backed `MacOsPlistReadback`
+whose canonical path, device/inode, byte count, and SHA-256 match the exact
+rendered plan. `readMacOsPlistReadback` reads through the protected filesystem
+inspector, rejects target changes and truncation, and refuses tampered content.
+The macOS `/var` to `/private/var` canonical-path projection is normalized
+before comparison.
+
 The caller remains responsible for obtaining the identity through the native
 macOS process observer (for example, `capturePeerProcessIdentity`) after
 launchd supplies the PID. The repository does not claim installed-service
@@ -39,6 +46,8 @@ the final launchd/Broker/signature verification.
 - Focused install-plan tests reject PID mismatch, missing identity, invalid
   start-time values, and substituted launchd service identities while accepting
   a matching PID/start-time pair.
+- The plist readback test verifies canonical identity/digest and rejects a
+  tampered plist before it can join final service readback.
 - `git diff --check` — passed.
 
 ## Interpretation and limits
@@ -51,6 +60,6 @@ physical remount durability. Those remain release evidence requirements.
 Source hashes at capture:
 
 ```text
-b2579e109241374780090bbf70ed7c7acd33ce2a08fe0fb8c4e4a6b3dc28c0d0  packages/broker/src/macos-install-plan.ts
-06e25e462197e918d6bb33828fcafc60ed0a04d9a72f74049b87ebb636a25629  packages/broker/src/macos-install-plan.test.ts
+84929e6ee2ac1dd67c76128cecb56c39aa0c54f44a6a20dccb62959919dbe67b  packages/broker/src/macos-install-plan.ts
+2ea379d46d28d25573c2eb0a3af8c1bf407fa4074cbce148dc5931aa3742305b  packages/broker/src/macos-install-plan.test.ts
 ```

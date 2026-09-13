@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest final-plist-readback addendum: source commit `70ca1e9` requires a
+descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
+the exact rendered plan. The readback rejects truncation, target changes,
+tampering, and non-canonical path substitution; the focused test and full
+395-test suite pass. This remains a non-installing boundary; real LaunchAgent
+bootstrap/readback remains open. Evidence:
+`evidence/2026-09-13-installed-readback-identity.md`.
+
 Latest verified-launchd-readback addendum: source commit `4cb4e1a` adds
 `composeMacOsInstallReadback`, which accepts only the bounded launchd service
 readback plus native process identity, Broker metadata, and signature sources.

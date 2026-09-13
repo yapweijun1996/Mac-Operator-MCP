@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `4cb4e1a`.
+Current committed implementation baseline: `70ca1e9`.
+
+The latest final-plist-readback addendum is `70ca1e9`: the installed-service
+readback now requires a descriptor-backed plist path, device/inode identity,
+byte count, and SHA-256 matching the exact rendered plan. The protected
+filesystem reader rejects truncation, target changes, and tampered content,
+including macOS `/var` to `/private/var` canonicalization. This remains a
+non-installing boundary; real LaunchAgent bootstrap and final host evidence
+remain open. Evidence:
+`evidence/2026-09-13-installed-readback-identity.md`.
 
 The latest verified-launchd-readback addendum is `4cb4e1a`: the installer now
 has a composition function that binds the bounded `launchctl print` service ID,
