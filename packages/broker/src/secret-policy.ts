@@ -7,9 +7,12 @@ const DENIED_BASENAMES = new Set([
 ]);
 
 const DENIED_PATH_FRAGMENTS = [
-  "/.ssh/", "/.gnupg/", "/.aws/", "/.azure/", "/.config/gcloud/", "/.kube/",
+  "/.ssh/", "/.gnupg/", "/.aws/", "/.azure/", "/.config/gcloud/", "/.config/gh/", "/.kube/", "/.docker/",
   "/library/keychains/", "/library/mail/", "/library/messages/", "/library/safari/",
-  "/library/application support/google/chrome/", "/photos library.photoslibrary/"
+  "/library/application support/google/chrome/", "/library/application support/bravesoftware/brave-browser/",
+  "/library/application support/microsoft edge/", "/library/containers/com.apple.mail/",
+  "/library/containers/com.apple.messages/", "/library/containers/com.apple.safari/",
+  "/photos library.photoslibrary/"
 ];
 
 const SECRET_CONTENT_PATTERNS = [
@@ -18,6 +21,9 @@ const SECRET_CONTENT_PATTERNS = [
   /\bAIza[0-9A-Za-z_-]{30,}\b/u,
   /\bgh[pousr]_[0-9A-Za-z]{20,}\b/u,
   /\bsk-proj-[0-9A-Za-z_-]{16,}\b/u,
+  /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}\b/iu,
+  /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/iu,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/u,
   /\bxox[baprs]-[0-9A-Za-z-]{16,}\b/u,
   /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/iu
 ];
@@ -28,9 +34,12 @@ const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /\bAIza[0-9A-Za-z_-]{30,}\b/gu,
   /\bgh[pousr]_[0-9A-Za-z]{20,}\b/gu,
   /\bsk-proj-[0-9A-Za-z_-]{16,}\b/gu,
+  /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}\b/giu,
+  /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/giu,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
   /\bxox[baprs]-[0-9A-Za-z-]{16,}\b/gu,
   /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/giu,
-  /(?:\/Users\/[^\s/]+|\/var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.kube|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/Google\/Chrome))[^\s]*/giu
+  /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.config\/(?:gcloud|gh)|\.kube|\.docker|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/(?:Google\/Chrome|BraveSoftware\/Brave-Browser|Microsoft Edge)|Containers\/com\.apple\.(?:mail|messages|safari))|Photos Library\.photoslibrary)(?:[^\r\n,;)]*)/giu
 ];
 
 export function assertContentPathAllowed(path: string): void {
@@ -38,9 +47,6 @@ export function assertContentPathAllowed(path: string): void {
   const name = basename(normalized);
   if (name === ".env" || name.startsWith(".env.") || DENIED_BASENAMES.has(name) ||
       DENIED_PATH_FRAGMENTS.some((fragment) => `${normalized}/`.includes(fragment))) {
-    throw new BrokerError("POLICY_DENIED", "Filesystem content is inside a protected secret zone");
-  }
-  if (normalized.endsWith("/.docker/config.json") || normalized.endsWith("/.kube/config")) {
     throw new BrokerError("POLICY_DENIED", "Filesystem content is inside a protected secret zone");
   }
 }

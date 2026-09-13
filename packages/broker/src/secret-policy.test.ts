@@ -9,8 +9,12 @@ test("fixed secret-zone policy denies credential and private-data paths", () => 
     "/Users/test/.ssh/id_ed25519",
     "/Users/test/.config/gcloud/application_default_credentials.json",
     "/Users/test/.docker/config.json",
+    "/Users/test/.docker/contexts/meta/abc/meta.json",
+    "/Users/test/.config/gh/hosts.yml",
     "/Users/test/Library/Keychains/login.keychain-db",
     "/Users/test/Library/Application Support/Google/Chrome/Default/Login Data",
+    "/Users/test/Library/Application Support/BraveSoftware/Brave-Browser/Default/Login Data",
+    "/Users/test/Library/Containers/com.apple.mail/Data/Library/Mail/V10/Envelope Index",
     "/Users/test/project/.git-credentials"
   ];
   for (const path of denied) {
@@ -24,7 +28,10 @@ test("content policy denies representative private keys and access tokens", () =
     "-----BEGIN PRIVATE KEY-----\nnot-a-real-key",
     "aws=AKIA1234567890ABCDEF",
     "api_key=supersecretvalue",
-    "token: xoxb-1234567890-abcdefghijklmnop"
+    "token: xoxb-1234567890-abcdefghijklmnop",
+    "Authorization: Bearer abcdefghijklmnop-secret",
+    "Authorization: Basic YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4",
+    "access_token=eyJheadersegment.payloadsegment.signaturesegment"
   ];
   for (const value of denied) {
     assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(value)), /protected secret signature/u);
@@ -38,6 +45,13 @@ test("log redaction removes secret-shaped values and bounds messages", () => {
   assert.equal(redacted.text.includes("supersecretvalue"), false);
   assert.equal(redacted.text.includes("AKIA1234567890ABCDEF"), false);
   assert.equal(redacted.text.includes("id_ed25519"), false);
+  const protectedPath = redactLogText("open failed: /Users/test/Library/Application Support/Google/Chrome/Default/Login Data");
+  assert.equal(protectedPath.redacted, true);
+  assert.equal(protectedPath.text.includes("Login Data"), false);
+  assert.equal(protectedPath.text.includes("Application Support"), false);
+  const privateRootPath = redactLogText("path=/private/var/root/.docker/contexts/meta/abc/meta.json");
+  assert.equal(privateRootPath.redacted, true);
+  assert.equal(privateRootPath.text.includes("meta.json"), false);
   const bounded = redactLogText("x".repeat(20_000));
   assert.equal(bounded.redacted, true);
   assert.ok(bounded.text.length <= 8192);
