@@ -88,10 +88,10 @@ fixtures. The host evidence remains partial and does not select deprecated
 
 ## Fresh current-revision readback
 
-The same opt-in command was rerun from source revision `eb9ee6a` after the
-privileged-helper caller-boundary evidence update, with no persistent service
-or privileged action touched. Result: 7 passed, 0 failed, 0 skipped. A full
-`MOPS_REAL_SANDBOX=1 npm test` regression also passed 349/349, so both opt-in
+The same opt-in command was rerun from source revision `b7ea5fb` after the
+governed L0/L1 host-readback additions, with no persistent service or
+privileged action touched. Result: 7 passed, 0 failed, 0 skipped. A full
+`MOPS_REAL_SANDBOX=1 npm test` regression also passed 362/362, so both opt-in
 real-host cases ran instead of being skipped. No Keychain item, LaunchAgent,
 real credential contents, Docker protocol, persistence mechanism, or
 privileged action was touched. This refreshes the evidence to the current

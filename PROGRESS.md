@@ -21,6 +21,15 @@ The focused host test passes 1/1; the full suite passes 362 tests (360 passed,
 was fixed by binding the expected expiry second to the signed token input.
 Evidence: `evidence/2026-09-13-l0-l1-host-readback.md`.
 
+The experimental sandbox boundary was rerun from source `b7ea5fb`: the
+focused opt-in real-Mac smoke passes 7/7 and `MOPS_REAL_SANDBOX=1 npm test`
+passes 362/362. This refresh confirms the existing partial environment,
+temporary-root, selected-loopback, credential-surface, child-launch, and
+cancellation observations but does not prove credential contents,
+descendant/`setsid` ownership, remount/crash/restart cleanup, persistence,
+Docker, or production isolation; `mac_task_run` remains blocked. Evidence:
+`evidence/2026-09-13-sandbox-profile-runner.md`.
+
 The latest governed HTTPS Edge service-entrypoint addendum is `0e8612d`:
 the packaged Edge now has a fixed `service-main.js` and strict owner-only
 `edge-service.json` loader. Startup binds canonical package/data/runtime roots,
