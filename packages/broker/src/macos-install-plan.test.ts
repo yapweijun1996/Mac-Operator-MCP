@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,12 +11,14 @@ import {
   composeMacOsInstallReadback,
   executeMacOsInstallPlan,
   inspectMacOsInstallFilesystem,
+  readMacOsPlistReadback,
   MacOsInstallPlanError,
   validateCodeSignatureReadback,
   validateExistingServicePrecondition,
   validateMacOsInstallReadback,
   type CodeSignatureCommandSpec,
   type LaunchdCommandSpec,
+  type MacOsInstallPlan,
   type MacOsInstallPlanInput
 } from "./macos-install-plan.js";
 import { createAuthorityControlUninstallActions, executeMacOsUninstallPlan } from "./macos-uninstall-plan.js";
@@ -93,6 +97,7 @@ test("readback requires matching signature, launchd identity, native transport, 
     plistPath: plan.plistPath,
     pid: 1234,
     processIdentity: { pid: 1234, startTimeMicros: 987654321 },
+    plist: plistReadback(plan),
     launchd: plan.launchd,
     broker: {
       ...base.metadata,
@@ -133,6 +138,7 @@ test("readback composition binds launchd service identity to native process and 
       truncated: false
     },
     processIdentity: { pid: 1234, startTimeMicros: 987654321 },
+    plist: plistReadback(plan),
     broker: {
       ...base.metadata,
       state: "running",
@@ -153,6 +159,7 @@ test("readback composition binds launchd service identity to native process and 
   assert.throws(() => composeMacOsInstallReadback(plan, {
     launchd: { ...composed.launchd, serviceId: "gui/501/com.mac-operator.attacker" } as never,
     processIdentity: composed.processIdentity,
+    plist: composed.plist,
     broker: composed.broker,
     signature: composed.signature
   }), /launchd readback sources/u);
@@ -328,6 +335,13 @@ test("plist apply uses native atomic write, creates a backup on upgrade, and res
     const first = await applyMacOsPlistPlan(install, { ownerUid: uid });
     assert.equal(first.created, true);
     const oldContent = await readFile(install.plistPath, "utf8");
+    const plistReadback = readMacOsPlistReadback(install, { ownerUid: uid });
+    assert.equal(plistReadback.path, await realpath(install.plistPath));
+    assert.equal(plistReadback.bytes, Buffer.byteLength(install.renderedPlist, "utf8"));
+    assert.equal(plistReadback.sha256, createHash("sha256").update(install.renderedPlist, "utf8").digest("hex"));
+    await writeFile(install.plistPath, "tampered", { mode: 0o600 });
+    assert.throws(() => readMacOsPlistReadback(install, { ownerUid: uid }), /planned plist readback|content/u);
+    await writeFile(install.plistPath, oldContent, { mode: 0o600 });
     const upgrade = buildMacOsInstallPlan({ ...common, operation: "upgrade", expectedPreviousSourceRevision: base.metadata.sourceRevision, metadata: { ...base.metadata, sourceRevision: "abcdef0123456789abcdef0123456789abcdef01" } });
     const second = await applyMacOsPlistPlan(upgrade, { ownerUid: uid });
     assert.equal(second.backupPath, upgrade.backupPath);
@@ -407,6 +421,7 @@ test("install executor requires explicit confirmation and verifies final Broker 
         plistPath: plan.plistPath,
         pid: 1234,
         processIdentity: { pid: 1234, startTimeMicros: 987654321 },
+        plist: plistReadback(plan),
         launchd: plan.launchd,
         broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
         signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null }
@@ -565,6 +580,19 @@ test("install executor stops a mismatched service and leaves an explicit recover
     await rm(root, { recursive: true, force: true });
   }
 });
+
+function plistReadback(plan: Pick<MacOsInstallPlan, "plistPath" | "renderedPlist">): { path: string; bytes: number; sha256: string; device: string; inode: string } {
+  const rendered = plan.renderedPlist;
+  let path = plan.plistPath;
+  try { path = realpathSync(path); } catch { /* the synthetic base plan is not installed */ }
+  return {
+    path,
+    bytes: Buffer.byteLength(rendered, "utf8"),
+    sha256: createHash("sha256").update(rendered, "utf8").digest("hex"),
+    device: "1",
+    inode: "2"
+  };
+}
 
 class RecordingInstallExecutor {
   readonly commands: Array<LaunchdCommandSpec | CodeSignatureCommandSpec> = [];

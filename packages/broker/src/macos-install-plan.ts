@@ -1,5 +1,6 @@
 import { lstat } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
@@ -139,6 +140,7 @@ export interface MacOsInstallReadback {
   /** PID from launchd, bound to the native start-time identity readback. */
   pid: number;
   processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
   launchd: LaunchdServiceReadback;
   broker: BrokerServiceReadback;
   signature: CodeSignatureReadback;
@@ -147,6 +149,7 @@ export interface MacOsInstallReadback {
 export interface MacOsInstallReadbackSources {
   launchd: LaunchdJobReadback;
   processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
   broker: BrokerServiceReadback;
   signature: CodeSignatureReadback;
 }
@@ -188,6 +191,14 @@ export interface MacOsPlistApplyResult {
   created: boolean;
   backupPath: string | null;
   backupSha256: string | null;
+  device: string;
+  inode: string;
+}
+
+export interface MacOsPlistReadback {
+  path: string;
+  bytes: number;
+  sha256: string;
   device: string;
   inode: string;
 }
@@ -337,7 +348,7 @@ export function validateCodeSignatureReadback(
  */
 export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: MacOsInstallReadback): void {
   if (!isRecord(readback) || !isRecord(readback.launchd) || !isRecord(readback.broker) ||
-      !isRecord(readback.signature) || !isRecord(readback.processIdentity)) {
+      !isRecord(readback.signature) || !isRecord(readback.processIdentity) || !isRecord(readback.plist)) {
     fail("INVALID_READBACK", "service readback is malformed");
   }
   const expectedUid = plan.domain.slice("gui/".length);
@@ -345,7 +356,11 @@ export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: M
       !/^\d+$/.test(expectedUid) || !Number.isSafeInteger(readback.pid) || readback.pid < 1 ||
       !Number.isSafeInteger(readback.processIdentity.pid) || readback.processIdentity.pid < 1 ||
       !Number.isSafeInteger(readback.processIdentity.startTimeMicros) || readback.processIdentity.startTimeMicros < 1 ||
-      readback.processIdentity.pid !== readback.pid) {
+      readback.processIdentity.pid !== readback.pid || readback.plist.path !== expectedPlistReadbackPath(plan) ||
+      !Number.isSafeInteger(readback.plist.bytes) || readback.plist.bytes !== Buffer.byteLength(plan.renderedPlist, "utf8") ||
+      typeof readback.plist.sha256 !== "string" || readback.plist.sha256 !== renderedPlistSha256(plan) ||
+      typeof readback.plist.device !== "string" || !/^\d+$/u.test(readback.plist.device) ||
+      typeof readback.plist.inode !== "string" || !/^\d+$/u.test(readback.plist.inode)) {
     fail("SERVICE_MISMATCH", "launchd readback does not match the planned per-user service");
   }
   if (readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
@@ -380,14 +395,14 @@ export function composeMacOsInstallReadback(
   sources: MacOsInstallReadbackSources
 ): MacOsInstallReadback {
   if (!isRecord(sources) || !isRecord(sources.launchd) || !isRecord(sources.processIdentity) ||
-      !isRecord(sources.broker) || !isRecord(sources.signature)) {
+      !isRecord(sources.plist) || !isRecord(sources.broker) || !isRecord(sources.signature)) {
     fail("INVALID_READBACK", "install readback sources are malformed");
   }
   const expectedServiceId = `${plan.domain}/${plan.label}`;
   const launchd = sources.launchd;
   if (launchd.serviceId !== expectedServiceId || launchd.domain !== plan.domain || launchd.label !== plan.label ||
       launchd.state !== "running" || launchd.type !== "LaunchAgent" || launchd.pid === null ||
-      launchd.program !== plan.launchd.program || launchd.plistPath !== plan.plistPath ||
+      launchd.program !== plan.launchd.program || launchd.plistPath !== expectedPlistReadbackPath(plan) ||
       launchd.pid !== sources.processIdentity.pid) {
     fail("SERVICE_MISMATCH", "launchd readback sources do not match the planned Broker service");
   }
@@ -397,12 +412,44 @@ export function composeMacOsInstallReadback(
     plistPath: plan.plistPath,
     pid: launchd.pid,
     processIdentity: sources.processIdentity,
+    plist: sources.plist,
     launchd: plan.launchd,
     broker: sources.broker,
     signature: sources.signature
   };
   validateMacOsInstallReadback(plan, readback);
   return readback;
+}
+
+/**
+ * Reads the exact planned plist through the descriptor-backed filesystem
+ * boundary and returns only its stable path, identity, size, and digest. The
+ * expected rendered bytes are checked before this source can participate in a
+ * final launchd/Broker readback.
+ */
+export function readMacOsPlistReadback(
+  plan: MacOsInstallPlan,
+  options: MacOsPlistApplyOptions
+): MacOsPlistReadback {
+  if (!Number.isSafeInteger(options.ownerUid) || options.ownerUid !== parseUid(plan.domain)) {
+    fail("FILESYSTEM_MISMATCH", "plist readback owner does not match the planned user domain");
+  }
+  const inspector = options.inspector ?? createInstallInspector(plan);
+  const targetPlan = inspector.planPath(plan.plistPath, "content_read");
+  let read: ReturnType<FilesystemInspector["readPlanned"]>;
+  try {
+    read = inspector.readPlanned(targetPlan, 0, MAX_PLAN_BYTES);
+  } catch {
+    fail("FILESYSTEM_MISMATCH", "planned plist could not be read through the protected filesystem boundary");
+  }
+  if (read.truncated || read.path !== expectedPlistReadbackPath(plan) || read.content.byteLength !== Buffer.byteLength(plan.renderedPlist, "utf8")) {
+    fail("FILESYSTEM_MISMATCH", "planned plist readback is truncated or has an unexpected identity");
+  }
+  const sha256 = createHash("sha256").update(read.content).digest("hex");
+  if (!read.content.equals(Buffer.from(plan.renderedPlist, "utf8")) || sha256 !== renderedPlistSha256(plan)) {
+    fail("FILESYSTEM_MISMATCH", "planned plist content does not match the rendered plan");
+  }
+  return { path: read.path, bytes: read.content.byteLength, sha256, device: read.device, inode: read.inode };
 }
 
 export function validateExistingServicePrecondition(plan: MacOsInstallPlan, readback: ExistingServiceReadback): void {
@@ -850,6 +897,18 @@ function normalizePreviousRevision(value: string | undefined, operation: MacOsIn
     fail("INVALID_METADATA", "upgrade, rollback, and uninstall require an exact previous source revision");
   }
   return value;
+}
+
+function renderedPlistSha256(plan: MacOsInstallPlan): string {
+  return createHash("sha256").update(plan.renderedPlist, "utf8").digest("hex");
+}
+
+function expectedPlistReadbackPath(plan: MacOsInstallPlan): string {
+  try {
+    return realpathSync(plan.plistPath);
+  } catch {
+    return plan.plistPath;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
