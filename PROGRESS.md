@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `7a136ef`.
+Current committed implementation baseline: `8fbd148`.
+
+The latest character/block-device addendum is `8fbd148`: the real-host
+negative fixture rejects `/dev/null`, `/dev/tty`, `/dev/random`, and the
+available `/dev/disk0` block device at the local-volume boundary without
+reading device bytes. Focused filesystem tests remain 29/29; the full suite
+passes 366 tests (364 passed, 2 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 366/366. Evidence:
+`evidence/2026-09-13-character-block-device-boundary.md`.
 
 The latest special-file hardening addendum is `7a136ef`: native metadata,
 content-read, and hash opens use `O_NONBLOCK`, so an untrusted FIFO cannot
