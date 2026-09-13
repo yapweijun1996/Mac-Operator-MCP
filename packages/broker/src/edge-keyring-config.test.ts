@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { sha256 } from "@mac-operator/contracts";
 import {
+  EdgeAuthenticationKeyManager,
   loadEdgeAuthenticationKeyConfig,
   writeEdgeAuthenticationKeyConfig,
   type EdgeAuthenticationKeyConfig
@@ -33,6 +35,7 @@ test("Edge key config binds explicit file sources and supports overlapping rotat
         keyId: "edge-key-old",
         keySource: "file",
         path: oldPath,
+        keyDigest: sha256(oldKey),
         notBeforeMs: NOW - 60_000,
         expiresAtMs: NOW + 60_000
       }]
@@ -55,6 +58,7 @@ test("Edge key config binds explicit file sources and supports overlapping rotat
           keyId: "edge-key-next",
           keySource: "file",
           path: nextPath,
+          keyDigest: sha256(nextKey),
           notBeforeMs: NOW,
           expiresAtMs: NOW + 120_000
         }
@@ -86,6 +90,7 @@ test("Edge key config rejects revoked, symlinked, and unsafe entries", async () 
       keyId: "edge-key-1",
       keySource: "file" as const,
       path: keyPath,
+      keyDigest: "0".repeat(64),
       notBeforeMs: NOW - 1_000,
       expiresAtMs: NOW + 60_000
     };
@@ -96,6 +101,88 @@ test("Edge key config rejects revoked, symlinked, and unsafe entries", async () 
     await assert.rejects(loadEdgeAuthenticationKeyConfig(configPath, store), /is revoked/u);
     await chmod(configPath, 0o640);
     await assert.rejects(loadEdgeAuthenticationKeyConfig(configPath, store), /not be accessible/u);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Edge key config rejects secret-byte replacement under the same protected path", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-edge-keyring-digest-"));
+  const configPath = join(directory, "edge-keys.json");
+  const keyPath = join(directory, "edge.key");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    await provisionAuthenticationKey(keyPath);
+    const original = await loadAuthenticationKey(keyPath);
+    await writeEdgeAuthenticationKeyConfig(configPath, {
+      schemaVersion: "0.1", revision: 1, keys: [{
+        edgeId: "edge-1", keyId: "edge-key-1", keySource: "file", path: keyPath,
+        keyDigest: sha256(original), notBeforeMs: NOW - 1_000, expiresAtMs: NOW + 60_000
+      }]
+    });
+    await writeFile(keyPath, randomBytes(32));
+    await assert.rejects(loadEdgeAuthenticationKeyConfig(configPath, store), /digest precondition failed/u);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Edge key config manager persists monotonic activation and exact restart restore", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-edge-keyring-manager-"));
+  const configPath = join(directory, "edge-keys.json");
+  const firstPath = join(directory, "edge.key");
+  const secondPath = join(directory, "edge-next.key");
+  const databasePath = join(directory, "broker.sqlite");
+  let store = new BrokerStore(databasePath);
+  try {
+    await provisionAuthenticationKey(firstPath);
+    const firstKey = await loadAuthenticationKey(firstPath);
+    const first: EdgeAuthenticationKeyConfig = {
+      schemaVersion: "0.1", revision: 1, keys: [{
+        edgeId: "edge-1", keyId: "edge-key-1", keySource: "file", path: firstPath,
+        keyDigest: sha256(firstKey),
+        notBeforeMs: NOW - 1_000, expiresAtMs: NOW + 60_000
+      }]
+    };
+    await writeEdgeAuthenticationKeyConfig(configPath, first);
+    const manager = new EdgeAuthenticationKeyManager(configPath, store, () => NOW);
+    assert.throws(() => manager.current(), /not activated/u);
+    await assert.rejects(manager.restore(), /does not match persisted activation/u);
+    const activated = await manager.activate();
+    assert.equal(activated.document.revision, 1);
+    assert.equal(store.activeEdgeKeyConfigIdentity()?.revision, 1);
+
+    store.close();
+    store = new BrokerStore(databasePath);
+    const restartedManager = new EdgeAuthenticationKeyManager(configPath, store, () => NOW + 1_000);
+    assert.equal((await restartedManager.restore()).payloadDigest, activated.payloadDigest);
+
+    await provisionAuthenticationKey(secondPath);
+    const secondKey = await loadAuthenticationKey(secondPath);
+    const second: EdgeAuthenticationKeyConfig = {
+      ...first,
+      revision: 2,
+      keys: [...first.keys, {
+        edgeId: "edge-1", keyId: "edge-key-2", keySource: "file", path: secondPath,
+        keyDigest: sha256(secondKey),
+        notBeforeMs: NOW + 1_000, expiresAtMs: NOW + 120_000
+      }]
+    };
+    await writeEdgeAuthenticationKeyConfig(configPath, second);
+    await restartedManager.activate(1);
+    assert.equal(store.activeEdgeKeyConfigIdentity()?.revision, 2);
+
+    await writeEdgeAuthenticationKeyConfig(configPath, first);
+    await assert.rejects(restartedManager.activate(), /revision must increase/u);
+    assert.equal(store.activeEdgeKeyConfigIdentity()?.revision, 2);
+    await writeEdgeAuthenticationKeyConfig(configPath, second);
+    await restartedManager.restore();
+    const audits = store.auditRows().filter((row) => row.tool === "internal_edge_key_config_activate");
+    assert.equal(audits.length, 4);
+    assert.equal(audits.filter((row) => row.event_type === "intent").length, 2);
+    assert.equal(audits.filter((row) => row.event_type === "completion").length, 2);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -117,6 +204,7 @@ test("Edge key config requires an explicit source and rejects Keychain/file mixi
         keySource: "keychain",
         service: "com.mac-operator.test",
         account,
+        keyDigest: "0".repeat(64),
         notBeforeMs: NOW - 1_000,
         expiresAtMs: NOW + 60_000
       }]

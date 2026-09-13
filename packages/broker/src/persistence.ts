@@ -35,6 +35,12 @@ export interface ApprovalKeyConfigActivationIdentity {
   activatedAtMs: number;
 }
 
+export interface EdgeKeyConfigActivationIdentity {
+  revision: number;
+  payloadDigest: string;
+  activatedAtMs: number;
+}
+
 export interface PolicySignerConfigActivationIdentity {
   revision: number;
   payloadDigest: string;
@@ -342,6 +348,18 @@ export class BrokerStore {
         payload_digest TEXT NOT NULL,
         activated_at_ms INTEGER NOT NULL,
         FOREIGN KEY (revision) REFERENCES approval_key_config_history(revision)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS edge_key_config_history (
+        revision INTEGER PRIMARY KEY,
+        payload_digest TEXT NOT NULL UNIQUE,
+        activated_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS active_edge_key_config (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        revision INTEGER NOT NULL,
+        payload_digest TEXT NOT NULL,
+        activated_at_ms INTEGER NOT NULL,
+        FOREIGN KEY (revision) REFERENCES edge_key_config_history(revision)
       ) STRICT;
       CREATE TABLE IF NOT EXISTS policy_signer_config_history (
         revision INTEGER PRIMARY KEY,
@@ -1646,6 +1664,78 @@ export class BrokerStore {
     const row = this.database.prepare(`
       SELECT revision, payload_digest, activated_at_ms
       FROM active_approval_key_config WHERE singleton = 1
+    `).get() as {
+      revision: number;
+      payload_digest: string;
+      activated_at_ms: number;
+    } | undefined;
+    return row ? {
+      revision: row.revision,
+      payloadDigest: row.payload_digest,
+      activatedAtMs: row.activated_at_ms
+    } : undefined;
+  }
+
+  activateEdgeKeyConfig(
+    identity: EdgeKeyConfigActivationIdentity,
+    expectedPreviousRevision: number
+  ): void {
+    if (!Number.isSafeInteger(identity.revision) || identity.revision < 1 ||
+        !/^[a-f0-9]{64}$/u.test(identity.payloadDigest) ||
+        !Number.isSafeInteger(identity.activatedAtMs) || identity.activatedAtMs < 0 ||
+        !Number.isSafeInteger(expectedPreviousRevision) || expectedPreviousRevision < 0) {
+      throw new BrokerError("PRECONDITION_FAILED", "Edge key configuration identity is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        const current = this.activeEdgeKeyConfigIdentity();
+        if ((current?.revision ?? 0) !== expectedPreviousRevision) {
+          throw new BrokerError("CONFLICT", "Persisted Edge key configuration revision changed concurrently");
+        }
+        if (identity.revision <= expectedPreviousRevision) {
+          throw new BrokerError("CONFLICT", "Edge key configuration revision must increase");
+        }
+        const highest = this.database.prepare(
+          "SELECT MAX(revision) AS revision FROM edge_key_config_history"
+        ).get() as { revision: number | null };
+        if (identity.revision <= (highest.revision ?? 0)) {
+          throw new BrokerError("CONFLICT", "Edge key configuration revision was already used or is below history");
+        }
+        const requestId = `edge-key-config-${identity.revision}-${identity.payloadDigest.slice(0, 16)}`;
+        const auditBase = {
+          requestId,
+          principalId: "local-edge-key-loader",
+          tool: "internal_edge_key_config_activate",
+          decision: "allow" as const,
+          targetRef: `edge_key_config:${identity.revision}`,
+          policyVersion: "internal-edge-key-config-0.1",
+          evidence: { payloadDigest: identity.payloadDigest, revision: identity.revision },
+          timestampMs: identity.activatedAtMs
+        };
+        this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
+        this.database.prepare(
+          "INSERT INTO edge_key_config_history(revision, payload_digest, activated_at_ms) VALUES (?, ?, ?)"
+        ).run(identity.revision, identity.payloadDigest, identity.activatedAtMs);
+        this.database.prepare(`
+          INSERT INTO active_edge_key_config(singleton, revision, payload_digest, activated_at_ms)
+          VALUES (1, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            revision=excluded.revision,
+            payload_digest=excluded.payload_digest,
+            activated_at_ms=excluded.activated_at_ms
+        `).run(identity.revision, identity.payloadDigest, identity.activatedAtMs);
+        this.insertAudit({ ...auditBase, eventType: "completion", resultClass: "SUCCEEDED" });
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Edge key configuration activation could not be persisted");
+    }
+  }
+
+  activeEdgeKeyConfigIdentity(): EdgeKeyConfigActivationIdentity | undefined {
+    const row = this.database.prepare(`
+      SELECT revision, payload_digest, activated_at_ms
+      FROM active_edge_key_config WHERE singleton = 1
     `).get() as {
       revision: number;
       payload_digest: string;

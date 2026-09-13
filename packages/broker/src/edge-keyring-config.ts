@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { lstat, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { EdgeKeyring, type EdgeAuthenticationKey } from "./edge-keyring.js";
 import {
   assertProtectedSecretDirectory,
@@ -10,11 +10,11 @@ import {
   loadKeychainAuthenticationKey,
   syncProtectedDirectory
 } from "./credentials.js";
-import type { BrokerStore } from "./persistence.js";
+import type { EdgeKeyConfigActivationIdentity, BrokerStore } from "./persistence.js";
 
 const MAX_CONFIG_BYTES = 128 * 1024;
 const ENTRY_KEYS = new Set([
-  "edgeId", "keyId", "keySource", "path", "service", "account", "notBeforeMs", "expiresAtMs"
+  "edgeId", "keyId", "keySource", "path", "service", "account", "keyDigest", "notBeforeMs", "expiresAtMs"
 ]);
 
 export interface EdgeAuthenticationKeyConfigEntry {
@@ -24,6 +24,7 @@ export interface EdgeAuthenticationKeyConfigEntry {
   path?: string;
   service?: string;
   account?: string;
+  keyDigest: string;
   notBeforeMs: number;
   expiresAtMs: number;
 }
@@ -42,9 +43,61 @@ export interface LoadedEdgeAuthenticationKeyConfig {
 }
 
 /**
+ * Broker-owned activation boundary for Edge authentication-key metadata.
+ * Activation is monotonic and audited; restart restore requires the exact
+ * persisted revision and payload digest before a keyring can be used.
+ */
+export class EdgeAuthenticationKeyManager {
+  private activeSnapshot: LoadedEdgeAuthenticationKeyConfig | undefined;
+
+  constructor(
+    private readonly configPath: string,
+    private readonly store: BrokerStore,
+    private readonly now: () => number = Date.now
+  ) {}
+
+  async activate(expectedPreviousRevision?: number): Promise<LoadedEdgeAuthenticationKeyConfig> {
+    const loaded = await loadEdgeAuthenticationKeyConfig(this.configPath, this.store);
+    const persisted = this.store.activeEdgeKeyConfigIdentity();
+    const persistedRevision = persisted?.revision ?? 0;
+    const expected = expectedPreviousRevision ?? persistedRevision;
+    if (expected !== persistedRevision) {
+      throw new BrokerError("CONFLICT", "Persisted Edge key configuration revision changed concurrently");
+    }
+    if (persisted && persisted.revision === loaded.document.revision && persisted.payloadDigest === loaded.payloadDigest) {
+      this.activeSnapshot = loaded;
+      return loaded;
+    }
+    const identity: EdgeKeyConfigActivationIdentity = {
+      revision: loaded.document.revision,
+      payloadDigest: loaded.payloadDigest,
+      activatedAtMs: this.now()
+    };
+    this.store.activateEdgeKeyConfig(identity, expected);
+    this.activeSnapshot = loaded;
+    return loaded;
+  }
+
+  async restore(): Promise<LoadedEdgeAuthenticationKeyConfig> {
+    const loaded = await loadEdgeAuthenticationKeyConfig(this.configPath, this.store);
+    const persisted = this.store.activeEdgeKeyConfigIdentity();
+    if (!persisted || persisted.revision !== loaded.document.revision || persisted.payloadDigest !== loaded.payloadDigest) {
+      throw new BrokerError("PRECONDITION_FAILED", "Edge key configuration does not match persisted activation");
+    }
+    this.activeSnapshot = loaded;
+    return loaded;
+  }
+
+  current(): LoadedEdgeAuthenticationKeyConfig {
+    if (!this.activeSnapshot) throw new BrokerError("PRECONDITION_FAILED", "Edge key configuration is not activated");
+    return this.activeSnapshot;
+  }
+}
+
+/**
  * Loads Edge authentication keys from explicitly selected protected sources.
- * The caller owns activation/reload policy; this function never infers a
- * source from request arguments and rejects revoked key identities.
+ * This function never infers a source from request arguments and rejects
+ * revoked key identities before constructing the keyring.
  */
 export async function loadEdgeAuthenticationKeyConfig(
   path: string,
@@ -60,6 +113,9 @@ export async function loadEdgeAuthenticationKeyConfig(
     const key = entry.keySource === "keychain"
       ? await loadKeychainAuthenticationKey(entry.service!, entry.account!)
       : await loadAuthenticationKey(entry.path!);
+    if (sha256(key) !== entry.keyDigest) {
+      throw new Error(`Edge authentication key digest precondition failed: ${identity}`);
+    }
     keys.push({
       edgeId: entry.edgeId,
       keyId: entry.keyId,
@@ -201,6 +257,7 @@ function validateEntry(value: unknown): void {
   if (Object.keys(record).some((key) => !ENTRY_KEYS.has(key)) ||
       typeof record.edgeId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(record.edgeId) ||
       typeof record.keyId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(record.keyId) ||
+      typeof record.keyDigest !== "string" || !/^[a-f0-9]{64}$/u.test(record.keyDigest) ||
       (!fileSource && !keychainSource) ||
       !Number.isSafeInteger(record.notBeforeMs) || (record.notBeforeMs as number) < 0 ||
       !Number.isSafeInteger(record.expiresAtMs) || (record.expiresAtMs as number) <= (record.notBeforeMs as number)) {
