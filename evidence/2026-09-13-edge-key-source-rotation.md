@@ -4,7 +4,7 @@ Status: PARTIAL protected Edge-key distribution boundary for MOP-081 / VT-AUTH-0
 
 ## Boundary exercised
 
-Commits `e9dd75e`, `7d91c8f`, and `49843cc` add an owner-only, versioned Edge
+Commits `e9dd75e`, `7d91c8f`, `49843cc`, and `a0b31fe` add an owner-only, versioned Edge
 authentication-key metadata loader, atomic writer, and BrokerStore-backed
 activation manager. Every entry must explicitly select
 `keySource: "file"` or `keySource: "keychain"`; a Keychain entry must contain
@@ -27,6 +27,12 @@ test fixtures; production startup should use the protected-file factory. The
 Edge package does not silently fall back to Keychain or environment-variable
 lookup.
 
+The Edge IPC client now checks the canonical owner-only socket parent, rejects
+symlinked or changed parent/socket identities, and revalidates the socket
+device/inode after connect and before writing the signed request. A replaced
+socket is therefore rejected before request bytes are sent; response HMAC
+verification remains a separate defense.
+
 The config reader requires an owner-only regular non-symlink file and rechecks
 device/inode identity after opening. File-backed key bytes use the existing
 owner-only, `O_NOFOLLOW`, bounded authentication-key loader. Keychain-backed
@@ -46,9 +52,9 @@ retiring the old key is a separate revoke-before-retire operation.
 
 - Host: Darwin arm64, macOS `26.2` build `25C56`.
 - Runtime: Node `v25.5.0`, npm `11.8.0`.
-- Focused source tests: 8 Edge/Broker key-source tests pass.
-- Full regression: 317 passed, 0 failed, 2 opt-in real-sandbox tests skipped
-  (319 total).
+- Focused source tests: 9 Edge key/IPC-boundary tests pass.
+- Full regression: 318 passed, 0 failed, 2 opt-in real-sandbox tests skipped
+  (320 total).
 - The Keychain test queried a random missing account only; no Keychain item was
   created, modified, or deleted.
 - Native production and fault-test addons compile; `npm run typecheck`,
@@ -69,6 +75,10 @@ retiring the old key is a separate revoke-before-retire operation.
   `14683576120a802054f9a13beb2001767765ff34a3bfb2d78bc9ac678a06a98a`
 - `packages/edge/src/request-factory.ts` SHA-256:
   `c31add8be0f68cbb72cd9a8bcce5476c3a8afcf7a31eb0f01a25896e5f141295`
+- `packages/edge/src/ipc-client.ts` SHA-256:
+  `06d2a676a478d2a5e01af04e1fcc226a534d9f40e9805a33aee2f9b36a93a04b`
+- `packages/edge/src/ipc-client.test.ts` SHA-256:
+  `721c1b29200ed111786f21ac89379f97103461f056ed9f32344260a6f927ea04`
 - `packages/broker/src/index.ts` SHA-256:
   `7f3581bdb41d8fac8509c4f8e1ab5d17130a9e5282f3e3f590e888496fc3cbd0`
 - Existing native Keychain reader source remains covered by
@@ -86,6 +96,7 @@ issuer integration, or production capability enablement. If Broker startup
 selects a Keychain-backed Edge key, Edge-side distribution still needs an
 approved cross-process mechanism; the Edge loader intentionally fails closed
 instead of falling back to environment variables or raw MCP arguments. The
-manager intentionally has no hot-reload or rollback bypass; operators must
+IPC checks reduce socket target-swap exposure but do not replace native caller
+identity, code signing, or confidentiality guarantees. The manager intentionally has no hot-reload or rollback bypass; operators must
 activate a strictly newer revision and use the existing revocation path to
 retire an old key.

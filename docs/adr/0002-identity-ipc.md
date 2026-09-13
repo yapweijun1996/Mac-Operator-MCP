@@ -100,6 +100,10 @@ cross-process secret distribution. The Edge request factory now provides a
 matching protected-file loader bound to the same expected digest. A Keychain
 source selected by the Broker still needs an approved Edge-side delivery
 mechanism; no environment-variable or MCP-argument fallback is permitted.
+The Edge IPC client also checks its owner-only socket parent and revalidates
+socket device/inode identity after connect before sending a signed request;
+this complements, but does not replace, native peer identity and response HMAC
+verification.
 
 This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, session concurrency, canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
 
