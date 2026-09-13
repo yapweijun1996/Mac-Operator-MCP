@@ -7,7 +7,7 @@
 
 ## Decision
 
-Privileged operations must cross a separate helper IPC channel. The unprivileged Broker remains the final authority and sends a Broker-generated, HMAC-authenticated command over an owner-only Unix socket. The helper authenticates the OS peer before parsing, validates a versioned command envelope, admits each request and nonce exactly once through a durable replay ledger, and dispatches only the fixed operation names `service_control`, `package_install`, and `power`.
+Privileged operations must cross a separate helper IPC channel. The unprivileged Broker remains the final authority and sends a Broker-generated, HMAC-authenticated command over an owner-only Unix socket. The helper authenticates the OS peer before parsing, validates a versioned command envelope, admits each request and nonce exactly once through a durable replay ledger, and dispatches only the fixed operation names `service_control`, `package_install`, and `power`. A Broker-owned authority callback is mandatory and is checked before dispatch, during cancellation polling, and before response publication; a revoked or expired active operation cannot be returned as success.
 
 The command carries only the normalized target, the digest of Broker-validated arguments, the active policy version, approval identity, and mutation-intent identity. It never carries shell text, executable paths, arbitrary arguments, filesystem roots, or credential material. Responses are bound to the complete command digest, bounded to flat redacted evidence, and require an allowlisted postcondition status before success is accepted.
 

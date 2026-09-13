@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `7658465`.
+Current committed implementation baseline: `5fad6a4`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -36,7 +36,7 @@ The latest implementation addendum is `53a6550`: the disabled-by-default `mac_ap
 
 The current implementation addendum is `9bba3cd`: disabled-by-default `mac_ui_action` binds an exact observed Accessibility element to an owner/session-scoped 30-second snapshot, parent app-window authority, `trusted_gui` approval, a Broker Job ID, fixed Broker-owned JXA, and exact before/after window/index/role/label reobservation. The fixed action allowlist is `press`, `select`, `increment`, `decrement`, `show_menu`, and `focus`; secure, redacted, sensitive, stale, mismatched, cancelled, and permission-denied paths fail closed. Credential typing, real permission-granted GUI evidence, structured automation, and capability enablement remain open. Evidence: `evidence/2026-09-13-ui-action-boundary.md`.
 
-The current implementation addendum is `7658465`: the proposed L5 helper boundary now has a separately authenticated owner-only IPC server, HMAC command/response binding, durable BrokerStore nonce/request replay admission, strict target/operation and handler-map validation, no raw executable or argument fields, bounded redacted evidence, and a fail-closed adapter when no explicit privileged handler is supplied. No root process or privileged operation is enabled. Evidence: `evidence/2026-09-13-privileged-helper-boundary.md`.
+The current implementation addendum is `5fad6a4`: the proposed L5 helper boundary now has a separately authenticated owner-only IPC server, HMAC command/response binding, durable BrokerStore nonce/request replay admission, strict target/operation and handler-map validation, no raw executable or argument fields, bounded redacted evidence, and a mandatory Broker-owned authority callback checked before dispatch, during active cancellation polling, and before response publication. Authority loss or expiry yields `UNKNOWN_OUTCOME`; no root process or privileged operation is enabled. Evidence: `evidence/2026-09-13-privileged-helper-boundary.md`.
 
 ## Completed work
 
