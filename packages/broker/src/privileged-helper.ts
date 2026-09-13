@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, CONTRACT_VERSION, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { removeStaleSocket, validateSocketParent } from "./ipc-server.js";
 import type { ApprovalRecord, BrokerJob, BrokerStore, RequestRecord } from "./persistence.js";
@@ -37,7 +37,8 @@ export type PrivilegedHelperResultClass =
  * privileged arguments.
  */
 export interface UnsignedPrivilegedHelperCommand {
-  protocolVersion: "0.1";
+  protocolVersion: typeof PROTOCOL_VERSION;
+  contractVersion: typeof CONTRACT_VERSION;
   commandId: string;
   requestId: string;
   nonce: string;
@@ -242,7 +243,8 @@ export class BrokerPrivilegedHelperCommandFactory {
       approvalId: approval.approvalId
     }));
     const unsigned: UnsignedPrivilegedHelperCommand = {
-      protocolVersion: "0.1",
+      protocolVersion: PROTOCOL_VERSION,
+      contractVersion: approval.contractVersion as typeof CONTRACT_VERSION,
       commandId: `priv-command:${identityDigest.slice(0, 48)}`,
       requestId: `request:${identityDigest.slice(0, 48)}`,
       nonce: `helper-nonce:${randomBytes(24).toString("hex")}`,
@@ -544,7 +546,8 @@ export function authenticatePrivilegedHelperCommand(
 
 export function validateUnsignedPrivilegedHelperCommand(command: UnsignedPrivilegedHelperCommand): void {
   if (command === null || typeof command !== "object" || Array.isArray(command) ||
-      command.protocolVersion !== "0.1" || !/^priv-command:[A-Za-z0-9._:-]{1,240}$/u.test(command.commandId) ||
+      command.protocolVersion !== PROTOCOL_VERSION || command.contractVersion !== CONTRACT_VERSION ||
+      !/^priv-command:[A-Za-z0-9._:-]{1,240}$/u.test(command.commandId) ||
       !/^request:[A-Za-z0-9._:-]{1,240}$/u.test(command.requestId) || !NONCE_PATTERN.test(command.nonce) ||
       !Number.isSafeInteger(command.nonceExpiresAtMs) || command.nonceExpiresAtMs < 0 ||
       !Number.isSafeInteger(command.timestampMs) || command.timestampMs < 0 ||
@@ -633,14 +636,15 @@ function parseSignedCommand(value: unknown): { unsigned: UnsignedPrivilegedHelpe
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper envelope is malformed");
   const record = value as Record<string, unknown>;
   const allowed = new Set([
-    "protocolVersion", "commandId", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs",
+    "protocolVersion", "contractVersion", "commandId", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs",
     "operation", "targetRef", "payloadDigest", "policyVersion", "approvalId", "intentId", "authenticationProof"
   ]);
   if (Object.keys(record).some((key) => !allowed.has(key)) || typeof record.authenticationProof !== "string" || !/^[a-f0-9]{64}$/u.test(record.authenticationProof)) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper envelope is malformed");
   }
   const unsigned = {
-    protocolVersion: record.protocolVersion as "0.1",
+    protocolVersion: record.protocolVersion as typeof PROTOCOL_VERSION,
+    contractVersion: record.contractVersion as typeof CONTRACT_VERSION,
     commandId: record.commandId as string,
     requestId: record.requestId as string,
     nonce: record.nonce as string,
@@ -718,7 +722,8 @@ function boundedMessage(value: string): string {
 
 function fallbackCommand(): UnsignedPrivilegedHelperCommand {
   return {
-    protocolVersion: "0.1",
+    protocolVersion: PROTOCOL_VERSION,
+    contractVersion: CONTRACT_VERSION,
     commandId: "priv-command:invalid",
     requestId: "request:invalid",
     nonce: "invalid-invalid-invalid",

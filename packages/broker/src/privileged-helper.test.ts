@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 import {
   AllowlistedPrivilegedHelper,
@@ -26,6 +26,7 @@ const NOW = 1_700_000_000_000;
 function command(sequence: number, operation: UnsignedPrivilegedHelperCommand["operation"] = "service_control"): UnsignedPrivilegedHelperCommand {
   return {
     protocolVersion: "0.1",
+    contractVersion: CONTRACT_VERSION,
     commandId: `priv-command:test-${sequence}`,
     requestId: `request:test-${sequence}`,
     nonce: `helper-nonce-${String(sequence).padStart(16, "0")}`,
@@ -76,6 +77,10 @@ test("privileged helper command is signed, bounded, and excludes raw execution a
   );
   assert.throws(
     () => authenticatePrivilegedHelperCommand({ ...signed, executable: "/bin/sh" }, key, NOW),
+    (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
+  );
+  assert.throws(
+    () => authenticatePrivilegedHelperCommand({ ...signed, contractVersion: "9.9" }, key, NOW),
     (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
   );
   assert.throws(
@@ -282,6 +287,7 @@ test("Broker helper command factory binds a running approved Job without raw aut
     const signed = factory.issue(identity);
     const unsigned = authenticatePrivilegedHelperCommand(signed, key, NOW + 4);
     assert.equal(unsigned.operation, "service_control");
+    assert.equal(unsigned.contractVersion, CONTRACT_VERSION);
     assert.equal(unsigned.targetRef, "service:system/com.example.factory");
     assert.equal(unsigned.payloadDigest, identity.payloadDigest);
     assert.equal(unsigned.policyVersion, "policy-0.1");
