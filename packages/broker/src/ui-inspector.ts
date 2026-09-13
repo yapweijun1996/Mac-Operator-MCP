@@ -11,6 +11,16 @@ const MAX_WINDOW_HINT_LENGTH = 256;
 const MAX_LABEL_LENGTH = 512;
 const MAX_ROLE_LENGTH = 128;
 const APP_ID_PATTERN = /^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
+const SENSITIVE_APP_BUNDLE_IDS = new Set([
+  "com.apple.SecurityAgent",
+  "com.apple.securityagent",
+  "com.apple.KeychainAccess",
+  "com.apple.keychainaccess",
+  "com.apple.systempreferences",
+  "com.apple.SystemPreferences",
+  "com.apple.loginwindow"
+]);
+const SENSITIVE_UI_TEXT_PATTERN = /\b(?:password|passcode|credential|security|privacy|private\s+key|sign\s*in|log\s*in|two[- ]factor|verification\s+code)\b/iu;
 
 /**
  * Broker-owned JXA. It accepts only positional identity/filter values supplied
@@ -159,6 +169,7 @@ export class MacUiInspectorImpl implements UiInspector {
 
   async observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl): Promise<SafeUiObservation> {
     validateUiObserveRequest(appId, windowHint, maxNodes);
+    validateSensitiveUiTarget(appId, windowHint);
     const result = await this.supervisor.run({
       executable: OSASCRIPT,
       args: ["-l", "JavaScript", "-e", UI_OBSERVE_SCRIPT, "--", appId, windowHint ?? "", String(maxNodes)],
@@ -184,6 +195,13 @@ export function validateUiObserveRequest(appId: unknown, windowHint?: unknown, m
   }
 }
 
+export function validateSensitiveUiTarget(appId: string, windowHint?: string): void {
+  const bundleId = appId.slice("bundle:".length);
+  if (SENSITIVE_APP_BUNDLE_IDS.has(bundleId) || (windowHint !== undefined && SENSITIVE_UI_TEXT_PATTERN.test(windowHint))) {
+    throw new BrokerError("SECRET_BOUNDARY_DENIED", "Sensitive application or security UI targets are not observable");
+  }
+}
+
 export function parseUiObserveResult(result: ProcessExecutionResult, appId: string, maxNodes = 200): SafeUiObservation {
   validateUiObserveRequest(appId, undefined, maxNodes);
   if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Accessibility observation was cancelled");
@@ -201,6 +219,7 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
   }
   const record = parsed as Record<string, unknown>;
+  validateSensitiveUiTarget(appId);
   if (record.status === "error") {
     switch (record.error) {
       case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
@@ -218,7 +237,10 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
   }
   const windowTitle = sanitizeText(record.window_title, MAX_LABEL_LENGTH);
-  const windowId = `window:${sha256(canonicalJson({ appId, windowIndex: record.window_index, windowTitle })).slice(0, 48)}`;
+  if (SENSITIVE_UI_TEXT_PATTERN.test(windowTitle)) {
+    throw new BrokerError("SECRET_BOUNDARY_DENIED", "Sensitive application or security UI targets are not observable");
+  }
+  const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle);
   const warnings: string[] = [];
   let redacted = false;
   const nodes: SafeUiNode[] = [];
@@ -261,6 +283,10 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
 
 function sanitizeText(value: string, maxLength: number): string {
   return value.replace(/[\u0000-\u001f\u007f]/gu, "�").slice(0, maxLength);
+}
+
+export function opaqueWindowId(appId: string, windowIndex: number, windowTitle: string): string {
+  return `window:${sha256(canonicalJson({ appId, windowIndex, windowTitle })).slice(0, 48)}`;
 }
 
 export const uiObserveExecutableForTesting = OSASCRIPT;

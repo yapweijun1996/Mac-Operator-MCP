@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MacUiInspectorImpl, parseUiObserveResult, uiObserveExecutableForTesting, uiObserveScriptForTesting, validateUiObserveRequest } from "./ui-inspector.js";
+import { MacUiInspectorImpl, parseUiObserveResult, uiObserveExecutableForTesting, uiObserveScriptForTesting, validateSensitiveUiTarget, validateUiObserveRequest } from "./ui-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 const appId = "bundle:com.example.Accessible";
@@ -54,6 +54,19 @@ test("Accessibility observation fails closed for permission, app, and window err
       (caught: unknown) => caught instanceof Error && "errorClass" in caught && (caught as { errorClass: string }).errorClass === expected
     );
   }
+});
+
+test("Accessibility observation denies sensitive applications, hints, and returned window titles", () => {
+  assert.throws(() => validateSensitiveUiTarget("bundle:com.apple.SecurityAgent"), /Sensitive application/u);
+  assert.throws(() => validateSensitiveUiTarget(appId, "Password"), /Sensitive application/u);
+  assert.throws(() => parseUiObserveResult(success(JSON.stringify({
+    status: "ok", app_id: "bundle:com.apple.SecurityAgent", window_index: 0, window_title: "Example", focused: false,
+    nodes: [], truncated: false
+  })), "bundle:com.apple.SecurityAgent", 10), /Sensitive application/u);
+  assert.throws(() => parseUiObserveResult(success(JSON.stringify({
+    status: "ok", app_id: appId, window_index: 0, window_title: "Sign in", focused: false,
+    nodes: [], truncated: false
+  })), appId, 10), /Sensitive application/u);
 });
 
 test("Accessibility observation validates identity, hint, and node budgets", () => {

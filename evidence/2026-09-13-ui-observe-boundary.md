@@ -9,13 +9,13 @@
 - Broker authorization requires the independent `mac.ui.observe` scope and an exact `window:bundle:<bundle_id>` target rule.
 - The adapter invokes only `/usr/bin/osascript -l JavaScript` with a Broker-owned constant script, `/` working directory, empty environment, a 10-second timeout cap, a 512 KiB output cap, and a 2,000-node cap.
 - The script checks `AXIsProcessTrusted`, resolves the requested running bundle and optional exact window title, and never accepts caller code or reads Accessibility element values.
-- The parser validates every returned field, masks secure/password-like nodes, redacts labels, bounds text, and derives opaque snapshot-bound window/element references.
+- The parser validates every returned field, denies sensitive application/window titles, masks secure/password-like nodes, redacts labels, bounds text, and derives opaque snapshot-bound window/element references.
 - Cancellation, timeout, output overflow, malformed output, missing app/window, and missing Accessibility permission map to stable fail-closed outcomes.
 
 ## Automated evidence
 
-- Accessibility parser, malformed-result, secure-node, secret-redaction, input-budget, fixed-command, Broker authority, GUI kill-switch, and contract-envelope tests pass.
-- Full suite after this boundary: 269 passing tests.
+- Accessibility parser, malformed-result, sensitive-target, secure-node, secret-redaction, input-budget, fixed-command, Broker authority, GUI kill-switch, and contract-envelope tests pass.
+- Full suite after this boundary: 270 passing tests.
 - `npm run typecheck` passed.
 - `npm run verify:contracts` passed: 44 unique tool contracts.
 - `npm audit --omit=dev --audit-level=high` reported 0 vulnerabilities.

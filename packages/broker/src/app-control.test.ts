@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AppControlInspectorImpl, appOpenExecutableForTesting, validateAppOpenRequest } from "./app-control.js";
+import { AppControlInspectorImpl, appFocusExecutableForTesting, appFocusScriptForTesting, appOpenExecutableForTesting, parseAppFocusResult, validateAppFocusRequest, validateAppOpenRequest } from "./app-control.js";
 import type { SafeAppInventory } from "./app-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -128,3 +128,54 @@ test("app open applies one global deadline across launch and reobservation", asy
   assert.ok(observedTimeouts.every((timeout) => timeout >= 1 && timeout <= 25));
   assert.ok(observedTimeouts.length >= 2);
 });
+
+test("app focus validates stable app-window inputs and fixed focus command output", async () => {
+  assert.doesNotThrow(() => validateAppFocusRequest("bundle:com.example.Editor", "Main"));
+  assert.throws(() => validateAppFocusRequest("com.example.Editor"), /stable bundle identity/u);
+  assert.throws(() => validateAppFocusRequest("bundle:com.example.Editor", "bad\nwindow"), /bounded visible text/u);
+  const observed: { executable: string; args: readonly string[]; cwd: string; environment?: Readonly<Record<string, string>> } = {
+    executable: "", args: [], cwd: ""
+  };
+  const inspector = new AppControlInspectorImpl({ async list() { return inventory([]); } }, {
+    async run(request) {
+      observed.executable = request.executable;
+      observed.args = request.args;
+      observed.cwd = request.cwd;
+      if (request.environment !== undefined) observed.environment = request.environment;
+      return successWithOutput(JSON.stringify({
+        status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
+        window_title: "Main", focused: true
+      }));
+    }
+  });
+  const result = await inspector.focus!("bundle:com.example.Editor", "Main", { timeoutMs: 5_000, shouldCancel: () => false });
+  assert.equal(result.focused, true);
+  assert.equal(result.verified, true);
+  assert.match(result.windowId, /^window:[a-f0-9]{48}$/u);
+  assert.equal(observed.executable, appFocusExecutableForTesting);
+  assert.deepEqual(observed.args.slice(0, 3), ["-l", "JavaScript", "-e"]);
+  assert.equal(observed.args[3], appFocusScriptForTesting);
+  assert.deepEqual(observed.args.slice(-2), ["bundle:com.example.Editor", "Main"]);
+  assert.equal(observed.cwd, "/");
+  assert.deepEqual(observed.environment, {});
+});
+
+test("app focus rejects unverified, sensitive, and permission-denied outcomes", () => {
+  assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
+    status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
+    window_title: "Main", focused: true
+  })), "bundle:com.apple.SecurityAgent"), /Sensitive application/u);
+  assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
+    status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
+    window_title: "Main", focused: false
+  })), "bundle:com.example.Editor"), /malformed metadata/u);
+  assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
+    status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
+    window_title: "Password", focused: true
+  })), "bundle:com.example.Editor"), /Sensitive application/u);
+  assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({ status: "error", error: "accessibility_permission" })), "bundle:com.example.Editor"), /permission is not granted/u);
+});
+
+function successWithOutput(stdout: string): ProcessExecutionResult {
+  return { ...success, stdout };
+}

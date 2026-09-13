@@ -52,7 +52,7 @@ Exit: approved real-project workflows pass without exposing a generic shell or c
 
 Status: `IN_PROGRESS`
 
-App inventory, a disabled-by-default approval-bound app launch slice, and the first disabled-by-default read-only Accessibility observation boundary are implemented with stable bundle identities and exact app/window target rules. Add focus and structured native automation next. Implement freshness-bound action targets, focus, app/action scopes, sensitive-surface rules, and macOS permission recovery.
+App inventory, disabled-by-default approval-bound app launch/focus slices, and the first disabled-by-default read-only Accessibility observation boundary are implemented with stable bundle identities and exact app/window target rules. Add structured native automation next. Implement snapshot-bound action targets, app/action scopes, sensitive-surface rules, and macOS permission recovery.
 
 Exit: approved workflows pass real-application tests and sensitive or stale targets fail closed.
 

@@ -12,7 +12,7 @@
   "output_cap_bytes": 524288,
   "network_policy": "none",
   "filesystem_policy": "none",
-  "secret_policy": "mask_secure_ui",
+  "secret_policy": "deny_sensitive_targets_and_mask_secure_ui",
   "approval_policy": "trusted_gui",
   "idempotent": true,
   "postcondition_verification": {
@@ -233,6 +233,6 @@
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
     "kb_item_id": "53141f65-7628-46e8-8475-14bbe4465b5c",
-    "source_text": "Purpose: bounded Accessibility-tree snapshot for an approved app/window. Input: app_id:string, window_hint?:string, max_nodes?:1..2000. Output: stable opaque element refs, roles, labels and safe states; secure nodes masked. Contract: L4 read_only; scope mac.ui.observe; target app_window; timeout 10000ms; cap 512KiB; no network/filesystem; secure UI/password content masked; approval trusted_gui; idempotent yes. Phase 4 planned."
+    "source_text": "Purpose: bounded Accessibility-tree snapshot for an approved app/window. Input: app_id:string, window_hint?:string, max_nodes?:1..2000. Output: stable opaque element refs, roles, labels and safe states; secure nodes masked. Contract: L4 read_only; scope mac.ui.observe; target app_window; timeout 10000ms; cap 512KiB; no network/filesystem; sensitive/security/credential targets denied and secure UI/password content masked; approval trusted_gui; idempotent yes. Phase 4 planned."
   }
 }

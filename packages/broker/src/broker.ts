@@ -39,8 +39,8 @@ import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-
 import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRunner } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
-import { AppControlInspectorImpl, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
-import { MacUiInspectorImpl, validateUiObserveRequest, type UiInspector } from "./ui-inspector.js";
+import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
+import { MacUiInspectorImpl, validateSensitiveUiTarget, validateUiObserveRequest, type UiInspector } from "./ui-inspector.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -404,6 +404,23 @@ export class Broker {
             execution.appOpenJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
+          if (request.tool === "mac_app_focus") {
+            const jobInput = {
+              jobId: `job:app-focus-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: `app-focus:${request.requestId}`,
+              createdAtMs: this.now()
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.appFocusJob = created.job;
+            execution.appFocusJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
         }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
@@ -417,6 +434,8 @@ export class Broker {
               ? { kind: "git_commit" as const, job: execution.gitCommitJob }
               : execution.appOpenJob && execution.appOpenJobNew
                 ? { kind: "app_open" as const, job: execution.appOpenJob }
+                : execution.appFocusJob && execution.appFocusJobNew
+                  ? { kind: "app_focus" as const, job: execution.appFocusJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
         const leaseStartedAtMs = this.now();
@@ -451,7 +470,8 @@ export class Broker {
         else if (pendingJob.kind === "task") execution.taskJob = started;
         else if (pendingJob.kind === "git_stage") execution.gitStageJob = started;
         else if (pendingJob.kind === "git_commit") execution.gitCommitJob = started;
-        else execution.appOpenJob = started;
+        else if (pendingJob.kind === "app_open") execution.appOpenJob = started;
+        else execution.appFocusJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       this.ensureActiveAuthority(request, execution.target);
@@ -611,6 +631,12 @@ export class Broker {
           throw new BrokerError("EXECUTION_FAILED", "App open job execution plan is unavailable");
         }
         return this.dispatchAppOpen(request, execution, toolPolicy.timeoutMs);
+      }
+      case "mac_app_focus": {
+        if (!execution.appFocus || !execution.appFocusJob) {
+          throw new BrokerError("EXECUTION_FAILED", "App focus job execution plan is unavailable");
+        }
+        return this.dispatchAppFocus(request, execution, toolPolicy.timeoutMs);
       }
       case "mac_app_list": {
         if (!execution.appList) throw new BrokerError("EXECUTION_FAILED", "App inventory execution plan is unavailable");
@@ -1859,6 +1885,83 @@ export class Broker {
     }
   }
 
+  private async dispatchAppFocus(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.appFocus || !execution.appFocusJob) {
+      throw new BrokerError("EXECUTION_FAILED", "App focus job execution plan is unavailable");
+    }
+    const job = execution.appFocusJob;
+    if (job.state === "queued") throw new BrokerError("CONFLICT", "App focus is already queued", true);
+    if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "App focus outcome is unresolved; inspect its Broker job", true);
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "App focus was cancelled before execution");
+    if (job.state === "completed") {
+      return appFocusDispatchResult(job, parseStoredAppFocusResult(job.stdout), true);
+    }
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "App focus job is not running");
+    if (!this.appControlInspector.focus) throw new BrokerError("UNSUPPORTED_CAPABILITY", "App focus adapter is not enabled");
+    try {
+      const focused = await this.appControlInspector.focus(
+        execution.appFocus.appId,
+        execution.appFocus.windowHint,
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+      );
+      this.ensureActiveAuthority(request, execution.target);
+      const data = {
+        app_id: focused.appId,
+        window_id: focused.windowId,
+        ...(focused.windowTitle !== undefined ? { window_title: focused.windowTitle } : {}),
+        focused: focused.focused,
+        reobserved_at: new Date(this.now()).toISOString(),
+        verified: focused.verified,
+        job_id: job.jobId
+      };
+      execution.appFocusJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: this.now(),
+        stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return {
+        data,
+        verification: {
+          required: true,
+          status: "verified",
+          strategy: "focused_app_window_reobservation",
+          evidence: {
+            summary: "The exact app-window identity was focused through fixed Broker-owned Accessibility automation and reobserved as focused",
+            readback_hash: sha256(canonicalJson(data)),
+            observed_at: data.reobserved_at
+          }
+        },
+        warnings: [...focused.warnings],
+        truncated: focused.truncated,
+        auditTarget: `app_window:${focused.windowId}`,
+        auditEvidence: {
+          appId: focused.appId,
+          windowId: focused.windowId,
+          focused: focused.focused,
+          verified: focused.verified,
+          warningCount: focused.warnings.length
+        }
+      };
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "App focus failed");
+      try {
+        execution.appFocusJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          state: "unknown",
+          resultClass: "unknown",
+          finishedAtMs: this.now()
+        }, execution.jobLease, this.now());
+      } catch {
+        // Preserve the original error; focus may have occurred without trusted readback.
+      }
+      throw brokerError;
+    }
+  }
+
   private async dispatchGitStage(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -2178,6 +2281,21 @@ export class Broker {
         }
       };
     }
+    if (request.tool === "mac_app_focus") {
+      assertExactArguments(request.arguments, ["app_id", "window_hint"]);
+      const appId = request.arguments.app_id;
+      const windowHint = request.arguments.window_hint;
+      validateAppFocusRequest(appId, windowHint);
+      validateSensitiveUiTarget(appId, windowHint as string | undefined);
+      return {
+        target: { kind: "app_window", reference: `window:${appId}` },
+        auditTarget: `app_window:window:${appId}`,
+        appFocus: {
+          appId,
+          ...(windowHint !== undefined ? { windowHint: windowHint as string } : {})
+        }
+      };
+    }
     if (request.tool === "mac_app_list") {
       assertExactArguments(request.arguments, ["running_only", "include_installed"]);
       const runningOnly = request.arguments.running_only ?? false;
@@ -2195,6 +2313,7 @@ export class Broker {
       const windowHint = request.arguments.window_hint;
       const maxNodes = request.arguments.max_nodes ?? 200;
       validateUiObserveRequest(appId, windowHint, maxNodes as number);
+      validateSensitiveUiTarget(appId, windowHint as string | undefined);
       return {
         target: { kind: "app_window", reference: `window:${appId}` },
         auditTarget: `app_window:window:${appId}`,
@@ -2888,6 +3007,10 @@ interface ExecutionPlan {
     documentPath?: string;
     url?: string;
   };
+  appFocus?: {
+    appId: string;
+    windowHint?: string;
+  };
   taskRun?: {
     profile: string;
     cwd: string;
@@ -2910,6 +3033,8 @@ interface ExecutionPlan {
   gitWriteJobNew?: boolean;
   appOpenJob?: BrokerJob;
   appOpenJobNew?: boolean;
+  appFocusJob?: BrokerJob;
+  appFocusJobNew?: boolean;
   jobLease?: JobLease;
 }
 
@@ -2998,6 +3123,34 @@ interface AppOpenResultData {
   job_id: string;
 }
 
+interface AppFocusResultData {
+  app_id: string;
+  window_id: string;
+  window_title?: string;
+  focused: true;
+  reobserved_at: string;
+  verified: true;
+  job_id: string;
+}
+
+function appFocusDispatchResult(job: BrokerJob, data: AppFocusResultData, reused: boolean): DispatchResult {
+  return {
+    data: { ...data, job_id: job.jobId },
+    verification: {
+      required: true,
+      status: "verified",
+      strategy: "focused_app_window_reobservation",
+      evidence: {
+        summary: reused ? "Reused a completed app focus Job readback" : "App window focus was reobserved for the exact target identity",
+        readback_hash: sha256(canonicalJson(data)),
+        observed_at: data.reobserved_at
+      }
+    },
+    auditTarget: `app_window:${data.window_id}`,
+    auditEvidence: { jobId: job.jobId, jobRevision: job.revision, reused, appId: data.app_id, windowId: data.window_id, focused: data.focused, verified: data.verified }
+  };
+}
+
 function appOpenDispatchResult(job: BrokerJob, data: AppOpenResultData, reused: boolean): DispatchResult {
   return {
     data: { ...data, job_id: job.jobId },
@@ -3038,6 +3191,29 @@ function parseStoredAppOpenResult(value: string): AppOpenResultData {
     state: record.state,
     process_id: null,
     target: { kind: "app", reference: record.app_id },
+    verified: true,
+    job_id: record.job_id
+  };
+}
+
+function parseStoredAppFocusResult(value: string): AppFocusResultData {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed");
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.app_id !== "string" || !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(record.app_id) ||
+      typeof record.window_id !== "string" || !/^window:[a-f0-9]{48}$/u.test(record.window_id) ||
+      (record.window_title !== undefined && (typeof record.window_title !== "string" || record.window_title.length > 512)) ||
+      record.focused !== true || typeof record.reobserved_at !== "string" || record.reobserved_at.length > 64 ||
+      record.verified !== true || typeof record.job_id !== "string" || !/^job:app-focus-[a-f0-9]{48}$/u.test(record.job_id)) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed");
+  }
+  return {
+    app_id: record.app_id,
+    window_id: record.window_id,
+    ...(record.window_title !== undefined ? { window_title: record.window_title } : {}),
+    focused: true,
+    reobserved_at: record.reobserved_at,
     verified: true,
     job_id: record.job_id
   };

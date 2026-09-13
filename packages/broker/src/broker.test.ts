@@ -894,6 +894,84 @@ test("mac_app_open binds GUI approval, app target, Job lease, and launch readbac
   }
 });
 
+test("mac_app_focus binds GUI approval, app-window target, Job lease, and focus readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-focus-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Editor";
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.app.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const appTool = basePolicy.tools.get("mac_app_focus")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_app_focus", { ...appTool, enabled: true }) };
+  let calls = 0;
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    appControlInspector: {
+      async open() { throw new Error("unused"); },
+      async focus(target, windowHint, control) {
+        calls += 1;
+        assert.equal(target, appId);
+        assert.equal(windowHint, "Example");
+        assert.equal(control.shouldCancel(), false);
+        return {
+          appId,
+          windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+          windowTitle: "Example",
+          focused: true,
+          verified: true,
+          warnings: [],
+          truncated: false
+        };
+      }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { app_id: appId, window_hint: "Example" };
+  const request = unsigned({
+    requestId: "app-focus-request",
+    nonce: "app-focus-nonce",
+    tool: "mac_app_focus",
+    arguments: argumentsValue
+  }, ["mac.app.control"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:app-focus",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_app_focus",
+      contractVersion: "0.1",
+      targetKind: "app_window",
+      targetRef: `app_window:window:${appId}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(calls, 1);
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        app_id: appId,
+        window_id: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+        window_title: "Example",
+        focused: true,
+        reobserved_at: new Date(NOW).toISOString(),
+        verified: true,
+        job_id: store.requestRecord("app-focus-request")?.jobId
+      });
+    }
+    assert.equal(store.approvalRecord("approval:app-focus")?.usedCount, 1);
+    assert.equal(store.ownedJobByIdempotencyKey("app-focus:app-focus-request", "principal-1")?.state, "completed");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_app_open never publishes success after active session revocation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-open-revoke-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -949,10 +1027,66 @@ test("mac_app_open never publishes success after active session revocation", asy
   }
 });
 
+test("mac_app_focus never publishes success after active session revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-focus-revoke-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Editor";
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.app.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const appTool = basePolicy.tools.get("mac_app_focus")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_app_focus", { ...appTool, enabled: true }) };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    appControlInspector: {
+      async open() { throw new Error("unused"); },
+      async focus() {
+        store.revoke("session", "session-1", "TEST_REVOKE", NOW);
+        return {
+          appId,
+          windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+          windowTitle: "Example",
+          focused: true,
+          verified: true,
+          warnings: [],
+          truncated: false
+        };
+      }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { app_id: appId, window_hint: "Example" };
+  const request = unsigned({ requestId: "app-focus-revoke", nonce: "app-focus-revoke-nonce", tool: "mac_app_focus", arguments: argumentsValue }, ["mac.app.control"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:app-focus-revoke",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_app_focus",
+      contractVersion: "0.1",
+      targetKind: "app_window",
+      targetRef: `app_window:window:${appId}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "CANCELLED");
+    assert.equal(store.ownedJobByIdempotencyKey("app-focus:app-focus-revoke", "principal-1")?.state, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 37);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 38);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

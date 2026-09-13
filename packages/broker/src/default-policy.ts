@@ -56,6 +56,19 @@ const tools: ToolPolicy[] = [
     enabled: false
   },
   {
+    tool: "mac_app_focus",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.app.control"],
+    capabilityFamilies: ["gui", "write"],
+    targetType: "app_window",
+    mutation: true,
+    approvalPolicy: "trusted_gui",
+    outputCapBytes: 131_072,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_ui_observe",
     contractVersion: "0.1",
     requiredScopes: ["mac.ui.observe"],
@@ -557,6 +570,13 @@ export function createDefaultPolicy(
         principalId: "principal-1",
         scope,
         target: { kind: "app", reference: appId }
+      }));
+      appIds.forEach((appId, appIndex) => targetRules.push({
+        ruleId: `test-app-window-control-${index}-${appIndex}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "app_window", reference: `window:${appId}` }
       }));
       return;
     }
