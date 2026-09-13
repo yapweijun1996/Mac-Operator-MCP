@@ -124,15 +124,20 @@ identity. This is startup assembly evidence only; no Mac-Operator LaunchAgent
 was installed or bootstrapped on the host. Evidence:
 `evidence/2026-09-13-launchd-edge-identity-startup.md`.
 
-The latest credential addendum is `ef5e336` plus `44c16ad`: the native adapter now provides a
+The latest credential addendum is `ef5e336`, `44c16ad`, `be02907`, plus
+`26cc667`: the native adapter now provides a
 non-interactive Security.framework generic-password read for one exact
 `com.mac-operator.*` service/account pair. It requires a unique 32-byte item,
 fails instead of presenting a Keychain UI, and exposes no secret in logs or
 files. A TypeScript loader and read-only missing-item/namespace tests are
 implemented; Approval issuer configuration can select this source only with an
 explicit `keySource: "keychain"` entry, while file-backed entries remain
-compatible. Production provisioning, ACL/rotation/deletion policy, Edge-key
-integration, and cross-process distribution remain open. Evidence:
+compatible. Explicit provisioning now generates one random 32-byte item,
+rejects duplicates, binds `kSecAttrAccessControl` to
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, disables synchronizable
+replication, and returns only a digest. No MCP tool exposes provisioning, and
+live-item ACL/rotation/deletion and Edge-side cross-process delivery remain
+open. Evidence:
 `evidence/2026-09-13-keychain-key-read.md`.
 
 The latest Edge-key addendum is `e9dd75e`, `7d91c8f`, `49843cc`, `a0b31fe`,

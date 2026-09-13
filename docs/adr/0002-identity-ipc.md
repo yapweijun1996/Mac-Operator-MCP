@@ -77,14 +77,17 @@ An Edge keyring supports overlapping validity windows for rotation. The Ed25519-
 
 Key-file lifecycle primitives use an owner-only non-symlink directory, exclusive `0600` creation, file and directory fsync, and an expected-digest precondition. Retirement refuses an Edge key until its exact identity is durably revoked, then uses a unique same-directory quarantine rename and unlink. APFS/SSD physical overwrite is outside this guarantee; cross-process delivery should move to an approved Keychain or packaging mechanism before production acceptance.
 
-Revisions `ef5e336` and `44c16ad` add a read-only Security.framework generic-password
-primitive for an exact `com.mac-operator.*` service/account pair. It requires a
-unique 32-byte item and sets authentication UI failure mode so a background
-Broker cannot prompt for credentials. Approval issuer metadata can select the
-source only with an explicit `keySource: "keychain"` entry; file-backed entries
-remain compatible. This is an explicit startup/configuration source rather than
-an MCP capability; provisioning, ACLs, rotation, deletion, Edge-key wiring,
-and cross-process distribution remain separate decisions.
+Revisions `ef5e336`, `44c16ad`, `be02907`, and `26cc667` add Security.framework
+generic-password read and provisioning primitives for an exact
+`com.mac-operator.*` service/account pair. Reads require a unique 32-byte item
+and fail rather than presenting authentication UI to a background Broker.
+Provisioning rejects duplicates, returns only a digest, binds
+`kSecAttrAccessControl` to `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`,
+and disables synchronizable replication. Approval issuer metadata can select
+the source only with an explicit `keySource: "keychain"` entry; file-backed
+entries remain compatible. These are explicit startup/operator operations, not
+MCP capabilities; live-item ACL review, rotation/deletion, Edge-side delivery,
+and cross-process distribution remain open.
 
 Revisions `e9dd75e` and `7d91c8f` add the same explicit-source boundary to Edge
 authentication-key metadata. The owner-only versioned config accepts either a

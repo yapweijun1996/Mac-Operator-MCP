@@ -226,16 +226,19 @@ installed or bootstrapped, so signed package provenance and live launchd
 restart/readback remain open. Evidence:
 `evidence/2026-09-13-launchd-edge-identity-startup.md`.
 
-Latest Keychain addendum: commits `ef5e336` and `44c16ad` add a native Security.framework
+Latest Keychain addendum: commits `ef5e336`, `44c16ad`, `be02907`, and `26cc667` add a native Security.framework
 generic-password read boundary with fixed service/account namespaces,
 unique-match enforcement, exact 32-byte output, and authentication-UI failure
 mode for background operation. Approval issuer metadata can select the source
 only through an explicit `keySource: "keychain"` entry; file-backed entries
-remain compatible. Missing-item and malformed-identity tests pass; no real
-secret item was created during verification. The protected loader now requires
-18 native exports. This is a partial distribution primitive, not Keychain
-provisioning, ACL/rotation/deletion evidence, Edge-key integration, live
-installed use, or production enablement.
+remain compatible. Explicit provisioning now generates one random 32-byte item,
+rejects duplicates, binds `kSecAttrAccessControl` to
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, disables synchronizable
+replication, and returns only a digest. Missing-item, malformed-identity, and
+provisioning namespace tests pass; no real secret item was created during
+verification. The protected loader now requires 19 native exports. This is a
+partial distribution primitive, not live-item ACL/rotation/deletion evidence,
+Edge-side Keychain delivery, installed use, or production enablement.
 Evidence: `evidence/2026-09-13-keychain-key-read.md`.
 
 Latest Edge-key source addendum: commits `e9dd75e`, `7d91c8f`, `49843cc`,
