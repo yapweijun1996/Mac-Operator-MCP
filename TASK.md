@@ -213,6 +213,13 @@ filesystem or launchd actions. Developer ID signing/notarization, installation,
 live readback, and independent review remain blocked. Evidence:
 `evidence/2026-09-13-helper-signature-gate.md`.
 
+`MOP-061` observer addendum: source revision `3b24604` wires the authenticated
+helper socket/key status client into the package observer and rejects a missing
+runtime source. The integration test completes a real local signed status
+exchange through the production-shaped observer. Root installation and live
+launchd evidence remain blocked. Evidence:
+`evidence/2026-09-13-helper-observer-ipc-integration.md`.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.

@@ -159,6 +159,12 @@ or partially bound artifact therefore fails before filesystem or launchd action.
 This is a package gate only; it does not assert that a signed/notarized helper
 artifact exists or authorize installation.
 
+Revision `3b24604` wires the authenticated helper status socket/key client into
+the production-shaped package observer. The observer now fails closed when no
+runtime source is selected, while the callback form remains available only for
+controlled host/test adapters. Package readiness still composes helper status
+with independent launchd, process, plist, and signature readback sources.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

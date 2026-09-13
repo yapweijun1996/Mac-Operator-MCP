@@ -1119,3 +1119,14 @@ three values before package readiness can be accepted. This closes the
 incomplete/ad-hoc identity path but does not claim a Developer ID-signed or
 notarized artifact, installed root helper, or live launchd evidence.
 Evidence: `evidence/2026-09-13-helper-signature-gate.md`.
+
+## Latest helper observer integration addendum
+
+Source revision `3b24604` wires the authenticated helper status client into the
+production-shaped package observer. Callers must select either the explicit
+helper socket/key client or a controlled test callback; no runtime source means
+observer construction fails closed. The observer integration test completes a
+real local signed status exchange and feeds the result through package
+readback. The latest default suite reports 399 tests, 396 passed, 3 opt-in
+sandbox tests skipped. Evidence:
+`evidence/2026-09-13-helper-observer-ipc-integration.md`.
