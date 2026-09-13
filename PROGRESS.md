@@ -1235,3 +1235,11 @@ and reclamation succeeds only after the child's PID/start-time identity is
 proven stale. Focused lock tests pass 5/5. This does not claim launchd
 singleton enforcement or remount durability. Evidence:
 `evidence/2026-09-14-service-instance-lock-process.md`.
+
+The host-only macOS install plan now has a real reversible lifecycle smoke:
+ad-hoc signature verification, nine-entry filesystem preflight, atomic plist
+publication, fixed `launchctl bootstrap`, live LaunchAgent readback with native
+PID/start-time capture, exact bootout, exact uninstall, and final service/plist
+absence all passed for a temporary waiting process. The process was not
+represented as a Broker, so final Broker readiness remains closed. Evidence:
+`evidence/2026-09-14-live-install-plan.md`.

@@ -27,4 +27,11 @@ identity.
 
 Installation is intentionally not automated in this repository. A future installer must still perform owner/mode/symlink/atomic-write checks for package files, plist parent directories, and logs, then execute the reviewed plan only after signature verification and rollback backup success. Readback should use `launchctl print gui/<uid>/com.mac-operator.broker` and the bounded Broker service readback; neither command is run by the build or test suite.
 
+The physical-host evidence includes a reversible temporary LaunchAgent smoke
+that uses the plan's real signature, preflight, atomic plist, bootstrap,
+readback, bootout, and uninstall primitives. It intentionally stops before
+Broker readiness: the final installer callback must provide an independently
+observed Broker metadata/native transport/signature readback, not a synthetic
+success from a temporary process.
+
 The test suite includes a real macOS smoke check that creates a synthetic app bundle in a temporary directory, signs it ad hoc with `/usr/bin/codesign`, and verifies it through the plan's fixed `--verify --strict --deep` command. This proves command wiring and basic host compatibility only; it is not production Developer ID signing, notarization, certificate/key protection, or installed-service evidence.

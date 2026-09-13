@@ -103,6 +103,14 @@ observation proves the child stale. Focused lock tests pass 5/5. This does not
 claim launchd singleton enforcement or remount durability. Evidence:
 `evidence/2026-09-14-service-instance-lock-process.md`.
 
+The host-only install plan has a real reversible lifecycle smoke covering
+ad-hoc signature verification, filesystem preflight, atomic plist publication,
+fixed bootstrap, live LaunchAgent/PID-start-time readback, bootout, exact
+uninstall, and final absence. The temporary waiting process was not treated as
+Broker readiness; Developer ID, installed Broker/Edge identity, production
+upgrade/rollback, and helper installation remain open. Evidence:
+`evidence/2026-09-14-live-install-plan.md`.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.
