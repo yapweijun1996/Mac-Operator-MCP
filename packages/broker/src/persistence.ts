@@ -275,6 +275,12 @@ export class BrokerStore {
         accepted_at_ms INTEGER NOT NULL,
         expires_at_ms INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS privileged_helper_nonces (
+        nonce TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE,
+        accepted_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS revocations (
         kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key', 'policy_signer')),
         subject_id TEXT NOT NULL,
@@ -1016,6 +1022,34 @@ export class BrokerStore {
       }
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Policy signer command admission could not be persisted");
+    }
+  }
+
+  admitPrivilegedHelperCommand(input: {
+    requestId: string;
+    nonce: string;
+    acceptedAtMs: number;
+    expiresAtMs: number;
+  }): void {
+    if (!/^request:[A-Za-z0-9._:-]{1,240}$/u.test(input.requestId) ||
+        !/^[A-Za-z0-9._:@/-]{16,128}$/u.test(input.nonce) ||
+        !Number.isSafeInteger(input.acceptedAtMs) || input.acceptedAtMs < 0 ||
+        !Number.isSafeInteger(input.expiresAtMs) || input.expiresAtMs <= input.acceptedAtMs) {
+      throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command admission is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        this.database.prepare("DELETE FROM privileged_helper_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        this.database.prepare(
+          "INSERT INTO privileged_helper_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
+        ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
+      });
+    } catch (error) {
+      if (String(error).includes("UNIQUE constraint failed")) {
+        throw new BrokerError("REPLAY_DENIED", "Privileged helper command nonce or request ID was already accepted");
+      }
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Privileged helper command admission could not be persisted");
     }
   }
 

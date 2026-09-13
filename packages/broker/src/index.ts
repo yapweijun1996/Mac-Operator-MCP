@@ -19,6 +19,7 @@ export * from "./task-runner.js";
 export * from "./approval-authority.js";
 export * from "./approval-keyring.js";
 export * from "./approval-ipc-server.js";
+export * from "./privileged-helper.js";
 export * from "./system-inspector.js";
 export * from "./network-inspector.js";
 export * from "./process-inspector.js";
