@@ -86,6 +86,11 @@ Revision `c49ff5b` makes host-only plist apply verify the actual current process
 UID in addition to the supplied root identity. A non-root caller that forges
 `ownerUid: 0` is rejected before filesystem preflight or mutation.
 
+Revision `c8dcb2c` removes caller-supplied filesystem inspector injection from
+the helper apply boundary. Host-only helper plist mutation now always uses its
+internal root filesystem policy, preventing a caller from swapping the writer
+after the real-path preflight.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

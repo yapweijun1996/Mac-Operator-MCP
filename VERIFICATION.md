@@ -82,7 +82,7 @@ no root process or privileged action was run. The full suite passes 337 tests
 (335 passed, 2 opt-in real-sandbox tests skipped). Evidence:
 `evidence/2026-09-13-privileged-helper-runtime.md`.
 
-Latest helper-package addendum: source commit `c49ff5b` adds a separate
+Latest helper-package addendum: source commit `c8dcb2c` adds a separate
 non-executing system LaunchDaemon plan. It fixes the root-domain plist path,
 native-only helper argv, exact helper signature identifier, protected helper
 root/key/socket paths, Broker peer UID/GID binding, root-owned plist actions,
@@ -97,7 +97,8 @@ files and an owner-executable helper. The package now also exposes a
 host-only, explicitly confirmed descriptor-relative plist apply/upgrade/
 rollback/uninstall primitive with exact identity preconditions and restoration
 on failed upgrade/uninstall; it rejects non-root callers before filesystem
-access, verifies the real current process UID, and never calls launchctl.
+access, verifies the real current process UID, pins the write to the internal
+root filesystem inspector, and never calls launchctl.
 Successful root-owned execution remains unverified. The full suite passes 347
 tests (345 passed, 2 opt-in real-sandbox tests skipped); the opt-in real-Mac
 suite passes 347/347. Evidence:

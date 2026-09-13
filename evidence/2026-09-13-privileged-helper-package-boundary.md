@@ -1,7 +1,7 @@
 # Privileged Helper Package Boundary Evidence
 
 Date: 2026-09-13
-Source commit: `c49ff5b`
+Source commit: `c8dcb2c`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -51,14 +51,19 @@ preflight double-checks root-owned paths and device/inode identity, and its
 pure readback tests reject unsafe mode/owner/type substitutions. The host-only
 plist apply primitive rejects mismatched operation confirmation and non-root
 ownership before filesystem access; it also verifies the actual current
-process UID, rejecting a forged `ownerUid: 0` before the filesystem preflight.
+process UID, rejects a forged `ownerUid: 0` before the filesystem preflight,
+and pins the writer to the internal root filesystem inspector rather than
+caller-injected state.
 Successful root-owned apply/rollback was not run.
 
 ## Remaining gates
 
 Developer ID signing and provenance (the smoke test is ad-hoc only),
 successful root-owned descriptor-relative installation, root-owned filesystem
-preflight on an installed package, caller PID/start-time provenance across a real helper/root
-process boundary, Keychain ACL approval, launchd install/rollback/readback,
-real caller-spoof tests, helper adapters, crash recovery, and independent
-security review remain open. The helper remains disabled.
+preflight on an installed package, caller PID/start-time provenance across a
+real helper/root process boundary, Keychain ACL approval, launchd
+install/rollback/readback, helper adapters, crash recovery, and independent
+security review remain open. The separate native cross-process caller-spoof
+test is recorded in
+`evidence/2026-09-13-privileged-helper-native-caller.md`; it does not prove a
+root-domain installation. The helper remains disabled.

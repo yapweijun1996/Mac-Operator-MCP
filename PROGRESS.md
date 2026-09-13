@@ -6,12 +6,14 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `c49ff5b`.
+Current committed implementation baseline: `c8dcb2c`.
 
-The latest helper apply hardening is `c49ff5b`: host-only plist mutation now
+The latest helper apply hardening is `c8dcb2c`: host-only plist mutation now
 checks the real current process UID in addition to the caller-supplied root
 identity, so a non-root process cannot forge `ownerUid: 0`. The rejection is
-tested before any helper filesystem preflight. The default full suite passes
+tested before any helper filesystem preflight, and the writer is pinned to the
+internal root filesystem inspector rather than caller-injected state. The
+default full suite passes
 347 tests (345 passed, 2 opt-in real-sandbox tests skipped); the real-Mac
 opt-in suite passes 347/347. Evidence:
 `evidence/2026-09-13-privileged-helper-package-boundary.md`.
