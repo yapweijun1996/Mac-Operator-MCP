@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -100,6 +101,67 @@ test("native IPC accepts a peer-authenticated fd through public Socket({ fd })",
     assert.equal(response.response.ok, true);
     assert.equal(response.response.tool, "mac_health");
   } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native IPC accepts a separately spawned Edge bound to its PID start-time identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-cross-process-"));
+  const socketPath = join(directory, "broker.sock");
+  const readyPath = join(directory, "ready");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const now = Date.now();
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: new EdgeKeyring([{
+      edgeId: "edge-1", keyId: "edge-key-1", key,
+      notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+    }]),
+    now: () => now
+  });
+  const childScript = [
+    'import { createConnection } from "node:net";',
+    'import { stat } from "node:fs/promises";',
+    'const [socketPath, readyPath] = process.argv.slice(1);',
+    'const deadline = Date.now() + 5000;',
+    'while (true) { try { await stat(readyPath); break; } catch { if (Date.now() >= deadline) process.exit(2); await new Promise((resolve) => setTimeout(resolve, 10)); } }',
+    'const socket = createConnection(socketPath);',
+    'let response = "";',
+    'socket.setEncoding("utf8");',
+    'socket.on("data", (chunk) => { response += chunk; });',
+    'socket.on("error", () => process.exit(3));',
+    'socket.on("end", () => { process.stdout.write(response); });',
+    'socket.on("connect", () => socket.end("not-json\\n"));'
+  ].join("\n");
+  const child = spawn(process.execPath, ["--input-type=module", "-e", childScript, socketPath, readyPath], {
+    cwd: "/",
+    env: { PATH: process.env.PATH ?? "" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (child.pid === undefined || child.stdout === null || child.stderr === null) {
+    child.kill("SIGKILL");
+    throw new Error("Edge fixture did not expose a process identity");
+  }
+  const identity = await waitForProcessIdentity(child.pid);
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) throw new Error("POSIX identity is unavailable");
+  const server = new MacOsNativeBrokerIpcServer({
+    socketPath,
+    broker,
+    peerPolicy: { expectedUid: uid, expectedGid: gid, allowedProcessIdentity: identity }
+  });
+  await server.listen();
+  try {
+    await writeFile(readyPath, "ready\n", { mode: 0o600 });
+    const output = await collectChildOutput(child, 5_000);
+    assert.match(output, /AUTH_INVALID/u);
+  } finally {
+    if (!child.killed && child.exitCode === null) child.kill("SIGKILL");
     await server.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -232,5 +294,52 @@ function send(socketPath: string, body: string): Promise<string> {
     socket.on("data", (chunk: string) => { response += chunk; });
     socket.on("end", () => resolve(response.trim()));
     socket.on("error", reject);
+  });
+}
+
+async function waitForProcessIdentity(pid: number): Promise<ReturnType<typeof capturePeerProcessIdentity>> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    try {
+      return capturePeerProcessIdentity(pid);
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error("Edge fixture process identity was unavailable");
+}
+
+function collectChildOutput(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    let errorOutput = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("Edge fixture timed out"));
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+      if (Buffer.byteLength(output, "utf8") > 131_072) {
+        child.kill("SIGKILL");
+        clearTimeout(timer);
+        reject(new Error("Edge fixture output exceeded the test cap"));
+      }
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      errorOutput += chunk.toString("utf8");
+      if (Buffer.byteLength(errorOutput, "utf8") > 16_384) child.kill("SIGKILL");
+    });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (code !== 0 || signal !== null) {
+        reject(new Error(`Edge fixture exited unexpectedly: ${code ?? "null"}/${signal ?? "none"}`));
+      } else {
+        resolve(output);
+      }
+    });
   });
 }
