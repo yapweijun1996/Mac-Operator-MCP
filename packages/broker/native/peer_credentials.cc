@@ -1520,6 +1520,12 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
   MaybeInjectWriteCrash("after_rename");
+  if (MaybeInjectWriteError("before_directory_fsync")) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem write directory could not be durably flushed");
+    return nullptr;
+  }
   if (fsync(parent_descriptor) != 0) {
     unlinkat(parent_descriptor, temporary_name, 0);
     close(parent_descriptor);

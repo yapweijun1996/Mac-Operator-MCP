@@ -236,9 +236,10 @@ test("native atomic write cleans temporary state on simulated ENOSPC", async () 
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-enospc-"));
   const nativePath = require.resolve("./peer_credentials_fault.node");
   const cases = [
-    { name: "create-write-error.txt", before: null, createOnly: true, faultPoint: "before_temp_write" },
-    { name: "create-fsync-error.txt", before: null, createOnly: true, faultPoint: "before_temp_fsync" },
-    { name: "replace-fsync-error.txt", before: "before", createOnly: false, faultPoint: "before_temp_fsync" }
+    { name: "create-write-error.txt", before: null, createOnly: true, faultPoint: "before_temp_write", expectedTarget: null },
+    { name: "create-fsync-error.txt", before: null, createOnly: true, faultPoint: "before_temp_fsync", expectedTarget: null },
+    { name: "replace-fsync-error.txt", before: "before", createOnly: false, faultPoint: "before_temp_fsync", expectedTarget: "before" },
+    { name: "create-directory-fsync-error.txt", before: null, createOnly: true, faultPoint: "before_directory_fsync", expectedTarget: "after" }
   ] as const;
   try {
     for (const current of cases) {
@@ -261,10 +262,10 @@ test("native atomic write cleans temporary state on simulated ENOSPC", async () 
       }, directory);
       assert.equal(result.signal, null);
       assert.notEqual(result.code, 0);
-      if (current.before === null) {
+      if (current.expectedTarget === null) {
         await assert.rejects(readFile(target), /ENOENT/u);
       } else {
-        assert.equal(await readFile(target, "utf8"), current.before);
+        assert.equal(await readFile(target, "utf8"), current.expectedTarget);
       }
       assert.equal((await readdir(directory)).includes(temporaryName), false);
       await rm(target, { force: true });
