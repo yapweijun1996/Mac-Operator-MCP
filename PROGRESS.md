@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `18a418a`.
+Current committed implementation baseline: `f76e8a0`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -67,6 +67,14 @@ current host readback is a valid ad-hoc linker-signed arm64 module with no Team
 ID; this is build-integrity evidence only and does not establish Developer ID
 provenance, notarization, Keychain distribution, installed startup, or
 production enablement. Evidence: `evidence/2026-09-13-native-adapter-code-signing.md`.
+
+The latest implementation addendum is `f76e8a0`: native Broker and
+compatibility IPC peer policies can bind the accepted UID/GID/PID to a captured
+native `startTimeMicros`, rejecting PID reuse before socket construction or
+request parsing. The stronger identity policy is explicit and preserves a
+PID-only compatibility mode; installed Edge startup still must capture and
+configure the intended caller identity. Evidence:
+`evidence/2026-09-13-native-peer-process-identity.md`.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 
