@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `9e3d99b`.
+Current committed implementation baseline: `9fd9fba`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
