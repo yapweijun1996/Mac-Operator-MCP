@@ -15,6 +15,7 @@ import type { DockerInspector } from "./docker-inspector.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
 import { UiSnapshotRegistry } from "./ui-inspector.js";
+import type { FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -2857,6 +2858,112 @@ test("real filesystem worker crash after commit leaves the Broker write Job UNKN
       observed_at: new Date(NOW).toISOString()
     });
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("reopened Broker rejects a stale completion from the prior Broker instance", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-stale-completion-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const path = join(directory, "stale-completion.txt");
+  const store = new BrokerStore(databasePath);
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  let startedResolve!: () => void;
+  let releaseWrite: ((value: FilesystemWorkerResult) => void) | undefined;
+  const writeStarted = new Promise<void>((resolve) => { startedResolve = resolve; });
+  const delayedExecutor = {
+    write: async () => {
+      startedResolve();
+      return await new Promise<FilesystemWorkerResult>((resolve) => { releaseWrite = resolve; });
+    },
+    close: async () => {}
+  } as unknown as FilesystemExecutor;
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    filesystemExecutor: delayedExecutor,
+    now: () => NOW
+  });
+  let restartedStore: BrokerStore | undefined;
+  let restartedBroker: Broker | undefined;
+  try {
+    const argumentsValue = { path, content: "stale", idempotency_key: "stale-completion", encoding: "utf8", create_only: true };
+    store.issueApproval({
+      approvalId: "approval:stale-completion",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const request = unsigned({
+      requestId: "stale-completion-request",
+      nonce: "stale-completion-nonce",
+      tool: "mac_write_file_atomic",
+      arguments: argumentsValue
+    }, ["mac.files.write", "mac.job.read"]);
+    const priorResult = broker.handle(signRequest(request, key));
+    await writeStarted;
+    const jobId = store.requestRecord(request.requestId)?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "running");
+
+    restartedStore = new BrokerStore(databasePath);
+    assert.equal(restartedStore.ownedJob(jobId, "principal-1")?.state, "unknown");
+    restartedBroker = new Broker({
+      store: restartedStore,
+      policy,
+      edgeAuthenticationKeys: testKeyring(key),
+      filesystemExecutor: delayedExecutor,
+      now: () => NOW
+    });
+    releaseWrite?.({
+      operation: "write",
+      path,
+      bytesWritten: 5,
+      sha256: sha256(Buffer.from("stale")),
+      created: true,
+      expectedSha256: null,
+      expectedMatched: true,
+      rootId: "test-root",
+      device: "device:test",
+      inode: "inode:test"
+    });
+    const priorResultValue = await priorResult;
+    assert.equal(priorResultValue.ok, false, JSON.stringify(priorResultValue));
+    assert.equal(restartedStore.ownedJob(jobId, "principal-1")?.state, "unknown");
+
+    const statusRequest = unsigned({
+      requestId: "stale-completion-status",
+      nonce: "stale-completion-status-nonce",
+      tool: "mac_job_status",
+      arguments: { job_id: jobId, tail_bytes: 128 }
+    }, ["mac.job.read"]);
+    const status = await restartedBroker.handle(signRequest(statusRequest, key));
+    assert.equal(status.ok, true, JSON.stringify(status));
+    assert.ok(status.ok);
+    assert.equal((status.data as { state: string }).state, "unknown");
+  } finally {
+    await broker.close();
+    await restartedBroker?.close();
+    restartedStore?.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
