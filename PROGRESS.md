@@ -124,14 +124,15 @@ identity. This is startup assembly evidence only; no Mac-Operator LaunchAgent
 was installed or bootstrapped on the host. Evidence:
 `evidence/2026-09-13-launchd-edge-identity-startup.md`.
 
-The latest credential addendum is `ef5e336`: the native adapter now provides a
+The latest credential addendum is `ef5e336` plus `44c16ad`: the native adapter now provides a
 non-interactive Security.framework generic-password read for one exact
 `com.mac-operator.*` service/account pair. It requires a unique 32-byte item,
 fails instead of presenting a Keychain UI, and exposes no secret in logs or
 files. A TypeScript loader and read-only missing-item/namespace tests are
-implemented; the existing file-backed key managers are not silently switched
-to Keychain. Production provisioning, ACL/rotation/deletion policy, and
-cross-process distribution remain open. Evidence:
+implemented; Approval issuer configuration can select this source only with an
+explicit `keySource: "keychain"` entry, while file-backed entries remain
+compatible. Production provisioning, ACL/rotation/deletion policy, Edge-key
+integration, and cross-process distribution remain open. Evidence:
 `evidence/2026-09-13-keychain-key-read.md`.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
@@ -315,7 +316,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 308 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 309 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.

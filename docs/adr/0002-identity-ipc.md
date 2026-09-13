@@ -77,12 +77,14 @@ An Edge keyring supports overlapping validity windows for rotation. The Ed25519-
 
 Key-file lifecycle primitives use an owner-only non-symlink directory, exclusive `0600` creation, file and directory fsync, and an expected-digest precondition. Retirement refuses an Edge key until its exact identity is durably revoked, then uses a unique same-directory quarantine rename and unlink. APFS/SSD physical overwrite is outside this guarantee; cross-process delivery should move to an approved Keychain or packaging mechanism before production acceptance.
 
-Revision `ef5e336` adds a read-only Security.framework generic-password
+Revisions `ef5e336` and `44c16ad` add a read-only Security.framework generic-password
 primitive for an exact `com.mac-operator.*` service/account pair. It requires a
 unique 32-byte item and sets authentication UI failure mode so a background
-Broker cannot prompt for credentials. This is an explicit startup/configuration
-source rather than an MCP capability; provisioning, ACLs, rotation, deletion,
-and wiring the active key managers to Keychain remain separate decisions.
+Broker cannot prompt for credentials. Approval issuer metadata can select the
+source only with an explicit `keySource: "keychain"` entry; file-backed entries
+remain compatible. This is an explicit startup/configuration source rather than
+an MCP capability; provisioning, ACLs, rotation, deletion, Edge-key wiring,
+and cross-process distribution remain separate decisions.
 
 This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, session concurrency, canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
 

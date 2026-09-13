@@ -226,14 +226,16 @@ installed or bootstrapped, so signed package provenance and live launchd
 restart/readback remain open. Evidence:
 `evidence/2026-09-13-launchd-edge-identity-startup.md`.
 
-Latest Keychain addendum: commit `ef5e336` adds a native Security.framework
+Latest Keychain addendum: commits `ef5e336` and `44c16ad` add a native Security.framework
 generic-password read boundary with fixed service/account namespaces,
 unique-match enforcement, exact 32-byte output, and authentication-UI failure
-mode for background operation. Missing-item and malformed-identity tests pass;
-the file-backed key managers are not silently changed, and no real secret item
-was created during verification. The protected loader now requires 18 native
-exports. This is a partial distribution primitive, not Keychain provisioning,
-ACL/rotation/deletion evidence, live installed use, or production enablement.
+mode for background operation. Approval issuer metadata can select the source
+only through an explicit `keySource: "keychain"` entry; file-backed entries
+remain compatible. Missing-item and malformed-identity tests pass; no real
+secret item was created during verification. The protected loader now requires
+18 native exports. This is a partial distribution primitive, not Keychain
+provisioning, ACL/rotation/deletion evidence, Edge-key integration, live
+installed use, or production enablement.
 Evidence: `evidence/2026-09-13-keychain-key-read.md`.
 
 Latest Edge TLS addendum: commit `87f3a72` records 217 passing tests and adds a protected TLS material loader. Certificate and private-key files are bounded, canonical absolute owner-only regular files; symlinks, weak permissions, oversized inputs, and device/inode changes are rejected before HTTPS startup receives material. Evidence: `evidence/2026-09-13-edge-tls-material.md`. This does not prove certificate rotation, Keychain storage, remote OAuth deployment, or installed startup.

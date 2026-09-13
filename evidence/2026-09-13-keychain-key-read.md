@@ -15,14 +15,17 @@ copied only into process memory; they are not logged or written back.
 The TypeScript boundary is explicit (`loadKeychainAuthenticationKey`) and is
 not selected by filesystem paths or MCP arguments. Missing items, malformed
 service/account values, duplicate matches, and invalid lengths fail closed.
-Existing file-backed Edge and approval keyring configuration remains unchanged
-until a protected provisioning/rotation decision explicitly selects Keychain.
+Commit `44c16ad` wires this source into Approval issuer configuration only when
+an entry explicitly sets `keySource: "keychain"`, `service`, and `account`;
+file-backed entries remain compatible, and mixed path/Keychain metadata is
+rejected.
 
 ## Host evidence
 
 - Host: Darwin arm64, macOS `26.2` build `25C56`.
 - Runtime: Node `v25.5.0`, npm `11.8.0`.
-- Source commit: `ef5e336` (`security: add non-interactive Keychain key reads`).
+- Source commits: `ef5e336` (`security: add non-interactive Keychain key reads`)
+  and `44c16ad` (`security: bind approval keys to explicit Keychain sources`).
 - Focused credentials/native tests: 12 passed, 0 failed.
 - Full regression: 308 passed, 0 failed, 2 opt-in real-sandbox tests skipped
   (310 total).
@@ -42,6 +45,10 @@ until a protected provisioning/rotation decision explicitly selects Keychain.
   `6158baf77923092454946a2512d86edf7dd13772312ccaec44dd00083c75e5f8`
 - `packages/broker/src/credentials.test.ts` SHA-256:
   `4a5bbd9464b8a419460e31621d06bfc4e985e47bc3dcec0e25862f090b65d420`
+- `packages/broker/src/approval-keyring.ts` SHA-256:
+  `a008c7036799b632f1c778557187448d7992b86710df7720da3e471d3f335759`
+- `packages/broker/src/approval-keyring.test.ts` SHA-256:
+  `288285fbb71bc757f59ea6f54ab93ca9419941d7c25ab6953d01df2d67e560e0`
 - `packages/broker/scripts/build-peer-credentials.sh` SHA-256:
   `1507c1c687ae1339c055bf402e4af88cf1c293db624afd90e35a9de7aee3ac03`
 - `packages/broker/scripts/build-peer-credentials-fault-test.sh` SHA-256:
@@ -49,9 +56,9 @@ until a protected provisioning/rotation decision explicitly selects Keychain.
 
 ## Limits and next gate
 
-This proves a non-interactive Keychain read boundary, not protected Keychain
-provisioning, access-control policy, rotation, deletion, cross-process
-distribution, or use by the active Edge/approval key managers. A real secret
-item was intentionally not created during evidence capture. Developer ID
+This proves a non-interactive Keychain read boundary and explicit Approval
+issuer source selection, not protected Keychain provisioning, access-control
+policy, rotation, deletion, or Edge-key integration. A real secret item was
+intentionally not created during evidence capture. Developer ID
 signing/notarization, Keychain ACL review, live installed startup, remote
 issuer integration, and production capability enablement remain open.
