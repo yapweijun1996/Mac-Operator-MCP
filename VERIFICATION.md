@@ -12,8 +12,8 @@ Latest bounded-log addendum: the `mac_log_tail` adapter now accepts only a
 supervisor-confirmed `OUTPUT_LIMIT` result, parses the already bounded output
 prefix, redacts it, and reports truncation explicitly. Unresolved process
 outcomes remain stable `UNKNOWN_OUTCOME` failures. Focused log tests pass 5/5;
-the Darwin real-sandbox sequential suite passes 438/438 with one explicit
-skip. Evidence: `evidence/2026-09-14-log-output-budget.md`.
+the latest Darwin real-sandbox suite passes 441/441 with one explicit skip.
+Evidence: `evidence/2026-09-14-log-output-budget.md`.
 
 Latest bounded-write addendum: `mac_apply_patch` now has a disabled-by-default
 Broker implementation with independent file/project scopes, exact project

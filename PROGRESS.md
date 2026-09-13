@@ -15,7 +15,7 @@ prefix when the Broker-owned process supervisor reaches its fixed 512 KiB
 output cap. The adapter exposes `truncated: true` and an explicit warning only
 after process termination has been observed; an unresolved supervisor outcome
 still fails closed as `UNKNOWN_OUTCOME`. Focused log tests pass 5/5, and the
-Darwin real-sandbox sequential suite passes 438/438 with one explicit skip.
+latest Darwin real-sandbox suite passes 441/441 with one explicit skip.
 Evidence: `evidence/2026-09-14-log-output-budget.md`.
 
 Latest bounded-write addendum: `mac_apply_patch` is now implemented behind a
