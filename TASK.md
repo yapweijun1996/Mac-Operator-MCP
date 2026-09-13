@@ -4,9 +4,9 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
-Task-volume identity addendum: the experimental runner captures and rechecks
-native volume identity for every authorized task root, failing closed on a
-changed root or volume before publishing a result. Evidence:
+Task-volume identity addendum: the experimental runner double-reads and
+rechecks native volume identity for every authorized task root, failing closed
+on a changed root or volume before publishing a result. Evidence:
 `evidence/2026-09-14-task-volume-identity.md`.
 
 Task credential-policy addendum: versioned TaskProfiles explicitly declare

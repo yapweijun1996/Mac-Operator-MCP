@@ -170,7 +170,14 @@ function captureTaskFilesystemIdentity(
   const roots = [...new Set(profile.filesystemRoots)].sort();
   if (roots.length === 0) throw new BrokerError("POLICY_DENIED", "Task filesystem roots are unavailable");
   try {
-    return roots.map((rootPath) => parseTaskFilesystemIdentity(observe(rootPath), rootPath));
+    return roots.map((rootPath) => {
+      const first = parseTaskFilesystemIdentity(observe(rootPath), rootPath);
+      const second = parseTaskFilesystemIdentity(observe(rootPath), rootPath);
+      if (first.id !== second.id || first.rootPath !== second.rootPath) {
+        throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity changed during preflight");
+      }
+      return second;
+    });
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity could not be established");

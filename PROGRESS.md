@@ -8,8 +8,8 @@ Latest task-volume identity addendum: the experimental task runner now reads
 each authorized filesystem root's native volume identity before launch and
 after completion. A changed canonical root or volume ID fails closed with
 `POLICY_DENIED` instead of publishing the child result. Focused
-TaskProfile/runner/sandbox tests pass 18/18, and the real-sandbox suite passes
-446/447 with one explicit host-boundary/opt-in skip. This catches remount or
+TaskProfile/runner/sandbox tests pass 19/19, and the real-sandbox suite passes
+447/448 with one explicit host-boundary/opt-in skip. This catches remount or
 target replacement across the execution boundary but does not yet provide a
 kernel-held mount namespace or prevent a swap during child syscalls. Evidence:
 `evidence/2026-09-14-task-volume-identity.md`.
