@@ -6,6 +6,12 @@ Last verified: 2026-09-13
 
 Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires repository evidence. Current implementation, test, and working-tree state is owned by `PROGRESS.md`; this ledger records task status and acceptance evidence. `BLOCKED` is reserved for an evidenced unmet prerequisite, not merely future-phase placement. Every blocked task records `blocked_by`, `unblock_condition`, and `expected_evidence`.
 
+Installer readback addendum: commit `6da24f6` requires a positive launchd PID
+and matching native PID/start-time identity in every post-bootstrap Broker
+readback. The host composition layer must obtain that identity from the native
+observer; installed LaunchAgent/bootstrap and final real-service evidence remain
+open. Evidence: `evidence/2026-09-13-installed-readback-identity.md`.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.

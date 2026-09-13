@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `0c34c65`.
+Current committed implementation baseline: `6da24f6`.
+
+The latest installer-readback addendum is `6da24f6`: post-bootstrap Broker
+readback now requires a positive launchd PID bound to the same native Darwin
+PID/start-time identity. Missing, malformed, mismatched, or non-positive
+process identities fail closed before install/upgrade/rollback readiness is
+reported. This strengthens the planned installer boundary but does not claim a
+real LaunchAgent installation or bootstrap; that host evidence remains open.
+Evidence: `evidence/2026-09-13-installed-readback-identity.md`.
 
 The latest Broker startup-serialization addendum is `0c34c65`: packaged
 service startup now holds an owner-only runtime-root instance lock containing

@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest installer-readback addendum: source commit `6da24f6` requires every
+non-null post-bootstrap `MacOsInstallReadback` to carry a positive launchd PID
+and a matching native Darwin PID/start-time identity. Negative coverage rejects
+missing, malformed, mismatched, and non-positive identities before readiness is
+reported. `npm run typecheck` and the 394-test suite pass. This is a contract
+boundary only; LaunchAgent installation/bootstrap and real installed-service
+readback remain open. Evidence:
+`evidence/2026-09-13-installed-readback-identity.md`.
+
 Latest startup-serialization addendum: source commit `0c34c65` acquires an
 owner-only runtime-root Broker instance lock with PID/start-time identity
 before socket preflight, Job Ledger access, and restart recovery. Live duplicate
