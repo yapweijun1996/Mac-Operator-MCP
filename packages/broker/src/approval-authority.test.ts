@@ -167,7 +167,13 @@ test("revoked approval issuer keys fail closed before issuance", async () => {
       /issuer key has been revoked/u
     );
     assert.equal(context.store.approvalRecord("approval:revoked-key"), undefined);
-    assert.equal(context.store.auditRows().length, 0);
+    assert.deepEqual(
+      context.store.auditRows().map((row) => [row.tool, row.event_type, row.result_class]),
+      [
+        ["internal_authority_revoke", "intent", "INTENT_RECORDED"],
+        ["internal_authority_revoke", "completion", "SUCCEEDED"]
+      ]
+    );
   } finally {
     await context.close();
   }

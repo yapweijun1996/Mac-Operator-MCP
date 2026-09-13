@@ -986,10 +986,32 @@ export class BrokerStore {
     if (!REVOCATION_KINDS.includes(kind) || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(subjectId) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
         !Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
     this.runTransaction(() => {
+      const requestId = `authority-revoke-${kind}-${sha256(canonicalJson({ kind, subjectId, reason, nowMs })).slice(0, 32)}`;
+      const auditBase = {
+        requestId,
+        principalId: "local-authority-operator",
+        tool: "internal_authority_revoke",
+        decision: "allow" as const,
+        targetRef: `revocation:${kind}:${subjectId}`,
+        policyVersion: "internal-authority-0.1",
+        evidence: { kind, subjectId, reason },
+        timestampMs: nowMs
+      };
+      this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
       this.database.prepare(
         "INSERT INTO revocations(kind, subject_id, revoked_at_ms, reason) VALUES (?, ?, ?, ?) ON CONFLICT(kind, subject_id) DO UPDATE SET revoked_at_ms=excluded.revoked_at_ms, reason=excluded.reason"
       ).run(kind, subjectId, nowMs, reason);
-      this.cancelQueuedJobsInTransaction(`REVOCATION_${kind.toUpperCase()}`, nowMs, (row) => queuedJobAffectedByRevocation(kind, subjectId, row));
+      const cancelled = this.cancelQueuedJobsInTransaction(
+        `REVOCATION_${kind.toUpperCase()}`,
+        nowMs,
+        (row) => queuedJobAffectedByRevocation(kind, subjectId, row)
+      );
+      this.insertAudit({
+        ...auditBase,
+        eventType: "completion",
+        resultClass: "SUCCEEDED",
+        evidence: { ...auditBase.evidence, persisted: true, cancelledQueuedJobs: cancelled }
+      });
     });
   }
 
@@ -1121,10 +1143,30 @@ export class BrokerStore {
     if (!SWITCH_NAMES.includes(name) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
         !Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
     this.runTransaction(() => {
+      const requestId = `authority-switch-${name}-${sha256(canonicalJson({ name, disabled, reason, nowMs })).slice(0, 32)}`;
+      const auditBase = {
+        requestId,
+        principalId: "local-authority-operator",
+        tool: "internal_authority_switch",
+        decision: "allow" as const,
+        targetRef: `switch:${name}`,
+        policyVersion: "internal-authority-0.1",
+        evidence: { name, disabled, reason },
+        timestampMs: nowMs
+      };
+      this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
       this.database.prepare(
         "INSERT INTO switches(name, disabled, changed_at_ms, reason) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET disabled=excluded.disabled, changed_at_ms=excluded.changed_at_ms, reason=excluded.reason"
       ).run(name, disabled ? 1 : 0, nowMs, reason);
-      if (disabled) this.cancelQueuedJobsInTransaction(`SWITCH_${name.toUpperCase()}`, nowMs, (row) => queuedJobAffectedBySwitch(name, row.tool));
+      const cancelled = disabled
+        ? this.cancelQueuedJobsInTransaction(`SWITCH_${name.toUpperCase()}`, nowMs, (row) => queuedJobAffectedBySwitch(name, row.tool))
+        : 0;
+      this.insertAudit({
+        ...auditBase,
+        eventType: "completion",
+        resultClass: "SUCCEEDED",
+        evidence: { ...auditBase.evidence, persisted: true, cancelledQueuedJobs: cancelled }
+      });
     });
   }
 

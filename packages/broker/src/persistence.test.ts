@@ -815,6 +815,39 @@ test("kill switches and revocations cancel queued jobs in the same persistence t
   }
 });
 
+test("authority switches and revocations append redacted intent and completion evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-authority-audit-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    store.setSwitch("network", true, "INCIDENT_RESPONSE", 10);
+    store.revoke("session", "session-1", "SESSION_EXPIRED", 11);
+
+    const authorityRows = store.auditRows().filter((row) =>
+      row.tool === "internal_authority_switch" || row.tool === "internal_authority_revoke"
+    );
+    assert.deepEqual(
+      authorityRows.map((row) => [row.tool, row.event_type, row.decision, row.result_class]),
+      [
+        ["internal_authority_switch", "intent", "allow", "INTENT_RECORDED"],
+        ["internal_authority_switch", "completion", "allow", "SUCCEEDED"],
+        ["internal_authority_revoke", "intent", "allow", "INTENT_RECORDED"],
+        ["internal_authority_revoke", "completion", "allow", "SUCCEEDED"]
+      ]
+    );
+    const switchCompletion = authorityRows.find((row) =>
+      row.tool === "internal_authority_switch" && row.event_type === "completion"
+    );
+    const revokeCompletion = authorityRows.find((row) =>
+      row.tool === "internal_authority_revoke" && row.event_type === "completion"
+    );
+    assert.equal(JSON.parse(String(switchCompletion?.evidence_json)).cancelledQueuedJobs, 0);
+    assert.equal(JSON.parse(String(revokeCompletion?.evidence_json)).persisted, true);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("restart reconciliation cancels queued jobs and marks running outcomes unknown", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-reconcile-"));
   const databasePath = join(directory, "broker.sqlite");

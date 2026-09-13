@@ -2790,7 +2790,7 @@ test("Broker discards a filesystem result when session authority is revoked duri
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, false);
     assert.equal(result.result_class, "CANCELLED");
-    assert.deepEqual(store.auditRows().map((row) => [row.event_type, row.result_class]), [
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === request.requestId).map((row) => [row.event_type, row.result_class]), [
       ["decision", "AUTHORIZED"],
       ["completion", "CANCELLED"]
     ]);
