@@ -3,7 +3,8 @@
 Date: 2026-09-13
 Host: Mac mini M4, macOS 26.2, arm64 development host
 Source commits: `db37a64` (`feat: track detached task descendants`) and
-`4621635` (`test: stabilize detached descendant fixture`)
+`4621635` (`test: stabilize detached descendant fixture`), plus `f0f6d1e`
+(`fix: bind process groups to root identity`)
 Scope: disabled local ProcessSupervisor and synthetic child-process fixtures; no production task runner or user data
 
 ## Boundary exercised
@@ -12,12 +13,13 @@ The disabled ProcessSupervisor launches a Broker-resolved executable in a
 detached POSIX process group. The direct child exit is not treated as complete
 termination evidence while the process group or a tracked descendant still
 exists. On macOS, a native process-identity adapter snapshots descendants by
-PID, parent PID, and start time, verifies the identity before signalling, and
-keeps the snapshot bounded to 256 processes. TERM/KILL escalation covers both
-the process group and the verified descendant identities. A missing native
-observer fails closed before execution; a malformed, truncated, or failed
-observation returns `UNKNOWN_OUTCOME` and holds the capacity slot until a
-reaper can prove that the group and tracked descendants are gone.
+PID, parent PID, and start time, verifies the root and descendant identities
+before signalling, and keeps the snapshot bounded to 256 processes. TERM/KILL
+escalation covers both the process group and the verified descendant identities;
+the group is never signalled when its root identity is unavailable. A missing
+native observer fails closed before execution; a malformed, truncated, or
+failed observation returns `UNKNOWN_OUTCOME` and holds the capacity slot until
+a reaper can prove that the group and tracked descendants are gone.
 
 ## Tests
 

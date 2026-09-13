@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `db37a64`.
+Current committed implementation baseline: `f0f6d1e`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -63,9 +63,10 @@ real credential stores, descendants/`setsid`, crash/restart cleanup, remounts,
 Docker, persistence, privilege, and allowlisted networking remain open.
 Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
-The latest implementation addendum is `db37a64`: the disabled
+The latest implementation addendum is `f0f6d1e`: the disabled
 `ProcessSupervisor` now binds macOS descendant termination to bounded native
-PID/start-time identities in addition to the detached process group. It
+PID/start-time identities in addition to the detached process group. It binds
+the root process group to its own start-time identity before signalling,
 signals only identities that still match their observed start time, refuses
 Darwin execution when the native observer is unavailable, and returns
 `UNKNOWN_OUTCOME` while retaining capacity when descendant observation is
@@ -268,7 +269,7 @@ There is no blocker to continued local implementation. Production enablement is 
 - Reran the full suite at 291 tests (289 passed, two default opt-in real-host tests skipped) on clean source commit `41e83c0`; `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` passed 6/6 on the Mac mini M4/macOS 26.2 host. The experimental runner smoke proves only Broker-rendered deny-default profile construction, default single-process/no-fork policy, explicit empty-environment filtering for four canaries, allowed temporary-root read/write, `/private/etc/passwd`/`.env`/symlink denial, curl DNS/network denial, child-launch denial, active sleep cancellation, and profile-matched process-tree proof validation. It does not prove real credential, descendant/`setsid`, crash/restart, remount, Docker, persistence, privilege, or allowlisted-network isolation. Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
 - Added atomic audit coverage for generic switch and revocation changes; focused persistence, Broker, and approval tests pass with the authority audit pair present.
-- On source revisions `db37a64` and `4621635`, the ProcessSupervisor focused suite passes 8/8, including a detached `setsid` descendant fixture. The full suite passes 294 of 296 tests with two opt-in real-sandbox tests skipped by default. The focused real-Mac sandbox run passes 7/7 with `MOPS_REAL_SANDBOX=1`; `npm run typecheck`, `npm run verify:contracts` (44 unique contracts), `npm audit --omit=dev --audit-level=high`, and `git diff --check` also pass.
+- On source revisions through `f0f6d1e`, the ProcessSupervisor focused suite passes 8/8, including a detached `setsid` descendant fixture and root-PID identity binding. The full suite passes 294 of 296 tests with two opt-in real-sandbox tests skipped by default. The focused real-Mac sandbox run passes 7/7 with `MOPS_REAL_SANDBOX=1`; `npm run typecheck`, `npm run verify:contracts` (44 unique contracts), `npm audit --omit=dev --audit-level=high`, and `git diff --check` also pass.
 
 The passing tests prove only the local foundation, bounded filesystem workers/search, and initial persistent Request/Approval/Job Ledgers on the recorded clean revision. They do not satisfy a release gate or prove protected Keychain-backed secret storage, installed cross-process code identity, a human approval UI/channel, production unattended profiles, remote deployment, removable-volume remount identity, process-tree ownership/termination, credential isolation, sandbox, GUI, helper, packaging, or whole-service rollback.
 
