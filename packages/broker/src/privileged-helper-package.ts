@@ -188,7 +188,6 @@ export interface PrivilegedHelperPlistApplyOptions {
   confirmOperation: PrivilegedHelperPackageOperation;
   /** Root ownership is mandatory; non-root callers fail before filesystem access. */
   ownerUid: number;
-  inspector?: FilesystemInspector;
 }
 
 export interface PrivilegedHelperPlistApplyResult {
@@ -430,7 +429,7 @@ export async function applyPrivilegedHelperPlistPlan(
     fail("INVALID_PEER_IDENTITY", "privileged helper plist apply requires root ownership");
   }
   await inspectPrivilegedHelperPackageFilesystem(plan, { requirePlist: plan.operation !== "install" });
-  const inspector = options.inspector ?? createPrivilegedHelperInspector();
+  const inspector = createPrivilegedHelperInspector();
   const targetPlan = inspector.planPath(plan.plistPath, "write");
   const current = optionalPrivilegedHelperStat(inspector, targetPlan);
   if (plan.operation === "install") {
