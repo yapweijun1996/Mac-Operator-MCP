@@ -1,6 +1,6 @@
 # Native adapter loading boundary evidence
 
-- Source commit: `a447cb1` (`fix: validate complete native adapter export set`)
+- Source commit: `f12ab8a` (`fix: enforce native N-API compatibility`)
 - Host: Mac mini M4, macOS `26.2` (`25C56`), arm64
 - Runtime: Node `v25.5.0`, npm `11.8.0`
 - Scope: unprivileged Broker native peer adapter loading; no privileged action
@@ -24,6 +24,10 @@ The loader rejects incomplete native modules at the same boundary: all 17
 production exports used by IPC, filesystem, process, network, and process-tree
 adapters must be functions before the module is returned.
 
+The native module also exposes its compiled N-API version. Loading requires a
+supported version (8 or newer) no greater than the active Node runtime's N-API
+version, and the focused host test reads this value back from the built addon.
+
 All production native consumers (filesystem, process, network, and process-tree
 inspection) now use this loader; no production TypeScript module directly
 requires the `.node` artifact. Test-only direct loads remain for fault-injection
@@ -32,20 +36,20 @@ and native syscall fixtures.
 ## Verification
 
 - `npm run build` passed, including the warning/error-free native compilation.
-- Native peer credential and native IPC focused tests pass 7/7, including symlink,
+- Native peer credential and native IPC focused tests pass 8/8, including symlink,
   writable-artifact, and non-canonical-path rejection.
-- `npm test` passes 295/297 tests, with two opt-in real-sandbox tests skipped.
+- `npm test` passes 296/298 tests, with two opt-in real-sandbox tests skipped.
 - `npm run typecheck`, `npm run verify:contracts`, `npm audit --omit=dev
   --audit-level=high`, and `git diff --check` pass.
 
 ## Artifact hashes
 
 - `packages/broker/src/peer-credentials.ts`:
-  `fe4904f6062696ed0b3c04762d8a7a061677371da84de8e21512ff4e1ab9d94a`
+  `fcae02c3504c0dc07d0c43a8c36b47470a6dbba84729dd275affc41c414860a8`
 - `packages/broker/native/peer_credentials.cc`:
-  `25e9a4035a7332f88104322dcec2b9a36cc10991fda8836d07eb55e61011d16b`
+  `a354b468c32213f678f84351931bb45fe95b6cc5443281e3f80c2aca2e633134`
 - `packages/broker/src/peer-credentials.test.ts`:
-  `16a074851be4b9cca9204135b39ef057ff96c4c97029ecfa8c7fc0ea61e2d8fe`
+  `b7e6db8335dffbb4f332904762aa6b68e63542e6ec3d6a96ebfa4ab6d6d8362c`
 
 This protects the local load boundary against accidental or simple package
 replacement, cached-module target swaps, and consumer-specific loading paths
