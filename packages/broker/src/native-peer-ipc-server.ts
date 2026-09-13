@@ -6,7 +6,9 @@ import {
   authorizePeerCredentials,
   loadNativePeerAdapter,
   parsePeerCredentials,
+  parsePeerProcessIdentity,
   type PeerCredentialPolicy,
+  type PeerProcessIdentity,
   type PeerCredentials
 } from "./peer-credentials.js";
 
@@ -22,8 +24,10 @@ export interface NativePeerIpcServerOptions {
   peerPolicy: NativePeerPolicy;
   backlog?: number;
   pollIntervalMs?: number;
+  peerIdentityMonitorIntervalMs?: number;
   onSocket: (socket: Socket, credentials: PeerCredentials) => void;
   onError?: (error: unknown) => void;
+  onPeerIdentityLost?: (identity: PeerProcessIdentity) => void;
 }
 
 export type NativePeerPolicy = PeerCredentialPolicy;
@@ -36,19 +40,27 @@ export class MacOsNativePeerIpcServer {
   private readonly native: NativeUnixPeerAdapter;
   private readonly backlog: number;
   private readonly pollIntervalMs: number;
+  private readonly peerIdentityMonitorIntervalMs: number;
   private listenerFd: number | undefined;
   private acceptLoopPromise: Promise<void> | undefined;
+  private peerIdentityMonitor: NodeJS.Timeout | undefined;
+  private peerIdentityFailure: Promise<void> | undefined;
   private readonly sockets = new Set<Socket>();
 
   constructor(private readonly options: NativePeerIpcServerOptions) {
     this.native = loadNativePeerAdapter();
     this.backlog = options.backlog ?? 16;
     this.pollIntervalMs = options.pollIntervalMs ?? 10;
+    this.peerIdentityMonitorIntervalMs = options.peerIdentityMonitorIntervalMs ?? 250;
     if (
       !Number.isSafeInteger(this.backlog) || this.backlog < 1 || this.backlog > 128 ||
-      !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 1 || this.pollIntervalMs > 1_000
+      !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 1 || this.pollIntervalMs > 1_000 ||
+      !Number.isSafeInteger(this.peerIdentityMonitorIntervalMs) || this.peerIdentityMonitorIntervalMs < 25 || this.peerIdentityMonitorIntervalMs > 10_000
     ) {
       throw new Error("Native peer IPC limits are invalid");
+    }
+    if (options.peerPolicy.allowedProcessIdentity !== undefined) {
+      validatePeerIdentity(options.peerPolicy.allowedProcessIdentity);
     }
   }
 
@@ -57,6 +69,8 @@ export class MacOsNativePeerIpcServer {
     assertNativeSocketPath(this.options.socketPath);
     await validateSocketParent(this.options.socketPath);
     await removeStaleSocket(this.options.socketPath);
+    this.assertExpectedPeerIdentity();
+    this.peerIdentityFailure = undefined;
     const descriptor = this.native.createUnixListener(this.options.socketPath, this.backlog);
     this.listenerFd = descriptor;
     try {
@@ -68,9 +82,13 @@ export class MacOsNativePeerIpcServer {
       throw error;
     }
     this.acceptLoopPromise = this.acceptLoop();
+    this.startPeerIdentityMonitor();
   }
 
   async close(): Promise<void> {
+    this.stopPeerIdentityMonitor();
+    const peerIdentityFailure = this.peerIdentityFailure;
+    if (peerIdentityFailure) await peerIdentityFailure;
     const descriptor = this.listenerFd;
     this.listenerFd = undefined;
     if (descriptor !== undefined) this.native.closeUnixDescriptor(descriptor);
@@ -129,6 +147,48 @@ export class MacOsNativePeerIpcServer {
     try { await unlink(this.options.socketPath); } catch { /* fail-closed cleanup is best effort */ }
     try { this.options.onError?.(error); } catch { /* caller errors cannot reopen the listener */ }
   }
+
+  private startPeerIdentityMonitor(): void {
+    const expected = this.options.peerPolicy.allowedProcessIdentity;
+    if (expected === undefined) return;
+    const check = () => {
+      this.peerIdentityMonitor = undefined;
+      if (this.listenerFd === undefined || this.peerIdentityFailure !== undefined) return;
+      try {
+        this.assertExpectedPeerIdentity();
+        this.peerIdentityMonitor = setTimeout(check, this.peerIdentityMonitorIntervalMs);
+        this.peerIdentityMonitor.unref?.();
+      } catch (error) {
+        this.peerIdentityFailure = this.failClosed(error).then(() => {
+          try {
+            this.options.onPeerIdentityLost?.(expected);
+          } catch (callbackError) {
+            try { this.options.onError?.(callbackError); } catch { /* callback errors cannot reopen the listener */ }
+          }
+        });
+      }
+    };
+    check();
+  }
+
+  private assertExpectedPeerIdentity(): void {
+    const expected = this.options.peerPolicy.allowedProcessIdentity;
+    if (expected === undefined) return;
+    let observed: PeerProcessIdentity;
+    try {
+      observed = parsePeerProcessIdentity(this.native.getProcessIdentity(expected.pid));
+    } catch {
+      throw new Error("Native peer process identity is unavailable");
+    }
+    if (observed.pid !== expected.pid || observed.startTimeMicros !== expected.startTimeMicros) {
+      throw new Error("Native peer process identity changed");
+    }
+  }
+
+  private stopPeerIdentityMonitor(): void {
+    if (this.peerIdentityMonitor) clearTimeout(this.peerIdentityMonitor);
+    this.peerIdentityMonitor = undefined;
+  }
 }
 
 interface AcceptedUnixClient {
@@ -158,4 +218,11 @@ export function assertNativeSocketPath(socketPath: string): void {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+function validatePeerIdentity(identity: PeerProcessIdentity): void {
+  if (!Number.isSafeInteger(identity.pid) || identity.pid < 1 || identity.pid > 99_999_999 ||
+      !Number.isSafeInteger(identity.startTimeMicros) || identity.startTimeMicros < 1) {
+    throw new Error("Native peer process identity is invalid");
+  }
 }

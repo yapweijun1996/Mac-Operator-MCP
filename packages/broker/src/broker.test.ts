@@ -679,6 +679,24 @@ test("revocation and global kill switch reject new work", async () => {
   } finally { await context.close(); }
 });
 
+test("host Edge lifecycle revocation is durable and rejects new work", async () => {
+  const context = await fixture();
+  try {
+    context.broker.revokeEdge("edge-1", "peer-identity-loss", NOW);
+    assert.equal(context.store.isRevoked("edge", "edge-1"), true);
+    const revoked = await context.broker.handle(signRequest(unsigned({ requestId: "edge-revoked", nonce: "edge-revoked-nonce" }), context.key));
+    assert.equal(revoked.result_class, "REVOKED");
+    assert.deepEqual(
+      context.store.auditRows()
+        .filter((row) => row.target_ref === "revocation:edge:edge-1")
+        .map((row) => [row.event_type, row.result_class]),
+      [["intent", "INTENT_RECORDED"], ["completion", "SUCCEEDED"]]
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("capability discovery separates planned, implemented, and enabled", async () => {
   const context = await fixture();
   try {

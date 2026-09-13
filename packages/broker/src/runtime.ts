@@ -15,6 +15,8 @@ export interface LocalBrokerRuntimeOptions {
 
 export interface MacOsNativeBrokerRuntimeOptions extends Omit<NativeBrokerIpcServerOptions, "broker"> {
   broker: Broker;
+  /** Edge identity revoked automatically when the native peer exits or changes. */
+  edgeId: string;
   operatorChannels?: readonly RuntimeChannel[];
 }
 
@@ -120,11 +122,20 @@ export class LocalBrokerRuntime {
 export function createMacOsNativeBrokerRuntime(
   options: MacOsNativeBrokerRuntimeOptions
 ): { runtime: LocalBrokerRuntime; brokerChannel: MacOsNativeBrokerIpcServer } {
-  const { operatorChannels, ...nativeOptions } = options;
+  const { operatorChannels, edgeId, onPeerIdentityLost: callerPeerIdentityLost, ...nativeOptions } = options;
   if (nativeOptions.peerPolicy.allowedProcessIdentity === undefined) {
     throw new Error("macOS native Broker runtime requires an explicit peer process identity");
   }
-  const brokerChannel = new MacOsNativeBrokerIpcServer(nativeOptions);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(edgeId)) {
+    throw new Error("macOS native Broker runtime Edge identity is invalid");
+  }
+  const brokerChannel = new MacOsNativeBrokerIpcServer({
+    ...nativeOptions,
+    onPeerIdentityLost: (identity) => {
+      options.broker.revokeEdge(edgeId);
+      callerPeerIdentityLost?.(identity);
+    }
+  });
   const runtime = new LocalBrokerRuntime({
     brokerChannel,
     ...(operatorChannels === undefined ? {} : { operatorChannels })

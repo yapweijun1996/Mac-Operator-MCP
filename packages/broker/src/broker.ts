@@ -218,6 +218,19 @@ export class Broker {
     return { inspected: jobs.length, removed, absent, skipped };
   }
 
+  /**
+   * Host lifecycle hook used when the authenticated Edge process identity is
+   * lost. This is not exposed through MCP; it records a durable revocation so
+   * queued work is cancelled and active workers fail their next authority
+   * check instead of publishing a late success.
+   */
+  revokeEdge(edgeId: string, reason = "Edge peer process identity was lost", nowMs = this.now()): void {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(edgeId)) {
+      throw new Error("Edge identity is invalid");
+    }
+    this.options.store.revoke("edge", edgeId, reason, nowMs);
+  }
+
   async handle(rawRequest: unknown): Promise<BrokerResult> {
     const startedAt = this.now();
     const policy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;

@@ -32,12 +32,13 @@ test("macOS runtime factory selects the native Broker IPC channel", async () => 
   });
   const { allowedProcessIdentity: _identity, ...pidOnlyPolicy } = currentProcessPeerPolicy();
   assert.throws(
-    () => createMacOsNativeBrokerRuntime({ socketPath, broker, peerPolicy: pidOnlyPolicy }),
+    () => createMacOsNativeBrokerRuntime({ socketPath, broker, edgeId: "edge-1", peerPolicy: pidOnlyPolicy }),
     /explicit peer process identity/u
   );
   const { runtime, brokerChannel } = createMacOsNativeBrokerRuntime({
     socketPath,
     broker,
+    edgeId: "edge-1",
     peerPolicy: currentProcessPeerPolicy()
   });
   await runtime.start();
@@ -168,6 +169,57 @@ test("native IPC accepts a separately spawned Edge bound to its PID start-time i
   }
 });
 
+test("native IPC fails closed when the bound Edge identity exits", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-peer-loss-"));
+  const socketPath = join(directory, "broker.sock");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const now = Date.now();
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1"),
+    edgeAuthenticationKeys: new EdgeKeyring([{
+      edgeId: "edge-1", keyId: "edge-key-1", key: randomBytes(32),
+      notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+    }]),
+    now: () => now
+  });
+  const child = spawn("/bin/sleep", ["5"], {
+    cwd: "/",
+    env: { PATH: "/usr/bin:/bin" },
+    stdio: "ignore"
+  });
+  if (child.pid === undefined) throw new Error("Peer-loss fixture did not expose a process identity");
+  const identity = await waitForProcessIdentity(child.pid);
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("POSIX identity is unavailable");
+  let resolveLost: ((value: ReturnType<typeof capturePeerProcessIdentity>) => void) | undefined;
+  const lost = new Promise<ReturnType<typeof capturePeerProcessIdentity>>((resolve) => { resolveLost = resolve; });
+  const { runtime } = createMacOsNativeBrokerRuntime({
+    socketPath,
+    broker,
+    edgeId: "edge-1",
+    peerIdentityMonitorIntervalMs: 25,
+    peerPolicy: { expectedUid: uid, allowedProcessIdentity: identity },
+    onPeerIdentityLost: (observed) => resolveLost?.(observed)
+  });
+  await runtime.start();
+  try {
+    child.kill("SIGTERM");
+    const observed = await Promise.race([
+      lost,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("Peer identity loss was not observed")), 2_000))
+    ]);
+    assert.deepEqual(observed, identity);
+    assert.equal(store.isRevoked("edge", "edge-1"), true);
+    await assert.rejects(stat(socketPath), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT");
+  } finally {
+    if (!child.killed && child.exitCode === null) child.kill("SIGKILL");
+    await runtime.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("native IPC drops a denied peer before parsing or auditing", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-"));
   const socketPath = join(directory, "broker.sock");
@@ -225,13 +277,8 @@ test("native IPC rejects a PID identity replacement before parsing or auditing",
       allowedProcessIdentity: { ...identity, startTimeMicros: identity.startTimeMicros + 1 }
     }
   });
-  await server.listen();
   try {
-    try {
-      assert.equal(await send(socketPath, "not-json\n"), "");
-    } catch (error) {
-      assert.match(String((error as NodeJS.ErrnoException).code), /^(?:EPIPE|ECONNRESET)$/u);
-    }
+    await assert.rejects(server.listen(), /process identity changed/u);
     assert.deepEqual(store.auditRows(), []);
   } finally {
     await server.close();
