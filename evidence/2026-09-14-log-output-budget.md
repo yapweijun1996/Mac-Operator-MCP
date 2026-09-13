@@ -7,7 +7,7 @@ Scope: `mac_log_tail` bounded output and process-result handling
 ## Evidence
 
 - `node --test packages/broker/dist/log-inspector.test.js` passed 5/5.
-- `MOPS_REAL_SANDBOX=1 npm test` over all compiled package tests passed 441
+- `MOPS_REAL_SANDBOX=1 npm test` over all compiled package tests passed 442
   tests with zero failures and one explicit skip.
 - The real system-source test exercised `/usr/bin/log` on the host; the
   injected boundary test exercised a supervisor-confirmed `OUTPUT_LIMIT`.
