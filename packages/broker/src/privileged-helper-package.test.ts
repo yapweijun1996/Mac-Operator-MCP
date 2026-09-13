@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import {
   buildPrivilegedHelperPackagePlan,
@@ -6,6 +10,7 @@ import {
   validatePrivilegedHelperPackageReadback,
   type PrivilegedHelperPackagePlanInput
 } from "./privileged-helper-package.js";
+import { ProcessSupervisor } from "./process-supervisor.js";
 
 const root = "/Library/Application Support/MacOperator/PrivilegedHelper";
 const base: PrivilegedHelperPackagePlanInput = {
@@ -138,4 +143,63 @@ test("privileged helper package upgrades require an exact previous source revisi
     expectedPreviousSourceRevision: "abcdef0123456789abcdef0123456789abcdef01"
   });
   assert.equal(plan.expectedPreviousSourceRevision, "abcdef0123456789abcdef0123456789abcdef01");
+});
+
+test("privileged helper package signature command verifies a real temporary macOS artifact", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("The production privileged-helper packaging target is macOS");
+    return;
+  }
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "mac-operator-helper-signature-"));
+  try {
+    const artifact = join(temporaryRoot, "MacOperatorPrivilegedHelper.app");
+    const contents = join(artifact, "Contents");
+    const executable = join(contents, "MacOS", "helper");
+    await mkdir(join(contents, "MacOS"), { recursive: true, mode: 0o700 });
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await writeFile(join(contents, "Info.plist"), [
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+      "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+      "<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.mac-operator.privileged-helper</string><key>CFBundleExecutable</key><string>helper</string></dict></plist>"
+    ].join("\n"), { mode: 0o600 });
+    const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+    const signed = await supervisor.run({
+      executable: "/usr/bin/codesign",
+      args: ["--force", "--deep", "--sign", "-", "--timestamp=none", artifact],
+      cwd: "/",
+      environment: {},
+      timeoutMs: 5_000,
+      outputCapBytes: 131_072
+    });
+    assert.equal(signed.resultClass, "SUCCEEDED");
+    const plan = buildPrivilegedHelperPackagePlan({
+      ...base,
+      helperRoot: temporaryRoot,
+      signedArtifactPath: artifact,
+      service: {
+        ...base.service,
+        program: executable,
+        programArguments: [executable],
+        workingDirectory: temporaryRoot,
+        stdoutPath: join(temporaryRoot, "logs", "helper.out.log"),
+        stderrPath: join(temporaryRoot, "logs", "helper.err.log")
+      },
+      helperKeyConfigPath: join(temporaryRoot, "config", "helper-keys.json"),
+      helperSocketPath: join(temporaryRoot, "run", "helper.sock")
+    });
+    const verified = await supervisor.run(plan.signatureVerify);
+    assert.equal(verified.resultClass, "SUCCEEDED");
+    const details = await supervisor.run({
+      executable: "/usr/bin/codesign",
+      args: ["-dv", "--verbose=4", artifact],
+      cwd: "/",
+      environment: {},
+      timeoutMs: 5_000,
+      outputCapBytes: 131_072
+    });
+    assert.equal(details.resultClass, "SUCCEEDED");
+    assert.match(`${details.stdout}\n${details.stderr}`, /Identifier=com\.mac-operator\.privileged-helper/u);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
