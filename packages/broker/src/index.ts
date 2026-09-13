@@ -34,6 +34,7 @@ export * from "./docker-inspector.js";
 export * from "./secret-policy.js";
 export * from "./request-validator.js";
 export * from "./runtime.js";
+export * from "./native-runtime-startup.js";
 export * from "./launchd.js";
 export * from "./service-entrypoint.js";
 export * from "./macos-install-plan.js";
