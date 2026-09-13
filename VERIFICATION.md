@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest task-volume identity addendum: the experimental task runner captures
+native volume identity for every authorized filesystem root before launch and
+rechecks it after completion. Root or volume changes fail closed before result
+publication. Focused TaskProfile/runner/sandbox tests pass 18/18; the
+real-sandbox suite passes 446/447 with one explicit host-boundary/opt-in skip.
+This is a target-swap/remount readback guard, not a kernel-held mount
+namespace, so a swap during a child syscall remains open. Evidence:
+`evidence/2026-09-14-task-volume-identity.md`.
+
 Latest task credential-policy addendum: TaskProfiles now carry an explicit
 `credentialPolicy`; only `none` is accepted. Registry resolution, sandbox
 rendering, and isolation-proof admission reject any unsupported credential

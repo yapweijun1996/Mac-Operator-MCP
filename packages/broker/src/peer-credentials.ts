@@ -31,6 +31,7 @@ interface NativePeerCredentials {
   nativeNapiVersion: number;
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
+  statStorageVolumeWithinRoot(rootPath: string): unknown;
   readKeychainGenericPassword(service: string, account: string): unknown;
   writeKeychainGenericPassword(service: string, account: string, key: Buffer): unknown;
   createUnixListener(path: string, backlog: number): number;

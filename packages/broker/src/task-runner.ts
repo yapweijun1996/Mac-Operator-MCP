@@ -1,5 +1,6 @@
 import { BrokerError } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 
@@ -82,7 +83,18 @@ export interface SandboxExecTaskRunnerOptions {
   hostEvidenceAccepted?: boolean;
   isolationProof?: TaskIsolationProof | null;
   allowedEnvironmentKeys?: readonly string[];
+  /** Test-only override; production reads volume identity from the protected native adapter. */
+  filesystemIdentityObserver?: (rootPath: string) => unknown;
   supervisor?: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
+}
+
+interface TaskFilesystemIdentity {
+  rootPath: string;
+  id: string;
+}
+
+interface NativeTaskFilesystemIdentityAdapter {
+  statStorageVolumeWithinRoot(rootPath: string): unknown;
 }
 
 /**
@@ -96,6 +108,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
   readonly mechanism: TaskIsolationMechanism = "sandbox-exec";
   readonly isolationProof: TaskIsolationProof | null;
   private readonly supervisor: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
+  private readonly filesystemIdentityObserver: (rootPath: string) => unknown;
 
   constructor(options: SandboxExecTaskRunnerOptions = {}) {
     const proof = options.isolationProof === null || options.isolationProof === undefined
@@ -104,6 +117,10 @@ export class SandboxExecTaskRunner implements TaskRunner {
     this.isolationProof = proof;
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
       allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? []
+    });
+    this.filesystemIdentityObserver = options.filesystemIdentityObserver ?? ((rootPath) => {
+      const native = loadNativePeerAdapter() as unknown as NativeTaskFilesystemIdentityAdapter;
+      return native.statStorageVolumeWithinRoot(rootPath);
     });
     // The current sandbox evidence covers only the no-fork single-process
     // profile. Keep the owned-group variant unavailable until a separate
@@ -122,6 +139,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
       throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
     }
     requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
+    const filesystemIdentity = captureTaskFilesystemIdentity(profile, this.filesystemIdentityObserver);
     const args = buildSandboxExecArguments(profile);
     let result: ProcessExecutionResult;
     try {
@@ -140,8 +158,58 @@ export class SandboxExecTaskRunner implements TaskRunner {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("EXECUTION_FAILED", "Sandboxed task could not be started");
     }
+    assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
     return mapProcessResult(result);
   }
+}
+
+function captureTaskFilesystemIdentity(
+  profile: ResolvedTaskProfile,
+  observe: (rootPath: string) => unknown
+): readonly TaskFilesystemIdentity[] {
+  const roots = [...new Set(profile.filesystemRoots)].sort();
+  if (roots.length === 0) throw new BrokerError("POLICY_DENIED", "Task filesystem roots are unavailable");
+  try {
+    return roots.map((rootPath) => parseTaskFilesystemIdentity(observe(rootPath), rootPath));
+  } catch (error) {
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity could not be established");
+  }
+}
+
+function assertTaskFilesystemIdentityStable(
+  profile: ResolvedTaskProfile,
+  expected: readonly TaskFilesystemIdentity[],
+  observe: (rootPath: string) => unknown
+): void {
+  try {
+    const roots = [...new Set(profile.filesystemRoots)].sort();
+    if (roots.length !== expected.length || roots.some((rootPath, index) => rootPath !== expected[index]?.rootPath)) {
+      throw new BrokerError("POLICY_DENIED", "Task filesystem roots changed during execution");
+    }
+    roots.forEach((rootPath, index) => {
+      const current = parseTaskFilesystemIdentity(observe(rootPath), rootPath);
+      const prior = expected[index];
+      if (prior === undefined || current.id !== prior.id || current.rootPath !== prior.rootPath) {
+        throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity changed during execution");
+      }
+    });
+  } catch (error) {
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity could not be verified");
+  }
+}
+
+function parseTaskFilesystemIdentity(value: unknown, expectedRootPath: string): TaskFilesystemIdentity {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity is malformed");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.rootPath !== "string" || record.rootPath !== expectedRootPath ||
+      typeof record.id !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/u.test(record.id)) {
+    throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity is malformed");
+  }
+  return { rootPath: record.rootPath, id: record.id };
 }
 
 export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
