@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `f0f6d1e`.
+Current committed implementation baseline: `ebe5a62`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -17,6 +17,14 @@ The implementation baseline above is superseded by `10ef33a`, which adds a fail-
 The latest implementation addendum is `87f3a72`: Edge TLS material can now be loaded only from bounded owner-only regular files opened with `O_NOFOLLOW` and checked for canonical path, ownership, permissions, and stable device/inode identity. This protects the HTTPS private key at the file boundary but does not establish remote deployment, certificate rotation, or Keychain storage.
 
 The latest implementation addendum is `0cdb8f0`: a macOS-native Broker IPC transport now owns Unix listener creation, accept, UID/GID/PID peer lookup, and descriptor lifecycle before handing accepted descriptors to Node through the public `Socket({ fd })` API. The legacy compatibility verifier remains private-handle based; installed startup must select and package the native transport before that path can be treated as production-ready.
+
+The latest implementation addendum is `ebe5a62`: the native peer adapter loader
+now checks canonical realpath, regular-file and symlink state, bounded size,
+current-user ownership, no group/other write bits, stable device/inode/size
+across loading, and the required export set before returning an adapter. A
+failure is treated as unavailable and fails closed. This is packaging/runtime
+boundary evidence only; code signing/provenance, ABI pinning, Keychain
+distribution, installed startup, and production enablement remain open.
 
 The latest implementation addendum is `24f1824`: `createMacOsNativeBrokerRuntime` is now the explicit macOS startup assembly boundary. It constructs the native Broker channel before optional operator channels and delegates ordering, rollback, and recovery to `LocalBrokerRuntime`; no installed launchd entrypoint or production enablement is implied.
 
@@ -87,14 +95,15 @@ not prove protected key distribution, installed startup/readback, active
 process termination, remote propagation, or an executable operator recovery
 procedure. Evidence: `evidence/2026-09-13-job-authority-lifecycle.md`.
 
-The latest implementation addendum is `08a2913`: the experimental
+The latest implementation addendum is `1e3eb86`: the experimental
 `SandboxExecTaskRunner` now refuses the unevidenced `owned_group` process-tree
 policy even when an external isolation proof is supplied. The only executable
 task policy remains the no-fork `single_process` variant. The real Mac opt-in
 smoke was rerun at 7/7 tests and checked only readability of the current
-user's Keychains directory and `/var/run/docker.sock`, both denied without
-reading contents. This is an enablement guard and partial host evidence, not
-a production selection of deprecated `sandbox-exec`.
+user's existing `.ssh`, `.docker`, Chrome, Safari, Mail, Messages, and Keychains
+directories plus `/var/run/docker.sock`, all denied without reading contents.
+This is an enablement guard and partial host evidence, not a production
+selection of deprecated `sandbox-exec`.
 Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
 ## Completed work

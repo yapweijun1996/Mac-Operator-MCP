@@ -52,7 +52,7 @@ The Broker task admission boundary now also requires a versioned `TaskIsolationP
 
 ## 2026-09-13 experimental runner evidence
 
-Source commit `08a2913` adds real-host secret-surface denial evidence on top of
+Source commit `1e3eb86` adds real-host secret-surface denial evidence on top of
 the `3e4b065` runner guard and `2e6cd57` profile boundary. The experimental
 runner uses `renderTaskSandboxProfile` and an opt-in
 `SandboxExecTaskRunner`. The renderer emits only a Broker-owned deny-default
@@ -80,8 +80,9 @@ termination. This is `PARTIAL` evidence:
 real credential surfaces, descendants/`setsid`, crash/restart cleanup,
 external allowlisted networking, DNS pinning, UDP behavior, Docker, persistence,
 privilege, and remount behavior remain unproven. The same host probe checked
-only readability of the current user's Keychains directory and
-`/var/run/docker.sock`; both were denied without reading contents. The focused
+only readability of the current user's `.ssh`, `.docker`, Chrome, Safari, Mail,
+Messages, and Keychains directories and `/var/run/docker.sock`; all were denied
+without reading contents. The focused
 real-Mac smoke passes 7/7 tests with `MOPS_REAL_SANDBOX=1`. `sandbox-exec` is
 deprecated, so this does not select it for
 production or unblock `mac_task_run`.
