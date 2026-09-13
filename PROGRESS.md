@@ -4,6 +4,12 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest bounded-Git-log addendum: `mac_git_log` now preserves complete commit
+records from a supervisor-confirmed output prefix, marks the result truncated,
+and rejects output-limit reports without observed termination as retryable
+`UNKNOWN_OUTCOME`. Focused Git tests pass 17/17. Evidence:
+`evidence/2026-09-14-git-log-output-budget.md`.
+
 Latest bounded-log addendum: `mac_log_tail` now preserves a safe, redacted
 prefix when the Broker-owned process supervisor reaches its fixed 512 KiB
 output cap. The adapter exposes `truncated: true` and an explicit warning only

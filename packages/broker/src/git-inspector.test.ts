@@ -24,6 +24,17 @@ function success(stdout: string): ProcessExecutionResult {
   };
 }
 
+function outputLimited(stdout: string, terminationObserved = true): ProcessExecutionResult {
+  return {
+    ...success(stdout),
+    state: "failed",
+    resultClass: "OUTPUT_LIMIT",
+    exitCode: null,
+    truncated: true,
+    terminationObserved
+  };
+}
+
 async function runFixtureGit(cwd: string, args: readonly string[]): Promise<string> {
   return await new Promise<string>((resolveResult, reject) => {
     const child = spawn("/usr/bin/git", [...args], {
@@ -141,6 +152,27 @@ test("Git log parser returns bounded commit metadata and rejects revision inject
   assert.equal(result.commits[1]!.author, undefined);
   assert.throws(() => validateGitLogRequest("/tmp/project", 5, "HEAD..origin/main"), BrokerError);
   assert.throws(() => validateGitLogRequest("/tmp/project", 201), BrokerError);
+});
+
+test("Git log parser preserves complete records from a supervisor-confirmed output prefix", () => {
+  const result = parseGitLogResult(
+    "/tmp/project",
+    outputLimited([
+      "a".repeat(40), "\0", "Alice", "\0", "2026-09-12T10:00:00Z", "\0", "safe subject", "\0",
+      "b".repeat(40), "\0", "partial author"
+    ].join(""))
+  );
+  assert.equal(result.commits.length, 1);
+  assert.equal(result.commits[0]?.id, "a".repeat(40));
+  assert.equal(result.truncated, true);
+  assert.ok(result.warnings.includes("Git log output was limited by fixed adapter budgets"));
+});
+
+test("Git log parser rejects an output limit without observed termination", () => {
+  assert.throws(
+    () => parseGitLogResult("/tmp/project", outputLimited("partial", false)),
+    /termination could not be verified/u
+  );
 });
 
 test("Git log inspector binds ref arguments and fixed no-network execution", async () => {

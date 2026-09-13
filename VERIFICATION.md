@@ -3,6 +3,11 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest bounded-Git-log addendum: the `mac_git_log` adapter parses complete
+records from a supervisor-confirmed bounded prefix, marks truncation, and
+fails closed when termination is not observed. Focused Git tests pass 17/17.
+Evidence: `evidence/2026-09-14-git-log-output-budget.md`.
+
 Latest bounded-log addendum: the `mac_log_tail` adapter now accepts only a
 supervisor-confirmed `OUTPUT_LIMIT` result, parses the already bounded output
 prefix, redacts it, and reports truncation explicitly. Unresolved process

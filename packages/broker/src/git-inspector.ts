@@ -714,8 +714,16 @@ function sanitizeGitValue(value: string, maxLength: number, allowEmpty = false):
 export function parseGitLogResult(projectRoot: string, result: ProcessExecutionResult): SafeGitLog {
   if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Git log was cancelled");
   if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Git log timed out");
-  if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Git log exceeded its output limit");
-  if (result.resultClass !== "SUCCEEDED") {
+  // The supervisor retains a bounded prefix after terminating an output-heavy
+  // log process. Parse complete records from that prefix, but never infer a
+  // result when termination itself was not observed.
+  if (result.resultClass === "OUTPUT_LIMIT" && !result.terminationObserved) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Git log termination could not be verified", true);
+  }
+  if (result.resultClass === "UNKNOWN_OUTCOME") {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Git log outcome could not be verified", true);
+  }
+  if (result.resultClass !== "SUCCEEDED" && result.resultClass !== "OUTPUT_LIMIT") {
     if (/not a git repository/u.test(result.stderr)) {
       throw new BrokerError("TARGET_NOT_FOUND", "The project root is not a Git repository");
     }
@@ -754,7 +762,8 @@ export function parseGitLogResult(projectRoot: string, result: ProcessExecutionR
   };
   if (malformed) addWarning("Some Git log records were malformed and were omitted");
   if (redacted) addWarning("Sensitive Git log text was redacted");
-  const truncated = result.truncated || malformed;
+  const outputLimited = result.resultClass === "OUTPUT_LIMIT";
+  const truncated = result.truncated || outputLimited || malformed;
   if (truncated) addWarning("Git log output was limited by fixed adapter budgets");
   return { projectRoot, commits, truncated, warnings };
 }
