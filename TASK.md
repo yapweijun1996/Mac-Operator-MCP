@@ -84,7 +84,7 @@ macOS transient `state = xpcproxy`; that value is now normalized to
 `launching` without claiming `running`. The separate service inspector applies
 the same conservative mapping to `loaded`. Strict Edge/helper readiness still
 requires `running` plus native PID/start-time identity. Focused launchd tests
-pass 7/7 and the full real-sandbox suite passes 419/419. This does not close
+pass 7/7 and the full real-sandbox suite passes 420/420. This does not close
 signed production artifacts, installed Broker/Edge handshake, or real-package
 upgrade/rollback/uninstall evidence. Evidence:
 `evidence/2026-09-14-live-launchd-readback.md`.
@@ -95,6 +95,13 @@ LaunchAgent smoke captured a positive PID/start-time identity through that
 path, then booted the service out and confirmed absence; stopped/malformed
 states remain terminal failures. This strengthens startup readback but does
 not claim an installed Broker/Edge service.
+
+The Broker instance-lock boundary additionally has a real non-cooperating
+process test: a child holds the owner-only lock, the parent is denied with
+`ALREADY_ACTIVE`, and reclamation succeeds only after native PID/start-time
+observation proves the child stale. Focused lock tests pass 5/5. This does not
+claim launchd singleton enforcement or remount durability. Evidence:
+`evidence/2026-09-14-service-instance-lock-process.md`.
 
 ## P0 — Foundation
 

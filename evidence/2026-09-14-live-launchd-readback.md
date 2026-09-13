@@ -48,8 +48,8 @@ non-running state, or failed native PID/start-time capture.
 
 - `node --test packages/broker/dist/launchd-readback.test.js`: 4/4 passed,
   including the `xpcproxy` regression and the real system-service smoke.
-- The default suite reports 419 tests: 416 passed, 0 failed, and 3 opt-in
-  sandbox tests skipped; `MOPS_REAL_SANDBOX=1 npm test` reports 419 passed,
+- The default suite reports 420 tests: 417 passed, 0 failed, and 3 opt-in
+  sandbox tests skipped; `MOPS_REAL_SANDBOX=1 npm test` reports 420 passed,
   0 failed, and 0 skipped.
 - A live temporary LaunchAgent was bootstrapped, parsed through the production
   readback adapter, booted out, and confirmed absent.

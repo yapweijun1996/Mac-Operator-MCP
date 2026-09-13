@@ -1219,8 +1219,8 @@ LaunchAgent was bootstrapped, read through the production adapter, booted out,
 and confirmed absent. Focused launchd readback and service-inspector tests pass
 7/7. Evidence:
 `evidence/2026-09-14-live-launchd-readback.md`. The updated default suite is
-419 tests (416 passed, 3 opt-in sandbox tests skipped), and the
-`MOPS_REAL_SANDBOX=1` suite is 419/419 with no skips.
+420 tests (417 passed, 3 opt-in sandbox tests skipped), and the
+`MOPS_REAL_SANDBOX=1` suite is 420/420 with no skips.
 
 The same live smoke then exercised `captureLaunchdEdgeProcessIdentity` against
 a temporary user LaunchAgent. It captured the positive PID/start-time identity
@@ -1228,3 +1228,10 @@ after the `xpcproxy` transition, with retry limited to that state and a
 five-second global deadline, then booted the service out and confirmed absence.
 The native startup focused suite passes 7/7; malformed, stopped, and identity
 failure paths remain fail-closed.
+
+The Broker instance-lock boundary now also has a real non-cooperating-process
+test: a child holds the owner-only lock, the parent receives `ALREADY_ACTIVE`,
+and reclamation succeeds only after the child's PID/start-time identity is
+proven stale. Focused lock tests pass 5/5. This does not claim launchd
+singleton enforcement or remount durability. Evidence:
+`evidence/2026-09-14-service-instance-lock-process.md`.

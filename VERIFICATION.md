@@ -988,8 +988,8 @@ launchd readback/service-inspector suites pass 7/7, including the regression.
 No persistent service or
 capability was installed. Evidence:
 `evidence/2026-09-14-live-launchd-readback.md`. The updated default suite is
-419 tests (416 passed, 3 opt-in sandbox tests skipped); the real-sandbox suite
-is 419 passed with 0 skips.
+420 tests (417 passed, 3 opt-in sandbox tests skipped); the real-sandbox suite
+is 420 passed with 0 skips.
 
 The live smoke also exercised `captureLaunchdEdgeProcessIdentity` against a
 temporary user LaunchAgent. It captured a positive PID/start-time identity
@@ -997,6 +997,13 @@ after the `xpcproxy` transition, retrying only that explicit transient under a
 five-second global deadline, then booted the service out and confirmed
 absence. Native startup focused tests pass 7/7; malformed, stopped, and
 identity-failure paths remain fail-closed.
+
+The Broker instance-lock boundary also has a real non-cooperating-process
+test: a child holds the owner-only lock, the parent receives `ALREADY_ACTIVE`,
+and reclamation succeeds only after the child's PID/start-time identity is
+proven stale. Focused lock tests pass 5/5. This does not claim launchd
+singleton enforcement or remount durability. Evidence:
+`evidence/2026-09-14-service-instance-lock-process.md`.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.
 

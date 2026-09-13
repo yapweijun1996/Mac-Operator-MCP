@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { chmod, lstat, mkdtemp, realpath, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { BrokerServiceInstanceLock, ServiceInstanceLockError } from "./service-instance-lock.js";
 
@@ -80,6 +83,71 @@ test("service instance lock refuses to remove a replacement lock on close", asyn
     assert.equal((await lstat(path)).isFile(), true);
     lock = undefined;
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("service instance lock rejects a real non-cooperating owner and reclaims only after exit", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("native PID/start-time observation is a macOS boundary");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-instance-lock-process-"));
+  const path = join(await realpath(directory), "broker.instance.lock");
+  const modulePath = fileURLToPath(new URL("./service-instance-lock.js", import.meta.url));
+  const childScript = `import { BrokerServiceInstanceLock } from ${JSON.stringify(modulePath)};\nconst lock = await BrokerServiceInstanceLock.acquire(process.argv[1]);\nprocess.stdout.write("ready\\n");\nsetInterval(() => {}, 1_000);`;
+  const child = spawn(process.execPath, ["--input-type=module", "-e", childScript, path], {
+    cwd: dirname(modulePath),
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  child.stdout.setEncoding("utf8");
+  let childOutput = "";
+  let childError = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => { childError += chunk; });
+  const waitForChildExit = (): Promise<void> => new Promise((resolve, reject) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => reject(new Error("lock owner did not exit")), 5_000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`lock owner did not start: ${childError}`)), 5_000);
+      child.stdout.on("data", (chunk: string) => {
+        childOutput += chunk;
+        if (childOutput.includes("ready\n")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      child.once("exit", (code, signal) => {
+        if (!childOutput.includes("ready\n")) {
+          clearTimeout(timer);
+          reject(new Error(`lock owner exited before readiness: ${code ?? signal}: ${childError}`));
+        }
+      });
+    });
+    await assert.rejects(
+      BrokerServiceInstanceLock.acquire(path),
+      (error: unknown) => error instanceof ServiceInstanceLockError && error.code === "ALREADY_ACTIVE"
+    );
+    child.kill("SIGTERM");
+    await waitForChildExit();
+    const reclaimed = await BrokerServiceInstanceLock.acquire(path);
+    await reclaimed.close();
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await waitForChildExit().catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }
 });
