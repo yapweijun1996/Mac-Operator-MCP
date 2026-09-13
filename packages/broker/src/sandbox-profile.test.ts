@@ -190,6 +190,19 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
     }, { timeoutMs: 3_000, shouldCancel: () => false });
     assert.notEqual(network.resultClass, "SUCCEEDED");
     assert.equal(network.stdout, "");
+
+    const childAttempt = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.child-denied",
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/bin/bash",
+        args: ["-c", "printf before; /bin/sleep 1; printf after"]
+      }
+    }, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.equal(childAttempt.resultClass, "EXECUTION_FAILED");
+    assert.equal(childAttempt.stdout, "before");
+    assert.match(childAttempt.stderr, /fork|Operation not permitted/u);
   } finally {
     if (previousCanary === undefined) delete process.env.MOP_CONTROLLER_SECRET;
     else process.env.MOP_CONTROLLER_SECRET = previousCanary;
