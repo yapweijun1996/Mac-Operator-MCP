@@ -180,6 +180,90 @@ test("native IPC accepts a separately spawned Edge bound to its PID start-time i
   }
 });
 
+test("native IPC smoke uses separately spawned Broker and Edge package processes", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("separate native package processes require macOS peer credentials");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-packaged-processes-"));
+  const socketPath = join(directory, "broker.sock");
+  const brokerReadyPath = join(directory, "broker.ready");
+  const keyPath = join(directory, "edge.key");
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const contractsModule = pathToFileURL(join(repositoryRoot, "packages/contracts/dist/index.js")).href;
+  const brokerModule = pathToFileURL(join(repositoryRoot, "packages/broker/dist/index.js")).href;
+  const key = randomBytes(32);
+  await writeFile(keyPath, key, { mode: 0o600 });
+  const brokerScript = [
+    'import { readFile, writeFile } from "node:fs/promises";',
+    'import { dirname, join } from "node:path";',
+    'const [socketPath, readyPath, keyPath, edgePidText, brokerModule] = process.argv.slice(1);',
+    'const { Broker, BrokerStore, EdgeKeyring, capturePeerProcessIdentity, createDefaultPolicy, createMacOsNativeBrokerRuntime } = await import(brokerModule);',
+    'try {',
+    '  const key = await readFile(keyPath);',
+    '  const edgePid = Number(edgePidText);',
+    '  const deadline = Date.now() + 5000;',
+    '  let identity;',
+    '  while (identity === undefined) { try { identity = capturePeerProcessIdentity(edgePid); } catch { if (Date.now() >= deadline) throw new Error("edge identity timeout"); await new Promise((resolve) => setTimeout(resolve, 10)); } }',
+    '  const uid = process.getuid?.();',
+    '  const gid = process.getgid?.();',
+    '  if (uid === undefined || gid === undefined) throw new Error("POSIX identity unavailable");',
+    '  const now = Date.now();',
+    '  const store = new BrokerStore(join(dirname(socketPath), "broker.sqlite"));',
+    '  const broker = new Broker({ store, policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]), edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: now - 1000, expiresAtMs: now + 60000 }]), now: () => now });',
+    '  const { runtime } = createMacOsNativeBrokerRuntime({ socketPath, broker, edgeId: "edge-1", peerPolicy: { expectedUid: uid, expectedGid: gid, allowedProcessIdentity: identity } });',
+    '  await runtime.start();',
+    '  await writeFile(readyPath, "ready\\n", { mode: 0o600 });',
+    '  await new Promise((resolve) => { const stop = () => { process.removeListener("SIGTERM", stop); process.removeListener("SIGINT", stop); resolve(); }; process.once("SIGTERM", stop); process.once("SIGINT", stop); });',
+    '  await runtime.close();',
+    '  store.close();',
+    '} catch { process.stderr.write("broker fixture failed\\n"); process.exitCode = 2; }'
+  ].join("\n");
+  const edgeScript = [
+    'import { createConnection } from "node:net";',
+    'import { readFile, stat } from "node:fs/promises";',
+    'const [socketPath, readyPath, keyPath, contractsModule] = process.argv.slice(1);',
+    'const { signRequest, verifyBrokerResponse } = await import(contractsModule);',
+    'const deadline = Date.now() + 5000;',
+    'while (true) { try { await stat(readyPath); break; } catch { if (Date.now() >= deadline) process.exit(2); await new Promise((resolve) => setTimeout(resolve, 10)); } }',
+    'const key = await readFile(keyPath);',
+    'const now = Date.now();',
+    'const request = signRequest({ protocolVersion: "0.1", requestId: "packaged-process-request", contractVersion: "0.1", tool: "mac_health", arguments: {}, principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes: ["mac.control.read"], issuedAtMs: now - 1000, expiresAtMs: now + 60000, edgeId: "edge-1" }, timestampMs: now, nonce: "packaged-process-nonce", policyAudience: "mac-operator-broker", policyVersion: "policy-0.1", authenticationKeyId: "edge-key-1" }, key);',
+    'const socket = createConnection(socketPath);',
+    'let response = "";',
+    'socket.setEncoding("utf8");',
+    'socket.on("data", (chunk) => { response += chunk; });',
+    'socket.on("error", () => process.exit(3));',
+    'socket.on("end", () => { try { const envelope = JSON.parse(response); if (!verifyBrokerResponse(request, envelope, key)) process.exit(4); process.stdout.write(JSON.stringify(envelope.response) + "\\n"); } catch { process.exit(5); } });',
+    'socket.on("connect", () => socket.end(JSON.stringify(request) + "\\n"));'
+  ].join("\n");
+  const edge = spawn(process.execPath, ["--input-type=module", "-e", edgeScript, socketPath, brokerReadyPath, keyPath, contractsModule], {
+    cwd: "/",
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const broker = spawn(process.execPath, ["--input-type=module", "-e", brokerScript, socketPath, brokerReadyPath, keyPath, String(edge.pid ?? 0), brokerModule], {
+    cwd: "/",
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  try {
+    if (edge.pid === undefined || broker.pid === undefined || edge.stdout === null || edge.stderr === null) {
+      throw new Error("Packaged process fixture did not expose process identities");
+    }
+    await waitForFile(brokerReadyPath, 5_000);
+    const output = await collectChildOutput(edge, 5_000);
+    const result = JSON.parse(output) as { ok: boolean; tool: string; result_class: string };
+    assert.equal(result.ok, true);
+    assert.equal(result.tool, "mac_health");
+    assert.equal(result.result_class, "SUCCEEDED");
+  } finally {
+    await stopChild(edge);
+    await stopChild(broker);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("native IPC fails closed when the bound Edge identity exits", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-native-ipc-peer-loss-"));
   const socketPath = join(directory, "broker.sock");
@@ -365,6 +449,34 @@ async function waitForProcessIdentity(pid: number): Promise<ReturnType<typeof ca
     }
   }
   throw new Error("Edge fixture process identity was unavailable");
+}
+
+async function waitForFile(path: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await stat(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error("Packaged Broker fixture did not become ready");
+}
+
+async function stopChild(child: ReturnType<typeof spawn>): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      resolve();
+    }, 2_000);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 function collectChildOutput(child: ReturnType<typeof spawn>, timeoutMs: number): Promise<string> {
