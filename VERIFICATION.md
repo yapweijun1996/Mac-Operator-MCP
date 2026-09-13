@@ -52,7 +52,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
-Latest Broker restart-recovery addendum: source commit `e12da49` persists a
+Latest Broker restart-recovery addendum: source commit `c42284b` persists a
 bounded non-secret task-process PID/process-group/start-time identity before
 task execution proceeds. A new BrokerStore marks the prior running Job
 `UNKNOWN`; `reconcileRestartedTaskProcesses()` then verifies the exact Darwin

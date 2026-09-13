@@ -1,6 +1,6 @@
 # Broker task-process restart recovery evidence
 
-- Source commit: `e12da49ffb25265cf857fbcfef75266ed95144a0`
+- Source commit: `c42284ba59626237dcf8152f3fdae1e70e145095`
 - Working tree: clean before this evidence document was added
 - Host: Mac mini M4, `Darwin yaps-Mac-mini.local 25.2.0`, arm64
 - Runtime: Node `v25.5.0`; macOS platform reported by Node as `darwin`
@@ -57,8 +57,8 @@ Source hashes at capture:
 ```text
 205c3c0909f88977e119aa2833573999e060e5a8c5907a59b81293a7a7bae183  packages/broker/src/process-supervisor.ts
 d1a98a8b4cce921b0d9eb0b209b673596a1f2eeaf03e8b41c195567b98e629e6  packages/broker/src/process-supervisor.test.ts
-0be84be1b8257248f0cb0351cde1616045323e6931aab7fee63d0c7fd33a470c  packages/broker/src/persistence.ts
-22b5c6f885ecc692af26f955c70cc1beab39095481e0c6e81ca5df49296d0d53  packages/broker/src/persistence.test.ts
+018e0bc66d019b1a2c28d8260e655bf2f17a137cf595e5639e4c468c90daaec9  packages/broker/src/persistence.ts
+fce18d2d745f892ba5ce702ec8c0ce354867f8ff5138c674fae0ab7c39c8e8d5  packages/broker/src/persistence.test.ts
 6968aa4f670580f09880b26cfa7b98a39647a0262b80c52978a0dd4d9f76614f  packages/broker/src/broker.ts
 fe1be778e928c4082be1b05ad67b7b0ba020eb1acd14cf0b2a90d4b8be8d7b3f  packages/broker/src/broker.test.ts
 30431982d9e4759c419061cb4c54c1b5232964e01e7a6e2c919ec12fc6bed4ff  packages/broker/src/task-runner.ts

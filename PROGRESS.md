@@ -6,9 +6,9 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `e12da49`.
+Current committed implementation baseline: `c42284b`.
 
-The latest Broker restart-recovery addendum is `e12da49`: task Jobs now retain
+The latest Broker restart-recovery addendum is `c42284b`: task Jobs now retain
 only a bounded non-secret PID/process-group/start-time identity after process
 start, and the host-startup hook `reconcileRestartedTaskProcesses()` selects
 only restart-reconciled `UNKNOWN` Jobs. A new Broker verifies the exact Darwin
