@@ -6,7 +6,7 @@ release-gate closure for the complete filesystem/secret boundary.
 - Date: 2026-09-13 (Asia/Kuala_Lumpur)
 - Host profile: macOS 26.2, arm64
 - Node: v25.5.0
-- Source commit: `db5e3f5d994385881319c83875bd26a76585f258`
+- Source commit: `a8fc40c1fe62855a5bc73131a77b16bc26199665`
 - Working tree before this evidence document: clean after the source commit
 - Contract version: `0.1`
 - Policy state: no capability enablement or policy mutation performed
@@ -44,7 +44,7 @@ probes, launch children, mutate files, change policy, or install services.
 ## Source hashes
 
 ```text
-f98ab0466cbf3e7a6aeba778243468630edd2efdecbd15b288eb3c60d7d185ae  packages/broker/src/l0-l1-host-readback.test.ts
+dcd04fad955d5da4df3312d1efe3219c980ca053f26668a0370b64e2367a6b24  packages/broker/src/l0-l1-host-readback.test.ts
 9e4e5e6746434dbcedae4a1d67f11346f4bda9acb9b0cae2797dd868c5115331  packages/edge/src/jwt-verifier.test.ts
 ```
 

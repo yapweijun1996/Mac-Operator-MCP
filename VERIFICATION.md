@@ -52,7 +52,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
-Latest L0/L1 host-readback addendum: source commit `db5e3f5` adds a
+Latest L0/L1 host-readback addendum: source commit `a8fc40c` adds a
 macOS-only, read-only host probe for bounded system facts, interface state
 with active probes and listener enumeration disabled, redacted process
 inventory/current-process identity, and canonical `/System/Library`

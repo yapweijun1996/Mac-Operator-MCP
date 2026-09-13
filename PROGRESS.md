@@ -6,9 +6,9 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `db5e3f5`.
+Current committed implementation baseline: `a8fc40c`.
 
-The latest L0/L1 host-readback addendum is `db5e3f5`: a macOS-only,
+The latest L0/L1 host-readback addendum is `a8fc40c`: a macOS-only,
 read-only test now observes bounded system facts, interface state without
 active probes or listener enumeration, redacted process metadata/current
 process identity, and canonical `/System/Library` metadata/list/tree output
