@@ -25,6 +25,17 @@ after the last snapshot, post-snapshot `setsid` resistance, credential
 isolation, or production task-runner enablement. Evidence:
 `evidence/2026-09-13-task-process-recovery.md`.
 
+The latest child-process environment addendum is `e9d8570`: a shared
+environment-key policy rejects secret-shaped, interpreter-loader, command
+resolution, temporary-directory, and Git/Docker configuration injection keys
+for task profiles. The lower-level Supervisor permits only the exact fixed
+Git/Docker adapter keys, preserving those adapters without allowing arbitrary
+`GIT_*` or `DOCKER_*` names. Negative tests cover `PATH` and `NODE_OPTIONS`,
+and the full real-Mac suite remains 387/387. This closes environment
+construction and injection control, not real Keychain/credential-content
+isolation or production task-runner enablement. Evidence:
+`evidence/2026-09-13-process-environment-boundary.md`.
+
 The latest Broker OS-process ownership addendum is `1a8b0cc`: default
 launchd, log, Git, Docker, app, and UI adapters now receive one Broker-owned
 `ProcessSupervisor` with a union of explicit non-secret environment keys and a
