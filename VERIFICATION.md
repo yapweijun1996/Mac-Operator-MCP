@@ -88,6 +88,19 @@ Broker-process restart fencing, old-worker OS ownership, or production task
 runner enablement. Evidence:
 `evidence/2026-09-13-worker-crash-unknown.md`.
 
+Latest Broker worker-lifecycle addendum: source commit `84f4991` gives the
+bounded executor explicit ownership of active Worker instances. Shutdown now
+rejects new work, terminates owned workers, waits for termination requests, and
+keeps capacity reserved until each Worker exit event. `Broker.close()` fences
+new requests and checks shutdown authority before publishing active results;
+the native runtime closes transport channels before these Broker resources.
+Focused lifecycle tests pass 13/13; the default full suite passes 377 tests
+(374 passed, 3 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 377/377. This is graceful in-process
+worker drain evidence only; crashed-Broker OS-process ownership, restart
+fencing, and production task-runner enablement remain open. Evidence:
+`evidence/2026-09-13-broker-worker-shutdown.md`.
+
 Latest Broker real-worker write-failure addendum: source commit `2371eba` adds
 a Broker integration test using a real `WorkerFilesystemExecutor`. A
 metadata-readable, write-authorized root becomes mode `0500`; the worker fails

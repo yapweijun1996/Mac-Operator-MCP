@@ -6,7 +6,18 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `61b0865`.
+Current committed implementation baseline: `84f4991`.
+
+The latest Broker worker-lifecycle addendum is `84f4991`: `BoundedWorkerExecutor`
+now owns its active Worker set, rejects new work after close, terminates and
+waits for owned workers, and releases capacity from the Worker exit event.
+`WorkerFilesystemExecutor` and `WorkerProcessExecutor` expose that close
+boundary; `Broker.close()` fences new requests and active completion checks;
+`LocalBrokerRuntime` closes transport channels before Broker resources. The
+focused lifecycle tests pass, and the real-Mac full suite passes 377/377.
+This proves graceful in-process worker drain, not OS-process ownership after a
+crashed Broker or complete restart fencing. Evidence:
+`evidence/2026-09-13-broker-worker-shutdown.md`.
 
 The latest worker-crash addendum is `61b0865`: a test-only filesystem worker
 performs a real atomic write and then exits without returning a result. The
