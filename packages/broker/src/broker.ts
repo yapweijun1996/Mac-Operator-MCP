@@ -1,6 +1,8 @@
 import {
   BrokerError,
   canonicalJson,
+  CONTRACT_VERSION,
+  PROTOCOL_VERSION,
   sha256,
   signBrokerResponse,
   verifyRequestAuthentication,
@@ -669,10 +671,13 @@ export class Broker {
                 name: state.tool,
                 enabled: state.enabled,
                 scopes: tool ? [...tool.requiredScopes] : [],
+                contract_version: tool?.contractVersion ?? null,
                 reason: state.enabled ? "enabled" : (state.disabledReason ?? "disabled")
               };
             }),
             permissions: [],
+            protocol_version: PROTOCOL_VERSION,
+            contract_version: CONTRACT_VERSION,
             version: "0.1.0"
           },
           verification: { required: false, status: "not_required", strategy: "capability_state_result_validation" }

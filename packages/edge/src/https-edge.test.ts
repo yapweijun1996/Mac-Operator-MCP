@@ -92,7 +92,11 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
         tool,
         result_class: "SUCCEEDED",
         data: tool === "mac_capabilities"
-          ? { capabilities: [{ name: "mac_health", enabled: true }] }
+          ? {
+            protocol_version: "0.1",
+            contract_version: "0.1",
+            capabilities: [{ name: "mac_health", enabled: true, contract_version: "0.1" }]
+          }
           : { overall: "healthy", components: [] },
         warnings: [],
         truncated: false,

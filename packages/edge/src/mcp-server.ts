@@ -1,4 +1,4 @@
-import { BrokerError, type BrokerFailure, type BrokerResult, type BrokerSuccess, type PrincipalContext } from "@mac-operator/contracts";
+import { BrokerError, CONTRACT_VERSION, PROTOCOL_VERSION, type BrokerFailure, type BrokerResult, type BrokerSuccess, type PrincipalContext } from "@mac-operator/contracts";
 import {
   McpServer,
   fromJsonSchema,
@@ -12,6 +12,7 @@ import { projectPrincipal } from "./principal.js";
 interface CapabilityState {
   name: string;
   enabled: boolean;
+  contractVersion: string | null;
 }
 
 export interface GovernedMcpServerOptions {
@@ -28,7 +29,7 @@ export function createGovernedMcpServerFactory(options: GovernedMcpServerOptions
     const principal = projectPrincipal(requestContext.authInfo, options);
     const capabilities = await options.gateway.execute("mac_capabilities", {}, principal, requestContext.requestInfo?.signal);
     if (!capabilities.ok) throw new Error(`Broker capability discovery failed: ${capabilities.result_class}`);
-    const enabledTools = readEnabledTools(capabilities);
+    const enabledTools = readEnabledTools(capabilities, options.contracts);
     const server = new McpServer({ name: "Mac-Operator-MCP", version: "0.1.0" });
     for (const toolName of enabledTools) {
       const contract = options.contracts.get(toolName);
@@ -105,14 +106,27 @@ export function mapGatewayError(tool: string, error: unknown): BrokerFailure {
   };
 }
 
-function readEnabledTools(result: BrokerSuccess): string[] {
+function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry): string[] {
   if (result.data === null || typeof result.data !== "object" || Array.isArray(result.data)) {
     throw new Error("Broker capability response data is malformed");
   }
   const capabilities = (result.data as Record<string, unknown>).capabilities;
   if (!Array.isArray(capabilities)) throw new Error("Broker capability response list is malformed");
+  const data = result.data as Record<string, unknown>;
+  if (data.protocol_version !== PROTOCOL_VERSION || data.contract_version !== CONTRACT_VERSION) {
+    throw new Error("Broker capability response version is incompatible");
+  }
   const parsed = capabilities.map(parseCapability);
-  return [...new Set(parsed.filter((item) => item.enabled).map((item) => item.name))].sort();
+  const enabled: string[] = [];
+  for (const item of parsed) {
+    if (!item.enabled) continue;
+    const contract = contracts.get(item.name);
+    if (!contract || item.contractVersion !== contract.schemaVersion || item.contractVersion !== CONTRACT_VERSION) {
+      throw new Error(`Broker capability contract version is incompatible for ${item.name}`);
+    }
+    enabled.push(item.name);
+  }
+  return [...new Set(enabled)].sort();
 }
 
 function parseCapability(value: unknown): CapabilityState {
@@ -120,8 +134,9 @@ function parseCapability(value: unknown): CapabilityState {
     throw new Error("Broker capability item is malformed");
   }
   const record = value as Record<string, unknown>;
-  if (typeof record.name !== "string" || typeof record.enabled !== "boolean") {
+  if (typeof record.name !== "string" || typeof record.enabled !== "boolean" ||
+      (record.contract_version !== null && typeof record.contract_version !== "string")) {
     throw new Error("Broker capability item is malformed");
   }
-  return { name: record.name, enabled: record.enabled };
+  return { name: record.name, enabled: record.enabled, contractVersion: record.contract_version as string | null };
 }

@@ -97,12 +97,17 @@
                     "minLength": 1,
                     "maxLength": 128
                   }
+                },
+                "contract_version": {
+                  "type": ["string", "null"],
+                  "maxLength": 64
                 }
               },
               "required": [
                 "name",
                 "enabled",
-                "scopes"
+                "scopes",
+                "contract_version"
               ]
             }
           },
@@ -140,12 +145,24 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 64
+          },
+          "protocol_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "contract_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
           }
         },
         "required": [
           "capabilities",
           "permissions",
-          "version"
+          "version",
+          "protocol_version",
+          "contract_version"
         ]
       },
       "warnings": {

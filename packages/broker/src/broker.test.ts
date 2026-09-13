@@ -707,13 +707,13 @@ test("capability discovery separates planned, implemented, and enabled", async (
       const capabilities = (result.data as { capabilities: Array<{ name: string; enabled: boolean; reason: string }> }).capabilities;
       assert.equal(capabilities.length, 44);
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_health"), {
-        name: "mac_health", enabled: true, scopes: ["mac.control.read"], reason: "enabled"
+        name: "mac_health", enabled: true, scopes: ["mac.control.read"], contract_version: "0.1", reason: "enabled"
       });
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_policy_explain"), {
-        name: "mac_policy_explain", enabled: false, scopes: ["mac.policy.explain"], reason: "scope_not_granted"
+        name: "mac_policy_explain", enabled: false, scopes: ["mac.policy.explain"], contract_version: "0.1", reason: "scope_not_granted"
       });
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_task_run"), {
-        name: "mac_task_run", enabled: false, scopes: ["mac.task.run"], reason: "disabled_by_policy"
+        name: "mac_task_run", enabled: false, scopes: ["mac.task.run"], contract_version: "0.1", reason: "disabled_by_policy"
       });
     }
   } finally { await context.close(); }
