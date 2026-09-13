@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `8fbd148`.
+Current committed implementation baseline: `9d6d6b0`.
+
+The latest filesystem pressure-budget addendum is `9d6d6b0`: a bounded fixture
+creates 600 temporary files and verifies 500-entry listing pagination,
+128-entry tree truncation, 100-result metadata/text search truncation, and
+oversized argument rejection. Focused filesystem tests pass 30/30; the full
+suite passes 367 tests (365 passed, 2 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 367/367. Evidence:
+`evidence/2026-09-13-filesystem-pressure-budgets.md`.
 
 The latest character/block-device addendum is `8fbd148`: the real-host
 negative fixture rejects `/dev/null`, `/dev/tty`, `/dev/random`, and the
@@ -685,7 +693,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 364 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 365 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
