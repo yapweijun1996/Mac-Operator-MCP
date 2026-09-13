@@ -181,11 +181,16 @@ export interface BrokerPrivilegedHelperCommandFactoryOptions {
 export class BrokerPrivilegedHelperCommandFactory {
   private readonly now: () => number;
   private readonly maxLifetimeMs: number;
+  private readonly authenticationKey: Buffer;
+  private readonly options: Omit<BrokerPrivilegedHelperCommandFactoryOptions, "authenticationKey">;
 
-  constructor(private readonly options: BrokerPrivilegedHelperCommandFactoryOptions) {
+  constructor(options: BrokerPrivilegedHelperCommandFactoryOptions) {
     if (!options.store) throw new Error("Privileged helper command factory requires a BrokerStore");
     if (options.authenticationKey.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
     if (typeof options.authorizeCommand !== "function") throw new Error("Privileged helper authority check is required");
+    const { authenticationKey, ...safeOptions } = options;
+    this.options = safeOptions;
+    this.authenticationKey = Buffer.from(authenticationKey);
     this.now = options.now ?? Date.now;
     this.maxLifetimeMs = options.maxLifetimeMs ?? 30_000;
     if (!Number.isSafeInteger(this.maxLifetimeMs) || this.maxLifetimeMs < 1 || this.maxLifetimeMs > MAX_COMMAND_AGE_MS) {
@@ -260,7 +265,11 @@ export class BrokerPrivilegedHelperCommandFactory {
     };
     validateUnsignedPrivilegedHelperCommand(unsigned);
     this.options.authorizeCommand(unsigned);
-    return signPrivilegedHelperCommand(unsigned, this.options.authenticationKey);
+    return signPrivilegedHelperCommand(unsigned, this.authenticationKey);
+  }
+
+  dispose(): void {
+    this.authenticationKey.fill(0);
   }
 
   private assertRunningIdentity(
@@ -365,6 +374,7 @@ export interface PrivilegedHelperIpcServerOptions {
 export class PrivilegedHelperIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
+  private readonly authenticationKey: Buffer;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
@@ -375,6 +385,7 @@ export class PrivilegedHelperIpcServer {
       throw new Error("Privileged helper IPC requires a peer verifier or native peer policy");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
+    this.authenticationKey = Buffer.from(options.authenticationKey);
     if (!options.replayGuard) throw new Error("Privileged helper replay guard is required");
     if (typeof options.authorizeCommand !== "function") throw new Error("Privileged helper authority check is required");
     this.maxRequestBytes = options.maxRequestBytes ?? MAX_COMMAND_BYTES;
@@ -419,7 +430,8 @@ export class PrivilegedHelperIpcServer {
     const nativeTransport = this.nativeTransport;
     this.nativeTransport = undefined;
     if (nativeTransport) {
-      await nativeTransport.close();
+      try { await nativeTransport.close(); }
+      finally { this.authenticationKey.fill(0); }
       return;
     }
     const server = this.server;
@@ -430,6 +442,8 @@ export class PrivilegedHelperIpcServer {
     }));
     try { await unlink(this.options.socketPath); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      this.authenticationKey.fill(0);
     }
   }
 
@@ -466,7 +480,7 @@ export class PrivilegedHelperIpcServer {
       let command: UnsignedPrivilegedHelperCommand | undefined;
       try {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
-        command = authenticatePrivilegedHelperCommand(raw, this.options.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+        command = authenticatePrivilegedHelperCommand(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
         this.options.replayGuard.admit(command);
         this.options.authorizeCommand(command);
         let authorityRevoked = false;
@@ -493,7 +507,7 @@ export class PrivilegedHelperIpcServer {
         if (authorityRevoked || this.now() >= command.expiresAtMs) {
           throw new BrokerError("UNKNOWN_OUTCOME", "Privileged helper authority changed during execution", true);
         }
-        response = success(command, validatePrivilegedHelperExecutionResult(result, command), this.options.authenticationKey);
+        response = success(command, validatePrivilegedHelperExecutionResult(result, command), this.authenticationKey);
       } catch (error) {
         const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper command is invalid");
         const fallback = command ?? fallbackCommand();
@@ -512,7 +526,7 @@ export class PrivilegedHelperIpcServer {
     command?: UnsignedPrivilegedHelperCommand
   ): PrivilegedHelperFailureResponse {
     const body = { ok: false as const, commandId, requestId, resultClass: errorClass, error: { message: boundedMessage(message), retryable } };
-    return { ...body, responseProof: responseProof(command, body, this.options.authenticationKey) };
+    return { ...body, responseProof: responseProof(command, body, this.authenticationKey) };
   }
 }
 

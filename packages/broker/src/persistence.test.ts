@@ -32,6 +32,8 @@ test("BrokerStore migrates the legacy revocation constraint without losing data"
     assert.equal(store.isRevoked("policy_signer", "policy-key-old"), true);
     store.revoke("authority_key", "authority-key-old", "ROTATED", 5);
     assert.equal(store.isRevoked("authority_key", "authority-key-old"), true);
+    store.revoke("helper_key", "helper-key-old", "ROTATED", 6);
+    assert.equal(store.isRevoked("helper_key", "helper-key-old"), true);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
