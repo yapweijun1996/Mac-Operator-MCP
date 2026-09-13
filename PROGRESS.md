@@ -56,6 +56,15 @@ CI runs it before typecheck and test; it does not execute repository scripts or
 inspect ignored build artifacts. Local style, typecheck, contract, audit, and
 full-test checks pass; first remote CI execution remains unverified.
 
+Latest real-sandbox addendum: `MOPS_REAL_SANDBOX=1 npm test` passed 430/430
+with one explicit non-sandbox skip on the current Darwin arm64 host. The three
+real sandbox runner checks exercised environment/credential-surface denial,
+single-process fork/setsid and external-network denial, selected loopback
+allowlisting, and active process-group cancellation. This strengthens host
+evidence but does not select deprecated `sandbox-exec`; credential contents,
+post-snapshot descendants, remounts, and production task enablement remain
+open. Evidence: `evidence/2026-09-14-real-sandbox-regression.md`.
+
 Current committed implementation baseline: install-plan raw-readback hardening.
 
 The current install-plan readback hardening adds a raw-source observer boundary:

@@ -103,6 +103,15 @@ observation proves the child stale. Focused lock tests pass 5/5. This does not
 claim launchd singleton enforcement or remount durability. Evidence:
 `evidence/2026-09-14-service-instance-lock-process.md`.
 
+Current-host sandbox addendum: `MOPS_REAL_SANDBOX=1 npm test` passed 430/430
+with one explicit non-sandbox skip on the Darwin arm64 host. Environment and
+protected-surface denial, single-process fork/setsid and external-network
+denial, selected loopback allowlisting, and active process-group cancellation
+all ran successfully. This strengthens MOP-086 evidence but leaves its
+deprecated-`sandbox-exec` production decision, post-snapshot descendants,
+remounts, credential contents, and `mac_task_run` enablement open. Evidence:
+`evidence/2026-09-14-real-sandbox-regression.md`.
+
 Install-plan readback hardening is committed locally. The host-only install
 plan now has a physical-Mac package smoke that calls the
 real executor with only independent launchd, native PID/start-time, plist,

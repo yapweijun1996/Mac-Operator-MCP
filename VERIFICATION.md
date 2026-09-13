@@ -56,12 +56,21 @@ readback cannot fall back to the Broker status channel. The full suite passes
 431 tests (427 passed, 4 explicit opt-in skips); production installer and
 signed-release evidence remain open.
 
-Latest repository-quality addendum: `npm run lint` now checks 361 tracked
+Latest repository-quality addendum: `npm run lint` now checks all tracked
 source/document files for CRLF, trailing whitespace, final newline, and regular
 file invariants without executing repository content. The macOS CI workflow
 runs this check before typecheck and tests. Local lint, full tests, contract
 verification, dependency audit, and diff checks pass; remote CI execution is
 not yet evidenced.
+
+Latest real-sandbox addendum: `MOPS_REAL_SANDBOX=1 npm test` passed 430/430
+with one explicit non-sandbox skip on the current Darwin arm64 host. The real
+runner checks covered environment and protected-surface denial, single-process
+fork/setsid and external-network denial, selected loopback allowlisting, and
+active process-group cancellation. This remains experimental host evidence;
+deprecated `sandbox-exec`, post-snapshot descendants, remounts, credential
+contents, and production task enablement remain open. Evidence:
+`evidence/2026-09-14-real-sandbox-regression.md`.
 
 Latest exact-arguments readback addendum: source commit `9d90138` parses the
 bounded launchd `arguments` block and requires the exact planned Node binary
