@@ -6,7 +6,18 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `84f4991`.
+Current committed implementation baseline: `f2ce163`.
+
+The latest cross-Broker stale-completion addendum is `f2ce163`: an actual
+`Broker.handle` write is held in `running`, a second `BrokerStore` reopen
+reconciles it to `UNKNOWN`, and the prior Broker's delayed worker result is
+rejected rather than published as success. The restarted Broker reads the Job
+as `UNKNOWN`. Focused Broker tests pass 64/64; the full suite passes 378 tests
+(375 passed, 3 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 378/378. This proves persisted Job
+lease/revision fencing across BrokerStore reopen, not OS-process ownership or
+proof that a crashed Broker's old worker has exited. Evidence:
+`evidence/2026-09-13-stale-broker-completion.md`.
 
 The latest Broker worker-lifecycle addendum is `84f4991`: `BoundedWorkerExecutor`
 now owns its active Worker set, rejects new work after close, terminates and
