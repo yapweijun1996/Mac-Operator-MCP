@@ -1,12 +1,12 @@
 # Privileged Helper Authenticated Status IPC Evidence
 
 Date: 2026-09-13  
-Implementation commit: `2240870`  
-Documentation commit: `35aa78e`  
-Dirty-state: clean after documentation commit  
-Host: macOS 26.2 (25C56), arm64  
-Runtime: Node.js v25.5.0  
-Tool contract version: 0.1  
+Implementation commits: `2240870`, `86a99ca`
+Documentation state: recorded in the repository history
+Dirty-state: source tree clean at implementation capture; docs tracked separately
+Host: macOS 26.2 (25C56), arm64
+Runtime: Node.js v25.5.0
+Tool contract version: 0.1
 Policy version: policy-0.1
 
 ## Scope
@@ -64,7 +64,7 @@ review remain open. This is local contract and test evidence only.
 
 ## Source hashes
 
-- `354ce2285c5e60a0e043b580f150b6a256d68aa089dd08cbe01268398f8a7c38` `packages/broker/src/privileged-helper.ts`
+- `ba61680e9a8a3755e16158bd680f092393590b674b0db355efbe20ed9be59ecb` `packages/broker/src/privileged-helper.ts`
 - `76b15e16ab2488bbb4959d9c2e008f3545d77b7716d2712e0412dcb0ea1f554f` `packages/broker/src/privileged-helper.test.ts`
 - `3930b16f720d8a25f2b5ea85e762fa28e40e42c5ed8ca17f877bbabf1a1f0fc4` `packages/broker/src/privileged-helper-runtime.ts`
 - `8233c2e2c919d0787ff4a515176d09ac8a26dceb51579b05ba7816206113693d` `packages/broker/src/privileged-helper-keyring.ts`

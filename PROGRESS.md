@@ -1081,7 +1081,8 @@ See `README.md`, `TASK.md`, `VERIFICATION.md`, and `docs/adr/README.md`.
 
 ## Latest helper status addendum
 
-Source revision `2240870` adds a helper-owned, read-only status boundary. The
+Source revisions `2240870` and `86a99ca` add and harden a helper-owned,
+read-only status boundary. The
 status request uses a distinct HMAC domain, bounded timestamp/expiry, strict
 envelope fields, durable replay admission, and the same native peer policy as
 the command channel. The response is HMAC-bound to the request and accepts

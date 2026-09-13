@@ -188,7 +188,7 @@ non-cooperating-process lock evidence remain open.
 - `MOP-073` — `PLANNED` — Perform independent security and architecture review; resolve all reproducible P0/P1 findings.
 - `MOP-074` — `PLANNED` — Produce exact-revision release candidate and real-client/real-Mac evidence.
 
-### Privileged helper status addendum (`2240870`)
+### Privileged helper status addendum (`2240870`, hardened in `86a99ca`)
 
 `MOP-060`/`MOP-061` now include a helper-owned read-only status IPC slice. It
 uses a separate HMAC domain, native peer authorization, durable replay

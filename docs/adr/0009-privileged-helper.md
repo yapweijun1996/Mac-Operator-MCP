@@ -140,7 +140,7 @@ reading, and strict `codesign` verification/details parsing. Runtime metadata is
 still supplied by the helper-owned runtime source and is never inferred from
 launchd or request arguments.
 
-Revision `2240870` adds the helper-owned read-only status IPC. Status requests
+Revision `2240870` (hardened in `86a99ca`) adds the helper-owned read-only status IPC. Status requests
 use a distinct HMAC domain, strict fields, bounded timestamps, durable replay
 admission, and the existing native peer policy. Responses are request-bound
 proofs over a fixed runtime readback that requires native transport, a disabled
