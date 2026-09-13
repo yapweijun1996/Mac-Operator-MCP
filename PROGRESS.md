@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `44cae6a`.
+Current committed implementation baseline: `22fdc81`.
+
+The latest Broker startup-serialization addendum is `22fdc81`: packaged
+service startup now holds an owner-only runtime-root instance lock containing
+the exact PID/start-time identity before socket preflight, BrokerStore open, or
+restart recovery. Duplicate live owners are rejected; stale locks are
+reclaimed only after exact identity observation proves the owner is gone, and
+observer uncertainty or target replacement fails closed. The default suite
+passes 394 tests (391 passed, 3 opt-in sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 394/394. Launchd installation/bootstrap,
+non-cooperating-process kernel locking, and physical crash/remount evidence
+remain open. Evidence:
+`evidence/2026-09-13-service-instance-lock.md`.
 
 The latest IPC ownership-hardening addendum is `44cae6a`: all local Unix IPC
 servers now probe existing socket paths before stale cleanup, bind close to a

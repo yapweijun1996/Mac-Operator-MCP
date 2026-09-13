@@ -39,6 +39,13 @@ preflights the Broker socket before startup Job recovery. Repository-level
 tests pass; installed launchd singleton enforcement and physical crash/remount
 readback remain open.
 
+Startup serialization addendum: source revision `22fdc81` adds an owner-only
+runtime-root instance lock with exact PID/start-time identity. It is acquired
+before socket preflight, BrokerStore access, and restart reconciliation;
+duplicate live owners are rejected and stale locks are reclaimed only after
+proof of owner death or PID reuse. Launchd install/bootstrap and
+non-cooperating-process lock evidence remain open.
+
 ## P1 — Local Broker vertical slice
 
 - `MOP-010` — `IN_PROGRESS` — Broker core plus local `mac_health`, `mac_capabilities`, `mac_policy_explain`, `mac_system_summary`, `mac_process_list`, `mac_process_inspect`, `mac_network_status`, `mac_service_status`, `mac_log_tail`, exact-target `mac_git_status`/`mac_git_branch_list`/`mac_git_log`, `mac_stat_path`, bounded `mac_read_file`, descriptor-backed `mac_hash_file`, bounded descriptor-backed `mac_list_directory`, bounded `mac_directory_tree`, metadata-only `mac_find_files`, metadata-only `mac_recent_files`, bounded secret-filtered `mac_search_text`, bounded `mac_project_discover`, bounded `mac_project_summary`, and bounded `mac_storage_analysis` handlers exist and pass tests. A fail-closed `LocalBrokerRuntime` now orders Broker IPC before operator channels, rolls back partial startup, retains failed cleanup for explicit recovery, and `createMacOsNativeBrokerRuntime` binds that lifecycle to the native Broker channel. The launchd startup assembly now restores the protected Authority key and places its separate native-peer channel under the same lifecycle. Installed launchd lifecycle, operator startup, listener ABI pinning, and production enablement remain open.

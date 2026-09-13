@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest startup-serialization addendum: source commit `22fdc81` acquires an
+owner-only runtime-root Broker instance lock with PID/start-time identity
+before socket preflight, Job Ledger access, and restart recovery. Live duplicate
+owners are denied, proven stale locks are reclaimed, and malformed,
+observer-uncertain, symlinked, or replaced locks fail closed. The default suite
+passes 394 tests (391 passed, 3 opt-in sandbox tests skipped);
+`MOPS_REAL_SANDBOX=1 npm test` passes 394/394, contract validation and audit
+pass. Launchd installation/bootstrap, arbitrary non-cooperating process
+locking, and physical crash/remount evidence remain open. Evidence:
+`evidence/2026-09-13-service-instance-lock.md`.
+
 Latest IPC ownership-hardening addendum: source commit `44cae6a` rejects live
 Unix listeners before stale cleanup, fences generic Node listener close with
 device/inode identity and a temporary symlink barrier, limits native cleanup
