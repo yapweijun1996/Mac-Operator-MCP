@@ -1267,6 +1267,8 @@ executor. Signed policy and Edge-key activations restore before native
 PID/start-time capture; the Broker starts its native socket with zero enabled
 capabilities and mode `0600`, then closes cleanly and leaves no temporary
 service or socket. This closes only the live startup-assembly slice; Edge
-request exchange, installed production packaging, Developer ID signing,
-upgrade/rollback, and helper installation remain open. Evidence:
-`evidence/2026-09-14-live-broker-startup.md`.
+request exchange is now covered by a native HTTPS-to-UDS smoke, while
+installed production packaging, Developer ID signing, upgrade/rollback, and
+helper installation remain open. Evidence:
+`evidence/2026-09-14-live-broker-startup.md` and
+`evidence/2026-09-14-native-https-edge.md`.

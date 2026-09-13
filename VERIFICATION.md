@@ -1038,8 +1038,17 @@ temporary signed policy and Edge-key activations restored before native Broker
 listener construction; the service reached `running` with zero enabled
 capabilities and a mode-`0600` socket, then closed and removed that socket.
 This is physical-host startup evidence only, not installed-package,
-Edge-request, Developer ID, or privileged-helper evidence. Evidence:
+installed Edge request packaging, Developer ID, or privileged-helper evidence.
+The separate native HTTPS Edge smoke now covers local request exchange;
+installed deployment remains open. Evidence:
 `evidence/2026-09-14-live-broker-startup.md`.
+
+Latest native HTTPS Edge addendum: the physical Darwin test now selects
+`MacOsNativeBrokerIpcServer` for the HTTPS Edge/Broker end-to-end path,
+captures the peer PID/start-time identity, verifies signed `mac_health`
+responses, rejects request replay, and confirms bearer-token redaction from
+Broker audit rows. Evidence:
+`evidence/2026-09-14-native-https-edge.md`.
 
 The documentation evidence for `VT-CON-01` and `VT-CON-02` includes JSON validity and envelope-schema validation, functional input/output schema compilation for all 44 contracts, exactly 44 contracts, catalog/contract parity, field/taxonomy checks, unique tool/provenance IDs, bounded-field checks, forbidden-authority-field checks, output/verification compatibility checks, excluded-interface checks, and full documentation diff review. These PASS results prove contract-document integrity and functional schema completeness only; they do not prove runtime implementation, API compatibility in a running server, postcondition behavior, authorization enforcement, or host safety. Runtime rows remain `OPEN` or `BLOCKED` because the 44 tools are still planned and no 44-tool runtime evidence exists.
 

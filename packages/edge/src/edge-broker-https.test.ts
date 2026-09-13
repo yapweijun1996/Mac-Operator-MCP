@@ -11,7 +11,7 @@ import test from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { Client, StreamableHTTPClientTransport, type FetchLike } from "@modelcontextprotocol/client";
 import type { PrincipalContext } from "@mac-operator/contracts";
-import { BrokerIpcServer, BrokerStore, Broker, createDefaultPolicy, EdgeKeyring, MacOsPeerCredentialVerifier } from "@mac-operator/broker";
+import { BrokerIpcServer, BrokerStore, Broker, createDefaultPolicy, EdgeKeyring, MacOsNativeBrokerIpcServer, MacOsPeerCredentialVerifier, capturePeerProcessIdentity } from "@mac-operator/broker";
 import { AuthenticatedIpcBrokerGateway, BrokerIpcClient, EdgeRequestFactory, createHttpsMcpEdge } from "./index.js";
 import { ToolContractRegistry } from "./contract-registry.js";
 import { createJwtAccessTokenVerifier } from "./jwt-verifier.js";
@@ -21,7 +21,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../.
 const contracts = await ToolContractRegistry.load(resolve(repositoryRoot, "tool-contracts"));
 
 test("authenticated HTTPS Edge reaches the Broker through signed local IPC", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-edge-broker-e2e-"));
+  const directory = await mkdtemp(join(tmpdir(), "e2e-"));
   const tlsDirectory = join(directory, "tls");
   await mkdir(tlsDirectory, { mode: 0o700 });
   const socketPath = join(directory, "broker.sock");
@@ -40,11 +40,17 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
     }]),
     now: () => now
   });
-  const brokerServer = new BrokerIpcServer({
-    socketPath,
-    broker,
-    peerCredentialVerifier: currentProcessVerifier()
-  });
+  const brokerServer = process.platform === "darwin"
+    ? new MacOsNativeBrokerIpcServer({
+      socketPath,
+      broker,
+      peerPolicy: currentProcessNativePolicy()
+    })
+    : new BrokerIpcServer({
+      socketPath,
+      broker,
+      peerCredentialVerifier: currentProcessVerifier()
+    });
   const requestFactory = new EdgeRequestFactory({
     authenticationKey: key,
     authenticationKeyId: "edge-key-1",
@@ -204,6 +210,21 @@ function currentProcessVerifier(): MacOsPeerCredentialVerifier {
     expectedGid: gid,
     allowedProcessIds: new Set([process.pid])
   });
+}
+
+function currentProcessNativePolicy(): {
+  expectedUid: number;
+  expectedGid: number;
+  allowedProcessIdentity: ReturnType<typeof capturePeerProcessIdentity>;
+} {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) throw new Error("POSIX identity is unavailable");
+  return {
+    expectedUid: uid,
+    expectedGid: gid,
+    allowedProcessIdentity: capturePeerProcessIdentity(process.pid)
+  };
 }
 
 function createPinnedFetch(port: number): FetchLike {
