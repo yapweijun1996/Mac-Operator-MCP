@@ -101,4 +101,9 @@ export class EdgeRequestFactory {
   verifyResponse(request: BrokerRequest, response: AuthenticatedBrokerResponse): boolean {
     return verifyBrokerResponse(request, response, this.options.authenticationKey);
   }
+
+  /** Wipe the in-memory Edge-to-Broker authentication key during shutdown. */
+  dispose(): void {
+    this.options.authenticationKey.fill(0);
+  }
 }
