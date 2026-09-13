@@ -52,6 +52,18 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
+Latest Broker OS-process ownership addendum: source commit `1a8b0cc` routes
+default launchd, log, Git, Docker, app, and UI adapters through one
+Broker-owned `ProcessSupervisor` with bounded aggregate concurrency and an
+explicit union of non-secret environment keys. `Broker.close()` drains that
+authority alongside worker executors and the task runner. The integration close
+test passes; `MOPS_REAL_SANDBOX=1 npm test` passes 381/381, while the default
+suite passes 381 tests (378 passed, 3 opt-in sandbox tests skipped). This is
+live graceful-shutdown evidence only: crashed-Broker descendant ownership,
+post-snapshot `setsid`, credential isolation, and production task-runner
+enablement remain open. Evidence:
+`evidence/2026-09-13-broker-process-ownership.md`.
+
 Latest OS-process lifecycle addendum: source commit `889ccdf` adds an
 explicit `ProcessSupervisor.close()` boundary. It rejects new work, cancels
 active owned process groups, waits for tracked process-tree drain, and leaves

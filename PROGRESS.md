@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `889ccdf`.
+Current committed implementation baseline: `1a8b0cc`.
+
+The latest Broker OS-process ownership addendum is `1a8b0cc`: default
+launchd, log, Git, Docker, app, and UI adapters now receive one Broker-owned
+`ProcessSupervisor` with a union of explicit non-secret environment keys and a
+bounded shared concurrency limit. `Broker.close()` drains this supervisor in
+addition to worker executors and the task runner. The integration close test
+passes; the opt-in host regression passes 381/381. This closes live Broker
+shutdown ownership for these adapter processes, not ownership after a crashed
+Broker or evidence for production task-runner enablement. Evidence:
+`evidence/2026-09-13-broker-process-ownership.md`.
 
 The latest OS-process lifecycle addendum is `889ccdf`: `ProcessSupervisor`
 now owns an explicit close boundary that stops new admissions, cancels every
@@ -14,9 +24,9 @@ active process group, waits for tracked process-tree drain, and preserves
 `UNKNOWN_OUTCOME` when termination cannot be observed. `SandboxExecTaskRunner`
 forwards that boundary and `Broker.close()` drains it after transport shutdown.
 The default task runner remains disabled, and the `owned_group` profile remains
-unavailable. The focused close tests pass; the default suite passes 380 tests
-(377 passed, 3 opt-in sandbox tests skipped), while
-`MOPS_REAL_SANDBOX=1 npm test` passes 380/380. This proves graceful shutdown of
+unavailable. The focused close tests pass; the default suite passes 381 tests
+(378 passed, 3 opt-in sandbox tests skipped), while
+`MOPS_REAL_SANDBOX=1 npm test` passes 381/381. This proves graceful shutdown of
 live Broker-owned OS task processes, not ownership after a crashed Broker,
 post-snapshot `setsid` escape resistance, credential isolation, or production
 task-runner enablement. Evidence:
