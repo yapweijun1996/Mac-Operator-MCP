@@ -26,7 +26,7 @@ process-boundary evidence; launchd installation/readback, Developer ID,
 remote OAuth/JWKS, and production key rotation remain open. Evidence:
 `evidence/2026-09-14-separate-edge-process.md`.
 
-Latest packaging-shape addendum: commit `a83c2f7` adds the reviewed Edge
+Latest packaging-shape addendum: commit `576038e` adds the reviewed Edge
 LaunchAgent template next to the Broker template and documents the Edge-first,
 Broker-second startup/readback order plus reverse authority-disabled uninstall.
 The template regression passes with both agents containing no shell,

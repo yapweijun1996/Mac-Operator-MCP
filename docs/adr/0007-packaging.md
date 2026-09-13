@@ -83,3 +83,16 @@ uninstall. This remains partial: the Broker status callback is an explicit
 owner-only fixture, and Developer ID/notarization, production persistence,
 upgrade/rollback, remote Edge, and root-domain helper evidence remain open.
 Evidence: `evidence/2026-09-14-live-install-plan.md`.
+
+Revision `576038e` adds the reviewed `com.mac-operator.edge.plist.in`
+template beside the Broker template. The static regression checks both
+templates for fixed component labels, exact entrypoint placeholders, and the
+absence of shell, environment, user, or privileged launchd fields. The
+deployment sequence now requires Edge launchd identity/readback before Broker
+startup and keeps the Broker status socket as a separately authenticated
+operator/readback channel. Revision `18e9103` also proves a separately spawned
+Edge process can complete the signed HTTPS-to-native-Broker exchange when the
+Broker binds the exact Edge UID/GID and PID/start-time identity. These are
+reviewable packaging and temporary process-boundary evidence only; persistent
+LaunchAgent installation, Developer ID/notarization, remote issuer
+interoperability, and production key distribution remain open.

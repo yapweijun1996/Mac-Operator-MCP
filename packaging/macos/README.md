@@ -51,9 +51,13 @@ suite.
 
 The physical-host evidence includes a reversible temporary LaunchAgent smoke
 that uses the plan's real signature, preflight, atomic plist, bootstrap,
-readback, bootout, and uninstall primitives. It intentionally stops before
-Broker readiness: the final installer callback must provide an independently
-observed Broker metadata/native transport/signature readback, not a synthetic
-success from a temporary process.
+readback, bootout, and uninstall primitives, plus a separate Broker startup
+smoke with signed policy/key restore and zero enabled capabilities. A
+Darwin-only cross-process Edge smoke completes the signed HTTPS-to-native-
+Broker exchange and binds the native peer to the exact Edge UID/GID and
+PID/start-time identity. These are temporary host/process-boundary checks;
+they do not establish persistent Edge/Broker LaunchAgent installation,
+Developer ID provenance, remote issuer interoperability, or production key
+distribution.
 
 The test suite includes a real macOS smoke check that creates a synthetic app bundle in a temporary directory, signs it ad hoc with `/usr/bin/codesign`, and verifies it through the plan's fixed `--verify --strict --deep` command. This proves command wiring and basic host compatibility only; it is not production Developer ID signing, notarization, certificate/key protection, or installed-service evidence.

@@ -6,7 +6,7 @@ Last verified: 2026-09-14
 
 ## Current situation
 
-Latest transport addendum: commit `a4bb152` adds a Darwin-only cross-process
+Latest transport addendum: commit `18e9103` adds a Darwin-only cross-process
 HTTPS smoke. A separately spawned Edge process loads the compiled Edge package,
 protected authentication key, contracts, TLS material, and local JWT verifier;
 the parent native Broker binds the child by exact UID/GID and PID/start-time.
@@ -17,7 +17,7 @@ launchd installation/readback, Developer ID/notarization, remote OAuth/JWKS,
 and production key rotation remain open. Evidence:
 `evidence/2026-09-14-separate-edge-process.md`.
 
-Latest packaging-shape addendum: commit `a83c2f7` adds a reviewable
+Latest packaging-shape addendum: commit `576038e` adds a reviewable
 `com.mac-operator.edge.plist.in` to the macOS packaging boundary alongside the
 Broker template. The
 documented order is Edge launchd identity/readback first, Broker startup second,
