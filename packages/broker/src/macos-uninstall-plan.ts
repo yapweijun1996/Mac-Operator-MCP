@@ -5,7 +5,8 @@ import {
   type MacOsInstallExecutionResult,
   type MacOsInstallPlan
 } from "./macos-install-plan.js";
-import type { AuthorityControlIpcClient } from "./authority-control-ipc.js";
+import type { AuthorityControlIpcClient, AuthorityControlIpcClientOptions } from "./authority-control-ipc.js";
+import type { AuthorityControlKeyManager } from "./authority-control-keyring.js";
 
 export interface MacOsUninstallAuthorityReadback {
   globalDisabled: boolean;
@@ -53,6 +54,21 @@ export function createAuthorityControlUninstallActions(
       edgeRevoked: await client.readRevocation("edge", edgeId)
     })
   };
+}
+
+/**
+ * Host assembly helper: select the already-activated protected operator key,
+ * construct the authenticated IPC client, and bind it to the uninstall gate.
+ * The key manager remains the source of truth; callers cannot inject a key
+ * through uninstall arguments.
+ */
+export function createAuthorityControlUninstallActionsFromKeyManager(
+  keyManager: Pick<AuthorityControlKeyManager, "createClient">,
+  clientOptions: Omit<AuthorityControlIpcClientOptions, "authenticationKey">,
+  edgeId: string,
+  reason = "service-uninstall"
+): MacOsUninstallAuthorityActions {
+  return createAuthorityControlUninstallActions(keyManager.createClient(clientOptions), edgeId, reason);
 }
 
 /**
