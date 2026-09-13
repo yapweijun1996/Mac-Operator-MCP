@@ -22,6 +22,13 @@ Fresh install, upgrade, downgrade rejection, rollback, signature failure, partia
 
 ## Candidate implementation evidence
 
+Revision `a06eb81` extends startup assembly so the active Edge and Authority
+key configurations are restored before constructing the native Broker and a
+separate owner-only Authority channel. The channel has an independent socket,
+explicit native peer identity, ordered runtime lifecycle, reverse cleanup, and
+defensive key wiping. This remains startup-assembly evidence only; no
+persistent LaunchAgent or production service was installed.
+
 Revision `f47ecc5` adds a dedicated protected Authority Control key
 configuration. Exactly one operator key is selected from an explicit file or
 Keychain source, bound to a secret digest, rejected when revoked or outside

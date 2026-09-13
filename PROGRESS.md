@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `f47ecc5`.
+Current committed implementation baseline: `a06eb81`.
+
+The latest startup-assembly addendum is `a06eb81`: the launchd Edge startup
+factory now restores both the active Edge key configuration and the active
+Authority Control key configuration before constructing the native Broker and
+separate owner-only Authority channel. The Authority channel has its own
+socket, requires an explicit native peer PID/start-time identity, joins the
+same fail-closed LocalBrokerRuntime lifecycle, and wipes its defensive key copy
+on close. Partial startup closes the new channel and releases the source key
+without misclassifying Edge failures. The full suite passes 333 tests (331
+passed, 2 opt-in real-sandbox tests skipped), with six native startup tests
+passing. No persistent service was installed. Evidence:
+`evidence/2026-09-13-authority-runtime-assembly.md`.
 
 The latest authority-key addendum is `f47ecc5`: owner-only Authority Control
 key metadata now has an explicit versioned file/Keychain source, digest-bound
