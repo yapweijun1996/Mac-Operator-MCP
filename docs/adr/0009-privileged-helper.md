@@ -19,6 +19,14 @@ mismatched contract before replay admission or dispatch; this improves local
 compatibility evidence without accepting the helper or enabling privileged
 operations.
 
+Revision `afe73c4` adds a dedicated protected helper-key configuration. Exactly
+one explicit file or Keychain source is active at a time, secret bytes are
+bound to a digest and validity window, `helper_key` revocation is checked
+before loading, and BrokerStore records audited monotonic activation with
+exact restart restore. The command factory and helper IPC server defensively
+copy and wipe HMAC keys. This improves key custody evidence but does not
+enable a helper adapter or establish a separate privileged process.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
@@ -28,4 +36,4 @@ operations.
 
 ## Open evidence
 
-Caller identity, root-domain packaging, code signing/notarization, protected key distribution, service/package/power adapters, crash recovery, real-host caller-spoof tests, and independent P0/P1 review remain open. This ADR is not an acceptance of privileged capability.
+Caller identity, separate helper/root-domain packaging, code signing/notarization, approved Keychain ACLs, service/package/power adapters, crash recovery, real-host caller-spoof tests, and independent P0/P1 review remain open. This ADR is not an acceptance of privileged capability.

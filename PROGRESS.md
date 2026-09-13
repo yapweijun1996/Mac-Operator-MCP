@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `a06eb81`.
+Current committed implementation baseline: `afe73c4`.
+
+The latest privileged-helper key addendum is `afe73c4`: the separately
+authenticated L5 helper now has a dedicated protected file/Keychain key
+configuration, `helper_key` revocation kind, digest-bound secret loading,
+audited monotonic activation, exact restart restore, validity-window checks,
+and defensive key disposal. The helper command factory and IPC server copy and
+wipe their HMAC keys; helper construction requires an activated manager while
+the adapter remains fail-closed. The full suite passes 335 tests (333 passed,
+2 opt-in real-sandbox tests skipped), with 33 focused helper-key/IPC/persistence
+tests passing. Caller identity packaging, root/helper separation, signed
+artifacts, real adapters, and privileged host evidence remain open. Evidence:
+`evidence/2026-09-13-privileged-helper-key-activation.md`.
 
 The latest startup-assembly addendum is `a06eb81`: the launchd Edge startup
 factory now restores both the active Edge key configuration and the active
