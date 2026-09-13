@@ -4,9 +4,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec, MacOsPlistReadback } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
-import type { LaunchdJobReadback } from "./launchd-readback.js";
-import type { PeerProcessIdentity } from "./peer-credentials.js";
-import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
+import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
+import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const HELPER_LABEL = "com.mac-operator.privileged-helper" as const;
 const HELPER_PLIST_PATH = "/Library/LaunchDaemons/com.mac-operator.privileged-helper.plist" as const;
@@ -155,6 +155,14 @@ export interface PrivilegedHelperPackageReadbackObserver {
   readPlist(plan: PrivilegedHelperPackagePlan): Promise<MacOsPlistReadback>;
   readRuntime(): Promise<PrivilegedHelperRuntimeReadback>;
   readSignature(): Promise<CodeSignatureReadback>;
+}
+
+export interface PrivilegedHelperPackageHostObserverOptions {
+  readRuntime(): Promise<PrivilegedHelperRuntimeReadback>;
+  launchdExecutor?: LaunchdReadbackExecutor;
+  processIdentityReader?: (pid: number) => PeerProcessIdentity;
+  readPlist?: (plan: PrivilegedHelperPackagePlan) => Promise<MacOsPlistReadback>;
+  readSignature?: (plan: PrivilegedHelperPackagePlan) => Promise<CodeSignatureReadback>;
 }
 
 export interface PrivilegedHelperPackagePlan {
@@ -944,6 +952,82 @@ export async function observePrivilegedHelperPackageReadback(
 }
 
 /**
+ * Creates the production-shaped observer. Launchd and codesign use the
+ * bounded, empty-environment ProcessSupervisor; PID identity uses the native
+ * observer; plist content uses the internal descriptor-backed reader. Runtime
+ * metadata remains an explicit helper-owned source because it is not inferred
+ * from launchd or caller arguments.
+ */
+export function createPrivilegedHelperPackageHostObserver(
+  plan: PrivilegedHelperPackagePlan,
+  options: PrivilegedHelperPackageHostObserverOptions
+): PrivilegedHelperPackageReadbackObserver {
+  if (options === null || typeof options !== "object" || typeof options.readRuntime !== "function") {
+    fail("INVALID_ARGUMENT", "privileged helper host observer runtime source is required");
+  }
+  return {
+    readLaunchd: async (serviceId) => readLaunchdJobReadback(serviceId, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor }),
+    readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? capturePeerProcessIdentity(pid),
+    readPlist: options.readPlist ?? (async (candidate) => readPrivilegedHelperPlistReadback(candidate)),
+    readRuntime: options.readRuntime,
+    readSignature: options.readSignature === undefined
+      ? async () => readPrivilegedHelperCodeSignature(plan, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor })
+      : async () => options.readSignature!(plan)
+  };
+}
+
+/**
+ * Performs a bounded strict verification and details readback for the exact
+ * helper artifact. The parser accepts only the small codesign detail fields
+ * needed by the package contract and never returns raw command output.
+ */
+export async function readPrivilegedHelperCodeSignature(
+  plan: PrivilegedHelperPackagePlan,
+  options: { executor?: LaunchdReadbackExecutor } = {}
+): Promise<CodeSignatureReadback> {
+  const executor = options.executor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+  let verification: ProcessExecutionResult;
+  let details: ProcessExecutionResult;
+  try {
+    verification = await executor.run(plan.signatureVerify);
+    if (verification.resultClass !== "SUCCEEDED" || verification.truncated) {
+      fail("SIGNATURE_MISMATCH", "privileged helper code signature verification failed");
+    }
+    details = await executor.run({
+      executable: CODESIGN_PATH,
+      args: ["-dv", "--verbose=4", plan.signedArtifactPath],
+      cwd: "/",
+      environment: {},
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      outputCapBytes: COMMAND_OUTPUT_CAP_BYTES
+    });
+  } catch (error) {
+    if (error instanceof PrivilegedHelperPackageError) throw error;
+    fail("SIGNATURE_MISMATCH", "privileged helper code signature readback failed");
+  }
+  if (details.resultClass !== "SUCCEEDED" || details.truncated) {
+    fail("SIGNATURE_MISMATCH", "privileged helper code signature details failed");
+  }
+  const output = `${details.stdout}\n${details.stderr}`;
+  const identifier = readCodeSignatureField(output, "Identifier", /^[A-Za-z0-9._:-]{1,128}$/u);
+  const teamIdentifier = readCodeSignatureField(output, "TeamIdentifier", /^[A-Z0-9]{5,32}$/u);
+  const cdHash = readCodeSignatureField(output, "CDHash", /^[a-f0-9]{20,64}$/u);
+  const readback: CodeSignatureReadback = {
+    artifactPath: plan.signedArtifactPath,
+    valid: true,
+    identifier,
+    teamIdentifier,
+    cdHash
+  };
+  try {
+    validateCodeSignatureReadback(plan.signature, readback, plan.signedArtifactPath);
+  } catch {
+    fail("SIGNATURE_MISMATCH", "privileged helper code signature readback does not match the plan");
+  }
+  return readback;
+}
+
+/**
  * Reads the exact root-domain plist through the descriptor-backed filesystem
  * boundary. The caller must already be the host/root executor; no caller-
  * supplied inspector or path is accepted.
@@ -1055,6 +1139,15 @@ function sameProcessIdentity(left: PeerProcessIdentity, right: PeerProcessIdenti
 function samePlistIdentity(left: MacOsPlistReadback, right: MacOsPlistReadback): boolean {
   return left.path === right.path && left.bytes === right.bytes && left.sha256 === right.sha256 &&
     left.device === right.device && left.inode === right.inode;
+}
+
+function readCodeSignatureField(output: string, fieldName: string, pattern: RegExp): string | null {
+  const matches = [...output.matchAll(new RegExp(`^${fieldName}=([^\\r\\n]+)$`, "gmu"))];
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) fail("SIGNATURE_MISMATCH", `privileged helper code signature returned duplicate ${fieldName}`);
+  const value = matches[0]?.[1]?.trim();
+  if (value === undefined || !pattern.test(value)) fail("SIGNATURE_MISMATCH", `privileged helper code signature returned malformed ${fieldName}`);
+  return value;
 }
 
 function isPrivilegedHelperPlistReadback(value: unknown, plan: PrivilegedHelperPackagePlan): value is MacOsPlistReadback {

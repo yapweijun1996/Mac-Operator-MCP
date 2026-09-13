@@ -10,8 +10,10 @@ import {
   buildPrivilegedHelperPackageExecutionPlan,
   buildPrivilegedHelperPackagePlan,
   composePrivilegedHelperPackageReadback,
+  createPrivilegedHelperPackageHostObserver,
   executePrivilegedHelperPackagePlan,
   observePrivilegedHelperPackageReadback,
+  readPrivilegedHelperCodeSignature,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
   validatePrivilegedHelperFilesystemReadback,
@@ -20,7 +22,7 @@ import {
   type PrivilegedHelperPackageReadbackObserver
 } from "./privileged-helper-package.js";
 import type { LaunchdJobReadback } from "./launchd-readback.js";
-import { ProcessSupervisor } from "./process-supervisor.js";
+import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const root = "/Library/Application Support/MacOperator/PrivilegedHelper";
 const base: PrivilegedHelperPackagePlanInput = {
@@ -271,6 +273,108 @@ test("privileged helper package upgrades require an exact previous source revisi
   assert.equal(plan.expectedPreviousSourceRevision, "abcdef0123456789abcdef0123456789abcdef01");
 });
 
+test("privileged helper host observer wires bounded launchd and native readback adapters", async () => {
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  const rendered = Buffer.from(plan.renderedPlist, "utf8");
+  const runtime = {
+    component: "mac-operator-privileged-helper" as const,
+    state: "running" as const,
+    runtimeState: "running" as const,
+    nativeTransportRequired: true as const,
+    adapterAvailable: false as const,
+    helperSocketPath: plan.helperSocketPath,
+    brokerSocketPath: plan.brokerSocketPath,
+    brokerPeerUid: plan.brokerPeer.uid,
+    brokerPeerGid: plan.brokerPeer.gid ?? null,
+    sourceRevision: plan.sourceRevision,
+    contractVersion: plan.contractVersion,
+    policyVersion: plan.policyVersion,
+    enabledCapabilities: [] as const
+  };
+  const signature = {
+    artifactPath: plan.signedArtifactPath,
+    valid: true,
+    identifier: plan.signature.identifier,
+    teamIdentifier: plan.signature.teamIdentifier ?? null,
+    cdHash: null
+  };
+  const plist = {
+    path: plan.plistPath,
+    bytes: rendered.byteLength,
+    sha256: createHash("sha256").update(rendered).digest("hex"),
+    device: "1",
+    inode: "2"
+  };
+  const serviceId = "system/com.mac-operator.privileged-helper";
+  const launchdOutput = [
+    `${serviceId} = {`,
+    "\tstate = running",
+    "\tpid = 1234",
+    `\tprogram = ${plan.launchd.program}`,
+    "\targuments = {",
+    `\t\t${plan.launchd.program}`,
+    "\t}",
+    `\tpath = ${plan.plistPath}`,
+    "\ttype = LaunchDaemon",
+    "\tlast exit code = (never exited)",
+    "}"
+  ].join("\n");
+  let launchdCommands = 0;
+  const launchdExecutor = {
+    run: async (command: ProcessExecutionRequest): Promise<ProcessExecutionResult> => {
+      launchdCommands += 1;
+      assert.deepEqual(command.args, ["print", serviceId]);
+      return successfulProcessResult(launchdOutput);
+    }
+  };
+  const observer = createPrivilegedHelperPackageHostObserver(plan, {
+    readRuntime: async () => runtime,
+    launchdExecutor,
+    processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
+    readPlist: async () => plist,
+    readSignature: async () => signature
+  });
+  const readback = await observePrivilegedHelperPackageReadback(plan, observer);
+  assert.equal(readback.pid, 1234);
+  assert.equal(readback.launchd.programArguments[0], plan.launchd.program);
+  assert.equal(launchdCommands, 2);
+});
+
+test("privileged helper codesign observer parses only bounded identity fields", async () => {
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  let calls = 0;
+  const executor = {
+    run: async (command: ProcessExecutionRequest): Promise<ProcessExecutionResult> => {
+      calls += 1;
+      if (calls === 1) assert.deepEqual(command.args, plan.signatureVerify.args);
+      else assert.deepEqual(command.args, ["-dv", "--verbose=4", plan.signedArtifactPath]);
+      return successfulProcessResult(calls === 1 ? "" : [
+        "Identifier=com.mac-operator.privileged-helper",
+        "TeamIdentifier=ABCDE12345",
+        "CDHash=0123456789abcdef0123"
+      ].join("\n"), "");
+    }
+  };
+  const signature = await readPrivilegedHelperCodeSignature(plan, { executor });
+  assert.deepEqual(signature, {
+    artifactPath: plan.signedArtifactPath,
+    valid: true,
+    identifier: "com.mac-operator.privileged-helper",
+    teamIdentifier: "ABCDE12345",
+    cdHash: "0123456789abcdef0123"
+  });
+  assert.equal(calls, 2);
+  await assert.rejects(
+    readPrivilegedHelperCodeSignature(plan, {
+      executor: {
+        run: async (command: ProcessExecutionRequest): Promise<ProcessExecutionResult> =>
+          successfulProcessResult(command.args[0] === "-dv" ? "Identifier=com.attacker\n" : "")
+      }
+    }
+  ),
+  (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SIGNATURE_MISMATCH");
+});
+
 test("privileged helper execution contract fixes preconditions, command order, and recovery", () => {
   const install = buildPrivilegedHelperPackagePlan(base);
   const installExecution = buildPrivilegedHelperPackageExecutionPlan(install, { present: false, sourceRevision: null });
@@ -430,3 +534,19 @@ test("privileged helper plist apply rejects a forged root UID before filesystem 
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PEER_IDENTITY"
   );
 });
+
+function successfulProcessResult(stdout: string, stderr = ""): ProcessExecutionResult {
+  return {
+    state: "completed",
+    resultClass: "SUCCEEDED",
+    exitCode: 0,
+    signal: null,
+    stdout,
+    stderr,
+    truncated: false,
+    durationMs: 1,
+    processId: 1,
+    processGroupId: 1,
+    terminationObserved: true
+  };
+}
