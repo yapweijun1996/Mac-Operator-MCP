@@ -88,10 +88,12 @@ fixtures. The host evidence remains partial and does not select deprecated
 
 ## Fresh current-revision readback
 
-The same opt-in command was rerun from source revision `e10f380` after the
-authenticated Keychain-delivery change, with a clean worktree before the
-verification command. Result: 7 passed, 0 failed, 0 skipped. No Keychain item,
-LaunchAgent, real credential contents, Docker protocol, persistence mechanism,
-or privileged action was touched. This refreshes the evidence to the current
+The same opt-in command was rerun from source revision `a778fea` after the
+privileged-helper caller-boundary evidence update, with no persistent service
+or privileged action touched. Result: 7 passed, 0 failed, 0 skipped. A full
+`MOPS_REAL_SANDBOX=1 npm test` regression also passed 346/346, so both opt-in
+real-host cases ran instead of being skipped. No Keychain item, LaunchAgent,
+real credential contents, Docker protocol, persistence mechanism, or
+privileged action was touched. This refreshes the evidence to the current
 source revision but does not change the `PARTIAL` decision or unblock
 `mac_task_run`.

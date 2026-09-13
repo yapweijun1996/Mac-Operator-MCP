@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `7a4a788`.
+Current committed implementation baseline: `a778fea`.
+
+The latest real-Mac sandbox readback was rerun from `a778fea` with
+`MOPS_REAL_SANDBOX=1`: both opt-in sandbox tests passed, and the full suite
+passed 346/346 with no skipped tests. The smoke remains synthetic and
+disabled-by-default; it does not establish real credential/persistence
+isolation, descendant/`setsid` ownership, remount safety, or a production
+replacement for deprecated `sandbox-exec`. `mac_task_run` remains disabled.
+Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
 The latest helper caller-boundary addendum is `7a4a788`: a real macOS
 cross-process test starts a separately spawned Broker fixture, captures its
