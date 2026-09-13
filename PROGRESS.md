@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `a742fbc`.
+Current committed implementation baseline: `1807ebc`.
+
+The latest filesystem volume-identity addendum is `1807ebc`: every
+`FilesystemPathPlan` now binds the native canonical root and volume identity at
+authorization, checks it before and after metadata/read/hash/list/write/unlink
+operations, and the native adapter compares target/parent `f_fsid` and
+filesystem type in addition to `st_dev`. Focused filesystem/native tests pass
+33/33; the full suite passes 364 tests (362 passed, 2 opt-in real-sandbox tests
+skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes 364/364. No volume was
+unmounted or mounted and no capability was enabled. Evidence:
+`evidence/2026-09-13-filesystem-volume-identity.md`.
 
 The latest filesystem canonicalization addendum is `a742fbc`: a temporary
 adversarial fixture proves that lexical containment rejects case-altered root
@@ -650,7 +660,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 361 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 362 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
@@ -666,7 +676,7 @@ Percentages beyond these objective counts are intentionally omitted because the 
 
 ## Current phase
 
-Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Runtime/package selection, signed-policy activation/rollback, HMAC plus macOS UID/GID/PID-authenticated local IPC, authenticated MCP introspection, sanitized system/process/network inspection, descriptor-backed path metadata, bounded regular-file reads, directory listing, depth/entry-bounded trees, metadata-only file discovery, recent-file metadata, bounded secret-filtered text search, bounded project discovery, bounded project summaries, and bounded storage/capacity analysis run in tests. Network listener enumeration remains explicitly limited until a version-pinned native ABI is available. Production key distribution, native-adapter packaging/runtime compatibility, remote issuer integration, operational policy tooling, audit reliability, packaging, configurable secret/remount controls, and enforceable I/O deadlines remain open.
+Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Runtime/package selection, signed-policy activation/rollback, HMAC plus macOS UID/GID/PID-authenticated local IPC, authenticated MCP introspection, sanitized system/process/network inspection, descriptor-backed path metadata, bounded regular-file reads, directory listing, depth/entry-bounded trees, metadata-only file discovery, recent-file metadata, bounded secret-filtered text search, bounded project discovery, bounded project summaries, and bounded storage/capacity analysis run in tests. Network listener enumeration remains explicitly limited until a version-pinned native ABI is available. Production key distribution, native-adapter packaging/runtime compatibility, remote issuer integration, operational policy tooling, audit reliability, packaging, configurable secret classification, physical/remount evidence, and enforceable I/O deadlines remain open.
 
 ## Decisions recorded
 
@@ -688,7 +698,7 @@ Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Run
 - Child-process sandbox technology on the target macOS version.
 - Installed startup wiring, native caller/process identity packaging, Keychain distribution, general schema-version framework, crash-window recovery, and rollback runbook.
 - Audit backend, integrity, retention, and read-only outage behavior.
-- Production filesystem allow roots, operator-configurable secret classifications, removable-volume identities, and cross-volume Unicode/case policy remain open; the bounded lexical case-alias and NFKC search behavior is covered by the latest adversarial fixture.
+- Production filesystem allow roots, operator-configurable secret classifications, physical/removable-volume remount evidence, and cross-volume Unicode/case policy remain open; plan/native volume-identity guards plus bounded lexical case-alias and NFKC search behavior are covered by adversarial fixtures.
 - macOS packaging, signing, launch, update, and rollback strategy.
 - Runtime compatibility fixtures and host conformance for unimplemented tools.
 - KB-MCP writeback review for the resolved contract and progress changes.
