@@ -39,11 +39,12 @@ preflights the Broker socket before startup Job recovery. Repository-level
 tests pass; installed launchd singleton enforcement and physical crash/remount
 readback remain open.
 
-Startup serialization addendum: source revision `22fdc81` adds an owner-only
+Startup serialization addendum: source revision `0c34c65` adds an owner-only
 runtime-root instance lock with exact PID/start-time identity. It is acquired
 before socket preflight, BrokerStore access, and restart reconciliation;
 duplicate live owners are rejected and stale locks are reclaimed only after
-proof of owner death or PID reuse. Launchd install/bootstrap and
+proof of owner death or PID reuse. Normal and failed startup cleanup paths
+release the lock after resource disposal. Launchd install/bootstrap and
 non-cooperating-process lock evidence remain open.
 
 ## P1 — Local Broker vertical slice

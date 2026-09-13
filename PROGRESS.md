@@ -6,15 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `22fdc81`.
+Current committed implementation baseline: `0c34c65`.
 
-The latest Broker startup-serialization addendum is `22fdc81`: packaged
+The latest Broker startup-serialization addendum is `0c34c65`: packaged
 service startup now holds an owner-only runtime-root instance lock containing
 the exact PID/start-time identity before socket preflight, BrokerStore open, or
 restart recovery. Duplicate live owners are rejected; stale locks are
 reclaimed only after exact identity observation proves the owner is gone, and
-observer uncertainty or target replacement fails closed. The default suite
-passes 394 tests (391 passed, 3 opt-in sandbox tests skipped), and
+observer uncertainty or target replacement fails closed. Normal and failed
+startup cleanup paths release the lock after Broker/store disposal. The default
+suite passes 394 tests (391 passed, 3 opt-in sandbox tests skipped), and
 `MOPS_REAL_SANDBOX=1 npm test` passes 394/394. Launchd installation/bootstrap,
 non-cooperating-process kernel locking, and physical crash/remount evidence
 remain open. Evidence:

@@ -1,6 +1,6 @@
 # Broker service instance-lock evidence
 
-- Source commit: `22fdc81`
+- Source commit: `0c34c65`
 - Working tree: clean before this evidence document update
 - Host: Mac mini M4, `Darwin yaps-Mac-mini.local 25.2.0`, arm64
 - Runtime: Node `v25.5.0`; macOS platform reported by Node as `darwin`
@@ -22,8 +22,9 @@ the owner is stale; observer uncertainty, malformed content, weak permissions,
 symlink replacement, and target changes fail closed.
 
 The lock handle remains open for the whole assembled service lifetime and is
-released after transport, Broker resources, keys, and the store close. Startup
-failure paths release it as well. This prevents the pre-listener race where two
+released after transport, Broker resources, keys, and the store close. Normal
+and startup-failure paths release it even when an earlier cleanup step throws.
+This prevents the pre-listener race where two
 Broker instances could both pass socket preflight and recover the same Job
 Ledger before either listener exists.
 
@@ -52,5 +53,5 @@ Source hashes at capture:
 ```text
 30e11367464936114b103c7d0e1fcef1c93ea56163cd46c2c1d9ddcf8da910b0  packages/broker/src/service-instance-lock.ts
 6542e3ac71d7baccc7054e5f09f9e8f687f83286aad154bb347cb26efb6e7aa5  packages/broker/src/service-instance-lock.test.ts
-db31ea1e81c5bc7b6d0e4efd21306434934a5f7516b600e43e1c1bb5376b507c  packages/broker/src/service-startup.ts
+56e81c3fdeeb697eead5c891810ad0655bca89084ef25de8283b37e12bbaaae78  packages/broker/src/service-startup.ts
 ```
