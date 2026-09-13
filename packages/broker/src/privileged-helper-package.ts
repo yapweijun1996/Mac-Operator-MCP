@@ -97,6 +97,7 @@ export interface PrivilegedHelperPackagePlanInput {
 export interface PrivilegedHelperLaunchdReadback {
   label: typeof HELPER_LABEL;
   program: string;
+  programArguments: readonly string[];
   workingDirectory: string;
   stdoutPath: string;
   stderrPath: string;
@@ -301,6 +302,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
   const launchd = {
     label: HELPER_LABEL,
     program: service.program,
+    programArguments: [...service.programArguments],
     workingDirectory: service.workingDirectory,
     stdoutPath: service.stdoutPath,
     stderrPath: service.stderrPath,
@@ -794,6 +796,7 @@ export function validatePrivilegedHelperPackageReadback(
   }
   if (readback.launchd === null || typeof readback.launchd !== "object" ||
       readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
+      !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
       readback.launchd.workingDirectory !== plan.launchd.workingDirectory ||
       readback.launchd.stdoutPath !== plan.launchd.stdoutPath || readback.launchd.stderrPath !== plan.launchd.stderrPath ||
       readback.launchd.domain !== "system" || readback.launchd.runsAsRoot !== true ||
@@ -891,6 +894,10 @@ function validateVersion(value: unknown, label: string): asserts value is string
 
 function launchctlCommand(args: readonly string[]): LaunchdCommandSpec {
   return { executable: LAUNCHCTL_PATH, args: [...args], cwd: "/", environment: {}, timeoutMs: COMMAND_TIMEOUT_MS, outputCapBytes: COMMAND_OUTPUT_CAP_BYTES };
+}
+
+function sameStrings(left: unknown, right: readonly string[]): boolean {
+  return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function canonicalPath(value: unknown, label: string): string {

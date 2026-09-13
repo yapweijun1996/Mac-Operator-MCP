@@ -132,6 +132,13 @@ test("privileged helper package readback binds root service, Broker peer, and di
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
   );
   assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, {
+      ...readback,
+      launchd: { ...readback.launchd, programArguments: [plan.launchd.program, `${plan.helperRoot}/bin/attacker`] }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+  assert.throws(
     () => validatePrivilegedHelperPackageReadback(plan, { ...readback, signature: { ...readback.signature, identifier: "com.attacker.helper" } }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SIGNATURE_MISMATCH"
   );
