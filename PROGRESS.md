@@ -136,7 +136,7 @@ integration, and cross-process distribution remain open. Evidence:
 `evidence/2026-09-13-keychain-key-read.md`.
 
 The latest Edge-key addendum is `e9dd75e`, `7d91c8f`, `49843cc`, `a0b31fe`,
-plus `ad781c2`:
+`ad781c2`, plus `5d5d2ce`:
 versioned owner-only
 Edge key metadata now requires an explicit `file` or `keychain` source per
 entry, binds an expected secret-byte SHA-256 digest, rejects mixed or unsafe
@@ -152,6 +152,10 @@ socket device/inode identity after connect before sending request bytes.
 The request factory copies key bytes at construction and validates the key ID,
 so callers cannot mutate the signing secret through an aliased Buffer or inject
 an unbounded key identity.
+The LaunchAgent startup assembly now restores the exact active Edge-key config
+before launchd PID/start-time capture and native runtime construction, injecting
+the restored keyring through a Broker factory; unactivated or mismatched config
+fails before `launchctl` is called.
 Overlapping validity windows provide a tested rotation path while the Broker
 continues to enforce signed-policy validity and key-specific revocation on each
 request. This is still a startup/configuration primitive, not installed

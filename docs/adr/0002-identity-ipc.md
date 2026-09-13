@@ -100,6 +100,10 @@ cross-process secret distribution. The Edge request factory now provides a
 matching protected-file loader bound to the same expected digest. A Keychain
 source selected by the Broker still needs an approved Edge-side delivery
 mechanism; no environment-variable or MCP-argument fallback is permitted.
+The LaunchAgent startup assembly restores that exact active config before
+launchd identity capture and native Broker construction, injecting the restored
+keyring through a Broker factory; an unactivated or changed config fails before
+`launchctl` readback.
 The Edge IPC client also checks its owner-only socket parent and revalidates
 socket device/inode identity after connect before sending a signed request;
 this complements, but does not replace, native peer identity and response HMAC

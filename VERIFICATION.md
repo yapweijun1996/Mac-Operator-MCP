@@ -239,26 +239,27 @@ installed use, or production enablement.
 Evidence: `evidence/2026-09-13-keychain-key-read.md`.
 
 Latest Edge-key source addendum: commits `e9dd75e`, `7d91c8f`, `49843cc`,
-`a0b31fe`, and `ad781c2` add a
-versioned owner-only Edge authentication-key config loader and atomic writer.
-Each entry explicitly selects a file or Keychain source and binds an expected
-secret-byte SHA-256 digest; mixed metadata, duplicate identities,
-unsafe/canonical-path violations, config target swaps, and invalid validity
-windows fail closed. A BrokerStore is required for load-time `edge_key`
-revocation preflight. `EdgeAuthenticationKeyManager` persists audited
-monotonic revision/digest activation and requires exact restart restore;
-overlapping file-backed validity windows prove the rotation path. The Edge
-request factory also has a protected-file loader/factory with owner-only,
-canonical, `O_NOFOLLOW`, bounded-encoding, and expected-digest checks; it does
-not fall back to environment variables or MCP arguments. The Edge IPC client
-also checks the owner-only socket parent and revalidates socket device/inode
-identity after connect before sending request bytes. Nine focused Edge/Broker
-key-source tests pass; the request factory also copies signing bytes and
-validates key IDs. Ten focused Edge/Broker key-source tests pass; the full
-regression is 319/321 with two opt-in
-real-sandbox tests skipped. This remains startup configuration evidence
-only: Keychain provisioning/ACLs, real-item rotation or deletion, an approved
-Edge-side Keychain delivery mechanism, installed launchd startup, and
+`a0b31fe`, `ad781c2`, and `5d5d2ce` add a versioned owner-only Edge
+authentication-key config loader and atomic writer. Each entry explicitly
+selects a file or Keychain source and binds an expected secret-byte SHA-256
+digest; mixed metadata, duplicate identities, unsafe/canonical-path
+violations, config target swaps, and invalid validity windows fail closed. A
+BrokerStore is required for load-time `edge_key` revocation preflight.
+`EdgeAuthenticationKeyManager` persists audited monotonic revision/digest
+activation and requires exact restart restore; overlapping file-backed validity
+windows prove the rotation path. The Edge request factory also has a
+protected-file loader/factory with owner-only, canonical, `O_NOFOLLOW`,
+bounded-encoding, and expected-digest checks; it does not fall back to
+environment variables or MCP arguments. The Edge IPC client checks the
+owner-only socket parent and revalidates socket device/inode identity after
+connect before sending request bytes. The request factory copies signing bytes
+and validates key IDs. LaunchAgent startup restores the active key config before
+PID/start-time capture and native Broker construction, refusing to call
+`launchctl` for an unactivated or mismatched config. Twelve focused
+Edge/Broker key-source/startup tests pass; the full regression is 321/323 with
+two opt-in real-sandbox tests skipped. This remains startup configuration
+evidence only: Keychain provisioning/ACLs, real-item rotation or deletion, an
+approved Edge-side Keychain delivery mechanism, installed launchd startup, and
 production capability enablement remain open. Evidence:
 `evidence/2026-09-13-edge-key-source-rotation.md`.
 
