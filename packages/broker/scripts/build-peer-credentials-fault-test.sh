@@ -26,6 +26,8 @@ xcrun clang++ \
   -DMAC_OPERATOR_NATIVE_FAULT_INJECTION \
   -bundle \
   -undefined dynamic_lookup \
+  -framework Security \
+  -framework CoreFoundation \
   -I"$node_headers" \
   "$source_file" \
   -o "$output_directory/peer_credentials_fault.node"

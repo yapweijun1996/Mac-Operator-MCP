@@ -25,6 +25,8 @@ xcrun clang++ \
   -Werror \
   -bundle \
   -undefined dynamic_lookup \
+  -framework Security \
+  -framework CoreFoundation \
   -I"$node_headers" \
   "$source_file" \
   -o "$output_directory/peer_credentials.node"

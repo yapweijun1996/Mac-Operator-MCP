@@ -31,6 +31,7 @@ interface NativePeerCredentials {
   nativeNapiVersion: number;
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
+  readKeychainGenericPassword(service: string, account: string): unknown;
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
@@ -46,7 +47,8 @@ const REQUIRED_NATIVE_EXPORTS = [
   "getPeerCredentials", "createUnixListener", "acceptUnixClient", "closeUnixDescriptor",
   "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot",
-  "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity"
+  "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity",
+  "readKeychainGenericPassword"
 ] as const;
 const MIN_SUPPORTED_NAPI_VERSION = 8;
 
@@ -175,6 +177,23 @@ export function capturePeerProcessIdentity(pid: number): PeerProcessIdentity {
   }
   const native = loadNativePeerAdapter();
   return parsePeerProcessIdentity(native.getProcessIdentity(pid));
+}
+
+/**
+ * Reads one exact Broker-owned generic-password item. The native adapter
+ * returns only a bounded raw key; callers must validate the service/account
+ * namespace and never log or persist the returned bytes.
+ */
+export function readKeychainGenericPassword(service: string, account: string): Buffer {
+  if (!/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(service) ||
+      !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
+    throw new Error("Keychain service or account is invalid");
+  }
+  const value = loadNativePeerAdapter().readKeychainGenericPassword(service, account);
+  if (!Buffer.isBuffer(value) || value.byteLength !== 32) {
+    throw new Error("Keychain generic password has an invalid length");
+  }
+  return Buffer.from(value);
 }
 
 export function authorizePeerCredentials(

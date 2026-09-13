@@ -1,6 +1,8 @@
 #include <node_api.h>
 
 #include <CommonCrypto/CommonDigest.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <libproc.h>
@@ -161,6 +163,81 @@ struct NetworkInterfaceRecord {
   bool up;
   std::set<std::string> addresses;
 };
+
+napi_value ReadKeychainGenericPassword(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+    napi_throw_type_error(env, nullptr, "readKeychainGenericPassword requires service and account");
+    return nullptr;
+  }
+  char service[192];
+  char account[192];
+  if (!ReadComponent(env, args[0], service, sizeof(service), "com.mac-operator.") ||
+      !ReadComponent(env, args[1], account, sizeof(account))) {
+    napi_throw_type_error(env, nullptr, "Keychain service or account is malformed");
+    return nullptr;
+  }
+  CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
+  CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
+  if (service_value == nullptr || account_value == nullptr) {
+    if (service_value != nullptr) CFRelease(service_value);
+    if (account_value != nullptr) CFRelease(account_value);
+    ThrowSystemError(env, "Keychain identity could not be represented");
+    return nullptr;
+  }
+  CFMutableDictionaryRef query = CFDictionaryCreateMutable(
+      kCFAllocatorDefault, 6, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (query == nullptr) {
+    CFRelease(service_value);
+    CFRelease(account_value);
+    ThrowSystemError(env, "Keychain query could not be created");
+    return nullptr;
+  }
+  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrService, service_value);
+  CFDictionarySetValue(query, kSecAttrAccount, account_value);
+  CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
+  CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  // Fail rather than presenting a Keychain authentication UI to a background Broker.
+  CFDictionarySetValue(query, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
+#pragma clang diagnostic pop
+  CFRelease(service_value);
+  CFRelease(account_value);
+
+  CFTypeRef matches = nullptr;
+  const OSStatus status = SecItemCopyMatching(query, &matches);
+  CFRelease(query);
+  if (status != errSecSuccess || matches == nullptr || CFGetTypeID(matches) != CFArrayGetTypeID() ||
+      CFArrayGetCount(static_cast<CFArrayRef>(matches)) != 1) {
+    if (matches != nullptr) CFRelease(matches);
+    ThrowSystemError(env, "Keychain generic password is unavailable");
+    return nullptr;
+  }
+  CFTypeRef item = CFArrayGetValueAtIndex(static_cast<CFArrayRef>(matches), 0);
+  if (item == nullptr || CFGetTypeID(item) != CFDataGetTypeID()) {
+    CFRelease(matches);
+    ThrowSystemError(env, "Keychain generic password is unavailable");
+    return nullptr;
+  }
+  const CFIndex length = CFDataGetLength(static_cast<CFDataRef>(item));
+  if (length != 32) {
+    CFRelease(matches);
+    ThrowSystemError(env, "Keychain generic password has an invalid length");
+    return nullptr;
+  }
+  napi_value result;
+  const void* bytes = CFDataGetBytePtr(static_cast<CFDataRef>(item));
+  if (bytes == nullptr || napi_create_buffer_copy(env, static_cast<size_t>(length), bytes, nullptr, &result) != napi_ok) {
+    CFRelease(matches);
+    ThrowSystemError(env, "Keychain generic password could not be returned");
+    return nullptr;
+  }
+  CFRelease(matches);
+  return result;
+}
 
 std::string SanitizeInterfaceName(const char* value) {
   if (value == nullptr || value[0] == '\0') return "unknown";
@@ -1908,6 +1985,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "isProcessIdentityAlive", function);
   napi_create_function(env, "getProcessIdentity", NAPI_AUTO_LENGTH, GetProcessIdentity, nullptr, &function);
   napi_set_named_property(env, exports, "getProcessIdentity", function);
+  napi_create_function(env, "readKeychainGenericPassword", NAPI_AUTO_LENGTH, ReadKeychainGenericPassword, nullptr, &function);
+  napi_set_named_property(env, exports, "readKeychainGenericPassword", function);
   return exports;
 }
 

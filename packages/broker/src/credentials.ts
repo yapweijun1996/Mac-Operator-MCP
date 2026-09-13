@@ -6,8 +6,18 @@ import { sha256 } from "@mac-operator/contracts";
 import { keyIdentity } from "./edge-keyring.js";
 import { approvalKeyIdentity, type ApprovalIssuerKey } from "./approval-authority.js";
 import type { BrokerStore, RevocationKind } from "./persistence.js";
+import { readKeychainGenericPassword } from "./peer-credentials.js";
 
 const HEX_KEY_PATTERN = /^[A-Fa-f0-9]{64}$/u;
+
+/**
+ * Explicit Keychain source for a 32-byte authentication key. This is not
+ * selected by file paths or MCP arguments; startup/configuration code must
+ * choose it deliberately and keep the returned bytes in memory only.
+ */
+export async function loadKeychainAuthenticationKey(service: string, account: string): Promise<Buffer> {
+  return readKeychainGenericPassword(service, account);
+}
 
 export async function loadAuthenticationKey(path: string): Promise<Buffer> {
   if (!isAbsolute(path)) throw new Error("Authentication key path must be absolute");

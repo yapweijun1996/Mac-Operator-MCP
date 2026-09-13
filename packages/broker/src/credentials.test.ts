@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   loadAuthenticationKey,
   loadApprovalIssuerKey,
+  loadKeychainAuthenticationKey,
   provisionAuthenticationKey,
   retireRevokedApprovalIssuerKey,
   retireRevokedAuthenticationKey
@@ -76,6 +77,22 @@ test("authentication key loader rejects weak permissions and symlinks", async ()
     await symlink(path, link);
     await assert.rejects(loadAuthenticationKey(link), /non-symlink/u);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("Keychain authentication source validates identity and fails closed when the item is absent", async () => {
+  const account = `edge:missing:${randomUUID()}`;
+  await assert.rejects(
+    loadKeychainAuthenticationKey("com.mac-operator.test", account),
+    /Keychain generic password is unavailable/u
+  );
+  await assert.rejects(
+    loadKeychainAuthenticationKey("/tmp/attacker", account),
+    /Keychain service or account is invalid/u
+  );
+  await assert.rejects(
+    loadKeychainAuthenticationKey("com.mac-operator.test", "../escape"),
+    /Keychain service or account is invalid/u
+  );
 });
 
 test("approval issuer key lifecycle requires durable revocation before retirement", async () => {
