@@ -1,4 +1,6 @@
 import { BrokerError } from "@mac-operator/contracts";
+import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
@@ -60,6 +62,64 @@ export class FailClosedTaskRunner implements TaskRunner {
   }
 }
 
+export interface SandboxExecTaskRunnerOptions {
+  /** Explicit opt-in; production defaults remain disabled. */
+  enabled?: boolean;
+  /** External evidence gate; true means an operator has accepted host evidence. */
+  hostEvidenceAccepted?: boolean;
+  isolationProof?: TaskIsolationProof | null;
+  allowedEnvironmentKeys?: readonly string[];
+  supervisor?: Pick<ProcessSupervisor, "run">;
+}
+
+/**
+ * Experimental macOS task boundary. `sandbox-exec` is deprecated and this
+ * runner is unavailable unless both an explicit opt-in and an external host
+ * evidence gate are supplied. It never accepts a caller-provided profile or
+ * executable; both come from the resolved Broker TaskProfile.
+ */
+export class SandboxExecTaskRunner implements TaskRunner {
+  readonly available: boolean;
+  readonly isolationProof: TaskIsolationProof | null;
+  private readonly supervisor: Pick<ProcessSupervisor, "run">;
+
+  constructor(options: SandboxExecTaskRunnerOptions = {}) {
+    const proof = options.isolationProof === null || options.isolationProof === undefined
+      ? null
+      : validateTaskIsolationProof(options.isolationProof);
+    this.isolationProof = proof;
+    this.supervisor = options.supervisor ?? new ProcessSupervisor({
+      allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? []
+    });
+    this.available = options.enabled === true && options.hostEvidenceAccepted === true &&
+      proof !== null && process.platform === "darwin";
+  }
+
+  async run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult> {
+    if (!this.available || this.isolationProof === null) {
+      throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
+    }
+    requireTaskIsolationProof(this.isolationProof, profile);
+    const args = buildSandboxExecArguments(profile);
+    let result: ProcessExecutionResult;
+    try {
+      result = await this.supervisor.run({
+        executable: "/usr/bin/sandbox-exec",
+        args,
+        cwd: profile.cwd,
+        ...(profile.process.environment === undefined ? {} : { environment: profile.process.environment }),
+        timeoutMs: Math.min(control.timeoutMs, profile.process.timeoutMs),
+        outputCapBytes: profile.process.outputCapBytes,
+        shouldCancel: control.shouldCancel
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("EXECUTION_FAILED", "Sandboxed task could not be started");
+    }
+    return mapProcessResult(result);
+  }
+}
+
 export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
@@ -118,4 +178,23 @@ export function validateTaskExecutionResult(value: TaskExecutionResult): TaskExe
     throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed verification summary");
   }
   return value;
+}
+
+function mapProcessResult(result: ProcessExecutionResult): TaskExecutionResult {
+  const state = result.state;
+  const resultClass = result.resultClass;
+  return {
+    state,
+    resultClass,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    truncated: result.truncated,
+    durationMs: result.durationMs,
+    verification: result.resultClass === "SUCCEEDED"
+      ? { status: "verified", summary: "sandboxed process exited successfully" }
+      : result.resultClass === "UNKNOWN_OUTCOME"
+        ? { status: "unknown", summary: "sandboxed process termination was not observed" }
+        : { status: "failed", summary: "sandboxed process did not satisfy exit-status verification" }
+  };
 }

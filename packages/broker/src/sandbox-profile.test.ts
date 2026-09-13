@@ -1,0 +1,189 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
+import { buildSandboxExecArguments, renderTaskSandboxProfile } from "./sandbox-profile.js";
+import { SandboxExecTaskRunner, type TaskIsolationProof } from "./task-runner.js";
+import type { ProcessExecutionRequest } from "./process-supervisor.js";
+import type { ResolvedTaskProfile } from "./task-profile.js";
+
+function proof(): TaskIsolationProof {
+  return {
+    schemaVersion: "0.1",
+    sandboxProfile: "deny-default-v0.1",
+    filesystem: "enforced",
+    network: "enforced",
+    credentials: "isolated",
+    processTree: "owned",
+    evidenceRef: "test://sandbox-profile"
+  };
+}
+
+function resolvedProfile(root: string, overrides: Partial<ResolvedTaskProfile> = {}): ResolvedTaskProfile {
+  return {
+    profile: "tests.echo",
+    cwd: root,
+    process: {
+      executable: "/usr/bin/printf",
+      args: ["sandboxed"],
+      cwd: root,
+      environment: {},
+      timeoutMs: 1_000,
+      outputCapBytes: 1_024
+    },
+    filesystemRoots: [root],
+    networkPolicy: "none",
+    networkAllowlist: [],
+    sandboxProfile: "deny-default-v0.1",
+    verificationStrategy: "exit_status_and_declared_task_verification",
+    ...overrides
+  };
+}
+
+test("sandbox profile renderer emits a deterministic deny-default no-network policy", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-"));
+  const root = await realpath(directory);
+  try {
+    const profile = resolvedProfile(root);
+    const rendered = renderTaskSandboxProfile(profile);
+    assert.match(rendered, /^\(version 1\)\n\(import "system\.sb"\)\n\(deny default\)\n/u);
+    assert.match(rendered, /\(allow process-exec \(literal "\/usr\/bin\/printf"\)\)/u);
+    assert.match(rendered, new RegExp(`\\(allow file-write\\* \\(subpath "${escapeRegExp(root)}"\\)\\)`));
+    assert.equal(rendered.includes("network-outbound"), false);
+    assert.match(rendered, /\(deny file-read\* \(regex #/u);
+    assert.deepEqual(buildSandboxExecArguments(profile).slice(0, 2), ["-p", rendered]);
+    assert.deepEqual(buildSandboxExecArguments(profile).slice(-1), ["sandboxed"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("sandbox profile renderer rejects broad roots, cwd escapes, and network allowlists", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-deny-"));
+  const root = await realpath(directory);
+  try {
+    assert.throws(
+      () => renderTaskSandboxProfile(resolvedProfile(root, { filesystemRoots: ["/"] })),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.throws(
+      () => renderTaskSandboxProfile(resolvedProfile(root, { cwd: "/tmp" })),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.throws(
+      () => renderTaskSandboxProfile(resolvedProfile(root, { networkPolicy: "allowlist", networkAllowlist: ["example.com"] })),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "NETWORK_DENIED"
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("SandboxExecTaskRunner stays unavailable without explicit host evidence and opt-in", async () => {
+  const runner = new SandboxExecTaskRunner({ isolationProof: proof() });
+  assert.equal(runner.available, false);
+  await assert.rejects(
+    runner.run(resolvedProfile("/tmp"), { timeoutMs: 1_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+});
+
+test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervisor", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-runner-"));
+  const root = await realpath(directory);
+  let observed: ProcessExecutionRequest | undefined;
+  const supervisor = {
+    run: async (request: ProcessExecutionRequest) => {
+      observed = request;
+      return {
+        state: "completed" as const,
+        resultClass: "SUCCEEDED" as const,
+        exitCode: 0,
+        signal: null,
+        stdout: "sandboxed",
+        stderr: "",
+        truncated: false,
+        durationMs: 2,
+        processId: 42,
+        processGroupId: 42,
+        terminationObserved: true
+      };
+    }
+  };
+  try {
+    const runner = new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      isolationProof: proof(),
+      supervisor
+    });
+    if (process.platform !== "darwin") {
+      assert.equal(runner.available, false);
+      return;
+    }
+    const result = await runner.run(resolvedProfile(root), { timeoutMs: 500, shouldCancel: () => false });
+    assert.equal(result.resultClass, "SUCCEEDED");
+    assert.equal(result.verification.status, "verified");
+    assert.equal(observed?.executable, "/usr/bin/sandbox-exec");
+    assert.equal(observed?.cwd, root);
+    assert.deepEqual(observed?.environment, {});
+    assert.equal(observed?.timeoutMs, 500);
+    assert.equal(observed?.outputCapBytes, 1_024);
+    assert.equal(observed?.args[0], "-p");
+    assert.equal(observed?.args[2], "/usr/bin/printf");
+    assert.equal(observed?.args.includes("/bin/sh"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real macOS sandbox runner blocks inherited environment, protected files, and network", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-real-"));
+  const root = await realpath(directory);
+  await writeFile(join(root, "fixture.txt"), "fixture", { mode: 0o600 });
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof()
+  });
+  const previousCanary = process.env.MOP_CONTROLLER_SECRET;
+  process.env.MOP_CONTROLLER_SECRET = "synthetic-controller-canary";
+  try {
+    const canary = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.canary",
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/bin/bash",
+        args: ["-c", "printf '%s:%s:%s' \"${MOP_CONTROLLER_SECRET-unset}\" \"$(test -r /private/etc/passwd && echo leaked || echo denied)\" \"$(test -r ./fixture.txt && echo allowed || echo denied)\"; printf created > ./created.txt"]
+      }
+    }, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.equal(canary.resultClass, "SUCCEEDED");
+    assert.equal(canary.stdout, "unset:denied:allowed");
+    assert.equal(await readFile(join(root, "created.txt"), "utf8"), "created");
+
+    const network = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.network",
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/usr/bin/curl",
+        args: ["--connect-timeout", "1", "http://example.com"]
+      }
+    }, { timeoutMs: 3_000, shouldCancel: () => false });
+    assert.notEqual(network.resultClass, "SUCCEEDED");
+    assert.equal(network.stdout, "");
+  } finally {
+    if (previousCanary === undefined) delete process.env.MOP_CONTROLLER_SECRET;
+    else process.env.MOP_CONTROLLER_SECRET = previousCanary;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
