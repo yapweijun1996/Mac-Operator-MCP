@@ -6,7 +6,21 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `1a8b0cc`.
+Current committed implementation baseline: `e12da49`.
+
+The latest Broker restart-recovery addendum is `e12da49`: task Jobs now retain
+only a bounded non-secret PID/process-group/start-time identity after process
+start, and the host-startup hook `reconcileRestartedTaskProcesses()` selects
+only restart-reconciled `UNKNOWN` Jobs. A new Broker verifies the exact Darwin
+identity before terminating the process tree; PID/start-time substitution is
+rejected, missing identity remains unresolved, recovery is audited, and the
+Job never becomes success. The cross-Broker real-process fixture passes, the
+default suite passes 385 tests (382 passed, 3 opt-in sandbox tests skipped),
+and `MOPS_REAL_SANDBOX=1 npm test` passes 385/385. This proves controlled
+restart recovery for a live root process, not orphaned descendant recovery
+after the root has exited, post-snapshot `setsid` resistance, credential
+isolation, or production task-runner enablement. Evidence:
+`evidence/2026-09-13-task-process-recovery.md`.
 
 The latest Broker OS-process ownership addendum is `1a8b0cc`: default
 launchd, log, Git, Docker, app, and UI adapters now receive one Broker-owned
