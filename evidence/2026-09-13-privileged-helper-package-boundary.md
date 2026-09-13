@@ -1,7 +1,7 @@
 # Privileged Helper Package Boundary Evidence
 
 Date: 2026-09-13
-Source commit: `e0c1e17`
+Source commit: `4bdcf94`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -32,8 +32,8 @@ and disabled adapter/capability state. The plan is not exposed through MCP.
 
 ## Verification
 
-- `npm test`: 341 tests, 339 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
-- Focused package-boundary tests: 4 passed, 0 failed.
+- `npm test`: 343 tests, 341 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
+- Focused package-boundary tests: 5 passed, 0 failed.
 - `npm run typecheck -- --pretty false`: passed.
 - `npm run build -- --pretty false`: passed.
 - `npm run verify:contracts`: 44 unique tool contracts validated.
@@ -43,11 +43,13 @@ and disabled adapter/capability state. The plan is not exposed through MCP.
 Negative coverage rejects per-user plist paths, interpreter/script argv,
 extra arguments, socket reuse, user-home helper roots, mismatched signatures,
 missing upgrade revisions, enabled adapter readback, and signature readback
-mismatch.
+mismatch. On the real macOS host, the temporary bundle smoke test also ran the
+fixed ad-hoc signing command, verified the plan's strict signature command,
+and read back `com.mac-operator.privileged-helper`.
 
 ## Remaining gates
 
-Developer ID signing and provenance, root-owned filesystem preflight on an
+Developer ID signing and provenance (the smoke test is ad-hoc only), root-owned filesystem preflight on an
 installed package, caller PID/start-time provenance across a real helper/root
 process boundary, Keychain ACL approval, launchd install/rollback/readback,
 real caller-spoof tests, helper adapters, crash recovery, and independent

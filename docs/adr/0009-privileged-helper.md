@@ -50,6 +50,11 @@ before helper construction. The helper still refuses to start without that
 identity; this is caller-authentication evidence, not installed launchd or
 root-domain evidence.
 
+Revision `4bdcf94` adds a real macOS temporary-bundle smoke test for the fixed
+ad-hoc `codesign --verify --strict --deep` command and exact helper identifier
+readback. It intentionally does not claim Developer ID provenance,
+notarization, installation, or root-domain execution.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `7af182e`.
+Current committed implementation baseline: `4bdcf94`.
+
+The latest helper-signature addendum is `4bdcf94`: on the real macOS host,
+the package test now builds a temporary helper bundle, runs the fixed
+`/usr/bin/codesign` ad-hoc signing command, verifies the exact plan command,
+and reads back `com.mac-operator.privileged-helper`. This is temporary
+ad-hoc evidence only; Developer ID provenance, notarization, installation,
+and root-domain readback remain open. The full suite passes 343 tests (341
+passed, 2 opt-in real-sandbox tests skipped). Evidence:
+`evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 The latest helper-caller addendum is `7af182e`: helper startup can now derive
 the caller from the exact per-user `gui/<uid>/com.mac-operator.broker`
