@@ -52,12 +52,13 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
-Latest privileged-helper key addendum: source commit `afe73c4` adds a dedicated
+Latest privileged-helper key addendum: source commit `d91d406` adds a dedicated
 owner-only helper key configuration and `helper_key` revocation path. The
 helper key manager requires explicit file/Keychain source, SHA-256 digest,
 validity window, audited monotonic activation, and exact restart restore before
 constructing either the Broker command factory or helper IPC server. Both
-defensively copy and wipe their HMAC key; the helper adapter remains
+defensively copy and wipe their HMAC key, and constructed paths recheck
+key-specific revocation before issuing or authorizing work; the helper adapter remains
 fail-closed. The focused helper-key/IPC/persistence suite passes 33/33 and
 the full suite passes 335 tests (333 passed, 2 opt-in real-sandbox tests
 skipped). No privileged operation was run. Evidence:

@@ -6,7 +6,12 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `afe73c4`.
+Current committed implementation baseline: `d91d406`.
+
+The latest helper-key addendum is `d91d406`: helper factories now recheck
+key-specific `helper_key` revocation at issue/authorization time, so revoking
+an activated key fences already-constructed helper command paths. The full
+suite remains green; no privileged operation is enabled.
 
 The latest privileged-helper key addendum is `afe73c4`: the separately
 authenticated L5 helper now has a dedicated protected file/Keychain key

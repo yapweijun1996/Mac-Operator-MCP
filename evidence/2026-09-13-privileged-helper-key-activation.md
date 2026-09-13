@@ -1,7 +1,7 @@
 # Privileged Helper Key Activation Evidence
 
 Date: 2026-09-13
-Source commit: `afe73c4`
+Source commit: `d91d406`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -28,7 +28,8 @@ exact revision/digest restart restore, enforces the validity window, and wipes
 temporary/replaced key buffers. It can construct the helper command factory or
 IPC server only from an activated key snapshot; raw helper arguments cannot
 select a key. The command factory and helper IPC server defensively copy their
-HMAC keys and expose disposal/close wiping. The helper adapter remains
+HMAC keys, recheck key-specific revocation before issuing or authorizing work,
+and expose disposal/close wiping. The helper adapter remains
 fail-closed by default.
 
 ## Verification
