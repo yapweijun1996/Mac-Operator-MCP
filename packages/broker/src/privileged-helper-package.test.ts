@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
@@ -97,12 +98,20 @@ test("privileged helper package plan rejects user-domain, interpreter, socket, a
 
 test("privileged helper package readback binds root service, Broker peer, and disabled adapter", () => {
   const plan = buildPrivilegedHelperPackagePlan(base);
+  const renderedPlistBytes = Buffer.from(plan.renderedPlist, "utf8");
   const readback = {
     domain: "system" as const,
     label: plan.label,
     plistPath: plan.plistPath,
     pid: 1234,
     processIdentity: { pid: 1234, startTimeMicros: 987654321 },
+    plist: {
+      path: plan.plistPath,
+      bytes: renderedPlistBytes.byteLength,
+      sha256: createHash("sha256").update(renderedPlistBytes).digest("hex"),
+      device: "1",
+      inode: "2"
+    },
     launchd: plan.launchd,
     helper: {
       component: "mac-operator-privileged-helper" as const,
@@ -149,6 +158,13 @@ test("privileged helper package readback binds root service, Broker peer, and di
       launchd: { ...readback.launchd, programArguments: [plan.launchd.program, `${plan.helperRoot}/bin/attacker`] }
     }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+  assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, {
+      ...readback,
+      plist: { ...readback.plist, sha256: "0".repeat(64) }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_READBACK"
   );
   assert.throws(
     () => validatePrivilegedHelperPackageReadback(plan, { ...readback, signature: { ...readback.signature, identifier: "com.attacker.helper" } }),

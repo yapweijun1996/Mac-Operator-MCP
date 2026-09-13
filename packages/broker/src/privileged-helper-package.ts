@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec } from "./macos-install-plan.js";
+import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec, MacOsPlistReadback } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { PeerProcessIdentity } from "./peer-credentials.js";
@@ -15,6 +15,7 @@ const COMMAND_TIMEOUT_MS = 5_000 as const;
 const COMMAND_OUTPUT_CAP_BYTES = 131_072 as const;
 const MAX_ARGUMENT_BYTES = 4_096;
 const MAX_ARGUMENT_TOTAL_BYTES = 64 * 1_024;
+const MAX_PLIST_BYTES = 512 * 1_024;
 const REVISION_PATTERN = /^[a-f0-9]{40}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/u;
 const INTERPRETER_NAMES = new Set([
@@ -133,6 +134,7 @@ export interface PrivilegedHelperPackageReadback {
   plistPath: typeof HELPER_PLIST_PATH;
   pid: number;
   processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
   launchd: PrivilegedHelperLaunchdReadback;
   helper: PrivilegedHelperRuntimeReadback;
   signature: CodeSignatureReadback;
@@ -797,7 +799,8 @@ export function validatePrivilegedHelperPackageReadback(
       readback.processIdentity === null || typeof readback.processIdentity !== "object" ||
       !Number.isSafeInteger(readback.processIdentity.pid) || readback.processIdentity.pid < 1 ||
       !Number.isSafeInteger(readback.processIdentity.startTimeMicros) || readback.processIdentity.startTimeMicros < 1 ||
-      readback.processIdentity.pid !== readback.pid) {
+      readback.processIdentity.pid !== readback.pid ||
+      !isPrivilegedHelperPlistReadback(readback.plist, plan)) {
     fail("INVALID_READBACK", "privileged helper readback identity is malformed");
   }
   if (readback.launchd === null || typeof readback.launchd !== "object" ||
@@ -827,6 +830,28 @@ export function validatePrivilegedHelperPackageReadback(
   } catch {
     fail("SIGNATURE_MISMATCH", "privileged helper code signature readback does not match the plan");
   }
+}
+
+/**
+ * Reads the exact root-domain plist through the descriptor-backed filesystem
+ * boundary. The caller must already be the host/root executor; no caller-
+ * supplied inspector or path is accepted.
+ */
+export function readPrivilegedHelperPlistReadback(plan: PrivilegedHelperPackagePlan): MacOsPlistReadback {
+  const inspector = createPrivilegedHelperInspector();
+  let read: ReturnType<FilesystemInspector["readPlanned"]>;
+  try {
+    const targetPlan = inspector.planPath(plan.plistPath, "content_read");
+    read = inspector.readPlanned(targetPlan, 0, MAX_PLIST_BYTES);
+  } catch {
+    fail("FILESYSTEM_MISMATCH", "privileged helper plist could not be read through the protected filesystem boundary");
+  }
+  const expectedBytes = Buffer.from(plan.renderedPlist, "utf8");
+  const sha256 = createHash("sha256").update(read.content).digest("hex");
+  if (read.truncated || read.path !== plan.plistPath || !read.content.equals(expectedBytes) || sha256 !== createHash("sha256").update(expectedBytes).digest("hex")) {
+    fail("FILESYSTEM_MISMATCH", "privileged helper plist readback does not match the rendered plan");
+  }
+  return { path: read.path, bytes: read.content.byteLength, sha256, device: read.device, inode: read.inode };
 }
 
 function normalizeService(config: PrivilegedHelperLaunchdConfig, helperRoot: string, enforceRoot = true): Required<PrivilegedHelperLaunchdConfig> {
@@ -904,6 +929,16 @@ function launchctlCommand(args: readonly string[]): LaunchdCommandSpec {
 
 function sameStrings(left: unknown, right: readonly string[]): boolean {
   return Array.isArray(left) && left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isPrivilegedHelperPlistReadback(value: unknown, plan: PrivilegedHelperPackagePlan): value is MacOsPlistReadback {
+  if (value === null || typeof value !== "object") return false;
+  const readback = value as Partial<MacOsPlistReadback>;
+  return readback.path === plan.plistPath &&
+    Number.isSafeInteger(readback.bytes) && readback.bytes === Buffer.byteLength(plan.renderedPlist, "utf8") &&
+    typeof readback.sha256 === "string" && readback.sha256 === createHash("sha256").update(plan.renderedPlist, "utf8").digest("hex") &&
+    typeof readback.device === "string" && /^\d+$/u.test(readback.device) &&
+    typeof readback.inode === "string" && /^\d+$/u.test(readback.inode);
 }
 
 function canonicalPath(value: unknown, label: string): string {
