@@ -1,8 +1,8 @@
-import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
 
 export interface FilesystemRootPolicy {
@@ -280,8 +280,6 @@ const PROJECT_MARKERS: Readonly<Record<string, readonly string[]>> = {
 const PROJECT_SKIP_DIRECTORIES = new Set([
   ".git", ".svn", ".hg", "node_modules", ".venv", "venv", "Pods", "DerivedData", "build", "dist", "target", ".cache"
 ]);
-const require = createRequire(import.meta.url);
-
 export class FilesystemInspector {
   private readonly roots: readonly FilesystemRootPolicy[];
   private readonly native: NativeFilesystemAdapter;
@@ -300,7 +298,7 @@ export class FilesystemInspector {
       return { ...root, denyRelativePaths };
     });
     try {
-      this.native = require("./peer_credentials.node") as NativeFilesystemAdapter;
+      this.native = loadNativePeerAdapter() as unknown as NativeFilesystemAdapter;
     } catch {
       throw new Error("Filesystem native adapter is unavailable");
     }

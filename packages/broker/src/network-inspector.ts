@@ -1,5 +1,5 @@
-import { createRequire } from "node:module";
 import { BrokerError } from "@mac-operator/contracts";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 
 export interface SafeNetworkInterface {
   name: string;
@@ -25,15 +25,13 @@ interface NativeNetworkAdapter {
   inspectNetwork(includeListeners: boolean): unknown;
 }
 
-const require = createRequire(import.meta.url);
-
 export function inspectNetwork(includeListeners: boolean): SafeNetworkStatus {
   if (typeof includeListeners !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "include_listeners must be a boolean");
   }
   let native: NativeNetworkAdapter;
   try {
-    native = require("./peer_credentials.node") as NativeNetworkAdapter;
+    native = loadNativePeerAdapter() as unknown as NativeNetworkAdapter;
   } catch {
     throw new BrokerError("EXECUTION_FAILED", "Network native adapter is unavailable");
   }

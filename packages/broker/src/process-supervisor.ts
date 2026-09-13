@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
@@ -13,8 +13,6 @@ const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const SECRET_ENV_KEY = /(?:API|AUTH|COOKIE|CREDENTIAL|KEY|PASSWORD|PASSWD|SECRET|TOKEN|AWS|GITHUB|OPENAI|SSH)/iu;
-const require = createRequire(import.meta.url);
-
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
   isProcessIdentityAlive(pid: number, startTimeMicros: number): unknown;
@@ -434,7 +432,7 @@ function processGroupAlive(processId: number): boolean {
 function createProcessTreeTracker(processId: number): ProcessTreeTracker | undefined {
   if (process.platform !== "darwin") return undefined;
   try {
-    const native = require("./peer_credentials.node") as Partial<NativeProcessTreeAdapter>;
+    const native = loadNativePeerAdapter() as unknown as Partial<NativeProcessTreeAdapter>;
     if (typeof native.listDescendantProcesses !== "function" || typeof native.isProcessIdentityAlive !== "function" ||
         typeof native.getProcessIdentity !== "function") return undefined;
     return new ProcessTreeTracker(native as NativeProcessTreeAdapter, processId);

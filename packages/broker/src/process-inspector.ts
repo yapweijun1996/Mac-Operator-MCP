@@ -1,4 +1,4 @@
-import { createRequire } from "node:module";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 
 export interface SafeProcessInfo {
   pid: number;
@@ -31,18 +31,16 @@ interface NativeProcessAdapter {
   inspectProcess(pid: number): unknown;
 }
 
-const require = createRequire(import.meta.url);
-
 export function inspectProcesses(limit: number, sort: "cpu" | "memory" | "pid" | "name"): SafeProcessInventory {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new Error("Process limit is outside the supported range");
   if (!["cpu", "memory", "pid", "name"].includes(sort)) throw new Error("Process sort is unsupported");
-  const native = require("./peer_credentials.node") as NativeProcessAdapter;
+  const native = loadNativePeerAdapter() as unknown as NativeProcessAdapter;
   return parseNativeProcessInventory(native.listProcesses(limit, sort));
 }
 
 export function inspectProcess(pid: number): SafeProcessDetail {
   if (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999) throw new Error("Process pid is outside the supported range");
-  const native = require("./peer_credentials.node") as NativeProcessAdapter;
+  const native = loadNativePeerAdapter() as unknown as NativeProcessAdapter;
   return parseNativeProcessDetail(native.inspectProcess(pid));
 }
 
