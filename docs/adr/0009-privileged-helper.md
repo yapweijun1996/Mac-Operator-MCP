@@ -129,6 +129,11 @@ Revision `56ab0ca` makes the host-only lifecycle executor accept only those raw
 sources and call the composition boundary itself. This prevents an executor
 caller from bypassing independent source checks with a preassembled readback.
 
+Revision `30b69df` adds an observer boundary that takes two launchd, process,
+and plist identity snapshots and rejects replacement during collection before
+composition. The boundary is host-only and injectable for tests; it does not
+install or enable the helper.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

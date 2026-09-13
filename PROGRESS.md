@@ -6,7 +6,14 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `56ab0ca`.
+Current committed implementation baseline: `30b69df`.
+
+The latest privileged-helper observer addendum is `30b69df`: the host-only
+observer reads launchd, PID/start-time, and plist identities twice and rejects
+service/process/target replacement during collection before composing helper
+readback. The injected observer fixture passes stable success and PID-swap
+failure cases; no root service is installed. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
 The latest privileged-helper executor addendum is `56ab0ca`: the host-only
 lifecycle executor now accepts only raw readback sources and invokes

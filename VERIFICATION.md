@@ -49,6 +49,13 @@ plan-shaped readback bypass. The full 395-test suite passes; root-owned
 installation and live LaunchDaemon readback remain open.
 Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Latest privileged-helper observer addendum: source commit `30b69df` adds a
+host-only observer boundary that re-reads launchd, PID/start-time, and plist
+identities before composition. A service/process/target replacement between
+snapshots fails closed; the full 395-test suite passes. No root service was
+installed, and live LaunchDaemon evidence remains open.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,

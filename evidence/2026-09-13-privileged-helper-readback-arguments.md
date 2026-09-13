@@ -1,7 +1,7 @@
 # Privileged Helper Exact-Arguments Readback Evidence
 
 Date: 2026-09-13
-Source commit: `1405b99`
+Source commit: `30b69df`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -49,6 +49,13 @@ launchd evidence.
 the composition function internally. The execution boundary therefore cannot
 report success from a preassembled, caller-provided package readback.
 
+`observePrivilegedHelperPackageReadback` is the host observer fixture boundary.
+It reads launchd, process PID/start-time, and plist identity before and after
+runtime/signature collection. Any service, PID, process start-time, plist
+device/inode, digest, or byte-count replacement between snapshots fails closed
+before final composition. The fixture proves a stable two-snapshot success and
+rejects a second-snapshot PID substitution.
+
 ## Verification
 
 - `npm test`: 395 tests, 392 passed, 0 failed, 3 opt-in macOS sandbox tests skipped.
@@ -64,6 +71,8 @@ report success from a preassembled, caller-provided package readback.
   `SERVICE_MISMATCH` before final helper validation.
 - Type-level and executor boundary coverage prevent a preassembled package
   readback from being supplied to the lifecycle callback.
+- Observer coverage performs two launchd/process/plist reads and rejects a
+  PID replacement between snapshots with stable `SERVICE_MISMATCH`.
 - No root-domain installation or live `launchctl` readback was attempted.
 
 ## Remaining gates
@@ -76,7 +85,7 @@ evidence only; it does not enable a privileged helper capability.
 
 ## Source hashes
 
-- `3824ddfdeb7a410db5e318251f23971ba1e058199358af9f7f51a63ba735815a`
+- `8a0d148fd1fc12ef58188e00f7e370204ec199293a3a9d4efb45476e51654622`
   `packages/broker/src/privileged-helper-package.ts`
-- `ee87f545031211095cf9fe2fb4b1901005bc27890589f4e7d22fe8810e73b3d7`
+- `65abbdc460decc3764bd754d1ddedd8fa72e6610f3df84373daff28749e1432f`
   `packages/broker/src/privileged-helper-package.test.ts`
