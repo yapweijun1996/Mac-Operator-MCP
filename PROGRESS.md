@@ -1078,3 +1078,22 @@ The passing tests prove only the local foundation, bounded filesystem workers/se
 ## Related documents
 
 See `README.md`, `TASK.md`, `VERIFICATION.md`, and `docs/adr/README.md`.
+
+## Latest helper status addendum
+
+Source revision `2240870` adds a helper-owned, read-only status boundary. The
+status request uses a distinct HMAC domain, bounded timestamp/expiry, strict
+envelope fields, durable replay admission, and the same native peer policy as
+the command channel. The response is HMAC-bound to the request and accepts
+only the fixed runtime readback shape: native transport required, adapter
+disabled, canonical distinct helper/Broker sockets, Broker UID/GID, source,
+contract, policy, and an empty enabled-capability set. The status source and
+Broker authority gate are explicit runtime inputs; launchd state and request
+arguments cannot fabricate them. The client rechecks the socket device/inode
+after the read to reject a replacement endpoint. Key-manager-created servers
+apply the active-key validity/revocation fence to status reads as well.
+
+No helper operation, root service, launchd mutation, or remote deployment is
+enabled. The full suite now reports 398 tests (395 passed, 3 opt-in sandbox
+tests skipped), with typecheck, contract verification, audit, and diff checks
+passing.

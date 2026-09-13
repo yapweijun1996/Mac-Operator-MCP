@@ -188,6 +188,17 @@ non-cooperating-process lock evidence remain open.
 - `MOP-073` — `PLANNED` — Perform independent security and architecture review; resolve all reproducible P0/P1 findings.
 - `MOP-074` — `PLANNED` — Produce exact-revision release candidate and real-client/real-Mac evidence.
 
+### Privileged helper status addendum (`2240870`)
+
+`MOP-060`/`MOP-061` now include a helper-owned read-only status IPC slice. It
+uses a separate HMAC domain, native peer authorization, durable replay
+admission, fixed status/readback schemas, socket identity fencing, and active
+helper-key authority checks. The status source is explicit and is not exposed
+as an MCP tool; no privileged operation or root-domain service is enabled.
+Verification: 398 tests (395 passed, 3 opt-in sandbox tests skipped),
+typecheck, contract verification, audit, and diff checks pass. Evidence:
+`evidence/2026-09-13-privileged-helper-status-ipc.md`.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.

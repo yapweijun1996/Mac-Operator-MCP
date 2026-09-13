@@ -140,6 +140,18 @@ reading, and strict `codesign` verification/details parsing. Runtime metadata is
 still supplied by the helper-owned runtime source and is never inferred from
 launchd or request arguments.
 
+Revision `2240870` adds the helper-owned read-only status IPC. Status requests
+use a distinct HMAC domain, strict fields, bounded timestamps, durable replay
+admission, and the existing native peer policy. Responses are request-bound
+proofs over a fixed runtime readback that requires native transport, a disabled
+adapter, canonical distinct sockets, Broker UID/GID, bounded source/contract/
+policy metadata, and no enabled capabilities. The host client fences socket
+device/inode identity before and after the exchange. Runtime construction
+exposes the status source and Broker authority gate, and the active key manager
+applies expiry, revocation, and activation-identity fencing to that gate. This
+remains read-only contract/test evidence; it does not install or enable the
+helper.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
