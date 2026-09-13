@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `9d90138`.
+Current committed implementation baseline: `8fd5814`.
+
+The latest privileged-helper readback addendum is `8fd5814`: the root-domain
+LaunchDaemon readback now carries and exactly matches the planned
+`ProgramArguments` array, so an otherwise matching helper cannot substitute a
+different executable argument vector. The negative readback test rejects an
+attacker-supplied extra argument. This remains a non-installing boundary; real
+root-owned launchd installation and final helper readback remain open.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
 The latest exact-arguments readback addendum is `9d90138`: bounded launchd
 readback now parses an optional `arguments` block, and Broker installation

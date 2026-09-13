@@ -12,6 +12,13 @@ The full 395-test suite passes. This remains a non-installing boundary; real
 LaunchAgent bootstrap/readback remains open. Evidence:
 `evidence/2026-09-13-installed-readback-identity.md`.
 
+Latest privileged-helper readback addendum: source commit `8fd5814` carries the
+native helper's planned `ProgramArguments` into the root-domain LaunchDaemon
+readback contract and rejects any missing, reordered, or substituted argument
+vector before helper readiness is accepted. The full 395-test suite passes;
+real root-owned installation and launchd readback remain open.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,

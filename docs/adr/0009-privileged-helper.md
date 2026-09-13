@@ -101,6 +101,12 @@ to the bounded `ProcessSupervisor`, requires the actual current UID to be root
 before command/filesystem/readback access, and performs fixed recovery after a
 bootstrap or final-readback failure. Root-domain success remains unverified.
 
+Revision `8fd5814` carries the normalized native helper `ProgramArguments` into
+the root-domain LaunchDaemon readback and requires exact array equality with the
+planned vector. This closes a substitution gap where a service could retain the
+expected label/program while launching with a different argument vector; it
+does not claim root-owned installation or live launchd evidence.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
