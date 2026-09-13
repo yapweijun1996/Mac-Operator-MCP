@@ -1,6 +1,7 @@
 export * from "./broker.js";
 export * from "./credentials.js";
 export * from "./edge-keyring.js";
+export * from "./edge-keyring-config.js";
 export * from "./filesystem-inspector.js";
 export * from "./filesystem-executor.js";
 export * from "./default-policy.js";
