@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `cd74420`.
+Current committed implementation baseline: `7a136ef`.
+
+The latest special-file hardening addendum is `7a136ef`: native metadata,
+content-read, and hash opens use `O_NONBLOCK`, so an untrusted FIFO cannot
+stall the Broker; FIFO metadata is `other`, generic content/hash/write fail
+closed, and `/dev/null`/`/dev` volume crossings are denied. Focused filesystem
+tests pass 29/29; the full suite passes 366 tests (364 passed, 2 opt-in
+real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes 366/366.
+Evidence: `evidence/2026-09-13-special-file-hardening.md`.
 
 The latest special-file boundary addendum is `cd74420`: a disposable
 Unix-domain socket is returned only as bounded `other` metadata and generic
@@ -669,7 +677,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 363 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 364 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
