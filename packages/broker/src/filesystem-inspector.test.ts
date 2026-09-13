@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -365,6 +365,50 @@ test("generic filesystem tools fail closed on Unix socket entries", async () => 
       }
       server.close(() => resolve());
     });
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("FIFO and pseudo-device targets cannot block or enter generic content tools", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-fifo-"));
+  const fifoPath = join(directory, "events.fifo");
+  try {
+    execFileSync("/usr/bin/mkfifo", [fifoPath], {
+      cwd: directory,
+      env: { PATH: "/usr/bin:/bin" },
+      stdio: "ignore"
+    });
+    const inspector = new FilesystemInspector([writeRoot(directory)]);
+    assert.equal(inspector.statPath(fifoPath, false).type, "other");
+    assert.throws(
+      () => inspector.readPlanned(inspector.planPath(fifoPath, "content_read"), 0, 16),
+      /escaped its authorized root, type, or volume/u
+    );
+    assert.throws(
+      () => inspector.hashPlanned(inspector.planPath(fifoPath, "content_read"), "sha256"),
+      /escaped its authorized root, type, or volume/u
+    );
+    assert.throws(
+      () => inspector.writePlanned(
+        inspector.planPath(fifoPath, "write"),
+        Buffer.from("x"),
+        undefined,
+        false,
+        ".mac-operator-write-fifo"
+      ),
+      /regular file or absent/u
+    );
+
+    const hostInspector = new FilesystemInspector([root("/")]);
+    assert.throws(
+      () => hostInspector.statPath("/dev/null", false),
+      /escaped its authorized root or volume/u
+    );
+    assert.throws(
+      () => hostInspector.listPlanned(hostInspector.planPath("/dev", "metadata"), undefined, 8, false),
+      /escaped its authorized root, type, or volume/u
+    );
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -707,7 +707,8 @@ napi_value StatPathWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
-  int target_flags = O_RDONLY | O_CLOEXEC;
+  // Metadata inspection must not block indefinitely on a FIFO with no writer.
+  int target_flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK;
   if (!follow_symlink) {
     struct stat link_stat;
     if (lstat(requested_target, &link_stat) != 0) {
@@ -1101,7 +1102,8 @@ napi_value ReadFileWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
-  int target_descriptor = open(requested_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  // Avoid a blocking open when an untrusted target is a FIFO.
+  int target_descriptor = open(requested_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
   if (target_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem file could not be opened safely");
@@ -1215,7 +1217,8 @@ napi_value HashFileWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
-  int target_descriptor = open(requested_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  // Avoid a blocking open when an untrusted target is a FIFO.
+  int target_descriptor = open(requested_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
   if (target_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem file could not be opened safely");
