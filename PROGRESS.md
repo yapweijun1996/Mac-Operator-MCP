@@ -6,7 +6,20 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `511f8a6`.
+Current committed implementation baseline: `018565d`.
+
+The latest packaged-process/readback addendum is `018565d`: a bounded,
+read-only `/bin/launchctl print` adapter now validates service identity, state,
+PID, canonical paths, type, and exit code, with a real Mac smoke against
+`system/com.apple.logd`. A second native IPC smoke starts Broker and Edge as
+separate package processes; the Broker captures the Edge PID/start-time before
+listening, while the Edge signs and verifies a complete `mac_health` round
+trip. The focused readback/IPC suite passes 11/11, the full suite passes 354
+tests (352 passed, 2 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 354/354. This remains local evidence;
+launchd installation, production signing, Keychain ACLs, and live upgrade or
+rollback are not proven. Evidence:
+`evidence/2026-09-13-packaged-process-and-launchd-readback.md`.
 
 The latest native process-boundary addendum is `511f8a6`: a real separately
 spawned Node Edge fixture now signs a `mac_health` request, connects across the
