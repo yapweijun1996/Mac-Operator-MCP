@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `9bba3cd`.
+Current committed implementation baseline: `7658465`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -35,6 +35,8 @@ The latest implementation addendum is `662801b`: the native filesystem boundary 
 The latest implementation addendum is `53a6550`: the disabled-by-default `mac_app_focus` boundary now binds independent `mac.app.control` authority to an exact `app_window` target, `trusted_gui` approval, durable mutation intent, a principal/session-bound Job lease, and active authority checks before dispatch and terminal success. A fixed Broker-owned JXA adapter uses `/usr/bin/osascript`, `/` cwd, an empty environment, a 10-second timeout, and a 128 KiB output cap to resolve and focus only an allowlisted running bundle/window, then verifies focused state. Sensitive system/security applications and credential/password/sign-in/verification-code targets are denied at Broker, adapter, and parser layers. This remains implemented but disabled by default. Evidence: `evidence/2026-09-13-app-focus-boundary.md`.
 
 The current implementation addendum is `9bba3cd`: disabled-by-default `mac_ui_action` binds an exact observed Accessibility element to an owner/session-scoped 30-second snapshot, parent app-window authority, `trusted_gui` approval, a Broker Job ID, fixed Broker-owned JXA, and exact before/after window/index/role/label reobservation. The fixed action allowlist is `press`, `select`, `increment`, `decrement`, `show_menu`, and `focus`; secure, redacted, sensitive, stale, mismatched, cancelled, and permission-denied paths fail closed. Credential typing, real permission-granted GUI evidence, structured automation, and capability enablement remain open. Evidence: `evidence/2026-09-13-ui-action-boundary.md`.
+
+The current implementation addendum is `7658465`: the proposed L5 helper boundary now has a separately authenticated owner-only IPC server, HMAC command/response binding, durable BrokerStore nonce/request replay admission, strict target/operation and handler-map validation, no raw executable or argument fields, bounded redacted evidence, and a fail-closed adapter when no explicit privileged handler is supplied. No root process or privileged operation is enabled. Evidence: `evidence/2026-09-13-privileged-helper-boundary.md`.
 
 ## Completed work
 
@@ -137,10 +139,10 @@ The current implementation addendum is `9bba3cd`: disabled-by-default `mac_ui_ac
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 278 passing.
+- Automated tests: 282 passing.
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
-- Privileged helper: none.
+- Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
 - Machine-readable tool contracts: 44 of 44 materialized with unique KB provenance; all remain planned, not implemented or enabled.
 
 Percentages beyond these objective counts are intentionally omitted because the delivery scope and estimates are not yet baselined.
