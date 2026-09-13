@@ -1,7 +1,7 @@
 # Governed Git Write Boundary Evidence
 
 - Date: 2026-09-13
-- Source commit: `0f71779`
+- Source commit: `336bd24`
 - Repository state: dirty after the source commit because documentation updates are pending; no production policy change
 - Scope: local Broker and Git inspector prototype on the development Mac
 - Policy state: `mac_git_stage` and `mac_git_commit` are implemented but disabled by the default policy
@@ -15,7 +15,7 @@ The Broker exposes two mutation plans behind the existing approval and Job lifec
 
 Both plans bind the project target, arguments, policy version, approval, mutation intent, idempotency key, and Job execution lease. They revalidate authority before dispatch and map timeout, cancellation, output overflow, target identity changes, command failure, and unresolved postconditions to stable failures or `UNKNOWN` Job state.
 
-The inspector uses a fixed `/usr/bin/git` command surface with an explicit empty/safe environment and bounded timeout/output. Hooks, fsmonitor, optional locks, signing, external integrations, and network behavior are disabled. No push, reset, remote mutation, shell expansion, or arbitrary Git subcommand is exposed.
+The inspector uses a fixed `/usr/bin/git` command surface with an explicit empty/safe environment and bounded timeout/output. Hooks, fsmonitor, optional locks, signing, replacement objects, external integrations, and network behavior are disabled. No push, reset, remote mutation, shell expansion, or arbitrary Git subcommand is exposed.
 
 Before and after mutation, the boundary checks canonical project identity and path identities. Stage rejects traversal, `.git`, secret paths, symlink components, and target swaps. Results expose only sanitized paths, hashes, commit/parent identities, index state, working-tree state, warnings, and truncation metadata; raw staged content is never returned or audited.
 
