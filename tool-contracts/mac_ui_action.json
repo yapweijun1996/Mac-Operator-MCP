@@ -103,6 +103,10 @@
           "accepted": {
             "type": "boolean"
           },
+          "job_id": {
+            "type": "string",
+            "pattern": "^job:ui-action-[a-f0-9]{48}$"
+          },
           "reobserved": {
             "type": "object",
             "additionalProperties": false,
@@ -135,6 +139,7 @@
           "element_ref",
           "action",
           "accepted",
+          "job_id",
           "reobserved"
         ]
       },
@@ -213,6 +218,6 @@
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
     "kb_item_id": "b9155116-18c8-41e3-a8e9-924b0138e57d",
-    "source_text": "Purpose: perform one supported Accessibility action on a previously resolved approved element. Input: element_ref:string, action:press|select|increment|decrement|show_menu|focus. Output: action result plus re-observed postcondition. Contract: L4 writes_local; scope mac.ui.control; target ui_element; timeout 15000ms; cap 256KiB; no network/filesystem; sensitive dialogs/security/credential UI denied; approval trusted_gui; non-idempotent unless action semantics are inherently safe. Phase 4 planned."
+    "source_text": "Purpose: perform one supported Accessibility action on a previously resolved approved element. Input: element_ref:string, action:press|select|increment|decrement|show_menu|focus. Output: action result, Broker Job ID, and re-observed postcondition. Contract: L4 writes_local; scope mac.ui.control; target ui_element; timeout 15000ms; cap 256KiB; no network/filesystem; sensitive dialogs/security/credential UI denied; approval trusted_gui; non-idempotent unless action semantics are inherently safe. Phase 4 planned."
   }
 }

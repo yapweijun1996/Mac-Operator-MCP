@@ -40,7 +40,7 @@ import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionR
 import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
-import { MacUiInspectorImpl, validateSensitiveUiTarget, validateUiObserveRequest, type UiInspector } from "./ui-inspector.js";
+import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, type UiActionName, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -63,6 +63,7 @@ export interface BrokerOptions {
   appInspector?: AppInventoryInspector;
   appControlInspector?: AppControlInspector;
   uiInspector?: UiInspector;
+  uiSnapshotRegistry?: UiSnapshotRegistry;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
 }
@@ -88,6 +89,7 @@ export class Broker {
   private readonly appInspector: AppInventoryInspector;
   private readonly appControlInspector: AppControlInspector;
   private readonly uiInspector: UiInspector;
+  private readonly uiSnapshotRegistry: UiSnapshotRegistry;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
   private readonly jobLeaseOwnerId: string;
@@ -110,6 +112,7 @@ export class Broker {
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl();
     this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector);
     this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl();
+    this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
@@ -257,7 +260,23 @@ export class Broker {
       );
       const execution = this.planExecution(request, policy, toolPolicy);
       const target = execution.target;
-      authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, target);
+      if (request.tool === "mac_ui_action") {
+        if (!execution.uiAction) throw new BrokerError("EXECUTION_FAILED", "UI action execution plan is unavailable");
+        const snapshot = this.uiSnapshotRegistry.resolve(
+          execution.uiAction.elementRef,
+          request.principal.principalId,
+          request.principal.sessionId,
+          this.now()
+        );
+        authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, {
+          kind: "app_window",
+          reference: `window:${snapshot.appId}`
+        });
+        validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
+        execution.uiAction.snapshot = snapshot;
+      } else {
+        authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, target);
+      }
       for (const additionalTarget of execution.additionalTargets ?? []) {
         authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, additionalTarget);
       }
@@ -421,6 +440,23 @@ export class Broker {
             execution.appFocusJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
+          if (request.tool === "mac_ui_action") {
+            const jobInput = {
+              jobId: `job:ui-action-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: `ui-action:${request.requestId}`,
+              createdAtMs: this.now()
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.uiActionJob = created.job;
+            execution.uiActionJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
         }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
@@ -436,6 +472,8 @@ export class Broker {
                 ? { kind: "app_open" as const, job: execution.appOpenJob }
                 : execution.appFocusJob && execution.appFocusJobNew
                   ? { kind: "app_focus" as const, job: execution.appFocusJob }
+                  : execution.uiActionJob && execution.uiActionJobNew
+                    ? { kind: "ui_action" as const, job: execution.uiActionJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
         const leaseStartedAtMs = this.now();
@@ -471,7 +509,8 @@ export class Broker {
         else if (pendingJob.kind === "git_stage") execution.gitStageJob = started;
         else if (pendingJob.kind === "git_commit") execution.gitCommitJob = started;
         else if (pendingJob.kind === "app_open") execution.appOpenJob = started;
-        else execution.appFocusJob = started;
+        else if (pendingJob.kind === "app_focus") execution.appFocusJob = started;
+        else execution.uiActionJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       this.ensureActiveAuthority(request, execution.target);
@@ -638,6 +677,12 @@ export class Broker {
         }
         return this.dispatchAppFocus(request, execution, toolPolicy.timeoutMs);
       }
+      case "mac_ui_action": {
+        if (!execution.uiAction || !execution.uiAction.snapshot || !execution.uiActionJob) {
+          throw new BrokerError("EXECUTION_FAILED", "UI action job execution plan is unavailable");
+        }
+        return this.dispatchUiAction(request, execution, toolPolicy.timeoutMs);
+      }
       case "mac_app_list": {
         if (!execution.appList) throw new BrokerError("EXECUTION_FAILED", "App inventory execution plan is unavailable");
         const inventory = await this.appInspector.list(
@@ -688,6 +733,12 @@ export class Broker {
           this.executionControl(request, execution.target, toolPolicy.timeoutMs)
         );
         this.ensureActiveAuthority(request, execution.target);
+        this.uiSnapshotRegistry.recordObservation(
+          observed,
+          request.principal.principalId,
+          request.principal.sessionId,
+          this.now()
+        );
         const data = {
           app_id: observed.appId,
           window_id: observed.windowId,
@@ -1962,6 +2013,92 @@ export class Broker {
     }
   }
 
+  private async dispatchUiAction(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.uiAction?.snapshot || !execution.uiActionJob) {
+      throw new BrokerError("EXECUTION_FAILED", "UI action job execution plan is unavailable");
+    }
+    const job = execution.uiActionJob;
+    if (job.state === "queued") throw new BrokerError("CONFLICT", "UI action is already queued", true);
+    if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "UI action outcome is unresolved; inspect its Broker job", true);
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "UI action was cancelled before execution");
+    if (job.state === "completed") return uiActionDispatchResult(job, parseStoredUiActionResult(job.stdout), true);
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "UI action job is not running");
+    if (!this.uiInspector.action) throw new BrokerError("UNSUPPORTED_CAPABILITY", "UI action adapter is not enabled");
+    try {
+      const acted = await this.uiInspector.action(
+        { snapshot: execution.uiAction.snapshot, action: execution.uiAction.action },
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+      );
+      this.ensureActiveAuthority(request, execution.target);
+      if (acted.elementRef !== execution.uiAction.snapshot.elementRef ||
+          acted.appId !== execution.uiAction.snapshot.appId ||
+          acted.windowId !== execution.uiAction.snapshot.windowId ||
+          acted.action !== execution.uiAction.action || acted.accepted !== true ||
+          acted.verified !== true || acted.reobserved.secure !== false) {
+        throw new BrokerError("VERIFICATION_FAILED", "UI action readback did not match the approved snapshot");
+      }
+      const data = {
+        element_ref: acted.elementRef,
+        action: acted.action,
+        accepted: acted.accepted,
+        job_id: job.jobId,
+        reobserved: {
+          role: acted.reobserved.role,
+          enabled: acted.reobserved.enabled,
+          focused: acted.reobserved.focused,
+          ...(acted.reobserved.state !== undefined ? { state: acted.reobserved.state } : {})
+        }
+      };
+      execution.uiActionJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: this.now(),
+        stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return {
+        data,
+        verification: {
+          required: true,
+          status: "verified",
+          strategy: "accessibility_reobservation",
+          evidence: {
+            summary: "The approved Accessibility element was re-resolved before and after one fixed action",
+            readback_hash: sha256(canonicalJson(data)),
+            observed_at: new Date(this.now()).toISOString()
+          }
+        },
+        warnings: [...acted.warnings],
+        truncated: acted.truncated,
+        auditTarget: `ui_element:${acted.elementRef}`,
+        auditEvidence: {
+          appId: acted.appId,
+          windowId: acted.windowId,
+          elementRef: acted.elementRef,
+          action: acted.action,
+          accepted: acted.accepted,
+          verified: acted.verified,
+          warningCount: acted.warnings.length
+        }
+      };
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Accessibility action failed");
+      try {
+        execution.uiActionJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          state: "unknown",
+          resultClass: "unknown",
+          finishedAtMs: this.now()
+        }, execution.jobLease, this.now());
+      } catch {
+        // Preserve the original error; the action may have occurred without trusted readback.
+      }
+      throw brokerError;
+    }
+  }
+
   private async dispatchGitStage(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -2294,6 +2431,17 @@ export class Broker {
           appId,
           ...(windowHint !== undefined ? { windowHint: windowHint as string } : {})
         }
+      };
+    }
+    if (request.tool === "mac_ui_action") {
+      assertExactArguments(request.arguments, ["element_ref", "action"]);
+      const elementRef = request.arguments.element_ref;
+      const action = request.arguments.action;
+      validateUiActionRequest(elementRef, action);
+      return {
+        target: { kind: "ui_element", reference: elementRef as string },
+        auditTarget: `ui_element:${elementRef as string}`,
+        uiAction: { elementRef: elementRef as string, action }
       };
     }
     if (request.tool === "mac_app_list") {
@@ -2725,6 +2873,19 @@ export class Broker {
       }
       throw new BrokerError("POLICY_DENIED", "No app identity is authorized for this tool");
     }
+    if (tool.targetType === "app_window" || tool.targetType === "ui_element") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "app_window" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized app-window identity is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No app-window identity is authorized for this tool");
+    }
     if (tool.targetType === "project") {
       for (const rule of policy.targetRules.filter((candidate) =>
         candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
@@ -2850,8 +3011,23 @@ export class Broker {
         request.contractVersion,
         request.principal.scopes
       );
-      for (const activeTarget of [target, ...additionalTargets]) {
-        authorizeTarget(currentPolicy, request.principal.principalId, tool.requiredScopes, activeTarget);
+      if (request.tool === "mac_ui_action") {
+        const execution = this.planExecution(request, currentPolicy, tool);
+        if (!execution.uiAction) throw new Error("UI action plan unavailable");
+        const snapshot = this.uiSnapshotRegistry.resolve(
+          execution.uiAction.elementRef,
+          request.principal.principalId,
+          request.principal.sessionId,
+          this.now()
+        );
+        authorizeTarget(currentPolicy, request.principal.principalId, tool.requiredScopes, {
+          kind: "app_window",
+          reference: `window:${snapshot.appId}`
+        });
+      } else {
+        for (const activeTarget of [target, ...additionalTargets]) {
+          authorizeTarget(currentPolicy, request.principal.principalId, tool.requiredScopes, activeTarget);
+        }
       }
     } catch {
       throw new BrokerError("CANCELLED", "Active work authority was revoked");
@@ -3011,6 +3187,11 @@ interface ExecutionPlan {
     appId: string;
     windowHint?: string;
   };
+  uiAction?: {
+    elementRef: string;
+    action: UiActionName;
+    snapshot?: UiSnapshotRecord;
+  };
   taskRun?: {
     profile: string;
     cwd: string;
@@ -3035,6 +3216,8 @@ interface ExecutionPlan {
   appOpenJobNew?: boolean;
   appFocusJob?: BrokerJob;
   appFocusJobNew?: boolean;
+  uiActionJob?: BrokerJob;
+  uiActionJobNew?: boolean;
   jobLease?: JobLease;
 }
 
@@ -3151,6 +3334,39 @@ function appFocusDispatchResult(job: BrokerJob, data: AppFocusResultData, reused
   };
 }
 
+interface UiActionResultData {
+  element_ref: string;
+  action: UiActionName;
+  accepted: true;
+  job_id: string;
+  reobserved: {
+    role: string;
+    enabled: boolean;
+    focused: boolean;
+    secure: false;
+    state?: string;
+  };
+}
+
+function uiActionDispatchResult(job: BrokerJob, data: UiActionResultData, reused: boolean): DispatchResult {
+  if (data.job_id !== job.jobId) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action Job identity is inconsistent");
+  return {
+    data: { ...data },
+    verification: {
+      required: true,
+      status: "verified",
+      strategy: "accessibility_reobservation",
+      evidence: {
+        summary: reused ? "Reused a completed UI action Job readback" : "The approved Accessibility element was re-resolved before and after one fixed action",
+        readback_hash: sha256(canonicalJson(data)),
+        observed_at: new Date().toISOString()
+      }
+    },
+    auditTarget: `ui_element:${data.element_ref}`,
+    auditEvidence: { jobId: job.jobId, jobRevision: job.revision, reused, elementRef: data.element_ref, action: data.action, accepted: data.accepted }
+  };
+}
+
 function appOpenDispatchResult(job: BrokerJob, data: AppOpenResultData, reused: boolean): DispatchResult {
   return {
     data: { ...data, job_id: job.jobId },
@@ -3216,6 +3432,39 @@ function parseStoredAppFocusResult(value: string): AppFocusResultData {
     reobserved_at: record.reobserved_at,
     verified: true,
     job_id: record.job_id
+  };
+}
+
+function parseStoredUiActionResult(value: string): UiActionResultData {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
+  const record = parsed as Record<string, unknown>;
+  const reobserved = record.reobserved;
+  if (typeof record.element_ref !== "string" || !/^element:[a-f0-9]{48}$/u.test(record.element_ref) ||
+      typeof record.action !== "string" || !["press", "select", "increment", "decrement", "show_menu", "focus"].includes(record.action) ||
+      record.accepted !== true || typeof record.job_id !== "string" || !/^job:ui-action-[a-f0-9]{48}$/u.test(record.job_id) ||
+      reobserved === null || typeof reobserved !== "object" || Array.isArray(reobserved)) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
+  }
+  const state = reobserved as Record<string, unknown>;
+  if (typeof state.role !== "string" || state.role.length < 1 || state.role.length > 128 ||
+      typeof state.enabled !== "boolean" || typeof state.focused !== "boolean" || state.secure !== false ||
+      (state.state !== undefined && (typeof state.state !== "string" || state.state.length > 512))) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
+  }
+  return {
+    element_ref: record.element_ref,
+    action: record.action as UiActionName,
+    accepted: true,
+    job_id: record.job_id,
+    reobserved: {
+      role: state.role,
+      enabled: state.enabled,
+      focused: state.focused,
+      secure: false,
+      ...(state.state !== undefined ? { state: state.state } : {})
+    }
   };
 }
 

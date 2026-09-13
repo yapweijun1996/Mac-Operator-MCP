@@ -14,6 +14,7 @@ import { BrokerStore, redactEvidence } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
+import { UiSnapshotRegistry } from "./ui-inspector.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -814,6 +815,162 @@ test("mac_ui_observe binds an independent app-window scope and returns redacted 
   }
 });
 
+test("mac_ui_action binds a short-lived owned snapshot, GUI approval, and reobserved action", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ui-action-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Accessible";
+  const elementRef = "element:0123456789abcdef0123456789abcdef0123456789abcdef";
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation({
+    appId,
+    windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+    windowIndex: 0,
+    windowTitle: "Example",
+    focused: true,
+    nodes: [{ elementRef, role: "AXButton", label: "Save", enabled: true, focused: false, secure: false }],
+    truncated: false,
+    warnings: []
+  }, "principal-1", "session-1", NOW);
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.ui.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const uiTool = basePolicy.tools.get("mac_ui_action")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_ui_action", { ...uiTool, enabled: true }) };
+  let actionCalls = 0;
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    uiSnapshotRegistry: registry,
+    uiInspector: {
+      async observe() { throw new Error("unused"); },
+      async action(execution, control) {
+        actionCalls += 1;
+        assert.equal(execution.snapshot.elementRef, elementRef);
+        assert.equal(execution.snapshot.ownerPrincipalId, "principal-1");
+        assert.equal(execution.action, "press");
+        assert.equal(control.shouldCancel(), false);
+        return {
+          elementRef,
+          action: "press",
+          accepted: true,
+          appId,
+          windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+          reobserved: { role: "AXButton", enabled: true, focused: false, secure: false },
+          warnings: [],
+          truncated: false,
+          verified: true
+        };
+      }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { element_ref: elementRef, action: "press" };
+  const request = unsigned({ requestId: "ui-action-request", nonce: "ui-action-nonce", tool: "mac_ui_action", arguments: argumentsValue }, ["mac.ui.control"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:ui-action",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_ui_action",
+      contractVersion: "0.1",
+      targetKind: "ui_element",
+      targetRef: `ui_element:${elementRef}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(actionCalls, 1);
+    if (result.ok) assert.deepEqual(result.data, {
+      element_ref: elementRef,
+      action: "press",
+      accepted: true,
+      job_id: store.requestRecord("ui-action-request")?.jobId,
+      reobserved: { role: "AXButton", enabled: true, focused: false }
+    });
+    assert.equal(store.ownedJobByIdempotencyKey("ui-action:ui-action-request", "principal-1")?.state, "completed");
+    assert.equal(store.approvalRecord("approval:ui-action")?.usedCount, 1);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_ui_action never publishes success after active session revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ui-action-revoke-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Accessible";
+  const elementRef = "element:0123456789abcdef0123456789abcdef0123456789abcdef";
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation({
+    appId,
+    windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+    windowIndex: 0,
+    windowTitle: "Example",
+    focused: true,
+    nodes: [{ elementRef, role: "AXButton", label: "Save", enabled: true, focused: false, secure: false }],
+    truncated: false,
+    warnings: []
+  }, "principal-1", "session-1", NOW);
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.ui.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const uiTool = basePolicy.tools.get("mac_ui_action")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_ui_action", { ...uiTool, enabled: true }) };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    uiSnapshotRegistry: registry,
+    uiInspector: {
+      async observe() { throw new Error("unused"); },
+      async action() {
+        store.revoke("session", "session-1", "TEST_REVOKE", NOW);
+        return {
+          elementRef,
+          action: "press",
+          accepted: true,
+          appId,
+          windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+          reobserved: { role: "AXButton", enabled: true, focused: false, secure: false },
+          warnings: [],
+          truncated: false,
+          verified: true
+        };
+      }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { element_ref: elementRef, action: "press" };
+  const request = unsigned({ requestId: "ui-action-revoke", nonce: "ui-action-revoke-nonce", tool: "mac_ui_action", arguments: argumentsValue }, ["mac.ui.control"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:ui-action-revoke",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_ui_action",
+      contractVersion: "0.1",
+      targetKind: "ui_element",
+      targetRef: `ui_element:${elementRef}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "CANCELLED");
+    assert.equal(store.ownedJobByIdempotencyKey("ui-action:ui-action-revoke", "principal-1")?.state, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_app_open binds GUI approval, app target, Job lease, and launch readback", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-open-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -1086,7 +1243,7 @@ test("mac_app_focus never publishes success after active session revocation", as
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 38);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 39);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

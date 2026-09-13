@@ -10,6 +10,8 @@ const MAX_NODES = 2_000;
 const MAX_WINDOW_HINT_LENGTH = 256;
 const MAX_LABEL_LENGTH = 512;
 const MAX_ROLE_LENGTH = 128;
+const UI_SNAPSHOT_TTL_MS = 30_000;
+const MAX_UI_SNAPSHOTS = 2_048;
 const APP_ID_PATTERN = /^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
 const SENSITIVE_APP_BUNDLE_IDS = new Set([
   "com.apple.SecurityAgent",
@@ -132,6 +134,17 @@ if (!/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/.test(appId)) {
 JSON.stringify(emitted);
 `.replace(/\s+/gu, " ").trim();
 
+/** Broker-owned JXA for one allowlisted Accessibility action and readback. */
+const UI_ACTION_SCRIPT = String.raw`
+ObjC.import("Foundation"); ObjC.import("ApplicationServices");
+const supplied = (() => { try { const a = ObjC.unwrap($.NSProcessInfo.processInfo.arguments).map((v) => String(ObjC.unwrap(v))); return a.slice(a.lastIndexOf("--") + 1); } catch (_) { return []; } })();
+const appId = String(supplied[0] || ""); const windowTitle = String(supplied[1] || ""); const windowIndex = Number(supplied[2]); const elementIndex = Number(supplied[3]); const expectedRole = String(supplied[4] || ""); const expectedLabel = String(supplied[5] || ""); const action = String(supplied[6] || ""); const bundleId = appId.slice(7);
+let emitted = null; const result = (value) => { emitted = value; }; const text = (call, fallback = "") => { try { const value = call(); return value == null ? fallback : String(value); } catch (_) { return fallback; } }; const safe = (call, fallback) => { try { return call() ?? fallback; } catch (_) { return fallback; } }; const secureRole = (role, subrole) => /secure|password|credential|protected|security/iu.test(role + " " + subrole);
+const findTarget = () => { const se = Application("System Events"); let process = null; for (const candidate of se.processes()) { if (text(() => candidate.bundleIdentifier()) === bundleId) { process = candidate; break; } } if (!process) return { error: "app_not_running" }; const windows = safe(() => process.windows(), []); let selected = null; let selectedIndex = -1; for (let i = 0; i < windows.length; i += 1) { if (text(() => windows[i].name()) === windowTitle) { selected = windows[i]; selectedIndex = i; break; } } if (selected === null) return { error: "window_not_found" }; if (selectedIndex !== windowIndex) return { error: "stale_target" }; let found = null; let index = 0; const visit = (element) => { if (found !== null) return; const role = text(() => element.role(), "AXUnknown"); const secure = secureRole(role, text(() => element.subrole())); const label = secure ? "" : text(() => element.description(), text(() => element.name())); if (index === elementIndex && role === expectedRole && label === expectedLabel && !secure) found = { element, role, index, enabled: Boolean(safe(() => element.enabled(), false)), focused: Boolean(safe(() => element.focused(), false)) }; index += 1; }; visit(selected); for (const element of safe(() => selected.entireContents(), [])) { if (index > elementIndex || found !== null) break; visit(element); } return found === null ? { error: "stale_target" } : { windowIndex: selectedIndex, target: found }; };
+if (!/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/.test(appId) || windowTitle.length === 0 || !Number.isSafeInteger(windowIndex) || windowIndex < 0 || !Number.isSafeInteger(elementIndex) || elementIndex < 0) result({ status: "error", error: "invalid_target" }); else if (!$.AXIsProcessTrusted()) result({ status: "error", error: "accessibility_permission" }); else if (!["press", "select", "increment", "decrement", "show_menu", "focus"].includes(action)) result({ status: "error", error: "action_unsupported" }); else { try { const before = findTarget(); if (before.error) result({ status: "error", error: before.error }); else { const target = before.target.element; if (action === "focus") target.focused = true; else if (action === "select") target.selected = true; else target.performAction(({ press: "AXPress", increment: "AXIncrement", decrement: "AXDecrement", show_menu: "AXShowMenu" })[action]); const after = findTarget(); if (after.error) result({ status: "error", error: after.error }); else result({ status: "ok", app_id: appId, window_index: after.windowIndex, window_title: windowTitle, element_index: after.target.index, role: after.target.role, enabled: after.target.enabled, focused: after.target.focused, secure: false, accepted: true }); } } catch (error) { const message = text(() => error && error.message); result({ status: "error", error: /not authorized|not permitted|assistive|accessibility|-1743/iu.test(message) ? "accessibility_permission" : "execution_failed" }); } }
+JSON.stringify(emitted);
+`.replace(/\s+/gu, " ").trim();
+
 export interface UiExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
@@ -149,6 +162,7 @@ export interface SafeUiNode {
 export interface SafeUiObservation {
   appId: string;
   windowId: string;
+  windowIndex?: number;
   windowTitle?: string;
   focused: boolean;
   nodes: readonly SafeUiNode[];
@@ -156,8 +170,51 @@ export interface SafeUiObservation {
   warnings: readonly string[];
 }
 
+export type UiActionName = "press" | "select" | "increment" | "decrement" | "show_menu" | "focus";
+
+export interface UiSnapshotRecord {
+  elementRef: string;
+  appId: string;
+  windowId: string;
+  windowIndex: number;
+  windowTitle: string;
+  elementIndex: number;
+  role: string;
+  label?: string;
+  enabled: boolean;
+  focused: boolean;
+  secure: boolean;
+  ownerPrincipalId: string;
+  ownerSessionId: string;
+  observedAtMs: number;
+}
+
+export interface UiActionExecution {
+  snapshot: UiSnapshotRecord;
+  action: UiActionName;
+}
+
+export interface SafeUiAction {
+  elementRef: string;
+  action: UiActionName;
+  accepted: true;
+  appId: string;
+  windowId: string;
+  reobserved: {
+    role: string;
+    enabled: boolean;
+    focused: boolean;
+    secure: false;
+    state?: string;
+  };
+  warnings: readonly string[];
+  truncated: false;
+  verified: true;
+}
+
 export interface UiInspector {
   observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl): Promise<SafeUiObservation>;
+  action?(execution: UiActionExecution, control: UiExecutionControl): Promise<SafeUiAction>;
 }
 
 export class MacUiInspectorImpl implements UiInspector {
@@ -181,6 +238,97 @@ export class MacUiInspectorImpl implements UiInspector {
     });
     return parseUiObserveResult(result, appId, maxNodes);
   }
+
+  async action(execution: UiActionExecution, control: UiExecutionControl): Promise<SafeUiAction> {
+    const { snapshot, action } = execution;
+    validateUiActionRequest(snapshot.elementRef, action);
+    validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
+    if (snapshot.secure || snapshot.label?.includes("[REDACTED]")) {
+      throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure or redacted UI elements cannot be acted on");
+    }
+    const result = await this.supervisor.run({
+      executable: OSASCRIPT,
+      args: [
+        "-l", "JavaScript", "-e", UI_ACTION_SCRIPT, "--",
+        snapshot.appId,
+        snapshot.windowTitle,
+        String(snapshot.windowIndex),
+        String(snapshot.elementIndex),
+        snapshot.role,
+        snapshot.label ?? "",
+        action
+      ],
+      cwd: UI_OBSERVE_CWD,
+      environment: {},
+      timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
+      outputCapBytes: 262_144,
+      shouldCancel: control.shouldCancel
+    });
+    return parseUiActionResult(result, snapshot, action);
+  }
+}
+
+export class UiSnapshotRegistry {
+  private readonly snapshots = new Map<string, UiSnapshotRecord>();
+
+  recordObservation(observation: SafeUiObservation, ownerPrincipalId: string, ownerSessionId: string, observedAtMs: number): void {
+    const windowTitle = (observation.windowTitle ?? "").replace(/[\u0000-\u001f\u007f]/gu, "�").slice(0, MAX_LABEL_LENGTH);
+    if (windowTitle.length === 0 || observation.truncated) return;
+    validateSensitiveUiTarget(observation.appId, windowTitle);
+    const windowIndex = observation.windowIndex ?? 0;
+    for (const [elementIndex, node] of observation.nodes.entries()) {
+      const labelResult = node.secure
+        ? { text: "", redacted: node.label !== undefined }
+        : node.label === undefined
+          ? { text: "", redacted: false }
+          : redactLogText(node.label.replace(/[\u0000-\u001f\u007f]/gu, "�").slice(0, MAX_LABEL_LENGTH));
+      const record: UiSnapshotRecord = {
+        elementRef: node.elementRef,
+        appId: observation.appId,
+        windowId: observation.windowId,
+        windowIndex,
+        windowTitle,
+        elementIndex,
+        role: node.role,
+        ...(labelResult.text.length > 0 ? { label: labelResult.text } : labelResult.redacted ? { label: "[REDACTED]" } : {}),
+        enabled: node.enabled,
+        focused: node.focused,
+        secure: node.secure,
+        ownerPrincipalId,
+        ownerSessionId,
+        observedAtMs
+      };
+      this.snapshots.set(node.elementRef, record);
+    }
+    this.prune(observedAtMs);
+  }
+
+  resolve(elementRef: string, ownerPrincipalId: string, ownerSessionId: string, nowMs: number): UiSnapshotRecord {
+    const snapshot = this.snapshots.get(elementRef);
+    if (!snapshot || snapshot.ownerPrincipalId !== ownerPrincipalId || snapshot.ownerSessionId !== ownerSessionId) {
+      throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is not available");
+    }
+    if (nowMs < snapshot.observedAtMs || nowMs - snapshot.observedAtMs > UI_SNAPSHOT_TTL_MS) {
+      this.snapshots.delete(elementRef);
+      throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
+    }
+    validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
+    if (snapshot.secure || snapshot.label?.includes("[REDACTED]")) {
+      throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure or redacted UI elements cannot be acted on");
+    }
+    return snapshot;
+  }
+
+  private prune(nowMs: number): void {
+    for (const [elementRef, snapshot] of this.snapshots) {
+      if (nowMs < snapshot.observedAtMs || nowMs - snapshot.observedAtMs > UI_SNAPSHOT_TTL_MS) this.snapshots.delete(elementRef);
+    }
+    while (this.snapshots.size > MAX_UI_SNAPSHOTS) {
+      const oldest = this.snapshots.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.snapshots.delete(oldest);
+    }
+  }
 }
 
 export function validateUiObserveRequest(appId: unknown, windowHint?: unknown, maxNodes = 200): asserts appId is string {
@@ -200,6 +348,79 @@ export function validateSensitiveUiTarget(appId: string, windowHint?: string): v
   if (SENSITIVE_APP_BUNDLE_IDS.has(bundleId) || (windowHint !== undefined && SENSITIVE_UI_TEXT_PATTERN.test(windowHint))) {
     throw new BrokerError("SECRET_BOUNDARY_DENIED", "Sensitive application or security UI targets are not observable");
   }
+}
+
+export function validateUiActionRequest(elementRef: unknown, action: unknown): asserts action is UiActionName {
+  if (typeof elementRef !== "string" || !/^element:[a-f0-9]{48}$/u.test(elementRef)) {
+    throw new BrokerError("PRECONDITION_FAILED", "element_ref must be an opaque Accessibility snapshot identity");
+  }
+  if (typeof action !== "string" || !["press", "select", "increment", "decrement", "show_menu", "focus"].includes(action)) {
+    throw new BrokerError("PRECONDITION_FAILED", "action is not an allowlisted Accessibility action");
+  }
+}
+
+export function parseUiActionResult(
+  result: ProcessExecutionResult,
+  snapshot: UiSnapshotRecord,
+  action: UiActionName
+): SafeUiAction {
+  validateUiActionRequest(snapshot.elementRef, action);
+  validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
+  if (snapshot.secure || snapshot.label?.includes("[REDACTED]")) {
+    throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure or redacted UI elements cannot be acted on");
+  }
+  if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Accessibility action was cancelled");
+  if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Accessibility action timed out");
+  if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Accessibility action exceeded its output limit");
+  if (result.resultClass !== "SUCCEEDED") {
+    if (/not authorized|not permitted|assistive|accessibility|-1743/iu.test(result.stderr)) {
+      throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
+    }
+    throw new BrokerError("EXECUTION_FAILED", "Accessibility action failed");
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
+  const record = parsed as Record<string, unknown>;
+  if (record.status === "error") {
+    switch (record.error) {
+      case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
+      case "app_not_running":
+      case "window_not_found":
+      case "stale_target": throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
+      case "secure_target": throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure UI elements cannot be acted on");
+      case "action_unsupported": throw new BrokerError("UNSUPPORTED_CAPABILITY", "Accessibility action is not supported by the target");
+      case "invalid_target": throw new BrokerError("PRECONDITION_FAILED", "UI action target metadata is malformed");
+      default: throw new BrokerError("EXECUTION_FAILED", "Accessibility action failed");
+    }
+  }
+  if (record.status !== "ok" || record.app_id !== snapshot.appId ||
+      record.window_index !== snapshot.windowIndex || record.window_title !== snapshot.windowTitle ||
+      record.element_index !== snapshot.elementIndex || record.role !== snapshot.role ||
+      typeof record.enabled !== "boolean" || typeof record.focused !== "boolean" ||
+      record.secure !== false || record.accepted !== true) {
+    throw new BrokerError("VERIFICATION_FAILED", "Accessibility action readback did not match the approved snapshot");
+  }
+  const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle);
+  if (windowId !== snapshot.windowId || opaqueElementId(windowId, snapshot.elementIndex, snapshot.role, snapshot.label ?? "", false) !== snapshot.elementRef) {
+    throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
+  }
+  return {
+    elementRef: snapshot.elementRef,
+    action,
+    accepted: true,
+    appId: snapshot.appId,
+    windowId,
+    reobserved: {
+      role: snapshot.role,
+      enabled: record.enabled as boolean,
+      focused: record.focused as boolean,
+      secure: false
+    },
+    warnings: [],
+    truncated: false,
+    verified: true
+  };
 }
 
 export function parseUiObserveResult(result: ProcessExecutionResult, appId: string, maxNodes = 200): SafeUiObservation {
@@ -258,7 +479,7 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
     const role = sanitizeText(node.role, MAX_ROLE_LENGTH);
     const labelResult = node.secure ? { text: "", redacted: node.label.length > 0 } : redactLogText(sanitizeText(node.label, MAX_LABEL_LENGTH));
     redacted ||= labelResult.redacted;
-    const elementRef = `element:${sha256(canonicalJson({ windowId, index, role, label: labelResult.text, secure: node.secure })).slice(0, 48)}`;
+    const elementRef = opaqueElementId(windowId, index, role, labelResult.text, node.secure);
     nodes.push({
       elementRef,
       role,
@@ -273,6 +494,7 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   return {
     appId,
     windowId,
+    windowIndex: record.window_index as number,
     ...(windowTitle.length > 0 ? { windowTitle } : {}),
     focused: record.focused,
     nodes,
@@ -289,5 +511,11 @@ export function opaqueWindowId(appId: string, windowIndex: number, windowTitle: 
   return `window:${sha256(canonicalJson({ appId, windowIndex, windowTitle })).slice(0, 48)}`;
 }
 
+export function opaqueElementId(windowId: string, elementIndex: number, role: string, label: string, secure: boolean): string {
+  return `element:${sha256(canonicalJson({ windowId, index: elementIndex, role, label, secure })).slice(0, 48)}`;
+}
+
 export const uiObserveExecutableForTesting = OSASCRIPT;
 export const uiObserveScriptForTesting = UI_OBSERVE_SCRIPT;
+export const uiActionExecutableForTesting = OSASCRIPT;
+export const uiActionScriptForTesting = UI_ACTION_SCRIPT;
