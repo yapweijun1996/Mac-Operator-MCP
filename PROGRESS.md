@@ -6,7 +6,18 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `42268d2`.
+Current committed implementation baseline: `01a26ba`.
+
+The latest sandbox hostile-descendant addendum is `01a26ba`: the opt-in
+real-Mac `single_process` profile runs a Broker-resolved `/usr/bin/perl`
+fixture that attempts `fork()` followed by `setsid()` and a marker write. The
+host returns `fork-denied` with a non-success result and leaves no marker in
+the temporary root. The focused sandbox suite passes 8/8; the complete
+`MOPS_REAL_SANDBOX=1 npm test` regression passes 373/373. This strengthens
+no-fork evidence only; owned-group enforcement, post-snapshot session escape,
+crash/restart cleanup, credential contents, persistence, and production task
+runner enablement remain open. Evidence:
+`evidence/2026-09-13-sandbox-hostile-descendant.md`.
 
 The latest Broker real-worker post-rename addendum is `42268d2`: a controlled
 test-only worker URL and fault native adapter drive a real descriptor-relative
