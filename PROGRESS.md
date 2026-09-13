@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `cc103a7`.
+Current committed implementation baseline: `d3efae1`.
+
+The latest privileged-helper plist addendum is `d3efae1`: final helper
+readback now requires the exact root-domain plist path, rendered byte count,
+SHA-256, and descriptor device/inode identity. The host-only reader uses the
+Broker filesystem inspector with no caller-supplied path or inspector, and
+tampered/truncated content fails closed. Root-owned installation and live
+LaunchDaemon readback remain open. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
 The latest privileged-helper identity addendum is `cc103a7`: an installed
 helper readback must now provide a positive launchd PID plus a matching native

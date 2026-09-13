@@ -26,6 +26,14 @@ identity values fail closed; the full 395-test suite passes. Real root-owned
 installation and live launchd readback remain open.
 Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Latest privileged-helper plist addendum: source commit `d3efae1` requires the
+exact root-domain plist path, rendered byte count, SHA-256, and descriptor
+device/inode identity in the final helper readback. A descriptor-backed
+host-only reader rejects target swaps, truncation, and tampered bytes; the full
+395-test suite passes. Root-owned installation and live LaunchDaemon readback
+remain open.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,

@@ -113,6 +113,11 @@ cannot report readiness from a launchd state string alone, and PID reuse or a
 missing native observer identity fails closed. Root-owned installation remains
 unverified.
 
+Revision `d3efae1` adds a descriptor-backed helper plist readback. The final
+readback must match the exact planned path, rendered byte count, SHA-256, and
+device/inode identity; the reader uses the internal protected filesystem
+inspector and rejects caller-supplied path or inspector substitution.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
