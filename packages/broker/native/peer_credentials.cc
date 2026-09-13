@@ -313,9 +313,22 @@ napi_value WriteKeychainGenericPassword(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
+  CFErrorRef access_error = nullptr;
+  SecAccessControlRef access = SecAccessControlCreateWithFlags(
+      kCFAllocatorDefault, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, 0, &access_error);
+  if (access == nullptr) {
+    if (access_error != nullptr) CFRelease(access_error);
+    CFRelease(service_value);
+    CFRelease(account_value);
+    CFRelease(key_value);
+    ThrowSystemError(env, "Keychain access control could not be created");
+    return nullptr;
+  }
+
   CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
       kCFAllocatorDefault, 8, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   if (attributes == nullptr) {
+    CFRelease(access);
     CFRelease(service_value);
     CFRelease(account_value);
     CFRelease(key_value);
@@ -326,10 +339,11 @@ napi_value WriteKeychainGenericPassword(napi_env env, napi_callback_info info) {
   CFDictionarySetValue(attributes, kSecAttrService, service_value);
   CFDictionarySetValue(attributes, kSecAttrAccount, account_value);
   CFDictionarySetValue(attributes, kSecValueData, key_value);
-  CFDictionarySetValue(attributes, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
+  CFDictionarySetValue(attributes, kSecAttrAccessControl, access);
   CFDictionarySetValue(attributes, kSecAttrSynchronizable, kCFBooleanFalse);
   const OSStatus add_status = SecItemAdd(attributes, nullptr);
   CFRelease(attributes);
+  CFRelease(access);
   CFRelease(service_value);
   CFRelease(account_value);
   CFRelease(key_value);
