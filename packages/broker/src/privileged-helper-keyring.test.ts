@@ -9,7 +9,7 @@ import {
   writePrivilegedHelperKeyConfig,
   type PrivilegedHelperKeyConfig
 } from "./privileged-helper-keyring.js";
-import { FailClosedPrivilegedHelper } from "./privileged-helper.js";
+import { FailClosedPrivilegedHelper, InMemoryPrivilegedHelperReplayGuard, readPrivilegedHelperStatus } from "./privileged-helper.js";
 import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials.js";
 import { BrokerStore } from "./persistence.js";
 
@@ -123,6 +123,64 @@ test("privileged helper key config rejects symlink, unsafe mode, and revocation"
     await chmod(configPath, 0o640);
     await assert.rejects(loadPrivilegedHelperKeyConfig(configPath, store), /not be accessible/u);
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("constructed helper server fences status reads after key revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-helper-keyring-status-"));
+  const configPath = join(directory, "helper-keys.json");
+  const keyPath = join(directory, "helper.key");
+  const socketPath = join(directory, "helper.sock");
+  const brokerSocketPath = join(directory, "broker.sock");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  let manager: PrivilegedHelperKeyManager | undefined;
+  try {
+    const provisioned = await provisionAuthenticationKey(keyPath);
+    const key = await loadAuthenticationKey(keyPath);
+    await writePrivilegedHelperKeyConfig(configPath, document(keyPath, provisioned.digest));
+    manager = new PrivilegedHelperKeyManager(configPath, store, () => NOW);
+    await manager.activate();
+    const server = manager.createServer({
+      socketPath,
+      replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+      adapter: new FailClosedPrivilegedHelper(),
+      authorizeCommand: () => undefined,
+      authorizeStatus: () => undefined,
+      readStatus: () => ({
+        component: "mac-operator-privileged-helper" as const,
+        state: "running" as const,
+        runtimeState: "running" as const,
+        nativeTransportRequired: true as const,
+        adapterAvailable: false as const,
+        helperSocketPath: socketPath,
+        brokerSocketPath,
+        brokerPeerUid: 501,
+        brokerPeerGid: 20,
+        sourceRevision: "a".repeat(40),
+        contractVersion: "0.1",
+        policyVersion: "policy-0.1",
+        enabledCapabilities: [] as const
+      }),
+      peerCredentialVerifier: { verify: () => undefined },
+      now: () => NOW
+    });
+    try {
+      await server.listen();
+      const status = await readPrivilegedHelperStatus({ socketPath, authenticationKey: key, now: () => NOW });
+      assert.equal(status.runtimeState, "running");
+      store.revoke("helper_key", "helper-key-1", "COMPROMISED", NOW);
+      await assert.rejects(
+        readPrivilegedHelperStatus({ socketPath, authenticationKey: key, now: () => NOW }),
+        (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "REVOKED"
+      );
+    } finally {
+      await server.close();
+    }
+    key.fill(0);
+  } finally {
+    manager?.dispose();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
