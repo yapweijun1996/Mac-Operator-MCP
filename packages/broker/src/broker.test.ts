@@ -264,6 +264,14 @@ test("mac_log_tail requires an allowlisted source and returns sanitized bounded 
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.log.read"], ["edge-key-1"], [], [], ["system"]),
     edgeAuthenticationKeys: testKeyring(key),
+    logInspector: {
+      tail: async () => ({
+        source: "system",
+        entries: [{ timestamp: null, level: "info", message: "safe broker log" }],
+        truncated: false,
+        warnings: []
+      })
+    },
     now: () => NOW
   });
   try {
