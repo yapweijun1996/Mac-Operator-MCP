@@ -194,6 +194,32 @@ test("launchd Edge startup refuses an unactivated key config before launchctl re
       /does not match persisted activation/u
     );
     assert.equal(launchctlCalled, false);
+
+    const manager = new EdgeAuthenticationKeyManager(configPath, store, () => now);
+    await manager.activate();
+    await writeEdgeAuthenticationKeyConfig(configPath, {
+      ...config,
+      revision: 2,
+      keys: [{ ...config.keys[0]!, edgeId: "edge-other" }]
+    });
+    await manager.activate(1);
+    launchctlCalled = false;
+    await assert.rejects(
+      createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig({
+        socketPath: join(root, "broker-mismatch.sock"), edgeId: "edge-1",
+        edgeServiceId: `gui/${uid}/com.mac-operator.edge`, expectedEdgeUid: uid,
+        edgeKeyConfigPath: configPath, edgeKeyStore: store,
+        commandExecutor: {
+          async run(): Promise<ProcessExecutionResult> {
+            launchctlCalled = true;
+            return success("");
+          }
+        },
+        createBroker: (edgeAuthenticationKeys) => new Broker({ store, policy: createDefaultPolicy("edge-1"), edgeAuthenticationKeys, now: () => now })
+      }),
+      (error: unknown) => error instanceof NativeRuntimeStartupError && error.code === "EDGE_KEY_CONFIG_UNAVAILABLE"
+    );
+    assert.equal(launchctlCalled, false);
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });

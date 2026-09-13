@@ -15,7 +15,8 @@ export type NativeRuntimeStartupErrorCode =
   | "INVALID_EDGE_SERVICE"
   | "EDGE_SERVICE_UNAVAILABLE"
   | "EDGE_PROCESS_NOT_RUNNING"
-  | "EDGE_PROCESS_IDENTITY_UNAVAILABLE";
+  | "EDGE_PROCESS_IDENTITY_UNAVAILABLE"
+  | "EDGE_KEY_CONFIG_UNAVAILABLE";
 
 export class NativeRuntimeStartupError extends Error {
   readonly code: NativeRuntimeStartupErrorCode;
@@ -132,6 +133,12 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
   } = options;
   const manager = new EdgeAuthenticationKeyManager(edgeKeyConfigPath, edgeKeyStore);
   const loaded = await manager.restore();
+  if (loaded.keys.length === 0 || loaded.keys.some((key) => key.edgeId !== runtimeOptions.edgeId)) {
+    throw new NativeRuntimeStartupError(
+      "EDGE_KEY_CONFIG_UNAVAILABLE",
+      "Active Edge key configuration does not match the requested Edge identity"
+    );
+  }
   const broker = createBroker(loaded.keyring);
   return createMacOsNativeBrokerRuntimeForLaunchdEdge({ ...runtimeOptions, broker });
 }
