@@ -6,7 +6,7 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `dd824b4`.
+Current committed implementation baseline: `08a2913`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
@@ -73,6 +73,16 @@ SHA-256 reason digest. This remains a source-level control boundary and does
 not prove protected key distribution, installed startup/readback, active
 process termination, remote propagation, or an executable operator recovery
 procedure. Evidence: `evidence/2026-09-13-job-authority-lifecycle.md`.
+
+The latest implementation addendum is `08a2913`: the experimental
+`SandboxExecTaskRunner` now refuses the unevidenced `owned_group` process-tree
+policy even when an external isolation proof is supplied. The only executable
+task policy remains the no-fork `single_process` variant. The real Mac opt-in
+smoke was rerun at 7/7 tests and checked only readability of the current
+user's Keychains directory and `/var/run/docker.sock`, both denied without
+reading contents. This is an enablement guard and partial host evidence, not
+a production selection of deprecated `sandbox-exec`.
+Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
 ## Completed work
 
@@ -175,7 +185,7 @@ procedure. Evidence: `evidence/2026-09-13-job-authority-lifecycle.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 292 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 293 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
@@ -246,7 +256,7 @@ There is no blocker to continued local implementation. Production enablement is 
 - Reran the full suite at 291 tests (289 passed, two default opt-in real-host tests skipped) on clean source commit `41e83c0`; `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` passed 6/6 on the Mac mini M4/macOS 26.2 host. The experimental runner smoke proves only Broker-rendered deny-default profile construction, default single-process/no-fork policy, explicit empty-environment filtering for four canaries, allowed temporary-root read/write, `/private/etc/passwd`/`.env`/symlink denial, curl DNS/network denial, child-launch denial, active sleep cancellation, and profile-matched process-tree proof validation. It does not prove real credential, descendant/`setsid`, crash/restart, remount, Docker, persistence, privilege, or allowlisted-network isolation. Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Recorded bounded host evidence in `evidence/2026-09-12-local-broker-foundation.md`.
 - Added atomic audit coverage for generic switch and revocation changes; focused persistence, Broker, and approval tests pass with the authority audit pair present.
-- On source revision `dd824b4`, the full suite passes 292 of 294 tests with two opt-in real-sandbox tests skipped by default; `npm run typecheck`, `npm run verify:contracts` (44 unique contracts), `npm audit --omit=dev --audit-level=high`, and `git diff --check` also pass.
+- On source revision `08a2913`, the full suite passes 293 of 295 tests with two opt-in real-sandbox tests skipped by default; the focused real-Mac sandbox run passes 7/7 with `MOPS_REAL_SANDBOX=1`; `npm run typecheck`, `npm run verify:contracts` (44 unique contracts), `npm audit --omit=dev --audit-level=high`, and `git diff --check` also pass.
 
 The passing tests prove only the local foundation, bounded filesystem workers/search, and initial persistent Request/Approval/Job Ledgers on the recorded clean revision. They do not satisfy a release gate or prove protected Keychain-backed secret storage, installed cross-process code identity, a human approval UI/channel, production unattended profiles, remote deployment, removable-volume remount identity, process-tree ownership/termination, credential isolation, sandbox, GUI, helper, packaging, or whole-service rollback.
 

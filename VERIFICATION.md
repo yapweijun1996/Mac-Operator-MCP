@@ -23,7 +23,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 | VT-SEC-01 | No secret output | T-006 | MOP-037 | Result/error/audit secret corpus | L0/L1 | OPEN — representative private-key, cloud/GitHub/OpenAI/Slack token, and credential-assignment signatures are denied before result construction with no raw secret in result/audit; split ranges, binary encodings, broader corpus, and false-positive analysis remain |
 | VT-SEC-02 | F1 requires dedicated opt-in | T-007 | MOP-037 | Mail/browser/photo/private-data denial tests | L0/L1 | OPEN — mandatory path rules deny representative Mail, Messages, Safari, Chrome profile, Photos, Keychain, SSH, GPG, and cloud credential zones, including canonical alias checks before read; purpose-built opt-in adapters and complete corpus remain |
 | VT-SBX-01 | Child cannot access controller secrets | T-008 | MOP-086, MOP-045 | macOS sandbox PoC and credential canary tests | L2 | BLOCKED — the opt-in runner smoke hides controller/`HOME`/SSH-agent/AWS-profile canaries with an explicit empty environment and denies `/private/etc/passwd`, a root-contained `.env`, and an outside-file symlink; fake credential canaries and the Broker non-stdio descriptor launch canary also pass. Real credential-surface isolation, hostile profile coverage, and production sandbox-boundary proof remain incomplete. Broker admission requires a profile-matched `TaskIsolationProof`; `mac_task_run` rejects missing or incomplete proof |
-| VT-SBX-02 | Child obeys network/process limits | T-009 | MOP-086, MOP-045 | Network egress and process escape tests | L2 | BLOCKED — the default opt-in profile omits `process-fork`; the smoke allows only its selected loopback `tcp` destination, denies a second loopback port and external curl DNS/network access (exit 6, empty stdout), and maps active `/bin/sleep` cancellation to detached process-group termination. Controlled ProcessSupervisor tests require group disappearance before observed termination, returning `UNKNOWN_OUTCOME` while retaining capacity when drain is unresolved. Explicit `owned_group`, `setsid` escape resistance, timeout/crash/restart cleanup, external allowlisted networking, UDP behavior, and real task-runner process ownership remain |
+| VT-SBX-02 | Child obeys network/process limits | T-009 | MOP-086, MOP-045 | Network egress and process escape tests | L2 | BLOCKED — the default opt-in profile omits `process-fork`; the smoke allows only its selected loopback `tcp` destination, denies a second loopback port and external curl DNS/network access (exit 6, empty stdout), and maps active `/bin/sleep` cancellation to detached process-group termination. Controlled ProcessSupervisor tests require group disappearance before observed termination, returning `UNKNOWN_OUTCOME` while retaining capacity when drain is unresolved. The runner now refuses the unevidenced `owned_group` policy even with a supplied proof. `setsid` escape resistance, timeout/crash/restart cleanup, external allowlisted networking, UDP behavior, and real task-runner process ownership remain |
 | VT-DKR-01 | No raw Docker authority | T-010 | MOP-042 | Adapter allowlist and raw-socket negative tests | L2 | OPEN — fixed local-only status/object/log adapter tests pass; real Docker daemon compatibility and host-level socket negative evidence remain |
 | VT-APR-01 | Approval binding and consumption | T-011 | MOP-082 | Payload mutation, expiry, replay, cross-principal tests | Mutation | OPEN — exact principal/tool/contract/target/payload/policy/class/mode binding, expiry, revocation, single-use exhaustion, competing consumption and pre-dispatch invalidation pass; authenticated issuance/UI, signed provenance, unattended profiles, active-work behavior and remote evidence remain |
 | VT-REL-01 | Mutation retry and reconciliation | T-012 | MOP-017, MOP-083 | Crash-window and duplicate-request tests | Mutation | OPEN — request lifecycle/revision tests, atomic approval/intent/idempotency/new-job admission, idempotent reuse, conflict rollback, fault-injected rollback/restart readback and startup reconciliation prevent false success; durable non-secret write descriptors with exact temporary names, lease owner/token/expiry heartbeat persistence, stale terminal-commit fencing, selected native `SIGKILL` crash boundaries, a non-authoritative `mac_job_status` postcondition probe, and explicit exact-artifact restart cleanup now pass; terminal invariants, queued/running recovery, remount durability, verified process ownership, external actor attribution, and broader partial-mutation evidence remain |
@@ -73,22 +73,25 @@ Latest Job lease addendum: the current revision persists a per-Broker owner ID, 
 
 Latest ProcessSupervisor addendum: the disabled child-process boundary now treats the POSIX detached process group, rather than only the direct child, as the termination unit. Normal completion, timeout, cancellation, output overflow, and orphan detection perform bounded `kill(-pgid, 0)` drain readback before returning `terminationObserved`; if the group remains past the deadline, the result is `UNKNOWN_OUTCOME` and the capacity slot remains held until an unref'd reaper observes disappearance. This is controlled host evidence only: it does not prove sandbox enforcement, credential isolation, `setsid` escape resistance, or production task-runner enablement. Evidence: `evidence/2026-09-13-process-group-drain.md`.
 
-Latest sandbox runner addendum: commit `2e6cd57` records the experimental,
+Latest sandbox runner addendum: commit `08a2913` records the experimental,
 opt-in `SandboxExecTaskRunner` and Broker-owned deny-default Seatbelt profile
 renderer. The renderer rejects raw SBPL, broad roots, cwd escapes, and
 non-loopback network destinations; loopback allowlists are rendered as exact
 `localhost:port` rules. Resolved profiles default to a single-process policy without
-`process-fork`, while explicit `owned_group` remains a separate unevidenced
-extension. It binds `/usr/bin/sandbox-exec` to a resolved TaskProfile and
+`process-fork`; the runner refuses `owned_group` even when an external proof is
+supplied. It binds `/usr/bin/sandbox-exec` to a resolved TaskProfile and
 passes only explicit cwd/environment/timeout/output/cancellation controls to
-`ProcessSupervisor`. On the Mac mini M4/macOS 26.2 host, the 6-test opt-in
+`ProcessSupervisor`. On the Mac mini M4/macOS 26.2 host, the 7-test opt-in
 smoke allowed temporary-root read/write, denied `/private/etc/passwd`, a
 root-contained `.env`, and an outside-file symlink, hid four synthetic parent
 environment canaries, denied curl DNS/network access, and mapped active
 `/bin/sleep` cancellation to process-group termination, and denies a Bash
 child-launch attempt under the default no-fork policy. Loopback allowlists are
 rendered as exact `localhost:port` rules; non-loopback destinations are
-rejected. This is `PARTIAL`
+rejected. The focused real-Mac smoke was rerun from `08a2913` with
+`MOPS_REAL_SANDBOX=1` and passes 7/7 tests. The host probe also checked only
+readability of the current user's Keychains directory and `/var/run/docker.sock`;
+both were denied without reading contents. This is `PARTIAL`
 evidence only: real credential stores, descendants/`setsid`,
 crash/restart cleanup, remounts, Docker, persistence, privilege, and
 allowlisted networking remain unproven; `sandbox-exec` is deprecated and the

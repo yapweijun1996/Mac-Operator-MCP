@@ -52,14 +52,18 @@ The Broker task admission boundary now also requires a versioned `TaskIsolationP
 
 ## 2026-09-13 experimental runner evidence
 
-Source commit `2e6cd57` adds `renderTaskSandboxProfile` and an opt-in
+Source commit `08a2913` adds real-host secret-surface denial evidence on top of
+the `3e4b065` runner guard and `2e6cd57` profile boundary. The experimental
+runner uses `renderTaskSandboxProfile` and an opt-in
 `SandboxExecTaskRunner`. The renderer emits only a Broker-owned deny-default
 Seatbelt subset, allows a resolved executable and explicit filesystem roots,
 denies global and representative project secret zones, and supports only
 loopback `tcp`/`udp` network allowlists. Resolved profiles default to `processTreePolicy:
 "single_process"`, which omits `process-fork`; only an explicit
 `owned_group` profile adds that rule and it remains separately unevidenced. The
-runner invokes `/usr/bin/sandbox-exec` through the bounded
+runner now refuses to become available for `owned_group`, even with an
+external proof, until a separate process-tree ownership decision is accepted.
+The runner invokes `/usr/bin/sandbox-exec` through the bounded
 `ProcessSupervisor` with an explicit environment, cwd, timeout, output cap, and
 cancellation callback. It remains unavailable unless macOS, explicit opt-in,
 an external host-evidence gate, and a matching `TaskIsolationProof` are all
@@ -75,10 +79,15 @@ and a real `/bin/sleep` cancellation mapped through detached process-group
 termination. This is `PARTIAL` evidence:
 real credential surfaces, descendants/`setsid`, crash/restart cleanup,
 external allowlisted networking, DNS pinning, UDP behavior, Docker, persistence,
-privilege, and remount behavior remain unproven. `sandbox-exec` is deprecated, so this does not select it for
+privilege, and remount behavior remain unproven. The same host probe checked
+only readability of the current user's Keychains directory and
+`/var/run/docker.sock`; both were denied without reading contents. The focused
+real-Mac smoke passes 7/7 tests with `MOPS_REAL_SANDBOX=1`. `sandbox-exec` is
+deprecated, so this does not select it for
 production or unblock `mac_task_run`.
 
 The versioned `TaskIsolationProof` now also binds the selected
 `processTreePolicy`, so evidence for `single_process` cannot be reused for an
-`owned_group` profile. This is a contract safeguard, not proof that the
+`owned_group` profile. The runner's availability gate independently refuses
+`owned_group`; this is a fail-closed enablement safeguard, not proof that the
 owned-group variant is safe.

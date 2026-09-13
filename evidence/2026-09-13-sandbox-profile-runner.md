@@ -1,7 +1,7 @@
 # Experimental sandbox profile runner evidence
 
 Date: 2026-09-13
-Source commit: `2e6cd57` (`feat: support loopback task network allowlists`)
+Source commit: `08a2913` (`test: deny task access to host secret surfaces`), building on `3e4b065` and `2e6cd57`
 Working tree: clean before evidence commands
 Host: Mac mini `Mac16,10`, Apple M4, 16 GB, arm64
 OS: macOS `26.2`, build `25C56`
@@ -54,17 +54,20 @@ non-success result with empty stdout (DNS resolution was denied, exit 6). A
 script attempt to launch `/bin/sleep` as a child was rejected with a fork
 permission error and only its pre-attempt output; a separate direct
 `/bin/sleep` fixture was cancelled through the runner and returned `CANCELLED`
-after process-group termination.
+after process-group termination. The same real-host probe found the current
+user Keychains directory and `/var/run/docker.sock` unavailable to the task;
+it checked only existence/readability and did not read credential or daemon
+content.
 
 | Dimension | Result | Evidence | Residual risk |
 |---|---|---|---|
 | Broker-owned profile construction | `ENFORCED` for tested inputs | Deny-default deterministic renderer; arbitrary SBPL is never accepted; broad roots/cwd escapes/network declarations fail closed. | Renderer is a narrow Seatbelt subset; complete macOS policy semantics and future profile changes still need review. |
 | Allowed-root read/write | `PARTIAL` | Allowed fixture read and create/readback inside a temporary root succeeded; a root-contained `.env` and symlink to `/private/etc/passwd` were denied. | Remount identity, hardlinks, mount escapes, and concurrent target swaps are not covered by this runner smoke. |
-| Protected system/secret paths | `PARTIAL` | `/private/etc/passwd`, a root-contained `.env`, and a protected-file symlink were denied; global and project secret deny rules are rendered. | Real Keychain, SSH, browser, cloud, package, Git, and signing stores were not opened. |
+| Protected system/secret paths | `PARTIAL` | `/private/etc/passwd`, a root-contained `.env`, a protected-file symlink, and the current user's Keychains directory were denied; global and project secret deny rules are rendered. | Real Keychain contents, SSH, browser, cloud, package, Git, and signing stores were not opened. |
 | Environment isolation | `PARTIAL` | Explicit empty environment hid controller, `HOME`, SSH-agent, and AWS-profile canaries. | This is ProcessSupervisor/profile evidence, not proof that every future profile or launcher has no secret inputs. |
 | Network allow/deny | `PARTIAL` | A loopback allowlist reached its selected `localhost:port`; an unlisted loopback port was denied, and an external curl DNS/network probe returned exit 6 with no stdout. | External allowlisted destinations, DNS pinning, non-DNS addresses, UDP behavior, and broader egress controls remain untested. |
-| Process-tree ownership | `PARTIAL` | The default profile omits `process-fork`; a child-launch attempt was denied, a built-in-only Bash fixture completed without descendants, and a real `/bin/sleep` fixture was cancelled through the runner with detached process-group termination. | `owned_group`, `setsid`, timeout/crash/restart cleanup, and a real task Job lease remain untested. |
-| Credential/Docker/persistence/privilege isolation | `UNKNOWN` | No real credential, Docker socket, launchd, privilege, or persistence surface was accessed. | `mac_task_run` remains disabled. |
+| Process-tree ownership | `PARTIAL` | The default profile omits `process-fork`; a child-launch attempt was denied, a built-in-only Bash fixture completed without descendants, and a real `/bin/sleep` fixture was cancelled through the runner with detached process-group termination. The runner now refuses `owned_group` even when an external proof is supplied. | `setsid`, timeout/crash/restart cleanup, and a real task Job lease remain untested. |
+| Credential/Docker/persistence/privilege isolation | `PARTIAL` | The real smoke confirmed the current user's Keychains directory and an existing `/var/run/docker.sock` were not readable, without opening either surface. | Credential contents, Docker protocol behavior, launchd, persistence, and privilege isolation remain unproven; `mac_task_run` remains disabled. |
 
 ## Decision
 
@@ -75,3 +78,10 @@ external host-evidence gate; the default `FailClosedTaskRunner` and Broker
 capability state remain unchanged. MOP-086, MOP-043, and MOP-045 stay blocked
 pending hostile credential/process/persistence/cleanup evidence or a stronger
 isolation design.
+
+The focused real-Mac smoke was rerun from `08a2913` with
+`MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js`:
+7/7 tests passed, including the owned-group refusal guard and the existing
+environment, filesystem, network, child-launch, and active-cancellation
+fixtures. The host evidence remains partial and does not select deprecated
+`sandbox-exec` for production.
