@@ -9,6 +9,7 @@
   "scripts": {
     "build": "npm run build:native --workspace @mac-operator/broker && tsc -b",
     "clean": "tsc -b --clean",
+    "lint": "node scripts/check-style.mjs",
     "test": "npm run build && npm run build:native:fault-test --workspace @mac-operator/broker && node --test packages/*/dist/**/*.test.js",
     "typecheck": "tsc -b --pretty false",
     "verify:contracts": "npm run build && node packages/contracts/dist/verify-contracts.js"

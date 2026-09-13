@@ -49,6 +49,13 @@ substitution, target swaps, and pre-confirmation rejection. Production signed
 artifacts, unattended installer authorization, and upgrade/rollback evidence
 remain open.
 
+Latest repository-quality addendum: the current change adds `npm run lint`, a
+dependency-free checker over the tracked source/document surface for CRLF,
+trailing whitespace, missing final newlines, and non-regular tracked inputs.
+CI runs it before typecheck and test; it does not execute repository scripts or
+inspect ignored build artifacts. Local style, typecheck, contract, audit, and
+full-test checks pass; first remote CI execution remains unverified.
+
 Current committed implementation baseline: install-plan raw-readback hardening.
 
 The current install-plan readback hardening adds a raw-source observer boundary:

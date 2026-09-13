@@ -18,3 +18,17 @@ Tests record the exact source commit, dirty state, contract and policy versions,
 ## Release use
 
 `VERIFICATION.md` is the traceability matrix. A release gate remains open until each required row has a current test and evidence reference. The current runtime test suite covers the bounded Edge/Broker foundation, descriptor-backed metadata/content reads, worker bounds, and initial Request/Approval/Job Ledger behavior. Release evidence still requires clean-revision CI and authenticated approval issuance, remote, complete filesystem/secret, sandbox, mutation recovery, GUI, helper, packaging, and operational layers listed above.
+
+The local baseline is:
+
+```text
+npm run lint
+npm run typecheck
+npm test
+npm run verify:contracts
+npm audit --audit-level=high
+```
+
+`npm run lint` is a dependency-free tracked-file check for text encoding,
+line endings, trailing whitespace, final newlines, and regular-file identity;
+it does not execute repository content or inspect ignored build artifacts.

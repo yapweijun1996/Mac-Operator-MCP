@@ -1,7 +1,7 @@
 # Controlled write recovery-postcondition evidence
 
-Date: 2026-09-13  
-Host: macOS arm64 development host  
+Date: 2026-09-13
+Host: macOS arm64 development host
 Scope: local synthetic fixtures only; no production roots or user data
 
 ## Boundary exercised

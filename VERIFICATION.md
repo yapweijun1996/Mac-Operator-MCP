@@ -56,6 +56,13 @@ readback cannot fall back to the Broker status channel. The full suite passes
 431 tests (427 passed, 4 explicit opt-in skips); production installer and
 signed-release evidence remain open.
 
+Latest repository-quality addendum: `npm run lint` now checks 361 tracked
+source/document files for CRLF, trailing whitespace, final newline, and regular
+file invariants without executing repository content. The macOS CI workflow
+runs this check before typecheck and tests. Local lint, full tests, contract
+verification, dependency audit, and diff checks pass; remote CI execution is
+not yet evidenced.
+
 Latest exact-arguments readback addendum: source commit `9d90138` parses the
 bounded launchd `arguments` block and requires the exact planned Node binary
 plus JavaScript entrypoint during Broker service composition. Missing,

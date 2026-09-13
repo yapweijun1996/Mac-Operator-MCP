@@ -1,6 +1,6 @@
 # Privileged Helper Authenticated Status IPC Evidence
 
-Date: 2026-09-13  
+Date: 2026-09-13
 Implementation commits: `2240870`, `86a99ca`
 Documentation state: recorded in the repository history
 Dirty-state: source tree clean at implementation capture; docs tracked separately
