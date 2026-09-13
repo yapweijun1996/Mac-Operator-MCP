@@ -81,7 +81,7 @@ Every read, search, list, and tree operation has byte, result, depth, and time b
 
 ## Git interaction
 
-Git read tools inherit filesystem read policy. `mac_git_diff` redacts secret-like output and refuses F0 paths. `mac_git_stage` accepts explicit paths and cannot stage denied files. `mac_git_commit` commits only staged content after a staged-diff/hash precondition; it cannot push, alter remotes, or bypass filesystem policy.
+Git read tools inherit filesystem read policy. `mac_git_diff` redacts secret-like output and refuses F0 paths. The implemented Git write boundary is disabled by default: `mac_git_stage` accepts only bounded explicit literal paths in an authorized project and cannot stage denied, secret, `.git`, symlink, or target-swapped files; `mac_git_commit` commits only staged content after an optional staged-diff/hash precondition. Both mutations run as Broker-owned Jobs with approval, intent, idempotency, lease, timeout/output budgets, and postcondition readback. Commands use a fixed `/usr/bin/git` argv with hooks, fsmonitor, optional locks, signing, and network integrations disabled; push, reset, remote mutation, shell expansion, and arbitrary Git subcommands are not exposed. Unknown or failed readback never becomes success. Real-Mac temporary-repository and controlled-write release evidence remain required before enablement.
 
 ## External, removable, and network volumes
 
