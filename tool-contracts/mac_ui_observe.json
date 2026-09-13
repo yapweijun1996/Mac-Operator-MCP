@@ -95,6 +95,14 @@
             "maxLength": 256,
             "pattern": "^[A-Za-z0-9._:/-]+$"
           },
+          "window_title": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 512
+          },
+          "focused": {
+            "type": "boolean"
+          },
           "nodes": {
             "type": "array",
             "minItems": 0,
@@ -146,6 +154,7 @@
         "required": [
           "app_id",
           "window_id",
+          "focused",
           "nodes",
           "truncated"
         ]

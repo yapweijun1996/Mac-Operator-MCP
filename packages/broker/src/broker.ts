@@ -40,6 +40,7 @@ import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionR
 import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
+import { MacUiInspectorImpl, validateUiObserveRequest, type UiInspector } from "./ui-inspector.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -61,6 +62,7 @@ export interface BrokerOptions {
   dockerInspector?: DockerInspector;
   appInspector?: AppInventoryInspector;
   appControlInspector?: AppControlInspector;
+  uiInspector?: UiInspector;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
 }
@@ -85,6 +87,7 @@ export class Broker {
   private readonly dockerInspector: DockerInspector;
   private readonly appInspector: AppInventoryInspector;
   private readonly appControlInspector: AppControlInspector;
+  private readonly uiInspector: UiInspector;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
   private readonly jobLeaseOwnerId: string;
@@ -106,6 +109,7 @@ export class Broker {
     this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl();
     this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector);
+    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
@@ -646,6 +650,46 @@ export class Broker {
             includeInstalled: execution.appList.includeInstalled,
             warningCount: inventory.warnings.length,
             truncated: inventory.truncated
+          }
+        };
+      }
+      case "mac_ui_observe": {
+        if (!execution.uiObserve) throw new BrokerError("EXECUTION_FAILED", "Accessibility observation execution plan is unavailable");
+        const observed = await this.uiInspector.observe(
+          execution.uiObserve.appId,
+          execution.uiObserve.windowHint,
+          execution.uiObserve.maxNodes,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        this.ensureActiveAuthority(request, execution.target);
+        const data = {
+          app_id: observed.appId,
+          window_id: observed.windowId,
+          ...(observed.windowTitle !== undefined ? { window_title: observed.windowTitle } : {}),
+          focused: observed.focused,
+          nodes: observed.nodes.map((node) => ({
+            element_ref: node.elementRef,
+            role: node.role,
+            ...(node.label !== undefined ? { label: node.label } : {}),
+            enabled: node.enabled,
+            focused: node.focused,
+            secure: node.secure
+          })),
+          truncated: observed.truncated
+        };
+        return {
+          data,
+          verification: { required: false, status: "not_required", strategy: "accessibility_snapshot_validation" },
+          warnings: [...observed.warnings],
+          truncated: observed.truncated,
+          auditTarget: `app_window:${observed.windowId}`,
+          auditEvidence: {
+            appId: observed.appId,
+            windowId: observed.windowId,
+            focused: observed.focused,
+            nodeCount: observed.nodes.length,
+            warningCount: observed.warnings.length,
+            truncated: observed.truncated
           }
         };
       }
@@ -2145,6 +2189,22 @@ export class Broker {
         appList: { runningOnly: runningOnly as boolean, includeInstalled: includeInstalled as boolean }
       };
     }
+    if (request.tool === "mac_ui_observe") {
+      assertExactArguments(request.arguments, ["app_id", "window_hint", "max_nodes"]);
+      const appId = request.arguments.app_id;
+      const windowHint = request.arguments.window_hint;
+      const maxNodes = request.arguments.max_nodes ?? 200;
+      validateUiObserveRequest(appId, windowHint, maxNodes as number);
+      return {
+        target: { kind: "app_window", reference: `window:${appId}` },
+        auditTarget: `app_window:window:${appId}`,
+        uiObserve: {
+          appId,
+          ...(windowHint !== undefined ? { windowHint: windowHint as string } : {}),
+          maxNodes: maxNodes as number
+        }
+      };
+    }
     if (request.tool === "mac_find_files") {
       assertExactArguments(request.arguments, ["roots", "query", "max_results"]);
       validateFindArguments(request.arguments);
@@ -2817,6 +2877,11 @@ interface ExecutionPlan {
   appList?: {
     runningOnly: boolean;
     includeInstalled: boolean;
+  };
+  uiObserve?: {
+    appId: string;
+    windowHint?: string;
+    maxNodes: number;
   };
   appOpen?: {
     appId: string;

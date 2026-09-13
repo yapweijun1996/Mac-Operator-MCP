@@ -743,6 +743,77 @@ test("mac_app_list binds app-set authority and returns sanitized metadata", asyn
   }
 });
 
+test("mac_ui_observe binds an independent app-window scope and returns redacted opaque nodes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ui-observe-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Accessible";
+  const policy = createDefaultPolicy("edge-1", true, ["mac.ui.observe"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  let observed: { appId: string; windowHint: string | undefined; maxNodes: number } | undefined;
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    uiInspector: {
+      async observe(requestedAppId, windowHint, maxNodes, control) {
+        observed = { appId: requestedAppId, windowHint, maxNodes };
+        assert.equal(control.shouldCancel(), false);
+        return {
+          appId: requestedAppId,
+          windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+          windowTitle: "Example",
+          focused: true,
+          nodes: [{
+            elementRef: "element:0123456789abcdef0123456789abcdef0123456789abcdef",
+            role: "AXWindow",
+            label: "Example",
+            enabled: true,
+            focused: true,
+            secure: false
+          }],
+          truncated: false,
+          warnings: []
+        };
+      }
+    },
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "ui-observe-request",
+      nonce: "ui-observe-nonce",
+      tool: "mac_ui_observe",
+      arguments: { app_id: appId, window_hint: "Example", max_nodes: 25 }
+    }, ["mac.ui.observe"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(observed, { appId, windowHint: "Example", maxNodes: 25 });
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        app_id: appId,
+        window_id: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+        window_title: "Example",
+        focused: true,
+        nodes: [{
+          element_ref: "element:0123456789abcdef0123456789abcdef0123456789abcdef",
+          role: "AXWindow",
+          label: "Example",
+          enabled: true,
+          focused: true,
+          secure: false
+        }],
+        truncated: false
+      });
+    }
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === "ui-observe-request").map((row) => row.target_ref), [
+      `app_window:window:${appId}`, "app_window:window:0123456789abcdef0123456789abcdef0123456789abcdef"
+    ]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_app_open binds GUI approval, app target, Job lease, and launch readback", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-open-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -881,7 +952,7 @@ test("mac_app_open never publishes success after active session revocation", asy
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 36);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 37);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

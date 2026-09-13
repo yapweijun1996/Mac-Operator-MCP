@@ -117,6 +117,10 @@
         {
           "if": { "properties": { "kind": { "const": "app_set" } }, "required": ["kind"] },
           "then": { "properties": { "reference": { "type": "string", "const": "all" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "app_window" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$" } } }
         }
       ]
     }

@@ -199,6 +199,17 @@ test("policy verification rejects tampering, unknown fields, and unimplemented e
     target: { kind: "app", reference: "com.example.Editor" }
   });
   assert.throws(() => instance.verify(signedBundle(invalidApp, keys.privateKey)), /schema validation failed/u);
+
+  const invalidAppWindow = policyDocument();
+  invalidAppWindow.principal_grants[0]!.scopes.push("mac.ui.observe");
+  invalidAppWindow.target_rules.push({
+    rule_id: "invalid-app-window-target",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.ui.observe",
+    target: { kind: "app_window", reference: "window:com.example.Editor" }
+  });
+  assert.throws(() => instance.verify(signedBundle(invalidAppWindow, keys.privateKey)), /schema validation failed/u);
 });
 
 test("policy verifier supports bounded signing-key rotation and revocation", async () => {
