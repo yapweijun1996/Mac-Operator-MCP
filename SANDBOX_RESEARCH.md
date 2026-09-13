@@ -92,3 +92,11 @@ The versioned `TaskIsolationProof` now also binds the selected
 `owned_group` profile. The runner's availability gate independently refuses
 `owned_group`; this is a fail-closed enablement safeguard, not proof that the
 owned-group variant is safe.
+
+## 2026-09-13 current-revision readback
+
+After source revision `e10f380`, the same `MOPS_REAL_SANDBOX=1 node --test
+packages/broker/dist/sandbox-profile.test.js` command passed 7/7 with no
+skips. This is a fresh readback of the existing temporary-fixture evidence;
+it does not add real credential-content, crash/restart, remount, Docker,
+persistence, privilege, or production task-runner proof.

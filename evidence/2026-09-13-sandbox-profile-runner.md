@@ -85,3 +85,13 @@ The focused real-Mac smoke was rerun from `1e3eb86` with
 environment, filesystem, network, child-launch, and active-cancellation
 fixtures. The host evidence remains partial and does not select deprecated
 `sandbox-exec` for production.
+
+## Fresh current-revision readback
+
+The same opt-in command was rerun from source revision `e10f380` after the
+authenticated Keychain-delivery change, with a clean worktree before the
+verification command. Result: 7 passed, 0 failed, 0 skipped. No Keychain item,
+LaunchAgent, real credential contents, Docker protocol, persistence mechanism,
+or privileged action was touched. This refreshes the evidence to the current
+source revision but does not change the `PARTIAL` decision or unblock
+`mac_task_run`.
