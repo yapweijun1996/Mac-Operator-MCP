@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,6 +22,35 @@ function success(stdout: string): ProcessExecutionResult {
     processGroupId: 1,
     terminationObserved: true
   };
+}
+
+async function runFixtureGit(cwd: string, args: readonly string[]): Promise<string> {
+  return await new Promise<string>((resolveResult, reject) => {
+    const child = spawn("/usr/bin/git", [...args], {
+      cwd,
+      env: {
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_OPTIONAL_LOCKS: "0"
+      },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code !== 0) {
+        reject(new Error(`fixture Git failed (${code ?? signal ?? "unknown"}): ${Buffer.concat(stderr).toString("utf8")}`));
+        return;
+      }
+      resolveResult(Buffer.concat(stdout).toString("utf8"));
+    });
+  });
 }
 
 test("Git status parser returns bounded staged, unstaged, untracked, and conflict paths", () => {
@@ -280,6 +310,41 @@ test("Git commit binds staged digest and reads back HEAD parents and a clean ind
     assert.ok(commit?.includes("--no-gpg-sign"));
     assert.equal(commit?.includes("push"), false);
     assert.equal(commit?.includes("reset"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Git write inspector performs a real bounded temporary-repository stage and commit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-real-"));
+  try {
+    const projectRoot = await realpath(directory);
+    await runFixtureGit(projectRoot, ["init", "--quiet", "--initial-branch=main"]);
+    await runFixtureGit(projectRoot, ["config", "user.name", "Mac Operator Fixture"]);
+    await runFixtureGit(projectRoot, ["config", "user.email", "fixture@example.invalid"]);
+    const sourcePath = join(projectRoot, "main.ts");
+    await writeFile(sourcePath, "export const value = 1;\n", { mode: 0o600 });
+    await runFixtureGit(projectRoot, ["add", "--", "main.ts"]);
+    await runFixtureGit(projectRoot, ["commit", "--quiet", "--no-verify", "--no-gpg-sign", "-m", "fixture initial"]);
+    const initialHead = (await runFixtureGit(projectRoot, ["rev-parse", "HEAD"])).trim();
+    await writeFile(sourcePath, "export const value = 2;\n", { mode: 0o600 });
+
+    const inspector = new GitWriteInspectorImpl();
+    const control = { timeoutMs: 5_000, shouldCancel: () => false };
+    const staged = await inspector.stage(projectRoot, ["main.ts"], control);
+    assert.deepEqual(staged.stagedPaths, ["main.ts"]);
+    assert.deepEqual(staged.skippedPaths, []);
+    assert.equal(staged.indexChanged, true);
+    assert.match(staged.stagedDiffSha256, /^[a-f0-9]{64}$/u);
+
+    const committed = await inspector.commit(projectRoot, "fixture governed commit", staged.stagedDiffSha256, control);
+    assert.match(committed.commitId, /^[a-f0-9]{40}$/u);
+    assert.deepEqual(committed.parentIds, [initialHead]);
+    assert.equal(committed.precondition.expectedSha256, staged.stagedDiffSha256);
+    assert.equal(committed.precondition.actualSha256, staged.stagedDiffSha256);
+    assert.equal(committed.precondition.matched, true);
+    assert.equal(committed.workingTreeState, "clean");
+    assert.equal((await runFixtureGit(projectRoot, ["status", "--porcelain"])).trim(), "");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
