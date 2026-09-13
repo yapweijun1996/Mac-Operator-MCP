@@ -11,6 +11,11 @@ export interface FilesystemExecutionControl {
   shouldCancel: () => boolean;
 }
 
+export interface WorkerFilesystemExecutorOptions {
+  /** Controlled host-test worker only; production uses the fixed worker below. */
+  workerUrl?: URL;
+}
+
 export interface FilesystemExecutor {
   stat(plan: FilesystemPathPlan, followSymlink: boolean, control: FilesystemExecutionControl): Promise<FilesystemWorkerResult>;
   read(
@@ -89,9 +94,10 @@ export interface FilesystemExecutor {
 export class WorkerFilesystemExecutor implements FilesystemExecutor {
   private readonly executor: BoundedWorkerExecutor<FilesystemWorkerCommand, FilesystemWorkerResult>;
 
-  constructor(maxConcurrent = 4) {
+  constructor(maxConcurrent = 4, options: WorkerFilesystemExecutorOptions = {}) {
+    const workerUrl = options.workerUrl ?? new URL("./filesystem-worker.js", import.meta.url);
     this.executor = new BoundedWorkerExecutor(
-      (command) => new Worker(new URL("./filesystem-worker.js", import.meta.url), {
+      (command) => new Worker(workerUrl, {
         workerData: command,
         argv: [],
         execArgv: [],

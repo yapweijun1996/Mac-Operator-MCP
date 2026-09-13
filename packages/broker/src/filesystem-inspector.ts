@@ -210,7 +210,7 @@ interface NativeStorageVolume extends SafeStorageVolume {
   rootPath: string;
 }
 
-interface NativeFilesystemAdapter {
+export interface FilesystemNativeAdapter {
   statPathWithinRoot(rootPath: string, targetPath: string, followSymlink: boolean): unknown;
   statStorageVolumeWithinRoot(rootPath: string): unknown;
   listDirectoryWithinRoot(
@@ -289,9 +289,14 @@ const PROJECT_SKIP_DIRECTORIES = new Set([
 ]);
 export class FilesystemInspector {
   private readonly roots: readonly FilesystemRootPolicy[];
-  private readonly native: NativeFilesystemAdapter;
+  private readonly native: FilesystemNativeAdapter;
 
-  constructor(roots: readonly FilesystemRootPolicy[]) {
+  /**
+   * The adapter override is reserved for controlled host tests. Production
+   * callers omit it so the protected, artifact-validated native adapter is
+   * loaded by default.
+   */
+  constructor(roots: readonly FilesystemRootPolicy[], nativeAdapter?: FilesystemNativeAdapter) {
     const rootIds = new Set<string>();
     this.roots = roots.map((root) => {
       if (!ROOT_ID_PATTERN.test(root.rootId) || rootIds.has(root.rootId)) {
@@ -305,7 +310,7 @@ export class FilesystemInspector {
       return { ...root, denyRelativePaths };
     });
     try {
-      this.native = loadNativePeerAdapter() as unknown as NativeFilesystemAdapter;
+      this.native = nativeAdapter ?? loadNativePeerAdapter() as unknown as FilesystemNativeAdapter;
     } catch {
       throw new Error("Filesystem native adapter is unavailable");
     }
