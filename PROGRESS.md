@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest real Broker network addendum: an opt-in Darwin integration sends a
+signed `mac_task_run` request through a profile-owned loopback TCP allowlist.
+The Broker fixes `/usr/bin/curl`, URL, empty environment, and no extra args;
+the experimental sandbox reaches only the selected local fixture and returns
+verified readback. Focused Broker tests pass 72/72, and the full
+`MOPS_REAL_SANDBOX=1 npm test` suite passes 448/449 with one explicit
+host-boundary/opt-in skip. Evidence:
+`evidence/2026-09-14-real-broker-task-network.md`.
+
 Latest task-volume identity addendum: the experimental task runner now reads
 each authorized filesystem root's native volume identity before launch and
 after completion. A changed canonical root or volume ID fails closed with

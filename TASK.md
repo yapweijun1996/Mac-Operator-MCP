@@ -4,6 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Real Broker network addendum: an opt-in Darwin integration verifies a signed
+task can reach only its profile-owned loopback TCP destination and return
+verified readback. Evidence:
+`evidence/2026-09-14-real-broker-task-network.md`.
+
 Task-volume identity addendum: the experimental runner double-reads and
 rechecks native volume identity for every authorized task root, failing closed
 on a changed root or volume before publishing a result. Evidence:
@@ -251,7 +256,7 @@ non-cooperating-process lock evidence remain open.
 
 ## P4 — L2 developer operations
 
-- `MOP-040` — `IN_PROGRESS` — Implemented governed Git status, diff, log, and branch metadata through exact project-root authorization, fixed `/usr/bin/git` commands, repository integration rejection, literal path/revision validation, bounded outputs, secret redaction, identity readback, and schema/conformance tests. Git log now preserves complete records from a supervisor-confirmed bounded prefix while rejecting unverified termination. A disabled-by-default controlled Git write prototype now adds explicit-path staging and local commit through Broker-owned Jobs, approval binding, fixed no-hook/no-network commands, staged-diff/HEAD/index/status readback, and fail-closed unknown-outcome handling. Network operations remain excluded; real-Mac repository evidence and write-gate closure remain open.
+- `MOP-040` — `IN_PROGRESS` — Implemented governed Git status, diff, log, and branch metadata through exact project-root authorization, fixed `/usr/bin/git` commands, repository integration rejection, literal path/revision validation, bounded outputs, secret redaction, identity readback, and schema/conformance tests. Git log now preserves complete records from a supervisor-confirmed bounded prefix while rejecting unverified termination. A disabled-by-default controlled Git write prototype now adds explicit-path staging and local commit through Broker-owned Jobs, approval binding, fixed no-hook/no-network commands, staged-diff/HEAD/index/status readback, and fail-closed unknown-outcome handling. A real opt-in Broker task integration now exercises a profile-owned loopback TCP allowlist through the sandbox runner; external destinations and broader network release evidence remain open. Network operations remain excluded; real-Mac repository evidence and write-gate closure remain open.
 - `MOP-041` — `IN_PROGRESS` — Implemented bounded `mac_package_inspect` with independent `mac.package.read` scope, exact project-root authorization, descriptor-backed manifest/lock identity checks, npm/pnpm/yarn/pip/uv/poetry/Brewfile parsing, protected-content denial, cancellation/timeout checks, and no package-manager script execution. Outdated registry reads remain disabled until an allowlisted registry profile and network-scope binding are released.
 - `MOP-042` — `IN_PROGRESS` — Implemented fixed local-only Docker status, object inspection, and bounded container logs through a Broker-owned adapter with exact `mac.docker.read` targets, a canonical Docker Desktop executable allowlist, fixed arguments, bounded parsing, environment/mount/log redaction, cancellation, and no raw socket proxy. A real Mac daemon readback observed local Docker version `29.1.3` without listing containers/images; object/log compatibility, storage readback, and independent raw-socket negative tests remain.
 - `MOP-043` — `BLOCKED` — Implemented the named-profile validation boundary and Broker-owned `mac_task_run` admission/Job lifecycle; versioned profiles now explicitly declare `credentialPolicy: none`, and an opt-in Darwin integration proves signed-request admission, single-use approval, Job linkage, experimental sandbox dispatch, and verified readback, but production execution remains disabled. `blocked_by: MOP-086`; `unblock_condition: per-tool functional schemas remain complete and sandbox/credential-isolation evidence passes`; `expected_evidence: hostile task-profile PoC, resource-bound tests, and L2 release-gate evidence (VT-SBX-01, VT-SBX-02)`.

@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest real Broker network addendum: an opt-in Darwin integration exercises a
+profile-owned loopback TCP allowlist through the signed Broker task path. The
+fixed curl executable, URL, empty environment, and arguments return verified
+local readback. Focused Broker tests pass 72/72; the real-sandbox suite passes
+448/449 with one explicit host-boundary/opt-in skip. Evidence:
+`evidence/2026-09-14-real-broker-task-network.md`.
+
 Latest task-volume identity addendum: the experimental task runner captures
 native volume identity twice for every authorized filesystem root before launch
 and rechecks it after completion. Root or volume changes fail closed before result

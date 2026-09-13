@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 import { canonicalJson, sha256, signRequest, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
@@ -1758,6 +1760,105 @@ test("real macOS Broker task path preserves sandbox, approval, and Job readback"
   } finally {
     await broker.close();
     store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real macOS Broker task path enforces a profile-owned network allowlist", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-network-"));
+  const root = await realpath(directory);
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("broker-network-readback");
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") throw new Error("Network fixture did not expose a numeric port");
+  const port = (address as AddressInfo).port;
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.curl"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([{
+      schemaVersion: "0.1",
+      profile: "tests.curl",
+      executable: "/usr/bin/curl",
+      fixedArgs: ["--silent", "--show-error", "--connect-timeout", "1", `http://localhost:${port}`],
+      allowedCwdRoots: [root],
+      allowedArgumentPattern: "^$",
+      maxArguments: 0,
+      environment: {},
+      filesystemRoots: [root],
+      networkPolicy: "allowlist",
+      networkAllowlist: [`tcp://localhost:${port}`],
+      credentialPolicy: "none",
+      processTreePolicy: "single_process",
+      sandboxProfile: "deny-default-v0.1",
+      timeoutMs: 2_000,
+      outputCapBytes: 1_024,
+      verificationStrategy: "exit_status_and_declared_task_verification",
+      enabled: true
+    }]),
+    taskRunner: new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      isolationProof: { ...testTaskIsolationProof(), evidenceRef: "evidence://real-broker-task-network" }
+    }),
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.curl", cwd: root, args: [] };
+  const request = unsigned({
+    requestId: "task-real-network",
+    nonce: "task-real-network-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-real-network",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.curl",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (result.ok) {
+      assert.equal((result.data as { stdout: string }).stdout, "broker-network-readback");
+      assert.equal(result.verification.status, "verified");
+    }
+    const jobId = store.requestRecord("task-real-network")?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "completed");
+  } finally {
+    await broker.close();
+    store.close();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await rm(directory, { recursive: true, force: true });
   }
 });
