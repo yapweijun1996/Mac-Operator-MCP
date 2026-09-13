@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `b7ea5fb`.
+Current committed implementation baseline: `0bcd893`.
+
+The latest secret-zone/redaction addendum is `0bcd893`: Broker content policy
+now denies full `.docker` state, GitHub CLI state, browser application data,
+and containerized macOS Mail/Messages/Safari paths, while evidence redaction
+handles `/private/var/root`, paths containing spaces, Bearer/Basic credentials,
+and JWT-shaped values. Focused policy tests pass 4/4; the full suite passes 362
+tests (360 passed, 2 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 362/362. No credential/private-data
+content was opened and no capability was enabled. Evidence:
+`evidence/2026-09-13-secret-zone-redaction.md`.
 
 The latest L0/L1 host-readback addendum is `b7ea5fb`: a macOS-only,
 read-only test now observes bounded system facts, interface state without
