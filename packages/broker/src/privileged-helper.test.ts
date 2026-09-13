@@ -16,6 +16,7 @@ import {
   authenticatePrivilegedHelperCommand,
   authenticatePrivilegedHelperResponse,
   authenticatePrivilegedHelperStatusResponse,
+  executePrivilegedHelperCommand,
   readPrivilegedHelperStatus,
   signPrivilegedHelperCommand,
   signPrivilegedHelperStatusRequest,
@@ -189,6 +190,23 @@ test("privileged helper IPC authenticates the peer and command, rejects replay, 
       assert.equal(verified.result.resultClass, "SUCCEEDED");
       assert.equal(verified.result.verification.status, "verified");
     }
+
+    const clientCommand = command(8);
+    const clientResponse = await executePrivilegedHelperCommand(signPrivilegedHelperCommand(clientCommand, key), {
+      socketPath,
+      authenticationKey: key,
+      now: () => NOW
+    });
+    assert.equal(clientResponse.ok, true);
+    if (clientResponse.ok) assert.equal(clientResponse.result.resultClass, "SUCCEEDED");
+    const clientReplay = await executePrivilegedHelperCommand(signPrivilegedHelperCommand(clientCommand, key), {
+      socketPath,
+      authenticationKey: key,
+      now: () => NOW
+    });
+    assert.equal(clientReplay.ok, false);
+    if (!clientReplay.ok) assert.equal(clientReplay.resultClass, "REPLAY_DENIED");
+
     assert.throws(
       () => authenticatePrivilegedHelperResponse(response, { ...first, targetRef: "service:system/com.example.other" }, key),
       (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "AUTH_INVALID"

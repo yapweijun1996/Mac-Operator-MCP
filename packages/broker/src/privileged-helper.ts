@@ -853,6 +853,72 @@ export async function readPrivilegedHelperStatus(options: PrivilegedHelperStatus
   }
 }
 
+export interface PrivilegedHelperCommandClientOptions {
+  socketPath: string;
+  authenticationKey: Buffer;
+  now?: () => number;
+  timeoutMs?: number;
+}
+
+/**
+ * Sends one already-signed Broker command to the helper. This client cannot
+ * create authority: the command factory remains the only place that binds
+ * approval, Job, target, policy, and kill-switch identity before signing.
+ */
+export async function executePrivilegedHelperCommand(
+  signedCommand: SignedPrivilegedHelperCommand,
+  options: PrivilegedHelperCommandClientOptions
+): Promise<PrivilegedHelperResponse> {
+  if (options === null || typeof options !== "object" || !canonicalStatusPath(options.socketPath) ||
+      !Buffer.isBuffer(options.authenticationKey) || options.authenticationKey.byteLength < 32) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command client options are invalid");
+  }
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_COMMAND_AGE_MS) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command timeout is invalid");
+  }
+  const now = options.now ?? Date.now;
+  const nowMs = now();
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper command clock is invalid");
+  }
+  const key = Buffer.from(options.authenticationKey);
+  let command: UnsignedPrivilegedHelperCommand;
+  try {
+    command = authenticatePrivilegedHelperCommand(signedCommand, key, nowMs);
+  } catch (error) {
+    key.fill(0);
+    throw error;
+  }
+  const serialized = `${JSON.stringify(signedCommand)}\n`;
+  if (Buffer.byteLength(serialized, "utf8") > MAX_COMMAND_BYTES) {
+    key.fill(0);
+    throw new BrokerError("OUTPUT_LIMIT", "Privileged helper command exceeded the byte limit");
+  }
+  let before: SocketPathIdentity;
+  try {
+    before = await captureSocketPathIdentity(options.socketPath);
+  } catch {
+    key.fill(0);
+    throw new BrokerError("TARGET_NOT_FOUND", "Privileged helper command socket is unavailable");
+  }
+  try {
+    const response = await exchangeHelperSocket(options.socketPath, serialized, timeoutMs);
+    let after: SocketPathIdentity;
+    try {
+      after = await captureSocketPathIdentity(options.socketPath);
+    } catch {
+      throw new BrokerError("CONFLICT", "Privileged helper command socket disappeared during execution", true);
+    }
+    if (before.device !== after.device || before.inode !== after.inode) {
+      throw new BrokerError("CONFLICT", "Privileged helper command socket identity changed during execution", true);
+    }
+    return authenticatePrivilegedHelperResponse(response, command, key);
+  } finally {
+    key.fill(0);
+  }
+}
+
 export function authenticatePrivilegedHelperCommand(
   raw: unknown,
   authenticationKey: Buffer,
@@ -1049,6 +1115,46 @@ function writeStatusResponse(socket: Socket, response: PrivilegedHelperStatusRes
     if (Buffer.byteLength(serialized, "utf8") <= MAX_RESPONSE_BYTES) socket.end(serialized);
     else socket.destroy();
   }
+}
+
+async function exchangeHelperSocket(socketPath: string, serialized: string, timeoutMs: number): Promise<unknown> {
+  return new Promise<unknown>((resolvePromise, reject) => {
+    const socket = connect(socketPath);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.setTimeout(timeoutMs, () => fail(new BrokerError("TIMEOUT", "Privileged helper command timed out", true)));
+    socket.once("error", (error) => fail(new BrokerError("UNKNOWN_OUTCOME", "Privileged helper command transport failed", true)));
+    socket.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      total += chunk.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        fail(new BrokerError("OUTPUT_LIMIT", "Privileged helper command response exceeded the byte limit"));
+        return;
+      }
+      chunks.push(chunk);
+      const combined = Buffer.concat(chunks);
+      const newline = combined.indexOf(0x0a);
+      if (newline === -1) return;
+      settled = true;
+      socket.destroy();
+      try {
+        resolvePromise(JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown);
+      } catch {
+        reject(new BrokerError("EXECUTION_FAILED", "Privileged helper command response is not valid JSON"));
+      }
+    });
+    socket.on("close", () => {
+      if (!settled) fail(new BrokerError("UNKNOWN_OUTCOME", "Privileged helper command channel closed without a response", true));
+    });
+    socket.once("connect", () => socket.write(serialized));
+  });
 }
 
 function fallbackStatusRequest(): UnsignedPrivilegedHelperStatusRequest {
