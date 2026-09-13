@@ -182,7 +182,7 @@ test("process supervisor terminates a tracked detached descendant", async (t) =>
       "import os,time; pid=os.fork();\nif pid==0:\n os.setsid(); print(os.getpid(), flush=True); time.sleep(5)\nelse:\n time.sleep(1)"
     ],
     cwd: CWD,
-    timeoutMs: 30,
+    timeoutMs: 200,
     outputCapBytes: 1_024
   });
   assert.equal(result.state, "timed_out");
