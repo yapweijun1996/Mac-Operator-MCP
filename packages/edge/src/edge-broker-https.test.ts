@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { Client, StreamableHTTPClientTransport, type FetchLike } from "@modelcontextprotocol/client";
+import type { PrincipalContext } from "@mac-operator/contracts";
 import { BrokerIpcServer, BrokerStore, Broker, createDefaultPolicy, EdgeKeyring, MacOsPeerCredentialVerifier } from "@mac-operator/broker";
 import { AuthenticatedIpcBrokerGateway, BrokerIpcClient, EdgeRequestFactory, createHttpsMcpEdge } from "./index.js";
 import { ToolContractRegistry } from "./contract-registry.js";
@@ -55,9 +56,23 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
       return () => `e2e-${++sequence}`;
     })()
   });
+  const replayPrincipal: PrincipalContext = {
+    principalId: "principal-1",
+    sessionId: "session-1",
+    issuer: "test-issuer",
+    audience: "mac-operator-broker",
+    scopes: ["mac.control.read"],
+    issuedAtMs: now - 1_000,
+    expiresAtMs: now + 300_000,
+    edgeId: "edge-1"
+  };
+  const brokerClient = new BrokerIpcClient(
+    socketPath,
+    (request, response) => requestFactory.verifyResponse(request, response)
+  );
   const gateway = new AuthenticatedIpcBrokerGateway(
     requestFactory,
-    new BrokerIpcClient(socketPath, (request, response) => requestFactory.verifyResponse(request, response))
+    brokerClient
   );
   const issuer = new URL("https://issuer.example.test");
   const resourceServerUrl = new URL("https://edge.example.test/mcp");
@@ -132,6 +147,11 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
     assert.equal(payload.tool, "mac_health");
     assert.equal(payload.result_class, "SUCCEEDED");
     assert.equal(JSON.stringify(store.auditRows()).includes(accessToken), false);
+    const replayRequest = requestFactory.create("mac_health", {}, replayPrincipal);
+    assert.equal((await brokerClient.call(replayRequest)).ok, true);
+    const replayed = await brokerClient.call(replayRequest);
+    assert.equal(replayed.ok, false);
+    if (!replayed.ok) assert.equal(replayed.result_class, "REPLAY_DENIED");
   } finally {
     await client.close().catch(() => undefined);
     await transport?.close().catch(() => undefined);

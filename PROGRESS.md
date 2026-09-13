@@ -6,7 +6,18 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `eb9ee6a`.
+Current committed implementation baseline: `37388f9`.
+
+The latest local layered Edge/Broker addendum is `37388f9`: a real RS256
+JWT-authenticated MCP client now reaches the Broker through the signed,
+peer-checked local UDS, discovers only the scope- and policy-enabled
+`mac_capabilities`/`mac_health` tools, and receives a verified `mac_health`
+success response. The full suite passes 350 tests (348 passed, 2 opt-in
+real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes 350/350
+on the current host. This remains temporary local evidence; no
+installed service, public endpoint, mutation, or production credential was
+used. Evidence:
+`evidence/2026-09-13-edge-broker-https-e2e.md`.
 
 The latest helper package execution addendum is `eb9ee6a`: the host-only
 executor now consumes the fixed lifecycle plan, defaults to the bounded

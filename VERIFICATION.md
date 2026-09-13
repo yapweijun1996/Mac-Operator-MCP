@@ -15,7 +15,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 |---|---|---|---|---|---|---|
 | VT-CON-01 | 44 canonical contract envelopes are schema-complete | T-019, T-020, T-021 | MOP-005, MOP-084, MOP-085 | Exactly 44 files; envelope JSON Schema validation; unique names and KB IDs; catalog parity; non-null audit class and postcondition object; valid delivery wave; required policy/budget fields; no excluded tools | Documentation | PASS |
 | VT-CON-02 | Per-tool functional input/output schemas are complete | T-019, T-021 | MOP-084 | Every contract has bounded `input_schema` and `output_schema`, functional schema compilation, forbidden-field checks, and catalog parity; runtime compatibility remains a separate gate | Documentation | PASS |
-| VT-AUTH-01 | Broker final authority | T-001, T-003 | MOP-011, MOP-013 | Forged scope/principal integration tests | Local/Remote | OPEN — exact scope/host target, signed Edge/key metadata, protected owner-only Authority Control key source with digest/revocation/activation binding, startup assembly with separate native-peer Authority channel, key rotation/revocation, macOS UID/GID/PID and optional PID/start-time peer denial, caller-filtered discovery and bearer isolation pass; installed caller-identity packaging, native code identity, and real remote issuer chain remain |
+| VT-AUTH-01 | Broker final authority | T-001, T-003 | MOP-011, MOP-013 | Forged scope/principal integration tests | Local/Remote | OPEN — a real RS256-authenticated MCP client now reaches `mac_health` through signed, peer-checked local IPC and Broker-owned capability discovery; exact scope/host target, signed Edge/key metadata, protected owner-only Authority Control key source with digest/revocation/activation binding, startup assembly with separate native-peer Authority channel, key rotation/revocation, macOS UID/GID/PID and optional PID/start-time peer denial, caller-filtered discovery and bearer isolation pass; separate packaged processes, installed caller-identity packaging, native code identity, and real remote issuer chain remain |
 | VT-AUTH-02 | Replay rejection | T-002 | MOP-012 | Duplicate nonce, stale timestamp, altered payload, restart tests | Local/Remote | OPEN — atomic nonce/request admission, local duplicate/restart and authenticated-denial reservation cases pass; corruption/retention/remote evidence remains |
 | VT-AUTH-03 | Compromised Edge cannot expand target | T-003 | MOP-013 | Broker policy negative matrix | Local | OPEN — exact host and signed filesystem-root authorization, deny/default-deny, and Broker-owned path-to-root mapping pass; app/resource normalizers remain |
 | VT-FS-01 | F0-F5 and precedence | T-004 | MOP-018, MOP-036 | Traversal, symlink, mount, deny-inside-allow real-Mac tests | L0/L1 | OPEN — descriptor metadata/read/hash/list/tree traversal, symlink escape, same-volume/local-volume containment, independent root enablement, protected-entry filtering, deny-after-resolution, single-link inode, and post-operation stability cases pass; remount identity, Unicode/case, broader special-file and configurable secret matrix remain |
@@ -51,6 +51,15 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 - Release gate: exact revision has no unresolved P0/P1 or High/Critical threat in affected boundaries.
 
 ## Current evidence
+
+Latest local Edge/Broker layered addendum: source commit `37388f9` adds a
+real RS256-authenticated MCP client test that completes pinned `2026-07-28`
+HTTPS discovery, receives Broker-filtered `mac_capabilities`, and calls
+`mac_health` through the signed, peer-checked local UDS. The full suite passes
+350 tests (348 passed, 2 opt-in real-sandbox tests skipped), and the opt-in
+real-host suite passes 350/350; no installed service, public endpoint,
+mutation, or production credential was used.
+Evidence: `evidence/2026-09-13-edge-broker-https-e2e.md`.
 
 Latest privileged-helper key addendum: source commit `d91d406` adds a dedicated
 owner-only helper key configuration and `helper_key` revocation path. The
