@@ -92,8 +92,11 @@ export class SandboxExecTaskRunner implements TaskRunner {
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
       allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? []
     });
+    // The current sandbox evidence covers only the no-fork single-process
+    // profile. Keep the owned-group variant unavailable until a separate
+    // process-tree ownership and escape-resistance proof is accepted.
     this.available = options.enabled === true && options.hostEvidenceAccepted === true &&
-      proof !== null && process.platform === "darwin";
+      proof?.processTreePolicy === "single_process" && process.platform === "darwin";
   }
 
   async run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult> {

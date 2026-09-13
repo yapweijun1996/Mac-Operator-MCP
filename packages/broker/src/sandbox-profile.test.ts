@@ -106,6 +106,19 @@ test("SandboxExecTaskRunner stays unavailable without explicit host evidence and
   );
 });
 
+test("SandboxExecTaskRunner refuses the unevidenced owned-group policy", async () => {
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: { ...proof(), processTreePolicy: "owned_group" }
+  });
+  assert.equal(runner.available, false);
+  await assert.rejects(
+    runner.run({} as ResolvedTaskProfile, { timeoutMs: 1_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+});
+
 test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervisor", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-runner-"));
   const root = await realpath(directory);
