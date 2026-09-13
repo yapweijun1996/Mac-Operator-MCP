@@ -6,7 +6,17 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `0bcd893`.
+Current committed implementation baseline: `a742fbc`.
+
+The latest filesystem canonicalization addendum is `a742fbc`: a temporary
+adversarial fixture proves that lexical containment rejects case-altered root
+aliases, while metadata search matches decomposed Unicode queries against
+composed filenames using the existing NFKC/lowercase key and verifies the
+native canonical return path. Focused filesystem tests pass 26/26; the full
+suite passes 363 tests (361 passed, 2 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 363/363. No protected content, service,
+policy, or capability state was changed. Evidence:
+`evidence/2026-09-13-filesystem-canonicalization.md`.
 
 The latest secret-zone/redaction addendum is `0bcd893`: Broker content policy
 now denies full `.docker` state, GitHub CLI state, browser application data,
@@ -640,7 +650,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 309 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 361 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
@@ -678,7 +688,7 @@ Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Run
 - Child-process sandbox technology on the target macOS version.
 - Installed startup wiring, native caller/process identity packaging, Keychain distribution, general schema-version framework, crash-window recovery, and rollback runbook.
 - Audit backend, integrity, retention, and read-only outage behavior.
-- Production filesystem allow roots, operator-configurable secret classifications, Unicode/case rules, and removable-volume identities.
+- Production filesystem allow roots, operator-configurable secret classifications, removable-volume identities, and cross-volume Unicode/case policy remain open; the bounded lexical case-alias and NFKC search behavior is covered by the latest adversarial fixture.
 - macOS packaging, signing, launch, update, and rollback strategy.
 - Runtime compatibility fixtures and host conformance for unimplemented tools.
 - KB-MCP writeback review for the resolved contract and progress changes.

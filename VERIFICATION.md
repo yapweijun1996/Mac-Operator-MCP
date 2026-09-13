@@ -18,7 +18,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 | VT-AUTH-01 | Broker final authority | T-001, T-003 | MOP-011, MOP-013 | Forged scope/principal integration tests | Local/Remote | OPEN — a real RS256-authenticated MCP client now reaches `mac_health` through signed, peer-checked local IPC and Broker-owned capability discovery; separately spawned Broker and Edge package-process fixtures now complete a signed request/response over native UDS under a captured PID/start-time identity and verify the Broker response proof; the fixed Broker service entrypoint restores exact persisted signed Policy/Edge-key authority before native listener construction; exact scope/host target, signed Edge/key metadata, protected owner-only Authority Control key source with digest/revocation/activation binding, startup assembly with separate native-peer Authority channel, key rotation/revocation, macOS UID/GID/PID and optional PID/start-time peer denial, caller-filtered discovery and bearer isolation pass; installed launchd process identity, native code identity, and real remote issuer chain remain |
 | VT-AUTH-02 | Replay rejection | T-002 | MOP-012 | Duplicate nonce, stale timestamp, altered payload, restart tests | Local/Remote | OPEN — atomic nonce/request admission, local duplicate/restart and authenticated-denial reservation cases pass; corruption/retention/remote evidence remains |
 | VT-AUTH-03 | Compromised Edge cannot expand target | T-003 | MOP-013 | Broker policy negative matrix | Local | OPEN — exact host and signed filesystem-root authorization, deny/default-deny, and Broker-owned path-to-root mapping pass; app/resource normalizers remain |
-| VT-FS-01 | F0-F5 and precedence | T-004 | MOP-018, MOP-036 | Traversal, symlink, mount, deny-inside-allow real-Mac tests | L0/L1 | OPEN — descriptor metadata/read/hash/list/tree traversal, symlink escape, same-volume/local-volume containment, independent root enablement, protected-entry filtering, deny-after-resolution, single-link inode, and post-operation stability cases pass; remount identity, Unicode/case, broader special-file and configurable secret matrix remain |
+| VT-FS-01 | F0-F5 and precedence | T-004 | MOP-018, MOP-036 | Traversal, symlink, mount, deny-inside-allow real-Mac tests | L0/L1 | OPEN — descriptor metadata/read/hash/list/tree traversal, symlink escape, same-volume/local-volume containment, independent root enablement, protected-entry filtering, deny-after-resolution, single-link inode, post-operation stability, lexical case-alias rejection, and NFKC-normalized Unicode search identity cases pass; remount identity, cross-volume normalization policy, broader special-file and configurable secret matrix remain |
 | VT-FS-02 | Target identity survives race | T-005 | MOP-018, MOP-036 | Symlink swap and create-target race harness | L0/L1 | OPEN — 2,000-iteration metadata final-symlink swap, 2,000-iteration content intermediate-symlink swap, 500-iteration create-only concurrent create/symlink replacement, hash post-authorization mutation rejection, bounded directory-list pagination/tree depth filtering, and descriptor readback pass; directory create/rename race and remount race evidence remain |
 | VT-SEC-01 | No secret output | T-006 | MOP-037 | Result/error/audit secret corpus | L0/L1 | OPEN — representative private-key, cloud/GitHub/OpenAI/Slack token, Bearer/Basic/JWT, and credential-assignment signatures are denied before result construction; protected `.docker`, GitHub CLI, browser, containerized Apple-data, and `/private/var/root` paths are covered, including paths with spaces. Split ranges, binary encodings, broader corpus, and false-positive analysis remain |
 | VT-SEC-02 | F1 requires dedicated opt-in | T-007 | MOP-037 | Mail/browser/photo/private-data denial tests | L0/L1 | OPEN — mandatory path rules deny representative Mail, Messages, Safari, Chrome profile, Photos, Keychain, SSH, GPG, and cloud credential zones, including canonical alias checks before read; purpose-built opt-in adapters and complete corpus remain |
@@ -51,6 +51,18 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 - Release gate: exact revision has no unresolved P0/P1 or High/Critical threat in affected boundaries.
 
 ## Current evidence
+
+Latest filesystem canonicalization addendum: source commit `a742fbc` adds a
+temporary adversarial fixture for lexical case-alias rejection and decomposed
+Unicode search against a composed filename. The match is checked against the
+native canonical path, including macOS `/private` path canonicalization where
+applicable. Focused filesystem tests pass 26/26; the full suite passes 363
+tests (361 passed, 2 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 363/363. Typecheck, 44-contract
+validation, dependency audit, and diff checks pass. Remount identity,
+cross-volume normalization policy, special-file/resource-exhaustion coverage,
+and release evidence remain open. Evidence:
+`evidence/2026-09-13-filesystem-canonicalization.md`.
 
 Latest secret-zone/redaction addendum: source commit `0bcd893` expands the
 Broker deny list to full `.docker` state, GitHub CLI state, browser application
