@@ -11,14 +11,17 @@ import { EdgeKeyring } from "./edge-keyring.js";
 import {
   captureLaunchdEdgeProcessIdentity,
   createMacOsNativeBrokerRuntimeForLaunchdEdge,
+  createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndAuthority,
   createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig,
   NativeRuntimeStartupError,
   parseLaunchdEdgeProcessReadback
 } from "./native-runtime-startup.js";
 import { BrokerStore } from "./persistence.js";
+import { capturePeerProcessIdentity } from "./peer-credentials.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
 import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials.js";
 import { EdgeAuthenticationKeyManager, writeEdgeAuthenticationKeyConfig, type EdgeAuthenticationKeyConfig } from "./edge-keyring-config.js";
+import { AuthorityControlKeyManager, writeAuthorityControlKeyConfig, type AuthorityControlKeyConfig } from "./authority-control-keyring.js";
 
 test("launchd Edge identity capture binds a running per-user service to native process identity", async () => {
   const uid = process.getuid?.();
@@ -221,6 +224,70 @@ test("launchd Edge startup refuses an unactivated key config before launchctl re
     );
     assert.equal(launchctlCalled, false);
   } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("launchd startup assembles the protected Authority Control channel separately", async () => {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-startup-authority-"));
+  const store = new BrokerStore(join(root, "broker.sqlite"));
+  const now = Date.now();
+  const edgeKeyPath = join(root, "edge.key");
+  const edgeConfigPath = join(root, "edge-keys.json");
+  const authorityKeyPath = join(root, "authority.key");
+  const authorityConfigPath = join(root, "authority-keys.json");
+  const serviceId = `gui/${uid}/com.mac-operator.edge`;
+  let authorityManager: AuthorityControlKeyManager | undefined;
+  let runtime: Awaited<ReturnType<typeof createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndAuthority>>["runtime"] | undefined;
+  try {
+    await provisionAuthenticationKey(edgeKeyPath);
+    const edgeKey = await loadAuthenticationKey(edgeKeyPath);
+    const edgeConfig: EdgeAuthenticationKeyConfig = {
+      schemaVersion: "0.1", revision: 1, keys: [{
+        edgeId: "edge-1", keyId: "edge-key-1", keySource: "file", path: edgeKeyPath,
+        keyDigest: sha256(edgeKey), notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+      }]
+    };
+    await writeEdgeAuthenticationKeyConfig(edgeConfigPath, edgeConfig);
+    await new EdgeAuthenticationKeyManager(edgeConfigPath, store, () => now).activate();
+
+    const authorityDigest = (await provisionAuthenticationKey(authorityKeyPath)).digest;
+    const authorityConfig: AuthorityControlKeyConfig = {
+      schemaVersion: "0.1", revision: 1, keys: [{
+        keyId: "authority-key-1", keySource: "file", path: authorityKeyPath,
+        keyDigest: authorityDigest, notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+      }]
+    };
+    await writeAuthorityControlKeyConfig(authorityConfigPath, authorityConfig);
+    authorityManager = new AuthorityControlKeyManager(authorityConfigPath, store, () => now);
+    await authorityManager.activate();
+
+    const broker = await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndAuthority({
+      socketPath: join(root, "broker.sock"),
+      edgeId: "edge-1",
+      edgeServiceId: serviceId,
+      expectedEdgeUid: uid,
+      edgeKeyConfigPath: edgeConfigPath,
+      edgeKeyStore: store,
+      authorityKeyConfigPath: authorityConfigPath,
+      authoritySocketPath: join(root, "authority.sock"),
+      authorityPeerPolicy: { expectedUid: uid, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) },
+      commandExecutor: new FakeLaunchdExecutor(success(`${serviceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`)),
+      createBroker: (edgeAuthenticationKeys) => new Broker({
+        store, policy: createDefaultPolicy("edge-1"), edgeAuthenticationKeys, now: () => now
+      })
+    });
+    runtime = broker.runtime;
+    assert.equal(broker.runtime.state, "stopped");
+    await broker.runtime.start();
+    assert.equal(broker.runtime.state, "running");
+    await broker.runtime.close();
+  } finally {
+    await runtime?.close().catch(() => undefined);
+    authorityManager?.dispose();
     store.close();
     await rm(root, { recursive: true, force: true });
   }

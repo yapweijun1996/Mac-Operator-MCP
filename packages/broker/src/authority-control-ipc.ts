@@ -71,6 +71,7 @@ export interface AuthorityControlIpcServerOptions {
 export class AuthorityControlIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
+  private readonly authenticationKey: Buffer;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
@@ -82,6 +83,7 @@ export class AuthorityControlIpcServer {
       throw new Error("Authority control IPC requires a peer verifier or native peer policy");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Authority control IPC key must contain at least 32 bytes");
+    this.authenticationKey = Buffer.from(options.authenticationKey);
     this.maxRequestBytes = options.maxRequestBytes ?? 64 * 1024;
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
@@ -124,7 +126,8 @@ export class AuthorityControlIpcServer {
     const nativeTransport = this.nativeTransport;
     this.nativeTransport = undefined;
     if (nativeTransport) {
-      await nativeTransport.close();
+      try { await nativeTransport.close(); }
+      finally { this.authenticationKey.fill(0); }
       return;
     }
     const server = this.server;
@@ -137,6 +140,8 @@ export class AuthorityControlIpcServer {
     }
     try { await unlink(this.options.socketPath); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      this.authenticationKey.fill(0);
     }
   }
 
@@ -161,7 +166,7 @@ export class AuthorityControlIpcServer {
       if (total > this.maxRequestBytes) {
         handled = true;
         socket.pause();
-        writeAuthorityControlResponse(socket, failure("OUTPUT_LIMIT", "Authority control IPC request exceeded the byte limit", false, undefined, this.options.authenticationKey));
+        writeAuthorityControlResponse(socket, failure("OUTPUT_LIMIT", "Authority control IPC request exceeded the byte limit", false, undefined, this.authenticationKey));
         return;
       }
       chunks.push(chunk);
@@ -176,7 +181,7 @@ export class AuthorityControlIpcServer {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
         command = authenticateAuthorityControlCommand(
           raw,
-          this.options.authenticationKey,
+          this.authenticationKey,
           this.now(),
           this.maxRequestAgeMs,
           this.allowedClockSkewMs
@@ -187,12 +192,12 @@ export class AuthorityControlIpcServer {
           acceptedAtMs: this.now(),
           expiresAtMs: command.nonceExpiresAtMs
         });
-        response = signAuthorityControlResponse(this.execute(command), command, this.options.authenticationKey);
+        response = signAuthorityControlResponse(this.execute(command), command, this.authenticationKey);
       } catch (error) {
         const brokerError = error instanceof BrokerError
           ? error
           : new BrokerError("PRECONDITION_FAILED", "Authority control command is invalid");
-        response = failure(brokerError.errorClass, brokerError.message, brokerError.retryable, command, this.options.authenticationKey);
+        response = failure(brokerError.errorClass, brokerError.message, brokerError.retryable, command, this.authenticationKey);
       }
       writeAuthorityControlResponse(socket, response);
     });

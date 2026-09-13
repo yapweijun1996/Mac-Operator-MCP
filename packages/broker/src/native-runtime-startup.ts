@@ -2,10 +2,13 @@ import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionR
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { createMacOsNativeBrokerRuntime, type MacOsNativeBrokerRuntimeOptions } from "./runtime.js";
 import { EdgeAuthenticationKeyManager } from "./edge-keyring-config.js";
+import { AuthorityControlKeyManager } from "./authority-control-keyring.js";
+import { AuthorityControlIpcServer } from "./authority-control-ipc.js";
 import { KeychainDeliveryServer } from "./keychain-delivery.js";
 import type { EdgeKeyring } from "./edge-keyring.js";
 import type { Broker } from "./broker.js";
 import type { BrokerStore } from "./persistence.js";
+import type { NativePeerPolicy } from "./native-peer-ipc-server.js";
 
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const LAUNCHCTL_TIMEOUT_MS = 5_000;
@@ -17,7 +20,8 @@ export type NativeRuntimeStartupErrorCode =
   | "EDGE_SERVICE_UNAVAILABLE"
   | "EDGE_PROCESS_NOT_RUNNING"
   | "EDGE_PROCESS_IDENTITY_UNAVAILABLE"
-  | "EDGE_KEY_CONFIG_UNAVAILABLE";
+  | "EDGE_KEY_CONFIG_UNAVAILABLE"
+  | "AUTHORITY_KEY_CONFIG_UNAVAILABLE";
 
 export class NativeRuntimeStartupError extends Error {
   readonly code: NativeRuntimeStartupErrorCode;
@@ -198,6 +202,92 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
     peerPolicy,
     operatorChannels: [...(runtimeOptions.operatorChannels ?? []), delivery]
   });
+}
+
+/**
+ * Production startup assembly for the Edge, Broker, and separate owner-only
+ * Authority Control channel. Both key configurations must already have an
+ * exact persisted activation; no MCP request can select either key or socket.
+ */
+export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndAuthority(
+  options: Omit<MacOsNativeBrokerRuntimeOptions, "peerPolicy" | "broker"> & {
+    edgeServiceId: string;
+    expectedEdgeUid: number;
+    expectedEdgeGid?: number;
+    commandExecutor?: LaunchdIdentityCommandExecutor;
+    edgeKeyConfigPath: string;
+    edgeKeyStore: BrokerStore;
+    createBroker: (edgeAuthenticationKeys: EdgeKeyring) => Broker;
+    keychainDelivery?: {
+      socketPath: string;
+      keyId: string;
+    };
+    authorityKeyConfigPath: string;
+    authoritySocketPath: string;
+    authorityPeerPolicy: NativePeerPolicy;
+  }
+): Promise<ReturnType<typeof createMacOsNativeBrokerRuntime>> {
+  const {
+    authorityKeyConfigPath,
+    authoritySocketPath,
+    authorityPeerPolicy,
+    edgeKeyStore,
+    socketPath,
+    ...baseOptions
+  } = options;
+  if (authoritySocketPath === socketPath) {
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      "Authority Control socket must be separate from the Broker IPC socket"
+    );
+  }
+  if (authorityPeerPolicy.allowedProcessIdentity === undefined) {
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      "Authority Control startup requires an explicit native peer process identity"
+    );
+  }
+  const manager = new AuthorityControlKeyManager(authorityKeyConfigPath, edgeKeyStore);
+  let loaded: Awaited<ReturnType<AuthorityControlKeyManager["restore"]>>;
+  try {
+    loaded = await manager.restore();
+  } catch (error) {
+    manager.dispose();
+    if (error instanceof NativeRuntimeStartupError) throw error;
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      "Active Authority Control key configuration could not be restored"
+    );
+  }
+  let authorityChannel: AuthorityControlIpcServer;
+  try {
+    authorityChannel = new AuthorityControlIpcServer({
+      socketPath: authoritySocketPath,
+      store: edgeKeyStore,
+      authenticationKey: loaded.key.key,
+      peerPolicy: authorityPeerPolicy
+    });
+  } catch {
+    manager.dispose();
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      "Authority Control channel could not be constructed"
+    );
+  }
+  // The server owns a defensive key copy and wipes it on close. The manager
+  // must not retain a second live copy after startup assembly succeeds.
+  manager.dispose();
+  try {
+    return await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig({
+      ...baseOptions,
+      socketPath,
+      edgeKeyStore,
+      operatorChannels: [...(baseOptions.operatorChannels ?? []), authorityChannel]
+    });
+  } catch (error) {
+    await authorityChannel.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 export function parseLaunchdEdgeProcessReadback(
