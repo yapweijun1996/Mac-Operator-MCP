@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,7 +8,7 @@ import { canonicalJson, sha256, signRequest, type Scope, type UnsignedBrokerRequ
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
-import type { FilesystemExecutor } from "./filesystem-executor.js";
+import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { FilesystemInspector } from "./filesystem-inspector.js";
 import { BrokerStore, redactEvidence } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
@@ -2636,6 +2636,81 @@ test("write completion failure leaves an atomic postcondition and an UNKNOWN Job
       observed_at: new Date(NOW).toISOString()
     });
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real filesystem worker failure leaves the Broker write Job UNKNOWN", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-worker-failure-"));
+  const path = join(directory, "worker-failure.txt");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  const argumentsValue = { path, content: "after", idempotency_key: "worker-failure", encoding: "utf8", create_only: true };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    filesystemExecutor: new WorkerFilesystemExecutor(1),
+    now: () => NOW
+  });
+  try {
+    store.issueApproval({
+      approvalId: "approval:worker-failure",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    // Authorization and plan capture still succeed, but the worker cannot
+    // create its temporary file after the parent directory becomes read-only.
+    await chmod(directory, 0o500);
+    const request = unsigned({
+      requestId: "write-worker-failure-request",
+      nonce: "write-worker-failure-nonce",
+      tool: "mac_write_file_atomic",
+      arguments: argumentsValue
+    }, ["mac.files.write", "mac.job.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "POLICY_DENIED");
+    const jobId = store.requestRecord(request.requestId)?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
+    await assert.rejects(readFile(path), /ENOENT/u);
+
+    const statusRequest = unsigned({
+      requestId: "write-worker-failure-status",
+      nonce: "write-worker-failure-status-nonce",
+      tool: "mac_job_status",
+      arguments: { job_id: jobId, tail_bytes: 128 }
+    }, ["mac.job.read"]);
+    const status = await broker.handle(signRequest(statusRequest, key));
+    assert.equal(status.ok, true, JSON.stringify(status));
+    assert.ok(status.ok);
+    assert.deepEqual((status.data as { state: string; recovery?: unknown }).recovery, {
+      postcondition: "unavailable",
+      resolution: "remains_unknown",
+      observed_at: new Date(NOW).toISOString()
+    });
+  } finally {
+    await chmod(directory, 0o700);
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
