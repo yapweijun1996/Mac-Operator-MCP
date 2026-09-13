@@ -7,7 +7,7 @@ export interface ToolPolicy {
   contractVersion: "0.1";
   requiredScopes: readonly Scope[];
   capabilityFamilies: readonly CapabilityFamily[];
-  targetType: "broker" | "policy_query" | "path" | "filesystem_roots" | "project" | "process" | "service" | "log_source" | "docker_runtime" | "docker_object" | "job" | "task_profile";
+  targetType: "broker" | "policy_query" | "path" | "filesystem_roots" | "project" | "process" | "service" | "log_source" | "app_set" | "app" | "app_window" | "ui_element" | "docker_runtime" | "docker_object" | "job" | "task_profile";
   mutation: boolean;
   approvalPolicy: "trusted_read" | "trusted_write" | "trusted_gui" | "trusted_profile" | "explicit_privileged_policy";
   outputCapBytes: number;
@@ -36,7 +36,7 @@ export interface PrincipalGrant {
   enabled: boolean;
 }
 
-export type TargetKind = "host" | "path" | "project" | "process" | "job" | "task_profile" | "app" | "app_window" | "ui_element" | "service" | "log_source" | "docker_runtime" | "docker_object" | "package" | "power";
+export type TargetKind = "host" | "path" | "project" | "process" | "job" | "task_profile" | "app_set" | "app" | "app_window" | "ui_element" | "service" | "log_source" | "docker_runtime" | "docker_object" | "package" | "power";
 
 export interface NormalizedTarget {
   kind: TargetKind;

@@ -344,6 +344,9 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
         (!isAbsolute(rule.target.reference) || resolve(rule.target.reference) !== rule.target.reference || rule.target.reference.includes("\n"))) {
       throw new Error(`Project target rule is not a canonical absolute path: ${rule.ruleId}`);
     }
+    if (rule.target.kind === "app_set" && rule.target.reference !== "all") {
+      throw new Error(`App-set target rule must use the all reference: ${rule.ruleId}`);
+    }
   }
   const base = createDefaultPolicy([...trustedEdgeIds][0] ?? "invalid-edge");
   const tools = new Map([...base.tools].map(([name, tool]) => [name, { ...tool, enabled: false }]));

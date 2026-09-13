@@ -699,10 +699,54 @@ test("capability discovery separates planned, implemented, and enabled", async (
   } finally { await context.close(); }
 });
 
+test("mac_app_list binds app-set authority and returns sanitized metadata", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-list-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  let observed: { runningOnly: boolean; includeInstalled: boolean } | undefined;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.app.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    appInspector: {
+      async list(runningOnly, includeInstalled, control) {
+        observed = { runningOnly, includeInstalled };
+        assert.equal(control.shouldCancel(), false);
+        return {
+          apps: [{ appId: "bundle:com.example.App", bundleId: "com.example.App", name: "Example", running: true, version: "1.0" }],
+          warnings: [],
+          truncated: false
+        };
+      }
+    },
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "app-list-request",
+      nonce: "app-list-nonce",
+      tool: "mac_app_list",
+      arguments: { running_only: true, include_installed: false }
+    }, ["mac.app.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.deepEqual(observed, { runningOnly: true, includeInstalled: false });
+    if (result.ok) {
+      assert.deepEqual(result.data, {
+        apps: [{ app_id: "bundle:com.example.App", bundle_id: "com.example.App", name: "Example", running: true, version: "1.0" }]
+      });
+    }
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === "app-list-request").map((row) => row.target_ref), ["app_set:all", "app_set:all"]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 34);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 35);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

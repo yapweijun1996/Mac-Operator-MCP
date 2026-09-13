@@ -34,3 +34,4 @@ export * from "./runtime.js";
 export * from "./launchd.js";
 export * from "./service-entrypoint.js";
 export * from "./macos-install-plan.js";
+export * from "./app-inspector.js";

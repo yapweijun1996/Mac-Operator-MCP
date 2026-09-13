@@ -2252,7 +2252,7 @@ function validApprovalId(value: string): boolean {
 }
 
 function validApprovalTarget(kind: string, reference: string): boolean {
-  return ["host", "path", "project", "process", "job", "task_profile", "app", "app_window", "ui_element", "service", "package", "power"]
+  return ["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "package", "power"]
     .includes(kind) && reference.startsWith(`${kind}:`) && reference.length <= 4096 && !reference.includes("\0");
 }
 

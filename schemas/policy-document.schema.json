@@ -106,7 +106,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["kind", "reference"],
       "properties": {
-        "kind": { "enum": ["host", "path", "project", "process", "job", "task_profile", "app", "app_window", "ui_element", "service", "log_source", "package", "power"] },
+        "kind": { "enum": ["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "log_source", "package", "power"] },
         "reference": { "type": "string", "minLength": 1, "maxLength": 4096 }
       }
     }

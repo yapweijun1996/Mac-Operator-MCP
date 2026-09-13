@@ -38,6 +38,7 @@ import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectReq
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRunner } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
+import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -57,6 +58,7 @@ export interface BrokerOptions {
   gitWriteInspector?: GitWriteInspector;
   packageInspector?: PackageInspector;
   dockerInspector?: DockerInspector;
+  appInspector?: AppInventoryInspector;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
 }
@@ -79,6 +81,7 @@ export class Broker {
   private readonly gitWriteInspector: GitWriteInspector;
   private readonly packageInspector: PackageInspector;
   private readonly dockerInspector: DockerInspector;
+  private readonly appInspector: AppInventoryInspector;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
   private readonly jobLeaseOwnerId: string;
@@ -98,6 +101,7 @@ export class Broker {
     this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl();
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
     this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl();
+    this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
@@ -572,6 +576,47 @@ export class Broker {
             version: "0.1.0"
           },
           verification: { required: false, status: "not_required", strategy: "capability_state_result_validation" }
+        };
+      }
+      case "mac_app_list": {
+        if (!execution.appList) throw new BrokerError("EXECUTION_FAILED", "App inventory execution plan is unavailable");
+        const inventory = await this.appInspector.list(
+          execution.appList.runningOnly,
+          execution.appList.includeInstalled,
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+        );
+        this.ensureActiveAuthority(request, execution.target);
+        const data = {
+          apps: inventory.apps.map((app) => ({
+            app_id: app.appId,
+            bundle_id: app.bundleId,
+            name: app.name,
+            running: app.running,
+            ...(app.version !== undefined ? { version: app.version } : {})
+          }))
+        };
+        return {
+          data,
+          verification: {
+            required: false,
+            status: "verified",
+            strategy: "app_inventory_result_validation",
+            evidence: {
+              summary: "App metadata was collected through a fixed Broker-owned JXA inventory adapter and validated without returning bundle paths or process arguments",
+              readback_hash: sha256(canonicalJson(data)),
+              observed_at: new Date(this.now()).toISOString()
+            }
+          },
+          warnings: [...inventory.warnings],
+          truncated: inventory.truncated,
+          auditTarget: "app_set:all",
+          auditEvidence: {
+            appCount: inventory.apps.length,
+            runningOnly: execution.appList.runningOnly,
+            includeInstalled: execution.appList.includeInstalled,
+            warningCount: inventory.warnings.length,
+            truncated: inventory.truncated
+          }
         };
       }
       case "mac_system_summary": {
@@ -1968,6 +2013,17 @@ export class Broker {
         }
       };
     }
+    if (request.tool === "mac_app_list") {
+      assertExactArguments(request.arguments, ["running_only", "include_installed"]);
+      const runningOnly = request.arguments.running_only ?? false;
+      const includeInstalled = request.arguments.include_installed ?? true;
+      validateAppListRequest(runningOnly as boolean, includeInstalled as boolean);
+      return {
+        target: { kind: "app_set", reference: "all" },
+        auditTarget: "app_set:all",
+        appList: { runningOnly: runningOnly as boolean, includeInstalled: includeInstalled as boolean }
+      };
+    }
     if (request.tool === "mac_find_files") {
       assertExactArguments(request.arguments, ["roots", "query", "max_results"]);
       validateFindArguments(request.arguments);
@@ -2352,6 +2408,10 @@ export class Broker {
       }
       throw new BrokerError("POLICY_DENIED", "No log source is authorized for this tool");
     }
+    if (tool.targetType === "app_set") {
+      authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "app_set", reference: "all" });
+      return;
+    }
     if (tool.targetType === "project") {
       for (const rule of policy.targetRules.filter((candidate) =>
         candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
@@ -2620,6 +2680,10 @@ interface ExecutionPlan {
     tail: number;
     sinceSeconds: number;
   };
+  appList?: {
+    runningOnly: boolean;
+    includeInstalled: boolean;
+  };
   taskRun?: {
     profile: string;
     cwd: string;
@@ -2768,6 +2832,14 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       throw new BrokerError("PRECONDITION_FAILED", "Service target requires service-specific planning");
     case "log_source":
       throw new BrokerError("PRECONDITION_FAILED", "Log target requires log-source-specific planning");
+    case "app_set":
+      return { kind: "app_set", reference: "all" };
+    case "app":
+      throw new BrokerError("PRECONDITION_FAILED", "App target requires app-specific planning");
+    case "app_window":
+      throw new BrokerError("PRECONDITION_FAILED", "App window target requires app-specific planning");
+    case "ui_element":
+      throw new BrokerError("PRECONDITION_FAILED", "UI element target requires app-specific planning");
     case "docker_runtime":
       throw new BrokerError("PRECONDITION_FAILED", "Docker runtime target requires Docker-specific planning");
     case "docker_object":
@@ -3077,7 +3149,7 @@ function normalizePolicyQueryTarget(value: unknown): NormalizedTarget {
   }
   const target = value as Record<string, unknown>;
   assertExactArguments(target, ["kind", "reference"]);
-  const allowedKinds = new Set<TargetKind>(["host", "path", "project", "process", "job", "task_profile", "app", "app_window", "ui_element", "service", "log_source", "package", "power"]);
+  const allowedKinds = new Set<TargetKind>(["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "log_source", "package", "power"]);
   if (
     typeof target.kind !== "string" || !allowedKinds.has(target.kind as TargetKind) ||
     typeof target.reference !== "string" || !/^[A-Za-z0-9._:/-]{1,4096}$/u.test(target.reference)

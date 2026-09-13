@@ -30,6 +30,19 @@ const tools: ToolPolicy[] = [
     enabled: true
   },
   {
+    tool: "mac_app_list",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.app.read"],
+    capabilityFamilies: ["read"],
+    targetType: "app_set",
+    mutation: false,
+    approvalPolicy: "trusted_read",
+    outputCapBytes: 262_144,
+    timeoutMs: 10_000,
+    implemented: true,
+    enabled: true
+  },
+  {
     tool: "mac_system_summary",
     contractVersion: "0.1",
     requiredScopes: ["mac.system.read"],
@@ -498,6 +511,16 @@ export function createDefaultPolicy(
         scope,
         target: { kind: "task_profile", reference: profile }
       }));
+      return;
+    }
+    if (scope === "mac.app.read") {
+      targetRules.push({
+        ruleId: `test-app-set-${index}`,
+        effect: "allow",
+        principalId: "principal-1",
+        scope,
+        target: { kind: "app_set", reference: "all" }
+      });
       return;
     }
     if (scope === "mac.process.read") {

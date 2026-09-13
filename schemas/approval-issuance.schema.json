@@ -23,7 +23,7 @@
         "requestingPrincipalId": { "type": "string", "pattern": "^[A-Za-z0-9._:@/-]{1,128}$" },
         "tool": { "type": "string", "pattern": "^mac_[a-z0-9_]{1,123}$" },
         "contractVersion": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
-        "targetKind": { "type": "string", "enum": ["host", "path", "project", "process", "job", "task_profile", "app", "app_window", "ui_element", "service", "package", "power"] },
+        "targetKind": { "type": "string", "enum": ["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "package", "power"] },
         "targetRef": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\u0000]+$" },
         "payloadDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "policyVersion": { "type": "string", "pattern": "^policy-[A-Za-z0-9._:-]{1,120}$" },
