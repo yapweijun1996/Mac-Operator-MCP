@@ -123,16 +123,15 @@ export class PrivilegedHelperKeyManager {
     options: Omit<BrokerPrivilegedHelperCommandFactoryOptions, "authenticationKey">
   ): BrokerPrivilegedHelperCommandFactory {
     const key = this.assertUsable();
-    const keyId = this.current().key.keyId;
+    const binding = this.captureBinding();
     try {
       return new BrokerPrivilegedHelperCommandFactory({
         ...options,
         authenticationKey: key,
-        keyRevocationCheck: () => this.store.isRevoked("helper_key", keyId),
+        keyRevocationCheck: () => this.store.isRevoked("helper_key", binding.keyId),
+        keyAuthorityCheck: () => this.assertBindingUsable(binding),
         authorizeCommand: (command) => {
-          if (this.store.isRevoked("helper_key", keyId)) {
-            throw new BrokerError("REVOKED", "Privileged helper key has been revoked");
-          }
+          this.assertBindingUsable(binding);
           options.authorizeCommand(command);
         }
       });
@@ -145,15 +144,14 @@ export class PrivilegedHelperKeyManager {
     options: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey">
   ): PrivilegedHelperIpcServer {
     const key = this.assertUsable();
-    const keyId = this.current().key.keyId;
+    const binding = this.captureBinding();
     try {
       return new PrivilegedHelperIpcServer({
         ...options,
         authenticationKey: key,
+        keyAuthorityCheck: () => this.assertBindingUsable(binding),
         authorizeCommand: (command) => {
-          if (this.store.isRevoked("helper_key", keyId)) {
-            throw new BrokerError("REVOKED", "Privileged helper key has been revoked");
-          }
+          this.assertBindingUsable(binding);
           options.authorizeCommand(command);
         }
       });
@@ -166,6 +164,39 @@ export class PrivilegedHelperKeyManager {
     this.activeSnapshot?.key.key.fill(0);
     this.activeSnapshot = undefined;
   }
+
+  private captureBinding(): HelperKeyBinding {
+    const snapshot = this.current();
+    return {
+      keyId: snapshot.key.keyId,
+      revision: snapshot.document.revision,
+      payloadDigest: snapshot.payloadDigest,
+      notBeforeMs: snapshot.key.notBeforeMs,
+      expiresAtMs: snapshot.key.expiresAtMs
+    };
+  }
+
+  private assertBindingUsable(binding: HelperKeyBinding): void {
+    if (this.store.isRevoked("helper_key", binding.keyId)) {
+      throw new BrokerError("REVOKED", "Privileged helper key has been revoked");
+    }
+    const active = this.store.activeHelperKeyConfigIdentity();
+    if (!active || active.revision !== binding.revision || active.payloadDigest !== binding.payloadDigest) {
+      throw new BrokerError("REVOKED", "Privileged helper key configuration is no longer active");
+    }
+    const nowMs = this.now();
+    if (!Number.isSafeInteger(nowMs) || nowMs < binding.notBeforeMs || nowMs >= binding.expiresAtMs) {
+      throw new BrokerError("AUTH_EXPIRED", "Privileged helper key is outside its validity window");
+    }
+  }
+}
+
+interface HelperKeyBinding {
+  keyId: string;
+  revision: number;
+  payloadDigest: string;
+  notBeforeMs: number;
+  expiresAtMs: number;
 }
 
 export async function loadPrivilegedHelperKeyConfig(

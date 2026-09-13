@@ -107,10 +107,14 @@ test("privileged helper IPC authenticates the peer and command, rejects replay, 
   const socketPath = join(directory, "helper.sock");
   const key = randomBytes(32);
   const store = new BrokerStore(join(directory, "broker.sqlite"));
+  let keyAvailable = true;
   const server = new PrivilegedHelperIpcServer({
     socketPath,
     authenticationKey: key,
     replayGuard: new BrokerStorePrivilegedHelperReplayGuard(store),
+    keyAuthorityCheck: () => {
+      if (!keyAvailable) throw new BrokerError("AUTH_EXPIRED", "Privileged helper key validity window ended");
+    },
     authorizeCommand: () => undefined,
     peerCredentialVerifier: { verify: () => undefined },
     adapter: new AllowlistedPrivilegedHelper({
@@ -157,6 +161,11 @@ test("privileged helper IPC authenticates the peer and command, rejects replay, 
     const wrongKey = await sendCommand(socketPath, signPrivilegedHelperCommand(command(4), randomBytes(32)));
     assert.equal(wrongKey.ok, false);
     if (!wrongKey.ok) assert.equal(wrongKey.resultClass, "AUTH_INVALID");
+
+    keyAvailable = false;
+    const expired = await sendCommand(socketPath, signPrivilegedHelperCommand(command(7), key));
+    assert.equal(expired.ok, false);
+    if (!expired.ok) assert.equal(expired.resultClass, "AUTH_EXPIRED");
   } finally {
     await server.close();
     store.close();

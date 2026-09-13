@@ -72,12 +72,21 @@ test("privileged helper key config is protected, digest-bound, and restart-resto
     store.close();
     store = new BrokerStore(databasePath);
     manager.dispose();
-    manager = new PrivilegedHelperKeyManager(configPath, store, () => NOW + 1_000);
+    let helperNow = NOW + 1_000;
+    manager = new PrivilegedHelperKeyManager(configPath, store, () => helperNow);
     assert.equal((await manager.restore()).payloadDigest, activated.payloadDigest);
     const secondDigest = (await provisionAuthenticationKey(secondKeyPath)).digest;
     await writePrivilegedHelperKeyConfig(configPath, document(secondKeyPath, secondDigest, 2));
     await manager.activate(1);
     assert.equal(manager.current().document.revision, 2);
+    const expiringFactory = manager.createCommandFactory({ store, authorizeCommand: () => undefined });
+    helperNow = NOW + 60_001;
+    assert.throws(
+      () => expiringFactory.issue({ requestId: "request:test", principalId: "principal-1", sessionId: "session-1", jobId: "job:test" }),
+      (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "AUTH_EXPIRED"
+    );
+    expiringFactory.dispose();
+    helperNow = NOW + 1_000;
     const revokedFactory = manager.createCommandFactory({ store, authorizeCommand: () => undefined });
     store.revoke("helper_key", "helper-key-2", "COMPROMISED", NOW);
     assert.throws(

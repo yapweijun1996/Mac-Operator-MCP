@@ -168,6 +168,8 @@ export interface BrokerPrivilegedHelperCommandFactoryOptions {
   authenticationKey: Buffer;
   /** Optional dynamic check used for key-specific revocation. */
   keyRevocationCheck?: () => boolean;
+  /** Optional dynamic check for key validity and active configuration identity. */
+  keyAuthorityCheck?: () => void;
   /** Required final Broker authority gate; it may include dynamic kill-switch state. */
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
   now?: () => number;
@@ -202,6 +204,7 @@ export class BrokerPrivilegedHelperCommandFactory {
 
   issue(input: PrivilegedHelperCommandIssueInput): SignedPrivilegedHelperCommand {
     const nowMs = input.nowMs ?? this.now();
+    this.options.keyAuthorityCheck?.();
     if (this.options.keyRevocationCheck?.()) {
       throw new BrokerError("REVOKED", "Privileged helper key has been revoked");
     }
@@ -362,6 +365,8 @@ export interface PrivilegedHelperIpcServerOptions {
   adapter: PrivilegedHelperAdapter;
   /** Broker-owned kill-switch/revocation check; absence is unsafe. */
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
+  /** Optional dynamic helper-key validity and active-configuration check. */
+  keyAuthorityCheck?: () => void;
   peerCredentialVerifier?: { verify(socket: Socket): unknown };
   peerPolicy?: NativePeerPolicy;
   maxRequestBytes?: number;
@@ -486,6 +491,7 @@ export class PrivilegedHelperIpcServer {
       try {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
         command = authenticatePrivilegedHelperCommand(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+        this.options.keyAuthorityCheck?.();
         this.options.replayGuard.admit(command);
         this.options.authorizeCommand(command);
         let authorityRevoked = false;
