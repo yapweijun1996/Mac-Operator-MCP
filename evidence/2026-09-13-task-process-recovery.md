@@ -1,7 +1,7 @@
 # Broker task-process restart recovery evidence
 
-- Source commit: `c42284ba59626237dcf8152f3fdae1e70e145095`
-- Working tree: clean before this evidence document was added
+- Source commit: `25065317038fc8f605a23bc8a307a40ebbc31fc5`
+- Working tree: clean before this evidence document update
 - Host: Mac mini M4, `Darwin yaps-Mac-mini.local 25.2.0`, arm64
 - Runtime: Node `v25.5.0`; macOS platform reported by Node as `darwin`
 - Captured: 2026-09-13 (Asia/Kuala_Lumpur)
@@ -13,18 +13,21 @@
 ## Implemented boundary
 
 `ProcessSupervisor` captures the Darwin root PID, detached process-group ID,
-and native start-time identity synchronously after spawn. The Broker persists
-that bounded identity in the running task Job under a lease and revision fence.
-The identity is not exposed through MCP job status or output.
+and native start-time identity synchronously after spawn, together with a
+bounded snapshot of observed descendant PID/start-time pairs. The Broker
+persists that non-secret snapshot in the running task Job under a lease and
+revision fence; later snapshots are monotonic and cannot replace the root
+identity. The metadata is not exposed through MCP job status or output.
 
 On a new `BrokerStore`, an interrupted running task becomes `UNKNOWN` and
 retains only the process identity metadata. The explicit host-startup hook
 `reconcileRestartedTaskProcesses()` selects only those restart-reconciled task
-Jobs, records redacted recovery intent, and calls the new Broker-owned recovery
-primitive. Recovery signals only when the exact PID/start-time identity is
-still alive, drains the verified process group/descendants, and records a
-completion result. Identity mismatch, observer failure, and unresolved group
-state remain non-success outcomes; the Job is never changed to `completed`.
+Jobs, records redacted recovery intent, and calls the Broker-owned recovery
+primitive. Recovery signals only when exact PID/start-time identities are
+still alive, including persisted descendants after the root has exited, drains
+the verified process group/descendants, and records a completion result.
+Identity mismatch, observer failure, and unresolved group state remain
+non-success outcomes; the Job is never changed to `completed`.
 
 ## Verification
 
@@ -37,30 +40,34 @@ state remain non-success outcomes; the Job is never changed to `completed`.
   passes on Darwin.
 - `process supervisor refuses a swapped persisted root identity` passes and
   leaves the original process for the owning supervisor to close.
+- `process supervisor recovers a persisted detached descendant after root exit`
+  passes on Darwin: a forked child calls `setsid()`, the persisted root is
+  killed, and recovery terminates the exact child identity without relying on
+  process-group membership.
 - `task process ownership metadata survives restart as UNKNOWN` passes,
   including schema migration and process-metadata readback.
-- Default `npm test` — 385 tests, 382 passed, 3 opt-in sandbox tests skipped.
-- `MOPS_REAL_SANDBOX=1 npm test` — 385 tests, 385 passed, 0 skipped.
+- Default `npm test` — 386 tests, 383 passed, 3 opt-in sandbox tests skipped.
+- `MOPS_REAL_SANDBOX=1 npm test` — 386 tests, 386 passed, 0 skipped.
 - `npm run typecheck -- --pretty false`, `npm run verify:contracts`,
   `npm audit --omit=dev --audit-level=high`, and `git diff --check` pass.
 
 ## Interpretation and limits
 
-This is real Darwin cross-BrokerStore recovery for a still-running root
-process. It does not prove that a Broker can safely recover descendants after
-the persisted root has already exited, defeat every post-snapshot `setsid`
-race, or establish sandbox filesystem/network/credential isolation. The
-task runner and `owned_group` profile remain disabled.
+This is real Darwin cross-BrokerStore recovery for a live root and for a
+persisted detached descendant after root exit. It does not prove recovery of
+descendants created after the last snapshot, defeat every post-snapshot
+`setsid` race, or establish sandbox filesystem/network/credential isolation.
+The task runner and `owned_group` profile remain disabled.
 
 Source hashes at capture:
 
 ```text
-205c3c0909f88977e119aa2833573999e060e5a8c5907a59b81293a7a7bae183  packages/broker/src/process-supervisor.ts
-d1a98a8b4cce921b0d9eb0b209b673596a1f2eeaf03e8b41c195567b98e629e6  packages/broker/src/process-supervisor.test.ts
-018e0bc66d019b1a2c28d8260e655bf2f17a137cf595e5639e4c468c90daaec9  packages/broker/src/persistence.ts
-fce18d2d745f892ba5ce702ec8c0ce354867f8ff5138c674fae0ab7c39c8e8d5  packages/broker/src/persistence.test.ts
-6968aa4f670580f09880b26cfa7b98a39647a0262b80c52978a0dd4d9f76614f  packages/broker/src/broker.ts
-fe1be778e928c4082be1b05ad67b7b0ba020eb1acd14cf0b2a90d4b8be8d7b3f  packages/broker/src/broker.test.ts
-30431982d9e4759c419061cb4c54c1b5232964e01e7a6e2c919ec12fc6bed4ff  packages/broker/src/task-runner.ts
-8f052862698bc6f0e2c028c1d125706a269fa7e83126282945cf461dfb6c3296  packages/broker/src/sandbox-profile.test.ts
+8af0345c323f020a79c900b2fb3e2a13177f961be6a5b8fa401ee7430790f7ff  packages/broker/src/process-supervisor.ts
+f92723324d73c28794103c97cb1fdc747bddee7423cadfefd3d39d6c9bef7b43  packages/broker/src/process-supervisor.test.ts
+15c9c5bfc3acac35d237a23831f4bb8713f4f00e68c7ee9929d921119ef7f55f  packages/broker/src/persistence.ts
+6c73166cd32c03d220247e83b3b52b07c55934f37469ef1a170f7bffdd8382fd  packages/broker/src/persistence.test.ts
+a0dc97ad681563f2567d9260508e769302f2f345e1829298160c01c2851416cf  packages/broker/src/broker.ts
+f67ee7d46412c01a36866a05fafc41f3b08f847f4308943c3c475a7bc7f61d85  packages/broker/src/broker.test.ts
+b264c40cb03fe3f24e10242678cbe53a23ef4729329a1da2442859b87522d600  packages/broker/src/task-runner.ts
+e105b052cf979ee8beec1e1ff281f2a8306667171262eb2d24af3a91bbb3e49a  packages/broker/src/sandbox-profile.test.ts
 ```

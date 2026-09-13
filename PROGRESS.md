@@ -6,19 +6,21 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `c42284b`.
+Current committed implementation baseline: `2506531`.
 
-The latest Broker restart-recovery addendum is `c42284b`: task Jobs now retain
-only a bounded non-secret PID/process-group/start-time identity after process
-start, and the host-startup hook `reconcileRestartedTaskProcesses()` selects
-only restart-reconciled `UNKNOWN` Jobs. A new Broker verifies the exact Darwin
-identity before terminating the process tree; PID/start-time substitution is
-rejected, missing identity remains unresolved, recovery is audited, and the
-Job never becomes success. The cross-Broker real-process fixture passes, the
-default suite passes 385 tests (382 passed, 3 opt-in sandbox tests skipped),
-and `MOPS_REAL_SANDBOX=1 npm test` passes 385/385. This proves controlled
-restart recovery for a live root process, not orphaned descendant recovery
-after the root has exited, post-snapshot `setsid` resistance, credential
+The latest Broker restart-recovery addendum is `2506531`: task Jobs now retain
+bounded non-secret PID/process-group/start-time identities for the root and
+observed descendants after process start. The host-startup hook
+`reconcileRestartedTaskProcesses()` selects only restart-reconciled `UNKNOWN`
+Jobs. A new Broker verifies exact Darwin identities before terminating the
+process tree; PID/start-time substitution is rejected, observed detached
+descendants can be recovered after root exit, missing identity remains
+unresolved, recovery is audited, and the Job never becomes success. The
+cross-Broker real-process fixture and detached-descendant fixture pass, the
+default suite passes 386 tests (383 passed, 3 opt-in sandbox tests skipped),
+and `MOPS_REAL_SANDBOX=1 npm test` passes 386/386. This proves controlled
+restart recovery for observed identities, not recovery of descendants created
+after the last snapshot, post-snapshot `setsid` resistance, credential
 isolation, or production task-runner enablement. Evidence:
 `evidence/2026-09-13-task-process-recovery.md`.
 
