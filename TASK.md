@@ -12,6 +12,13 @@ readback. The host composition layer must obtain that identity from the native
 observer; installed LaunchAgent/bootstrap and final real-service evidence remain
 open. Evidence: `evidence/2026-09-13-installed-readback-identity.md`.
 
+Verified launchd readback addendum: commit `4cb4e1a` adds
+`composeMacOsInstallReadback`, binding the bounded launchd service identity,
+running state, LaunchAgent type, PID, program, and plist path to the native
+process identity before Broker/signature validation. It remains a non-installing
+host composition boundary; real LaunchAgent bootstrap and final service evidence
+remain open. Evidence: `evidence/2026-09-13-installed-readback-identity.md`.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.

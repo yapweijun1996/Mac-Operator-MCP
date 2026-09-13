@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `6da24f6`.
+Current committed implementation baseline: `4cb4e1a`.
+
+The latest verified-launchd-readback addendum is `4cb4e1a`: the installer now
+has a composition function that binds the bounded `launchctl print` service ID,
+per-user domain, LaunchAgent type, running state, PID, program, and plist path
+to the same native PID/start-time identity before validating Broker metadata and
+code-signature readback. The composition layer never installs or bootstraps a
+service; real LaunchAgent installation and final host readback remain open.
+Evidence: `evidence/2026-09-13-installed-readback-identity.md`.
 
 The latest installer-readback addendum is `6da24f6`: post-bootstrap Broker
 readback now requires a positive launchd PID bound to the same native Darwin

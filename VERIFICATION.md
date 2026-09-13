@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest verified-launchd-readback addendum: source commit `4cb4e1a` adds
+`composeMacOsInstallReadback`, which accepts only the bounded launchd service
+readback plus native process identity, Broker metadata, and signature sources.
+It rejects substituted service IDs, domains, states, types, PIDs, programs, or
+plist paths before delegating to the complete install validator. The focused
+composition test and full 395-test suite pass. This remains a non-installing
+composition boundary; real LaunchAgent bootstrap/readback remains open.
+Evidence: `evidence/2026-09-13-installed-readback-identity.md`.
+
 Latest installer-readback addendum: source commit `6da24f6` requires every
 non-null post-bootstrap `MacOsInstallReadback` to carry a positive launchd PID
 and a matching native Darwin PID/start-time identity. Negative coverage rejects
