@@ -36,7 +36,7 @@ const base: PrivilegedHelperPackagePlanInput = {
     stderrPath: `${root}/logs/helper.err.log`
   },
   signedArtifactPath: `${root}/MacOperatorPrivilegedHelper.app`,
-  signature: { identifier: "com.mac-operator.privileged-helper", teamIdentifier: "ABCDE12345" },
+  signature: { identifier: "com.mac-operator.privileged-helper", teamIdentifier: "ABCDE12345", cdHash: "0123456789abcdef0123" },
   helperKeyConfigPath: `${root}/config/helper-keys.json`,
   helperSocketPath: `${root}/run/helper.sock`,
   brokerSocketPath: "/Users/operator/Library/Application Support/MacOperator/run/broker.sock",
@@ -94,6 +94,10 @@ test("privileged helper package plan rejects user-domain, interpreter, socket, a
   );
   assert.throws(
     () => buildPrivilegedHelperPackagePlan({ ...base, signature: { identifier: "com.attacker.helper" } }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_SIGNATURE"
+  );
+  assert.throws(
+    () => buildPrivilegedHelperPackagePlan({ ...base, signature: { identifier: base.signature.identifier, teamIdentifier: "ABCDE12345" } }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_SIGNATURE"
   );
   assert.throws(
@@ -296,7 +300,7 @@ test("privileged helper host observer wires bounded launchd and native readback 
     valid: true,
     identifier: plan.signature.identifier,
     teamIdentifier: plan.signature.teamIdentifier ?? null,
-    cdHash: null
+    cdHash: plan.signature.cdHash ?? null
   };
   const plist = {
     path: plan.plistPath,

@@ -1094,11 +1094,12 @@ function validatePeerExpectation(value: PrivilegedHelperBrokerPeerExpectation): 
 
 function normalizeSignature(value: CodeSignatureExpectation): CodeSignatureExpectation {
   if (value === null || typeof value !== "object" || typeof value.identifier !== "string" ||
-      value.identifier !== HELPER_LABEL || (value.teamIdentifier !== undefined && !/^[A-Z0-9]{5,32}$/u.test(value.teamIdentifier)) ||
-      (value.cdHash !== undefined && !/^[a-f0-9]{20,64}$/u.test(value.cdHash))) {
-    fail("INVALID_SIGNATURE", "privileged helper code signature expectation is invalid");
+      value.identifier !== HELPER_LABEL || typeof value.teamIdentifier !== "string" ||
+      !/^[A-Z0-9]{10}$/u.test(value.teamIdentifier) || typeof value.cdHash !== "string" ||
+      !/^[a-f0-9]{20,64}$/u.test(value.cdHash)) {
+    fail("INVALID_SIGNATURE", "privileged helper requires a Developer ID team identifier and CDHash");
   }
-  return { identifier: value.identifier, ...(value.teamIdentifier === undefined ? {} : { teamIdentifier: value.teamIdentifier }), ...(value.cdHash === undefined ? {} : { cdHash: value.cdHash }) };
+  return { identifier: value.identifier, teamIdentifier: value.teamIdentifier, cdHash: value.cdHash };
 }
 
 function normalizePreviousRevision(value: string | undefined, operation: PrivilegedHelperPackageOperation): string | undefined {
