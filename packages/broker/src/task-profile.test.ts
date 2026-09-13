@@ -16,6 +16,7 @@ function profile(root: string, overrides: Partial<TaskProfile> = {}): TaskProfil
     environment: { LANG: "C" },
     filesystemRoots: [root],
     networkPolicy: "none",
+    credentialPolicy: "none",
     sandboxProfile: "deny-default-v0.1",
     timeoutMs: 1_000,
     outputCapBytes: 1_024,
@@ -44,6 +45,7 @@ test("named task resolution fixes executable, environment, roots, and budgets", 
     assert.deepEqual(resolved.filesystemRoots, [canonicalRoot]);
     assert.equal(resolved.networkPolicy, "none");
     assert.deepEqual(resolved.networkAllowlist, []);
+    assert.equal(resolved.credentialPolicy, "none");
     assert.equal(resolved.processTreePolicy, "single_process");
     assert.equal(resolved.sandboxProfile, "deny-default-v0.1");
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -118,5 +120,6 @@ test("task profile documents reject secret environments, unanchored arguments, a
     assert.throws(() => new TaskProfileRegistry([profile(root, { networkPolicy: "allowlist", networkAllowlist: ["tcp://10.0.0.1:443"] })]), /allowlist is malformed/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { networkPolicy: "allowlist", networkAllowlist: [] })]), /must declare destinations/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { processTreePolicy: "unbounded" as never })]), /malformed/u);
+    assert.throws(() => new TaskProfileRegistry([profile(root, { credentialPolicy: "broker-managed" as never })]), /malformed/u);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

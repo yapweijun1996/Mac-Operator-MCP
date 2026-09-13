@@ -40,6 +40,7 @@ function resolvedProfile(root: string, overrides: Partial<ResolvedTaskProfile> =
     filesystemRoots: [root],
     networkPolicy: "none",
     networkAllowlist: [],
+    credentialPolicy: "none",
     processTreePolicy: "single_process",
     sandboxProfile: "deny-default-v0.1",
     verificationStrategy: "exit_status_and_declared_task_verification",
@@ -91,6 +92,10 @@ test("sandbox profile renderer rejects broad roots, cwd escapes, and network all
     );
     assert.throws(
       () => renderTaskSandboxProfile(resolvedProfile(root, { networkPolicy: "unexpected" as never })),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.throws(
+      () => renderTaskSandboxProfile(resolvedProfile(root, { credentialPolicy: "broker-managed" as never })),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
     );
   } finally {

@@ -32,11 +32,15 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
       !Array.isArray(profile.filesystemRoots) || profile.filesystemRoots.length < 1 ||
       profile.filesystemRoots.some((root) => !isSafeFilesystemRoot(root)) ||
       !Array.isArray(profile.networkAllowlist) ||
+      (profile.credentialPolicy !== undefined && profile.credentialPolicy !== "none") ||
       (profile.networkPolicy !== "none" && profile.networkPolicy !== "allowlist")) {
     throw new BrokerError("POLICY_DENIED", "Task sandbox profile is not supported by the Broker boundary");
   }
   if (profile.networkPolicy === "none" && profile.networkAllowlist.length !== 0) {
     throw new BrokerError("NETWORK_DENIED", "No-network task cannot declare destinations");
+  }
+  if ((profile.credentialPolicy ?? "none") !== "none") {
+    throw new BrokerError("POLICY_DENIED", "Task credential policy is not supported by the Broker boundary");
   }
   const networkDestinations = profile.networkPolicy === "allowlist"
     ? profile.networkAllowlist.map(parseTaskNetworkDestination)

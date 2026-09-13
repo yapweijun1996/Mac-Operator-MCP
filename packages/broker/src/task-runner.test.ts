@@ -102,4 +102,8 @@ test("task runner isolation proof requires every boundary and the selected sandb
     () => requireTaskIsolationProof({ ...proof, processTreePolicy: "owned_group" }, profile),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
+  assert.throws(
+    () => requireTaskIsolationProof(proof, { ...profile, credentialPolicy: "broker-managed" as never }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
 });

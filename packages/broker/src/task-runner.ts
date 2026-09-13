@@ -192,6 +192,9 @@ export function requireTaskIsolationProof(
       validated.processTreePolicy !== (profile.processTreePolicy ?? "single_process")) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof does not match the selected profile");
   }
+  if ((profile.credentialPolicy ?? "none") !== "none") {
+    throw new BrokerError("POLICY_DENIED", "Task credential policy is not supported by the Broker boundary");
+  }
   return validated;
 }
 

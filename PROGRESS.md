@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest task credential-policy addendum: versioned TaskProfiles now carry an
+explicit `credentialPolicy`, and the only supported value is `none`. Registry
+resolution, sandbox profile rendering, and isolation-proof admission all fail
+closed on any future credential-bearing value, while process environments stay
+explicit and allowlisted. Focused task-profile/runner/sandbox tests pass 17/17;
+the current real-sandbox suite remains 445/446 with one explicit skip. This is
+an enforceable Broker policy boundary, not proof of real credential-store
+contents or production sandbox selection. Evidence:
+`evidence/2026-09-14-task-credential-policy.md`.
+
 Latest real process-kill-switch addendum: an opt-in Darwin Broker integration
 flips the durable `process` kill switch while a real sandboxed task is active.
 The control callback observes the switch, the ProcessSupervisor drains the

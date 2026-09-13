@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest task credential-policy addendum: TaskProfiles now carry an explicit
+`credentialPolicy`; only `none` is accepted. Registry resolution, sandbox
+rendering, and isolation-proof admission reject any unsupported credential
+value before execution. Focused task-profile/runner/sandbox tests pass 17/17;
+the real-sandbox suite remains 445/446 with one explicit skip. This proves a
+Broker policy boundary, not real credential-store isolation or production
+sandbox selection. Evidence:
+`evidence/2026-09-14-task-credential-policy.md`.
+
 Latest real process-kill-switch addendum: an opt-in Darwin integration flips
 the durable `process` kill switch during a running sandboxed task. The
 ProcessSupervisor drains the detached group, Broker returns `CANCELLED`, and
