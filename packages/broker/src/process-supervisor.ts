@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
   isProcessIdentityAlive(pid: number, startTimeMicros: number): unknown;
+  getProcessIdentity(pid: number): unknown;
 }
 
 interface ProcessTreeIdentity {
@@ -174,16 +175,28 @@ export class ProcessSupervisor {
           overflow: accepted.byteLength < chunk.byteLength
         };
       };
+      const groupState = (): "alive" | "none" | "unknown" => {
+        const rootState = processTree?.rootState() ?? "alive";
+        if (rootState === "unknown") return "unknown";
+        if (!processGroupAlive(processId)) return "none";
+        return processTree?.rootIdentityUnavailable ? "unknown" : "alive";
+      };
       const terminate = (reason: "cancelled" | "timed_out" | "output_limit" | "orphaned") => {
         if (terminationReason === null) terminationReason = reason;
         if (terminationRequested) return;
         terminationRequested = true;
         processTree?.sample();
-        signalProcessGroup(child, processId, "SIGTERM");
+        const rootState = processTree?.rootState() ?? "alive";
+        if (rootState === "unknown") {
+          finishUnknown();
+          return;
+        }
+        if (rootState === "alive") signalProcessGroup(child, processId, "SIGTERM");
         processTree?.signal("SIGTERM");
         groupDrainDeadlineMs ??= Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
         terminationTimer = setTimeout(() => {
-          signalProcessGroup(child, processId, "SIGKILL");
+          const currentRootState = processTree?.rootState() ?? "alive";
+          if (currentRootState === "alive") signalProcessGroup(child, processId, "SIGKILL");
           processTree?.signal("SIGKILL");
           waitForGroupDrain();
         }, this.terminationGraceMs);
@@ -192,12 +205,14 @@ export class ProcessSupervisor {
       const waitForGroupDrain = () => {
         if (settled) return;
         processTree?.sample();
+        const rootState = processTree?.rootState() ?? "alive";
         const descendantState = processTree?.aliveState() ?? "none";
-        if (processTree?.observationFailed || descendantState === "unknown") {
+        const currentGroupState = groupState();
+        if (rootState === "unknown" || processTree?.observationFailed || descendantState === "unknown" || currentGroupState === "unknown") {
           finishUnknown();
           return;
         }
-        if (!processGroupAlive(processId) && descendantState === "none") {
+        if (currentGroupState === "none" && descendantState === "none") {
           finish(childExitCode, childExitSignal);
           return;
         }
@@ -243,14 +258,17 @@ export class ProcessSupervisor {
         if (settled) return;
         settled = true;
         clearTimers();
-        const groupAlive = processGroupAlive(processId);
+        const rootState = processTree?.rootState() ?? "alive";
+        const currentGroupState = groupState();
         const descendantState = processTree?.aliveState() ?? "none";
-        if (!groupAlive && descendantState === "none") release();
+        if (rootState !== "unknown" && currentGroupState === "none" && descendantState === "none") release();
         else {
           orphanReaperTimer = setInterval(() => {
             processTree?.sample();
+            const currentRootState = processTree?.rootState() ?? "alive";
+            const currentGroupState = groupState();
             const currentDescendantState = processTree?.aliveState() ?? "none";
-            if (!processGroupAlive(processId) && currentDescendantState === "none") {
+            if (currentRootState !== "unknown" && currentGroupState === "none" && currentDescendantState === "none") {
               if (orphanReaperTimer) clearInterval(orphanReaperTimer);
               orphanReaperTimer = undefined;
               release();
@@ -295,10 +313,12 @@ export class ProcessSupervisor {
         childExitSignal = signal;
         if (settled) return;
         processTree?.sample();
+        const rootState = processTree?.rootState() ?? "alive";
         const descendantState = processTree?.aliveState() ?? "none";
-        if (processTree?.observationFailed || descendantState === "unknown") {
+        const currentGroupState = groupState();
+        if (rootState === "unknown" || processTree?.observationFailed || descendantState === "unknown" || currentGroupState === "unknown") {
           finishUnknown();
-        } else if (processGroupAlive(processId) || descendantState === "alive") {
+        } else if (currentGroupState === "alive" || descendantState === "alive") {
           if (terminationReason === null) {
             groupDrainDeadlineMs ??= Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
             terminate("orphaned");
@@ -415,7 +435,8 @@ function createProcessTreeTracker(processId: number): ProcessTreeTracker | undef
   if (process.platform !== "darwin") return undefined;
   try {
     const native = require("./peer_credentials.node") as Partial<NativeProcessTreeAdapter>;
-    if (typeof native.listDescendantProcesses !== "function" || typeof native.isProcessIdentityAlive !== "function") return undefined;
+    if (typeof native.listDescendantProcesses !== "function" || typeof native.isProcessIdentityAlive !== "function" ||
+        typeof native.getProcessIdentity !== "function") return undefined;
     return new ProcessTreeTracker(native as NativeProcessTreeAdapter, processId);
   } catch {
     return undefined;
@@ -425,11 +446,38 @@ function createProcessTreeTracker(processId: number): ProcessTreeTracker | undef
 class ProcessTreeTracker {
   private readonly descendants = new Map<number, ProcessTreeIdentity>();
   private failed = false;
+  private readonly rootIdentity: ProcessTreeIdentity | undefined;
 
-  constructor(private readonly native: NativeProcessTreeAdapter, private readonly processId: number) {}
+  constructor(private readonly native: NativeProcessTreeAdapter, private readonly processId: number) {
+    try {
+      const identity = parseProcessIdentity(native.getProcessIdentity(processId));
+      if (identity.pid === processId) this.rootIdentity = identity;
+    } catch {
+      // A very short-lived process can exit before its root identity is read.
+      // Descendant tracking remains useful, but group signalling must stay disabled.
+      this.rootIdentity = undefined;
+    }
+  }
 
   get observationFailed(): boolean {
     return this.failed;
+  }
+
+  get rootIdentityUnavailable(): boolean {
+    return this.rootIdentity === undefined;
+  }
+
+  rootState(): "alive" | "dead" | "unknown" {
+    if (this.failed) return "unknown";
+    if (this.rootIdentity === undefined) return "dead";
+    try {
+      const alive = this.native.isProcessIdentityAlive(this.rootIdentity.pid, this.rootIdentity.startTimeMicros);
+      if (alive === true) return "alive";
+      if (alive === false) return "dead";
+      return "unknown";
+    } catch {
+      return "unknown";
+    }
   }
 
   sample(): void {
@@ -450,7 +498,9 @@ class ProcessTreeTracker {
     if (this.failed) return "unknown";
     for (const identity of this.descendants.values()) {
       try {
-        if (this.native.isProcessIdentityAlive(identity.pid, identity.startTimeMicros) !== false) return "alive";
+        const alive = this.native.isProcessIdentityAlive(identity.pid, identity.startTimeMicros);
+        if (alive === true) return "alive";
+        if (alive !== false) return "unknown";
       } catch {
         return "unknown";
       }
@@ -470,6 +520,20 @@ class ProcessTreeTracker {
   }
 }
 
+function parseProcessIdentity(value: unknown): ProcessTreeIdentity {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed process identity");
+  const identity = value as Record<string, unknown>;
+  const pid = identity.pid;
+  const parentPid = identity.parentPid;
+  const startTimeMicros = identity.startTimeMicros;
+  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999 ||
+      typeof parentPid !== "number" || !Number.isSafeInteger(parentPid) || parentPid < 1 || parentPid > 99_999_999 ||
+      typeof startTimeMicros !== "number" || !Number.isSafeInteger(startTimeMicros) || startTimeMicros < 1) {
+    throw new Error("Malformed process identity");
+  }
+  return { pid, startTimeMicros };
+}
+
 function parseProcessTreeSnapshot(value: unknown): { processes: ProcessTreeIdentity[]; truncated: boolean } {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed process tree snapshot");
   const record = value as Record<string, unknown>;
@@ -479,17 +543,10 @@ function parseProcessTreeSnapshot(value: unknown): { processes: ProcessTreeIdent
   const processes: ProcessTreeIdentity[] = [];
   const seen = new Set<number>();
   for (const value of record.processes) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed process identity");
-    const identity = value as Record<string, unknown>;
-    const pid = identity.pid;
-    const parentPid = identity.parentPid;
-    const startTimeMicros = identity.startTimeMicros;
-    if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999 ||
-        typeof parentPid !== "number" || !Number.isSafeInteger(parentPid) || parentPid < 1 || parentPid > 99_999_999 ||
-        typeof startTimeMicros !== "number" || !Number.isSafeInteger(startTimeMicros) || startTimeMicros < 1 ||
-        seen.has(pid)) throw new Error("Malformed process identity");
-    seen.add(pid);
-    processes.push({ pid, startTimeMicros });
+    const identity = parseProcessIdentity(value);
+    if (seen.has(identity.pid)) throw new Error("Malformed process identity");
+    seen.add(identity.pid);
+    processes.push(identity);
   }
   return { processes, truncated: record.truncated };
 }

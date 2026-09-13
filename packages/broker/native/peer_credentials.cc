@@ -1750,6 +1750,31 @@ napi_value IsProcessIdentityAlive(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value GetProcessIdentity(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "getProcessIdentity requires pid");
+    return nullptr;
+  }
+  int32_t requested_pid = 0;
+  if (napi_get_value_int32(env, args[0], &requested_pid) != napi_ok || requested_pid < 1 || requested_pid > 99'999'999) {
+    napi_throw_type_error(env, nullptr, "Process pid must be between 1 and 99999999");
+    return nullptr;
+  }
+  ProcessIdentityRecord identity{};
+  if (!ReadProcessIdentity(static_cast<pid_t>(requested_pid), &identity)) {
+    ThrowSystemError(env, "Process identity could not be read");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  SetNumber(env, result, "pid", static_cast<double>(identity.pid));
+  SetNumber(env, result, "parentPid", static_cast<double>(identity.parent_pid));
+  SetNumber(env, result, "startTimeMicros", static_cast<double>(identity.start_time_micros));
+  return result;
+}
+
 napi_value ListProcesses(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value args[2];
@@ -1878,6 +1903,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "listDescendantProcesses", function);
   napi_create_function(env, "isProcessIdentityAlive", NAPI_AUTO_LENGTH, IsProcessIdentityAlive, nullptr, &function);
   napi_set_named_property(env, exports, "isProcessIdentityAlive", function);
+  napi_create_function(env, "getProcessIdentity", NAPI_AUTO_LENGTH, GetProcessIdentity, nullptr, &function);
+  napi_set_named_property(env, exports, "getProcessIdentity", function);
   return exports;
 }
 
