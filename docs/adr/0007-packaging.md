@@ -96,3 +96,16 @@ Broker binds the exact Edge UID/GID and PID/start-time identity. These are
 reviewable packaging and temporary process-boundary evidence only; persistent
 LaunchAgent installation, Developer ID/notarization, remote issuer
 interoperability, and production key distribution remain open.
+
+The packaged-service smoke adds temporary host evidence for the same boundary:
+with `MOPS_REAL_INSTALL=1`, it copies the compiled packages and dependencies
+into an isolated owner-only root, bootstraps the real Edge LaunchAgent before
+Broker, verifies launchd argument vectors, TLS listener readiness, native and
+status socket identity/mode, HMAC Broker status, PID identity, and empty
+capabilities, then bootouts and verifies both labels are absent. It refuses to
+run when either fixed label is already loaded. Workspace dependency symlinks
+are deliberately excluded from this evidence because they are not an
+installed-package boundary. Persistent installation, production signing,
+remote issuer interoperability, Keychain ACLs, and privileged helper
+installation remain open. Evidence:
+`evidence/2026-09-14-packaged-edge-broker-launchd.md`.

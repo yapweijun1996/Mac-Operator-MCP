@@ -34,6 +34,17 @@ environment, user, or privileged launchd fields. This is static packaging
 evidence only; persistent install, signing provenance, and remote deployment
 remain open.
 
+Latest packaged-service host addendum: the Darwin-only opt-in smoke starts
+the compiled Edge and Broker entrypoints as separate real user LaunchAgents,
+checks exact launchd arguments, an Edge TLS handshake, owner-only native and
+status sockets, HMAC status readback with no enabled capabilities, native PID
+identity, and bounded post-bootout absence. It copies dependencies into the
+temporary package so workspace symlinks are not mistaken for installed
+packaging. `MOPS_REAL_INSTALL=1` is required and existing fixed labels cause a
+skip. Persistent installation, Developer ID/notarization, remote OAuth/JWKS,
+Keychain ACLs, and helper installation remain open. Evidence:
+`evidence/2026-09-14-packaged-edge-broker-launchd.md`.
+
 Latest exact-arguments readback addendum: source commit `9d90138` parses the
 bounded launchd `arguments` block and requires the exact planned Node binary
 plus JavaScript entrypoint during Broker service composition. Missing,

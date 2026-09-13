@@ -60,4 +60,11 @@ they do not establish persistent Edge/Broker LaunchAgent installation,
 Developer ID provenance, remote issuer interoperability, or production key
 distribution.
 
+The opt-in packaged-service smoke (`MOPS_REAL_INSTALL=1 node --test
+packages/broker/dist/packaged-service-smoke.test.js`) starts both compiled
+entrypoints as real per-user LaunchAgents, reads back launchd and Broker
+status, and verifies bounded bootout/absence. It refuses to run when either
+fixed label is already loaded and copies dependencies into a temporary package
+root so workspace symlinks are not part of the evidence.
+
 The test suite includes a real macOS smoke check that creates a synthetic app bundle in a temporary directory, signs it ad hoc with `/usr/bin/codesign`, and verifies it through the plan's fixed `--verify --strict --deep` command. This proves command wiring and basic host compatibility only; it is not production Developer ID signing, notarization, certificate/key protection, or installed-service evidence.

@@ -26,6 +26,17 @@ keeps both agents free of shell, environment, user, and privileged launchd
 fields. This is a packaging artifact and static boundary check; it does not
 claim persistent installation, signing provenance, or remote deployment.
 
+Latest packaged-service host addendum: the opt-in Darwin smoke now copies the
+compiled Edge/Broker packages and runtime dependencies into an isolated
+temporary root, bootstraps the real Edge LaunchAgent before Broker, verifies
+the exact launchd argument vectors, Edge TLS listener, native/status socket
+ownership and mode, HMAC Broker status, native PID identity, and empty
+capability readback, then bootouts both labels and verifies absence. The smoke
+is gated by `MOPS_REAL_INSTALL=1` and refuses to run when either fixed label is
+already loaded. This is temporary host evidence, not production signing or
+persistent installation. Evidence:
+`evidence/2026-09-14-packaged-edge-broker-launchd.md`.
+
 Current committed implementation baseline: install-plan raw-readback hardening.
 
 The current install-plan readback hardening adds a raw-source observer boundary:

@@ -15,6 +15,9 @@ Status: Draft plan
    `createMacOsNativeBrokerRuntime` bound to the Edge launchd identity. Add
    signed/package-managed launch, including the separate policy-signer
    operator socket and protected operator key, only after ADR-0007 is accepted.
+   On a disposable host, the opt-in packaged-service smoke may be run with
+   `MOPS_REAL_INSTALL=1` to verify the Edge-first/Broker-second LaunchAgent
+   order and post-bootout absence; it is not an installer or release approval.
 6. Add the privileged helper only after lower-boundary gates pass.
 
 ## Required deployment inputs
