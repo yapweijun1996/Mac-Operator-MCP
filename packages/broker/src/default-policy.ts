@@ -472,6 +472,19 @@ const tools: ToolPolicy[] = [
     enabled: false
   },
   {
+    tool: "mac_apply_patch",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.files.write", "mac.project.write"],
+    capabilityFamilies: ["write"],
+    targetType: "project",
+    mutation: true,
+    approvalPolicy: "trusted_write",
+    outputCapBytes: 524_288,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_task_run",
     contractVersion: "0.1",
     requiredScopes: ["mac.task.run"],
@@ -544,6 +557,15 @@ export function createDefaultPolicy(
         scope,
         target: { kind: "path", reference: root.rootId }
       }));
+      if (scope === "mac.files.write") {
+        projectRoots.forEach((projectRoot, projectIndex) => targetRules.push({
+          ruleId: `test-project-write-${index}-${projectIndex}`,
+          effect: "allow",
+          principalId: "principal-1",
+          scope,
+          target: { kind: "project", reference: projectRoot }
+        }));
+      }
       return;
     }
     if (scope === "mac.job.read" || scope === "mac.job.cancel") {
@@ -643,7 +665,7 @@ export function createDefaultPolicy(
       }));
       return;
     }
-    if (scope === "mac.git.read" || scope === "mac.git.write" || scope === "mac.package.read") {
+    if (scope === "mac.project.write" || scope === "mac.git.read" || scope === "mac.git.write" || scope === "mac.package.read") {
       projectRoots.forEach((projectRoot, projectIndex) => targetRules.push({
         ruleId: `test-project-${index}-${projectIndex}`,
         effect: "allow",

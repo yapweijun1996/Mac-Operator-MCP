@@ -28,6 +28,7 @@ import {
 import { PolicyManager } from "./policy-loader.js";
 import { parseBrokerRequest } from "./request-validator.js";
 import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition, type TemporaryWriteCleanupResult } from "./filesystem-inspector.js";
+import type { FilesystemPatchResult } from "./filesystem-patch.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
 import { inspectNetwork } from "./network-inspector.js";
@@ -559,6 +560,24 @@ export class Broker {
             execution.writeJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
+          if (request.tool === "mac_apply_patch") {
+            if (!execution.patch || !execution.filesystem) throw new BrokerError("EXECUTION_FAILED", "Filesystem patch execution plan is unavailable");
+            const jobInput = {
+              jobId: `job:patch-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: `patch:${request.requestId}`,
+              createdAtMs: this.now()
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.patchJob = created.job;
+            execution.patchJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
           if (request.tool === "mac_git_stage" || request.tool === "mac_git_commit") {
             const jobInput = {
               jobId: `job:git-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
@@ -631,9 +650,11 @@ export class Broker {
         }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
-      const pendingJob = execution.writeJob && execution.writeJobNew
-        ? { kind: "write" as const, job: execution.writeJob }
-        : execution.taskJob && execution.taskJobNew
+      const pendingJob = execution.patchJob && execution.patchJobNew
+        ? { kind: "patch" as const, job: execution.patchJob }
+        : execution.writeJob && execution.writeJobNew
+          ? { kind: "write" as const, job: execution.writeJob }
+          : execution.taskJob && execution.taskJobNew
           ? { kind: "task" as const, job: execution.taskJob }
           : execution.gitStageJob && execution.gitWriteJobNew
             ? { kind: "git_stage" as const, job: execution.gitStageJob }
@@ -676,6 +697,7 @@ export class Broker {
         }
         execution.jobLease = lease;
         if (pendingJob.kind === "write") execution.writeJob = started;
+        else if (pendingJob.kind === "patch") execution.patchJob = started;
         else if (pendingJob.kind === "task") execution.taskJob = started;
         else if (pendingJob.kind === "git_stage") execution.gitStageJob = started;
         else if (pendingJob.kind === "git_commit") execution.gitCommitJob = started;
@@ -1895,6 +1917,9 @@ export class Broker {
       case "mac_write_file_atomic": {
         return this.dispatchWrite(request, execution, toolPolicy.timeoutMs);
       }
+      case "mac_apply_patch": {
+        return this.dispatchPatch(request, execution, toolPolicy.timeoutMs);
+      }
       case "mac_task_run": {
         return this.dispatchTask(request, execution, toolPolicy.timeoutMs, toolPolicy.outputCapBytes);
       }
@@ -2030,6 +2055,65 @@ export class Broker {
         }, execution.jobLease, this.now());
       } catch {
         // Preserve the original error; a running job without a terminal readback is unresolved.
+      }
+      throw brokerError;
+    }
+  }
+
+  private async dispatchPatch(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.filesystem || !execution.patch || !execution.patchJob || !this.filesystemExecutor.applyPatch) {
+      throw new BrokerError("EXECUTION_FAILED", "Filesystem patch job execution plan is unavailable");
+    }
+    const job = execution.patchJob;
+    if (job.state === "completed") {
+      return patchDispatchResult(job, parseStoredPatchResult(job.stdout), true);
+    }
+    if (job.state === "queued") {
+      throw new BrokerError("CONFLICT", "Filesystem patch is already queued", true);
+    }
+    if (job.state === "running" && execution.patchJobNew !== true) {
+      throw new BrokerError("UNKNOWN_OUTCOME", "Filesystem patch outcome is unresolved; inspect its Broker job", true);
+    }
+    if (job.state === "unknown") {
+      throw new BrokerError("UNKNOWN_OUTCOME", "Filesystem patch outcome is unresolved; inspect its Broker job", true);
+    }
+    if (job.state === "cancelled") {
+      throw new BrokerError("CANCELLED", "Filesystem patch was cancelled before execution");
+    }
+    if (job.state !== "running") {
+      throw new BrokerError("EXECUTION_FAILED", "Filesystem patch job already failed");
+    }
+    try {
+      const workerResult = await this.filesystemExecutor.applyPatch(
+        execution.filesystem.plan,
+        execution.patch.patch,
+        execution.patch.expectedBaseHash,
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+      );
+      if (workerResult.operation !== "patch") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+      this.ensureActiveAuthority(request, execution.target);
+      const data = patchResultData(workerResult);
+      execution.patchJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: this.now(),
+        stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return patchDispatchResult(execution.patchJob, workerResult, false);
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Filesystem patch job failed");
+      try {
+        execution.patchJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+          state: "unknown",
+          resultClass: "unknown",
+          finishedAtMs: this.now()
+        }, execution.jobLease, this.now());
+      } catch {
+        // Preserve the original error; a patch without trusted terminal readback is unresolved.
       }
       throw brokerError;
     }
@@ -2802,6 +2886,25 @@ export class Broker {
         }
       };
     }
+    if (request.tool === "mac_apply_patch") {
+      assertExactArguments(request.arguments, ["project_root", "patch", "expected_base_hash"]);
+      const projectRoot = request.arguments.project_root;
+      const patchText = request.arguments.patch;
+      const expectedBaseHash = request.arguments.expected_base_hash;
+      validateApplyPatchArguments(projectRoot, patchText, expectedBaseHash);
+      const inspector = new FilesystemInspector(policy.filesystemRoots);
+      const plan = inspector.planPath(projectRoot as string, "write");
+      return {
+        target: { kind: "project", reference: projectRoot as string },
+        auditTarget: `project:${projectRoot as string}`,
+        filesystem: { inspector, plan },
+        patch: {
+          projectRoot: projectRoot as string,
+          patch: patchText as string,
+          ...(expectedBaseHash !== undefined ? { expectedBaseHash: (expectedBaseHash as string).toLowerCase() } : {})
+        }
+      };
+    }
     if (request.tool === "mac_process_inspect") {
       assertExactArguments(request.arguments, ["pid"]);
       const pid = request.arguments.pid;
@@ -3430,8 +3533,15 @@ interface ExecutionPlan {
     idempotencyKey: string;
     temporaryName: string;
   };
+  patch?: {
+    projectRoot: string;
+    patch: string;
+    expectedBaseHash?: string;
+  };
   writeJob?: BrokerJob;
   writeJobNew?: boolean;
+  patchJob?: BrokerJob;
+  patchJobNew?: boolean;
   taskJob?: BrokerJob;
   taskJobNew?: boolean;
   gitStageJob?: BrokerJob;
@@ -3465,6 +3575,23 @@ interface WriteResultData {
     matched: boolean;
     create_only: boolean;
   };
+}
+
+interface PatchResultData {
+  project_root: string;
+  result: "applied" | "no_change";
+  changed_paths: readonly string[];
+  precondition: {
+    checked: boolean;
+    expected_sha256: string | null;
+    actual_sha256: string;
+    matched: boolean;
+  };
+  files: readonly {
+    path: string;
+    sha256: string;
+    size_bytes: number;
+  }[];
 }
 
 interface WriteRecoveryStatus {
@@ -3725,6 +3852,96 @@ function parseStoredWriteResult(value: string): WriteResultData {
   };
 }
 
+function patchResultData(result: FilesystemPatchResult): PatchResultData {
+  return {
+    project_root: result.projectRoot,
+    result: result.result,
+    changed_paths: [...result.changedPaths],
+    precondition: {
+      checked: result.precondition.checked,
+      expected_sha256: result.precondition.expectedSha256,
+      actual_sha256: result.precondition.actualSha256,
+      matched: result.precondition.matched
+    },
+    files: result.files.map((file) => ({ path: file.path, sha256: file.sha256, size_bytes: file.sizeBytes }))
+  };
+}
+
+function parseStoredPatchResult(value: string): PatchResultData {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed");
+  }
+  const record = parsed as Record<string, unknown>;
+  const precondition = record.precondition;
+  const files = record.files;
+  const changedPaths = record.changed_paths;
+  if (typeof record.project_root !== "string" || !isAbsolute(record.project_root) || record.project_root.length > 4096 || record.project_root.includes("\0") ||
+      (record.result !== "applied" && record.result !== "no_change") || !Array.isArray(changedPaths) || changedPaths.length > 64 ||
+      changedPaths.some((path) => !isSafePatchRelativePath(path)) ||
+      precondition === null || typeof precondition !== "object" || Array.isArray(precondition) ||
+      typeof (precondition as Record<string, unknown>).checked !== "boolean" || typeof (precondition as Record<string, unknown>).matched !== "boolean" ||
+      typeof (precondition as Record<string, unknown>).actual_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test((precondition as Record<string, unknown>).actual_sha256 as string) ||
+      ((precondition as Record<string, unknown>).expected_sha256 !== null && (typeof (precondition as Record<string, unknown>).expected_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test((precondition as Record<string, unknown>).expected_sha256 as string))) ||
+      !Array.isArray(files) || files.length > 64) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed");
+  }
+  const condition = precondition as Record<string, unknown>;
+  const parsedFiles = files.map((file) => {
+    if (file === null || typeof file !== "object" || Array.isArray(file)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch file is malformed");
+    const item = file as Record<string, unknown>;
+    if (typeof item.path !== "string" || !isAbsolute(item.path) || item.path.length > 4096 || item.path.includes("\0") ||
+        typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(item.sha256) || !Number.isSafeInteger(item.size_bytes) || (item.size_bytes as number) < 0 || (item.size_bytes as number) > 1_048_576) {
+      throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch file is malformed");
+    }
+    return { path: item.path, sha256: item.sha256, size_bytes: item.size_bytes as number };
+  });
+  return {
+    project_root: record.project_root,
+    result: record.result,
+    changed_paths: changedPaths as string[],
+    precondition: {
+      checked: condition.checked as boolean,
+      expected_sha256: condition.expected_sha256 as string | null,
+      actual_sha256: condition.actual_sha256 as string,
+      matched: condition.matched as boolean
+    },
+    files: parsedFiles
+  };
+}
+
+function patchDispatchResult(job: BrokerJob, result: FilesystemPatchResult | PatchResultData, reused: boolean): DispatchResult {
+  const data = "project_root" in result ? result : patchResultData(result);
+  return {
+    data: { ...data, job_id: job.jobId },
+    verification: {
+      required: true,
+      status: "verified",
+      strategy: "changed_paths_and_hash_readback",
+      evidence: {
+        summary: reused ? "Reused completed Broker patch Job after validating its stored result" : "Patch output was read back from descriptor-bound writes and hashed",
+        readback_hash: sha256(canonicalJson(data.files)),
+        observed_at: new Date(Date.now()).toISOString()
+      }
+    },
+    auditTarget: `project:${data.project_root}`,
+    auditEvidence: {
+      jobId: job.jobId,
+      result: data.result,
+      changedPathCount: data.changed_paths.length,
+      fileCount: data.files.length,
+      preconditionChecked: data.precondition.checked
+    }
+  };
+}
+
+function isSafePatchRelativePath(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 4096 && !value.includes("\0") &&
+    !value.startsWith("/") && !value.includes("\\") &&
+    !value.split("/").some((part) => part === "" || part === "." || part === "..");
+}
+
 function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
   switch (toolPolicy.targetType) {
     case "broker":
@@ -3956,6 +4173,19 @@ function decodeDirectoryCursor(value: unknown): string | undefined {
 
 function encodeDirectoryCursor(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
+}
+
+function validateApplyPatchArguments(projectRoot: unknown, patchText: unknown, expectedBaseHash: unknown): void {
+  if (typeof projectRoot !== "string" || projectRoot.length < 1 || projectRoot.length > 4096 || projectRoot.includes("\0") || projectRoot.includes("\n") || projectRoot.includes("\r")) {
+    throw new BrokerError("PRECONDITION_FAILED", "project_root must be a bounded absolute path");
+  }
+  if (!isAbsolute(projectRoot)) throw new BrokerError("PRECONDITION_FAILED", "project_root must be an absolute path");
+  if (typeof patchText !== "string" || patchText.length < 1 || Buffer.byteLength(patchText, "utf8") > 524_288 || patchText.includes("\0") || patchText.includes("\r")) {
+    throw new BrokerError("PRECONDITION_FAILED", "patch must be a bounded textual patch");
+  }
+  if (expectedBaseHash !== undefined && (typeof expectedBaseHash !== "string" || !/^[A-Fa-f0-9]{64}$/u.test(expectedBaseHash))) {
+    throw new BrokerError("PRECONDITION_FAILED", "expected_base_hash must be a SHA-256 digest");
+  }
 }
 
 function validateWriteArguments(argumentsValue: Readonly<Record<string, unknown>>): void {

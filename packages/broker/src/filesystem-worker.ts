@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { parentPort, workerData } from "node:worker_threads";
 import { BrokerError } from "@mac-operator/contracts";
 import { FilesystemInspector } from "./filesystem-inspector.js";
+import { applyFilesystemPatch } from "./filesystem-patch.js";
 import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 import type { WorkerResult } from "./worker-executor.js";
@@ -128,6 +129,8 @@ try {
       device: write.device,
       inode: write.inode
     };
+  } else if (command.operation === "patch") {
+    value = applyFilesystemPatch(inspector, command.plan, command.patch, command.expectedBaseHash);
   } else {
     throw new BrokerError("PRECONDITION_FAILED", "Filesystem worker command is unsupported");
   }

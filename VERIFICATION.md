@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest bounded-write addendum: `mac_apply_patch` now has a disabled-by-default
+Broker implementation with independent file/project scopes, exact project
+target authorization, approval and Job linkage, textual patch bounds,
+secret-content denial, expected-base hash checks, descriptor-relative atomic
+writes, target identity binding, rollback, and structured post-write hashes.
+Focused Broker and filesystem tests pass; evidence is recorded in
+`evidence/2026-09-14-bounded-patch.md`. Enablement and physical remount,
+crash-attribution, and final release evidence remain open.
+
 Latest live install/readback addendum: the current source makes the macOS
 install executor accept
 only independent raw launchd, native PID/start-time, plist, Broker-status, and

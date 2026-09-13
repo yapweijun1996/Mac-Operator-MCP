@@ -8,6 +8,7 @@ import type {
   SafeStorageAnalysis,
   SafeTreeEntry
 } from "./filesystem-inspector.js";
+import type { FilesystemPatchResult } from "./filesystem-patch.js";
 
 export type FilesystemWorkerCommand =
   | { operation: "stat"; plan: FilesystemPathPlan; followSymlink: boolean }
@@ -28,6 +29,12 @@ export type FilesystemWorkerCommand =
       expectedSha256: string | undefined;
       createOnly: boolean;
       tempName: string;
+    }
+  | {
+      operation: "patch";
+      plan: FilesystemPathPlan;
+      patch: string;
+      expectedBaseHash: string | undefined;
     };
 
 export type FilesystemWorkerResult =
@@ -105,4 +112,5 @@ export type FilesystemWorkerResult =
       rootId: string;
       device: string;
       inode: string;
-    };
+    }
+  | FilesystemPatchResult;

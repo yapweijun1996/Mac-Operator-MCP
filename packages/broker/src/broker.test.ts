@@ -1408,7 +1408,7 @@ test("mac_app_focus never publishes success after active session revocation", as
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 39);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 40);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -2644,6 +2644,66 @@ test("mac_write_file_atomic requires a bound approval and verifies atomic readba
       assert.match((status.data as { stdout: string }).stdout, /bytes_written/u);
     }
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_apply_patch requires project write scopes, approval, and bounded readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-patch-"));
+  const projectRoot = await realpath(directory);
+  const path = join(projectRoot, "README.txt");
+  await writeFile(path, "before\n", { mode: 0o600 });
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: projectRoot, metadata: true, contentRead: true, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.project.write", "mac.job.read"], ["edge-key-1"], [root], [], [], [projectRoot]);
+  const patchTool = basePolicy.tools.get("mac_apply_patch");
+  assert.ok(patchTool);
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_apply_patch", { ...patchTool, enabled: true }) };
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  try {
+    const patchText = ["*** Begin Patch", "*** Update File: README.txt", "@@", "-before", "+after", "*** End Patch", ""].join("\n");
+    const argumentsValue = { project_root: projectRoot, patch: patchText };
+    const unsignedRequest = unsigned({ requestId: "patch-request", nonce: "patch-nonce", tool: "mac_apply_patch", arguments: argumentsValue }, ["mac.files.write", "mac.project.write", "mac.job.read"]);
+    const unapproved = await broker.handle(signRequest(unsignedRequest, key));
+    assert.equal(unapproved.result_class, "POLICY_DENIED");
+    store.issueApproval({
+      approvalId: "approval:patch",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_apply_patch",
+      contractVersion: "0.1",
+      targetKind: "project",
+      targetRef: `project:${projectRoot}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const approvedRequest = { ...unsignedRequest, requestId: "patch-approved-request", nonce: "patch-approved-nonce" };
+    const approved = await broker.handle(signRequest(approvedRequest, key));
+    assert.equal(approved.ok, true, JSON.stringify(approved));
+    if (approved.ok) {
+      const data = approved.data as { project_root: string; result: string; changed_paths: string[]; files: Array<{ path: string; sha256: string; size_bytes: number }>; job_id: string };
+      assert.equal(data.project_root, projectRoot);
+      assert.equal(data.result, "applied");
+      assert.deepEqual(data.changed_paths, ["README.txt"]);
+      assert.equal(data.files[0]?.path, await realpath(path));
+      assert.equal(data.files[0]?.size_bytes, 6);
+      assert.equal(store.requestRecord("patch-approved-request")?.jobId, data.job_id);
+      assert.equal(approved.verification.status, "verified");
+    }
+    assert.equal(await readFile(path, "utf8"), "after\n");
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === "patch-approved-request").map((row) => [row.event_type, row.target_ref]), [
+      ["decision", `project:${projectRoot}`],
+      ["intent", `project:${projectRoot}`],
+      ["completion", `project:${projectRoot}`]
+    ]);
+  } finally {
+    await broker.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }

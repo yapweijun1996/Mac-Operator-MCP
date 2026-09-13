@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import type { FilesystemPathPlan } from "./filesystem-inspector.js";
+import type { FilesystemPatchResult } from "./filesystem-patch.js";
 import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 import { BoundedWorkerExecutor } from "./worker-executor.js";
 
@@ -91,6 +92,12 @@ export interface FilesystemExecutor {
     control: FilesystemExecutionControl,
     temporaryName?: string
   ): Promise<FilesystemWorkerResult>;
+  applyPatch?(
+    plan: FilesystemPathPlan,
+    patch: string,
+    expectedBaseHash: string | undefined,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemPatchResult>;
 }
 
 export class WorkerFilesystemExecutor implements FilesystemExecutor {
@@ -240,6 +247,20 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
       tempName: temporaryName ?? `.mac-operator-write-${randomUUID()}`
     }, control.timeoutMs, control.shouldCancel).then(validateFilesystemWorkerResult);
   }
+
+  applyPatch(
+    plan: FilesystemPathPlan,
+    patch: string,
+    expectedBaseHash: string | undefined,
+    control: FilesystemExecutionControl
+  ): Promise<FilesystemPatchResult> {
+    return this.executor.run({ operation: "patch", plan, patch, expectedBaseHash }, control.timeoutMs, control.shouldCancel)
+      .then(validateFilesystemWorkerResult)
+      .then((value) => {
+        if (value.operation !== "patch") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");
+        return value;
+      });
+  }
 }
 
 function validateFilesystemWorkerResult(value: FilesystemWorkerResult): FilesystemWorkerResult {
@@ -265,6 +286,25 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
         (value.expectedSha256 !== null && !/^[a-f0-9]{64}$/u.test(value.expectedSha256)) ||
         typeof value.expectedMatched !== "boolean" || !/^\d+$/u.test(value.device) || !/^\d+$/u.test(value.inode)) {
       throw malformed();
+    }
+    return value;
+  }
+  if (value.operation === "patch") {
+    if (typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || value.projectRoot.length > 4096 || value.projectRoot.includes("\0") ||
+        (value.result !== "applied" && value.result !== "no_change") || !Array.isArray(value.changedPaths) || value.changedPaths.length > 64 ||
+        value.changedPaths.some((path) => !isSafePatchRelativePath(path)) ||
+        value.precondition === null || typeof value.precondition !== "object" || Array.isArray(value.precondition) ||
+        typeof value.precondition.checked !== "boolean" || typeof value.precondition.matched !== "boolean" ||
+        typeof value.precondition.actualSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.precondition.actualSha256) ||
+        (value.precondition.expectedSha256 !== null && (typeof value.precondition.expectedSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.precondition.expectedSha256))) ||
+        !Array.isArray(value.files) || value.files.length > 64) {
+      throw malformed();
+    }
+    for (const file of value.files) {
+      if (file === null || typeof file !== "object" || typeof file.path !== "string" || !isAbsolute(file.path) || file.path.length > 4096 || file.path.includes("\0") ||
+          !/^[a-f0-9]{64}$/u.test(file.sha256) || !Number.isSafeInteger(file.sizeBytes) || file.sizeBytes < 0 || file.sizeBytes > 1_048_576) {
+        throw malformed();
+      }
     }
     return value;
   }
@@ -455,4 +495,10 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
 
 function malformed(): BrokerError {
   return new BrokerError("EXECUTION_FAILED", "Filesystem worker returned a malformed result");
+}
+
+function isSafePatchRelativePath(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 4096 && !value.includes("\0") &&
+    !value.startsWith("/") && !value.includes("\\") &&
+    !value.split("/").some((part) => part === "" || part === "." || part === "..");
 }

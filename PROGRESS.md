@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest bounded-write addendum: `mac_apply_patch` is now implemented behind a
+disabled-by-default `mac.files.write` + `mac.project.write` policy gate. The
+Broker owns a textual patch parser with project-relative path checks, fixed
+file/count/byte limits, secret-content denial, expected-base hashing,
+descriptor-relative atomic writes, identity preconditions, rollback, and
+conservative UNKNOWN outcomes. The worker protocol, Broker Job lifecycle,
+approval/audit binding, and readback result validation are wired end to end;
+focused Broker and filesystem tests pass. Evidence:
+`evidence/2026-09-14-bounded-patch.md`. Contract enablement, remount and
+crash attribution evidence, and production release gates remain open.
+
 ## Current situation
 
 Latest transport addendum: commit `18e9103` adds a Darwin-only cross-process

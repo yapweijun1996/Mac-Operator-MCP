@@ -4,6 +4,7 @@ export * from "./edge-keyring.js";
 export * from "./edge-keyring-config.js";
 export * from "./filesystem-inspector.js";
 export * from "./filesystem-executor.js";
+export * from "./filesystem-patch.js";
 export * from "./default-policy.js";
 export * from "./ipc-server.js";
 export * from "./native-ipc-server.js";
