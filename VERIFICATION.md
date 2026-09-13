@@ -19,6 +19,13 @@ vector before helper readiness is accepted. The full 395-test suite passes;
 real root-owned installation and launchd readback remain open.
 Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
+Latest privileged-helper identity addendum: source commit `cc103a7` requires a
+positive launchd PID and a matching native PID/start-time identity in every
+non-uninstall helper readback. Missing, null, mismatched, or non-positive
+identity values fail closed; the full 395-test suite passes. Real root-owned
+installation and live launchd readback remain open.
+Evidence: `evidence/2026-09-13-privileged-helper-readback-arguments.md`.
+
 Latest final-plist-readback addendum: source commit `70ca1e9` requires a
 descriptor-backed plist path, device/inode, byte count, and SHA-256 matching
 the exact rendered plan. The readback rejects truncation, target changes,

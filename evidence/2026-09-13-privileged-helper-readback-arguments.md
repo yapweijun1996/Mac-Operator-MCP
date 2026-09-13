@@ -1,7 +1,7 @@
 # Privileged Helper Exact-Arguments Readback Evidence
 
 Date: 2026-09-13
-Source commit: `8fd5814`
+Source commit: `cc103a7`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -25,12 +25,19 @@ program, working directory, and signature cannot authorize a substituted or
 extra argument. The helper remains native-only and rejects interpreters,
 scripts, and extra argv entries at plan construction.
 
+The same readback now requires a positive launchd PID and a native
+`{ pid, startTimeMicros }` identity whose PID matches it. Missing, null,
+mismatched, reused, or non-positive identity values fail closed before a
+running helper is accepted.
+
 ## Verification
 
 - `npm test`: 395 tests, 392 passed, 0 failed, 3 opt-in macOS sandbox tests skipped.
 - `npm run typecheck`: passed.
 - Negative coverage: a helper readback with an attacker-supplied extra
   argument is rejected with stable `SERVICE_MISMATCH`.
+- Negative coverage: null PID and zero start-time readbacks are rejected with
+  stable `INVALID_READBACK`.
 - No root-domain installation or live `launchctl` readback was attempted.
 
 ## Remaining gates
@@ -43,7 +50,7 @@ evidence only; it does not enable a privileged helper capability.
 
 ## Source hashes
 
-- `2ae62da868803a7eaf5cb666a175e4763a1a0e1b76f3baf83f6c0042b76a8523`
+- `a4773b1b5fe8fe38dbfb8cf4bf0a061f8577d3c776020370c5ba59f5659d7157`
   `packages/broker/src/privileged-helper-package.ts`
-- `da9232867ecddbbad6af2c66c05b78d1436f4865b550a324a3941cd0a9dfdd09`
+- `8420f1dd90178bad2916f0600d295326b4568467bf6a760a708aaacab0d535f2`
   `packages/broker/src/privileged-helper-package.test.ts`

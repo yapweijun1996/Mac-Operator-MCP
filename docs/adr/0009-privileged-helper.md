@@ -107,6 +107,12 @@ planned vector. This closes a substitution gap where a service could retain the
 expected label/program while launching with a different argument vector; it
 does not claim root-owned installation or live launchd evidence.
 
+Revision `cc103a7` requires every non-uninstall helper readback to carry a
+positive launchd PID and a matching native PID/start-time identity. A helper
+cannot report readiness from a launchd state string alone, and PID reuse or a
+missing native observer identity fails closed. Root-owned installation remains
+unverified.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

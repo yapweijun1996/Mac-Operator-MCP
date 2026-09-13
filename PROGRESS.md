@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `8fd5814`.
+Current committed implementation baseline: `cc103a7`.
+
+The latest privileged-helper identity addendum is `cc103a7`: an installed
+helper readback must now provide a positive launchd PID plus a matching native
+PID/start-time identity. Missing, null, reused, or zero start-time identities
+fail closed before helper readiness is reported. This remains a non-installing
+boundary; root-owned launchd installation and final helper evidence remain
+open. Evidence:
+`evidence/2026-09-13-privileged-helper-readback-arguments.md`.
 
 The latest privileged-helper readback addendum is `8fd5814`: the root-domain
 LaunchDaemon readback now carries and exactly matches the planned
