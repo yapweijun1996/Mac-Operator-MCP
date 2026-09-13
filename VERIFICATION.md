@@ -36,7 +36,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 | VT-PRIV-01 | Helper exposes no arbitrary root | T-018 | MOP-060, MOP-061 | Schema fuzz, caller spoof, operation bypass tests | L5 | BLOCKED — proposed helper IPC now authenticates the OS peer before parsing, binds HMAC commands/responses to a full command digest, persists helper nonce/request replay admission, rejects raw executable/argument fields, dispatches only three operation names, and bounds/redacts postcondition evidence; caller-spoof, privileged packaging/signing, real adapters, crash recovery, and independent review remain |
 | VT-POL-01 | Policy integrity/versioning | T-019 | MOP-080, MOP-084 | Invalid config, downgrade, atomic reload and rollback tests | Local | OPEN — schema/signature/tamper/downgrade/transactional activation/restart matching/explicit rollback/version-binding, protected signer-file loading with per-key digest binding, bounded overlapping signer validity windows, durable activation/restore/reload/rollback, audited key-specific revocation, replay-bound HMAC operator UDS, separate replay-bound Authority Control IPC with native peer denial and expected-state switch preconditions, and legacy revocation migration pass; installed startup, protected key distribution, native caller/process identity packaging, general migrations, crash injection, and cross-runtime canonicalization remain |
 | VT-DOS-01 | Resource bounds | T-020 | MOP-017, MOP-070 | Rate, output, disk, depth, timeout and concurrency tests | Release | OPEN — filesystem worker concurrency, V8 memory/stack settings, empty environment, output caps, deadline/cancellation, bounded detached process-group plus root/descendant identity drain/capacity tests pass; local post-auth Edge fixed-window rate limits pass; shared durable/session limits, disk/depth budgets, kernel-level cancellation and general jobs remain |
-| VT-COMP-01 | Version negotiation fails safely | T-021 | MOP-081 | Edge/Broker/helper compatibility matrix | Local/Remote/L5 | OPEN |
+| VT-COMP-01 | Version negotiation fails safely | T-021 | MOP-081 | Edge/Broker/helper compatibility matrix | Local/Remote/L5 | OPEN — local Broker capability readback now binds protocol/contract versions and Edge fails closed on missing or mismatched enabled-tool versions; installed, remote, helper, upgrade/rollback, and cross-runtime compatibility evidence remains |
 | VT-OPS-01 | Disable/uninstall removes authority | T-022 | MOP-071, MOP-087 | Revocation, service removal and readback procedure | Release | OPEN — temporary ad-hoc app bundle signature verification passes through the fixed plan command; Developer ID/notarization, native identity, live launchd disable/uninstall, and final readback remain |
 
 ## Release gates
@@ -51,6 +51,18 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 - Release gate: exact revision has no unresolved P0/P1 or High/Critical threat in affected boundaries.
 
 ## Current evidence
+
+Latest capability compatibility addendum: source commit `8061254` adds
+protocol/contract version fields to Broker capability readback and the
+versioned `mac_capabilities` output schema. The MCP Edge validates the shared
+protocol and contract versions and requires every enabled capability to match
+the local contract registry before registering an MCP tool; missing, malformed,
+stale, or mismatched data fails closed. The full suite passes 327 tests (325
+passed, 2 opt-in real-sandbox tests skipped), including the versioned contract
+conformance case and an enabled-capability mismatch negative test. Evidence:
+`evidence/2026-09-13-capability-version-binding.md`. This is local compatibility
+evidence only; installed/remote/helper matrices, upgrade/rollback readback, and
+cross-runtime canonicalization remain open.
 
 Latest app launch addendum: commit `85d1e96` records 264 passing tests and adds the disabled-by-default `mac_app_open` mutation boundary, runtime contract-envelope conformance, and one global deadline across inventory, launch, and reobservation. The Broker requires independent `mac.app.control`, an exact `app:bundle:<bundle_id>` target, `trusted_gui` approval, durable intent, a generic Job lease, and active authority rechecks. The adapter first confirms the stable identity in bounded Broker-owned inventory, invokes only fixed `/usr/bin/open -b <bundle_id>` with `/` cwd, empty environment, and bounded timeout/output, then reobserves the exact app as running before committing the Job and success result. Paths and URLs are rejected until their own filesystem/network policy and target-swap proofs exist; caller scripts, arbitrary executables, process IDs, and app arguments are not accepted. Fake-adapter tests cover command wiring, target absence, already-running state, active deadline expiry, approval/Job/audit linkage, and active session revocation; no user application was launched during verification. Evidence: `evidence/2026-09-13-app-open-boundary.md`. Focus, app/window freshness, Accessibility, sensitive-surface, permission recovery, real-app launch, and GUI release evidence remain open.
 

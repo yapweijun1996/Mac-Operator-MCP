@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `e10f380`.
+Current committed implementation baseline: `8061254`.
+
+The latest implementation addendum is `8061254`: Broker capability discovery
+now returns shared protocol/contract versions and per-tool contract versions;
+the versioned `mac_capabilities` schema requires those fields. The MCP Edge
+fails closed unless the top-level versions match shared constants and every
+enabled capability matches the local contract registry. This binds local
+Broker-to-Edge capability exposure without granting Edge authority. Installed,
+remote, helper, upgrade/rollback, and cross-runtime compatibility evidence
+remain open. Evidence: `evidence/2026-09-13-capability-version-binding.md`.
 
 The following paragraph records the preceding `e8112ea` baseline for evidence continuity:
 
