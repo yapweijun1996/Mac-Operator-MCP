@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `7f8f285`.
+Current committed implementation baseline: `72a3284`.
+
+The latest helper-key lifecycle addendum is `72a3284`: already-constructed
+helper factories and IPC servers now recheck helper-key revocation, active
+revision/digest identity, and validity windows before issue, parse, or
+authorization. Expiry and activation replacement fence old key owners without
+relying on a restart. The full suite remains 344 tests (342 passed, 2 opt-in
+real-sandbox tests skipped). Evidence:
+`evidence/2026-09-13-privileged-helper-key-lifecycle.md`.
 
 The latest helper-filesystem addendum is `7f8f285`: the package boundary now
 has a read-only root-owned preflight with double `lstat`, symlink/type/mode/

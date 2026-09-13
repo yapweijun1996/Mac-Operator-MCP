@@ -62,6 +62,12 @@ helper-key/plist files plus an owner-executable helper. It remains a preflight
 primitive; descriptor-relative installation and real root-domain readback are
 not yet enabled.
 
+Revision `72a3284` fences already-constructed helper key owners when the
+dedicated key is revoked, its active revision/digest is replaced, or its
+validity window expires. The factory checks before issuing; the IPC server
+checks before replay admission and authority/dispatch. This remains disabled
+helper lifecycle evidence and does not enable privileged operations.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

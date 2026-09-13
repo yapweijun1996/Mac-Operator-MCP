@@ -64,6 +64,15 @@ the full suite passes 335 tests (333 passed, 2 opt-in real-sandbox tests
 skipped). No privileged operation was run. Evidence:
 `evidence/2026-09-13-privileged-helper-key-activation.md`.
 
+Latest helper-key lifecycle addendum: source commit `72a3284` adds dynamic
+active-key fencing to already-constructed helper factories and IPC servers.
+Each issue/parse/authorization path rechecks dedicated `helper_key` revocation,
+BrokerStore active revision/digest identity, and the configured validity window;
+expiry and activation replacement fail closed without restart. The helper
+focused suite passes 9/9 and the full suite passes 344 tests (342 passed, 2
+opt-in real-sandbox tests skipped). Evidence:
+`evidence/2026-09-13-privileged-helper-key-lifecycle.md`.
+
 Latest helper-runtime addendum: source commit `12a1ac3` adds an independent
 helper lifecycle that restores the exact active helper-key identity before
 constructing the listener, requires an explicit native peer process identity,
