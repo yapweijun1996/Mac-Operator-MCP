@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `92137e2`.
+Current committed implementation baseline: `4d18b31`.
+
+The latest current-revision sandbox readback is `4d18b31`: the opt-in
+`SandboxExecTaskRunner` smoke passes 7/7 on the Mac mini M4, and the complete
+`MOPS_REAL_SANDBOX=1 npm test` regression passes 370/370. The run remains
+temporary-fixture evidence only; credential contents, hostile descendants,
+crash/restart cleanup, persistence, Docker/privilege isolation, external
+allowlisted networking, and remount behavior remain unproven. The default task
+runner and `mac_task_run` remain disabled. Evidence:
+`evidence/2026-09-13-sandbox-profile-rerun.md`.
 
 The latest macOS volume-inventory addendum is `92137e2`: read-only `diskutil
 list`, `mount`, `/Volumes`, and `df -P` readback shows only the internal APFS

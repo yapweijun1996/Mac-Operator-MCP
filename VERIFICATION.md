@@ -52,6 +52,15 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
+Latest current-revision sandbox readback: source revision `4d18b31` passes the
+opt-in `SandboxExecTaskRunner` smoke 7/7 on the Mac mini M4, and
+`MOPS_REAL_SANDBOX=1 npm test` passes 370/370. The run is temporary-fixture
+evidence only; credential contents, hostile descendants, crash/restart cleanup,
+persistence, Docker/privilege isolation, external allowlisted networking, and
+remount behavior remain unproven. The default task runner and `mac_task_run`
+remain disabled. Evidence:
+`evidence/2026-09-13-sandbox-profile-rerun.md`.
+
 Latest macOS volume-inventory addendum: source commit `92137e2` records
 read-only `diskutil list`, `mount`, `/Volumes`, and `df -P` output. The host has
 only internal APFS surfaces and the system `Macintosh HD -> /` alias; no
