@@ -1,19 +1,22 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import test from "node:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   buildMacOsInstallPlan,
   applyMacOsPlistPlan,
+  executeMacOsInstallPlan,
   inspectMacOsInstallFilesystem,
   MacOsInstallPlanError,
   validateCodeSignatureReadback,
   validateExistingServicePrecondition,
   validateMacOsInstallReadback,
+  type CodeSignatureCommandSpec,
+  type LaunchdCommandSpec,
   type MacOsInstallPlanInput
 } from "./macos-install-plan.js";
-import { ProcessSupervisor } from "./process-supervisor.js";
+import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const base: MacOsInstallPlanInput = {
   uid: 501,
@@ -297,3 +300,157 @@ test("plist apply uses native atomic write, creates a backup on upgrade, and res
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("install executor requires explicit confirmation and verifies final Broker readback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-execute-"));
+  try {
+    const uid = process.getuid?.();
+    if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+    const userHome = join(root, "home");
+    const installRoot = join(userHome, "MacOperator");
+    const binRoot = join(installRoot, "bin");
+    const logRoot = join(installRoot, "logs");
+    const artifact = join(installRoot, "MacOperatorBroker.app");
+    const launchAgents = join(userHome, "Library", "LaunchAgents");
+    await mkdir(binRoot, { recursive: true, mode: 0o700 });
+    await mkdir(logRoot, { recursive: true, mode: 0o700 });
+    await mkdir(artifact, { recursive: true, mode: 0o700 });
+    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
+    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
+    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
+    for (const directory of [userHome, join(userHome, "Library"), launchAgents, installRoot, binRoot, logRoot, artifact]) {
+      await chmod(directory, 0o700);
+    }
+    const plan = buildMacOsInstallPlan({
+      ...base,
+      uid,
+      userHome,
+      installRoot,
+      plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
+      signedArtifactPath: artifact,
+      service: {
+        ...base.service,
+        program: join(binRoot, "node"),
+        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        workingDirectory: installRoot,
+        stdoutPath: join(logRoot, "broker.out.log"),
+        stderrPath: join(logRoot, "broker.err.log")
+      }
+    });
+    const executor = new RecordingInstallExecutor();
+    await assert.rejects(
+      executeMacOsInstallPlan(plan, {
+        confirmOperation: "upgrade",
+        existingService: { present: false, sourceRevision: null },
+        ownerUid: uid,
+        commandExecutor: executor,
+        readback: async () => null
+      }),
+      (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "CONFIRMATION_REQUIRED"
+    );
+    assert.equal(executor.commands.length, 0);
+
+    const result = await executeMacOsInstallPlan(plan, {
+      confirmOperation: "install",
+      existingService: { present: false, sourceRevision: null },
+      ownerUid: uid,
+      commandExecutor: executor,
+      readback: async () => ({
+        domain: plan.domain,
+        label: plan.label,
+        plistPath: plan.plistPath,
+        pid: 1234,
+        launchd: plan.launchd,
+        broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
+        signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null }
+      })
+    });
+    assert.equal(result.operation, "install");
+    assert.equal(result.readback?.broker.nativeTransportRequired, true);
+    assert.deepEqual(executor.commands.map((command) => command.args[0]), ["--verify", "bootstrap"]);
+    await assert.doesNotReject(readFile(plan.plistPath, "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("install executor stops a mismatched service and leaves an explicit recovery artifact", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-execute-readback-"));
+  try {
+    const uid = process.getuid?.();
+    if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+    const userHome = join(root, "home");
+    const installRoot = join(userHome, "MacOperator");
+    const binRoot = join(installRoot, "bin");
+    const logRoot = join(installRoot, "logs");
+    const artifact = join(installRoot, "MacOperatorBroker.app");
+    const launchAgents = join(userHome, "Library", "LaunchAgents");
+    await mkdir(binRoot, { recursive: true, mode: 0o700 });
+    await mkdir(logRoot, { recursive: true, mode: 0o700 });
+    await mkdir(artifact, { recursive: true, mode: 0o700 });
+    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
+    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
+    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
+    for (const directory of [userHome, join(userHome, "Library"), launchAgents, installRoot, binRoot, logRoot, artifact]) {
+      await chmod(directory, 0o700);
+    }
+    const plan = buildMacOsInstallPlan({
+      ...base,
+      uid,
+      operation: "upgrade",
+      expectedPreviousSourceRevision: base.metadata.sourceRevision,
+      metadata: { ...base.metadata, sourceRevision: "abcdef0123456789abcdef0123456789abcdef01" },
+      userHome,
+      installRoot,
+      plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
+      signedArtifactPath: artifact,
+      service: {
+        ...base.service,
+        program: join(binRoot, "node"),
+        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        workingDirectory: installRoot,
+        stdoutPath: join(logRoot, "broker.out.log"),
+        stderrPath: join(logRoot, "broker.err.log")
+      }
+    });
+    await mkdir(dirname(plan.plistPath), { recursive: true, mode: 0o700 });
+    await writeFile(plan.plistPath, "old plist", { mode: 0o600 });
+    const executor = new RecordingInstallExecutor();
+    await assert.rejects(
+      executeMacOsInstallPlan(plan, {
+        confirmOperation: "upgrade",
+        existingService: { present: true, sourceRevision: base.metadata.sourceRevision },
+        ownerUid: uid,
+        commandExecutor: executor,
+        readback: async () => null
+      }),
+      (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "READBACK_FAILED"
+    );
+    assert.deepEqual(executor.commands.map((command) => command.args[0]), ["--verify", "bootout", "bootstrap", "bootout"]);
+    assert.notEqual(await readFile(plan.plistPath, "utf8"), "old plist");
+    await assert.doesNotReject(readFile(plan.backupPath, "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+class RecordingInstallExecutor {
+  readonly commands: Array<LaunchdCommandSpec | CodeSignatureCommandSpec> = [];
+
+  async run(command: LaunchdCommandSpec | CodeSignatureCommandSpec): Promise<ProcessExecutionResult> {
+    this.commands.push(command);
+    return {
+      state: "completed",
+      resultClass: "SUCCEEDED",
+      exitCode: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      durationMs: 1,
+      processId: 1,
+      processGroupId: 1,
+      terminationObserved: true
+    };
+  }
+}

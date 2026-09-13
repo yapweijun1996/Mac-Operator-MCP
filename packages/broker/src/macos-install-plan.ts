@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
+import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const SERVICE_TIMEOUT_MS = 5_000;
@@ -24,7 +25,11 @@ export type MacOsInstallPlanErrorCode =
   | "FILESYSTEM_MISMATCH"
   | "INVALID_READBACK"
   | "SIGNATURE_MISMATCH"
-  | "SERVICE_MISMATCH";
+  | "SERVICE_MISMATCH"
+  | "CONFIRMATION_REQUIRED"
+  | "COMMAND_FAILED"
+  | "READBACK_FAILED"
+  | "RECOVERY_FAILED";
 
 export class MacOsInstallPlanError extends Error {
   readonly code: MacOsInstallPlanErrorCode;
@@ -172,6 +177,24 @@ export interface MacOsPlistApplyResult {
   backupSha256: string | null;
   device: string;
   inode: string;
+}
+
+export interface MacOsInstallCommandExecutor {
+  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec): Promise<ProcessExecutionResult>;
+}
+
+export interface MacOsInstallExecutionOptions extends MacOsPlistApplyOptions {
+  /** Host-only confirmation; it must exactly match the planned operation. */
+  confirmOperation: MacOsInstallOperation;
+  existingService: ExistingServiceReadback;
+  commandExecutor?: MacOsInstallCommandExecutor;
+  readback: () => Promise<MacOsInstallReadback | null>;
+}
+
+export interface MacOsInstallExecutionResult {
+  operation: MacOsInstallOperation;
+  readback: MacOsInstallReadback | null;
+  plist: MacOsPlistApplyResult;
 }
 
 type ExpectedFilesystemKind = "file" | "directory" | "file-or-directory";
@@ -500,6 +523,92 @@ export async function applyMacOsPlistPlan(
     currentIdentity
   );
   return toApplyResult(plan.operation, result, plan.backupPath, null);
+}
+
+/**
+ * Executes the bounded host-side portion of an installation plan.
+ *
+ * This is intentionally not called by MCP handlers. The caller must provide
+ * an exact operation confirmation and an authoritative existing-service
+ * readback. Commands use fixed argv, empty environments, and the same bounded
+ * ProcessSupervisor contract as other Broker child processes. A successful
+ * launchctl command is never treated as success without the caller's final
+ * readback. If readback fails after bootstrap, the exact service is booted out
+ * and the plist is left for an explicit rollback plan; no uncertain repair can
+ * overwrite a target that may have changed under an external actor.
+ */
+export async function executeMacOsInstallPlan(
+  plan: MacOsInstallPlan,
+  options: MacOsInstallExecutionOptions
+): Promise<MacOsInstallExecutionResult> {
+  if (options.confirmOperation !== plan.operation) {
+    fail("CONFIRMATION_REQUIRED", "installation requires an explicit matching host operation confirmation");
+  }
+  validateExistingServicePrecondition(plan, options.existingService);
+  const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+  if (plan.operation !== "uninstall") {
+    await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
+  }
+  let bootedOut = false;
+  let plistApplied = false;
+  let bootstrapped = false;
+  let plist: MacOsPlistApplyResult;
+  try {
+    if (plan.operation !== "install") {
+      await runInstallCommand(executor, plan.rollback.bootout, "existing launchd service could not be stopped");
+      bootedOut = true;
+    }
+    plist = await applyMacOsPlistPlan(plan, options);
+    plistApplied = true;
+    if (plan.operation !== "uninstall") {
+      await runInstallCommand(executor, plan.install.bootstrap, "launchd service could not be bootstrapped");
+      bootstrapped = true;
+    }
+  } catch (error) {
+    if (bootedOut && !plistApplied) {
+      try {
+        await runInstallCommand(executor, plan.install.bootstrap, "previous launchd service could not be restored");
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], "installation failed and launchd recovery also failed");
+      }
+    }
+    throw error;
+  }
+  let readback: MacOsInstallReadback | null;
+  try {
+    readback = await options.readback();
+    if (plan.operation === "uninstall") {
+      if (readback !== null) fail("READBACK_FAILED", "uninstall readback still reports an installed service");
+    } else {
+      if (readback === null) fail("READBACK_FAILED", "service readback is absent after bootstrap");
+      validateMacOsInstallReadback(plan, readback);
+    }
+  } catch (error) {
+    if (bootstrapped) {
+      try {
+        await runInstallCommand(executor, plan.rollback.bootout, "mismatched launchd service could not be stopped");
+      } catch (stopError) {
+        throw new AggregateError([error, stopError], "installation readback failed and launchd recovery also failed");
+      }
+    }
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("READBACK_FAILED", "service readback failed after installation");
+  }
+  return { operation: plan.operation, readback, plist };
+}
+
+async function runInstallCommand(
+  executor: MacOsInstallCommandExecutor,
+  command: LaunchdCommandSpec | CodeSignatureCommandSpec,
+  failureMessage: string
+): Promise<void> {
+  let result: ProcessExecutionResult;
+  try {
+    result = await executor.run(command);
+  } catch {
+    fail("COMMAND_FAILED", failureMessage);
+  }
+  if (result.resultClass !== "SUCCEEDED") fail("COMMAND_FAILED", failureMessage);
 }
 
 function launchctlCommand(args: readonly string[]): LaunchdCommandSpec {
