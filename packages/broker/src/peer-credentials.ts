@@ -1,4 +1,6 @@
 import { createRequire } from "node:module";
+import { lstatSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import type { Socket } from "node:net";
 
 export interface PeerCredentials {
@@ -23,6 +25,7 @@ interface SocketWithHandle extends Socket {
 }
 
 const require = createRequire(import.meta.url);
+const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
 
 export class MacOsPeerCredentialVerifier implements PeerCredentialVerifier {
   private readonly native: NativePeerCredentials;
@@ -52,10 +55,39 @@ export class MacOsPeerCredentialVerifier implements PeerCredentialVerifier {
 export function loadNativePeerAdapter(): NativePeerCredentials {
   if (process.platform !== "darwin") throw new Error("Peer credential verification requires macOS");
   try {
-    return require("./peer_credentials.node") as NativePeerCredentials;
+    const nativePath = require.resolve("./peer_credentials.node");
+    assertNativeAdapterFile(nativePath);
+    const before = statSync(nativePath);
+    const native = require(nativePath) as Partial<NativePeerCredentials>;
+    const after = statSync(nativePath);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size) {
+      throw new Error("Native peer adapter changed while loading");
+    }
+    if (
+      typeof native.getPeerCredentials !== "function" ||
+      typeof native.createUnixListener !== "function" ||
+      typeof native.acceptUnixClient !== "function" ||
+      typeof native.closeUnixDescriptor !== "function"
+    ) {
+      throw new Error("Native peer adapter exports are incomplete");
+    }
+    return native as NativePeerCredentials;
   } catch {
     throw new Error("Peer credential native adapter is unavailable");
   }
+}
+
+function assertNativeAdapterFile(nativePath: string): void {
+  if (!isAbsolute(nativePath) || resolve(nativePath) !== nativePath || realpathSync(nativePath) !== nativePath) {
+    throw new Error("Native peer adapter path is not canonical");
+  }
+  const linkStat = lstatSync(nativePath);
+  if (!linkStat.isFile() || linkStat.isSymbolicLink() || linkStat.size < 1 || linkStat.size > MAX_NATIVE_ADAPTER_BYTES ||
+      (linkStat.mode & 0o022) !== 0) {
+    throw new Error("Native peer adapter file is not protected");
+  }
+  const uid = process.getuid?.();
+  if (uid !== undefined && linkStat.uid !== uid) throw new Error("Native peer adapter owner is not current user");
 }
 
 export function parsePeerCredentials(value: unknown): PeerCredentials {
