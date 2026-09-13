@@ -6,7 +6,15 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `4bdcf94`.
+Current committed implementation baseline: `7f8f285`.
+
+The latest helper-filesystem addendum is `7f8f285`: the package boundary now
+has a read-only root-owned preflight with double `lstat`, symlink/type/mode/
+owner checks, device/inode stability, owner-only helper-key/plist files, and
+owner-executable native helper validation. This remains preflight evidence;
+descriptor-relative installation and real root-owned package readback remain
+open. The full suite passes 344 tests (342 passed, 2 opt-in real-sandbox tests
+skipped). Evidence: `evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 The latest helper-signature addendum is `4bdcf94`: on the real macOS host,
 the package test now builds a temporary helper bundle, runs the fixed

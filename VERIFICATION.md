@@ -73,7 +73,7 @@ no root process or privileged action was run. The full suite passes 337 tests
 (335 passed, 2 opt-in real-sandbox tests skipped). Evidence:
 `evidence/2026-09-13-privileged-helper-runtime.md`.
 
-Latest helper-package addendum: source commit `4bdcf94` adds a separate
+Latest helper-package addendum: source commit `7f8f285` adds a separate
 non-executing system LaunchDaemon plan. It fixes the root-domain plist path,
 native-only helper argv, exact helper signature identifier, protected helper
 root/key/socket paths, Broker peer UID/GID binding, root-owned plist actions,
@@ -82,7 +82,10 @@ enablement or capability advertisement. No launchd mutation, root process,
 signing, or privileged operation was run. A real macOS temporary bundle smoke
 test executes the fixed ad-hoc signing/verification command and reads back
 the exact helper identifier; this does not prove Developer ID provenance. The
-full suite passes 343 tests (341 passed, 2 opt-in real-sandbox tests skipped). Evidence:
+package now also has a double-`lstat` root-owned filesystem preflight with
+symlink/type/mode/owner and device/inode checks, including owner-only key/plist
+files and an owner-executable helper. The full suite passes 344 tests (342
+passed, 2 opt-in real-sandbox tests skipped). Evidence:
 `evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 Latest helper-caller addendum: source commit `7af182e` binds helper startup to

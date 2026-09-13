@@ -55,6 +55,13 @@ ad-hoc `codesign --verify --strict --deep` command and exact helper identifier
 readback. It intentionally does not claim Developer ID provenance,
 notarization, installation, or root-domain execution.
 
+Revision `7f8f285` adds a read-only helper package filesystem preflight. It
+double-checks `lstat` identity, rejects symlinks, foreign ownership, unsafe
+modes, unexpected types, and device/inode changes, and requires owner-only
+helper-key/plist files plus an owner-executable helper. It remains a preflight
+primitive; descriptor-relative installation and real root-domain readback are
+not yet enabled.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
