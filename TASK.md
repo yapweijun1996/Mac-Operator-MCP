@@ -111,6 +111,15 @@ Broker readiness; Developer ID, installed Broker/Edge identity, production
 upgrade/rollback, and helper installation remain open. Evidence:
 `evidence/2026-09-14-live-install-plan.md`.
 
+The real Broker startup assembly now has a physical-host smoke: a temporary
+user LaunchAgent supplied the native PID/start-time identity, signed policy and
+Edge-key activations were restored from a temporary BrokerStore, and the
+native Broker socket started with zero enabled capabilities and mode `0600`.
+Close removed the socket and cleanup booted out the temporary service. This is
+startup-assembly evidence, not installed-package, Edge request-exchange,
+Developer ID, or privileged-helper evidence. Evidence:
+`evidence/2026-09-14-live-broker-startup.md`.
+
 ## P0 — Foundation
 
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.

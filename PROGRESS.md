@@ -1243,3 +1243,13 @@ PID/start-time capture, exact bootout, exact uninstall, and final service/plist
 absence all passed for a temporary waiting process. The process was not
 represented as a Broker, so final Broker readiness remains closed. Evidence:
 `evidence/2026-09-14-live-install-plan.md`.
+
+The physical host now also exercises `createBrokerServiceFromStartupConfig`
+against a real temporary per-user LaunchAgent without a synthetic launchd
+executor. Signed policy and Edge-key activations restore before native
+PID/start-time capture; the Broker starts its native socket with zero enabled
+capabilities and mode `0600`, then closes cleanly and leaves no temporary
+service or socket. This closes only the live startup-assembly slice; Edge
+request exchange, installed production packaging, Developer ID signing,
+upgrade/rollback, and helper installation remain open. Evidence:
+`evidence/2026-09-14-live-broker-startup.md`.
