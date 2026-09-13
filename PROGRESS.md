@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `1fecf5b`.
+Current committed implementation baseline: `511f8a6`.
+
+The latest native process-boundary addendum is `511f8a6`: a real separately
+spawned Node Edge fixture now signs a `mac_health` request, connects across the
+native Unix-domain socket, verifies the complete Broker response proof, and is
+accepted only under the captured macOS PID/start-time identity. The fixture
+uses an explicit `/` working directory, a minimal environment, and a temporary
+owner-only key file; the peer-loss case remains covered. The focused native IPC
+suite passes 7/7, the full suite passes 350 tests (348 passed, 2 opt-in
+real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes 350/350.
+This remains local process-boundary evidence: installed launchd packaging,
+signed production binaries, Keychain distribution, and remote deployment are
+not proven. Evidence: `evidence/2026-09-13-native-edge-process-boundary.md`.
 
 The latest local layered Edge/Broker addendum is `1fecf5b`: a real RS256
 JWT-authenticated MCP client now reaches the Broker through the signed,
