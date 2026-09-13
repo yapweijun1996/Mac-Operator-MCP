@@ -32,6 +32,7 @@ interface NativePeerCredentials {
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
   readKeychainGenericPassword(service: string, account: string): unknown;
+  writeKeychainGenericPassword(service: string, account: string, key: Buffer): unknown;
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
@@ -48,7 +49,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot",
   "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity",
-  "readKeychainGenericPassword"
+  "readKeychainGenericPassword", "writeKeychainGenericPassword"
 ] as const;
 const MIN_SUPPORTED_NAPI_VERSION = 8;
 
@@ -194,6 +195,22 @@ export function readKeychainGenericPassword(service: string, account: string): B
     throw new Error("Keychain generic password has an invalid length");
   }
   return Buffer.from(value);
+}
+
+/**
+ * Provisions one exact 32-byte generic-password item with a device-bound
+ * after-first-unlock accessibility class. Provisioning is explicit startup or
+ * operator configuration work; MCP request arguments never select it.
+ */
+export function writeKeychainGenericPassword(service: string, account: string, key: Buffer): void {
+  if (!/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(service) ||
+      !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
+    throw new Error("Keychain service or account is invalid");
+  }
+  if (!Buffer.isBuffer(key) || key.byteLength !== 32) {
+    throw new Error("Keychain generic password must contain exactly 32 bytes");
+  }
+  loadNativePeerAdapter().writeKeychainGenericPassword(service, account, Buffer.from(key));
 }
 
 export function authorizePeerCredentials(

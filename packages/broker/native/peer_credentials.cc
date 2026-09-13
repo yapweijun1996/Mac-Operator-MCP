@@ -239,6 +239,113 @@ napi_value ReadKeychainGenericPassword(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value WriteKeychainGenericPassword(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+    napi_throw_type_error(env, nullptr, "writeKeychainGenericPassword requires service, account, and key");
+    return nullptr;
+  }
+  char service[192];
+  char account[192];
+  if (!ReadComponent(env, args[0], service, sizeof(service), "com.mac-operator.") ||
+      !ReadComponent(env, args[1], account, sizeof(account))) {
+    napi_throw_type_error(env, nullptr, "Keychain service or account is malformed");
+    return nullptr;
+  }
+  bool is_buffer = false;
+  if (napi_is_buffer(env, args[2], &is_buffer) != napi_ok || !is_buffer) {
+    napi_throw_type_error(env, nullptr, "Keychain generic password must be a Buffer");
+    return nullptr;
+  }
+  void* key_bytes = nullptr;
+  size_t key_length = 0;
+  if (napi_get_buffer_info(env, args[2], &key_bytes, &key_length) != napi_ok || key_bytes == nullptr || key_length != 32) {
+    napi_throw_type_error(env, nullptr, "Keychain generic password must contain exactly 32 bytes");
+    return nullptr;
+  }
+
+  CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
+  CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
+  CFDataRef key_value = CFDataCreate(kCFAllocatorDefault, static_cast<const UInt8*>(key_bytes), 32);
+  if (service_value == nullptr || account_value == nullptr || key_value == nullptr) {
+    if (service_value != nullptr) CFRelease(service_value);
+    if (account_value != nullptr) CFRelease(account_value);
+    if (key_value != nullptr) CFRelease(key_value);
+    ThrowSystemError(env, "Keychain identity could not be represented");
+    return nullptr;
+  }
+
+  CFMutableDictionaryRef lookup = CFDictionaryCreateMutable(
+      kCFAllocatorDefault, 6, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (lookup == nullptr) {
+    CFRelease(service_value);
+    CFRelease(account_value);
+    CFRelease(key_value);
+    ThrowSystemError(env, "Keychain query could not be created");
+    return nullptr;
+  }
+  CFDictionarySetValue(lookup, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(lookup, kSecAttrService, service_value);
+  CFDictionarySetValue(lookup, kSecAttrAccount, account_value);
+  CFDictionarySetValue(lookup, kSecReturnAttributes, kCFBooleanTrue);
+  CFDictionarySetValue(lookup, kSecMatchLimit, kSecMatchLimitAll);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  CFDictionarySetValue(lookup, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
+#pragma clang diagnostic pop
+  CFTypeRef existing = nullptr;
+  const OSStatus lookup_status = SecItemCopyMatching(lookup, &existing);
+  if (existing != nullptr) CFRelease(existing);
+  CFRelease(lookup);
+  if (lookup_status == errSecSuccess || lookup_status == errSecDuplicateItem) {
+    CFRelease(service_value);
+    CFRelease(account_value);
+    CFRelease(key_value);
+    ThrowSystemError(env, "Keychain generic password already exists");
+    return nullptr;
+  }
+  if (lookup_status != errSecItemNotFound) {
+    CFRelease(service_value);
+    CFRelease(account_value);
+    CFRelease(key_value);
+    ThrowSystemError(env, "Keychain generic password availability could not be checked");
+    return nullptr;
+  }
+
+  CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
+      kCFAllocatorDefault, 8, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (attributes == nullptr) {
+    CFRelease(service_value);
+    CFRelease(account_value);
+    CFRelease(key_value);
+    ThrowSystemError(env, "Keychain attributes could not be created");
+    return nullptr;
+  }
+  CFDictionarySetValue(attributes, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(attributes, kSecAttrService, service_value);
+  CFDictionarySetValue(attributes, kSecAttrAccount, account_value);
+  CFDictionarySetValue(attributes, kSecValueData, key_value);
+  CFDictionarySetValue(attributes, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
+  CFDictionarySetValue(attributes, kSecAttrSynchronizable, kCFBooleanFalse);
+  const OSStatus add_status = SecItemAdd(attributes, nullptr);
+  CFRelease(attributes);
+  CFRelease(service_value);
+  CFRelease(account_value);
+  CFRelease(key_value);
+  if (add_status == errSecDuplicateItem) {
+    ThrowSystemError(env, "Keychain generic password already exists");
+    return nullptr;
+  }
+  if (add_status != errSecSuccess) {
+    ThrowSystemError(env, "Keychain generic password could not be provisioned");
+    return nullptr;
+  }
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+}
+
 std::string SanitizeInterfaceName(const char* value) {
   if (value == nullptr || value[0] == '\0') return "unknown";
   std::string result;
@@ -1987,6 +2094,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "getProcessIdentity", function);
   napi_create_function(env, "readKeychainGenericPassword", NAPI_AUTO_LENGTH, ReadKeychainGenericPassword, nullptr, &function);
   napi_set_named_property(env, exports, "readKeychainGenericPassword", function);
+  napi_create_function(env, "writeKeychainGenericPassword", NAPI_AUTO_LENGTH, WriteKeychainGenericPassword, nullptr, &function);
+  napi_set_named_property(env, exports, "writeKeychainGenericPassword", function);
   return exports;
 }
 

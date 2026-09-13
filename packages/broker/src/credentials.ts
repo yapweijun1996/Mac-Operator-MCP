@@ -6,7 +6,7 @@ import { sha256 } from "@mac-operator/contracts";
 import { keyIdentity } from "./edge-keyring.js";
 import { approvalKeyIdentity, type ApprovalIssuerKey } from "./approval-authority.js";
 import type { BrokerStore, RevocationKind } from "./persistence.js";
-import { readKeychainGenericPassword } from "./peer-credentials.js";
+import { readKeychainGenericPassword, writeKeychainGenericPassword } from "./peer-credentials.js";
 
 const HEX_KEY_PATTERN = /^[A-Fa-f0-9]{64}$/u;
 
@@ -17,6 +17,21 @@ const HEX_KEY_PATTERN = /^[A-Fa-f0-9]{64}$/u;
  */
 export async function loadKeychainAuthenticationKey(service: string, account: string): Promise<Buffer> {
   return readKeychainGenericPassword(service, account);
+}
+
+/**
+ * Explicitly provisions one random 32-byte authentication key in the
+ * Broker-owned Keychain namespace. The secret is returned only as a digest;
+ * callers must reload it through `loadKeychainAuthenticationKey`.
+ */
+export async function provisionKeychainAuthenticationKey(service: string, account: string): Promise<{ digest: string }> {
+  if (!/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(service) ||
+      !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
+    throw new Error("Keychain service or account is invalid");
+  }
+  const key = randomBytes(32);
+  writeKeychainGenericPassword(service, account, key);
+  return { digest: sha256(key) };
 }
 
 export async function loadAuthenticationKey(path: string): Promise<Buffer> {

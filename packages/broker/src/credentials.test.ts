@@ -9,6 +9,7 @@ import {
   loadApprovalIssuerKey,
   loadKeychainAuthenticationKey,
   provisionAuthenticationKey,
+  provisionKeychainAuthenticationKey,
   retireRevokedApprovalIssuerKey,
   retireRevokedAuthenticationKey
 } from "./credentials.js";
@@ -91,6 +92,17 @@ test("Keychain authentication source validates identity and fails closed when th
   );
   await assert.rejects(
     loadKeychainAuthenticationKey("com.mac-operator.test", "../escape"),
+    /Keychain service or account is invalid/u
+  );
+});
+
+test("Keychain authentication provisioning validates its explicit namespace without creating malformed items", async () => {
+  await assert.rejects(
+    provisionKeychainAuthenticationKey("/tmp/attacker", `edge:invalid:${randomUUID()}`),
+    /Keychain service or account is invalid/u
+  );
+  await assert.rejects(
+    provisionKeychainAuthenticationKey("com.mac-operator.test", `../escape`),
     /Keychain service or account is invalid/u
   );
 });
