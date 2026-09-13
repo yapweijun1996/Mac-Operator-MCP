@@ -50,6 +50,12 @@ stronger identity before constructing the native listener. Lower-level
 compatibility constructors remain available for migration and tests, but the
 production assembly cannot silently choose PID-only authorization.
 
+Revision `cd84e37` adds a real cross-process Mac test. A separately spawned
+Node Edge fixture is captured by PID/start time before the listener starts,
+then accepted through the native UDS and reaches the bounded request handler.
+This proves the identity binding is not merely same-process self-observation;
+installed launchd startup and Edge restart handling remain open.
+
 An Edge keyring supports overlapping validity windows for rotation. The Ed25519-signed policy separately authorizes exact `(edge_id, key_id, not_before, expires_at)` metadata, while secret bytes come only from protected local key files. A request must pass both signed-policy metadata and local-key validity. Key-specific revocation is persisted and overrides both. Rotation, unknown key, local expiry, signed-policy expiry, and old-key revocation tests pass.
 
 Key-file lifecycle primitives use an owner-only non-symlink directory, exclusive `0600` creation, file and directory fsync, and an expected-digest precondition. Retirement refuses an Edge key until its exact identity is durably revoked, then uses a unique same-directory quarantine rename and unlink. APFS/SSD physical overwrite is outside this guarantee; cross-process delivery should move to an approved Keychain or packaging mechanism before production acceptance.

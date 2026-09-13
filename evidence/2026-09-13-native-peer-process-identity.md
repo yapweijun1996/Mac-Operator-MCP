@@ -23,11 +23,14 @@ identity is accepted from request arguments.
 
 - Host: Darwin arm64, macOS `26.2` build `25C56`.
 - Runtime: Node `v25.5.0`, npm `11.8.0`.
-- Source commits: `f76e8a0` (`security: bind native IPC peers to process identity`)
-  and `752f73a` (`security: require peer identity for native runtime`).
+- Source commits: `f76e8a0` (`security: bind native IPC peers to process identity`),
+  `752f73a` (`security: require peer identity for native runtime`), and
+  `cd84e37` (`test: prove cross-process peer identity binding`).
 - Captured: `2026-09-13`; source working tree was clean at test capture.
-- Focused native IPC/peer tests: 11 passed, 0 failed.
-- Full regression: 299 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
+- Focused native IPC/peer/runtime tests: 17 passed, 0 failed.
+- Full regression: 300 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
+- `MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/sandbox-profile.test.js` —
+  7 passed, 0 failed.
 - The native server rejects a deliberately mismatched start time before JSON
   parsing and leaves the Broker audit ledger empty.
 - `createMacOsNativeBrokerRuntime` rejects a PID-only peer policy before it
@@ -49,8 +52,8 @@ identity is accepted from request arguments.
 - `packages/broker/src/runtime.ts` SHA-256:
   `95aa51569d69d74216d85fdb7ff126c792b545944f8881846a85052c4aa5d416`
 - `packages/broker/src/native-ipc-server.test.ts` after the runtime-assembly
-  guard SHA-256:
-  `607aadcf702a7fbe62217a6e426e69d66d6bdf22d8cbce8c8e774067889e3563`
+  guard and cross-process fixture SHA-256:
+  `013dd86a2bb3bcc58a1d9af71229511313db3691d3110f5b4e4f706ca80eaeb3`
 
 ## Limits and next gate
 
