@@ -60,7 +60,7 @@ Exit: approved workflows pass real-application tests and sensitive or stale targ
 
 Status: `PLANNED`
 
-Finalize helper protocol, local caller authentication, package/signing model, operation allowlist, preconditions, verification, rollback, audit, compatibility, and emergency disable. Implement the smallest approved operation set.
+The proposed helper protocol and separately authenticated IPC boundary are implemented as a fail-closed candidate: OS peer authorization precedes parsing, HMAC commands/responses are digest-bound, helper request/nonce replay is durable, and only three operation names are representable. Finalize local caller identity, package/signing model, operation-specific preconditions/verification, rollback, audit, compatibility, and emergency disable before implementing any privileged adapter.
 
 Exit: independent review and adversarial real-host tests pass; no arbitrary root execution path exists.
 

@@ -12,5 +12,6 @@ ADRs capture decisions that materially affect authority, compatibility, data own
 | [ADR-0006](0006-sandbox.md) | Child-process sandbox | Proposed |
 | [ADR-0007](0007-packaging.md) | macOS packaging and signing | Proposed |
 | [ADR-0008](0008-approval-model.md) | Approval model | Proposed |
+| [ADR-0009](0009-privileged-helper.md) | Separately authenticated privileged helper boundary | Proposed |
 
 Each accepted ADR must record evidence, affected tasks, migration or compatibility impact, failure and rollback behavior, and superseded decisions.
