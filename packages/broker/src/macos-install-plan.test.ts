@@ -16,6 +16,7 @@ import {
   type LaunchdCommandSpec,
   type MacOsInstallPlanInput
 } from "./macos-install-plan.js";
+import { executeMacOsUninstallPlan } from "./macos-uninstall-plan.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const base: MacOsInstallPlanInput = {
@@ -369,9 +370,75 @@ test("install executor requires explicit confirmation and verifies final Broker 
     assert.equal(result.readback?.broker.nativeTransportRequired, true);
     assert.deepEqual(executor.commands.map((command) => command.args[0]), ["--verify", "bootstrap"]);
     await assert.doesNotReject(readFile(plan.plistPath, "utf8"));
+
+    const authorityEvents: string[] = [];
+    const uninstallPlan = buildMacOsInstallPlan({
+      ...base,
+      operation: "uninstall",
+      expectedPreviousSourceRevision: base.metadata.sourceRevision,
+      uid,
+      userHome,
+      installRoot,
+      plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
+      signedArtifactPath: artifact,
+      service: {
+        ...base.service,
+        program: join(binRoot, "node"),
+        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        workingDirectory: installRoot,
+        stdoutPath: join(logRoot, "broker.out.log"),
+        stderrPath: join(logRoot, "broker.err.log")
+      }
+    });
+    const removed = await executeMacOsUninstallPlan(uninstallPlan, {
+      confirmOperation: "uninstall",
+      existingService: { present: true, sourceRevision: base.metadata.sourceRevision },
+      ownerUid: uid,
+      commandExecutor: executor,
+      readback: async () => null,
+      edgeId: "edge-1",
+      disableGlobal: async () => { authorityEvents.push("disable-global"); },
+      revokeEdge: async (edgeId) => { authorityEvents.push(`revoke-edge:${edgeId}`); },
+      authorityReadback: async () => {
+        authorityEvents.push("authority-readback");
+        return { globalDisabled: true, edgeRevoked: true };
+      }
+    });
+    assert.equal(removed.readback, null);
+    assert.deepEqual(authorityEvents, ["disable-global", "revoke-edge:edge-1", "authority-readback", "authority-readback"]);
+    await assert.rejects(readFile(uninstallPlan.plistPath, "utf8"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("uninstall authority gate fails closed before filesystem mutation", async () => {
+  const plan = buildMacOsInstallPlan({
+    ...base,
+    operation: "uninstall",
+    expectedPreviousSourceRevision: base.metadata.sourceRevision
+  });
+  const events: string[] = [];
+  const executor = new RecordingInstallExecutor();
+  await assert.rejects(
+    executeMacOsUninstallPlan(plan, {
+      confirmOperation: "uninstall",
+      existingService: { present: true, sourceRevision: base.metadata.sourceRevision },
+      ownerUid: base.uid,
+      commandExecutor: executor,
+      readback: async () => null,
+      edgeId: "edge-1",
+      disableGlobal: async () => { events.push("disable-global"); },
+      revokeEdge: async () => { events.push("revoke-edge"); },
+      authorityReadback: async () => {
+        events.push("authority-readback");
+        return { globalDisabled: true, edgeRevoked: false };
+      }
+    }),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "AUTHORITY_MISMATCH"
+  );
+  assert.deepEqual(events, ["disable-global", "revoke-edge", "authority-readback"]);
+  assert.deepEqual(executor.commands, []);
 });
 
 test("install executor stops a mismatched service and leaves an explicit recovery artifact", async () => {
