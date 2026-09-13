@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `1807ebc`.
+Current committed implementation baseline: `cd74420`.
+
+The latest special-file boundary addendum is `cd74420`: a disposable
+Unix-domain socket is returned only as bounded `other` metadata and generic
+content-read, hash, and atomic-write attempts fail closed. Focused filesystem
+tests pass 28/28; the full suite passes 365 tests (363 passed, 2 opt-in
+real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes 365/365.
+FIFO/device/pseudo-filesystem coverage remains open and no production adapter
+was enabled. Evidence:
+`evidence/2026-09-13-special-file-boundary.md`.
 
 The latest filesystem volume-identity addendum is `1807ebc`: every
 `FilesystemPathPlan` now binds the native canonical root and volume identity at
@@ -660,7 +669,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Released tools: 0 of 44 planned.
 - Implemented local Broker handlers: 39 of 44 planned.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 362 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: 363 passing (two opt-in real-sandbox tests skipped by default).
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
