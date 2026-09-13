@@ -52,11 +52,14 @@ The Broker task admission boundary now also requires a versioned `TaskIsolationP
 
 ## 2026-09-13 experimental runner evidence
 
-Source commit `a50b999` adds `renderTaskSandboxProfile` and an opt-in
+Source commit `22dd190` adds `renderTaskSandboxProfile` and an opt-in
 `SandboxExecTaskRunner`. The renderer emits only a Broker-owned deny-default
 Seatbelt subset, allows a resolved executable and explicit filesystem roots,
 denies global and representative project secret zones, and rejects network
-allowlists. The runner invokes `/usr/bin/sandbox-exec` through the bounded
+allowlists. Resolved profiles default to `processTreePolicy:
+"single_process"`, which omits `process-fork`; only an explicit
+`owned_group` profile adds that rule and it remains separately unevidenced. The
+runner invokes `/usr/bin/sandbox-exec` through the bounded
 `ProcessSupervisor` with an explicit environment, cwd, timeout, output cap, and
 cancellation callback. It remains unavailable unless macOS, explicit opt-in,
 an external host-evidence gate, and a matching `TaskIsolationProof` are all

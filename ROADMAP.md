@@ -44,7 +44,7 @@ Exit: the Mac can be diagnosed safely through released read-only tools with exac
 
 Status: `IN_PROGRESS`
 
-Bounded Git, package, and fixed local-only Docker inspection are implemented with independent scopes and target authorization. An experimental, disabled-by-default macOS `SandboxExecTaskRunner` now renders a Broker-owned deny-default profile and passes explicit execution limits through `ProcessSupervisor`; its real-host evidence is partial. Continue with named test/build profiles and Broker-owned jobs only after sandbox evidence; prove filesystem, network, environment, process-tree, and credential isolation before enabling controlled writes. Add atomic file writes, patching, explicit staging, and local commits with preconditions and verification.
+Bounded Git, package, and fixed local-only Docker inspection are implemented with independent scopes and target authorization. An experimental, disabled-by-default macOS `SandboxExecTaskRunner` now renders a Broker-owned deny-default profile with a default single-process/no-fork policy and passes explicit execution limits through `ProcessSupervisor`; its real-host evidence is partial. Continue with named test/build profiles and Broker-owned jobs only after sandbox evidence; prove filesystem, network, environment, process-tree, and credential isolation before enabling controlled writes. Add atomic file writes, patching, explicit staging, and local commits with preconditions and verification.
 
 Exit: approved real-project workflows pass without exposing a generic shell or controller credentials.
 

@@ -28,10 +28,13 @@ The Broker admission contract additionally requires a versioned, profile-matched
 
 ## Experimental implementation addendum
 
-Commit `684058c` implements a narrow `SandboxExecTaskRunner` behind explicit
+Commit `22dd190` implements a narrow `SandboxExecTaskRunner` behind explicit
 opt-in and host-evidence gates. It renders deny-default policy from the
-resolved `TaskProfile` and delegates bounded execution to `ProcessSupervisor`;
-it does not accept raw SBPL, caller-selected executables, or network allowlists.
+resolved `TaskProfile` and delegates bounded execution to `ProcessSupervisor`.
+Resolved profiles default to a single-process policy that omits
+`process-fork`; an explicit owned process-group policy remains a separate,
+unevidenced extension. The runner does not accept raw SBPL, caller-selected
+executables, or network allowlists.
 The real-host smoke is recorded in
 [`evidence/2026-09-13-sandbox-profile-runner.md`](../../evidence/2026-09-13-sandbox-profile-runner.md)
 and remains partial. The runner is not wired into the production Broker
