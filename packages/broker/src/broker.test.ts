@@ -82,6 +82,7 @@ function taskProfile(root: string): TaskProfile {
 function testTaskIsolationProof(): TaskIsolationProof {
   return {
     schemaVersion: "0.1",
+    sandboxMechanism: "sandbox-exec",
     sandboxProfile: "deny-default-v0.1",
     filesystem: "enforced",
     network: "enforced",

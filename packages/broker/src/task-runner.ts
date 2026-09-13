@@ -36,6 +36,8 @@ export interface TaskExecutionResult {
  */
 export interface TaskIsolationProof {
   schemaVersion: "0.1";
+  /** Explicit host mechanism; evidence cannot silently transfer to another runner. */
+  sandboxMechanism: "sandbox-exec";
   sandboxProfile: string;
   filesystem: "enforced";
   network: "enforced";
@@ -100,6 +102,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
     // profile. Keep the owned-group variant unavailable until a separate
     // process-tree ownership and escape-resistance proof is accepted.
     this.available = options.enabled === true && options.hostEvidenceAccepted === true &&
+      proof?.sandboxMechanism === "sandbox-exec" &&
       proof?.processTreePolicy === "single_process" && process.platform === "darwin";
   }
 
@@ -139,10 +142,11 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
-  const allowedKeys = new Set(["schemaVersion", "sandboxProfile", "filesystem", "network", "credentials", "processTree", "processTreePolicy", "evidenceRef"]);
+  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "processTree", "processTreePolicy", "evidenceRef"]);
   if (
     Object.keys(value).some((key) => !allowedKeys.has(key)) ||
     proof.schemaVersion !== "0.1" ||
+    proof.sandboxMechanism !== "sandbox-exec" ||
     typeof proof.sandboxProfile !== "string" ||
     !SANDBOX_PROFILE_PATTERN.test(proof.sandboxProfile) ||
     proof.filesystem !== "enforced" ||
@@ -157,6 +161,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
   }
   return {
     schemaVersion: "0.1",
+    sandboxMechanism: "sandbox-exec",
     sandboxProfile: proof.sandboxProfile,
     filesystem: "enforced",
     network: "enforced",

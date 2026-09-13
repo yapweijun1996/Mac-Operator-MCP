@@ -65,6 +65,12 @@ evidence but does not select deprecated `sandbox-exec`; credential contents,
 post-snapshot descendants, remounts, and production task enablement remain
 open. Evidence: `evidence/2026-09-14-real-sandbox-regression.md`.
 
+Latest isolation-proof hardening: `TaskIsolationProof` now binds an explicit
+`sandboxMechanism` (`sandbox-exec` for the experimental runner) in addition to
+the profile and process-tree policy. Validation rejects unknown mechanisms, so
+future App Sandbox or Virtualization evidence cannot be reused accidentally by
+the deprecated runner. The runner remains opt-in and unavailable by default.
+
 Current committed implementation baseline: install-plan raw-readback hardening.
 
 The current install-plan readback hardening adds a raw-source observer boundary:

@@ -32,3 +32,7 @@ production isolation mechanism. Credential contents, Docker protocol access,
 post-snapshot descendants, physical remounts, and production task enablement
 remain unproven; `mac_task_run` stays disabled and its release gate remains
 blocked pending a supported sandbox/process-ownership decision.
+
+The proof schema now records the exact `sandboxMechanism` (`sandbox-exec`) and
+rejects other mechanism values. This prevents this experimental evidence from
+being silently reused by a future App Sandbox or Virtualization runner.

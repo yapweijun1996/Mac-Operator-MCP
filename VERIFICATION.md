@@ -72,6 +72,12 @@ deprecated `sandbox-exec`, post-snapshot descendants, remounts, credential
 contents, and production task enablement remain open. Evidence:
 `evidence/2026-09-14-real-sandbox-regression.md`.
 
+Latest isolation-proof hardening: `TaskIsolationProof` now binds an explicit
+`sandboxMechanism` (`sandbox-exec` for the experimental runner) alongside the
+profile and process-tree policy. Unknown mechanisms are rejected, preventing
+future App Sandbox or Virtualization evidence from being reused by the
+deprecated runner. The runner remains opt-in and unavailable by default.
+
 Latest exact-arguments readback addendum: source commit `9d90138` parses the
 bounded launchd `arguments` block and requires the exact planned Node binary
 plus JavaScript entrypoint during Broker service composition. Missing,

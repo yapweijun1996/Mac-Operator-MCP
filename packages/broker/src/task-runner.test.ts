@@ -59,6 +59,7 @@ test("task runner result validation rejects malformed or oversized verification 
 test("task runner isolation proof requires every boundary and the selected sandbox profile", () => {
   const proof = {
     schemaVersion: "0.1",
+    sandboxMechanism: "sandbox-exec",
     sandboxProfile: "deny-default-v0.1",
     filesystem: "enforced",
     network: "enforced",
@@ -70,6 +71,10 @@ test("task runner isolation proof requires every boundary and the selected sandb
   assert.deepEqual(validateTaskIsolationProof(proof), proof);
   assert.throws(
     () => validateTaskIsolationProof({ ...proof, credentials: "unknown" }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.throws(
+    () => validateTaskIsolationProof({ ...proof, sandboxMechanism: "app-sandbox" as never }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
   assert.throws(

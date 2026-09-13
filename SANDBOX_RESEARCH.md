@@ -48,7 +48,7 @@ The first hostile boundary probe ran on a Mac mini `Mac16,10` (Apple M4, 16 GB),
 
 This evidence is insufficient to select `sandbox-exec` as the production task boundary. It does not unblock `MOP-043` or `MOP-045`; the next research slice must test hostile credentials, process-tree ownership, cleanup after timeout/crash, and external allowlisted networking or move execution to a stronger boundary. The Broker-side canary closes only one previously unknown launch invariant: `ProcessSupervisor` does not inherit arbitrary parent descriptors. It must not be interpreted as credential isolation or as proof that `sandbox-exec` itself enforces descriptor policy.
 
-The Broker task admission boundary now also requires a versioned `TaskIsolationProof` before any runner marked available can consume approval or create a task Job. The proof must name the selected profile sandbox and attest to enforced filesystem/network boundaries, isolated credentials, and owned process-tree cleanup. This is a fail-closed contract gate; the current default runner remains unavailable, and the test-only attestation is not production evidence.
+The Broker task admission boundary now also requires a versioned `TaskIsolationProof` before any runner marked available can consume approval or create a task Job. The proof must name the explicit sandbox mechanism and profile, then attest to enforced filesystem/network boundaries, isolated credentials, and owned process-tree cleanup. Binding the mechanism prevents evidence for deprecated `sandbox-exec` from being reused by a future App Sandbox or Virtualization runner. This is a fail-closed contract gate; the current default runner remains unavailable, and the test-only attestation is not production evidence.
 
 ## 2026-09-13 experimental runner evidence
 
@@ -87,11 +87,12 @@ real-Mac smoke passes 7/7 tests with `MOPS_REAL_SANDBOX=1`. `sandbox-exec` is
 deprecated, so this does not select it for
 production or unblock `mac_task_run`.
 
-The versioned `TaskIsolationProof` now also binds the selected
-`processTreePolicy`, so evidence for `single_process` cannot be reused for an
-`owned_group` profile. The runner's availability gate independently refuses
-`owned_group`; this is a fail-closed enablement safeguard, not proof that the
-owned-group variant is safe.
+The versioned `TaskIsolationProof` binds both the selected sandbox mechanism
+and `processTreePolicy`, so evidence for deprecated `sandbox-exec`,
+`single_process`, or another profile cannot be silently reused by a different
+runner or an `owned_group` profile. The runner's availability gate
+independently refuses `owned_group`; this is a fail-closed enablement safeguard,
+not proof that the owned-group variant is safe.
 
 ## 2026-09-13 current-revision readback
 

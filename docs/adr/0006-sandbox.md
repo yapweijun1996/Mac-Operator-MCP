@@ -24,7 +24,7 @@ Evaluate macOS sandbox profiles and current platform support, dedicated users, c
 
 A hostile fixture must fail to read controller and user credentials, escape allowed roots, reach denied network targets, detach unowned processes, access Docker/root-equivalent interfaces, persist launch items, or survive cancellation. Results must identify exact macOS/hardware/runtime versions.
 
-The Broker admission contract additionally requires a versioned, profile-matched `TaskIsolationProof` attesting to the sandbox, filesystem, network, credential, and process-tree dimensions. This gate prevents a runner's generic `available` flag from being treated as proof; it does not accept self-attestation as release evidence, and the default runner remains disabled until host evidence is independently reviewed.
+The Broker admission contract additionally requires a versioned, profile-matched `TaskIsolationProof` that names the exact sandbox mechanism and attests to the sandbox, filesystem, network, credential, and process-tree dimensions. Binding the mechanism prevents evidence from being reused across `sandbox-exec`, App Sandbox, or Virtualization implementations. This gate prevents a runner's generic `available` flag from being treated as proof; it does not accept self-attestation as release evidence, and the default runner remains disabled until host evidence is independently reviewed.
 
 ## Experimental implementation addendum
 
@@ -36,8 +36,9 @@ Resolved profiles default to a single-process policy that omits
 unevidenced extension. The runner does not accept raw SBPL, caller-selected
 executables, or non-loopback network destinations; loopback allowlists are
 rendered as exact `localhost:port` rules.
-`TaskIsolationProof` binds this process-tree policy to the resolved profile so
-proofs cannot be replayed across policy variants.
+`TaskIsolationProof` binds the `sandbox-exec` mechanism and process-tree policy
+to the resolved profile so proofs cannot be replayed across policy variants or
+future isolation runners.
 The real-host smoke is recorded in
 [`evidence/2026-09-13-sandbox-profile-runner.md`](../../evidence/2026-09-13-sandbox-profile-runner.md)
 and remains partial. The runner is not wired into the production Broker

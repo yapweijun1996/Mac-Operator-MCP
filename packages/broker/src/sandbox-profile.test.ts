@@ -14,6 +14,7 @@ import type { ResolvedTaskProfile } from "./task-profile.js";
 function proof(): TaskIsolationProof {
   return {
     schemaVersion: "0.1",
+    sandboxMechanism: "sandbox-exec",
     sandboxProfile: "deny-default-v0.1",
     filesystem: "enforced",
     network: "enforced",
