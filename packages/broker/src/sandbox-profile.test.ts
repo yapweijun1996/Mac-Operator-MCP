@@ -17,6 +17,7 @@ function proof(): TaskIsolationProof {
     network: "enforced",
     credentials: "isolated",
     processTree: "owned",
+    processTreePolicy: "single_process",
     evidenceRef: "test://sandbox-profile"
   };
 }

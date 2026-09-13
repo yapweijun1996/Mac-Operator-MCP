@@ -64,6 +64,7 @@ test("task runner isolation proof requires every boundary and the selected sandb
     network: "enforced",
     credentials: "isolated",
     processTree: "owned",
+    processTreePolicy: "single_process",
     evidenceRef: "evidence://task-runner"
   } as const;
   assert.deepEqual(validateTaskIsolationProof(proof), proof);
@@ -82,6 +83,10 @@ test("task runner isolation proof requires every boundary and the selected sandb
   assert.deepEqual(requireTaskIsolationProof(proof, profile), proof);
   assert.throws(
     () => requireTaskIsolationProof({ ...proof, sandboxProfile: "other-profile" }, profile),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.throws(
+    () => requireTaskIsolationProof({ ...proof, processTreePolicy: "owned_group" }, profile),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
 });

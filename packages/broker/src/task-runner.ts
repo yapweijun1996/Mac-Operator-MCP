@@ -39,6 +39,7 @@ export interface TaskIsolationProof {
   network: "enforced";
   credentials: "isolated";
   processTree: "owned";
+  processTreePolicy: "single_process" | "owned_group";
   evidenceRef: string;
 }
 
@@ -125,7 +126,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
-  const allowedKeys = new Set(["schemaVersion", "sandboxProfile", "filesystem", "network", "credentials", "processTree", "evidenceRef"]);
+  const allowedKeys = new Set(["schemaVersion", "sandboxProfile", "filesystem", "network", "credentials", "processTree", "processTreePolicy", "evidenceRef"]);
   if (
     Object.keys(value).some((key) => !allowedKeys.has(key)) ||
     proof.schemaVersion !== "0.1" ||
@@ -135,6 +136,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     proof.network !== "enforced" ||
     proof.credentials !== "isolated" ||
     proof.processTree !== "owned" ||
+    (proof.processTreePolicy !== "single_process" && proof.processTreePolicy !== "owned_group") ||
     typeof proof.evidenceRef !== "string" ||
     !EVIDENCE_REFERENCE_PATTERN.test(proof.evidenceRef)
   ) {
@@ -147,6 +149,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     network: "enforced",
     credentials: "isolated",
     processTree: "owned",
+    processTreePolicy: proof.processTreePolicy,
     evidenceRef: proof.evidenceRef
   };
 }
@@ -156,7 +159,8 @@ export function requireTaskIsolationProof(
   profile: ResolvedTaskProfile
 ): TaskIsolationProof {
   const validated = validateTaskIsolationProof(proof);
-  if (validated.sandboxProfile !== profile.sandboxProfile) {
+  if (validated.sandboxProfile !== profile.sandboxProfile ||
+      validated.processTreePolicy !== (profile.processTreePolicy ?? "single_process")) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof does not match the selected profile");
   }
   return validated;
