@@ -91,6 +91,11 @@ the helper apply boundary. Host-only helper plist mutation now always uses its
 internal root filesystem policy, preventing a caller from swapping the writer
 after the real-path preflight.
 
+Revision `3d5d257` adds a dry-run helper package execution contract. It binds
+the exact existing source revision and returns fixed install/upgrade/rollback/
+uninstall steps plus final readback and operation-specific recovery steps. It
+does not execute launchctl or perform root mutation.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

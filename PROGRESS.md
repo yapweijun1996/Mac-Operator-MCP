@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `c8dcb2c`.
+Current committed implementation baseline: `3d5d257`.
+
+The latest helper lifecycle addendum is `3d5d257`: a host-only dry-run
+execution contract now validates the exact existing service revision and fixes
+the install/upgrade/rollback/uninstall step order, including signature
+verification, bootout/bootstrap, plist action, final readback, and recovery
+steps. It is a plan-only boundary; no launchctl command or root mutation is
+executed. The default full suite passes 348 tests (346 passed, 2 opt-in
+real-sandbox tests skipped). Evidence:
+`evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 The latest helper apply hardening is `c8dcb2c`: host-only plist mutation now
 checks the real current process UID in addition to the caller-supplied root
@@ -18,9 +27,9 @@ default full suite passes
 opt-in suite passes 347/347. Evidence:
 `evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
-The latest real-Mac sandbox readback was rerun from `c49ff5b` with
+The latest real-Mac sandbox readback was rerun from `3d5d257` with
 `MOPS_REAL_SANDBOX=1`: both opt-in sandbox tests passed, and the full suite
-passed 346/346 with no skipped tests. The smoke remains synthetic and
+passed 348/348 with no skipped tests. The smoke remains synthetic and
 disabled-by-default; it does not establish real credential/persistence
 isolation, descendant/`setsid` ownership, remount safety, or a production
 replacement for deprecated `sandbox-exec`. `mac_task_run` remains disabled.

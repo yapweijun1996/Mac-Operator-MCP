@@ -1,7 +1,7 @@
 # Privileged Helper Package Boundary Evidence
 
 Date: 2026-09-13
-Source commit: `c8dcb2c`
+Source commit: `3d5d257`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -32,9 +32,9 @@ and disabled adapter/capability state. The plan is not exposed through MCP.
 
 ## Verification
 
-- `npm test`: 347 tests, 345 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
-- Focused package-boundary tests: 8 passed, 0 failed.
-- `MOPS_REAL_SANDBOX=1 npm test`: 347 tests, 347 passed, 0 skipped.
+- `npm test`: 348 tests, 346 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
+- Focused package-boundary tests: 9 passed, 0 failed.
+- `MOPS_REAL_SANDBOX=1 npm test`: 348 tests, 348 passed, 0 skipped.
 - `npm run typecheck -- --pretty false`: passed.
 - `npm run build -- --pretty false`: passed.
 - `npm run verify:contracts`: 44 unique tool contracts validated.
@@ -55,6 +55,11 @@ process UID, rejects a forged `ownerUid: 0` before the filesystem preflight,
 and pins the writer to the internal root filesystem inspector rather than
 caller-injected state.
 Successful root-owned apply/rollback was not run.
+
+The dry-run execution contract validates an absent service for install and an
+exact prior source revision for upgrade, rollback, and uninstall. It fixes the
+signature verification, bootout, plist action, bootstrap, final readback, and
+recovery-step order. It is a plan-only artifact and did not invoke launchctl.
 
 ## Remaining gates
 

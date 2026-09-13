@@ -33,7 +33,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 | VT-AUD-02 | Audit privacy/integrity | T-015 | MOP-015 | Tamper, access-control, redaction and retention tests | Release | OPEN — recursive redaction and startup hash-chain tamper rejection pass; keyed/external anchoring, retention and access-control evidence remain |
 | VT-UI-01 | Fresh target and focus | T-016 | MOP-050, MOP-052, MOP-053 | App identity, launch readback, stale ref, window change and focus-race tests | GUI | OPEN — exact bundle identity authorization, fixed launch/focus command wiring, GUI approval/Job leases, active revocation, running-state reobservation, focused-window readback, bounded Accessibility observation/parser/permission-denial tests, and snapshot-bound `mac_ui_action` freshness/identity/revocation tests pass; no real app launch/focus/action or permission-granted UI evidence was run |
 | VT-UI-02 | Sensitive UI denied | T-017 | MOP-054 | Password, credential and security-setting tests | GUI | OPEN — conservative sensitive bundle/window deny checks and secure-node masking tests pass; broader credential surfaces, clipboard/cross-app policy, and real-app evidence remain |
-| VT-PRIV-01 | Helper exposes no arbitrary root | T-018 | MOP-060, MOP-061 | Schema fuzz, caller spoof, operation bypass tests | L5 | BLOCKED — proposed helper IPC now authenticates the OS peer before parsing, binds HMAC commands/responses to a full command digest, persists helper nonce/request replay admission, rejects raw executable/argument fields, dispatches only three operation names, and bounds/redacts postcondition evidence. A dedicated protected `helper_key` source/loader now binds digest, validity, revocation, monotonic activation, exact restore, and key disposal; independent helper startup restores that activation, requires native peer identity, rejects Broker/control socket reuse, and can derive the caller from an exact Broker LaunchAgent readback bound to PID/start-time identity. A separate non-executing root-domain package plan fixes native-only argv, exact signature identity, protected socket/key paths, Broker peer UID/GID binding, disabled capability advertisement, and rollback/readback invariants. A real macOS cross-process test accepts the captured Broker PID/start-time identity and drops a spawned caller before parsing; host-only plist apply additionally verifies the real current UID before filesystem access. Developer ID provenance, real root-domain readback, separate helper/root installation, real adapters, crash recovery, and independent review remain |
+| VT-PRIV-01 | Helper exposes no arbitrary root | T-018 | MOP-060, MOP-061 | Schema fuzz, caller spoof, operation bypass tests | L5 | BLOCKED — proposed helper IPC now authenticates the OS peer before parsing, binds HMAC commands/responses to a full command digest, persists helper nonce/request replay admission, rejects raw executable/argument fields, dispatches only three operation names, and bounds/redacts postcondition evidence. A dedicated protected `helper_key` source/loader now binds digest, validity, revocation, monotonic activation, exact restore, and key disposal; independent helper startup restores that activation, requires native peer identity, rejects Broker/control socket reuse, and can derive the caller from an exact Broker LaunchAgent readback bound to PID/start-time identity. A separate non-executing root-domain package plan fixes native-only argv, exact signature identity, protected socket/key paths, Broker peer UID/GID binding, disabled capability advertisement, rollback/readback invariants, and a dry-run execution contract for exact revision preconditions, command order, readback, and recovery. A real macOS cross-process test accepts the captured Broker PID/start-time identity and drops a spawned caller before parsing; host-only plist apply additionally verifies the real current UID before filesystem access. Developer ID provenance, real root-domain readback, separate helper/root installation, real adapters, crash recovery, and independent review remain |
 | VT-POL-01 | Policy integrity/versioning | T-019 | MOP-080, MOP-084 | Invalid config, downgrade, atomic reload and rollback tests | Local | OPEN — schema/signature/tamper/downgrade/transactional activation/restart matching/explicit rollback/version-binding, protected signer-file loading with per-key digest binding, bounded overlapping signer validity windows, durable activation/restore/reload/rollback, audited key-specific revocation, protected Authority Control and helper key file/Keychain sources with digest-bound monotonic activation and exact restart restore, replay-bound HMAC operator UDS, separate replay-bound Authority Control IPC with native peer denial and expected-state switch preconditions, and legacy revocation migration pass; installed startup, protected key distribution, native caller/process identity packaging, general migrations, crash injection, and cross-runtime canonicalization remain |
 | VT-DOS-01 | Resource bounds | T-020 | MOP-017, MOP-070 | Rate, output, disk, depth, timeout and concurrency tests | Release | OPEN — filesystem worker concurrency, V8 memory/stack settings, empty environment, output caps, deadline/cancellation, bounded detached process-group plus root/descendant identity drain/capacity tests pass; local post-auth Edge fixed-window rate limits pass; shared durable/session limits, disk/depth budgets, kernel-level cancellation and general jobs remain |
 | VT-COMP-01 | Version negotiation fails safely | T-021 | MOP-081 | Edge/Broker/helper compatibility matrix | Local/Remote/L5 | OPEN — Broker capability readback, the separately authenticated helper command, and the Authority Control IPC response envelope now bind explicit protocol/contract versions or domains and fail closed on mismatch; installed, remote, helper packaging, upgrade/rollback, and cross-runtime compatibility evidence remains |
@@ -82,7 +82,7 @@ no root process or privileged action was run. The full suite passes 337 tests
 (335 passed, 2 opt-in real-sandbox tests skipped). Evidence:
 `evidence/2026-09-13-privileged-helper-runtime.md`.
 
-Latest helper-package addendum: source commit `c8dcb2c` adds a separate
+Latest helper-package addendum: source commit `3d5d257` adds a separate
 non-executing system LaunchDaemon plan. It fixes the root-domain plist path,
 native-only helper argv, exact helper signature identifier, protected helper
 root/key/socket paths, Broker peer UID/GID binding, root-owned plist actions,
@@ -99,9 +99,11 @@ rollback/uninstall primitive with exact identity preconditions and restoration
 on failed upgrade/uninstall; it rejects non-root callers before filesystem
 access, verifies the real current process UID, pins the write to the internal
 root filesystem inspector, and never calls launchctl.
-Successful root-owned execution remains unverified. The full suite passes 347
-tests (345 passed, 2 opt-in real-sandbox tests skipped); the opt-in real-Mac
-suite passes 347/347. Evidence:
+Successful root-owned execution remains unverified. A dry-run execution
+contract now validates exact existing-service revisions and fixes the
+signature/bootout/plist/bootstrap/readback order plus recovery steps without
+running launchctl. The full suite passes 348 tests (346 passed, 2 opt-in
+real-sandbox tests skipped). Evidence:
 `evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 Latest helper-caller addendum: source commit `7af182e` binds helper startup to
@@ -239,9 +241,9 @@ allowlisted networking remain unproven; `sandbox-exec` is deprecated and the
 runner is not wired into production capability enablement. Evidence:
 `evidence/2026-09-13-sandbox-profile-runner.md`.
 
-Current host readback: source revision `c49ff5b` reran the focused opt-in
+Current host readback: source revision `3d5d257` reran the focused opt-in
 sandbox test at 7/7 and the complete `MOPS_REAL_SANDBOX=1 npm test` regression
-at 347/347 with no skipped tests. This refreshes real-Mac evidence only; it
+at 348/348 with no skipped tests. This refreshes real-Mac evidence only; it
 does not change the `BLOCKED` gate because deprecated `sandbox-exec`, real
 credential/persistence isolation, descendant ownership, remount behavior, and
 production runner acceptance remain unresolved.
