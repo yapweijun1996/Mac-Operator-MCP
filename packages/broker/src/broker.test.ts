@@ -1852,6 +1852,95 @@ test("real macOS Broker task cancellation drains the process after session revoc
   }
 });
 
+test("real macOS Broker task cancellation drains the process after process kill switch", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-kill-switch-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.sleep"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([{
+      schemaVersion: "0.1",
+      profile: "tests.sleep",
+      executable: "/bin/sleep",
+      allowedCwdRoots: [root],
+      allowedArgumentPattern: "^[0-9]{1,2}$",
+      maxArguments: 1,
+      environment: {},
+      filesystemRoots: [root],
+      networkPolicy: "none",
+      networkAllowlist: [],
+      processTreePolicy: "single_process",
+      sandboxProfile: "deny-default-v0.1",
+      timeoutMs: 5_000,
+      outputCapBytes: 1_024,
+      verificationStrategy: "exit_status_and_declared_task_verification",
+      enabled: true
+    }]),
+    taskRunner: new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      isolationProof: { ...testTaskIsolationProof(), evidenceRef: "evidence://real-broker-task-kill-switch" }
+    }),
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.sleep", cwd: root, args: ["5"] };
+  const request = unsigned({
+    requestId: "task-real-kill-switch",
+    nonce: "task-real-kill-switch-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  let killSwitchTimer: NodeJS.Timeout | undefined;
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-real-kill-switch",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.sleep",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    killSwitchTimer = setTimeout(() => {
+      store.setSwitch("process", true, "real-task-process-kill-switch-test", NOW);
+    }, 100);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "CANCELLED", JSON.stringify(result));
+    assert.equal(store.isSwitchDisabled("process"), true);
+    assert.equal(store.requestRecord("task-real-kill-switch")?.state, "CANCELLED");
+    const jobId = store.requestRecord("task-real-kill-switch")?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
+    assert.equal(store.ownedJob(jobId, "principal-1")?.resultClass, "unknown");
+  } finally {
+    if (killSwitchTimer !== undefined) clearTimeout(killSwitchTimer);
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_task_run does not publish success after active session revocation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-revoke-"));
   const root = await realpath(directory);

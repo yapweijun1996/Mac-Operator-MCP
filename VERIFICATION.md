@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest real process-kill-switch addendum: an opt-in Darwin integration flips
+the durable `process` kill switch during a running sandboxed task. The
+ProcessSupervisor drains the detached group, Broker returns `CANCELLED`, and
+the Job remains `unknown`. `MOPS_REAL_SANDBOX=1 npm test` passes 445/446 with
+one explicit host-boundary/opt-in skip; the focused Broker suite passes 71/71.
+Evidence: `evidence/2026-09-14-real-broker-task-kill-switch.md`.
+
 Latest real active-revocation addendum: an opt-in Darwin integration revokes
 the session while `/bin/sleep` is running inside the experimental sandbox.
 The ProcessSupervisor drains the process group, Broker returns `CANCELLED`,

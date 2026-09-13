@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest real process-kill-switch addendum: an opt-in Darwin Broker integration
+flips the durable `process` kill switch while a real sandboxed task is active.
+The control callback observes the switch, the ProcessSupervisor drains the
+detached group, and Broker returns `CANCELLED` with an `unknown` Job. The full
+`MOPS_REAL_SANDBOX=1 npm test` suite passes 445/446 with one explicit
+host-boundary/opt-in skip; focused Broker tests pass 71/71. Evidence:
+`evidence/2026-09-14-real-broker-task-kill-switch.md`.
+
 Latest real active-revocation addendum: an opt-in Darwin Broker integration
 revokes the session while a real sandboxed `/bin/sleep` task is running. The
 ProcessSupervisor observes the authority loss, drains the detached process
