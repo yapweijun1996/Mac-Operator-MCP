@@ -6,7 +6,16 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `3d5d257`.
+Current committed implementation baseline: `eb9ee6a`.
+
+The latest helper package execution addendum is `eb9ee6a`: the host-only
+executor now consumes the fixed lifecycle plan, defaults to the bounded
+`ProcessSupervisor`, requires the real current UID to be root before any
+command/filesystem/readback access, and runs operation-specific recovery when
+bootstrap or final readback fails. Root-domain success remains unverified;
+the default suite passes 349 tests (347 passed, 2 opt-in real-sandbox tests
+skipped), and the opt-in real-Mac suite passes 349/349. Evidence:
+`evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
 The latest helper lifecycle addendum is `3d5d257`: a host-only dry-run
 execution contract now validates the exact existing service revision and fixes
@@ -27,7 +36,7 @@ default full suite passes
 opt-in suite passes 347/347. Evidence:
 `evidence/2026-09-13-privileged-helper-package-boundary.md`.
 
-The latest real-Mac sandbox readback was rerun from `3d5d257` with
+The latest real-Mac sandbox readback was rerun from `eb9ee6a` with
 `MOPS_REAL_SANDBOX=1`: both opt-in sandbox tests passed, and the full suite
 passed 348/348 with no skipped tests. The smoke remains synthetic and
 disabled-by-default; it does not establish real credential/persistence

@@ -96,6 +96,11 @@ the exact existing source revision and returns fixed install/upgrade/rollback/
 uninstall steps plus final readback and operation-specific recovery steps. It
 does not execute launchctl or perform root mutation.
 
+Revision `eb9ee6a` adds the gated host executor for that contract. It defaults
+to the bounded `ProcessSupervisor`, requires the actual current UID to be root
+before command/filesystem/readback access, and performs fixed recovery after a
+bootstrap or final-readback failure. Root-domain success remains unverified.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

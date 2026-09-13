@@ -1,7 +1,7 @@
 # Privileged Helper Package Boundary Evidence
 
 Date: 2026-09-13
-Source commit: `3d5d257`
+Source commit: `eb9ee6a`
 Dirty-state: clean at capture
 Host: macOS 26.2 (25C56), arm64
 Runtime: Node.js v25.5.0
@@ -32,9 +32,9 @@ and disabled adapter/capability state. The plan is not exposed through MCP.
 
 ## Verification
 
-- `npm test`: 348 tests, 346 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
-- Focused package-boundary tests: 9 passed, 0 failed.
-- `MOPS_REAL_SANDBOX=1 npm test`: 348 tests, 348 passed, 0 skipped.
+- `npm test`: 349 tests, 347 passed, 0 failed, 2 opt-in real-sandbox tests skipped.
+- Focused package-boundary tests: 10 passed, 0 failed.
+- `MOPS_REAL_SANDBOX=1 npm test`: 349 tests, 349 passed, 0 skipped.
 - `npm run typecheck -- --pretty false`: passed.
 - `npm run build -- --pretty false`: passed.
 - `npm run verify:contracts`: 44 unique tool contracts validated.
@@ -57,9 +57,12 @@ caller-injected state.
 Successful root-owned apply/rollback was not run.
 
 The dry-run execution contract validates an absent service for install and an
-exact prior source revision for upgrade, rollback, and uninstall. It fixes the
-signature verification, bootout, plist action, bootstrap, final readback, and
-recovery-step order. It is a plan-only artifact and did not invoke launchctl.
+exact prior source revision for upgrade, rollback, and uninstall. The gated
+executor consumes that contract with bounded `ProcessSupervisor` commands,
+requires root before access, and performs fixed recovery after bootstrap or
+readback failure. The current host run stopped at the non-root gate and did
+not invoke launchctl or mutate the system plist; successful root-owned
+execution remains unverified.
 
 ## Remaining gates
 
