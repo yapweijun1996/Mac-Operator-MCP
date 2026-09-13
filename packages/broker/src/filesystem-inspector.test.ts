@@ -597,6 +597,30 @@ test("root filesystem containment supports child paths without prefix ambiguity"
   assert.equal(result.type, "directory");
 });
 
+test("filesystem lexical containment fails closed across case and Unicode aliases", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-unicode-case-"));
+  const composedName = "Café.txt";
+  const decomposedName = "Cafe\u0301.txt";
+  const file = join(directory, composedName);
+  await writeFile(file, "safe");
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    assert.throws(
+      () => inspector.planPath(`${directory.toUpperCase()}/SAFE`, "metadata"),
+      /outside authorized roots/u
+    );
+    const matches = inspector.findFilesPlanned(
+      [inspector.planPath(directory, "metadata")],
+      decomposedName,
+      10
+    );
+    const canonicalFile = await realpath(file);
+    assert.equal(matches.matches.some((match) => match.path === canonicalFile), true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("descriptor readback resists an atomic symlink target-swap race", async () => {
   const parent = await mkdtemp(join(tmpdir(), "mac-operator-fs-swap-"));
   const directory = join(parent, "allowed");
