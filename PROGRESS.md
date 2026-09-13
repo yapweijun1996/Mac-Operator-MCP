@@ -135,8 +135,8 @@ compatible. Production provisioning, ACL/rotation/deletion policy, Edge-key
 integration, and cross-process distribution remain open. Evidence:
 `evidence/2026-09-13-keychain-key-read.md`.
 
-The latest Edge-key addendum is `e9dd75e`, `7d91c8f`, `49843cc`, plus
-`a0b31fe`:
+The latest Edge-key addendum is `e9dd75e`, `7d91c8f`, `49843cc`, `a0b31fe`,
+plus `ad781c2`:
 versioned owner-only
 Edge key metadata now requires an explicit `file` or `keychain` source per
 entry, binds an expected secret-byte SHA-256 digest, rejects mixed or unsafe
@@ -149,6 +149,9 @@ owner-only, `O_NOFOLLOW`, canonical-path, bounded-encoding, and expected-digest
 checks; it never falls back to environment variables or MCP arguments.
 The Edge IPC client also checks the owner-only socket parent and revalidates
 socket device/inode identity after connect before sending request bytes.
+The request factory copies key bytes at construction and validates the key ID,
+so callers cannot mutate the signing secret through an aliased Buffer or inject
+an unbounded key identity.
 Overlapping validity windows provide a tested rotation path while the Broker
 continues to enforce signed-policy validity and key-specific revocation on each
 request. This is still a startup/configuration primitive, not installed

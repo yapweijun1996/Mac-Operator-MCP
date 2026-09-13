@@ -4,7 +4,7 @@ Status: PARTIAL protected Edge-key distribution boundary for MOP-081 / VT-AUTH-0
 
 ## Boundary exercised
 
-Commits `e9dd75e`, `7d91c8f`, `49843cc`, and `a0b31fe` add an owner-only, versioned Edge
+Commits `e9dd75e`, `7d91c8f`, `49843cc`, `a0b31fe`, and `ad781c2` add an owner-only, versioned Edge
 authentication-key metadata loader, atomic writer, and BrokerStore-backed
 activation manager. Every entry must explicitly select
 `keySource: "file"` or `keySource: "keychain"`; a Keychain entry must contain
@@ -52,9 +52,9 @@ retiring the old key is a separate revoke-before-retire operation.
 
 - Host: Darwin arm64, macOS `26.2` build `25C56`.
 - Runtime: Node `v25.5.0`, npm `11.8.0`.
-- Focused source tests: 9 Edge key/IPC-boundary tests pass.
-- Full regression: 318 passed, 0 failed, 2 opt-in real-sandbox tests skipped
-  (320 total).
+- Focused source tests: 10 Edge key/IPC-boundary tests pass.
+- Full regression: 319 passed, 0 failed, 2 opt-in real-sandbox tests skipped
+  (321 total).
 - The Keychain test queried a random missing account only; no Keychain item was
   created, modified, or deleted.
 - Native production and fault-test addons compile; `npm run typecheck`,
@@ -72,9 +72,9 @@ retiring the old key is a separate revoke-before-retire operation.
 - `packages/edge/src/authentication-key.ts` SHA-256:
   `36ad6e0b10949cbaebabf46663bafa0d87b08ae9c6fc1f91177469c3d60f3ddc`
 - `packages/edge/src/authentication-key.test.ts` SHA-256:
-  `14683576120a802054f9a13beb2001767765ff34a3bfb2d78bc9ac678a06a98a`
+  `27606c58226664ed33553cd6e26193266741eca364d5c1e2db0e9c65f8020bb7`
 - `packages/edge/src/request-factory.ts` SHA-256:
-  `c31add8be0f68cbb72cd9a8bcce5476c3a8afcf7a31eb0f01a25896e5f141295`
+  `d5879f17a2c6233c334c2605c5ee06745d2c173be9a7e795fc01ea2b283d6d0c`
 - `packages/edge/src/ipc-client.ts` SHA-256:
   `06d2a676a478d2a5e01af04e1fcc226a534d9f40e9805a33aee2f9b36a93a04b`
 - `packages/edge/src/ipc-client.test.ts` SHA-256:

@@ -238,8 +238,8 @@ provisioning, ACL/rotation/deletion evidence, Edge-key integration, live
 installed use, or production enablement.
 Evidence: `evidence/2026-09-13-keychain-key-read.md`.
 
-Latest Edge-key source addendum: commits `e9dd75e`, `7d91c8f`, `49843cc`, and
-`a0b31fe` add a
+Latest Edge-key source addendum: commits `e9dd75e`, `7d91c8f`, `49843cc`,
+`a0b31fe`, and `ad781c2` add a
 versioned owner-only Edge authentication-key config loader and atomic writer.
 Each entry explicitly selects a file or Keychain source and binds an expected
 secret-byte SHA-256 digest; mixed metadata, duplicate identities,
@@ -253,7 +253,9 @@ canonical, `O_NOFOLLOW`, bounded-encoding, and expected-digest checks; it does
 not fall back to environment variables or MCP arguments. The Edge IPC client
 also checks the owner-only socket parent and revalidates socket device/inode
 identity after connect before sending request bytes. Nine focused Edge/Broker
-key-source tests pass; the full regression is 318/320 with two opt-in
+key-source tests pass; the request factory also copies signing bytes and
+validates key IDs. Ten focused Edge/Broker key-source tests pass; the full
+regression is 319/321 with two opt-in
 real-sandbox tests skipped. This remains startup configuration evidence
 only: Keychain provisioning/ACLs, real-item rotation or deletion, an approved
 Edge-side Keychain delivery mechanism, installed launchd startup, and
