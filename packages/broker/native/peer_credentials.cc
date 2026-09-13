@@ -26,6 +26,9 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <vector>
+#ifdef MAC_OPERATOR_NATIVE_FAULT_INJECTION
+#include <signal.h>
+#endif
 
 namespace {
 
@@ -63,6 +66,36 @@ bool ParseUnsigned(const char* value, unsigned long long* output) {
   *output = parsed;
   return true;
 }
+
+#ifdef MAC_OPERATOR_NATIVE_FAULT_INJECTION
+std::string g_write_fault_point;
+
+void MaybeInjectWriteCrash(const char* point) {
+  if (g_write_fault_point == point) {
+    kill(getpid(), SIGKILL);
+  }
+}
+
+napi_value SetWriteFaultPoint(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "setWriteFaultPoint requires one boundary name");
+    return nullptr;
+  }
+  char point[64];
+  if (!ReadComponent(env, args[0], point, sizeof(point))) {
+    napi_throw_type_error(env, nullptr, "Write fault boundary name is malformed");
+    return nullptr;
+  }
+  g_write_fault_point = point;
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+}
+#else
+void MaybeInjectWriteCrash(const char*) {}
+#endif
 
 std::string Sha256Hex(const std::vector<unsigned char>& content) {
   unsigned char digest[CC_SHA256_DIGEST_LENGTH];
@@ -1210,6 +1243,7 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, "Filesystem write temporary file could not be created");
     return nullptr;
   }
+  MaybeInjectWriteCrash("after_temp_create");
   const unsigned char* bytes = static_cast<const unsigned char*>(content_data);
   size_t written = 0;
   while (written < content_length) {
@@ -1225,6 +1259,7 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     }
     written += static_cast<size_t>(result);
   }
+  MaybeInjectWriteCrash("after_temp_write");
   if (fsync(temporary_descriptor) != 0) {
     close(temporary_descriptor);
     unlinkat(parent_descriptor, temporary_name, 0);
@@ -1233,18 +1268,28 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, "Filesystem write could not be durably flushed");
     return nullptr;
   }
+  MaybeInjectWriteCrash("after_temp_fsync");
   close(temporary_descriptor);
 
   int rename_result = create_only
       ? renameatx_np(parent_descriptor, temporary_name, parent_descriptor, base_name, RENAME_EXCL)
       : renameat(parent_descriptor, temporary_name, parent_descriptor, base_name);
-  if (rename_result != 0 || fsync(parent_descriptor) != 0) {
+  if (rename_result != 0) {
     unlinkat(parent_descriptor, temporary_name, 0);
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem write could not be atomically committed");
     return nullptr;
   }
+  MaybeInjectWriteCrash("after_rename");
+  if (fsync(parent_descriptor) != 0) {
+    unlinkat(parent_descriptor, temporary_name, 0);
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem write directory could not be durably flushed");
+    return nullptr;
+  }
+  MaybeInjectWriteCrash("after_directory_fsync");
 
   int target_descriptor = openat(parent_descriptor, base_name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
   if (target_descriptor < 0) {
@@ -1265,6 +1310,7 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, "Filesystem write result identity is not authorized");
     return nullptr;
   }
+  MaybeInjectWriteCrash("before_readback");
 
   std::vector<unsigned char> readback(static_cast<size_t>(target_stat.st_size));
   size_t read = 0;
@@ -1693,6 +1739,10 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "hashFileWithinRoot", function);
   napi_create_function(env, "writeFileAtomicWithinRoot", NAPI_AUTO_LENGTH, WriteFileAtomicWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "writeFileAtomicWithinRoot", function);
+#ifdef MAC_OPERATOR_NATIVE_FAULT_INJECTION
+  napi_create_function(env, "setWriteFaultPoint", NAPI_AUTO_LENGTH, SetWriteFaultPoint, nullptr, &function);
+  napi_set_named_property(env, exports, "setWriteFaultPoint", function);
+#endif
   napi_create_function(env, "unlinkFileWithinRoot", NAPI_AUTO_LENGTH, UnlinkFileWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "unlinkFileWithinRoot", function);
   napi_create_function(env, "listProcesses", NAPI_AUTO_LENGTH, ListProcesses, nullptr, &function);

@@ -14,7 +14,7 @@ When startup reconciliation marks a running write `UNKNOWN`, `mac_job_status` ma
 
 - Broker integration: an unknown write with a matching target returns `recovery.postcondition = matches`, `resolution = remains_unknown`, and no file content; the Job remains `unknown`.
 - Broker crash-window simulation: the native atomic write commits in a temporary test executor, completion then fails, and the Broker records `UNKNOWN`; the target is fully committed and status readback reports `matches` without promoting the Job.
-- Native controller-kill boundary: a test-only worker calls the native atomic-write primitive, signals after the atomic operation returns, and is terminated before a hypothetical controller readback; both create-only and replacement cases leave complete `after` content with no temporary file.
+- Native syscall crash boundary: a test-only fault-instrumented native module terminates its child process with `SIGKILL` after temporary-file `fsync` and after `rename`; create-before-rename leaves the target absent and only the orphan temporary file, while create/replace-after-rename leave complete `after` content with no temporary file.
 - Persistence restart: the non-secret descriptor survives a BrokerStore close/reopen while stdout remains empty and the Job reconciles to `unknown`.
 - Contract validation: the optional recovery object is bounded and schema-valid under `mac_job_status`.
 
@@ -22,4 +22,4 @@ Observed verification on this revision: `npm test` passed with 242 tests; `npm r
 
 ## Limits and next gate
 
-The controller-kill test is a bounded worker termination after the native atomic operation returns, not an OS process kill injected at every native syscall boundary. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Native syscall-boundary crash injection, filesystem remount identity, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.
+The crash fixture is test-only and injects `SIGKILL` at selected native syscall boundaries; it is not exhaustive arbitrary-instruction crash coverage and does not prove post-crash filesystem durability across remount. It does not prove which actor created or replaced a target, and it deliberately does not auto-retry or transition `UNKNOWN` to success. Filesystem remount identity, orphan-temporary cleanup policy, durable backup/restore, and final release readback remain open under VT-REL-01 and MOP-046.

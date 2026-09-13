@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -10,6 +11,62 @@ import { Worker } from "node:worker_threads";
 import { FilesystemInspector } from "./filesystem-inspector.js";
 
 const require = createRequire(import.meta.url);
+
+const nativeFaultChildSource = `
+  const configuration = JSON.parse(process.env.MOP_NATIVE_FAULT_CASE || "{}");
+  const native = require(configuration.nativePath);
+  native.setWriteFaultPoint(configuration.faultPoint);
+  native.writeFileAtomicWithinRoot(
+    configuration.root,
+    configuration.target,
+    Buffer.from(configuration.content, "utf8"),
+    configuration.createOnly,
+    configuration.expectedPresent,
+    configuration.expectedDevice,
+    configuration.expectedInode,
+    configuration.tempName
+  );
+`;
+
+function runNativeFaultChild(configuration: {
+  nativePath: string;
+  root: string;
+  target: string;
+  content: string;
+  createOnly: boolean;
+  expectedPresent: boolean;
+  expectedDevice: string;
+  expectedInode: string;
+  tempName: string;
+  faultPoint: string;
+}, cwd: string): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  const child = spawn(process.execPath, ["--eval", nativeFaultChildSource], {
+    cwd,
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      MOP_NATIVE_FAULT_CASE: JSON.stringify(configuration)
+    },
+    stdio: "ignore"
+  });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, 5000);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, signal });
+    });
+  });
+}
 
 test("descriptor-backed metadata returns the opened target identity", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-stat-"));
@@ -94,12 +151,15 @@ test("write postcondition probe distinguishes match, mismatch, and unavailable",
   }
 });
 
-test("native atomic write survives a controller-kill boundary without partial target state", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-kill-boundary-"));
-  const nativePath = require.resolve("./peer_credentials.node");
+test("native atomic write survives syscall-level process crash boundaries without partial target state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-crash-boundary-"));
+  const nativePath = require.resolve("./peer_credentials_fault.node");
+  const productionNative = require("./peer_credentials.node") as Record<string, unknown>;
+  assert.equal(Object.prototype.hasOwnProperty.call(productionNative, "setWriteFaultPoint"), false);
   const cases = [
-    { name: "created.txt", before: null, createOnly: true },
-    { name: "replaced.txt", before: "before", createOnly: false }
+    { name: "create-before-rename.txt", before: null, createOnly: true, faultPoint: "after_temp_fsync", expectedTarget: null, expectedTemporary: true },
+    { name: "create-after-rename.txt", before: null, createOnly: true, faultPoint: "after_rename", expectedTarget: "after", expectedTemporary: false },
+    { name: "replace-after-rename.txt", before: "before", createOnly: false, faultPoint: "after_rename", expectedTarget: "after", expectedTemporary: false }
   ] as const;
   try {
     for (const current of cases) {
@@ -107,46 +167,29 @@ test("native atomic write survives a controller-kill boundary without partial ta
       if (current.before !== null) await writeFile(target, current.before, { mode: 0o600 });
       const inspector = new FilesystemInspector([writeRoot(directory)]);
       const prior = current.before === null ? undefined : inspector.statPath(target, false);
-      const worker = new Worker(`
-        const { parentPort, workerData } = require("node:worker_threads");
-        const native = require(workerData.nativePath);
-        native.writeFileAtomicWithinRoot(
-          workerData.root,
-          workerData.target,
-          Buffer.from(workerData.content),
-          workerData.createOnly,
-          workerData.expectedPresent,
-          workerData.expectedDevice,
-          workerData.expectedInode,
-          workerData.tempName
-        );
-        parentPort.postMessage("committed-before-controller-readback");
-        setInterval(() => {}, 1000);
-      `, {
-        eval: true,
-        workerData: {
-          nativePath,
-          root: directory,
-          target,
-          content: "after",
-          createOnly: current.createOnly,
-          expectedPresent: prior !== undefined,
-          expectedDevice: prior?.device ?? "0",
-          expectedInode: prior?.inode ?? "0",
-          tempName: `.mac-operator-write-kill-${current.name}`
-        }
-      });
-      const committed = await new Promise<string>((resolve, reject) => {
-        worker.once("message", resolve);
-        worker.once("error", reject);
-      });
-      assert.equal(committed, "committed-before-controller-readback");
-      const exit = new Promise<number>((resolve) => worker.once("exit", resolve));
-      await worker.terminate();
-      assert.notEqual(await exit, 0);
-      assert.equal(await readFile(target, "utf8"), "after");
-      assert.equal((await readdir(directory)).some((entry) => entry.startsWith(".mac-operator-write-kill-")), false);
-      await rm(target);
+      const tempName = `.mac-operator-write-fault-${current.name}`;
+      const result = await runNativeFaultChild({
+        nativePath,
+        root: directory,
+        target,
+        content: "after",
+        createOnly: current.createOnly,
+        expectedPresent: prior !== undefined,
+        expectedDevice: prior?.device ?? "0",
+        expectedInode: prior?.inode ?? "0",
+        tempName,
+        faultPoint: current.faultPoint
+      }, directory);
+      assert.equal(result.code, null);
+      assert.equal(result.signal, "SIGKILL");
+      if (current.expectedTarget === null) {
+        await assert.rejects(readFile(target), /ENOENT/u);
+      } else {
+        assert.equal(await readFile(target, "utf8"), current.expectedTarget);
+      }
+      assert.equal((await readdir(directory)).includes(tempName), current.expectedTemporary);
+      await rm(join(directory, tempName), { force: true });
+      await rm(target, { force: true });
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
