@@ -52,6 +52,21 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Current evidence
 
+Latest L0/L1 host-readback addendum: source commit `db5e3f5` adds a
+macOS-only, read-only host probe for bounded system facts, interface state
+with active probes and listener enumeration disabled, redacted process
+inventory/current-process identity, and canonical `/System/Library`
+metadata/list/tree output with content reads disabled and protected relative
+zones denied. The probe performs no mutation, child launch, credential read,
+policy change, or service install. Focused host test passes 1/1; the full suite
+passes 362 tests (360 passed, 2 opt-in real-sandbox tests skipped), and
+`MOPS_REAL_SANDBOX=1 npm test` passes 362/362. Typecheck, 44-contract
+validation, dependency audit, and diff checks pass. A one-second JWT expiry
+assertion race found during the host run was fixed by binding the expected
+expiry second to the signed token input. This remains a narrow L0/L1 slice;
+secret corpus, remount/race, special-file, listener ABI, and release evidence
+remain open. Evidence: `evidence/2026-09-13-l0-l1-host-readback.md`.
+
 Latest governed HTTPS Edge service-entrypoint addendum: source commit
 `0e8612d` adds a fixed `service-main.js` and strict owner-only
 `edge-service.json` loader. Startup binds canonical package/data/runtime roots,

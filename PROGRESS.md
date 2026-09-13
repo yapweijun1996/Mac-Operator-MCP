@@ -6,7 +6,19 @@ Last verified: 2026-09-13
 
 ## Current situation
 
-Current committed implementation baseline: `0e8612d`.
+Current committed implementation baseline: `db5e3f5`.
+
+The latest L0/L1 host-readback addendum is `db5e3f5`: a macOS-only,
+read-only test now observes bounded system facts, interface state without
+active probes or listener enumeration, redacted process metadata/current
+process identity, and canonical `/System/Library` metadata/list/tree output
+with content reads disabled and protected relative zones denied. It performs
+no mutation, child launch, credential read, policy change, or service install.
+The focused host test passes 1/1; the full suite passes 362 tests (360 passed,
+2 opt-in real-sandbox tests skipped), and `MOPS_REAL_SANDBOX=1 npm test` passes
+362/362. A one-second JWT test assertion race found during the real-host run
+was fixed by binding the expected expiry second to the signed token input.
+Evidence: `evidence/2026-09-13-l0-l1-host-readback.md`.
 
 The latest governed HTTPS Edge service-entrypoint addendum is `0e8612d`:
 the packaged Edge now has a fixed `service-main.js` and strict owner-only
