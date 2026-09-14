@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Runtime contract-integrity addendum: source revision `2dedae0` hardens Edge
+contract loading with non-symlink directory/file checks, group/other-write
+denial, and device/inode/mode readback before and after loading. Focused
+contract-registry tests pass 5/5; the complete physical-Darwin regression
+passes 598/598 with 0 skipped tests. This protects the runtime MCP contract
+surface but does not replace Broker authorization or close package-signing and
+installed-service release gates. Evidence:
+`evidence/2026-09-15-runtime-contract-integrity.md`.
+
 Idempotency authorization addendum: source revision `d715512` hardens
 `BrokerStore.createJob` so idempotent Job reuse requires the same policy
 version as the original authorized operation, in addition to principal, tool,

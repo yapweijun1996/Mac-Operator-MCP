@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Runtime contract-integrity addendum: source revision `2dedae0` makes the Edge
+contract loader reject group/other-writable contract directories and files,
+rejects symlinked paths, and rechecks device/inode/mode before and after each
+read plus the directory-wide load. This protects the MCP schema/purpose
+surface from an untrusted package replacement while Broker authorization
+remains authoritative. Focused contract-registry tests pass 5/5 and the full
+physical-Darwin regression passes 598/598 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-runtime-contract-integrity.md`.
+
 Idempotency authorization addendum: source revision `d715512` makes the
 BrokerStore Job reuse path bind
 the existing Job's policy version in addition to principal, tool, target, and
