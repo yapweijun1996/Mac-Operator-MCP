@@ -8,6 +8,11 @@ import { detectProcessIdentityReplacement, ProcessSupervisor } from "./process-s
 
 const CWD = process.cwd();
 
+test("process supervisor rejects invalid per-executable capacity", () => {
+  assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 0 }), /limits are outside/u);
+  assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 65 }), /limits are outside/u);
+});
+
 test("process supervisor rejects descendant PID identity replacement", () => {
   const tracked = [{ pid: 42, startTimeMicros: 100 }];
   assert.equal(detectProcessIdentityReplacement(tracked, [{ pid: 42, startTimeMicros: 100 }]), false);
@@ -678,5 +683,76 @@ test("process supervisor enforces concurrent process capacity", async () => {
   cancelled = true;
   const result = await first;
   assert.equal(result.state, "cancelled");
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor isolates per-executable capacity from the global pool", async () => {
+  const supervisor = new ProcessSupervisor({ maxConcurrent: 2, maxConcurrentPerExecutable: 1, pollIntervalMs: 5, terminationGraceMs: 50 });
+  let cancelled = false;
+  const first = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["2"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100,
+    shouldCancel: () => cancelled
+  });
+  try {
+    await waitForActiveProcess(supervisor, 1, 1_000);
+    await assert.rejects(
+      supervisor.run({
+        executable: "/bin/sleep",
+        args: ["1"],
+        cwd: CWD,
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      }),
+      /capacity is exhausted/u
+    );
+    const other = await supervisor.run({
+      executable: "/usr/bin/printf",
+      args: ["other"],
+      cwd: CWD,
+      timeoutMs: 1_000,
+      outputCapBytes: 100
+    });
+    assert.equal(other.state, "completed");
+    assert.equal(other.stdout, "other");
+  } finally {
+    cancelled = true;
+    await first;
+    await supervisor.close();
+  }
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor counts concurrent starts for one executable", async () => {
+  const supervisor = new ProcessSupervisor({ maxConcurrent: 4, maxConcurrentPerExecutable: 4, pollIntervalMs: 5, terminationGraceMs: 50 });
+  let cancelled = false;
+  const runs = Array.from({ length: 4 }, () => supervisor.run({
+    executable: "/bin/sleep",
+    args: ["2"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100,
+    shouldCancel: () => cancelled
+  }));
+  try {
+    await waitForActiveProcess(supervisor, 4, 1_000);
+    await assert.rejects(
+      supervisor.run({
+        executable: "/bin/sleep",
+        args: ["1"],
+        cwd: CWD,
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      }),
+      /capacity is exhausted/u
+    );
+  } finally {
+    cancelled = true;
+    await Promise.all(runs);
+    await supervisor.close();
+  }
   assert.equal(supervisor.activeCount(), 0);
 });

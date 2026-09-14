@@ -13,6 +13,7 @@ const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_TERMINATION_GRACE_MS = 250;
+const DEFAULT_MAX_CONCURRENT_PER_EXECUTABLE = 4;
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
   isProcessIdentityAlive(pid: number, startTimeMicros: number): unknown;
@@ -103,6 +104,8 @@ export function detectProcessIdentityReplacement(
 
 export interface ProcessSupervisorOptions {
   maxConcurrent?: number;
+  /** Maximum active or pending starts for one canonical executable path. */
+  maxConcurrentPerExecutable?: number;
   pollIntervalMs?: number;
   terminationGraceMs?: number;
   allowedEnvironmentKeys?: readonly string[];
@@ -128,9 +131,12 @@ export interface ProcessExecutionResult {
 
 export class ProcessSupervisor {
   private activeProcesses = 0;
+  private readonly activeProcessesByExecutable = new Map<string, number>();
   private readonly activeRuns = new Set<ActiveProcessRun>();
   private readonly pendingStarts = new Set<Promise<void>>();
+  private readonly pendingStartsByExecutable = new Map<string, number>();
   private readonly maxConcurrent: number;
+  private readonly maxConcurrentPerExecutable: number;
   private readonly pollIntervalMs: number;
   private readonly terminationGraceMs: number;
   private readonly allowedEnvironmentKeys: ReadonlySet<string>;
@@ -139,10 +145,12 @@ export class ProcessSupervisor {
 
   constructor(options: ProcessSupervisorOptions = {}) {
     this.maxConcurrent = options.maxConcurrent ?? 4;
+    this.maxConcurrentPerExecutable = options.maxConcurrentPerExecutable ?? DEFAULT_MAX_CONCURRENT_PER_EXECUTABLE;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.terminationGraceMs = options.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS;
     this.allowedEnvironmentKeys = new Set(options.allowedEnvironmentKeys ?? []);
     if (!Number.isSafeInteger(this.maxConcurrent) || this.maxConcurrent < 1 || this.maxConcurrent > 64 ||
+        !Number.isSafeInteger(this.maxConcurrentPerExecutable) || this.maxConcurrentPerExecutable < 1 || this.maxConcurrentPerExecutable > 64 ||
         !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 5 || this.pollIntervalMs > 1_000 ||
         !Number.isSafeInteger(this.terminationGraceMs) || this.terminationGraceMs < 25 || this.terminationGraceMs > 10_000) {
       throw new Error("Process supervisor limits are outside the supported range");
@@ -158,7 +166,11 @@ export class ProcessSupervisor {
     if (this.cancelled(request.shouldCancel)) {
       throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
     }
-    if (this.activeProcesses + this.pendingStarts.size >= this.maxConcurrent) {
+    const executableKey = request.executable;
+    const activeForExecutable = this.activeProcessesByExecutable.get(executableKey) ?? 0;
+    const pendingForExecutable = this.pendingStartsByExecutable.get(executableKey) ?? 0;
+    if (this.activeProcesses + this.pendingStarts.size >= this.maxConcurrent ||
+        activeForExecutable + pendingForExecutable >= this.maxConcurrentPerExecutable) {
       throw new BrokerError("CONFLICT", "Process capacity is exhausted", true);
     }
 
@@ -167,11 +179,15 @@ export class ProcessSupervisor {
     let resolvePendingStart!: () => void;
     const pendingStart = new Promise<void>((resolve) => { resolvePendingStart = resolve; });
     this.pendingStarts.add(pendingStart);
+    this.pendingStartsByExecutable.set(executableKey, pendingForExecutable + 1);
     let pendingStartReleased = false;
     const releasePendingStart = (): void => {
       if (pendingStartReleased) return;
       pendingStartReleased = true;
       this.pendingStarts.delete(pendingStart);
+      const current = this.pendingStartsByExecutable.get(executableKey) ?? 0;
+      if (current <= 1) this.pendingStartsByExecutable.delete(executableKey);
+      else this.pendingStartsByExecutable.set(executableKey, current - 1);
       resolvePendingStart();
     };
     let child: ChildProcess;
@@ -232,6 +248,8 @@ export class ProcessSupervisor {
         throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
       }
       this.activeProcesses += 1;
+      const currentActiveForExecutable = this.activeProcessesByExecutable.get(executableKey) ?? 0;
+      this.activeProcessesByExecutable.set(executableKey, currentActiveForExecutable + 1);
       let stopRun: (() => void) | undefined;
       let resolveDrained!: () => void;
       let drained = false;
@@ -255,6 +273,9 @@ export class ProcessSupervisor {
         () => {
           if (drained) return;
           drained = true;
+          const current = this.activeProcessesByExecutable.get(executableKey) ?? 0;
+          if (current <= 1) this.activeProcessesByExecutable.delete(executableKey);
+          else this.activeProcessesByExecutable.set(executableKey, current - 1);
           resolveDrained();
           this.activeRuns.delete(activeRun);
         }
