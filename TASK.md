@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Local IPC shutdown-drain addendum: all Node owner-only/local UDS servers now
+own an accepted-socket set and destroy those sockets before waiting for server
+close, preventing idle peers from extending shutdown to the read timeout.
+Cross-channel IPC tests pass 29/29 and the complete physical-Darwin regression
+passes 575/575 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-local-ipc-shutdown-drain.md`.
+
 Broker IPC framing addendum: the authenticated Broker socket rejects
 non-whitespace trailing data before JSON parsing or request admission; the
 same signed request retries successfully, so no replay or audit state is

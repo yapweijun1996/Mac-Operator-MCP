@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Local IPC shutdown-drain addendum: Broker, Approval, Authority Control,
+Broker Status, Policy Signer, and Privileged Helper Node UDS servers track and
+destroy accepted sockets before close waits. The idle-peer regression passes;
+the cross-channel IPC suite passes 29/29 and the complete physical-Darwin
+suite passes 575/575 with 0 skipped tests. Build, typecheck, lint, contract
+verification, and diff checks pass. Evidence:
+`evidence/2026-09-15-local-ipc-shutdown-drain.md`.
+
 Broker IPC framing addendum: the authenticated Broker server rejects
 non-whitespace trailing bytes after its first frame before JSON parsing or
 Broker admission. A clean retry succeeds and proves no replay/audit state is

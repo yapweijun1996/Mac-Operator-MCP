@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Local IPC shutdown-drain addendum: Node UDS servers for Broker, Approval,
+Authority Control, Broker Status, Policy Signer, and Privileged Helper now
+track and destroy accepted sockets before close waits. The cross-channel IPC
+suite passes 29/29, including an idle Broker peer, and the full physical-
+Darwin regression passes 575/575 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-local-ipc-shutdown-drain.md`.
+
 Broker IPC framing addendum: the authenticated Broker socket now rejects
 non-whitespace bytes after its first newline frame before JSON parsing or
 Broker admission. The signed request can be retried cleanly, proving the
