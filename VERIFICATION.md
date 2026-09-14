@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest canonical JSON wire-profile addendum: this revision publishes the
+versioned `jcs-utf8-v1` serialization profile and `canonicalJsonUtf8` byte
+helper. Four fixed vectors cover nested values, escaping, number formatting,
+Unicode ordering without normalization, and empty values; focused tests pass
+2/2, the full physical-Darwin regression passes 535/535, and typecheck passes.
+This is a repository contract and TypeScript
+readback only; native cross-runtime interoperability and release acceptance
+remain open. Evidence:
+`evidence/2026-09-15-canonical-json-wire-profile.md`.
+
 Latest guest-attestation keyring addendum: commits `73148a6`, `db83881`, and `c56aa0a` add a startup-only
 Broker manager for protected Ed25519 public-key configuration. Owner-only
 canonical files are opened with `O_NOFOLLOW`, device/inode and digest bound,

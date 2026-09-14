@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest canonical JSON wire-profile addendum: the contracts package now exports
+the versioned `jcs-utf8-v1` profile and `canonicalJsonUtf8`, with fixed SHA-256
+vectors for nested values, escaping, number formatting, Unicode ordering, and
+UTF-8 round trips. Focused tests pass 2/2, the full physical-Darwin regression
+passes 535/535, and typecheck passes. This establishes the repository
+serialization contract without changing existing digest bytes;
+native Swift/C++ interoperability and cross-runtime release evidence remain
+open. Evidence: `evidence/2026-09-15-canonical-json-wire-profile.md`.
+
 Latest guest-attestation keyring addendum: commits `73148a6`, `db83881`, and
 `c56aa0a` add a Broker
 startup/operator key manager for signed guest provenance. It loads only
