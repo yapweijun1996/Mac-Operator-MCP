@@ -21,6 +21,7 @@ export * from "./policy-signer-ipc.js";
 export * from "./process-supervisor.js";
 export * from "./task-profile.js";
 export * from "./task-runner.js";
+export * from "./virtualization-guest-transport.js";
 export * from "./sandbox-profile.js";
 export * from "./approval-authority.js";
 export * from "./approval-keyring.js";

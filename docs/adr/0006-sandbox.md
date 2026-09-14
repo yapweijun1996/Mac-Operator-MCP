@@ -78,3 +78,12 @@ unavailable host credentials, and guest-owned process tree/policy; the runner ch
 the attestation both at construction and immediately before dispatch. This is a
 fail-closed adapter contract, not independent host evidence or capability
 enablement.
+
+The future native bridge also has a separate authenticated transport contract
+in `virtualization-guest-transport.ts`. Domain-separated HMAC proofs bind
+requests to a guest identity, profile/task digests, nonce, freshness window,
+and bounded budgets; responses bind the complete request digest and carry only
+bounded output marked as Broker-redacted. The checked-in replay guard is
+process-local for protocol tests and must be replaced by a BrokerStore-backed
+admission implementation before a restart-safe bridge is enabled. Evidence is
+recorded in [`evidence/2026-09-14-virtualization-guest-transport.md`](../../evidence/2026-09-14-virtualization-guest-transport.md).

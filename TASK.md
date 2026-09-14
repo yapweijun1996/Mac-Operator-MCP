@@ -551,6 +551,14 @@ post-snapshot descendant escapes remain open. Evidence:
 5. Review the `KB_SYNC.md` writeback manifest before any upstream KB mutation.
 6. Implement the local Broker vertical slice before selecting production remote transport.
 
+The Virtualization guest bridge now has a disabled protocol-only seam in
+`virtualization-guest-transport.ts`. It is implemented/tested as an
+HMAC-authenticated, request/response-bound contract with bounded output and a
+process-local replay guard. It remains `PLANNED` for production enablement
+until a native VM adapter, durable replay admission, host/guest credential and
+filesystem/network evidence, cancellation/readback proof, and signing are
+available. Evidence: `evidence/2026-09-14-virtualization-guest-transport.md`.
+
 ## Definition of Done
 
 A task is `DONE` only when implementation, focused verification, affected regression and security checks, real-Mac evidence where relevant, documentation updates, and final repository readback are complete. Code existence alone is insufficient.

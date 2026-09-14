@@ -128,6 +128,18 @@ fail-closed adapter contract, not VM boot, entitlement, credential-isolation,
 or production enablement evidence. Evidence:
 `evidence/2026-09-14-virtualization-framework-sdk.md`.
 
+Latest authenticated guest-transport addendum: `virtualization-guest-transport.ts`
+adds a versioned, domain-separated HMAC protocol seam for a future native
+Virtualization guest bridge. Request proofs bind guest identity, profile/task
+digests, nonce, freshness, process policy, and bounded budgets; response proofs
+bind the complete request digest, guest identity, result, verification, and
+Broker-redacted output. Strict envelope validation rejects unknown fields,
+wrong keys, stale requests, oversized output, and replayed request IDs/nonces.
+The checked-in replay guard is process-local and explicitly not durable across
+restart; a BrokerStore-backed guard remains required before enabling a native
+bridge. Focused transport tests pass 6/6. Evidence:
+`evidence/2026-09-14-virtualization-guest-transport.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now
