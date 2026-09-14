@@ -1,7 +1,7 @@
 # Capability Kill-Switch Readback Evidence
 
 Date: 2026-09-15
-Source commit: `be1384e`
+Source commits: `be1384e`, `62d2c9f`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
