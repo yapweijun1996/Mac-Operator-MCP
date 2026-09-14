@@ -277,6 +277,14 @@ The full `MOPS_REAL_SANDBOX=1 npm test` suite passes 444/445 with one explicit
 host-boundary/opt-in skip; focused Broker tests pass 70/70. Evidence:
 `evidence/2026-09-14-real-broker-task-revocation.md`.
 
+Latest real Edge-revocation addendum: an opt-in Darwin Broker integration
+revokes the authenticated Edge identity while a real sandboxed `/bin/sleep`
+task is running. The active authority check observes the revocation,
+ProcessSupervisor drains the detached process group, and Broker returns
+`CANCELLED` while keeping the Job `unknown`; no late success is published.
+The focused integration passes 1/1. Evidence:
+`evidence/2026-09-14-real-broker-task-edge-revocation.md`.
+
 Latest real Broker task-path addendum: an opt-in Darwin integration now
 exercises the signed `mac_task_run` request through Broker policy admission,
 single-use approval, Job creation, `SandboxExecTaskRunner`, and verified
