@@ -75,7 +75,7 @@ test("privileged helper native IPC accepts the bound Broker process and drops a 
       stdio: "ignore"
     });
     await writeFile(attackerReady, "ready\n", { mode: 0o600 });
-    const attackerOutput = await waitForFileText(attackerResult);
+    const attackerOutput = await waitForFileText(attackerResult, false);
     assert.equal(attackerOutput, "");
   } finally {
     await unlink(authorizedHold).catch(() => undefined);
@@ -95,11 +95,16 @@ async function waitForProcessIdentity(pid: number): Promise<ReturnType<typeof ca
   throw new Error("Helper peer process identity was unavailable");
 }
 
-async function waitForFileText(path: string): Promise<string> {
+async function waitForFileText(path: string, requireNonEmpty = true): Promise<string> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    try { return await readFile(path, "utf8"); }
-    catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+    try {
+      const value = await readFile(path, "utf8");
+      if (!requireNonEmpty || value.length > 0) return value;
+    } catch {
+      // The result file can exist while the child is still flushing its bytes.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for ${path}`);
 }

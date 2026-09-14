@@ -298,6 +298,44 @@ test("SandboxExecTaskRunner rejects a task-root volume swap at process start", a
   }
 });
 
+test("SandboxExecTaskRunner keeps a signal-terminated task unresolved", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-crash-"));
+  const root = await realpath(directory);
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof(),
+    supervisor: {
+      run: async (request) => {
+        request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+        return {
+          state: "failed" as const,
+          resultClass: "EXECUTION_FAILED" as const,
+          exitCode: null,
+          signal: "SIGKILL" as const,
+          stdout: "partial-write\n",
+          stderr: "",
+          truncated: false,
+          durationMs: 2,
+          processId: 42,
+          processGroupId: 42,
+          terminationObserved: true
+        };
+      }
+    }
+  });
+  try {
+    if (process.platform !== "darwin") return;
+    const result = await runner.run(resolvedProfile(root), { timeoutMs: 1_000, shouldCancel: () => false });
+    assert.equal(result.state, "unknown");
+    assert.equal(result.resultClass, "UNKNOWN_OUTCOME");
+    assert.equal(result.verification.status, "unknown");
+    assert.match(result.verification.summary ?? "", /side effects are unresolved/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("real macOS sandbox runner blocks inherited environment, protected files, and network", {
   skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
 }, async () => {

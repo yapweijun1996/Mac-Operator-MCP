@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest task-crash mapping addendum: `SandboxExecTaskRunner` maps an observed
+`SIGKILL`/signal execution failure to `UNKNOWN_OUTCOME` with unknown
+verification, preserving a Broker Job as unresolved when a writes-local task
+may have partially changed state before crashing. Focused
+process-supervisor/sandbox/task-runner tests pass 33/33; the full real-sandbox
+suite passes 452/453 with one explicit host-boundary/opt-in skip. Explicit
+timeout, cancellation, and output-limit classes remain distinct. Evidence:
+`evidence/2026-09-14-task-crash-unknown.md`.
+
 Latest process-crash addendum: `ProcessSupervisor` treats a non-null child
 termination signal as an abnormal exit, so a real self-`SIGKILL` returns
 `EXECUTION_FAILED` rather than `SUCCEEDED` even when `exitCode` is null.

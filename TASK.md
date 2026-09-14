@@ -4,6 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Task-crash mapping addendum: an observed child signal is retained as
+`UNKNOWN_OUTCOME` at the task boundary so writes-local work cannot be reported
+successful without post-crash attribution. Evidence:
+`evidence/2026-09-14-task-crash-unknown.md`.
+
 Process-crash addendum: an observed child termination signal is now classified
 as `EXECUTION_FAILED` even when `exitCode` is null, preventing false-success
 task readback. Evidence:

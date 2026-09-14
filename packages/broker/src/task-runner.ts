@@ -296,8 +296,12 @@ export function validateTaskExecutionResult(value: TaskExecutionResult): TaskExe
 }
 
 function mapProcessResult(result: ProcessExecutionResult): TaskExecutionResult {
-  const state = result.state;
-  const resultClass = result.resultClass;
+  // A signal-terminated task may have performed an unobserved partial write.
+  // Keep that outcome unresolved even when the process group drained cleanly;
+  // only explicit budget/cancellation classes may claim their bounded result.
+  const crashed = result.resultClass === "EXECUTION_FAILED" && result.signal !== null;
+  const state = crashed ? "unknown" : result.state;
+  const resultClass = crashed ? "UNKNOWN_OUTCOME" : result.resultClass;
   return {
     state,
     resultClass,
@@ -306,10 +310,10 @@ function mapProcessResult(result: ProcessExecutionResult): TaskExecutionResult {
     stderr: result.stderr,
     truncated: result.truncated,
     durationMs: result.durationMs,
-    verification: result.resultClass === "SUCCEEDED"
+    verification: resultClass === "SUCCEEDED"
       ? { status: "verified", summary: "sandboxed process exited successfully" }
-      : result.resultClass === "UNKNOWN_OUTCOME"
-        ? { status: "unknown", summary: "sandboxed process termination was not observed" }
+      : resultClass === "UNKNOWN_OUTCOME"
+        ? { status: "unknown", summary: crashed ? "sandboxed process terminated by signal; task side effects are unresolved" : "sandboxed process termination was not observed" }
         : { status: "failed", summary: "sandboxed process did not satisfy exit-status verification" }
   };
 }

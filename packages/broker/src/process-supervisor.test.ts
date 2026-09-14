@@ -265,7 +265,7 @@ test("process supervisor close drains owned processes and rejects new work", asy
     timeoutMs: 5_000,
     outputCapBytes: 100
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitForActiveProcess(supervisor, 1, 2_000);
   const closePromise = supervisor.close();
   await assert.rejects(
     supervisor.run({
@@ -465,6 +465,15 @@ async function assertProcessGone(pid: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.throws(() => process.kill(pid, 0));
+}
+
+async function waitForActiveProcess(supervisor: ProcessSupervisor, expected: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (supervisor.activeCount() >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Process supervisor did not admit the expected active run");
 }
 
 test("process supervisor enforces concurrent process capacity", async () => {
