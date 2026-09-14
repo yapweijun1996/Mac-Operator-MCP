@@ -239,24 +239,17 @@ export class VirtualizationGuestVmLifecycle {
   async close(): Promise<void> {
     await this.serialized(async () => {
       if (this.closed) return;
-      let failure: unknown;
       if (this.available && (this.currentState === "running" || this.currentState === "unknown")) {
-        try {
-          await this.stopInternal();
-        } catch (error) {
-          failure = error;
-        }
+        await this.stopInternal();
       }
       try {
         await this.adapter.close?.();
       } catch (error) {
-        failure ??= error;
-      } finally {
-        this.closed = true;
-        this.currentState = "closed";
-        this.currentBootId = null;
+        throw mapLifecycleError(error, "close");
       }
-      if (failure !== undefined) throw mapLifecycleError(failure, "close");
+      this.closed = true;
+      this.currentState = "closed";
+      this.currentBootId = null;
     });
   }
 

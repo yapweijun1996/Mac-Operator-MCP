@@ -150,3 +150,31 @@ test("VM lifecycle close drains a running adapter and rejects new work", async (
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
 });
+
+test("VM lifecycle does not close over an unconfirmed stop", async () => {
+  let stopAttempts = 0;
+  let closeAttempts = 0;
+  let failStop = true;
+  const adapter = adapterFixture({
+    stop: async () => {
+      stopAttempts += 1;
+      if (failStop) throw new Error("stop unavailable");
+      return { state: "stopped", guestIdentity, bootId };
+    },
+    status: async () => ({ state: "running", guestIdentity, bootId })
+  });
+  adapter.close = async () => { closeAttempts += 1; };
+  const lifecycle = enabledLifecycle(adapter);
+  await lifecycle.start();
+  await assert.rejects(
+    lifecycle.close(),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME"
+  );
+  assert.equal(lifecycle.state, "unknown");
+  assert.equal(closeAttempts, 0);
+  await lifecycle.status();
+  failStop = false;
+  await lifecycle.close();
+  assert.equal(lifecycle.state, "closed");
+  assert.equal(stopAttempts, 2);
+});

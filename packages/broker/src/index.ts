@@ -29,6 +29,7 @@ export * from "./virtualization-guest-attestation-keyring.js";
 export * from "./virtualization-guest-native.js";
 export * from "./virtualization-guest-agent.js";
 export * from "./virtualization-guest-lifecycle.js";
+export * from "./virtualization-guest-vm-native.js";
 export * from "./sandbox-profile.js";
 export * from "./approval-authority.js";
 export * from "./approval-keyring.js";
