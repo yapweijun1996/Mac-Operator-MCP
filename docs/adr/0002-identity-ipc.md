@@ -115,6 +115,13 @@ socket device/inode identity after connect before sending a signed request;
 this complements, but does not replace, native peer identity and response HMAC
 verification.
 
+Revision `a26a188` adds a bounded, read-only Swift standard-library probe for
+the `jcs-utf8-v1` canonical JSON vectors. It independently reproduces
+ECMAScript escaping, UTF-16 property ordering, UTF-8 digest bytes, and the
+fixed SHA-256 vectors on the physical Darwin host. This is useful native
+serialization readback, but it is not the production guest/adapter transport;
+the actual Swift/C++ adapter integration and release gate remain open.
+
 This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, session concurrency, canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
 
 ## Acceptance evidence
