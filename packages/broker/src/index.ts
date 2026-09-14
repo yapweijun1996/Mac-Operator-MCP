@@ -22,6 +22,7 @@ export * from "./process-supervisor.js";
 export * from "./task-profile.js";
 export * from "./task-runner.js";
 export * from "./virtualization-guest-transport.js";
+export * from "./virtualization-guest-channel.js";
 export * from "./virtualization-guest-image.js";
 export * from "./sandbox-profile.js";
 export * from "./approval-authority.js";
