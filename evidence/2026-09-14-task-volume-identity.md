@@ -15,19 +15,21 @@ MOPS_REAL_SANDBOX=1 npm test
 
 ## Observed result
 
-- Focused TaskProfile/runner/sandbox suite: 19/19 passed.
-- Full real-sandbox suite: 447/448 passed, 0 failed, 1 explicit host-boundary/opt-in skip.
-- The volume-swap test changed the observed root identity after the supervisor
-  returned; the runner rejected the result with `POLICY_DENIED`.
+- Focused TaskProfile/runner/sandbox suite: 20/20 passed.
+- Full real-sandbox suite: 449/450 passed, 0 failed, 1 explicit host-boundary/opt-in skip.
+- The volume-swap tests changed the observed root identity during preflight, at
+  process start, and after the supervisor returned; the runner rejected each
+  result with `POLICY_DENIED`.
 
 ## Boundary
 
 Before launch, `SandboxExecTaskRunner` asks the protected native adapter twice
 for a bounded `{ rootPath, id }` identity for every resolved filesystem root.
-After the supervisor returns, it asks again and requires the same canonical
-root and volume ID. Malformed, missing, reordered, or changed identities fail closed;
-Broker therefore cannot publish a task result whose authorized root has been
-replaced or remounted across the execution boundary.
+The process-start callback repeats the check after spawn and before Broker
+ownership persistence; after the supervisor returns, it asks again and requires
+the same canonical root and volume ID. Malformed, missing, reordered, or changed
+identities fail closed; Broker therefore cannot publish a task result whose
+authorized root has been replaced or remounted at those execution boundaries.
 
 ## Limitations
 

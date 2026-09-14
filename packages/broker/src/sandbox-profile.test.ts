@@ -267,6 +267,37 @@ test("SandboxExecTaskRunner rejects a task-root volume swap during preflight", a
   }
 });
 
+test("SandboxExecTaskRunner rejects a task-root volume swap at process start", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-volume-start-"));
+  const root = await realpath(directory);
+  let identity = "volume:one";
+  let supervisorCalled = false;
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof(),
+    filesystemIdentityObserver: (rootPath) => ({ rootPath, id: identity }),
+    supervisor: {
+      run: async (request) => {
+        supervisorCalled = true;
+        identity = "volume:two";
+        request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+        throw new Error("must not continue after a process-start swap");
+      }
+    }
+  });
+  try {
+    if (process.platform !== "darwin") return;
+    await assert.rejects(
+      runner.run(resolvedProfile(root), { timeoutMs: 1_000, shouldCancel: () => false }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.equal(supervisorCalled, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("real macOS sandbox runner blocks inherited environment, protected files, and network", {
   skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
 }, async () => {

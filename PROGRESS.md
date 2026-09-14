@@ -9,18 +9,19 @@ signed `mac_task_run` request through a profile-owned loopback TCP allowlist.
 The Broker fixes `/usr/bin/curl`, URL, empty environment, and no extra args;
 the experimental sandbox reaches only the selected local fixture and returns
 verified readback. Focused Broker tests pass 72/72, and the full
-`MOPS_REAL_SANDBOX=1 npm test` suite passes 448/449 with one explicit
+`MOPS_REAL_SANDBOX=1 npm test` suite passes 449/450 with one explicit
 host-boundary/opt-in skip. Evidence:
 `evidence/2026-09-14-real-broker-task-network.md`.
 
-Latest task-volume identity addendum: the experimental task runner now reads
-each authorized filesystem root's native volume identity before launch and
-after completion. A changed canonical root or volume ID fails closed with
-`POLICY_DENIED` instead of publishing the child result. Focused
-TaskProfile/runner/sandbox tests pass 19/19, and the real-sandbox suite passes
-447/448 with one explicit host-boundary/opt-in skip. This catches remount or
-target replacement across the execution boundary but does not yet provide a
-kernel-held mount namespace or prevent a swap during child syscalls. Evidence:
+Latest task-volume identity addendum: the experimental task runner reads each
+authorized filesystem root's native volume identity twice before launch, again
+at process start, and after completion. A changed canonical root or volume ID
+fails closed with `POLICY_DENIED` instead of publishing the child result.
+Focused TaskProfile/runner/sandbox tests pass 20/20, and the real-sandbox suite
+passes 449/450 with one explicit host-boundary/opt-in skip. This catches
+remount or target replacement at the Broker execution boundary but does not
+yet provide a kernel-held mount namespace or prevent a swap during child
+syscalls. Evidence:
 `evidence/2026-09-14-task-volume-identity.md`.
 
 Latest task credential-policy addendum: versioned TaskProfiles now carry an
