@@ -5,8 +5,9 @@ Date: 2026-09-15
 ## Decision
 
 The Broker now has one startup-owned composition seam for the native guest
-VM, lifecycle controller, virtio channel, authenticated guest transport, and
-virtualization task runner. The seam is opt-in and requires independent
+VM, lifecycle controller, virtio channel, optional guest-initiated listener
+source, authenticated guest transport, and virtualization task runner. The
+seam is opt-in and requires independent
 `enabled` and `hostEvidenceAccepted` gates. MCP request arguments never reach
 the image path, image digest, guest port, authentication key path, attestation,
 or isolation proof.
@@ -16,7 +17,8 @@ or isolation proof.
 `packages/broker/src/virtualization-guest-startup.ts` loads a protected image
 and authentication key only after the gates pass, verifies the image identity,
 creates the native VM adapter, binds one fixed virtio port (`38765`) and bounded
-frame/deadline budgets, then constructs `VirtualizationGuestTransportClient`
+frame/deadline budgets, optionally creates a startup-owned listener source,
+then constructs `VirtualizationGuestTransportClient`
 with a caller-supplied durable replay guard. The loaded key is wiped after the
 transport copies it. VM start is exposed as a `RuntimeChannel`, status is an
 explicit recovery readback, and close drains transport before lifecycle/VM

@@ -14,10 +14,23 @@ typecheck, lint, and diff checks pass. This does not prove a production
 AF_VSOCK acceptor, VM boot, guest isolation, or `mac_task_run` enablement.
 Evidence: `evidence/2026-09-15-virtualization-guest-bootstrap.md`.
 
+Virtio listener addendum: the native Virtualization.framework artifact now
+installs a startup-owned fixed-port listener and exposes bounded asynchronous
+accept/read/write/close operations through a TypeScript
+`VirtualizationGuestConnectionSource`. Pending connections and external
+handles are drained on listener/VM close, and an aborted accept closes a late
+connection rather than leaking it. Focused VM/listener tests pass 6/6 and the
+complete physical-Darwin suite passes 562/562 with 0 skipped tests; typecheck,
+lint, and diff checks pass. This proves only the host-side listener seam, not a
+guest AF_VSOCK service, bootable image, guest isolation, attestation production,
+or `mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-vsock-listener.md`.
+
 Latest startup composition addendum: the startup-only
 `virtualizationGuest` seam composes image identity verification, native VM
-lifecycle, a fixed virtio port, authenticated transport, replay admission, and
-the virtualization runner. If explicitly enabled, the guest starts before
+lifecycle, a fixed virtio port, an optional guest-initiated listener source,
+authenticated transport, replay admission, and the virtualization runner. If
+explicitly enabled, the guest starts before
 restart reconciliation and is closed before Broker persistence; with no seam,
 the prior fail-closed runner remains in force. Focused startup tests pass 3/3,
 the service-startup tests pass 3/3, and the complete physical-Darwin suite

@@ -7,13 +7,17 @@
 #include <dispatch/dispatch.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cerrno>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <fcntl.h>
 #include <limits.h>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -22,12 +26,49 @@
 #include <unistd.h>
 #include <vector>
 
+constexpr uint64_t kGuestConnectionMagic = 0x4d4f504753545243ULL;
+
+struct GuestListenerState {
+  std::mutex mutex;
+  std::condition_variable condition;
+  std::deque<void*> pending_connections;
+  size_t max_connections = 1;
+  bool closed = false;
+
+  ~GuestListenerState() {
+    for (void* retained_connection : pending_connections) {
+      if (retained_connection != nullptr) {
+        (void)(__bridge_transfer VZVirtioSocketConnection*)retained_connection;
+      }
+    }
+  }
+};
+
+struct GuestConnectionHandle {
+  uint64_t magic = kGuestConnectionMagic;
+  void* retained_connection = nullptr;
+  int file_descriptor = -1;
+  std::mutex mutex;
+  bool closed = false;
+};
+
+@interface MOPVirtioSocketListenerDelegate : NSObject <VZVirtioSocketListenerDelegate> {
+@public
+  std::shared_ptr<GuestListenerState> state;
+}
+- (instancetype)initWithState:(std::shared_ptr<GuestListenerState>)listenerState;
+@end
+
 @interface MOPVirtualizationGuestHandle : NSObject {
 @public
   uint64_t magic;
+  std::mutex listener_mutex;
+  std::unordered_map<uint32_t, std::shared_ptr<GuestListenerState>> listener_states;
 }
 @property(nonatomic, strong) VZVirtualMachine* machine;
 @property(nonatomic, strong) dispatch_queue_t queue;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber*, VZVirtioSocketListener*>* listeners;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber*, MOPVirtioSocketListenerDelegate*>* listenerDelegates;
 @property(nonatomic, copy) NSString* imagePath;
 @property(nonatomic, copy) NSString* imageSha256;
 @property(nonatomic, copy) NSString* runtimeVersion;
@@ -36,6 +77,29 @@
 @end
 
 @implementation MOPVirtualizationGuestHandle
+@end
+
+@implementation MOPVirtioSocketListenerDelegate
+
+- (instancetype)initWithState:(std::shared_ptr<GuestListenerState>)listenerState {
+  self = [super init];
+  if (self != nil) state = std::move(listenerState);
+  return self;
+}
+
+- (BOOL)listener:(VZVirtioSocketListener*)listener
+    shouldAcceptNewConnection:(VZVirtioSocketConnection*)connection
+    fromSocketDevice:(VZVirtioSocketDevice*)socketDevice {
+  (void)listener;
+  (void)socketDevice;
+  if (connection == nil || connection.fileDescriptor < 0 || state == nullptr) return NO;
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (state->closed || state->pending_connections.size() >= state->max_connections) return NO;
+  state->pending_connections.push_back((__bridge_retained void*)connection);
+  state->condition.notify_one();
+  return YES;
+}
+
 @end
 
 namespace {
@@ -47,6 +111,24 @@ constexpr uint64_t kNativeOperationTimeoutNs = 15ULL * 60ULL * 1000000000ULL;
 constexpr size_t kMaxFrameBytes = 4 * 1024 * 1024;
 constexpr uint32_t kMinVsockPort = 1;
 constexpr uint32_t kMaxVsockPort = 65535;
+
+void ReleaseRetainedConnection(void* retained_connection) {
+  if (retained_connection != nullptr) {
+    (void)(__bridge_transfer VZVirtioSocketConnection*)retained_connection;
+  }
+}
+
+void CloseListenerState(const std::shared_ptr<GuestListenerState>& state) {
+  if (state == nullptr) return;
+  std::deque<void*> pending;
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->closed = true;
+    pending.swap(state->pending_connections);
+  }
+  state->condition.notify_all();
+  for (void* retained_connection : pending) ReleaseRetainedConnection(retained_connection);
+}
 
 void ThrowError(napi_env env, const char* message) {
   napi_throw_error(env, nullptr, message);
@@ -184,11 +266,77 @@ MOPVirtualizationGuestHandle* ReadHandle(napi_env env, napi_value value) {
   return handle;
 }
 
+GuestConnectionHandle* ReadConnectionHandle(napi_env env, napi_value value) {
+  void* data = nullptr;
+  if (napi_get_value_external(env, value, &data) != napi_ok || data == nullptr) {
+    napi_throw_type_error(env, nullptr, "Virtualization guest connection handle is invalid");
+    return nullptr;
+  }
+  GuestConnectionHandle* connection = static_cast<GuestConnectionHandle*>(data);
+  if (connection->magic != kGuestConnectionMagic) {
+    napi_throw_type_error(env, nullptr, "Virtualization guest connection handle is invalid");
+    return nullptr;
+  }
+  return connection;
+}
+
+void CloseConnectionHandle(GuestConnectionHandle* connection) {
+  if (connection == nullptr) return;
+  std::lock_guard<std::mutex> lock(connection->mutex);
+  if (connection->closed) return;
+  connection->closed = true;
+  if (connection->retained_connection != nullptr) {
+    VZVirtioSocketConnection* native_connection =
+        (__bridge VZVirtioSocketConnection*)connection->retained_connection;
+    [native_connection close];
+  }
+}
+
+void FinalizeConnection(napi_env env, void* data, void* hint) {
+  (void)env;
+  (void)hint;
+  GuestConnectionHandle* connection = static_cast<GuestConnectionHandle*>(data);
+  if (connection == nullptr) return;
+  CloseConnectionHandle(connection);
+  connection->magic = 0;
+  if (connection->retained_connection != nullptr) {
+    (void)(__bridge_transfer VZVirtioSocketConnection*)connection->retained_connection;
+    connection->retained_connection = nullptr;
+  }
+  delete connection;
+}
+
+void CloseAllListeners(MOPVirtualizationGuestHandle* handle) {
+  if (handle == nullptr) return;
+  std::unordered_map<uint32_t, std::shared_ptr<GuestListenerState>> states;
+  {
+    std::lock_guard<std::mutex> lock(handle->listener_mutex);
+    states.swap(handle->listener_states);
+  }
+  if (handle.queue != nil) {
+    dispatch_sync(handle.queue, ^{
+      if (handle.machine != nil) {
+        NSArray<VZSocketDevice*>* devices = handle.machine.socketDevices;
+        VZVirtioSocketDevice* socket_device = devices.count == 1 &&
+            [devices.firstObject isKindOfClass:[VZVirtioSocketDevice class]]
+            ? (VZVirtioSocketDevice*)devices.firstObject : nil;
+        if (socket_device != nil) {
+          for (const auto& entry : states) [socket_device removeSocketListenerForPort:entry.first];
+        }
+      }
+      [handle.listeners removeAllObjects];
+      [handle.listenerDelegates removeAllObjects];
+    });
+  }
+  for (const auto& entry : states) CloseListenerState(entry.second);
+}
+
 void FinalizeHandle(napi_env env, void* data, void* hint) {
   (void)env;
   (void)hint;
   if (data != nullptr) {
     MOPVirtualizationGuestHandle* handle = (__bridge_transfer MOPVirtualizationGuestHandle*)data;
+    CloseAllListeners(handle);
     handle->magic = 0;
     handle.machine = nil;
     handle.queue = nil;
@@ -299,6 +447,43 @@ struct AsyncChannelOperation {
   bool timed_out = false;
 };
 
+struct AsyncAcceptOperation {
+  napi_env env = nullptr;
+  napi_async_work work = nullptr;
+  napi_deferred deferred = nullptr;
+  std::shared_ptr<GuestListenerState> state;
+  uint32_t timeout_ms = 0;
+  void* retained_connection = nullptr;
+  bool timed_out = false;
+  std::string error;
+};
+
+struct AsyncConnectionReadOperation {
+  napi_env env = nullptr;
+  napi_async_work work = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_ref connection_reference = nullptr;
+  GuestConnectionHandle* connection = nullptr;
+  uint32_t max_bytes = 0;
+  uint32_t timeout_ms = 0;
+  bool eof = false;
+  bool timed_out = false;
+  std::string error;
+  std::vector<unsigned char> response;
+};
+
+struct AsyncConnectionWriteOperation {
+  napi_env env = nullptr;
+  napi_async_work work = nullptr;
+  napi_deferred deferred = nullptr;
+  napi_ref connection_reference = nullptr;
+  GuestConnectionHandle* connection = nullptr;
+  uint32_t timeout_ms = 0;
+  std::vector<unsigned char> request;
+  bool timed_out = false;
+  std::string error;
+};
+
 void RecordCompletion(const std::shared_ptr<WaitState>& wait, NSError* error) {
   {
     std::lock_guard<std::mutex> lock(wait->mutex);
@@ -371,6 +556,474 @@ bool ReadAll(int descriptor, unsigned char* bytes, size_t length, uint64_t deadl
     return false;
   }
   return true;
+}
+
+bool IsGuestPort(uint32_t port) {
+  return port >= kMinVsockPort && port <= kMaxVsockPort;
+}
+
+VZVirtioSocketDevice* SocketDeviceForHandle(MOPVirtualizationGuestHandle* handle) {
+  if (handle == nullptr || handle.machine == nil) return nil;
+  NSArray<VZSocketDevice*>* devices = handle.machine.socketDevices;
+  if (devices.count != 1 || ![devices.firstObject isKindOfClass:[VZVirtioSocketDevice class]]) return nil;
+  return (VZVirtioSocketDevice*)devices.firstObject;
+}
+
+void ExecuteAccept(AsyncAcceptOperation* operation) {
+  if (operation->state == nullptr) {
+    operation->error = "Virtualization guest listener is unavailable";
+    return;
+  }
+  std::unique_lock<std::mutex> lock(operation->state->mutex);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(operation->timeout_ms);
+  while (!operation->state->closed && operation->state->pending_connections.empty()) {
+    if (operation->state->condition.wait_until(lock, deadline) == std::cv_status::timeout) {
+      operation->timed_out = true;
+      return;
+    }
+  }
+  if (!operation->state->pending_connections.empty()) {
+    operation->retained_connection = operation->state->pending_connections.front();
+    operation->state->pending_connections.pop_front();
+    return;
+  }
+  if (operation->state->closed) {
+    operation->error = "Virtualization guest listener is closed";
+    return;
+  }
+  operation->timed_out = true;
+}
+
+void CompleteAccept(napi_env env, napi_status status, void* data) {
+  AsyncAcceptOperation* operation = static_cast<AsyncAcceptOperation*>(data);
+  if (status != napi_ok || !operation->error.empty()) {
+    ReleaseRetainedConnection(operation->retained_connection);
+    operation->retained_connection = nullptr;
+    napi_value error;
+    const char* message = operation->error.empty() ? "Virtualization guest connection accept failed" : operation->error.c_str();
+    napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &error);
+    napi_reject_deferred(env, operation->deferred, error);
+  } else if (operation->timed_out || operation->retained_connection == nullptr) {
+    napi_value result;
+    napi_get_null(env, &result);
+    napi_resolve_deferred(env, operation->deferred, result);
+  } else {
+    GuestConnectionHandle* connection = new GuestConnectionHandle();
+    connection->retained_connection = operation->retained_connection;
+    operation->retained_connection = nullptr;
+    VZVirtioSocketConnection* native_connection =
+        (__bridge VZVirtioSocketConnection*)connection->retained_connection;
+    connection->file_descriptor = native_connection == nil ? -1 : native_connection.fileDescriptor;
+    napi_value result;
+    const bool external_created = connection->file_descriptor >= 0 &&
+        napi_create_external(env, connection, FinalizeConnection, nullptr, &result) == napi_ok;
+    if (!external_created) {
+      if (connection->retained_connection != nullptr) {
+        (void)(__bridge_transfer VZVirtioSocketConnection*)connection->retained_connection;
+        connection->retained_connection = nullptr;
+      }
+      delete connection;
+      napi_value error;
+      napi_create_string_utf8(env, "Virtualization guest connection handle could not be created", NAPI_AUTO_LENGTH, &error);
+      napi_reject_deferred(env, operation->deferred, error);
+    } else {
+      napi_resolve_deferred(env, operation->deferred, result);
+    }
+  }
+  if (operation->work != nullptr) napi_delete_async_work(env, operation->work);
+  delete operation;
+}
+
+napi_value ListenGuestPort(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+    napi_throw_type_error(env, nullptr, "listenGuestPort requires a handle, port, and connection cap");
+    return nullptr;
+  }
+  MOPVirtualizationGuestHandle* handle = ReadHandle(env, args[0]);
+  if (handle == nullptr) return nullptr;
+  uint32_t port = 0;
+  uint32_t max_connections = 0;
+  if (napi_get_value_uint32(env, args[1], &port) != napi_ok ||
+      napi_get_value_uint32(env, args[2], &max_connections) != napi_ok ||
+      !IsGuestPort(port) || max_connections < 1 || max_connections > 8) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest listener limits are invalid");
+    return nullptr;
+  }
+  auto state = std::make_shared<GuestListenerState>();
+  state->max_connections = max_connections;
+  __block bool failed = false;
+  dispatch_sync(handle.queue, ^{
+    if (handle.closed || handle.machine == nil || SocketDeviceForHandle(handle) == nil) {
+      failed = true;
+      return;
+    }
+    VZVirtioSocketDevice* socket_device = SocketDeviceForHandle(handle);
+    if (socket_device == nil) {
+      failed = true;
+      return;
+    }
+    std::shared_ptr<GuestListenerState> replaced;
+    {
+      std::lock_guard<std::mutex> lock(handle->listener_mutex);
+      const auto previous = handle->listener_states.find(port);
+      if (previous != handle->listener_states.end()) {
+        replaced = previous->second;
+        handle->listener_states.erase(previous);
+      }
+      handle->listener_states.emplace(port, state);
+    }
+    if (replaced != nullptr) CloseListenerState(replaced);
+    MOPVirtioSocketListenerDelegate* delegate = [[MOPVirtioSocketListenerDelegate alloc] initWithState:state];
+    VZVirtioSocketListener* listener = [[VZVirtioSocketListener alloc] init];
+    listener.delegate = delegate;
+    [socket_device setSocketListener:listener forPort:port];
+    handle.listeners[@(port)] = listener;
+    handle.listenerDelegates[@(port)] = delegate;
+  });
+  if (failed) {
+    CloseListenerState(state);
+    napi_throw_error(env, nullptr, "Virtualization guest virtio socket listener is unavailable");
+    return nullptr;
+  }
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+}
+
+napi_value RemoveGuestPort(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+    napi_throw_type_error(env, nullptr, "removeGuestPort requires a handle and port");
+    return nullptr;
+  }
+  MOPVirtualizationGuestHandle* handle = ReadHandle(env, args[0]);
+  if (handle == nullptr) return nullptr;
+  uint32_t port = 0;
+  if (napi_get_value_uint32(env, args[1], &port) != napi_ok || !IsGuestPort(port)) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest listener port is invalid");
+    return nullptr;
+  }
+  std::shared_ptr<GuestListenerState> state;
+  {
+    std::lock_guard<std::mutex> lock(handle->listener_mutex);
+    const auto found = handle->listener_states.find(port);
+    if (found != handle->listener_states.end()) {
+      state = found->second;
+      handle->listener_states.erase(found);
+    }
+  }
+  dispatch_sync(handle.queue, ^{
+    VZVirtioSocketDevice* socket_device = SocketDeviceForHandle(handle);
+    if (socket_device != nil) [socket_device removeSocketListenerForPort:port];
+    [handle.listeners removeObjectForKey:@(port)];
+    [handle.listenerDelegates removeObjectForKey:@(port)];
+  });
+  CloseListenerState(state);
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+}
+
+napi_value AcceptGuestConnection(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+    napi_throw_type_error(env, nullptr, "acceptGuestConnection requires a handle, port, and timeout");
+    return nullptr;
+  }
+  MOPVirtualizationGuestHandle* handle = ReadHandle(env, args[0]);
+  if (handle == nullptr) return nullptr;
+  uint32_t port = 0;
+  uint32_t timeout_ms = 0;
+  if (napi_get_value_uint32(env, args[1], &port) != napi_ok ||
+      napi_get_value_uint32(env, args[2], &timeout_ms) != napi_ok ||
+      !IsGuestPort(port) || timeout_ms < 1 || timeout_ms > 120000) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest accept limits are invalid");
+    return nullptr;
+  }
+  std::shared_ptr<GuestListenerState> state;
+  {
+    std::lock_guard<std::mutex> lock(handle->listener_mutex);
+    const auto found = handle->listener_states.find(port);
+    if (found != handle->listener_states.end()) state = found->second;
+  }
+  if (state == nullptr) {
+    napi_throw_error(env, nullptr, "Virtualization guest listener is not configured");
+    return nullptr;
+  }
+  AsyncAcceptOperation* operation = new AsyncAcceptOperation();
+  operation->env = env;
+  operation->state = std::move(state);
+  operation->timeout_ms = timeout_ms;
+  napi_value promise;
+  if (napi_create_promise(env, &operation->deferred, &promise) != napi_ok) {
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest accept promise could not be created");
+    return nullptr;
+  }
+  napi_value resource_name;
+  napi_create_string_utf8(env, "virtualization-guest-accept", NAPI_AUTO_LENGTH, &resource_name);
+  if (napi_create_async_work(env, nullptr, resource_name,
+                             [](napi_env worker_env, void* data) {
+                               (void)worker_env;
+                               ExecuteAccept(static_cast<AsyncAcceptOperation*>(data));
+                             }, CompleteAccept, operation, &operation->work) != napi_ok ||
+      napi_queue_async_work(env, operation->work) != napi_ok) {
+    if (operation->work != nullptr) napi_delete_async_work(env, operation->work);
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest accept could not be queued");
+    return nullptr;
+  }
+  return promise;
+}
+
+void ExecuteConnectionRead(AsyncConnectionReadOperation* operation) {
+  if (operation->connection == nullptr) {
+    operation->error = "Virtualization guest connection is unavailable";
+    return;
+  }
+  int descriptor = -1;
+  {
+    std::lock_guard<std::mutex> lock(operation->connection->mutex);
+    if (operation->connection->closed || operation->connection->retained_connection == nullptr) {
+      operation->eof = true;
+      return;
+    }
+    descriptor = operation->connection->file_descriptor;
+  }
+  if (descriptor < 0) {
+    operation->eof = true;
+    return;
+  }
+  const uint64_t start_ms = MonotonicMilliseconds();
+  const uint64_t deadline_ms = start_ms == 0 ? 0 : start_ms + operation->timeout_ms;
+  if (deadline_ms == 0) {
+    operation->error = "Virtualization guest connection clock is unavailable";
+    return;
+  }
+  operation->response.resize(operation->max_bytes);
+  while (true) {
+    struct pollfd poll_descriptor{};
+    poll_descriptor.fd = descriptor;
+    poll_descriptor.events = POLLIN;
+    const int remaining_ms = RemainingMilliseconds(deadline_ms);
+    if (remaining_ms < 1) {
+      operation->timed_out = true;
+      operation->response.clear();
+      return;
+    }
+    const int polled = poll(&poll_descriptor, 1, remaining_ms);
+    if (polled == 0) {
+      operation->timed_out = true;
+      operation->response.clear();
+      return;
+    }
+    if (polled < 0 && errno == EINTR) continue;
+    if (polled < 0 || (poll_descriptor.revents & (POLLERR | POLLNVAL)) != 0) {
+      operation->error = "Virtualization guest connection read failed";
+      operation->response.clear();
+      return;
+    }
+    const ssize_t received = recv(descriptor, operation->response.data(), operation->response.size(), MSG_DONTWAIT);
+    if (received > 0) {
+      operation->response.resize(static_cast<size_t>(received));
+      return;
+    }
+    if (received == 0) {
+      operation->eof = true;
+      operation->response.clear();
+      return;
+    }
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+    operation->error = "Virtualization guest connection read failed";
+    operation->response.clear();
+    return;
+  }
+}
+
+void CompleteConnectionRead(napi_env env, napi_status status, void* data) {
+  AsyncConnectionReadOperation* operation = static_cast<AsyncConnectionReadOperation*>(data);
+  if (status != napi_ok || !operation->error.empty()) {
+    napi_value error;
+    const char* message = operation->error.empty() ? "Virtualization guest connection read failed" : operation->error.c_str();
+    napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &error);
+    napi_reject_deferred(env, operation->deferred, error);
+  } else if (operation->timed_out) {
+    napi_value error;
+    napi_create_string_utf8(env, "Virtualization guest connection read timed out", NAPI_AUTO_LENGTH, &error);
+    napi_reject_deferred(env, operation->deferred, error);
+  } else if (operation->eof) {
+    napi_value result;
+    napi_get_null(env, &result);
+    napi_resolve_deferred(env, operation->deferred, result);
+  } else {
+    napi_value result;
+    napi_create_buffer_copy(env, operation->response.size(), operation->response.data(), nullptr, &result);
+    napi_resolve_deferred(env, operation->deferred, result);
+  }
+  if (operation->connection_reference != nullptr) napi_delete_reference(env, operation->connection_reference);
+  if (operation->work != nullptr) napi_delete_async_work(env, operation->work);
+  delete operation;
+}
+
+napi_value ReadGuestConnectionChunk(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+    napi_throw_type_error(env, nullptr, "readGuestConnectionChunk requires a connection, byte cap, and timeout");
+    return nullptr;
+  }
+  GuestConnectionHandle* connection = ReadConnectionHandle(env, args[0]);
+  if (connection == nullptr) return nullptr;
+  uint32_t max_bytes = 0;
+  uint32_t timeout_ms = 0;
+  if (napi_get_value_uint32(env, args[1], &max_bytes) != napi_ok ||
+      napi_get_value_uint32(env, args[2], &timeout_ms) != napi_ok ||
+      max_bytes < 1 || max_bytes > kMaxFrameBytes || timeout_ms < 1 || timeout_ms > 120000) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest connection read limits are invalid");
+    return nullptr;
+  }
+  AsyncConnectionReadOperation* operation = new AsyncConnectionReadOperation();
+  operation->env = env;
+  operation->connection = connection;
+  operation->max_bytes = max_bytes;
+  operation->timeout_ms = timeout_ms;
+  napi_value promise;
+  if (napi_create_promise(env, &operation->deferred, &promise) != napi_ok ||
+      napi_create_reference(env, args[0], 1, &operation->connection_reference) != napi_ok) {
+    if (operation->connection_reference != nullptr) napi_delete_reference(env, operation->connection_reference);
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest connection read promise could not be created");
+    return nullptr;
+  }
+  napi_value resource_name;
+  napi_create_string_utf8(env, "virtualization-guest-connection-read", NAPI_AUTO_LENGTH, &resource_name);
+  if (napi_create_async_work(env, nullptr, resource_name,
+                             [](napi_env worker_env, void* data) {
+                               (void)worker_env;
+                               ExecuteConnectionRead(static_cast<AsyncConnectionReadOperation*>(data));
+                             }, CompleteConnectionRead, operation, &operation->work) != napi_ok ||
+      napi_queue_async_work(env, operation->work) != napi_ok) {
+    if (operation->work != nullptr) napi_delete_async_work(env, operation->work);
+    napi_delete_reference(env, operation->connection_reference);
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest connection read could not be queued");
+    return nullptr;
+  }
+  return promise;
+}
+
+void ExecuteConnectionWrite(AsyncConnectionWriteOperation* operation) {
+  if (operation->connection == nullptr) {
+    operation->error = "Virtualization guest connection is unavailable";
+    return;
+  }
+  int descriptor = -1;
+  {
+    std::lock_guard<std::mutex> lock(operation->connection->mutex);
+    if (operation->connection->closed || operation->connection->retained_connection == nullptr) {
+      operation->error = "Virtualization guest connection is closed";
+      return;
+    }
+    descriptor = operation->connection->file_descriptor;
+  }
+  const uint64_t start_ms = MonotonicMilliseconds();
+  const uint64_t deadline_ms = start_ms == 0 ? 0 : start_ms + operation->timeout_ms;
+  if (descriptor < 0 || deadline_ms == 0 ||
+      !WriteAll(descriptor, operation->request.data(), operation->request.size(), deadline_ms)) {
+    operation->timed_out = deadline_ms != 0 && RemainingMilliseconds(deadline_ms) < 1;
+    operation->error = operation->timed_out
+        ? "Virtualization guest connection write timed out"
+        : "Virtualization guest connection write failed";
+  }
+}
+
+void CompleteConnectionWrite(napi_env env, napi_status status, void* data) {
+  AsyncConnectionWriteOperation* operation = static_cast<AsyncConnectionWriteOperation*>(data);
+  if (status != napi_ok || !operation->error.empty()) {
+    napi_value error;
+    const char* message = operation->error.empty() ? "Virtualization guest connection write failed" : operation->error.c_str();
+    napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &error);
+    napi_reject_deferred(env, operation->deferred, error);
+  } else {
+    napi_value undefined;
+    napi_get_undefined(env, &undefined);
+    napi_resolve_deferred(env, operation->deferred, undefined);
+  }
+  if (operation->connection_reference != nullptr) napi_delete_reference(env, operation->connection_reference);
+  if (operation->work != nullptr) napi_delete_async_work(env, operation->work);
+  delete operation;
+}
+
+napi_value WriteGuestConnectionChunk(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+    napi_throw_type_error(env, nullptr, "writeGuestConnectionChunk requires a connection, frame, and timeout");
+    return nullptr;
+  }
+  GuestConnectionHandle* connection = ReadConnectionHandle(env, args[0]);
+  if (connection == nullptr) return nullptr;
+  bool is_buffer = false;
+  napi_is_buffer(env, args[1], &is_buffer);
+  uint32_t timeout_ms = 0;
+  if (!is_buffer || napi_get_value_uint32(env, args[2], &timeout_ms) != napi_ok || timeout_ms < 1 || timeout_ms > 120000) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest connection write limits are invalid");
+    return nullptr;
+  }
+  void* data = nullptr;
+  size_t length = 0;
+  if (napi_get_buffer_info(env, args[1], &data, &length) != napi_ok ||
+      data == nullptr || length < 1 || length > kMaxFrameBytes) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest connection frame exceeds the byte limit");
+    return nullptr;
+  }
+  AsyncConnectionWriteOperation* operation = new AsyncConnectionWriteOperation();
+  operation->env = env;
+  operation->connection = connection;
+  operation->timeout_ms = timeout_ms;
+  operation->request.assign(static_cast<unsigned char*>(data), static_cast<unsigned char*>(data) + length);
+  napi_value promise;
+  if (napi_create_promise(env, &operation->deferred, &promise) != napi_ok ||
+      napi_create_reference(env, args[0], 1, &operation->connection_reference) != napi_ok) {
+    if (operation->connection_reference != nullptr) napi_delete_reference(env, operation->connection_reference);
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest connection write promise could not be created");
+    return nullptr;
+  }
+  napi_value resource_name;
+  napi_create_string_utf8(env, "virtualization-guest-connection-write", NAPI_AUTO_LENGTH, &resource_name);
+  if (napi_create_async_work(env, nullptr, resource_name,
+                             [](napi_env worker_env, void* data) {
+                               (void)worker_env;
+                               ExecuteConnectionWrite(static_cast<AsyncConnectionWriteOperation*>(data));
+                             }, CompleteConnectionWrite, operation, &operation->work) != napi_ok ||
+      napi_queue_async_work(env, operation->work) != napi_ok) {
+    if (operation->work != nullptr) napi_delete_async_work(env, operation->work);
+    napi_delete_reference(env, operation->connection_reference);
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest connection write could not be queued");
+    return nullptr;
+  }
+  return promise;
+}
+
+napi_value CloseGuestConnection(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "closeGuestConnection requires a connection");
+    return nullptr;
+  }
+  GuestConnectionHandle* connection = ReadConnectionHandle(env, args[0]);
+  if (connection == nullptr) return nullptr;
+  CloseConnectionHandle(connection);
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
 }
 
 uint32_t ReadBigEndian32(const unsigned char* bytes) {
@@ -932,6 +1585,8 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     handle->magic = kHandleMagic;
     handle.queue = queue;
     handle.machine = [[VZVirtualMachine alloc] initWithConfiguration:configuration queue:queue];
+    handle.listeners = [NSMutableDictionary dictionary];
+    handle.listenerDelegates = [NSMutableDictionary dictionary];
     handle.imagePath = [NSString stringWithUTF8String:canonical_path.c_str()];
     handle.imageSha256 = [NSString stringWithUTF8String:expected_digest];
     handle.runtimeVersion = [NSString stringWithUTF8String:runtime_version];
@@ -973,17 +1628,20 @@ napi_value CloseGuestVm(napi_env env, napi_callback_info info) {
     if (handle.closed) return;
     if (handle.machine == nil || handle.machine.state != VZVirtualMachineStateStopped) {
       rejected = true;
-      return;
     }
-    handle.closed = YES;
-    handle->magic = 0;
-    handle.machine = nil;
-    handle.queue = nil;
   });
   if (rejected) {
     ThrowError(env, "Virtualization guest VM must be stopped before close");
     return nullptr;
   }
+  CloseAllListeners(handle);
+  dispatch_sync(handle.queue, ^{
+    if (handle.closed) return;
+    handle.closed = YES;
+    handle->magic = 0;
+    handle.machine = nil;
+    handle.queue = nil;
+  });
   napi_value undefined;
   napi_get_undefined(env, &undefined);
   return undefined;
@@ -1005,6 +1663,12 @@ napi_value Initialize(napi_env env, napi_value exports) {
   SetFunction(env, exports, "statusGuestVm", StatusGuestVm);
   SetFunction(env, exports, "closeGuestVm", CloseGuestVm);
   SetFunction(env, exports, "exchangeGuestFrame", ExchangeGuestFrame);
+  SetFunction(env, exports, "listenGuestPort", ListenGuestPort);
+  SetFunction(env, exports, "removeGuestPort", RemoveGuestPort);
+  SetFunction(env, exports, "acceptGuestConnection", AcceptGuestConnection);
+  SetFunction(env, exports, "readGuestConnectionChunk", ReadGuestConnectionChunk);
+  SetFunction(env, exports, "writeGuestConnectionChunk", WriteGuestConnectionChunk);
+  SetFunction(env, exports, "closeGuestConnection", CloseGuestConnection);
   return exports;
 }
 

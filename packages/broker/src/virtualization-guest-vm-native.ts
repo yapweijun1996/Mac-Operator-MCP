@@ -16,6 +16,10 @@ import type {
   VirtualizationGuestVmStopResult
 } from "./virtualization-guest-lifecycle.js";
 import type { VirtualizationGuestChannel } from "./virtualization-guest-transport.js";
+import type {
+  VirtualizationGuestConnectionSource,
+  VirtualizationGuestStream
+} from "./virtualization-guest-bootstrap.js";
 
 const require = createRequire(import.meta.url);
 const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
@@ -44,6 +48,12 @@ export interface NativeVirtualizationGuestVmBinding {
     maxResponseBytes: number,
     timeoutMs: number
   ): Promise<unknown>;
+  listenGuestPort(handle: unknown, port: number, maxConnections: number): void;
+  removeGuestPort(handle: unknown, port: number): void;
+  acceptGuestConnection(handle: unknown, port: number, timeoutMs: number): Promise<unknown>;
+  readGuestConnectionChunk(connection: unknown, maxBytes: number, timeoutMs: number): Promise<unknown>;
+  writeGuestConnectionChunk(connection: unknown, frame: Buffer, timeoutMs: number): Promise<unknown>;
+  closeGuestConnection(connection: unknown): void;
 }
 
 export interface NativeVirtualizationGuestChannelOptions {
@@ -53,8 +63,17 @@ export interface NativeVirtualizationGuestChannelOptions {
   timeoutMs?: number;
 }
 
+export interface NativeVirtualizationGuestConnectionSourceOptions {
+  /** Guest-owned virtio-socket port; the Broker startup config owns it. */
+  port: number;
+  maxConnections?: number;
+  maxChunkBytes?: number;
+  ioTimeoutMs?: number;
+}
+
 export interface NativeVirtualizationGuestVmAdapter extends VirtualizationGuestVmAdapter {
   createChannel(options: NativeVirtualizationGuestChannelOptions): VirtualizationGuestChannel;
+  createConnectionSource?(options: NativeVirtualizationGuestConnectionSourceOptions): VirtualizationGuestConnectionSource;
 }
 
 interface NativeAdapterArtifact {
@@ -88,7 +107,10 @@ export function loadNativeVirtualizationGuestVmBinding(): NativeVirtualizationGu
         native.nativeNapiVersion > runtimeNapiVersion ||
         typeof native.createGuestVm !== "function" || typeof native.startGuestVm !== "function" ||
         typeof native.stopGuestVm !== "function" || typeof native.statusGuestVm !== "function" ||
-        typeof native.closeGuestVm !== "function" || typeof native.exchangeGuestFrame !== "function") {
+        typeof native.closeGuestVm !== "function" || typeof native.exchangeGuestFrame !== "function" ||
+        typeof native.listenGuestPort !== "function" || typeof native.removeGuestPort !== "function" ||
+        typeof native.acceptGuestConnection !== "function" || typeof native.readGuestConnectionChunk !== "function" ||
+        typeof native.writeGuestConnectionChunk !== "function" || typeof native.closeGuestConnection !== "function") {
       throw new Error("Virtualization guest VM adapter exports are incompatible");
     }
     loadedArtifact = after;
@@ -215,6 +237,11 @@ class NativeVirtualizationGuestVmAdapterImpl implements NativeVirtualizationGues
     return new NativeVirtualizationGuestChannel(this.native, this.handle, options);
   }
 
+  createConnectionSource(options: NativeVirtualizationGuestConnectionSourceOptions): VirtualizationGuestConnectionSource {
+    this.assertOpen();
+    return createNativeVirtualizationGuestConnectionSource(this.native, this.handle, options);
+  }
+
   private assertOpen(): void {
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest VM adapter is closed");
   }
@@ -282,6 +309,94 @@ function unavailableAdapter(): NativeVirtualizationGuestVmAdapter {
     status: reject,
     createChannel: () => {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest VM adapter is not enabled");
+    },
+    createConnectionSource: () => {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest VM adapter is not enabled");
+    }
+  };
+}
+
+class NativeVirtualizationGuestStream implements VirtualizationGuestStream {
+  private closed = false;
+
+  readonly readable: AsyncIterable<Uint8Array> = this.readChunks();
+
+  constructor(
+    private readonly native: NativeVirtualizationGuestVmBinding,
+    private readonly connection: unknown,
+    private readonly maxChunkBytes: number,
+    private readonly ioTimeoutMs: number
+  ) {}
+
+  async write(frame: Uint8Array): Promise<void> {
+    if (this.closed) throw new BrokerError("CANCELLED", "Virtualization guest connection is closed");
+    if (!(frame instanceof Uint8Array) || frame.byteLength < 1 || frame.byteLength > 4 * 1024 * 1024) {
+      throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest connection frame exceeded the byte limit");
+    }
+    await this.native.writeGuestConnectionChunk(this.connection, Buffer.from(frame), this.ioTimeoutMs);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.native.closeGuestConnection(this.connection);
+  }
+
+  private async *readChunks(): AsyncIterable<Uint8Array> {
+    while (!this.closed) {
+      const chunk = await this.native.readGuestConnectionChunk(this.connection, this.maxChunkBytes, this.ioTimeoutMs);
+      if (chunk === null || chunk === undefined) return;
+      if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest connection chunk is malformed");
+      }
+      if (chunk.byteLength < 1 || chunk.byteLength > this.maxChunkBytes) {
+        throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest connection chunk exceeded the byte limit");
+      }
+      yield new Uint8Array(chunk);
+    }
+  }
+}
+
+/**
+ * Wraps the native listener/connection ABI in the transport-independent
+ * Bootstrap source. The handle and port are startup-owned; no MCP argument is
+ * accepted by this factory.
+ */
+export function createNativeVirtualizationGuestConnectionSource(
+  native: NativeVirtualizationGuestVmBinding,
+  handle: unknown,
+  options: NativeVirtualizationGuestConnectionSourceOptions
+): VirtualizationGuestConnectionSource {
+  validateConnectionSourceOptions(options);
+  native.listenGuestPort(handle, options.port, options.maxConnections ?? 8);
+  const maxChunkBytes = options.maxChunkBytes ?? 64 * 1024;
+  const ioTimeoutMs = options.ioTimeoutMs ?? 15_000;
+  let closed = false;
+  return {
+    accept: async (signal): Promise<VirtualizationGuestStream | null> => {
+      while (!closed && !signal.aborted) {
+        const pending = native.acceptGuestConnection(handle, options.port, ioTimeoutMs);
+        const nativeConnection = await raceAbortWithCleanup(
+          pending,
+          signal,
+          (value) => {
+            if (value !== null && value !== undefined) native.closeGuestConnection(value);
+          },
+          "Virtualization guest connection accept was cancelled"
+        );
+        // A finite native accept deadline is only an observation budget. Keep
+        // the listener alive across idle periods; listener close is signalled
+        // separately by a rejected native accept after state teardown.
+        if (nativeConnection === null || nativeConnection === undefined) continue;
+        return new NativeVirtualizationGuestStream(native, nativeConnection, maxChunkBytes, ioTimeoutMs);
+      }
+      if (signal.aborted) throw new BrokerError("CANCELLED", "Virtualization guest connection accept was cancelled");
+      return null;
+    },
+    close: async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      native.removeGuestPort(handle, options.port);
     }
   };
 }
@@ -292,6 +407,16 @@ function validateChannelOptions(options: NativeVirtualizationGuestChannelOptions
       (options.maxFrameBytes !== undefined && (!Number.isSafeInteger(options.maxFrameBytes) || options.maxFrameBytes < 256 || options.maxFrameBytes > 4 * 1024 * 1024)) ||
       (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 120_000))) {
     throw new Error("Virtualization guest channel options are invalid");
+  }
+}
+
+function validateConnectionSourceOptions(options: NativeVirtualizationGuestConnectionSourceOptions): void {
+  if (options === null || typeof options !== "object" ||
+      !Number.isSafeInteger(options.port) || options.port < 1 || options.port > 65_535 ||
+      (options.maxConnections !== undefined && (!Number.isSafeInteger(options.maxConnections) || options.maxConnections < 1 || options.maxConnections > 8)) ||
+      (options.maxChunkBytes !== undefined && (!Number.isSafeInteger(options.maxChunkBytes) || options.maxChunkBytes < 256 || options.maxChunkBytes > 64 * 1024)) ||
+      (options.ioTimeoutMs !== undefined && (!Number.isSafeInteger(options.ioTimeoutMs) || options.ioTimeoutMs < 1 || options.ioTimeoutMs > 120_000))) {
+    throw new Error("Virtualization guest connection source options are invalid");
   }
 }
 
@@ -360,6 +485,39 @@ async function raceAbort<T>(operation: Promise<T>, signal: AbortSignal, message:
   signal.addEventListener("abort", onAbort, { once: true });
   try {
     return await Promise.race([operation, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+async function raceAbortWithCleanup<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+  cleanup: (value: T) => void,
+  message: string
+): Promise<T> {
+  if (signal.aborted) {
+    void operation.then(cleanup, () => undefined);
+    throw new BrokerError("CANCELLED", message);
+  }
+  let rejectAbort: ((reason: BrokerError) => void) | undefined;
+  let aborted = false;
+  const abortOutcome = new Promise<T>((_resolve, reject) => { rejectAbort = reject; });
+  const onAbort = (): void => {
+    aborted = true;
+    rejectAbort?.(new BrokerError("CANCELLED", message));
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    const value = await Promise.race([operation, abortOutcome]);
+    if (aborted) cleanup(value);
+    return value;
+  } catch (error) {
+    if (aborted) {
+      void operation.then(cleanup, () => undefined);
+      throw new BrokerError("CANCELLED", message);
+    }
+    throw error;
   } finally {
     signal.removeEventListener("abort", onAbort);
   }

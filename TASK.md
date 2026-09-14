@@ -14,9 +14,21 @@ Focused bootstrap tests pass 5/5; the full physical-Darwin regression passes
 attestation production, and `mac_task_run` enablement remain open. Evidence:
 `evidence/2026-09-15-virtualization-guest-bootstrap.md`.
 
+Virtio listener addendum: the native lifecycle artifact now provides a
+startup-owned fixed-port `VZVirtioSocketListener` with bounded queued accepts,
+finite asynchronous chunk I/O, connection-handle lifetime fencing, and
+deterministic listener/VM draining. The TypeScript wrapper exposes the
+transport-independent bootstrap source and cleans up a late connection after
+accept cancellation. Focused VM/listener tests pass 6/6; the full
+physical-Darwin regression passes 562/562 with 0 skipped tests. Guest-side
+AF_VSOCK serving, bootable image, guest profile execution/isolation, attestation
+production, and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-guest-vsock-listener.md`.
+
 Startup composition addendum: an optional startup-only factory now wires the
-native guest VM, serialized lifecycle, fixed virtio channel, HMAC transport,
-durable replay guard, and virtualization task runner into Broker service
+native guest VM, serialized lifecycle, fixed virtio channel, optional
+guest-initiated listener source, HMAC transport, durable replay guard, and
+virtualization task runner into Broker service
 startup. It validates the immutable image before construction, starts an
 enabled guest before restart recovery, and drains it before store close. The
 default path remains disabled and fail closed. Focused startup tests pass 3/3;

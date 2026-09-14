@@ -15,10 +15,24 @@ not claim a production AF_VSOCK acceptor, bootable image, VM boot, guest
 isolation, or `mac_task_run` enablement. Evidence:
 `evidence/2026-09-15-virtualization-guest-bootstrap.md`.
 
+Virtualization listener addendum: the protected native lifecycle artifact now
+exposes a fixed-port `VZVirtioSocketListener` boundary with bounded pending
+connections, finite accept/read/write deadlines, external connection-handle
+lifetime fencing, and listener/VM close draining. The TypeScript adapter wraps
+it as a `VirtualizationGuestConnectionSource` for the bootstrap protocol;
+accept cancellation closes a connection that arrives after the caller stops
+waiting. Focused VM/listener tests pass 6/6 and the full physical-Darwin
+regression passes 562/562 with 0 skipped tests. This closes only the host-side
+virtio-socket acceptor seam; it does not claim a guest AF_VSOCK service,
+bootable image, guest execution/isolation, attestation production, or
+`mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-vsock-listener.md`.
+
 Latest startup composition addendum: the optional
 `virtualizationGuest` startup seam now composes the protected image, native VM
-lifecycle, fixed virtio channel, authenticated guest transport, and
-virtualization task runner. Enabled startup boots the guest before Job Ledger
+lifecycle, fixed virtio channel, optional guest-initiated listener source,
+authenticated guest transport, and virtualization task runner. Enabled startup
+boots the guest before Job Ledger
 recovery and closes transport/VM resources before the Broker store; absent
 startup input leaves the existing fail-closed runner unchanged. Focused startup
 tests pass 3/3 and the full physical-Darwin regression passes 555/555 with 0

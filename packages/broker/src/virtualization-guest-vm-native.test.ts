@@ -10,6 +10,7 @@ import {
   createNativeVirtualizationGuestVm,
   loadNativeVirtualizationGuestVmBinding,
   NativeVirtualizationGuestChannel,
+  createNativeVirtualizationGuestConnectionSource,
   type NativeVirtualizationGuestVmBinding,
   validateNativeVirtualizationGuestVmAdapterPath
 } from "./virtualization-guest-vm-native.js";
@@ -24,6 +25,12 @@ test("native Virtualization guest lifecycle artifact exposes handle-bound operat
   assert.equal(typeof native.stopGuestVm, "function");
   assert.equal(typeof native.statusGuestVm, "function");
   assert.equal(typeof native.closeGuestVm, "function");
+  assert.equal(typeof native.listenGuestPort, "function");
+  assert.equal(typeof native.removeGuestPort, "function");
+  assert.equal(typeof native.acceptGuestConnection, "function");
+  assert.equal(typeof native.readGuestConnectionChunk, "function");
+  assert.equal(typeof native.writeGuestConnectionChunk, "function");
+  assert.equal(typeof native.closeGuestConnection, "function");
   validateNativeVirtualizationGuestVmAdapterPath(require.resolve("./virtualization_guest_lifecycle.node"));
 });
 
@@ -120,4 +127,72 @@ test("native virtio guest channel enforces bounded frames and forwards only hand
     channel.exchange(new Uint8Array([1]), controller.signal),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
   );
+});
+
+test("native virtio guest listener adapts bounded connections into the bootstrap source", async () => {
+  const calls: string[] = [];
+  const writes: Buffer[] = [];
+  const chunks: Array<Buffer | null> = [Buffer.from([1, 2, 3]), null];
+  const accepted: Array<unknown | null> = [null, { nativeConnection: true }];
+  const native = {
+    listenGuestPort: (_handle: unknown, port: number, maxConnections: number): void => {
+      calls.push(`listen:${port}:${maxConnections}`);
+    },
+    removeGuestPort: (_handle: unknown, port: number): void => {
+      calls.push(`remove:${port}`);
+    },
+    acceptGuestConnection: async (): Promise<unknown | null> => accepted.shift() ?? null,
+    readGuestConnectionChunk: async (): Promise<Buffer | null> => chunks.shift() ?? null,
+    writeGuestConnectionChunk: async (_connection: unknown, frame: Buffer): Promise<void> => {
+      writes.push(frame);
+    },
+    closeGuestConnection: (): void => {
+      calls.push("close");
+    }
+  } as unknown as NativeVirtualizationGuestVmBinding;
+  const source = createNativeVirtualizationGuestConnectionSource(native, { privateHandle: true }, {
+    port: 38_765,
+    maxConnections: 2,
+    maxChunkBytes: 256,
+    ioTimeoutMs: 500
+  });
+  const stream = await source.accept(new AbortController().signal);
+  assert.ok(stream);
+  const received: Uint8Array[] = [];
+  for await (const chunk of stream.readable) received.push(chunk);
+  assert.deepEqual([...received[0]!], [1, 2, 3]);
+  await stream.write(new Uint8Array([9, 8]));
+  await stream.close();
+  await source.close();
+  assert.deepEqual(calls, ["listen:38765:2", "close", "remove:38765"]);
+  assert.deepEqual(writes, [Buffer.from([9, 8])]);
+});
+
+test("native virtio guest listener closes a connection that arrives after accept cancellation", async () => {
+  let resolveAccept!: (value: unknown) => void;
+  let closed = 0;
+  const native = {
+    listenGuestPort: (): void => undefined,
+    removeGuestPort: (): void => undefined,
+    acceptGuestConnection: (): Promise<unknown> => new Promise((resolve) => { resolveAccept = resolve; }),
+    readGuestConnectionChunk: async (): Promise<null> => null,
+    writeGuestConnectionChunk: async (): Promise<void> => undefined,
+    closeGuestConnection: (): void => { closed += 1; }
+  } as unknown as NativeVirtualizationGuestVmBinding;
+  const source = createNativeVirtualizationGuestConnectionSource(native, { privateHandle: true }, {
+    port: 38_765,
+    maxChunkBytes: 256,
+    ioTimeoutMs: 500
+  });
+  const controller = new AbortController();
+  const pending = source.accept(controller.signal);
+  controller.abort();
+  await assert.rejects(
+    pending,
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+  );
+  resolveAccept({ lateConnection: true });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(closed, 1);
+  await source.close();
 });

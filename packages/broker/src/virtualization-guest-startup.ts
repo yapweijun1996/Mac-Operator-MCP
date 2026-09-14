@@ -23,6 +23,7 @@ import {
 import {
   createNativeVirtualizationGuestVm,
   type NativeVirtualizationGuestChannelOptions,
+  type NativeVirtualizationGuestConnectionSourceOptions,
   type NativeVirtualizationGuestVmAdapter,
   type NativeVirtualizationGuestVmOptions
 } from "./virtualization-guest-vm-native.js";
@@ -39,6 +40,7 @@ import {
   type TaskRunner
 } from "./task-runner.js";
 import type { RuntimeChannel } from "./runtime.js";
+import type { VirtualizationGuestConnectionSource } from "./virtualization-guest-bootstrap.js";
 
 /** Stable startup-owned virtio port for the authenticated guest protocol. */
 export const DEFAULT_VIRTUALIZATION_GUEST_PORT = 38_765;
@@ -69,6 +71,8 @@ export interface VirtualizationGuestRuntimeStartupOptions {
   maxFrameBytes?: number;
   exchangeTimeoutMs?: number;
   maxResponseBytes?: number;
+  /** Optional host-side listener for guest-initiated bootstrap connections. */
+  connectionSource?: NativeVirtualizationGuestConnectionSourceOptions;
   lifecycle?: Pick<VirtualizationGuestVmLifecycleOptions, "startTimeoutMs" | "stopTimeoutMs">;
   now?: () => number;
   /** Test seam; production uses the protected native adapter loader. */
@@ -89,6 +93,8 @@ export interface VirtualizationGuestRuntime {
   readonly taskRunner: TaskRunner;
   /** Channel suitable for LocalBrokerRuntime operatorChannels. */
   readonly runtimeChannel: RuntimeChannel;
+  /** Optional fixed-port source for a separately composed guest bootstrap. */
+  readonly connectionSource: VirtualizationGuestConnectionSource | undefined;
   start(signal?: AbortSignal): Promise<void>;
   /** Reads native VM state and reconciles an UNKNOWN lifecycle state. */
   recover(signal?: AbortSignal): Promise<VirtualizationGuestVmStatusResult>;
@@ -120,7 +126,7 @@ export async function createVirtualizationGuestRuntime(
       adapter: disabledAdapter(),
       ...(options.lifecycle ?? {})
     });
-    return new VirtualizationGuestRuntimeImpl({ lifecycle, guestIdentity, taskRunner: new VirtualizationTaskRunner() });
+    return new VirtualizationGuestRuntimeImpl({ lifecycle, guestIdentity, taskRunner: new VirtualizationTaskRunner(), connectionSource: undefined });
   }
 
   if (options.authenticationKeyPath === undefined || options.replayGuard === undefined ||
@@ -146,7 +152,7 @@ export async function createVirtualizationGuestRuntime(
   });
   if (!lifecycle.available) {
     if (typeof adapter.close === "function") await adapter.close().catch(() => undefined);
-    return new VirtualizationGuestRuntimeImpl({ lifecycle, guestIdentity, taskRunner: new VirtualizationTaskRunner() });
+    return new VirtualizationGuestRuntimeImpl({ lifecycle, guestIdentity, taskRunner: new VirtualizationTaskRunner(), connectionSource: undefined });
   }
 
   const channelOptions: NativeVirtualizationGuestChannelOptions = {
@@ -156,8 +162,15 @@ export async function createVirtualizationGuestRuntime(
   };
   let transport: VirtualizationGuestTransportClient;
   let channel: VirtualizationGuestChannel;
+  let connectionSource: VirtualizationGuestConnectionSource | undefined;
   try {
     channel = adapter.createChannel(channelOptions);
+    if (options.connectionSource !== undefined) {
+      if (typeof adapter.createConnectionSource !== "function") {
+        throw new BrokerError("POLICY_DENIED", "Virtualization guest listener adapter is unavailable");
+      }
+      connectionSource = adapter.createConnectionSource(options.connectionSource);
+    }
     const key = await loadAuthenticationKey(options.authenticationKeyPath);
     try {
       const transportOptions: VirtualizationGuestTransportClientOptions = {
@@ -173,6 +186,7 @@ export async function createVirtualizationGuestRuntime(
       key.fill(0);
     }
   } catch (error) {
+    if (connectionSource !== undefined) await connectionSource.close().catch(() => undefined);
     await lifecycle.close().catch(() => undefined);
     throw error;
   }
@@ -192,8 +206,9 @@ export async function createVirtualizationGuestRuntime(
       isolationProof: options.isolationProof,
       ...(options.attestationVerifier === undefined ? {} : { attestationVerifier: options.attestationVerifier })
     });
-    return new VirtualizationGuestRuntimeImpl({ lifecycle, guestIdentity, taskRunner });
+    return new VirtualizationGuestRuntimeImpl({ lifecycle, guestIdentity, taskRunner, connectionSource });
   } catch (error) {
+    if (connectionSource !== undefined) await connectionSource.close().catch(() => undefined);
     transport.close();
     await lifecycle.close().catch(() => undefined);
     throw error;
@@ -206,6 +221,7 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
   readonly lifecycle: VirtualizationGuestVmLifecycle;
   readonly taskRunner: TaskRunner;
   readonly runtimeChannel: RuntimeChannel;
+  readonly connectionSource: VirtualizationGuestConnectionSource | undefined;
   private closed = false;
   private closePromise: Promise<void> | undefined;
 
@@ -213,11 +229,13 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
     lifecycle: VirtualizationGuestVmLifecycle;
     guestIdentity: VirtualizationGuestIdentity;
     taskRunner: TaskRunner;
+    connectionSource: VirtualizationGuestConnectionSource | undefined;
   }) {
     this.lifecycle = options.lifecycle;
     this.guestIdentity = { ...options.guestIdentity };
     this.available = options.lifecycle.available;
     this.taskRunner = options.taskRunner;
+    this.connectionSource = options.connectionSource;
     this.runtimeChannel = {
       listen: () => this.start(),
       close: () => this.close()
@@ -252,7 +270,8 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closePromise = (async () => {
       let firstError: unknown;
-      try { await this.taskRunner.close?.(); } catch (error) { firstError = error; }
+      try { await this.connectionSource?.close(); } catch (error) { firstError ??= error; }
+      try { await this.taskRunner.close?.(); } catch (error) { firstError ??= error; }
       try { await this.lifecycle.close(); } catch (error) { firstError ??= error; }
       this.closed = firstError !== undefined;
       if (firstError !== undefined) throw firstError;

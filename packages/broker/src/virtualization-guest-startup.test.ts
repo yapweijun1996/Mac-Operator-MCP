@@ -99,7 +99,12 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
   let state: "stopped" | "running" = "stopped";
   let bootId = "boot-test-12345678";
   let channelPort: number | undefined;
-  const adapter: VirtualizationGuestVmAdapter & { createChannel(options: { port: number }): { exchange: (frame: Uint8Array, signal: AbortSignal) => Promise<Uint8Array> } } = {
+  let listenerPort: number | undefined;
+  let listenerClosed = false;
+  const adapter: VirtualizationGuestVmAdapter & {
+    createChannel(options: { port: number }): { exchange: (frame: Uint8Array, signal: AbortSignal) => Promise<Uint8Array> };
+    createConnectionSource(options: { port: number }): { accept(signal: AbortSignal): Promise<null>; close(): Promise<void> };
+  } = {
     available: true,
     guestIdentity,
     async start() { state = "running"; return { state: "running", guestIdentity, bootId }; },
@@ -108,6 +113,13 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
     createChannel(options) {
       channelPort = options.port;
       return { exchange: async () => new Uint8Array([123, 125]) };
+    },
+    createConnectionSource(options: { port: number }) {
+      listenerPort = options.port;
+      return {
+        accept: async () => null,
+        close: async () => { listenerClosed = true; }
+      };
     },
     async close() { state = "stopped"; }
   };
@@ -123,11 +135,14 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
     attestation,
     enabled: true,
     hostEvidenceAccepted: true,
+    connectionSource: { port: 38_766, maxConnections: 2, maxChunkBytes: 256, ioTimeoutMs: 500 },
     vmFactory
   });
   try {
     assert.equal(runtime.available, true);
     assert.equal(channelPort, DEFAULT_VIRTUALIZATION_GUEST_PORT);
+    assert.equal(listenerPort, 38_766);
+    assert.ok(runtime.connectionSource);
     await runtime.start();
     assert.equal(runtime.readback().state, "running");
     assert.equal((await runtime.recover()).state, "running");
@@ -135,7 +150,7 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
     assert.equal(runtime.readback().state, "stopped");
   } finally {
     await runtime.close();
+    assert.equal(listenerClosed, true);
     await rm(root, { recursive: true, force: true });
   }
 });
-
