@@ -7,6 +7,7 @@ import { BrokerError } from "@mac-operator/contracts";
 import {
   BrokerStoreVirtualizationGuestReplayGuard,
   InMemoryVirtualizationGuestReplayGuard,
+  VirtualizationGuestTransportClient,
   createVirtualizationGuestRequest,
   signVirtualizationGuestResponse,
   verifyVirtualizationGuestRequest,
@@ -139,4 +140,124 @@ test("request contract excludes raw host paths and credentials", () => {
   assert.equal(keys.includes("executablePath"), false);
   assert.equal(keys.includes("cwd"), false);
   assert.equal(keys.includes("args"), false);
+});
+
+test("bounded transport client admits before exchange and verifies the signed response", async () => {
+  let sentRequestId = "";
+  const client = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    expectedGuestIdentity: guestIdentity,
+    expectedSandboxProfile: "guest-task-v1",
+    expectedProfileDigest: "b".repeat(64),
+    channel: {
+      async exchange(frame, signal) {
+        assert.equal(signal.aborted, false);
+        const signedRequest = JSON.parse(Buffer.from(frame).toString("utf8")) as ReturnType<typeof request>;
+        sentRequestId = signedRequest.requestId;
+        return Buffer.from(JSON.stringify(signVirtualizationGuestResponse(responseFor(signedRequest), key)), "utf8");
+      }
+    }
+  });
+  const result = await client.execute({
+    guestIdentity,
+    sandboxProfile: "guest-task-v1",
+    profileDigest: "b".repeat(64),
+    taskDigest: "c".repeat(64),
+    processTreePolicy: "single_process",
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    requestId: "request:guest-abcdef0123456789",
+    nonce: "guest-nonce-abcdef0123456789",
+    timestampMs: now,
+    expiresAtMs: now + 30_000
+  });
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(sentRequestId, "request:guest-abcdef0123456789");
+  client.close();
+});
+
+test("transport timeout and cancellation fail closed after request admission", async () => {
+  const neverChannel = {
+    async exchange(_frame: Uint8Array, _signal: AbortSignal): Promise<Uint8Array> {
+      return new Promise<Uint8Array>(() => undefined);
+    }
+  };
+  const channel = {
+    async exchange(_frame: Uint8Array, signal: AbortSignal): Promise<Uint8Array> {
+      await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+      return Buffer.alloc(0);
+    }
+  };
+  const timeoutClient = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    channel: neverChannel
+  });
+  await assert.rejects(
+    timeoutClient.execute({
+      guestIdentity,
+      sandboxProfile: "guest-task-v1",
+      profileDigest: "b".repeat(64),
+      taskDigest: "c".repeat(64),
+      processTreePolicy: "single_process",
+      timeoutMs: 20,
+      outputCapBytes: 1_024,
+      requestId: "request:guest-timeout-1234567890",
+      nonce: "guest-nonce-timeout-1234567890",
+      timestampMs: now,
+      expiresAtMs: now + 30_000
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "TIMEOUT"
+  );
+  const cancelClient = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    channel,
+    cancellationPollMs: 10
+  });
+  await assert.rejects(
+    cancelClient.execute({
+      guestIdentity,
+      sandboxProfile: "guest-task-v1",
+      profileDigest: "b".repeat(64),
+      taskDigest: "c".repeat(64),
+      processTreePolicy: "single_process",
+      timeoutMs: 1_000,
+      outputCapBytes: 1_024,
+      requestId: "request:guest-cancel-1234567890",
+      nonce: "guest-nonce-cancel-1234567890",
+      timestampMs: now,
+      expiresAtMs: now + 30_000
+    }, { shouldCancel: () => true }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+  );
+});
+
+test("transport loss after admission is an unknown outcome", async () => {
+  const client = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    channel: { async exchange(): Promise<Uint8Array> { throw new Error("guest channel closed"); } }
+  });
+  await assert.rejects(
+    client.execute({
+      guestIdentity,
+      sandboxProfile: "guest-task-v1",
+      profileDigest: "b".repeat(64),
+      taskDigest: "c".repeat(64),
+      processTreePolicy: "single_process",
+      timeoutMs: 1_000,
+      outputCapBytes: 1_024,
+      requestId: "request:guest-loss-12345678901",
+      nonce: "guest-nonce-loss-12345678901",
+      timestampMs: now,
+      expiresAtMs: now + 30_000
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable === true
+  );
 });

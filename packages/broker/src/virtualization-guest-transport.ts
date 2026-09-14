@@ -14,6 +14,8 @@ const MAX_REQUEST_AGE_MS = 60_000;
 const MAX_CLOCK_SKEW_MS = 5_000;
 const MAX_TIMEOUT_MS = 15 * 60_000;
 const MAX_OUTPUT_CAP_BYTES = 4 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 64 * 1024;
+const MAX_RESPONSE_BYTES = MAX_OUTPUT_CAP_BYTES + 64 * 1024;
 const MAX_SUMMARY_BYTES = 512;
 const MAX_REPLAY_ENTRIES = 4096;
 
@@ -169,6 +171,31 @@ export interface VerifyVirtualizationGuestResponseOptions {
   expectedOutputCapBytes?: number;
 }
 
+/**
+ * The native side owns the actual VM/virtio channel. The Broker supplies a
+ * bounded signed frame and an abort signal; it never sends a host path, raw
+ * executable, credential, or arbitrary command to this channel.
+ */
+export interface VirtualizationGuestChannel {
+  exchange(frame: Uint8Array, signal: AbortSignal): Promise<Uint8Array>;
+}
+
+export interface VirtualizationGuestTransportClientOptions {
+  authenticationKey: Buffer;
+  replayGuard: VirtualizationGuestReplayGuard;
+  channel: VirtualizationGuestChannel;
+  now?: () => number;
+  expectedGuestIdentity?: VirtualizationGuestIdentity;
+  expectedSandboxProfile?: string;
+  expectedProfileDigest?: string;
+  maxResponseBytes?: number;
+  cancellationPollMs?: number;
+}
+
+export interface VirtualizationGuestExchangeOptions {
+  shouldCancel?: () => boolean;
+}
+
 export function createVirtualizationGuestRequest(
   input: VirtualizationGuestRequestInput,
   authenticationKey: Buffer,
@@ -281,6 +308,126 @@ export function verifyVirtualizationGuestResponse(
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("AUTH_INVALID", "Virtualization guest response authentication failed");
+  }
+}
+
+/**
+ * Bounded Broker-owned exchange boundary for a future native guest adapter.
+ * Replay admission occurs before the frame leaves the Broker. Once admitted,
+ * transport loss is reported as UNKNOWN_OUTCOME because the guest may have
+ * started work and the Broker cannot infer a result from a closed channel.
+ */
+export class VirtualizationGuestTransportClient {
+  private readonly authenticationKey: Buffer;
+  private readonly replayGuard: VirtualizationGuestReplayGuard;
+  private readonly channel: VirtualizationGuestChannel;
+  private readonly now: () => number;
+  private readonly expectedGuestIdentity: VirtualizationGuestIdentity | undefined;
+  private readonly expectedSandboxProfile: string | undefined;
+  private readonly expectedProfileDigest: string | undefined;
+  private readonly maxResponseBytes: number;
+  private readonly cancellationPollMs: number;
+  private closed = false;
+
+  constructor(options: VirtualizationGuestTransportClientOptions) {
+    validateAuthenticationKey(options.authenticationKey);
+    if (!options.replayGuard || !options.channel || typeof options.channel.exchange !== "function") {
+      throw new Error("Virtualization guest transport requires a replay guard and channel");
+    }
+    this.authenticationKey = Buffer.from(options.authenticationKey);
+    this.replayGuard = options.replayGuard;
+    this.channel = options.channel;
+    this.now = options.now ?? Date.now;
+    this.expectedGuestIdentity = options.expectedGuestIdentity;
+    this.expectedSandboxProfile = options.expectedSandboxProfile;
+    this.expectedProfileDigest = options.expectedProfileDigest;
+    this.maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
+    this.cancellationPollMs = options.cancellationPollMs ?? 25;
+    if (!Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes < 256 || this.maxResponseBytes > MAX_RESPONSE_BYTES ||
+        !Number.isSafeInteger(this.cancellationPollMs) || this.cancellationPollMs < 10 || this.cancellationPollMs > 1_000) {
+      throw new Error("Virtualization guest transport limits are invalid");
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+    this.authenticationKey.fill(0);
+  }
+
+  async execute(input: VirtualizationGuestRequestInput, options: VirtualizationGuestExchangeOptions = {}): Promise<UnsignedVirtualizationGuestResponse> {
+    if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest transport is closed");
+    const now = this.now();
+    const signedRequest = createVirtualizationGuestRequest(input, this.authenticationKey, { now });
+    const request = verifyVirtualizationGuestRequest(signedRequest, this.authenticationKey, {
+      replayGuard: this.replayGuard,
+      now,
+      ...(this.expectedGuestIdentity === undefined ? {} : { expectedGuestIdentity: this.expectedGuestIdentity }),
+      ...(this.expectedSandboxProfile === undefined ? {} : { expectedSandboxProfile: this.expectedSandboxProfile }),
+      ...(this.expectedProfileDigest === undefined ? {} : { expectedProfileDigest: this.expectedProfileDigest })
+    });
+    const frame = Buffer.from(JSON.stringify(signedRequest), "utf8");
+    if (frame.byteLength > MAX_REQUEST_BYTES) {
+      throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest request exceeded the byte limit");
+    }
+    const controller = new AbortController();
+    let timeoutExpired = false;
+    let cancelled = false;
+    let rejectAbort: ((reason: BrokerError) => void) | undefined;
+    const abortOutcome = new Promise<Uint8Array>((_resolve, reject) => {
+      rejectAbort = reject;
+    });
+    const timeout = setTimeout(() => {
+      timeoutExpired = true;
+      controller.abort();
+      rejectAbort?.(new BrokerError("TIMEOUT", "Virtualization guest task exceeded its execution budget"));
+    }, request.timeoutMs);
+    const poller = options.shouldCancel === undefined
+      ? undefined
+      : setInterval(() => {
+        try {
+          if (options.shouldCancel?.()) {
+            cancelled = true;
+            controller.abort();
+            rejectAbort?.(new BrokerError("CANCELLED", "Virtualization guest task was cancelled under active authority"));
+          }
+        } catch {
+          cancelled = true;
+          controller.abort();
+          rejectAbort?.(new BrokerError("CANCELLED", "Virtualization guest task was cancelled under active authority"));
+        }
+      }, this.cancellationPollMs);
+    try {
+      const responseFrame = await Promise.race([
+        this.channel.exchange(frame, controller.signal),
+        abortOutcome
+      ]);
+      if (timeoutExpired) throw new BrokerError("TIMEOUT", "Virtualization guest task exceeded its execution budget");
+      if (cancelled) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled under active authority");
+      if (!Buffer.isBuffer(responseFrame) && !(responseFrame instanceof Uint8Array)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest response frame is invalid");
+      }
+      if (responseFrame.byteLength > this.maxResponseBytes) {
+        throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest response exceeded the byte limit");
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(Buffer.from(responseFrame).toString("utf8")) as unknown;
+      } catch {
+        throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest response frame is not valid JSON");
+      }
+      return verifyVirtualizationGuestResponse(raw, this.authenticationKey, request, {
+        ...(this.expectedGuestIdentity === undefined ? {} : { expectedGuestIdentity: this.expectedGuestIdentity }),
+        expectedOutputCapBytes: request.outputCapBytes
+      });
+    } catch (error) {
+      if (timeoutExpired) throw new BrokerError("TIMEOUT", "Virtualization guest task exceeded its execution budget");
+      if (cancelled) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled under active authority");
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("UNKNOWN_OUTCOME", "Virtualization guest transport outcome could not be established", true);
+    } finally {
+      clearTimeout(timeout);
+      if (poller !== undefined) clearInterval(poller);
+    }
   }
 }
 

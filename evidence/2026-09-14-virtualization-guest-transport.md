@@ -24,16 +24,20 @@ has been admitted and fails closed when its bounded capacity is exhausted. The
 production-shaped `BrokerStoreVirtualizationGuestReplayGuard` uses schema
 version 6's owner-controlled SQLite ledger and rejects the same request after a
 Broker restart. The in-memory implementation remains process-local and is
-test-only.
+test-only. `VirtualizationGuestTransportClient` admits before sending a
+bounded JSON frame, enforces a hard response-size limit even when a channel
+ignores abort, maps timeout/cancellation/transport loss to stable errors, and
+verifies the response against the admitted request.
 
 ## Verification
 
-Focused transport tests pass 7/7, covering round-trip authentication,
+Focused transport tests pass 10/10, covering round-trip authentication,
 request tampering, wrong keys, nonce/request-ID replay, response binding,
 guest mismatch, proof tampering, freshness, strict envelopes, output limits,
 exclusion of raw host paths/credential-shaped fields, and durable replay after
-restart. The persistence regression plus the transport file passes 50/50 in
-the focused combined run.
+restart, bounded exchange, timeout, cancellation, and transport loss. The
+persistence regression plus the transport file passes 53/53 in the focused
+combined run.
 
 This evidence does not establish VM boot, entitlement/signing, guest
 filesystem or network enforcement, host-credential isolation, process-tree

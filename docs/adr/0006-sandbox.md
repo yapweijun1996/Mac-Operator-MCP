@@ -85,5 +85,7 @@ requests to a guest identity, profile/task digests, nonce, freshness window,
 and bounded budgets; responses bind the complete request digest and carry only
 bounded output marked as Broker-redacted. The BrokerStore-backed replay guard
 now persists request IDs and nonces across restart; the in-memory guard remains
-test-only. Evidence is recorded in
+test-only. `VirtualizationGuestTransportClient` enforces the same admission
+before a bounded frame exchange and maps timeout, cancellation, malformed
+responses, and transport loss to stable Broker errors. Evidence is recorded in
 [`evidence/2026-09-14-virtualization-guest-transport.md`](../../evidence/2026-09-14-virtualization-guest-transport.md).
