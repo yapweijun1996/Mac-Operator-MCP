@@ -2,7 +2,7 @@
 
 Status: Initial threat-model baseline; mitigations are requirements, not implementation evidence
 Version: 0.1
-Last reviewed: 2026-09-12
+Last reviewed: 2026-09-14
 
 ## Scope
 
@@ -70,6 +70,7 @@ This model covers the remote MCP client, Remote MCP Edge, Edge-to-Broker IPC, Lo
 | TB-06 | Broker to Privileged Helper | Independent caller authentication and operation allowlist |
 | TB-07 | Adapter to macOS UI/app | App/element identity, freshness, focus and sensitive-target checks |
 | TB-08 | Broker policy to OS permission | Broker deny remains authoritative even when macOS permits access |
+| TB-09 | Broker to Virtualization guest channel | Domain-separated HMAC, durable nonce admission, guest identity/attestation binding, bounded frames, timeout/cancel, and unknown-outcome handling |
 
 ## Risk rating
 
@@ -101,6 +102,8 @@ Likelihood and impact are rated 1-5. Risk is `likelihood × impact`: Low 1-4, Me
 | T-020 Resource exhaustion | All | 12 High | Rate, byte, depth, result, time, concurrency and disk budgets | VT-DOS-01 | Open |
 | T-021 Version confusion between Edge/Broker/helper | TB-02/TB-06 | 16 High | Explicit negotiation and reject-incompatible behavior | VT-COMP-01 | Open |
 | T-022 Incomplete uninstall or stale authority | Operations | 15 High | Credential revocation, service removal and readback runbook | VT-OPS-01 | Open |
+| T-023 Guest identity or result substitution | TB-09 | 20 Critical | Domain-separated HMAC; durable nonce/request admission; request-digest, guest-identity, profile, and attestation binding; reject transport loss as unknown | VT-VZ-01 | Open |
+| T-024 Guest boundary falsely claims isolation | TB-09/TB-04 | 25 Critical | Independently verified VM boot, image/runtime identity, guest filesystem/network/credential/process evidence, cancellation, and postcondition readback | VT-VZ-02 | Blocked pending native guest evidence |
 
 ## Attack-path priorities
 
