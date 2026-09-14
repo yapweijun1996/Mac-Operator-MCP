@@ -477,6 +477,18 @@ test("policy verification key file requires protected ownership and mode", async
       }),
       /must not be writable/u
     );
+    await chmod(keyPath, 0o600);
+    const privatePem = Buffer.from(keys.privateKey.export({ type: "pkcs8", format: "pem" }));
+    await writeFile(keyPath, privatePem, { mode: 0o600 });
+    await assert.rejects(
+      PolicyBundleVerifier.createFromKeyFile({
+        schemaDirectory: join(repositoryRoot, "schemas"),
+        expectedKeyId: "policy-key-1",
+        publicKeyPath: keyPath,
+        now: () => NOW
+      }),
+      /public material only/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

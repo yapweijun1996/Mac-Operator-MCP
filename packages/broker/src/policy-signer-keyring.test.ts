@@ -206,3 +206,22 @@ test("policy signer config rejects unsafe paths, duplicate identities, and non-E
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("policy signer key loader rejects private-key files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-policy-signer-private-"));
+  const configPath = join(directory, "policy-signers.json");
+  const keyPath = join(directory, "policy-key-private.pem");
+  const keys = generateKeyPairSync("ed25519");
+  try {
+    const privatePem = Buffer.from(keys.privateKey.export({ type: "pkcs8", format: "pem" }));
+    await writeFile(keyPath, privatePem, { mode: 0o600 });
+    await writePolicySignerKeyConfig(configPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [entry("policy-key-private", keyPath, sha256(privatePem))]
+    });
+    await assert.rejects(loadPolicySignerKeyConfig(configPath), /public material only/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

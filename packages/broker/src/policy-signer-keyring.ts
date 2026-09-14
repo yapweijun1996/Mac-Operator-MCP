@@ -1,5 +1,5 @@
 import { constants, lstat, open, rename, unlink } from "node:fs/promises";
-import { createPublicKey, randomUUID } from "node:crypto";
+import { createPrivateKey, createPublicKey, randomUUID } from "node:crypto";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import {
@@ -150,6 +150,12 @@ export async function loadPolicySignerKeyConfig(
     if (identities.has(entry.keyId)) throw new Error(`Duplicate policy signer key: ${entry.keyId}`);
     identities.add(entry.keyId);
     const publicKeyPem = await readProtectedPublicKey(entry.path);
+    try {
+      createPrivateKey(publicKeyPem);
+      throw new Error(`Policy signer key must contain public material only: ${entry.keyId}`);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("public material only")) throw error;
+    }
     const publicKey = createPublicKey(publicKeyPem);
     if (publicKey.asymmetricKeyType !== "ed25519") {
       throw new Error(`Policy signer key must be Ed25519: ${entry.keyId}`);

@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
-import { createPublicKey, verify, type KeyObject } from "node:crypto";
+import { createPrivateKey, createPublicKey, verify, type KeyObject } from "node:crypto";
 import {
   PLANNED_TOOL_NAMES,
   SCOPES,
@@ -114,6 +114,7 @@ export class PolicyBundleVerifier {
           !Number.isSafeInteger(expiresAtMs) || expiresAtMs <= notBeforeMs) {
         throw new Error(`Policy verification key validity window is invalid: ${key.keyId}`);
       }
+      assertPublicKeyMaterial(key.publicKeyPem);
       const publicKey = createPublicKey(key.publicKeyPem);
       if (publicKey.asymmetricKeyType !== "ed25519") throw new Error("Policy verification key must be Ed25519");
       trustedKeys.set(key.keyId, { publicKey, notBeforeMs, expiresAtMs });
@@ -208,6 +209,15 @@ export class PolicyBundleVerifier {
     }
     return this.verify(parsed);
   }
+}
+
+function assertPublicKeyMaterial(value: string | Buffer): void {
+  try {
+    createPrivateKey(value);
+  } catch {
+    return;
+  }
+  throw new Error("Policy verification key must contain public material only");
 }
 
 export class PolicyManager {

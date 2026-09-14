@@ -1,4 +1,4 @@
-import { createPublicKey, verify, type KeyObject } from "node:crypto";
+import { createPrivateKey, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
@@ -111,6 +111,7 @@ export class VirtualizationGuestAttestationVerifier {
           !Number.isSafeInteger(expiresAtMs) || expiresAtMs <= notBeforeMs) {
         throw new Error(`Guest attestation key validity window is invalid: ${configured.keyId}`);
       }
+      assertPublicKeyMaterial(configured.publicKeyPem);
       const publicKey = createPublicKey(configured.publicKeyPem);
       if (publicKey.asymmetricKeyType !== "ed25519") {
         throw new Error("Guest attestation verification key must be Ed25519");
@@ -190,6 +191,16 @@ export class VirtualizationGuestAttestationVerifier {
       expiresAtMs
     };
   }
+}
+
+/** Refuse private key material even when Node could derive a public key from it. */
+function assertPublicKeyMaterial(value: string | Buffer): void {
+  try {
+    createPrivateKey(value);
+  } catch {
+    return;
+  }
+  throw new Error("Guest attestation verification key must contain public material only");
 }
 
 export function isVirtualizationGuestIdentity(value: unknown): value is VirtualizationGuestIdentity {

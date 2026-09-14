@@ -91,6 +91,16 @@ test("signed guest attestation rejects envelope mutation, expiry, unknown keys, 
   expectDenied(() => check.verify({ ...signed, algorithm: "RSA" } as unknown as SignedVirtualizationGuestAttestation));
 });
 
+test("guest attestation verifier rejects private-key material", () => {
+  const keyPair = generateKeyPairSync("ed25519");
+  assert.throws(
+    () => VirtualizationGuestAttestationVerifier.create({
+      trustedKeys: [{ keyId: "guest-key-1", publicKeyPem: keyPair.privateKey.export({ type: "pkcs8", format: "pem" }) }]
+    }),
+    /public material only/u
+  );
+});
+
 test("VirtualizationTaskRunner revalidates signed guest provenance before dispatch", async () => {
   const keys = generateKeyPairSync("ed25519");
   const directory = await mkdtemp("/tmp/mac-operator-signed-guest-");

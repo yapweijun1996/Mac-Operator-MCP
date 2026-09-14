@@ -162,3 +162,21 @@ test("guest attestation key config rejects duplicate paths and symlinked configs
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("guest attestation key loader rejects private-key files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-private-"));
+  const configPath = join(directory, "guest-attestation-keys.json");
+  const keyPath = join(directory, "guest-key-private.pem");
+  const keys = generateKeyPairSync("ed25519");
+  try {
+    await writeFile(keyPath, keys.privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+    await writeVirtualizationGuestAttestationKeyConfig(configPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [entry("guest-key-private", keyPath, sha256(Buffer.from(keys.privateKey.export({ type: "pkcs8", format: "pem" }))))]
+    });
+    await assert.rejects(loadVirtualizationGuestAttestationKeyConfig(configPath), /public material only/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
