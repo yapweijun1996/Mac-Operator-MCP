@@ -95,6 +95,13 @@ can choose the Keychain coordinates or executable identity. Data-protection
 Keychain entitlements and production code-signing provenance remain packaging
 gates rather than runtime fallbacks.
 
+The audit-tail sidecar now takes an owner-only atomically-created sibling lock
+for every read and publication. The lock spans validation, atomic rename, and
+directory `fsync`; release rechecks device/inode identity, and a pre-existing
+lock fails closed rather than being reclaimed by PID or age. This closes the
+same-target cross-process sidecar race while leaving crash recovery to an
+authenticated operator procedure.
+
 The persistence constructor now enforces a monotonic SQLite `user_version`
 gate. Fresh and legacy databases are upgraded through a versioned forward-only
 registry of idempotent revocation, request, and Job migrations inside one
@@ -108,4 +115,4 @@ backup into a fresh destination, followed by a separately reviewed operator
 cutover. The focused migration suite covers fresh initialization, legacy
 preservation, future-version refusal, and registry-integrity refusal.
 
-`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, production Keychain anchor provisioning, cross-process sidecar locking, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover runbook, production code-signing/Keychain identity review, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, the forward-only migration registry, the keyed local anchor boundary, and the development-host Keychain ACL boundary are implemented; production rollback execution remains host-only.
+`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, production Keychain anchor provisioning, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover and stale-lock recovery runbook, production code-signing/Keychain identity review, an external rollback-resistant anchor, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, the forward-only migration registry, the keyed local anchor boundary with cross-process locking, and the development-host Keychain ACL boundary are implemented; production rollback execution remains host-only.

@@ -24,6 +24,15 @@ installation, cross-process locking, and external immutable anchoring remain
 open. Evidence:
 `evidence/2026-09-14-packaged-audit-anchor-startup.md`.
 
+Latest audit-lock addendum: `AuditAnchorManager` now serializes sidecar reads
+and publications with an owner-only atomic sibling lock, holds it through
+validation/rename/`fsync`, and rechecks device/inode identity before release.
+Existing locks are never auto-reclaimed; the boundary fails closed for
+authenticated operator recovery. Focused audit-anchor plus persistence tests
+pass 44/44. This closes a local cross-process sidecar race but does not prove a
+kernel lease or external immutable anchoring. Evidence:
+`evidence/2026-09-14-audit-anchor-lock.md`.
+
 Latest keyed-audit addendum: the optional Broker-owned audit anchor binds the
 SQLite tail to a separate 0600 sidecar with an explicit HMAC key source; a
 dedicated Keychain factory binds that source to the Broker executable ACL. The

@@ -47,7 +47,9 @@ LaunchAgents were removed during cleanup.
 This is a local keyed-integrity boundary, not an external immutable log. An
 attacker who can read the configured HMAC key can forge the sidecar; an attacker
 who can roll back both the database and sidecar remains outside this evidence.
-Packaged startup now enables and requires the Keychain-backed source, but this
-temporary smoke does not establish production Developer ID provisioning,
-rotation, cross-process sidecar locking, or a rollback-resistant external
-anchor.
+Packaged startup now enables and requires the Keychain-backed source. The
+sidecar also has a separate focused cross-process lock boundary; a pre-existing
+lock fails closed and is never auto-reclaimed. The temporary smoke does not
+establish production Developer ID provisioning, rotation, or a
+rollback-resistant external anchor. Lock evidence:
+`evidence/2026-09-14-audit-anchor-lock.md`.

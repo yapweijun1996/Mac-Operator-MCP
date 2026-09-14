@@ -29,6 +29,16 @@ cross-process sidecar locking, and external rollback-resistant anchoring remain
 open. Evidence:
 `evidence/2026-09-14-packaged-audit-anchor-startup.md`.
 
+Latest audit-lock addendum: `AuditAnchorManager` now takes an owner-only
+atomically-created sibling lock across sidecar read, validation, atomic
+publication, and directory `fsync`. Release rechecks device/inode identity;
+an existing lock is never auto-reclaimed and causes fail-closed recovery. The
+focused audit-anchor plus persistence suite passes 44/44. This closes the
+same-target sidecar race but is not a kernel lease or external immutable log;
+stale-lock operator recovery, production Keychain rotation, Developer ID
+installation, and rollback-resistant external anchoring remain open. Evidence:
+`evidence/2026-09-14-audit-anchor-lock.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now

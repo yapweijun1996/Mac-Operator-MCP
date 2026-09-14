@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -63,6 +63,29 @@ test("AuditAnchorManager refuses a missing anchor for non-empty audit state", as
       () => manager.verify({ sequence: 1, eventHash: firstHash }),
       /anchor is missing/u
     );
+  } finally {
+    manager.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("AuditAnchorManager fails closed when another process holds the sidecar lock", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-lock-"));
+  const path = join(directory, "audit.anchor");
+  const manager = new AuditAnchorManager({
+    path,
+    keySource: { keyId: "audit-key-1", loadKey: () => key }
+  });
+  const lockPath = `${path}.lock`;
+  try {
+    await writeFile(lockPath, "foreign-owner\n", { mode: 0o600 });
+    assert.throws(
+      () => manager.publish(1, firstHash),
+      /lock is held/u
+    );
+    await unlink(lockPath);
+    manager.publish(1, firstHash);
+    manager.verify({ sequence: 1, eventHash: firstHash });
   } finally {
     manager.close();
     await rm(directory, { recursive: true, force: true });

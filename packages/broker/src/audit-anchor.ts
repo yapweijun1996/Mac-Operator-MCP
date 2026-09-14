@@ -57,38 +57,42 @@ export class AuditAnchorManager {
   }
 
   verify(tail: { sequence: number; eventHash: string } | undefined): void {
-    const current = readAnchorIfPresent(this.options.path);
-    if (tail === undefined) {
-      if (current !== undefined) throw new Error("Audit anchor exists for an empty audit database");
-      return;
-    }
-    if (current === undefined) throw new Error("Audit anchor is missing for a non-empty audit database");
-    if (current.keyId !== this.options.keySource.keyId ||
-        current.sequence !== tail.sequence || current.eventHash !== tail.eventHash ||
-        !timingSafeEqual(Buffer.from(current.mac, "hex"), Buffer.from(anchorMac(this.key, current.keyId, current.sequence, current.eventHash), "hex"))) {
-      throw new Error("Audit anchor does not match the persisted audit tail");
-    }
+    withAnchorLock(this.options.path, () => {
+      const current = readAnchorIfPresent(this.options.path);
+      if (tail === undefined) {
+        if (current !== undefined) throw new Error("Audit anchor exists for an empty audit database");
+        return;
+      }
+      if (current === undefined) throw new Error("Audit anchor is missing for a non-empty audit database");
+      if (current.keyId !== this.options.keySource.keyId ||
+          current.sequence !== tail.sequence || current.eventHash !== tail.eventHash ||
+          !timingSafeEqual(Buffer.from(current.mac, "hex"), Buffer.from(anchorMac(this.key, current.keyId, current.sequence, current.eventHash), "hex"))) {
+        throw new Error("Audit anchor does not match the persisted audit tail");
+      }
+    });
   }
 
   publish(sequence: number, eventHash: string): void {
     if (!Number.isSafeInteger(sequence) || sequence < 1 || !HASH_PATTERN.test(eventHash)) {
       throw new Error("Audit anchor tail is malformed");
     }
-    const existing = readAnchorIfPresent(this.options.path);
-    if (existing !== undefined) {
-      if (existing.keyId !== this.options.keySource.keyId) throw new Error("Audit anchor key identity changed");
-      if (existing.sequence > sequence) return;
-      if (existing.sequence === sequence && existing.eventHash === eventHash) return;
-      if (existing.sequence === sequence) throw new Error("Audit anchor sequence was reused");
-    }
-    const record: AuditAnchorRecord = {
-      format: ANCHOR_FORMAT,
-      keyId: this.options.keySource.keyId,
-      sequence,
-      eventHash,
-      mac: anchorMac(this.key, this.options.keySource.keyId, sequence, eventHash)
-    };
-    writeAnchor(this.options.path, record);
+    withAnchorLock(this.options.path, () => {
+      const existing = readAnchorIfPresent(this.options.path);
+      if (existing !== undefined) {
+        if (existing.keyId !== this.options.keySource.keyId) throw new Error("Audit anchor key identity changed");
+        if (existing.sequence > sequence) return;
+        if (existing.sequence === sequence && existing.eventHash === eventHash) return;
+        if (existing.sequence === sequence) throw new Error("Audit anchor sequence was reused");
+      }
+      const record: AuditAnchorRecord = {
+        format: ANCHOR_FORMAT,
+        keyId: this.options.keySource.keyId,
+        sequence,
+        eventHash,
+        mac: anchorMac(this.key, this.options.keySource.keyId, sequence, eventHash)
+      };
+      writeAnchor(this.options.path, record);
+    });
   }
 }
 
@@ -167,6 +171,62 @@ function writeAnchor(path: string, record: AuditAnchorRecord): void {
     try { unlinkSync(temporaryPath); } catch { /* Preserve the publication error. */ }
     throw error;
   }
+}
+
+function withAnchorLock<T>(path: string, operation: () => T): T {
+  const lockPath = `${path}.lock`;
+  let fd: number;
+  try {
+    fd = openSync(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("Audit anchor lock is held or requires operator recovery");
+    }
+    throw error;
+  }
+  let identity: { dev: number; ino: number } | undefined;
+  try {
+    const stat = lstatSync(lockPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
+        (process.getuid?.() !== undefined && stat.uid !== process.getuid?.())) {
+      throw new Error("Audit anchor lock is not a protected regular file");
+    }
+    identity = { dev: stat.dev, ino: stat.ino };
+    const owner = Buffer.from(`${process.pid}:${randomBytes(16).toString("hex")}\n`, "utf8");
+    writeAll(fd, owner);
+    fsyncSync(fd);
+    syncDirectory(dirname(path));
+  } catch (error) {
+    closeSync(fd);
+    if (identity !== undefined) {
+      try {
+        const current = lstatSync(lockPath);
+        if (current.dev === identity.dev && current.ino === identity.ino) {
+          unlinkSync(lockPath);
+          syncDirectory(dirname(path));
+        }
+      } catch { /* Preserve the lock setup error and require recovery. */ }
+    }
+    throw error;
+  }
+  if (identity === undefined) throw new Error("Audit anchor lock identity is unavailable");
+  const lockIdentity = identity;
+  try {
+    return operation();
+  } finally {
+    closeSync(fd);
+    const current = lstatSync(lockPath);
+    if (current.dev !== lockIdentity.dev || current.ino !== lockIdentity.ino) {
+      throw new Error("Audit anchor lock target changed during operation");
+    }
+    unlinkSync(lockPath);
+    syncDirectory(dirname(path));
+  }
+}
+
+function syncDirectory(path: string): void {
+  const directoryFd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try { fsyncSync(directoryFd); } finally { closeSync(directoryFd); }
 }
 
 function writeAll(fd: number, bytes: Buffer): void {
