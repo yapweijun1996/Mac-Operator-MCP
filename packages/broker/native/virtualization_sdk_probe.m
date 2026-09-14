@@ -4,10 +4,15 @@
 int main(void) {
   @autoreleasepool {
     VZVirtualMachineConfiguration *configuration = [[VZVirtualMachineConfiguration alloc] init];
+    NSError *validationError = nil;
+    BOOL configurationValid = [configuration validateWithError:&validationError];
     NSDictionary *record = @{
       @"framework": @"Virtualization.framework",
       @"host_version": [[NSProcessInfo processInfo] operatingSystemVersionString],
       @"configuration_type": NSStringFromClass([configuration class]),
+      @"virtualization_supported": @([VZVirtualMachine isSupported]),
+      @"configuration_valid_without_guest": @(configurationValid),
+      @"validation_error_present": @(validationError != nil),
       @"vm_boot_attempted": @NO
     };
     NSError *error = nil;

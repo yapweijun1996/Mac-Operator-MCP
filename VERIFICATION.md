@@ -13,13 +13,14 @@ host-boundary/opt-in skip. Evidence:
 
 Latest Virtualization.framework candidate addendum: the active Darwin 26.2
 Command Line Tools SDK contains the Virtualization.framework module and
-headers; the native Objective-C probe links it and constructs a
-`VZVirtualMachineConfiguration` without boot. The new disabled-by-default
+headers; the native Objective-C probe links it, reports host support, and
+constructs an intentionally invalid guest-less `VZVirtualMachineConfiguration`
+without boot. The new disabled-by-default
 `VirtualizationTaskRunner` requires an
 external host-evidence gate, a native executor, and a proof-bound guest image
 SHA-256/runtime identity; it rechecks that identity before dispatch and fails
-closed on a target swap. Focused task-runner tests pass 7/7; the full
-`MOPS_REAL_SANDBOX=1 npm test` regression passes 457/458 with one explicit
+closed on a target swap. Focused task-runner tests pass 8/8; the full
+`MOPS_REAL_SANDBOX=1 npm test` regression passes 458/459 with one explicit
 host-boundary/opt-in skip. No VM boot, guest isolation, or production task
 enablement is claimed. Evidence:
 `evidence/2026-09-14-virtualization-framework-sdk.md`.

@@ -228,3 +228,39 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
   );
   assert.equal(calls, 1);
 });
+
+test("VirtualizationTaskRunner maps native adapter transport loss to unknown", async () => {
+  const guest: VirtualizationGuestIdentity = {
+    imageSha256: "e".repeat(64),
+    runtimeVersion: "macos-26.2-vz-1"
+  };
+  const runner = new VirtualizationTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: {
+      schemaVersion: "0.1",
+      sandboxMechanism: "virtualization",
+      sandboxProfile: "guest-deny-default-v0.1",
+      filesystem: "enforced",
+      network: "enforced",
+      credentials: "isolated",
+      processTree: "owned",
+      processTreePolicy: "single_process",
+      evidenceRef: "evidence://virtualization-guest",
+      virtualizationGuest: guest
+    },
+    executor: {
+      available: true,
+      guestIdentity: guest,
+      async run() { throw new Error("native transport closed"); }
+    }
+  });
+  if (process.platform !== "darwin") {
+    assert.equal(runner.available, false);
+    return;
+  }
+  await assert.rejects(
+    runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable === true
+  );
+});

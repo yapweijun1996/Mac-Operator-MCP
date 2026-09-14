@@ -10,7 +10,8 @@ unowned registration. Evidence:
 `evidence/2026-09-14-process-identity-exit-window.md`.
 
 Virtualization.framework candidate addendum: the current Darwin SDK exposes
-the framework surface and the native probe links it without booting a VM; a
+the framework surface and the native probe links it without booting a VM while
+reporting host support and rejecting a guest-less configuration; a
 disabled `VirtualizationTaskRunner` seam now
 requires externally reviewed guest image digest/runtime evidence plus a
 matching native-adapter identity at dispatch. Identity mismatch, absent guest

@@ -13,15 +13,17 @@ passes 457/458 with one explicit host-boundary/opt-in skip. Evidence:
 
 Latest Virtualization.framework candidate addendum: the active Darwin 26.2
 SDK exposes Virtualization.framework headers/modules, and the checked-in native
-Objective-C probe links the framework and constructs a
-`VZVirtualMachineConfiguration`; Xcode is absent, Swift compiler/SDK versions
-do not match, and no VM image or guest boot was attempted. A disabled-by-default
+Objective-C probe links the framework, reports host support, and constructs an
+intentionally invalid guest-less `VZVirtualMachineConfiguration`; Xcode is
+absent, Swift compiler/SDK versions do not match, and no VM image or guest boot
+was attempted. A disabled-by-default
 `VirtualizationTaskRunner` seam now requires an externally reviewed guest
 image SHA-256/runtime identity, a native-adapter executor, and a matching
 identity recheck immediately before dispatch; missing or changed identity
 fails closed, and adapter failures remain retryable `UNKNOWN_OUTCOME`. New
-proof-validation and target-swap tests pass; the full real-sandbox regression
-passes 457/458 with one explicit host-boundary/opt-in skip. This is SDK and
+proof-validation, target-swap, and adapter-failure tests pass 8/8; the full
+real-sandbox regression passes 458/459 with one explicit host-boundary/opt-in
+skip. This is SDK and
 boundary evidence only, not VM isolation or `mac_task_run` enablement.
 Evidence: `evidence/2026-09-14-virtualization-framework-sdk.md`.
 
