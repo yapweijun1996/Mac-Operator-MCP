@@ -4,6 +4,20 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Native virtualization lifecycle addendum: commit `40f0461` connects the
+Broker lifecycle state machine to a protected Objective-C++ N-API artifact.
+It revalidates the startup-owned image, builds a read-only Virtualization
+framework configuration without host network or directory sharing, exposes
+asynchronous handle-only start/stop/status/close operations, and binds every
+transition to an adapter-owned boot ID. The TypeScript adapter rechecks image
+identity before every call and maps malformed or uncertain native outcomes
+fail-closed. Focused lifecycle/adapter tests pass 9/9; full physical-Darwin
+regression passes 551/551 with 0 skipped tests. The host rejected the
+synthetic VM configuration before boot, so entitlement, bootable image, guest
+serving/isolation, attestation production, and `mac_task_run` enablement remain
+blocked. Evidence:
+`evidence/2026-09-15-virtualization-guest-native-lifecycle.md`.
+
 Virtualization lifecycle addendum: commit `042517a` adds the disabled,
 Broker-owned VM lifecycle state machine. It serializes start/stop/status and
 close, enforces caller cancellation and bounded deadlines, binds every result

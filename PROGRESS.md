@@ -4,6 +4,21 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest native virtualization lifecycle addendum: commit `40f0461` connects the
+Broker-owned lifecycle controller to a separate Objective-C++ N-API artifact
+linked against `Virtualization.framework`. The startup constructor revalidates
+the protected image identity, creates a read-only block attachment with no
+host network or directory sharing and one future virtio-socket device, and
+exposes asynchronous handle-bound start/stop/status/close operations with
+random boot IDs and unknown-state mapping. The TypeScript adapter rechecks the
+image before every operation and never accepts MCP paths. Focused lifecycle/
+adapter tests pass 9/9 and the full physical-Darwin regression passes 551/551
+with 0 skipped tests. The current host rejects the synthetic configuration
+before VM creation, so no VM boot or guest isolation is claimed; production
+entitlement, bootable image, guest serving, attestation production, and
+`mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-guest-native-lifecycle.md`.
+
 Latest Broker virtualization lifecycle addendum: commit `042517a` adds a
 disabled-by-default, Broker-owned `VirtualizationGuestVmLifecycle` state
 machine. Start, stop, status, cancellation, timeout, close, and recovery are

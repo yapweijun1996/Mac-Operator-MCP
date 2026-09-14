@@ -195,3 +195,27 @@ seam. It does not boot a VM, serve virtio, produce attestation, or provide
 independent filesystem, network, credential, or process isolation; this ADR
 remains proposed and `mac_task_run` remains disabled. Evidence is recorded in
 [`evidence/2026-09-15-virtualization-guest-lifecycle.md`](../../evidence/2026-09-15-virtualization-guest-lifecycle.md).
+
+## Native lifecycle adapter
+
+Commit `40f0461` connects that Broker boundary to a separate Objective-C++
+N-API artifact linked against the host `Virtualization.framework`. The
+startup-only constructor revalidates the canonical owner-only image and its
+device/inode/size/SHA-256 identity, creates a read-only block attachment, and
+configures no host network or directory sharing. It adds one virtio-socket
+device for the future guest agent, then exposes asynchronous, handle-bound
+start/stop/status/close operations. Every start returns an adapter-owned boot
+ID; status maps intermediate and framework-error states to `unknown`; close
+refuses to discard a machine that is not stopped. The TypeScript adapter
+rechecks the image before each operation and does not accept MCP paths or
+commands.
+
+The artifact compiles and passes strict local code-signature verification, but
+the current host rejects the synthetic configuration before VM creation. The
+focused lifecycle/adapter tests pass 9/9 and the full physical-Darwin
+regression passes 551/551 with 0 skipped tests. This is an actual native
+Virtualization.framework boundary, not VM boot or isolation evidence; a
+Developer ID-signed entitled runtime, bootable reviewed image, virtio guest
+server, signed attestation producer, and independent isolation proof are still
+required before this ADR can be accepted or `mac_task_run` enabled. Evidence:
+[`evidence/2026-09-15-virtualization-guest-native-lifecycle.md`](../../evidence/2026-09-15-virtualization-guest-native-lifecycle.md).

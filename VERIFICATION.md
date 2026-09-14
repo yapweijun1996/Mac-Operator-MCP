@@ -3,6 +3,20 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest native virtualization lifecycle addendum: commit `40f0461` adds a
+separate Objective-C++ N-API artifact linked to `Virtualization.framework` and
+loads it through a protected, digest-bound startup path. The native config uses
+a read-only guest disk, no host network or directory sharing, and a future
+virtio-socket device; asynchronous handle-bound lifecycle methods return and
+validate an adapter-owned boot ID. Focused lifecycle/adapter tests pass 9/9;
+the complete
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 551/551 with 0 skipped tests; typecheck and lint pass. The
+current host rejects the synthetic configuration before VM creation, so this
+does not prove VM boot or guest isolation and no production capability is
+enabled. Evidence:
+`evidence/2026-09-15-virtualization-guest-native-lifecycle.md`.
+
 Latest Broker virtualization lifecycle addendum: commit `042517a` adds a
 disabled-by-default lifecycle controller around a future native VM adapter.
 Operations are serialized and bounded; identity and boot ID are validated on
