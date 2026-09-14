@@ -11,7 +11,8 @@ ProcessSupervisor suite passes 22/22. The complete
 `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
 regression passes 486/486, including the temporary Edge/Broker LaunchAgent
 bootstrap, authenticated status readback, and cleanup. This closes an
-in-process admission/shutdown race only; crashed-process ownership,
+in-process admission/shutdown race only; native root readback also binds the
+detached process-group ID and fails closed if it changes. Crashed-process ownership,
 post-snapshot descendants, credential isolation, and production signing remain
 open. Evidence:
 `evidence/2026-09-14-process-start-admission.md`.

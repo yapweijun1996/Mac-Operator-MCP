@@ -13,6 +13,9 @@ observed, and any `onStarted` ownership persistence callback completes. Pending
 starts count against the shared `maxConcurrent` limit. If the Broker closes in
 that window, the close promise waits for the startup's verified abort and
 cleanup instead of returning while an untracked child can still be starting.
+The native Darwin identity readback also includes the actual process-group ID;
+startup requires it to match the detached child PID, and every later root
+identity check fails closed if the group changes.
 
 ## Verification
 

@@ -22,6 +22,7 @@ interface NativeProcessTreeAdapter {
 interface ProcessTreeIdentity {
   pid: number;
   startTimeMicros: number;
+  processGroupId?: number;
 }
 
 interface ActiveProcessRun {
@@ -196,10 +197,10 @@ export class ProcessSupervisor {
         const startTimeMicros = processTree === undefined
           ? undefined
           : await waitForRootProcessIdentity(processTree, child);
-        if (processTree === undefined || startTimeMicros === undefined) {
+        if (processTree === undefined || startTimeMicros === undefined || processTree.rootProcessGroupId !== processId) {
           const drained = await this.abortUnownedProcess(child, processId, processTree);
           if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
-          throw new BrokerError("POLICY_DENIED", "Process identity could not be captured");
+          throw new BrokerError("POLICY_DENIED", "Process identity or process-group identity could not be captured");
         }
         try {
           processTree.sample();
@@ -985,12 +986,13 @@ class ProcessTreeTracker {
     if (expectedRootIdentity !== undefined) {
       this.rootIdentity = {
         pid: expectedRootIdentity.pid,
-        startTimeMicros: expectedRootIdentity.startTimeMicros
+        startTimeMicros: expectedRootIdentity.startTimeMicros,
+        processGroupId: expectedRootIdentity.processGroupId
       };
       return;
     }
     try {
-      const identity = parseProcessIdentity(native.getProcessIdentity(processId));
+      const identity = parseProcessIdentity(native.getProcessIdentity(processId), true);
       if (identity.pid === processId) this.rootIdentity = identity;
     } catch {
       // A very short-lived process can exit before its root identity is read.
@@ -1006,7 +1008,7 @@ class ProcessTreeTracker {
   captureRootIdentity(): number | undefined {
     if (this.rootIdentity !== undefined || this.failed) return this.rootIdentity?.startTimeMicros;
     try {
-      const identity = parseProcessIdentity(this.native.getProcessIdentity(this.processId));
+      const identity = parseProcessIdentity(this.native.getProcessIdentity(this.processId), true);
       if (identity.pid === this.processId) this.rootIdentity = identity;
     } catch {
       // A short-lived process may not be visible in the native process table yet.
@@ -1028,12 +1030,21 @@ class ProcessTreeTracker {
     return this.rootIdentity === undefined;
   }
 
+  get rootProcessGroupId(): number | undefined {
+    return this.rootIdentity?.processGroupId;
+  }
+
   rootState(): "alive" | "dead" | "unknown" {
     if (this.failed) return "unknown";
     if (this.rootIdentity === undefined) return "dead";
     try {
       const alive = this.native.isProcessIdentityAlive(this.rootIdentity.pid, this.rootIdentity.startTimeMicros);
-      if (alive === true) return "alive";
+      if (alive === true) {
+        const current = parseProcessIdentity(this.native.getProcessIdentity(this.rootIdentity.pid), true);
+        if (current.pid !== this.rootIdentity.pid || current.startTimeMicros !== this.rootIdentity.startTimeMicros ||
+            current.processGroupId !== this.rootIdentity.processGroupId) return "unknown";
+        return "alive";
+      }
       if (alive === false) return "dead";
       return "unknown";
     } catch {
@@ -1100,18 +1111,24 @@ class ProcessTreeTracker {
   }
 }
 
-function parseProcessIdentity(value: unknown): ProcessTreeIdentity {
+function parseProcessIdentity(value: unknown, requireProcessGroupId = false): ProcessTreeIdentity {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed process identity");
   const identity = value as Record<string, unknown>;
   const pid = identity.pid;
   const parentPid = identity.parentPid;
+  const processGroupId = identity.processGroupId;
   const startTimeMicros = identity.startTimeMicros;
   if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999 ||
       typeof parentPid !== "number" || !Number.isSafeInteger(parentPid) || parentPid < 1 || parentPid > 99_999_999 ||
       typeof startTimeMicros !== "number" || !Number.isSafeInteger(startTimeMicros) || startTimeMicros < 1) {
     throw new Error("Malformed process identity");
   }
-  return { pid, startTimeMicros };
+  if (processGroupId !== undefined &&
+      (typeof processGroupId !== "number" || !Number.isSafeInteger(processGroupId) || processGroupId < 1 || processGroupId > 99_999_999)) {
+    throw new Error("Malformed process-group identity");
+  }
+  if (requireProcessGroupId && processGroupId === undefined) throw new Error("Process-group identity is unavailable");
+  return { pid, startTimeMicros, ...(processGroupId === undefined ? {} : { processGroupId }) };
 }
 
 function parseProcessTreeSnapshot(value: unknown): { processes: ProcessTreeIdentity[]; truncated: boolean } {

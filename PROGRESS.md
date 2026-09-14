@@ -102,8 +102,9 @@ capacity; it cannot return while an untracked startup is still proving
 ownership. The focused Darwin ProcessSupervisor suite passes 22/22, and the
 full `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
 regression passes 486/486, including the temporary LaunchAgent smoke. This is
-an in-process admission and shutdown race fix, not kernel quotas or proof of
-crashed-Broker descendant ownership. Evidence:
+an in-process admission and shutdown race fix; native Darwin root checks also
+bind the observed process-group ID to the detached PID. It is not kernel
+quotas or proof of crashed-Broker descendant ownership. Evidence:
 `evidence/2026-09-14-process-start-admission.md`.
 
 Latest controller-secret-zone addendum: Broker-owned sandbox profiles now

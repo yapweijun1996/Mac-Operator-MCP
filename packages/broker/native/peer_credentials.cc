@@ -2084,6 +2084,7 @@ struct ProcessRecord {
 struct ProcessIdentityRecord {
   pid_t pid;
   pid_t parent_pid;
+  pid_t process_group_id;
   uint64_t start_time_micros;
 };
 
@@ -2097,6 +2098,7 @@ bool ReadProcessIdentity(pid_t pid, ProcessIdentityRecord* output) {
   const uint64_t start_time_micros = bsd_info.pbi_start_tvsec * 1'000'000ULL + bsd_info.pbi_start_tvusec;
   output->pid = pid;
   output->parent_pid = static_cast<pid_t>(bsd_info.pbi_ppid);
+  output->process_group_id = static_cast<pid_t>(bsd_info.pbi_pgid);
   output->start_time_micros = start_time_micros;
   return true;
 }
@@ -2273,6 +2275,7 @@ napi_value ListDescendantProcesses(napi_env env, napi_callback_info info) {
     napi_create_object(env, &item);
     SetNumber(env, item, "pid", static_cast<double>(identity.pid));
     SetNumber(env, item, "parentPid", static_cast<double>(identity.parent_pid));
+    SetNumber(env, item, "processGroupId", static_cast<double>(identity.process_group_id));
     SetNumber(env, item, "startTimeMicros", static_cast<double>(identity.start_time_micros));
     napi_set_element(env, process_array, index, item);
   }
@@ -2325,6 +2328,7 @@ napi_value GetProcessIdentity(napi_env env, napi_callback_info info) {
   napi_create_object(env, &result);
   SetNumber(env, result, "pid", static_cast<double>(identity.pid));
   SetNumber(env, result, "parentPid", static_cast<double>(identity.parent_pid));
+  SetNumber(env, result, "processGroupId", static_cast<double>(identity.process_group_id));
   SetNumber(env, result, "startTimeMicros", static_cast<double>(identity.start_time_micros));
   return result;
 }
