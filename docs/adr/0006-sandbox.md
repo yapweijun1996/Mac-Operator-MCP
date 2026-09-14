@@ -97,3 +97,12 @@ Broker-owned authority callback is mandatory before sending it. This is a
 protocol and adapter boundary only. Broker Job reconciliation, native guest
 status serving, VM boot, and independent isolation evidence remain required
 before this ADR can be accepted or `mac_task_run` enabled.
+
+The Broker now persists the admitted request identity and bounded guest
+descriptor in schema version `7` and exposes a host-startup recovery hook. It
+selects only restart-unknown Jobs, rechecks current policy/switch/revocation
+authority, and asks the TaskRunner for a fresh status response bound to the
+original request. Only an authenticated, signed, verified terminal response
+can close the Job; uncertain or unavailable responses remain `UNKNOWN`. This
+closes the Broker-side Job boundary but does not provide a native guest status
+server or VM isolation evidence.

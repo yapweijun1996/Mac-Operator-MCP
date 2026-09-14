@@ -269,6 +269,11 @@ export async function createBrokerServiceFromStartupConfig(options: {
     // promoted to success.
     let recoveryError: unknown;
     try {
+      await broker.reconcileRestartedGuestTasks();
+    } catch (error) {
+      recoveryError = error;
+    }
+    try {
       await broker.reconcileRestartedTaskProcesses();
     } catch (error) {
       recoveryError = error;

@@ -30,7 +30,8 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 3, name: "request-approval-and-job-linkage" },
         { version: 4, name: "job-lease-process-and-helper-metadata" },
         { version: 5, name: "broker-runtime-fence" },
-        { version: 6, name: "virtualization-guest-replay-ledger" }
+        { version: 6, name: "virtualization-guest-replay-ledger" },
+        { version: 7, name: "virtualization-guest-task-metadata" }
       ]);
     } finally {
       database.close();
@@ -1611,6 +1612,67 @@ test("task process no-fork ownership proof survives restart", async () => {
     store.close();
     store = new BrokerStore(databasePath);
     assert.deepEqual(store.ownedJob("job:task-process-proof", "principal-1")?.processMetadata, metadata);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Virtualization guest request identity survives restart and terminal recovery clears it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-task-metadata-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const metadata = {
+    requestId: "request:guest-1234567890abcdef",
+    nonce: "guest-nonce-1234567890abcdef",
+    requestDigest: "b".repeat(64),
+    guestIdentity: { imageSha256: "c".repeat(64), runtimeVersion: "macos-guest-1" },
+    profileDigest: "d".repeat(64),
+    taskDigest: "e".repeat(64),
+    timeoutMs: 10_000,
+    outputCapBytes: 4_096,
+    recordedAtMs: 2
+  } as const;
+  const lease = {
+    ownerId: "broker:test",
+    token: "lease:guest-task-metadata-1234",
+    expiresAtMs: 30
+  };
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:guest-task-metadata", "guest-task-metadata"));
+    const running = store.startJob("job:guest-task-metadata", "principal-1", 0, 1, lease);
+    const recorded = store.recordJobGuestRequest(
+      "job:guest-task-metadata",
+      "principal-1",
+      running.revision,
+      metadata,
+      lease,
+      2
+    );
+    assert.deepEqual(recorded.guestMetadata, metadata);
+    assert.equal(recorded.revision, 2);
+    store.close();
+    store = new BrokerStore(databasePath);
+    const recovered = store.ownedJob("job:guest-task-metadata", "principal-1");
+    assert.equal(recovered?.state, "unknown");
+    assert.deepEqual(recovered?.guestMetadata, metadata);
+    assert.deepEqual(store.restartUnknownGuestJobs().map((job) => job.jobId), ["job:guest-task-metadata"]);
+    const reconciled = store.reconcileUnknownGuestTask(
+      "job:guest-task-metadata",
+      "principal-1",
+      recovered?.revision ?? -1,
+      {
+        state: "completed",
+        resultClass: "success",
+        finishedAtMs: 4,
+        exitCode: 0,
+        stdout: "verified",
+        verificationStatus: "verified"
+      }
+    );
+    assert.equal(reconciled.state, "completed");
+    assert.equal(reconciled.guestMetadata, undefined);
+    assert.deepEqual(store.restartUnknownGuestJobs(), []);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

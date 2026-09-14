@@ -171,6 +171,23 @@ Broker Job reconciliation, native guest status serving, VM boot, and production
 enablement remain open. Evidence:
 `evidence/2026-09-14-virtualization-guest-transport.md`.
 
+Latest guest Job reconciliation addendum: the Broker now persists a bounded,
+non-secret guest request descriptor (`guest_metadata_json`) immediately after
+authenticated replay admission and before a native guest frame is sent. The
+schema is version `7`; it records only request ID/nonce/digest, immutable guest
+identity, profile/task digests, and timeout/output budgets. On restart,
+`reconcileRestartedGuestTasks()` selects only `mac_task_run` Jobs that are
+already `UNKNOWN`, marked `BROKER_RESTART`, and retain that descriptor. It
+performs a fresh status lookup through the TaskRunner recovery boundary with
+current policy, kill-switch, revocation, owner, and identity checks. Only a
+verified terminal result can close the Job; unavailable, cancelled, malformed,
+unverified, or transport-uncertain results remain `UNKNOWN` and are audited.
+Focused Broker, persistence, task-runner, and guest-transport tests pass, and
+the complete `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1
+npm test` regression passes 509/509. Native guest status serving, VM boot,
+guest isolation evidence, and production enablement remain open. Evidence:
+`evidence/2026-09-14-virtualization-guest-transport.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now
@@ -219,6 +236,13 @@ duplicate and persistence failures map to stable `REPLAY_DENIED` and
 transactional and future schema markers remain refused. The focused
 persistence plus Guest transport run passes 50/50. Evidence:
 `evidence/2026-09-14-virtualization-guest-transport.md`.
+
+Schema version `7` extends the Job Ledger with the bounded guest task request
+descriptor used by restart reconciliation. The descriptor contains no host
+paths, executable text, arguments, environment, credentials, or raw output;
+terminal recovery clears it after verified readback, while unresolved Jobs
+retain it for a later bounded lookup. Migration is forward-only and future
+schema markers remain refused.
 
 Latest process-tree identity addendum: ProcessSupervisor now rejects a
 descendant PID whose start-time changes between observations, marks native

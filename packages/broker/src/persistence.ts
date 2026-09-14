@@ -87,7 +87,7 @@ const MAX_JOB_LEASE_MS = 120_000;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 6;
+export const BROKER_SCHEMA_VERSION = 7;
 const MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS = 4096;
 
 /**
@@ -122,6 +122,27 @@ export interface ProcessJobMetadata {
 export interface ProcessDescendantMetadata {
   pid: number;
   startTimeMicros: number;
+}
+
+/**
+ * Non-secret identity and budget facts for an admitted Virtualization guest
+ * task. This is deliberately limited to the signed request identity and
+ * Broker-owned digests so recovery never needs host paths, commands, or
+ * credentials.
+ */
+export interface GuestTaskJobMetadata {
+  requestId: string;
+  nonce: string;
+  requestDigest: string;
+  guestIdentity: {
+    imageSha256: string;
+    runtimeVersion: string;
+  };
+  profileDigest: string;
+  taskDigest: string;
+  timeoutMs: number;
+  outputCapBytes: number;
+  recordedAtMs: number;
 }
 
 /**
@@ -171,6 +192,7 @@ export interface BrokerJob {
   revision: number;
   writeMetadata?: WriteJobMetadata;
   processMetadata?: ProcessJobMetadata;
+  guestMetadata?: GuestTaskJobMetadata;
   privilegedPayload?: PrivilegedHelperPayload;
 }
 
@@ -556,6 +578,7 @@ export class BrokerStore {
         lease_expires_at_ms INTEGER,
         write_metadata_json TEXT NOT NULL DEFAULT '',
         process_metadata_json TEXT NOT NULL DEFAULT '',
+        guest_metadata_json TEXT NOT NULL DEFAULT '',
         privileged_payload_json TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL,
         UNIQUE (owner_principal_id, idempotency_key)
@@ -1494,8 +1517,8 @@ export class BrokerStore {
           job_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
           payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
           finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-          cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, privileged_payload_json, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', ?, 0)
+          cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, guest_metadata_json, privileged_payload_json, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', '', ?, 0)
       `).run(
         input.jobId, input.ownerPrincipalId, input.ownerSessionId, input.tool, input.targetRef,
         input.policyVersion, input.payloadDigest, input.idempotencyKey, input.createdAtMs,
@@ -1550,6 +1573,21 @@ export class BrokerStore {
         AND state = 'unknown'
         AND cancel_reason = 'BROKER_RESTART'
         AND process_metadata_json <> ''
+      ORDER BY created_at_ms, job_id
+      LIMIT ?
+    `).all(limit) as unknown as JobRow[];
+    return rows.map(mapJob);
+  }
+
+  /** Return restart-reconciled Virtualization tasks with an admitted request identity. */
+  restartUnknownGuestJobs(limit = 100): BrokerJob[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
+    const rows = this.database.prepare(`
+      SELECT * FROM jobs
+      WHERE tool = 'mac_task_run'
+        AND state = 'unknown'
+        AND cancel_reason = 'BROKER_RESTART'
+        AND guest_metadata_json <> ''
       ORDER BY created_at_ms, job_id
       LIMIT ?
     `).all(limit) as unknown as JobRow[];
@@ -1672,6 +1710,32 @@ export class BrokerStore {
     });
   }
 
+  recordJobGuestRequest(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    metadata: GuestTaskJobMetadata,
+    lease: JobLease,
+    nowMs: number
+  ): BrokerJob {
+    validateGuestTaskJobMetadata(metadata);
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+    validateJobLease(lease, nowMs, false);
+    return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
+      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+          metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs) {
+        throw new BrokerError("PRECONDITION_FAILED", "Guest request metadata is outside the active Job window");
+      }
+      if (current.guestMetadata !== undefined) {
+        throw new BrokerError("CONFLICT", "Guest request metadata was already recorded");
+      }
+      this.database.prepare(`
+        UPDATE jobs SET guest_metadata_json = ?, revision = revision + 1
+        WHERE job_id = ? AND owner_principal_id = ?
+      `).run(serializeGuestTaskJobMetadata(metadata), jobId, principalId);
+    }, lease, nowMs);
+  }
+
   finishJob(
     jobId: string,
     principalId: string,
@@ -1702,14 +1766,70 @@ export class BrokerStore {
       this.database.prepare(`
         UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = ?,
           stdout_text = ?, stderr_text = ?, output_truncated = ?, process_metadata_json = CASE WHEN ? = 'unknown' THEN process_metadata_json ELSE '' END,
+          guest_metadata_json = CASE WHEN ? = 'unknown' THEN guest_metadata_json ELSE '' END,
           lease_owner_id = NULL, lease_token = NULL, lease_acquired_at_ms = NULL,
           lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL, revision = revision + 1
         WHERE job_id = ? AND owner_principal_id = ?
       `).run(
         outcome.state, outcome.resultClass, outcome.finishedAtMs, exitCode,
-        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0, outcome.state, jobId, principalId
+        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0, outcome.state, outcome.state, jobId, principalId
       );
     }, lease, leaseNowMs, outcome.state === "unknown");
+  }
+
+  /**
+   * Promote one restart-unknown guest task only after a verified, authenticated
+   * status response. No active lease is accepted and the persisted guest
+   * identity is cleared once a terminal readback is recorded.
+   */
+  reconcileUnknownGuestTask(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    outcome: {
+      state: Exclude<JobState, "queued" | "running" | "unknown">;
+      resultClass: Exclude<JobResultClass, "queued" | "accepted" | "unknown">;
+      finishedAtMs: number;
+      exitCode?: number | null;
+      stdout?: string;
+      stderr?: string;
+      verificationStatus: "verified";
+    }
+  ): BrokerJob {
+    if (!Number.isSafeInteger(outcome.finishedAtMs) || outcome.finishedAtMs < 0 || outcome.verificationStatus !== "verified") {
+      throw malformedJob();
+    }
+    if (!validTerminalOutcome(outcome.state, outcome.resultClass)) throw malformedJob();
+    const stdout = sanitizeJobOutput(outcome.stdout ?? "");
+    const stderr = sanitizeJobOutput(outcome.stderr ?? "");
+    const exitCode = outcome.exitCode ?? null;
+    if (exitCode !== null && (!Number.isInteger(exitCode) || exitCode < -2_147_483_648 || exitCode > 2_147_483_647)) {
+      throw malformedJob();
+    }
+    return this.runTransaction(() => {
+      const currentRow = this.requireOwnedJobRow(jobId, principalId);
+      const current = mapJob(currentRow);
+      if (current.revision !== expectedRevision || current.state !== "unknown" ||
+          current.tool !== "mac_task_run" || current.guestMetadata === undefined ||
+          currentRow.cancel_requested !== 1 || currentRow.cancel_reason !== "BROKER_RESTART" ||
+          currentRow.lease_token !== null || current.startedAtMs === null ||
+          outcome.finishedAtMs < current.startedAtMs) {
+        throw new BrokerError("CONFLICT", "Guest Job recovery precondition changed concurrently");
+      }
+      const updated = this.database.prepare(`
+        UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = ?,
+          stdout_text = ?, stderr_text = ?, output_truncated = ?, guest_metadata_json = '',
+          revision = revision + 1
+        WHERE job_id = ? AND owner_principal_id = ? AND state = 'unknown'
+          AND revision = ? AND lease_token IS NULL AND guest_metadata_json <> ''
+      `).run(
+        outcome.state, outcome.resultClass, outcome.finishedAtMs, exitCode,
+        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0,
+        jobId, principalId, expectedRevision
+      );
+      if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Guest Job recovery changed concurrently");
+      return this.requireOwnedJob(jobId, principalId);
+    });
   }
 
   renewJobLease(jobId: string, principalId: string, lease: JobLease, nowMs: number, leaseDurationMs = 30_000): JobLease {
@@ -2617,7 +2737,8 @@ export class BrokerStore {
         { version: 3, name: "request-approval-and-job-linkage", apply: () => this.migrateRequestsSchema() },
         { version: 4, name: "job-lease-process-and-helper-metadata", apply: () => this.migrateJobsSchema() },
         { version: 5, name: "broker-runtime-fence", apply: () => this.migrateRuntimeFenceSchema() },
-        { version: 6, name: "virtualization-guest-replay-ledger", apply: () => this.migrateVirtualizationGuestReplaySchema() }
+        { version: 6, name: "virtualization-guest-replay-ledger", apply: () => this.migrateVirtualizationGuestReplaySchema() },
+        { version: 7, name: "virtualization-guest-task-metadata", apply: () => this.migrateVirtualizationGuestTaskMetadataSchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -2716,6 +2837,9 @@ export class BrokerStore {
     if (!names.has("process_metadata_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN process_metadata_json TEXT NOT NULL DEFAULT ''");
     }
+    if (!names.has("guest_metadata_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN guest_metadata_json TEXT NOT NULL DEFAULT ''");
+    }
     if (!names.has("privileged_payload_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN privileged_payload_json TEXT NOT NULL DEFAULT ''");
     }
@@ -2748,6 +2872,14 @@ export class BrokerStore {
     const names = new Set(columns.map((column) => column.name));
     if (names.size !== 4 || !names.has("nonce") || !names.has("request_id") || !names.has("accepted_at_ms") || !names.has("expires_at_ms")) {
       throw new Error("Virtualization guest replay schema is malformed");
+    }
+  }
+
+  private migrateVirtualizationGuestTaskMetadataSchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("guest_metadata_json")) {
+      throw new Error("Virtualization guest task metadata schema is unavailable");
     }
   }
 
@@ -2819,6 +2951,7 @@ interface JobRow {
   stderr_text: string;
   output_truncated: number;
   cancel_requested: number;
+  cancel_reason: string | null;
   lease_owner_id: string | null;
   lease_token: string | null;
   lease_acquired_at_ms: number | null;
@@ -2826,6 +2959,7 @@ interface JobRow {
   lease_expires_at_ms: number | null;
   write_metadata_json: string;
   process_metadata_json: string;
+  guest_metadata_json: string;
   privileged_payload_json: string;
   revision: number;
 }
@@ -2941,6 +3075,7 @@ function mapJob(row: JobRow): BrokerJob {
     revision: row.revision,
     ...(row.write_metadata_json ? { writeMetadata: parseWriteJobMetadata(row.write_metadata_json) } : {}),
     ...(row.process_metadata_json ? { processMetadata: parseProcessJobMetadata(row.process_metadata_json) } : {}),
+    ...(row.guest_metadata_json ? { guestMetadata: parseGuestTaskJobMetadata(row.guest_metadata_json) } : {}),
     ...(row.privileged_payload_json ? { privilegedPayload: parsePrivilegedHelperPayload(row.privileged_payload_json) } : {})
   };
 }
@@ -3091,6 +3226,47 @@ function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {
 function serializeProcessJobMetadata(metadata: ProcessJobMetadata): string {
   validateProcessJobMetadata(metadata);
   return canonicalJson(metadata);
+}
+
+function serializeGuestTaskJobMetadata(metadata: GuestTaskJobMetadata): string {
+  validateGuestTaskJobMetadata(metadata);
+  return canonicalJson(metadata);
+}
+
+function parseGuestTaskJobMetadata(value: string): GuestTaskJobMetadata {
+  if (value.length < 1 || value.length > 2_000) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task metadata is malformed");
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(value) as unknown; }
+  catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task metadata is malformed"); }
+  try { validateGuestTaskJobMetadata(parsed as GuestTaskJobMetadata); }
+  catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task metadata is malformed"); }
+  return parsed as GuestTaskJobMetadata;
+}
+
+function validateGuestTaskJobMetadata(metadata: GuestTaskJobMetadata): void {
+  if (metadata === null || typeof metadata !== "object" ||
+      !/^request:guest-[A-Za-z0-9._:-]{16,128}$/u.test(metadata.requestId) ||
+      !/^guest-nonce-[A-Za-z0-9._:-]{16,128}$/u.test(metadata.nonce) ||
+      !/^[a-f0-9]{64}$/u.test(metadata.requestDigest) ||
+      metadata.guestIdentity === null || typeof metadata.guestIdentity !== "object" ||
+      !/^[a-f0-9]{64}$/u.test(metadata.guestIdentity.imageSha256) ||
+      typeof metadata.guestIdentity.runtimeVersion !== "string" ||
+      !/^[A-Za-z0-9._:+/-]{1,128}$/u.test(metadata.guestIdentity.runtimeVersion) ||
+      !/^[a-f0-9]{64}$/u.test(metadata.profileDigest) ||
+      !/^[a-f0-9]{64}$/u.test(metadata.taskDigest) ||
+      !Number.isSafeInteger(metadata.timeoutMs) || metadata.timeoutMs < 1 || metadata.timeoutMs > 900_000 ||
+      !Number.isSafeInteger(metadata.outputCapBytes) || metadata.outputCapBytes < 1 || metadata.outputCapBytes > 4 * 1024 * 1024 ||
+      !Number.isSafeInteger(metadata.recordedAtMs) || metadata.recordedAtMs < 0) {
+    throw malformedJob();
+  }
+  const keys = Object.keys(metadata).sort().join(",");
+  if (keys !== "guestIdentity,nonce,outputCapBytes,profileDigest,recordedAtMs,requestDigest,requestId,taskDigest,timeoutMs") {
+    throw malformedJob();
+  }
+  const identityKeys = Object.keys(metadata.guestIdentity).sort().join(",");
+  if (identityKeys !== "imageSha256,runtimeVersion") throw malformedJob();
 }
 
 function parseProcessJobMetadata(value: string): ProcessJobMetadata {

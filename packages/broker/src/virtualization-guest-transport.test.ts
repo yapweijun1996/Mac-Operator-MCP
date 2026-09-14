@@ -229,6 +229,7 @@ test("request contract excludes raw host paths and credentials", () => {
 
 test("bounded transport client admits before exchange and verifies the signed response", async () => {
   let sentRequestId = "";
+  let admittedRequestId = "";
   const client = new VirtualizationGuestTransportClient({
     authenticationKey: key,
     replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
@@ -257,20 +258,25 @@ test("bounded transport client admits before exchange and verifies the signed re
     nonce: "guest-nonce-abcdef0123456789",
     timestampMs: now,
     expiresAtMs: now + 30_000
+  }, {
+    onRequestAdmitted: (admitted) => { admittedRequestId = admitted.requestId; }
   });
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(sentRequestId, "request:guest-abcdef0123456789");
+  assert.equal(admittedRequestId, sentRequestId);
   client.close();
 });
 
 test("bounded transport client performs authenticated guest status lookup", async () => {
   let originalRequestId = "";
+  let baseAuthorityCalls = 0;
+  let perCallAuthorityCalls = 0;
   const client = new VirtualizationGuestTransportClient({
     authenticationKey: key,
     replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
     now: () => now,
     expectedGuestIdentity: guestIdentity,
-    authorizeStatusLookup: () => undefined,
+    authorizeStatusLookup: () => { baseAuthorityCalls += 1; },
     channel: {
       async exchange(frame) {
         const signedStatusRequest = JSON.parse(Buffer.from(frame).toString("utf8")) as ReturnType<typeof statusRequest>;
@@ -293,9 +299,13 @@ test("bounded transport client performs authenticated guest status lookup", asyn
     nonce: "guest-status-nonce-abcdef0123456789",
     timestampMs: now,
     expiresAtMs: now + 30_000
+  }, {
+    authorizeStatusLookup: () => { perCallAuthorityCalls += 1; }
   });
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(originalRequestId, original.requestId);
+  assert.equal(baseAuthorityCalls, 1);
+  assert.equal(perCallAuthorityCalls, 1);
   client.close();
 });
 

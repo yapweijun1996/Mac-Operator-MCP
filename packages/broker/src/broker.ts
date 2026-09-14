@@ -13,7 +13,7 @@ import {
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
-import type { BrokerJob, BrokerStore, JobLease, WriteJobMetadata } from "./persistence.js";
+import type { BrokerJob, BrokerStore, GuestTaskJobMetadata, JobLease, WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -40,7 +40,7 @@ import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitS
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
-import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRunner } from "./task-runner.js";
+import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
@@ -347,6 +347,204 @@ export class Broker {
       });
     }
     return { inspected: jobs.length, drained, absent, identityMismatch, unknown };
+  }
+
+  /**
+   * Host-startup hook for Virtualization guest tasks whose request was
+   * admitted before the prior Broker instance stopped. Recovery never replays
+   * execution: it asks the authenticated guest for the original task status,
+   * and only a signed, verified terminal readback may close the Job.
+   */
+  async reconcileRestartedGuestTasks(limit = 100): Promise<{
+    inspected: number;
+    recovered: number;
+    unavailable: number;
+    unknown: number;
+    skipped: number;
+  }> {
+    const jobs = this.options.store.restartUnknownGuestJobs(limit);
+    if (jobs.length === 0) return { inspected: 0, recovered: 0, unavailable: 0, unknown: 0, skipped: 0 };
+    const policy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+    let recovered = 0;
+    let unavailable = 0;
+    let unknown = 0;
+    let skipped = 0;
+    for (const job of jobs) {
+      const metadata = job.guestMetadata;
+      const auditRequestId = `job-guest-recovery-${job.jobId}-${job.revision}`;
+      if (metadata === undefined) {
+        unknown += 1;
+        continue;
+      }
+      const priorCompletion = this.options.store.auditEventResult(auditRequestId, "completion");
+      if (priorCompletion !== undefined) {
+        if (priorCompletion === "GUEST_RECOVERED") recovered += 1;
+        else if (priorCompletion !== "GUEST_RECOVERY_UNAVAILABLE" && priorCompletion !== "GUEST_RECOVERY_UNKNOWN") skipped += 1;
+        if (priorCompletion === "GUEST_RECOVERED" ||
+            (priorCompletion !== "GUEST_RECOVERY_UNAVAILABLE" && priorCompletion !== "GUEST_RECOVERY_UNKNOWN")) continue;
+      }
+      if (!this.options.store.auditEventExists(auditRequestId, "intent")) {
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_virtualization_guest_recovery",
+          eventType: "intent",
+          decision: "allow",
+          resultClass: "INTENT_RECORDED",
+          targetRef: `job:${job.jobId}`,
+          policyVersion: job.policyVersion,
+          evidence: {
+            jobId: job.jobId,
+            jobRevision: job.revision,
+            requestId: metadata.requestId,
+            requestDigest: metadata.requestDigest,
+            guestImageSha256: metadata.guestIdentity.imageSha256,
+            guestRuntimeVersion: metadata.guestIdentity.runtimeVersion
+          },
+          timestampMs: this.now()
+        });
+      }
+      const tool = policy.tools.get("mac_task_run");
+      if (policy.killSwitches.global || policy.killSwitches.process || tool?.implemented !== true || tool.enabled !== true ||
+          job.policyVersion !== policy.version || this.options.store.isRevoked("principal", job.ownerPrincipalId) ||
+          this.options.store.isRevoked("session", job.ownerSessionId) || this.taskRunner.mechanism !== "virtualization" ||
+          typeof this.taskRunner.recoverUnknownTask !== "function") {
+        unavailable += 1;
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_virtualization_guest_recovery",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: "GUEST_RECOVERY_UNAVAILABLE",
+          targetRef: `job:${job.jobId}`,
+          policyVersion: job.policyVersion,
+          evidence: { jobId: job.jobId, jobRevision: job.revision },
+          timestampMs: this.now()
+        });
+        continue;
+      }
+      const authorizeStatusLookup = (input: Parameters<NonNullable<TaskRecoveryRequest["authorizeStatusLookup"]>>[0]): void => {
+        const currentPolicy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+        const currentTool = currentPolicy.tools.get("mac_task_run");
+        if (input.originalRequestId !== metadata.requestId || input.originalNonce !== metadata.nonce ||
+            input.originalRequestDigest !== metadata.requestDigest || input.timeoutMs !== metadata.timeoutMs ||
+            input.outputCapBytes !== metadata.outputCapBytes ||
+            input.guestIdentity.imageSha256 !== metadata.guestIdentity.imageSha256 ||
+            input.guestIdentity.runtimeVersion !== metadata.guestIdentity.runtimeVersion) {
+          throw new BrokerError("POLICY_DENIED", "Guest status lookup is not bound to the persisted Job");
+        }
+        if (currentPolicy.killSwitches.global || currentPolicy.killSwitches.process || currentTool?.implemented !== true ||
+            currentTool.enabled !== true || job.policyVersion !== currentPolicy.version ||
+            this.options.store.isRevoked("principal", job.ownerPrincipalId) || this.options.store.isRevoked("session", job.ownerSessionId)) {
+          throw new BrokerError("REVOKED", "Guest status lookup authority is revoked");
+        }
+      };
+      let result;
+      try {
+        result = await this.taskRunner.recoverUnknownTask({
+          metadata,
+          authorizeStatusLookup,
+          shouldCancel: () => {
+            if (this.closing) return true;
+            try {
+              authorizeStatusLookup({
+                guestIdentity: metadata.guestIdentity,
+                originalRequestId: metadata.requestId,
+                originalNonce: metadata.nonce,
+                originalRequestDigest: metadata.requestDigest,
+                timeoutMs: metadata.timeoutMs,
+                outputCapBytes: metadata.outputCapBytes
+              });
+              return false;
+            } catch {
+              return true;
+            }
+          }
+        });
+      } catch (error) {
+        if (error instanceof BrokerError && error.errorClass === "POLICY_DENIED") unavailable += 1;
+        else unknown += 1;
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_virtualization_guest_recovery",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: error instanceof BrokerError && error.errorClass === "POLICY_DENIED" ? "GUEST_RECOVERY_UNAVAILABLE" : "GUEST_RECOVERY_UNKNOWN",
+          targetRef: `job:${job.jobId}`,
+          policyVersion: job.policyVersion,
+          evidence: { jobId: job.jobId, jobRevision: job.revision, errorClass: error instanceof BrokerError ? error.errorClass : "UNKNOWN" },
+          timestampMs: this.now()
+        });
+        continue;
+      }
+      if (result.state === "unknown" || result.verification.status !== "verified") {
+        unknown += 1;
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_virtualization_guest_recovery",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: "GUEST_RECOVERY_UNKNOWN",
+          targetRef: `job:${job.jobId}`,
+          policyVersion: job.policyVersion,
+          evidence: { jobId: job.jobId, jobRevision: job.revision, state: result.state, resultClass: result.resultClass, verification: result.verification.status },
+          timestampMs: this.now()
+        });
+        continue;
+      }
+      const terminalState = result.state === "completed" ? "completed" : result.state === "cancelled" ? "cancelled" : "failed";
+      const resultClass = result.resultClass === "SUCCEEDED" ? "success" : terminalState === "cancelled" ? "denied" : result.resultClass === "TIMEOUT" || result.resultClass === "OUTPUT_LIMIT" ? "failed" : "failed";
+      try {
+        authorizeStatusLookup({
+          guestIdentity: metadata.guestIdentity,
+          originalRequestId: metadata.requestId,
+          originalNonce: metadata.nonce,
+          originalRequestDigest: metadata.requestDigest,
+          timeoutMs: metadata.timeoutMs,
+          outputCapBytes: metadata.outputCapBytes
+        });
+        this.options.store.reconcileUnknownGuestTask(job.jobId, job.ownerPrincipalId, job.revision, {
+          state: terminalState,
+          resultClass,
+          finishedAtMs: this.now(),
+          exitCode: result.exitCode,
+          stdout: redactBoundedText(result.stdout, Math.max(1, Math.floor((tool?.outputCapBytes ?? 4_096) / 2))).text,
+          stderr: redactBoundedText(result.stderr, Math.max(1, Math.floor((tool?.outputCapBytes ?? 4_096) / 2))).text,
+          verificationStatus: "verified"
+        });
+        recovered += 1;
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_virtualization_guest_recovery",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: "GUEST_RECOVERED",
+          targetRef: `job:${job.jobId}`,
+          policyVersion: job.policyVersion,
+          evidence: { jobId: job.jobId, jobRevision: job.revision, state: terminalState, resultClass },
+          timestampMs: this.now()
+        });
+      } catch (error) {
+        unknown += 1;
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_virtualization_guest_recovery",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: "GUEST_RECOVERY_UNKNOWN",
+          targetRef: `job:${job.jobId}`,
+          policyVersion: job.policyVersion,
+          evidence: { jobId: job.jobId, jobRevision: job.revision, errorClass: error instanceof BrokerError ? error.errorClass : "UNKNOWN" },
+          timestampMs: this.now()
+        });
+      }
+    }
+    return { inspected: jobs.length, recovered, unavailable, unknown, skipped };
   }
 
   /**
@@ -2598,6 +2796,31 @@ export class Broker {
             recordedAtMs
           );
       };
+      const persistGuestRequest = (admission: VirtualizationGuestTaskAdmission): void => {
+        if (!execution.taskJob || !execution.jobLease) {
+          throw new BrokerError("EXECUTION_FAILED", "Guest request cannot be linked to its Job");
+        }
+        const recordedAtMs = this.now();
+        const metadata: GuestTaskJobMetadata = {
+          requestId: admission.requestId,
+          nonce: admission.nonce,
+          requestDigest: admission.requestDigest,
+          guestIdentity: { ...admission.guestIdentity },
+          profileDigest: admission.profileDigest,
+          taskDigest: admission.taskDigest,
+          timeoutMs: admission.timeoutMs,
+          outputCapBytes: admission.outputCapBytes,
+          recordedAtMs
+        };
+        execution.taskJob = this.options.store.recordJobGuestRequest(
+          execution.taskJob.jobId,
+          request.principal.principalId,
+          execution.taskJob.revision,
+          metadata,
+          execution.jobLease,
+          recordedAtMs
+        );
+      };
       const taskControl = this.executionControl(
         request,
         execution.target,
@@ -2606,7 +2829,8 @@ export class Broker {
         [],
         execution.jobLease,
         (snapshot) => persistTaskProcessSnapshot(snapshot, true),
-        (snapshot) => persistTaskProcessSnapshot(snapshot, false)
+        (snapshot) => persistTaskProcessSnapshot(snapshot, false),
+        persistGuestRequest
       );
       const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
         resolved,
@@ -3289,7 +3513,8 @@ export class Broker {
     additionalTargets: readonly NormalizedTarget[] = [],
     jobLease?: JobLease,
     onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void,
-    onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void
+    onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void,
+    onGuestRequestAdmitted?: (admission: VirtualizationGuestTaskAdmission) => void
   ) {
     let lastLeaseHeartbeatMs = Number.NEGATIVE_INFINITY;
     return {
@@ -3311,7 +3536,8 @@ export class Broker {
         }
       },
       ...(onProcessStarted === undefined ? {} : { onProcessStarted }),
-      ...(onProcessOwnershipChanged === undefined ? {} : { onProcessOwnershipChanged })
+      ...(onProcessOwnershipChanged === undefined ? {} : { onProcessOwnershipChanged }),
+      ...(onGuestRequestAdmitted === undefined ? {} : { onGuestRequestAdmitted })
     };
   }
 

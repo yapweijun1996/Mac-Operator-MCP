@@ -335,10 +335,29 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
   };
   const profile = resolvedGuestProfile();
   let sent: Record<string, unknown> | undefined;
+  let admitted: Record<string, unknown> | undefined;
   let closed = false;
   const transport: VirtualizationGuestTransport = {
-    async execute(input) {
+    async execute(input, options) {
       sent = input as unknown as Record<string, unknown>;
+      options?.onRequestAdmitted?.({
+        schemaVersion: "0.1",
+        protocolVersion: "0.1",
+        contractVersion: "0.1",
+        kind: "virtualization_guest_task",
+        requestId: "request:guest-0123456789abcdef",
+        nonce: "guest-nonce-0123456789abcdef",
+        timestampMs: 1,
+        expiresAtMs: 30_001,
+        guestIdentity: guest,
+        sandboxProfile: profile.sandboxProfile,
+        profileDigest: virtualizationProfileDigest(profile),
+        taskDigest: virtualizationTaskDigest(profile),
+        processTreePolicy: profile.processTreePolicy,
+        timeoutMs: 1_500,
+        outputCapBytes: 4_096,
+        operation: "task_run"
+      });
       return {
         schemaVersion: "0.1",
         protocolVersion: "0.1",
@@ -370,7 +389,11 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
   const result = await executor.run({
     profile,
     guestIdentity: guest,
-    control: { timeoutMs: 1_500, shouldCancel: () => false }
+    control: {
+      timeoutMs: 1_500,
+      shouldCancel: () => false,
+      onGuestRequestAdmitted: (value) => { admitted = value as unknown as Record<string, unknown>; }
+    }
   });
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(sent?.sandboxProfile, profile.sandboxProfile);
@@ -378,6 +401,25 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
   assert.equal(sent?.outputCapBytes, 4_096);
   assert.equal(sent?.profileDigest, virtualizationProfileDigest(profile));
   assert.equal(sent?.taskDigest, virtualizationTaskDigest(profile));
+  assert.equal(admitted?.requestId, "request:guest-0123456789abcdef");
+  assert.equal(admitted?.requestDigest, sha256(canonicalJson({
+    schemaVersion: "0.1",
+    protocolVersion: "0.1",
+    contractVersion: "0.1",
+    kind: "virtualization_guest_task",
+    requestId: "request:guest-0123456789abcdef",
+    nonce: "guest-nonce-0123456789abcdef",
+    timestampMs: 1,
+    expiresAtMs: 30_001,
+    guestIdentity: guest,
+    sandboxProfile: profile.sandboxProfile,
+    profileDigest: virtualizationProfileDigest(profile),
+    taskDigest: virtualizationTaskDigest(profile),
+    processTreePolicy: profile.processTreePolicy,
+    timeoutMs: 1_500,
+    outputCapBytes: 4_096,
+    operation: "task_run"
+  })));
   assert.equal("cwd" in (sent ?? {}), false);
   assert.equal("executable" in (sent ?? {}), false);
   assert.equal("args" in (sent ?? {}), false);
@@ -388,6 +430,72 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
     executor.run({ profile, guestIdentity: guest, control: { timeoutMs: 1_500, shouldCancel: () => false } }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
+});
+
+test("VirtualizationGuestTransportExecutor recovers only through the bound status lookup", async () => {
+  const guest: VirtualizationGuestIdentity = {
+    imageSha256: "2".repeat(64),
+    runtimeVersion: "macos-26.2-vz-1"
+  };
+  let authorized = false;
+  const metadata = {
+    requestId: "request:guest-0123456789abcdef",
+    nonce: "guest-nonce-0123456789abcdef",
+    requestDigest: "3".repeat(64),
+    guestIdentity: guest,
+    profileDigest: "4".repeat(64),
+    taskDigest: "5".repeat(64),
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    recordedAtMs: 2
+  } as const;
+  const transport: VirtualizationGuestTransport = {
+    async execute() { throw new Error("must not execute during recovery"); },
+    async lookup(input, options) {
+      options?.authorizeStatusLookup?.(input);
+      authorized = true;
+      return {
+        schemaVersion: "0.1",
+        protocolVersion: "0.1",
+        contractVersion: "0.1",
+        kind: "virtualization_guest_task_status_result",
+        requestId: "request:guest-status-0123456789abcdef",
+        nonce: "guest-status-nonce-0123456789abcdef",
+        guestIdentity: guest,
+        originalRequestId: metadata.requestId,
+        originalNonce: metadata.nonce,
+        originalRequestDigest: metadata.requestDigest,
+        statusRequestDigest: "6".repeat(64),
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "recovered",
+        stderr: "",
+        truncated: false,
+        durationMs: 5,
+        outputPolicy: "broker-redacted-v1",
+        verification: { status: "verified", summary: "guest status readback" }
+      };
+    },
+    close() {}
+  };
+  const executor = new VirtualizationGuestTransportExecutor({
+    available: true,
+    transport,
+    guestIdentity: guest,
+    attestation: guestAttestation(guest)
+  });
+  const result = await executor.recoverUnknownTask({
+    metadata,
+    authorizeStatusLookup: (input) => {
+      assert.equal(input.originalRequestId, metadata.requestId);
+      assert.equal(input.originalRequestDigest, metadata.requestDigest);
+    }
+  });
+  assert.equal(authorized, true);
+  assert.equal(result.state, "completed");
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(result.verification.status, "verified");
 });
 
 test("VirtualizationGuestTransportExecutor never publishes an unverified guest success", async () => {

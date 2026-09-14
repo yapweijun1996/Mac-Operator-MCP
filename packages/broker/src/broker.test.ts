@@ -12,7 +12,7 @@ import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { FilesystemInspector } from "./filesystem-inspector.js";
-import { BrokerStore, redactEvidence, type BrokerJob, type JobLease } from "./persistence.js";
+import { BrokerStore, redactEvidence, type BrokerJob, type GuestTaskJobMetadata, type JobLease } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import { SandboxExecTaskRunner } from "./task-runner.js";
@@ -246,6 +246,96 @@ test("restarted Broker recovers an exact task process identity without resolving
     await restartedBroker?.close();
     await broker.close();
     await running?.catch(() => undefined);
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("restarted Broker reconciles a guest Job only through an authenticated terminal status result", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-job-recovery-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const key = randomBytes(32);
+  const root = await realpath(directory);
+  let store = new BrokerStore(databasePath);
+  const metadata: GuestTaskJobMetadata = {
+    requestId: "request:guest-0123456789abcdef",
+    nonce: "guest-nonce-0123456789abcdef",
+    requestDigest: "a".repeat(64),
+    guestIdentity: { imageSha256: "b".repeat(64), runtimeVersion: "macos-guest-1" },
+    profileDigest: "c".repeat(64),
+    taskDigest: "d".repeat(64),
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    recordedAtMs: NOW + 2
+  };
+  const lease = { ownerId: "broker:guest-recovery", token: "lease:guest-recovery-1234", expiresAtMs: NOW + 30_000 };
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...basePolicy.tools.get("mac_task_run")!, enabled: true })
+  };
+  const taskRunner: TaskRunner = {
+    available: true,
+    mechanism: "virtualization",
+    isolationProof: null,
+    async run() { throw new Error("not used"); },
+    async recoverUnknownTask({ metadata: persisted, authorizeStatusLookup }) {
+      authorizeStatusLookup({
+        guestIdentity: persisted.guestIdentity,
+        originalRequestId: persisted.requestId,
+        originalNonce: persisted.nonce,
+        originalRequestDigest: persisted.requestDigest,
+        timeoutMs: persisted.timeoutMs,
+        outputCapBytes: persisted.outputCapBytes
+      });
+      return {
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "guest-recovered",
+        stderr: "",
+        truncated: false,
+        durationMs: 5,
+        verification: { status: "verified", summary: "authenticated guest status readback" }
+      };
+    }
+  };
+  let broker: Broker | undefined;
+  try {
+    store.createJob({
+      jobId: "job:guest-recovery",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task_profile:tests.echo",
+      policyVersion: "policy-0.1",
+      payloadDigest: "e".repeat(64),
+      idempotencyKey: "guest-recovery",
+      createdAtMs: NOW
+    });
+    const started = store.startJob("job:guest-recovery", "principal-1", 0, NOW + 1, lease);
+    store.recordJobGuestRequest("job:guest-recovery", "principal-1", started.revision, metadata, lease, NOW + 2);
+    store.close();
+    store = new BrokerStore(databasePath);
+    broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), taskRunner, now: () => NOW + 10 });
+    assert.deepEqual(await broker.reconcileRestartedGuestTasks(), {
+      inspected: 1,
+      recovered: 1,
+      unavailable: 0,
+      unknown: 0,
+      skipped: 0
+    });
+    const job = store.ownedJob("job:guest-recovery", "principal-1");
+    assert.equal(job?.state, "completed");
+    assert.equal(job?.resultClass, "success");
+    assert.equal(job?.guestMetadata, undefined);
+    assert.equal(store.auditEventResult("job-guest-recovery-job:guest-recovery-3", "completion"), "GUEST_RECOVERED");
+  } finally {
+    await broker?.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }

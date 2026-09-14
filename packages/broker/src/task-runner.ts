@@ -1,13 +1,16 @@
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import type { GuestTaskJobMetadata } from "./persistence.js";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
-import { validateUnsignedVirtualizationGuestResponse } from "./virtualization-guest-transport.js";
+import { validateUnsignedVirtualizationGuestResponse, validateUnsignedVirtualizationGuestStatusResponse, virtualizationGuestRequestDigest } from "./virtualization-guest-transport.js";
 import type {
   UnsignedVirtualizationGuestResponse,
+  UnsignedVirtualizationGuestStatusResponse,
   VirtualizationGuestExchangeOptions,
-  VirtualizationGuestRequestInput
+  VirtualizationGuestRequestInput,
+  VirtualizationGuestStatusLookupInput
 } from "./virtualization-guest-transport.js";
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
@@ -26,6 +29,25 @@ export interface TaskExecutionControl {
   shouldCancel: () => boolean;
   onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void;
   onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
+  onGuestRequestAdmitted?: (admission: VirtualizationGuestTaskAdmission) => void;
+}
+
+/** Non-secret identity captured immediately before a guest request is sent. */
+export interface VirtualizationGuestTaskAdmission {
+  requestId: string;
+  nonce: string;
+  requestDigest: string;
+  guestIdentity: VirtualizationGuestIdentity;
+  profileDigest: string;
+  taskDigest: string;
+  timeoutMs: number;
+  outputCapBytes: number;
+}
+
+export interface TaskRecoveryRequest {
+  metadata: GuestTaskJobMetadata;
+  shouldCancel?: () => boolean;
+  authorizeStatusLookup: (input: VirtualizationGuestStatusLookupInput) => void;
 }
 
 export type TaskVerificationStatus = "verified" | "failed" | "unknown" | "not_run";
@@ -103,6 +125,7 @@ export interface TaskRunner {
   /** Stop accepting work and drain any Broker-owned OS processes. */
   close?(): Promise<void>;
   run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult>;
+  recoverUnknownTask?(request: TaskRecoveryRequest): Promise<TaskExecutionResult>;
 }
 
 export class FailClosedTaskRunner implements TaskRunner {
@@ -274,6 +297,7 @@ export interface VirtualizationTaskExecutor {
   readonly guestIdentity: VirtualizationGuestIdentity | null;
   readonly attestation: VirtualizationGuestAttestation | null;
   run(request: VirtualizationTaskExecutionRequest): Promise<TaskExecutionResult>;
+  recoverUnknownTask?(request: TaskRecoveryRequest): Promise<TaskExecutionResult>;
   close?(): Promise<void>;
 }
 
@@ -284,6 +308,7 @@ export interface VirtualizationTaskExecutor {
  */
 export interface VirtualizationGuestTransport {
   execute(input: VirtualizationGuestRequestInput, options?: VirtualizationGuestExchangeOptions): Promise<UnsignedVirtualizationGuestResponse>;
+  lookup?(input: VirtualizationGuestStatusLookupInput, options?: VirtualizationGuestExchangeOptions): Promise<UnsignedVirtualizationGuestStatusResponse>;
   close(): void;
 }
 
@@ -337,8 +362,42 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
       processTreePolicy: request.profile.processTreePolicy,
       timeoutMs: Math.min(request.control.timeoutMs, request.profile.process.timeoutMs),
       outputCapBytes: request.profile.process.outputCapBytes
-    }, { shouldCancel: request.control.shouldCancel });
+    }, {
+      shouldCancel: request.control.shouldCancel,
+      onRequestAdmitted: (admitted) => request.control.onGuestRequestAdmitted?.({
+        requestId: admitted.requestId,
+        nonce: admitted.nonce,
+        requestDigest: virtualizationGuestRequestDigest(admitted),
+        guestIdentity: { ...admitted.guestIdentity },
+        profileDigest: admitted.profileDigest,
+        taskDigest: admitted.taskDigest,
+        timeoutMs: admitted.timeoutMs,
+        outputCapBytes: admitted.outputCapBytes
+      })
+    });
     return mapVirtualizationGuestResponse(response, this.guestIdentity);
+  }
+
+  async recoverUnknownTask(request: TaskRecoveryRequest): Promise<TaskExecutionResult> {
+    if (this.closed || !this.available) {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest transport executor is not available");
+    }
+    if (typeof this.transport.lookup !== "function") {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest status lookup is not enabled");
+    }
+    const metadata = request.metadata;
+    const response = await this.transport.lookup({
+      guestIdentity: { ...metadata.guestIdentity },
+      originalRequestId: metadata.requestId,
+      originalNonce: metadata.nonce,
+      originalRequestDigest: metadata.requestDigest,
+      timeoutMs: metadata.timeoutMs,
+      outputCapBytes: metadata.outputCapBytes
+    }, {
+      ...(request.shouldCancel === undefined ? {} : { shouldCancel: request.shouldCancel }),
+      authorizeStatusLookup: request.authorizeStatusLookup
+    });
+    return mapVirtualizationGuestStatusResponse(response, this.guestIdentity, metadata);
   }
 
   async close(): Promise<void> {
@@ -409,6 +468,25 @@ export class VirtualizationTaskRunner implements TaskRunner {
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("UNKNOWN_OUTCOME", "Virtualized task outcome could not be established", true);
+    }
+  }
+
+  async recoverUnknownTask(request: TaskRecoveryRequest): Promise<TaskExecutionResult> {
+    if (!this.available || this.isolationProof === null || this.executor === undefined ||
+        typeof this.executor.recoverUnknownTask !== "function") {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest status recovery is not enabled");
+    }
+    const guestIdentity = this.isolationProof.virtualizationGuest;
+    if (guestIdentity === undefined || !sameVirtualizationGuestIdentity(guestIdentity, this.executor.guestIdentity) ||
+        this.executor.attestation === null || !virtualizationAttestationMatchesProof(this.executor.attestation, this.isolationProof) ||
+        !sameVirtualizationGuestIdentity(guestIdentity, request.metadata.guestIdentity)) {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest identity is unavailable or changed");
+    }
+    try {
+      return await this.executor.recoverUnknownTask(request);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("UNKNOWN_OUTCOME", "Virtualized task status could not be established", true);
     }
   }
 }
@@ -712,4 +790,37 @@ function mapVirtualizationGuestResponse(
     });
   }
   throw new BrokerError("EXECUTION_FAILED", "Virtualization guest returned an unsupported result class");
+}
+
+function mapVirtualizationGuestStatusResponse(
+  response: UnsignedVirtualizationGuestStatusResponse,
+  expectedGuestIdentity: VirtualizationGuestIdentity,
+  expectedMetadata?: GuestTaskJobMetadata
+): TaskExecutionResult {
+  validateUnsignedVirtualizationGuestStatusResponse(response);
+  if (expectedMetadata !== undefined &&
+      (response.originalRequestId !== expectedMetadata.requestId ||
+       response.originalNonce !== expectedMetadata.nonce ||
+       response.originalRequestDigest !== expectedMetadata.requestDigest)) {
+    throw new BrokerError("CONFLICT", "Virtualization guest status response is not bound to the persisted Job");
+  }
+  return mapVirtualizationGuestResponse({
+    schemaVersion: response.schemaVersion,
+    protocolVersion: response.protocolVersion,
+    contractVersion: response.contractVersion,
+    kind: "virtualization_guest_task_result",
+    requestId: response.originalRequestId,
+    nonce: response.originalNonce,
+    guestIdentity: response.guestIdentity,
+    requestDigest: response.originalRequestDigest,
+    state: response.state,
+    resultClass: response.resultClass,
+    exitCode: response.exitCode,
+    stdout: response.stdout,
+    stderr: response.stderr,
+    truncated: response.truncated,
+    durationMs: response.durationMs,
+    outputPolicy: response.outputPolicy,
+    verification: response.verification
+  }, expectedGuestIdentity);
 }

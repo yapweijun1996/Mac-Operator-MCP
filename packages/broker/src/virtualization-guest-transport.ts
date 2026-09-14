@@ -266,6 +266,10 @@ export interface VirtualizationGuestTransportClientOptions {
 
 export interface VirtualizationGuestExchangeOptions {
   shouldCancel?: () => boolean;
+  /** Called only after request authentication and replay admission. */
+  onRequestAdmitted?: (request: UnsignedVirtualizationGuestRequest) => void;
+  /** Optional per-call Broker authority for a status lookup. */
+  authorizeStatusLookup?: (input: VirtualizationGuestStatusLookupInput) => void;
 }
 
 export function createVirtualizationGuestRequest(
@@ -550,6 +554,12 @@ export class VirtualizationGuestTransportClient {
       ...(this.expectedSandboxProfile === undefined ? {} : { expectedSandboxProfile: this.expectedSandboxProfile }),
       ...(this.expectedProfileDigest === undefined ? {} : { expectedProfileDigest: this.expectedProfileDigest })
     });
+    try {
+      options.onRequestAdmitted?.(request);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest request admission could not be persisted");
+    }
     const frame = Buffer.from(JSON.stringify(signedRequest), "utf8");
     if (frame.byteLength > MAX_REQUEST_BYTES) {
       throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest request exceeded the byte limit");
@@ -577,7 +587,10 @@ export class VirtualizationGuestTransportClient {
     options: VirtualizationGuestExchangeOptions = {}
   ): Promise<UnsignedVirtualizationGuestStatusResponse> {
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest transport is closed");
-    if (this.authorizeStatusLookup === undefined) {
+    const authorizers = [this.authorizeStatusLookup, options.authorizeStatusLookup].filter(
+      (value): value is (input: VirtualizationGuestStatusLookupInput) => void => value !== undefined
+    );
+    if (authorizers.length === 0) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest status lookup authority is unavailable");
     }
     const authorizedInput: VirtualizationGuestStatusLookupInput = {
@@ -585,7 +598,9 @@ export class VirtualizationGuestTransportClient {
       guestIdentity: { ...input.guestIdentity }
     };
     try {
-      this.authorizeStatusLookup(authorizedInput);
+      for (const authorizeStatusLookup of authorizers) {
+        authorizeStatusLookup({ ...authorizedInput, guestIdentity: { ...authorizedInput.guestIdentity } });
+      }
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("POLICY_DENIED", "Virtualization guest status lookup is not authorized");
