@@ -1692,7 +1692,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
         stderr: "",
         truncated: false,
         durationMs: 1,
-        verification: { status: "verified", summary: "fake isolated runner read back its postcondition" }
+        verification: { status: "verified", summary: "token=super-secret-value" }
       };
     }
   };
@@ -1744,6 +1744,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
         truncated: false
       });
       assert.equal(result.verification.status, "verified");
+      assert.equal((result.verification.evidence as { summary: string }).summary, "[REDACTED]");
     }
     const jobId = store.requestRecord("task-success")!.jobId!;
     assert.equal(store.ownedJob(jobId, "principal-1")?.state, "completed");

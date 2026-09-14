@@ -20,6 +20,9 @@ text do not cross the guest protocol.
 
 Guest responses apply the bounded Broker log-redaction policy to stdout,
 stderr, and verification summaries before they cross the guest protocol.
+The host Broker applies the same policy again to runner verification summaries
+before publishing a successful `mac_task_run` envelope, so a non-Guest runner
+cannot bypass the result boundary.
 `VirtualizationGuestProcessExecutor` is a concrete ProcessSupervisor adapter
 for a future guest image, but remains unavailable unless both explicit enable
 and independently accepted isolation-evidence gates are true. Process bounds

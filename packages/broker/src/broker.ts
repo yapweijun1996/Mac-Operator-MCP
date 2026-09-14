@@ -2846,6 +2846,9 @@ export class Broker {
       const streamCap = Math.max(1, Math.floor(outputCapBytes / 2));
       const stdout = redactBoundedText(taskResult.stdout, streamCap);
       const stderr = redactBoundedText(taskResult.stderr, streamCap);
+      const verificationSummary = taskResult.verification.summary === undefined
+        ? undefined
+        : redactBoundedText(taskResult.verification.summary, 512).text;
       const finished = !outputBudgetExceeded && !timeoutBudgetExceeded && taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
       const terminalState = finished ? "completed" : timeoutBudgetExceeded || taskResult.state === "timed_out" ? "failed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
       const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : timeoutBudgetExceeded || taskResult.state === "timed_out" || outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT" ? "failed" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
@@ -2881,7 +2884,7 @@ export class Broker {
           required: true,
           status: "verified",
           strategy: resolved.verificationStrategy,
-          evidence: { summary: taskResult.verification.summary ?? "Task exit status and declared task verification passed" }
+          evidence: { summary: verificationSummary ?? "Task exit status and declared task verification passed" }
         },
         truncated: taskResult.truncated || stdout.truncated || stderr.truncated,
         auditTarget: `task_profile:${resolved.profile}`,

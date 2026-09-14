@@ -34,7 +34,8 @@ environment entries, rechecks canonical executable/cwd/root targets at
 admission, and dispatches only fixed startup-owned process material. A
 bounded terminal ledger serves status recovery, maps timeout/cancellation/
 output failures to stable redacted results, and keeps the process adapter
-behind an explicit isolation-evidence gate. Focused guest-executor tests pass
+behind an explicit isolation-evidence gate. The host Broker also redacts task
+verification summaries before publishing the final success envelope. Focused guest-executor tests pass
 7/7 and the full physical-Darwin regression passes 569/569 with 0 skipped
 tests. This proves manifest binding and executor semantics only; it does not
 claim a bootable guest, guest filesystem/network/credential isolation, or

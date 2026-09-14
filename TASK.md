@@ -31,7 +31,8 @@ environment entries, rechecks canonical targets, and passes only fixed
 manifest material to a bounded process adapter. Terminal outcomes are kept in
 a bounded status ledger with stable redacted summaries; active work is
 cancelled before executor close can publish success; the concrete process
-adapter remains evidence-gated. Focused guest-executor tests pass 7/7; the
+adapter remains evidence-gated. The host Broker redacts runner verification
+summaries before publishing task success. Focused guest-executor tests pass 7/7; the
 full physical-Darwin regression passes 569/569 with 0 skipped tests. Guest
 isolation evidence, bootable image deployment, and `mac_task_run` enablement
 remain open. Evidence:
