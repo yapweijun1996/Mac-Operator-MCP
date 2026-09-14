@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization guest native-handle fencing addendum: the Native
+Virtualization.framework lifecycle no longer resurrects a closed handle when
+retained async work completes. Its validity marker is atomic, and the serial
+queue remains available until finalization so delayed callbacks fail closed
+instead of dispatching through a null queue. Native build and focused
+VM-native tests pass 7/7; the complete physical-Darwin regression passes
+576/576 with 0 skipped tests. VM boot, guest isolation, production
+attestation, and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-native-handle-fencing.md`.
+
 Local IPC shutdown-drain addendum: all Node owner-only/local UDS servers now
 own an accepted-socket set and destroy those sockets before waiting for server
 close, preventing idle peers from extending shutdown to the read timeout.

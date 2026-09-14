@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Virtualization guest native-handle fencing addendum: the native lifecycle
+handle validity marker is atomic, is not reset by retained async transition
+completion, and the dispatch queue remains alive until the external handle is
+finalized. This closes a native use-after-close resurrection/null-queue race;
+it does not claim VM boot or guest isolation evidence. Native lifecycle build,
+focused VM-native tests (7/7), typecheck, lint, contract verification, diff
+check, and the complete physical-Darwin suite (576/576, 0 skipped) pass.
+Evidence: `evidence/2026-09-15-virtualization-native-handle-fencing.md`.
+
 Local IPC shutdown-drain addendum: Broker, Approval, Authority Control,
 Broker Status, Policy Signer, and Privileged Helper Node UDS servers track and
 destroy accepted sockets before close waits. The idle-peer regression passes;

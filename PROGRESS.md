@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization guest native-handle fencing addendum: the native VM lifecycle
+adapter now uses an atomic handle-validity marker, never restores that marker
+after a retained async transition completes, and keeps the serial dispatch
+queue alive until the external handle finalizer. This prevents a closed handle
+from being resurrected and lets in-flight callbacks observe the closed state
+instead of dispatching through a null queue. Native build, focused VM-native
+tests (7/7), and the complete physical-Darwin regression (576/576, 0 skipped)
+pass. Evidence: `evidence/2026-09-15-virtualization-native-handle-fencing.md`.
+
 Local IPC shutdown-drain addendum: Node UDS servers for Broker, Approval,
 Authority Control, Broker Status, Policy Signer, and Privileged Helper now
 track and destroy accepted sockets before close waits. The cross-channel IPC
