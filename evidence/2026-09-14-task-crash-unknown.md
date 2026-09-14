@@ -10,17 +10,20 @@ Scope: Broker task result mapping after an observed child crash; no production c
 npm run typecheck
 npm run build
 MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/process-supervisor.test.js packages/broker/dist/sandbox-profile.test.js packages/broker/dist/task-runner.test.js
+MOPS_REAL_SANDBOX=1 node --test packages/broker/dist/broker.test.js packages/broker/dist/process-supervisor.test.js packages/broker/dist/sandbox-profile.test.js packages/broker/dist/task-runner.test.js
 MOPS_REAL_SANDBOX=1 npm test
 ```
 
 ## Observed result
 
-- Focused process-supervisor/sandbox/task-runner suite: 33/33 passed.
-- Full real-sandbox suite: 452/453 passed, 0 failed, 1 explicit host-boundary/opt-in skip.
+- Focused Broker/process-supervisor/sandbox/task-runner suite: 106/106 passed.
+- Full real-sandbox suite: 453/454 passed, 0 failed, 1 explicit host-boundary/opt-in skip.
 - A `SandboxExecTaskRunner` result with `EXECUTION_FAILED` plus `SIGKILL`
   is mapped to `state: unknown`, `resultClass: UNKNOWN_OUTCOME`, and unknown
   verification with a side-effect warning. Explicit timeout, cancellation, and
   output-limit classes retain their dedicated bounded outcomes.
+- The real Broker integration returns `UNKNOWN_OUTCOME` after a profile-owned
+  child self-terminates and leaves both the Request and Job unresolved.
 
 ## Boundary
 

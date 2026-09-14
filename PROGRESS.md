@@ -14,10 +14,11 @@ Evidence: `evidence/2026-09-14-process-identity-startup-retry.md`.
 Latest task-crash mapping addendum: `SandboxExecTaskRunner` maps an observed
 `SIGKILL`/signal execution failure to `UNKNOWN_OUTCOME` with unknown
 verification, preserving a Broker Job as unresolved when a writes-local task
-may have partially changed state before crashing. Focused
-process-supervisor/sandbox/task-runner tests pass 33/33; the full real-sandbox
-suite passes 452/453 with one explicit host-boundary/opt-in skip. Explicit
-timeout, cancellation, and output-limit classes remain distinct. Evidence:
+may have partially changed state before crashing. A real Broker integration
+confirms the Request and Job remain unresolved. Focused
+Broker/process-supervisor/sandbox/task-runner tests pass 106/106; the full
+real-sandbox suite passes 453/454 with one explicit host-boundary/opt-in skip.
+Explicit timeout, cancellation, and output-limit classes remain distinct. Evidence:
 `evidence/2026-09-14-task-crash-unknown.md`.
 
 Latest process-crash addendum: `ProcessSupervisor` treats a non-null child

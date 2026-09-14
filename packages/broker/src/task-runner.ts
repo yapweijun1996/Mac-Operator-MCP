@@ -141,10 +141,13 @@ export class SandboxExecTaskRunner implements TaskRunner {
     requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
     const filesystemIdentity = captureTaskFilesystemIdentity(profile, this.filesystemIdentityObserver);
     const args = buildSandboxExecArguments(profile);
-    const onStarted = (snapshot: ProcessOwnershipSnapshot): void => {
-      assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
-      control.onProcessStarted?.(snapshot);
-    };
+    const requiresOwnershipPersistence = control.onProcessStarted !== undefined || control.onProcessOwnershipChanged !== undefined;
+    const onStarted = requiresOwnershipPersistence
+      ? (snapshot: ProcessOwnershipSnapshot): void => {
+        assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
+        control.onProcessStarted?.(snapshot);
+      }
+      : undefined;
     let result: ProcessExecutionResult;
     try {
       result = await this.supervisor.run({
@@ -155,7 +158,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
         timeoutMs: Math.min(control.timeoutMs, profile.process.timeoutMs),
         outputCapBytes: profile.process.outputCapBytes,
         shouldCancel: control.shouldCancel,
-        onStarted,
+        ...(onStarted === undefined ? {} : { onStarted }),
         ...(control.onProcessOwnershipChanged === undefined ? {} : { onOwnershipChanged: control.onProcessOwnershipChanged })
       });
     } catch (error) {

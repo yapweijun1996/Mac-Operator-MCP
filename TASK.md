@@ -11,7 +11,8 @@ already exited. Evidence:
 
 Task-crash mapping addendum: an observed child signal is retained as
 `UNKNOWN_OUTCOME` at the task boundary so writes-local work cannot be reported
-successful without post-crash attribution. Evidence:
+successful without post-crash attribution; a real Broker integration confirms
+the Request and Job remain unresolved. Evidence:
 `evidence/2026-09-14-task-crash-unknown.md`.
 
 Process-crash addendum: an observed child termination signal is now classified

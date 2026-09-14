@@ -289,7 +289,11 @@ test("SandboxExecTaskRunner rejects a task-root volume swap at process start", a
   try {
     if (process.platform !== "darwin") return;
     await assert.rejects(
-      runner.run(resolvedProfile(root), { timeoutMs: 1_000, shouldCancel: () => false }),
+      runner.run(resolvedProfile(root), {
+        timeoutMs: 1_000,
+        shouldCancel: () => false,
+        onProcessStarted: () => undefined
+      }),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
     );
     assert.equal(supervisorCalled, true);

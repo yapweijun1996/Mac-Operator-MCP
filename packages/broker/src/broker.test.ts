@@ -1863,6 +1863,91 @@ test("real macOS Broker task path enforces a profile-owned network allowlist", {
   }
 });
 
+test("real macOS Broker task crash keeps the Job unknown", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-crash-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.crash"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([{
+      schemaVersion: "0.1",
+      profile: "tests.crash",
+      executable: "/bin/bash",
+      fixedArgs: ["-c", "kill -KILL $$"],
+      allowedCwdRoots: [root],
+      allowedArgumentPattern: "^$",
+      maxArguments: 0,
+      environment: {},
+      filesystemRoots: [root],
+      networkPolicy: "none",
+      networkAllowlist: [],
+      credentialPolicy: "none",
+      processTreePolicy: "single_process",
+      sandboxProfile: "deny-default-v0.1",
+      timeoutMs: 2_000,
+      outputCapBytes: 1_024,
+      verificationStrategy: "exit_status_and_declared_task_verification",
+      enabled: true
+    }]),
+    taskRunner: new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      isolationProof: { ...testTaskIsolationProof(), evidenceRef: "evidence://real-broker-task-crash" }
+    }),
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.crash", cwd: root, args: [] };
+  const request = unsigned({
+    requestId: "task-real-crash",
+    nonce: "task-real-crash-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-real-crash",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.crash",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "UNKNOWN_OUTCOME", JSON.stringify(result));
+    assert.equal(store.requestRecord("task-real-crash")?.state, "UNKNOWN");
+    const jobId = store.requestRecord("task-real-crash")?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
+    assert.equal(store.ownedJob(jobId, "principal-1")?.resultClass, "unknown");
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("real macOS Broker task cancellation drains the process after session revocation", {
   skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
 }, async () => {
