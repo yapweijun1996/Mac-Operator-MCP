@@ -48,7 +48,7 @@ diff checks pass. Independent native number-vector expansion and final release
 evidence remain unproven. Evidence:
 `evidence/2026-09-15-cross-runtime-json-number-canonicalization.md`.
 
-Capability-family capacity addendum: source revisions `db129b3` and `0b7d3b9` add schema-v9
+Capability-family capacity addendum: source revisions `db129b3`, `0b7d3b9`, and `d7c4689` add schema-v9
 request markers and durable BrokerStore admission gates for independent
 read/write/process/network/gui/destructive/privileged families. Family
 selection comes from the active Broker policy, is persisted before
@@ -57,7 +57,8 @@ transaction across handles. Empty legacy markers count against every requested
 family; malformed stored markers fail closed as `AUDIT_UNAVAILABLE`, including
 when the new request is family-less. Focused Broker/persistence tests pass
 123/123 with 6 explicit skips; the complete physical-Darwin suite passes
-597/597 with 0 skipped tests. Build,
+597/597 with 0 skipped tests; RequestRecord and the versioned ledger schema
+read back the resolved family list while preserving legacy records. Build,
 typecheck, lint, contract verification, native canonical probe, and diff
 checks pass. Adapter-specific semantic quotas, kernel/disk/depth limits,
 installed service evidence, and final release acceptance remain unproven.
