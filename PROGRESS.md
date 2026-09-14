@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Local IPC framing hardening addendum: the Privileged Helper, Policy Signer,
+and Broker Status owner-only channels now reject non-whitespace bytes after
+their authenticated first frame before replay admission, status readback, or
+mutation. Their clients reject appended response frames as well. The complete
+physical-Darwin regression passes 573/573 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-local-ipc-framing-hardening.md`.
+
 Capability kill-switch readback addendum: `mac_capabilities` now evaluates
 both persisted runtime switches and signed-policy family kill-switches before
 advertising an enabled capability. Disabled families return the stable
