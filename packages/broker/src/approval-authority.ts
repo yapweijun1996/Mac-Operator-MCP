@@ -104,6 +104,9 @@ export class ApprovalAuthority {
     if (issuance.nonceExpiresAtMs <= nowMs) {
       throw new BrokerError("AUTH_EXPIRED", "Approval issuance nonce has expired");
     }
+    if (issuance.approval.expiresAtMs <= nowMs) {
+      throw new BrokerError("AUTH_EXPIRED", "Approval has already expired");
+    }
     if (issuance.nonceExpiresAtMs <= issuance.timestampMs ||
         issuance.nonceExpiresAtMs > issuance.timestampMs + this.maxRequestAgeMs + this.allowedClockSkewMs) {
       throw new BrokerError("AUTH_EXPIRED", "Approval issuance nonce window is invalid");

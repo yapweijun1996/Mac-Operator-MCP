@@ -114,6 +114,24 @@ test("approval issuance rejects a current-expired nonce before persistence", asy
   }
 });
 
+test("approval issuance rejects an already-expired approval before persistence", async () => {
+  const context = await fixture();
+  try {
+    const issuedAtMs = NOW - 1_000;
+    const approvalId = "approval:expired-approval";
+    const issuance = signed(
+      approval({ approvalId, issuedAtMs, expiresAtMs: NOW - 1 }),
+      context.key,
+      { timestampMs: issuedAtMs, nonceExpiresAtMs: NOW + 1_000 }
+    );
+    assert.throws(() => context.authority.issue(issuance), /Approval has already expired/u);
+    assert.equal(context.store.approvalRecord(approvalId), undefined);
+    assert.equal(context.store.auditRows().length, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("approval issuance nonce replay is denied after BrokerStore reopen", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-replay-"));
   const databasePath = join(directory, "broker.sqlite");
