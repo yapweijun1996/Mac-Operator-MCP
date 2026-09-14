@@ -4,10 +4,11 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Latest canonical JSON wire-profile addendum: commits `7860a00` and `a26a188`
+Latest canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`, and
+`1aa0eea`
 publish the versioned `jcs-utf8-v1` profile, exact UTF-8 byte helper, and a
-bounded read-only native Swift standard-library probe over four fixed SHA-256
-vectors. Focused TypeScript tests pass 2/2, the native probe passes 4/4, the
+bounded read-only native Swift standard-library probe over five fixed SHA-256
+vectors. Focused TypeScript tests pass 2/2, the native probe passes 5/5, the
 full physical-Darwin regression passes 535/535, and typecheck passes. This
 establishes repository and independent native serialization readback without
 changing existing digest bytes; the production Swift/C++ adapter, VM

@@ -3,7 +3,7 @@
 - Date: 2026-09-15
 - Host: physical Darwin arm64, macOS 26.2 (25C56)
 - Scope: request/response/ledger digest serialization; no capability enablement
-- Source revision: `a26a188`
+- Source revision: `1aa0eea`
 
 ## Boundary
 
@@ -22,8 +22,9 @@ also compares a TextDecoder round trip to the expected canonical string.
 
 The native probe `scripts/verify-canonical-json-native.sh` compiles a bounded,
 read-only Swift standard-library implementation (including its own JSON parser
-and SHA-256) and checks the same vector file. It reports `vectors:4,
-passed:4` on this host.
+and SHA-256) and checks the same vector file. It reports `vectors:5,
+passed:5` on this host, including the ECMAScript notation thresholds at
+`1e-6`, `1e-7`, `1e20`, and `1e21`.
 
 ```text
 npm run typecheck
@@ -31,7 +32,7 @@ node --test packages/contracts/dist/canonical-json.test.js
 npm run verify:canonical:native
 ```
 
-Result: 2/2 focused TypeScript tests, 4/4 native vectors, and the full
+Result: 2/2 focused TypeScript tests, 5/5 native vectors, and the full
 physical-Darwin regression on this source revision passed (535/535).
 
 ## Limits
