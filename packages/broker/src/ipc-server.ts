@@ -96,6 +96,11 @@ export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestByt
     socket.pause();
     chunks = [];
     try {
+      const trailing = combined.subarray(newline + 1);
+      if (trailing.some((byte) => !isAsciiWhitespace(byte))) {
+        writeResult(socket, failure("PRECONDITION_FAILED", "IPC request contains trailing data"));
+        return;
+      }
       const request = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
       writeResult(socket, await broker.handleForIpc(request));
     } catch {
@@ -108,7 +113,11 @@ function writeResult(socket: Socket, result: BrokerResult | AuthenticatedBrokerR
   if (!socket.destroyed) socket.end(`${JSON.stringify(result)}\n`);
 }
 
-function failure(errorClass: "AUTH_INVALID" | "OUTPUT_LIMIT", message: string): BrokerResult {
+function isAsciiWhitespace(byte: number): boolean {
+  return byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20;
+}
+
+function failure(errorClass: "AUTH_INVALID" | "OUTPUT_LIMIT" | "PRECONDITION_FAILED", message: string): BrokerResult {
   const error = new BrokerError(errorClass, message);
   return { ok: false, request_id: "invalid-request", tool: "unknown", result_class: error.errorClass, error: { message, retryable: false }, duration_ms: 0 };
 }

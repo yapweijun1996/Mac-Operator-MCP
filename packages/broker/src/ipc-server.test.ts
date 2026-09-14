@@ -42,7 +42,22 @@ test("IPC socket is owner-only and transports an authenticated request", async (
       policyVersion: "policy-0.1",
       authenticationKeyId: "edge-key-1"
     };
-    const response = await send(socketPath, `${JSON.stringify(signRequest(unsigned, key))}\n`);
+    const signed = signRequest(unsigned, key);
+    const trailing = JSON.parse(await send(socketPath, `${JSON.stringify(signed)}\n{}\n`)) as {
+      result_class: string;
+      request_id: string;
+      tool: string;
+    };
+    assert.deepEqual(trailing, {
+      result_class: "PRECONDITION_FAILED",
+      request_id: "invalid-request",
+      tool: "unknown",
+      ok: false,
+      error: { message: "IPC request contains trailing data", retryable: false },
+      duration_ms: 0
+    });
+    assert.deepEqual(store.auditRows(), []);
+    const response = await send(socketPath, `${JSON.stringify(signed)}\n`);
     assert.equal((JSON.parse(response) as { response: { ok: boolean } }).response.ok, true);
   } finally {
     await server.close();
