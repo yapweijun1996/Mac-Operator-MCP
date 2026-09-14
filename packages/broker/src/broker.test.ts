@@ -431,6 +431,35 @@ test("Broker bounds concurrent requests per principal session", async () => {
   }
 });
 
+test("Broker rejects unsafe request and session limits at construction", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-limits-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const base = {
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: testKeyring(randomBytes(32)),
+    now: () => NOW
+  };
+  try {
+    for (const limits of [
+      { maxRequestAgeMs: 0 },
+      { maxRequestAgeMs: 600_001 },
+      { allowedClockSkewMs: -1 },
+      { allowedClockSkewMs: 60_001 },
+      { maxActiveRequestsPerSession: 0 },
+      { maxActiveRequestsPerSession: 65 }
+    ]) {
+      assert.throws(
+        () => new Broker({ ...base, ...limits }),
+        /Broker request or session limits are invalid/u
+      );
+    }
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_process_inspect returns bounded detail for an authorized pid", async () => {
   const key = randomBytes(32);
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-inspect-"));
