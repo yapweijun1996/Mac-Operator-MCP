@@ -328,6 +328,7 @@ export class BrokerStore {
   private readonly faultInjector: ((point: PersistenceFaultPoint) => void) | undefined;
   private readonly auditAnchor: AuditAnchorManager | undefined;
   private pendingAuditAnchor: { sequence: number; eventHash: string } | undefined;
+  private auditAnchorUnavailable = false;
 
   constructor(path: string, options: BrokerStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
@@ -2497,6 +2498,9 @@ export class BrokerStore {
   }
 
   private runTransaction<T>(operation: () => T): T {
+    if (this.auditAnchorUnavailable) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Audit anchor publication is unavailable; Broker restart is required");
+    }
     this.pendingAuditAnchor = undefined;
     this.database.exec("BEGIN IMMEDIATE");
     let committed = false;
@@ -2520,8 +2524,16 @@ export class BrokerStore {
   }
 
   private publishPendingAuditAnchor(anchor: { sequence: number; eventHash: string } | undefined): void {
-    if (anchor === undefined) return;
-    this.auditAnchor?.publish(anchor.sequence, anchor.eventHash);
+    if (anchor === undefined || this.auditAnchor === undefined) return;
+    try {
+      this.auditAnchor.publish(anchor.sequence, anchor.eventHash);
+    } catch {
+      // SQLite is already committed and cannot be rolled back here. Freeze
+      // further writes until the operator repairs the sidecar and restarts the
+      // Broker, so no later mutation can run with an unanchored audit tail.
+      this.auditAnchorUnavailable = true;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Audit anchor publication is unavailable; Broker restart is required");
+    }
   }
 
   private readSchemaVersion(): number {

@@ -431,9 +431,10 @@ skip. Evidence:
 
 Latest audit-outage addendum: a held owner-only audit-anchor lock now proves
 the post-commit publication failure boundary. The audit append returns
-retryable `AUDIT_UNAVAILABLE` after SQLite has committed, the sidecar remains
-at its previous tail, and the next BrokerStore startup rejects the mismatch.
-The focused persistence suite passes 41/41. Evidence:
+retryable `AUDIT_UNAVAILABLE` after SQLite has committed, the same BrokerStore
+freezes further writes, the sidecar remains at its previous tail, and the next
+BrokerStore startup rejects the mismatch. The focused persistence suite passes
+41/41. Evidence:
 `evidence/2026-09-14-audit-anchor-publication-outage.md`.
 
 Latest packaged-startup addendum: the compiled Broker service entrypoint now

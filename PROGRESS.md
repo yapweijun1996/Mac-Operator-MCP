@@ -39,8 +39,9 @@ Latest audit-outage addendum: a held audit-anchor sidecar lock now has a
 physical regression proving that SQLite commit and keyed-tail publication are
 separate failure boundaries. A post-commit publication outage returns the
 retryable `AUDIT_UNAVAILABLE` error, leaves the database ahead of the sidecar,
-and makes the next BrokerStore startup reject the mismatch. The focused
-persistence suite passes 41/41. Evidence:
+freezes further writes in the same BrokerStore, and makes the next BrokerStore
+startup reject the mismatch. The focused persistence suite passes 41/41.
+Evidence:
 `evidence/2026-09-14-audit-anchor-publication-outage.md`.
 
 Latest packaged-startup addendum: the compiled Broker service entrypoint now

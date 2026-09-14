@@ -360,6 +360,11 @@ test("audit anchor publication outage leaves the store ahead and blocks restart"
     );
     assert.equal(store.auditRows().length, 2);
     await rm(`${anchorPath}.lock`, { force: true });
+    assert.throws(
+      () => store!.appendAudit(auditEvent("anchor-outage-retry")),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    assert.equal(store.auditRows().length, 2);
     store.close();
     store = undefined;
     assert.throws(

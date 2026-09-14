@@ -18,9 +18,13 @@ the audit state as trustworthy.
 - A real owner-only sidecar lock blocks the second publication.
 - The second audit row is durably present in SQLite, but its append call fails
   with `AUDIT_UNAVAILABLE`.
+- After the lock is removed, the same BrokerStore remains write-frozen and
+  rejects a retry until the process is restarted.
 - After the lock is removed, reopening the same database fails with an audit
   anchor mismatch.
 - Persistence suite: 41/41 passed.
+- Full `MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`: 480 tests, 479
+  passed, 0 failed, 1 explicit opt-in install skip.
 
 ## Limits
 
