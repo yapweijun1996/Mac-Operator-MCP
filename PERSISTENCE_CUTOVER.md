@@ -40,6 +40,14 @@ commands, environment variables, logs, or MCP requests.
 2. Stop the Broker through the installed service owner, then verify the
    owner-only instance lock is released and no old process identity remains.
    Do not copy or replace a live SQLite file under an active Broker.
+   If the audit-anchor sibling lock remains, do not remove it by age or PID.
+   Keep admission disabled, verify the Broker LaunchAgent/process identity is
+   absent, and record the anchor and lock device/inode, owner, mode, and
+   canonical parent through the reviewed host recovery boundary. Remove only
+   that exact owner-only lock after the stopped-service precondition, `fsync`
+   the parent directory, and preserve the readback as operator evidence. If
+   any identity or ownership check is uncertain, leave the lock in place and
+   restore an authenticated backup into a fresh destination instead.
 3. Call the host-only `BrokerStore.backupTo` boundary. Confirm the resulting
    `.sqlite.enc` manifest, key ID, file owner/mode, source identity, SQLite
    `quick_check`, audit-chain verification, and encrypted publication readback.
@@ -99,4 +107,6 @@ this final readback and the operator audit completion are durable.
 and the transactional migration registry are implemented and test-covered.
 The runbook's installed launchd stop/start, production artifact signing,
 external anchoring, operator approval, and service cutover steps remain host
-operations and are not automated by this repository.
+operations and are not automated by this repository. Audit-anchor lock
+recovery is intentionally a stopped-service, exact-target host operation;
+there is no age-based or PID-based automatic cleanup path.
