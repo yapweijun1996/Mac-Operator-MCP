@@ -58,6 +58,23 @@ test("Broker status IPC authenticates readback and rejects durable replay", asyn
     const trailing = await sendStatus(socketPath, signBrokerStatusRequest(request, authenticationKey), "{}\n");
     assert.equal(trailing.ok, false);
     if (!trailing.ok) assert.equal(trailing.resultClass, "PRECONDITION_FAILED");
+
+    const expired: UnsignedBrokerStatusRequest = {
+      ...request,
+      requestId: `request:broker-status-${"c".repeat(16)}`,
+      nonce: `broker-status-nonce-${"d".repeat(16)}`,
+      timestampMs: NOW - 120_000,
+      expiresAtMs: NOW - 60_000
+    };
+    const expiredResponse = await sendStatus(socketPath, signBrokerStatusRequest(expired, authenticationKey));
+    assert.equal(expiredResponse.ok, false);
+    if (!expiredResponse.ok) {
+      assert.equal(expiredResponse.resultClass, "AUTH_EXPIRED");
+      const authenticated = authenticateBrokerStatusResponse(expiredResponse, expired, authenticationKey);
+      assert.equal(authenticated.ok, false);
+      if (!authenticated.ok) assert.equal(authenticated.resultClass, "AUTH_EXPIRED");
+    }
+
     const first = await sendStatus(socketPath, signBrokerStatusRequest(request, authenticationKey));
     assert.equal(first.ok, true);
     if (first.ok) {

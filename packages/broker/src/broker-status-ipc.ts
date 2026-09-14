@@ -209,6 +209,7 @@ export class BrokerStatusIpcServer {
       let response: BrokerStatusResponse;
       try {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+        request = unsignedBrokerStatusCandidate(raw);
         request = authenticateBrokerStatusRequest(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
         if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
           throw new BrokerError("PRECONDITION_FAILED", "Broker status request contained trailing data");
@@ -392,6 +393,28 @@ function parseSignedBrokerStatusRequest(raw: unknown): { unsigned: UnsignedBroke
   delete (unsigned as unknown as Record<string, unknown>).authenticationProof;
   validateUnsignedBrokerStatusRequest(unsigned);
   return { unsigned, authenticationProof: value.authenticationProof };
+}
+
+/**
+ * Recover a structurally valid unsigned request before freshness/auth checks
+ * so callers can authenticate stable failures such as AUTH_EXPIRED or
+ * REPLAY_DENIED. This candidate is never admitted or used for status access.
+ */
+function unsignedBrokerStatusCandidate(raw: unknown): UnsignedBrokerStatusRequest | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const allowed = [
+    "protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "authenticationProof"
+  ];
+  if (!sameKeys(record, allowed) || typeof record.authenticationProof !== "string") return undefined;
+  const candidate = { ...record } as unknown as UnsignedBrokerStatusRequest & { authenticationProof?: string };
+  delete candidate.authenticationProof;
+  try {
+    validateUnsignedBrokerStatusRequest(candidate);
+    return candidate;
+  } catch {
+    return undefined;
+  }
 }
 
 function fallbackRequest(): UnsignedBrokerStatusRequest {
