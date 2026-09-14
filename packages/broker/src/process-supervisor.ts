@@ -122,6 +122,7 @@ export interface ProcessExecutionResult {
 export class ProcessSupervisor {
   private activeProcesses = 0;
   private readonly activeRuns = new Set<ActiveProcessRun>();
+  private readonly pendingStarts = new Set<Promise<void>>();
   private readonly maxConcurrent: number;
   private readonly pollIntervalMs: number;
   private readonly terminationGraceMs: number;
@@ -150,93 +151,109 @@ export class ProcessSupervisor {
     if (this.cancelled(request.shouldCancel)) {
       throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
     }
-    if (this.activeProcesses >= this.maxConcurrent) {
+    if (this.activeProcesses + this.pendingStarts.size >= this.maxConcurrent) {
       throw new BrokerError("CONFLICT", "Process capacity is exhausted", true);
     }
 
     const environment = Object.fromEntries(Object.entries(request.environment ?? {}));
     const startedAtMs = Date.now();
+    let resolvePendingStart!: () => void;
+    const pendingStart = new Promise<void>((resolve) => { resolvePendingStart = resolve; });
+    this.pendingStarts.add(pendingStart);
+    let pendingStartReleased = false;
+    const releasePendingStart = (): void => {
+      if (pendingStartReleased) return;
+      pendingStartReleased = true;
+      this.pendingStarts.delete(pendingStart);
+      resolvePendingStart();
+    };
     let child: ChildProcess;
     try {
-      child = spawn(request.executable, [...request.args], {
-        cwd: request.cwd,
-        env: environment,
-        shell: false,
-        detached: true,
-        stdio: ["ignore", "pipe", "pipe"]
-      });
-    } catch {
-      throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
-    }
-    const childPid = child.pid;
-    if (typeof childPid !== "number" || !Number.isSafeInteger(childPid) || childPid <= 0) {
-      child.kill("SIGKILL");
-      throw new BrokerError("EXECUTION_FAILED", "Child process did not expose a valid process identity");
-    }
-    const processId = childPid;
-    const processTree = createProcessTreeTracker(processId);
-    if (process.platform === "darwin" && processTree === undefined) {
-      const drained = await this.abortUnownedProcess(child, processId, processTree);
-      if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
-      throw new BrokerError("POLICY_DENIED", "Process tree observer is unavailable");
-    }
-    if (request.onStarted !== undefined) {
-      const startTimeMicros = processTree === undefined
-        ? undefined
-        : await waitForRootProcessIdentity(processTree, child);
-      if (processTree === undefined || startTimeMicros === undefined) {
-        const drained = await this.abortUnownedProcess(child, processId, processTree);
-        if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
-        throw new BrokerError("POLICY_DENIED", "Process identity could not be captured");
-      }
       try {
-        processTree.sample();
-        if (processTree.observationFailed) {
-          throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
-        }
-        request.onStarted({
-          identity: { pid: processId, processGroupId: processId, startTimeMicros },
-          descendants: processTree.snapshotDescendants()
+        child = spawn(request.executable, [...request.args], {
+          cwd: request.cwd,
+          env: environment,
+          shell: false,
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"]
         });
-      } catch (error) {
+      } catch {
+        throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
+      }
+      const childPid = child.pid;
+      if (typeof childPid !== "number" || !Number.isSafeInteger(childPid) || childPid <= 0) {
+        child.kill("SIGKILL");
+        throw new BrokerError("EXECUTION_FAILED", "Child process did not expose a valid process identity");
+      }
+      const processId = childPid;
+      const processTree = createProcessTreeTracker(processId);
+      if (process.platform === "darwin" && processTree === undefined) {
         const drained = await this.abortUnownedProcess(child, processId, processTree);
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
-        if (error instanceof BrokerError) throw error;
-        throw new BrokerError("AUDIT_UNAVAILABLE", "Process identity could not be persisted");
+        throw new BrokerError("POLICY_DENIED", "Process tree observer is unavailable");
       }
-    }
-    if (this.closing || this.cancelled(request.shouldCancel)) {
-      const drained = await this.abortUnownedProcess(child, processId, processTree);
-      if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
-      throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
-    }
-    this.activeProcesses += 1;
-    let stopRun: (() => void) | undefined;
-    let resolveDrained!: () => void;
-    let drained = false;
-    const drainedPromise = new Promise<void>((resolve) => { resolveDrained = resolve; });
-    const activeRun: ActiveProcessRun = {
-      stop: () => stopRun?.(),
-      drained: drainedPromise
-    };
-    // Register before observing: an ownership callback can fail synchronously
-    // during the first sample, and release() must then be able to remove the
-    // run from the active set instead of leaving a close-time ghost entry.
-    this.activeRuns.add(activeRun);
-    return this.observe(
-      child,
-      request,
-      processId,
-      startedAtMs,
-      processTree,
-      (stop) => { stopRun = stop; },
-      () => {
-        if (drained) return;
-        drained = true;
-        resolveDrained();
-        this.activeRuns.delete(activeRun);
+      if (request.onStarted !== undefined) {
+        const startTimeMicros = processTree === undefined
+          ? undefined
+          : await waitForRootProcessIdentity(processTree, child);
+        if (processTree === undefined || startTimeMicros === undefined) {
+          const drained = await this.abortUnownedProcess(child, processId, processTree);
+          if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
+          throw new BrokerError("POLICY_DENIED", "Process identity could not be captured");
+        }
+        try {
+          processTree.sample();
+          if (processTree.observationFailed) {
+            throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
+          }
+          request.onStarted({
+            identity: { pid: processId, processGroupId: processId, startTimeMicros },
+            descendants: processTree.snapshotDescendants()
+          });
+        } catch (error) {
+          const drained = await this.abortUnownedProcess(child, processId, processTree);
+          if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
+          if (error instanceof BrokerError) throw error;
+          throw new BrokerError("AUDIT_UNAVAILABLE", "Process identity could not be persisted");
+        }
       }
-    );
+      if (this.closing || this.cancelled(request.shouldCancel)) {
+        const drained = await this.abortUnownedProcess(child, processId, processTree);
+        if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
+        throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
+      }
+      this.activeProcesses += 1;
+      let stopRun: (() => void) | undefined;
+      let resolveDrained!: () => void;
+      let drained = false;
+      const drainedPromise = new Promise<void>((resolve) => { resolveDrained = resolve; });
+      const activeRun: ActiveProcessRun = {
+        stop: () => stopRun?.(),
+        drained: drainedPromise
+      };
+      // Register before observing: an ownership callback can fail synchronously
+      // during the first sample, and release() must then be able to remove the
+      // run from the active set instead of leaving a close-time ghost entry.
+      this.activeRuns.add(activeRun);
+      releasePendingStart();
+      return this.observe(
+        child,
+        request,
+        processId,
+        startedAtMs,
+        processTree,
+        (stop) => { stopRun = stop; },
+        () => {
+          if (drained) return;
+          drained = true;
+          resolveDrained();
+          this.activeRuns.delete(activeRun);
+        }
+      );
+    } catch (error) {
+      releasePendingStart();
+      throw error;
+    }
   }
 
   activeCount(): number {
@@ -457,8 +474,12 @@ export class ProcessSupervisor {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closing = true;
     const activeRuns = [...this.activeRuns];
+    const pendingStarts = [...this.pendingStarts];
     for (const run of activeRuns) run.stop();
-    this.closePromise = Promise.all(activeRuns.map((run) => run.drained)).then(() => undefined);
+    this.closePromise = Promise.all([
+      ...activeRuns.map((run) => run.drained),
+      ...pendingStarts
+    ]).then(() => undefined);
     return this.closePromise;
   }
 

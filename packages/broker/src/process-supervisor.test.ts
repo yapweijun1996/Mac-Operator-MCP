@@ -333,6 +333,32 @@ test("process supervisor close drains owned processes and rejects new work", asy
   assert.strictEqual(supervisor.close(), closePromise);
 });
 
+test("process supervisor close waits for a startup that is proving ownership", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Startup ownership persistence uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ maxConcurrent: 1, pollIntervalMs: 5, terminationGraceMs: 50 });
+  let closePromise: Promise<void> | undefined;
+  let closeResolved = false;
+  const starting = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["10"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100,
+    onStarted: () => {
+      closePromise = supervisor.close();
+      void closePromise.then(() => { closeResolved = true; });
+    }
+  });
+  await assert.rejects(starting, (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED");
+  assert.ok(closePromise);
+  await closePromise;
+  assert.equal(closeResolved, true);
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor does not retain a synchronously aborted ownership run", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Synchronous ownership sampling uses the macOS native process observer");

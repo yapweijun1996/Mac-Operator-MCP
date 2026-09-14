@@ -94,6 +94,18 @@ option off, and crashed-process, detached-worker, launchd, and installed-service
 evidence remain open. Evidence:
 `evidence/2026-09-14-broker-runtime-fence.md`.
 
+Latest process-start admission addendum: `ProcessSupervisor` now counts a
+child from validated spawn through PID/start-time observation and ownership
+persistence, so pending starts consume shared concurrency capacity. Broker
+shutdown also waits for those pending starts to abort and release their
+capacity; it cannot return while an untracked startup is still proving
+ownership. The focused Darwin ProcessSupervisor suite passes 22/22, and the
+full `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 486/486, including the temporary LaunchAgent smoke. This is
+an in-process admission and shutdown race fix, not kernel quotas or proof of
+crashed-Broker descendant ownership. Evidence:
+`evidence/2026-09-14-process-start-admission.md`.
+
 Latest controller-secret-zone addendum: Broker-owned sandbox profiles now
 deny `.codex` and `.openai` controller-state directories in addition to the
 existing SSH, cloud, Docker, browser, Mail, Messages, and Keychain zones. The
