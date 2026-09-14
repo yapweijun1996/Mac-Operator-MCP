@@ -177,3 +177,21 @@ service is ready to be hosted by the native virtio adapter, but it does not
 create or boot a VM, install a guest image, or provide independent isolation
 evidence; this ADR remains proposed and the production task capability remains
 disabled.
+
+## Broker-owned lifecycle boundary
+
+Commit `042517a` adds `VirtualizationGuestVmLifecycle`, a disabled-by-default
+state machine that owns the future adapter's start, stop, status, cancellation,
+timeout, close, and recovery semantics. Operations are serialized to prevent
+lifecycle races; immutable guest identity and boot ID are checked on every
+adapter result; and a timeout, cancellation, identity mismatch, or adapter
+failure moves the state to `unknown` until a fresh bounded status readback
+recovers it. The close path drains an active VM through the guarded stop path
+and rejects new work after closure.
+
+Focused lifecycle tests pass 5/5 and the full physical-Darwin regression passes
+547/547 with 0 skipped tests. The controller is only a Broker/native-adapter
+seam. It does not boot a VM, serve virtio, produce attestation, or provide
+independent filesystem, network, credential, or process isolation; this ADR
+remains proposed and `mac_task_run` remains disabled. Evidence is recorded in
+[`evidence/2026-09-15-virtualization-guest-lifecycle.md`](../../evidence/2026-09-15-virtualization-guest-lifecycle.md).

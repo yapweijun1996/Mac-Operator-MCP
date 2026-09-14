@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization lifecycle addendum: commit `042517a` adds the disabled,
+Broker-owned VM lifecycle state machine. It serializes start/stop/status and
+close, enforces caller cancellation and bounded deadlines, binds every result
+to the immutable guest identity and boot ID, and leaves failed or ambiguous
+operations in `unknown` until fresh status recovery. Focused tests pass 5/5;
+the full physical-Darwin regression passes 547/547 with 0 skipped tests. This
+does not boot a VM or close the guest isolation, virtio serving, attestation
+production, or `mac_task_run` release gates. Evidence:
+`evidence/2026-09-15-virtualization-guest-lifecycle.md`.
+
 Guest-agent protocol addendum: commit `c8a856e` adds a bounded
 `VirtualizationGuestAgent` service for the future native guest channel. It
 performs HMAC/freshness/profile/guest-identity verification and replay admission

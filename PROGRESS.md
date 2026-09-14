@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest Broker virtualization lifecycle addendum: commit `042517a` adds a
+disabled-by-default, Broker-owned `VirtualizationGuestVmLifecycle` state
+machine. Start, stop, status, cancellation, timeout, close, and recovery are
+serialized and bounded; every adapter result is checked against the immutable
+guest identity and boot ID, while failures remain `unknown` until fresh status
+readback. Focused lifecycle tests pass 5/5 and the full physical-Darwin
+regression passes 547/547 with 0 skipped tests. This is a native-adapter
+lifecycle seam only: it does not boot a VM or prove guest isolation, virtio
+serving, attestation production, or `mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-lifecycle.md`.
+
 Latest guest-agent addendum: commit `c8a856e` adds `VirtualizationGuestAgent`,
 a bounded guest-side protocol service for the future native virtio channel. It
 verifies HMAC, freshness, guest/profile digest binding, and replay identity

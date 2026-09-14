@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest Broker virtualization lifecycle addendum: commit `042517a` adds a
+disabled-by-default lifecycle controller around a future native VM adapter.
+Operations are serialized and bounded; identity and boot ID are validated on
+start/stop/status, cancellation and timeout fail closed, and uncertain
+operations remain `unknown` until status recovery. Focused lifecycle tests pass
+5/5. The complete
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 547/547 with 0 skipped tests; typecheck and lint pass. This
+does not demonstrate VM boot, guest transport serving, or independent guest
+isolation, so no production capability is enabled. Evidence:
+`evidence/2026-09-15-virtualization-guest-lifecycle.md`.
+
 Latest guest-agent addendum: commit `c8a856e` adds a bounded
 `VirtualizationGuestAgent` protocol service. It verifies signed request
 freshness, guest/profile binding, and replay identity before invoking a
