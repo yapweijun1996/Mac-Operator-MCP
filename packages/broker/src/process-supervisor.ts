@@ -232,9 +232,20 @@ export class ProcessSupervisor {
   ): Promise<boolean> {
     if (processTree === undefined) {
       signalProcessGroup(child, processId, "SIGKILL");
+      // Without a native tree observer, group disappearance cannot prove that
+      // a detached descendant did not escape. Keep the outcome unresolved.
+      const deadline = Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
+      while (Date.now() < deadline && processGroupAlive(processId)) {
+        await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+      }
+      return false;
     } else {
       processTree.sample();
-      if (processTree.rootState() === "alive") signalProcessGroup(child, processId, "SIGKILL");
+      const rootState = processTree.rootState();
+      if (rootState === "alive") signalProcessGroup(child, processId, "SIGKILL");
+      else if (rootState === "unknown") {
+        try { child.kill("SIGKILL"); } catch { /* Keep the cleanup outcome unresolved. */ }
+      }
       processTree.signal("SIGKILL");
     }
     const deadline = Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);

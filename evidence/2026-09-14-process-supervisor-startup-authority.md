@@ -27,7 +27,9 @@ After startup identity/ownership callbacks and before registering an active
 run, `ProcessSupervisor` checks both its close state and the request's
 cancellation predicate. Authority loss takes the same bounded process-group
 drain path as other startup failures; an unproven drain returns retryable
-`UNKNOWN_OUTCOME` rather than allowing the child to proceed.
+`UNKNOWN_OUTCOME` rather than allowing the child to proceed. If the native
+process-tree observer is unavailable or fails, the supervisor does not infer
+that group disappearance means descendants were drained.
 
 ## Limitations
 

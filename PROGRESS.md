@@ -10,6 +10,8 @@ registration. A real `/bin/sleep` closes this window by invoking `close()` from
 the startup callback; the child is drained, `CANCELLED` is returned, and no
 active capacity remains. Focused process-supervisor tests pass 17/17; the full
 real-sandbox suite passes 454/455 with one explicit host-boundary/opt-in skip.
+Missing or failed native process-tree observation now returns unresolved
+cleanup rather than inferring detached descendants are gone.
 Evidence: `evidence/2026-09-14-process-supervisor-startup-authority.md`.
 
 Latest process-identity startup addendum: native PID/start-time capture now
