@@ -2,7 +2,18 @@
 
 Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
-Last verified: 2026-09-14
+Last verified: 2026-09-15
+
+Latest hardening addendum: commit `92bf395` adds deterministic bounded security
+fuzz regression suites for Broker and guest authentication mutation, replay,
+strict envelopes, traversal/protected zones, secret and prompt-injection-shaped
+content, canonicalization, and output/resource budgets. On the physical Darwin
+arm64 host, `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm
+test` passes 515/515, including the focused security-fuzz suite at 6/6. This
+advances MOP-070 to `IN_PROGRESS`; exhaustive fuzzing, revocation/policy
+state-machine campaigns, kernel-level resource/isolation evidence, and
+independent review remain open. Evidence:
+`evidence/2026-09-15-security-fuzz-regression.md`.
 
 Latest strict-exit addendum: governed sandbox tasks now request a final native
 process-tree readback after child close. Missing observation, truncation, PID
