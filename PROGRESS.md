@@ -28,6 +28,19 @@ bootable image, guest execution/isolation, attestation production, or
 `mac_task_run` enablement. Evidence:
 `evidence/2026-09-15-virtualization-guest-vsock-listener.md`.
 
+Guest profile executor addendum: the guest-side manifest registry now
+recomputes the shared profile/task digests, rejects shell and unsafe
+environment entries, rechecks canonical executable/cwd/root targets at
+admission, and dispatches only fixed startup-owned process material. A
+bounded terminal ledger serves status recovery, maps timeout/cancellation/
+output failures to stable redacted results, and keeps the process adapter
+behind an explicit isolation-evidence gate. Focused guest-executor tests pass
+6/6 and the full physical-Darwin regression passes 568/568 with 0 skipped
+tests. This proves manifest binding and executor semantics only; it does not
+claim a bootable guest, guest filesystem/network/credential isolation, or
+`mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-executor.md`.
+
 Latest startup composition addendum: the optional
 `virtualizationGuest` startup seam now composes the protected image, native VM
 lifecycle, fixed virtio channel, optional guest-initiated listener source,

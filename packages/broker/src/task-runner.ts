@@ -1,4 +1,4 @@
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson } from "@mac-operator/contracts";
 import type { GuestTaskJobMetadata } from "./persistence.js";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
@@ -15,6 +15,10 @@ import {
   type VirtualizationGuestIdentity
 } from "./virtualization-guest-attestation.js";
 import { verifyVirtualizationGuestImage, type LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
+import {
+  virtualizationGuestProfileDigest,
+  virtualizationGuestTaskDigest
+} from "./virtualization-guest-executor.js";
 import { validateUnsignedVirtualizationGuestResponse, validateUnsignedVirtualizationGuestStatusResponse, virtualizationGuestRequestDigest } from "./virtualization-guest-transport.js";
 import type {
   UnsignedVirtualizationGuestResponse,
@@ -247,17 +251,7 @@ export interface VirtualizationTaskExecutionRequest {
  * executable, arguments, and environment never leave the Broker.
  */
 export function virtualizationProfileDigest(profile: ResolvedTaskProfile): string {
-  return sha256(canonicalJson({
-    schemaVersion: "0.1",
-    profile: profile.profile,
-    sandboxProfile: profile.sandboxProfile,
-    filesystemRoots: [...profile.filesystemRoots],
-    networkPolicy: profile.networkPolicy,
-    networkAllowlist: [...profile.networkAllowlist],
-    credentialPolicy: profile.credentialPolicy,
-    processTreePolicy: profile.processTreePolicy,
-    verificationStrategy: profile.verificationStrategy
-  }));
+  return virtualizationGuestProfileDigest(profile);
 }
 
 /** Digest of one exact resolved task, including its Broker-owned process limits. */
@@ -265,18 +259,22 @@ export function virtualizationTaskDigest(
   profile: ResolvedTaskProfile,
   profileDigest = virtualizationProfileDigest(profile)
 ): string {
-  return sha256(canonicalJson({
-    schemaVersion: "0.1",
-    profileDigest,
-    process: {
-      executable: profile.process.executable,
-      args: [...profile.process.args],
-      cwd: profile.process.cwd,
-      environment: { ...(profile.process.environment ?? {}) },
-      timeoutMs: profile.process.timeoutMs,
-      outputCapBytes: profile.process.outputCapBytes
-    }
-  }));
+  return virtualizationGuestTaskDigest({
+    profile: profile.profile,
+    sandboxProfile: profile.sandboxProfile,
+    filesystemRoots: profile.filesystemRoots,
+    networkPolicy: profile.networkPolicy,
+    networkAllowlist: profile.networkAllowlist,
+    credentialPolicy: profile.credentialPolicy,
+    processTreePolicy: profile.processTreePolicy,
+    verificationStrategy: profile.verificationStrategy,
+    executable: profile.process.executable,
+    args: profile.process.args,
+    cwd: profile.process.cwd,
+    ...(profile.process.environment === undefined ? {} : { environment: profile.process.environment }),
+    timeoutMs: profile.process.timeoutMs,
+    outputCapBytes: profile.process.outputCapBytes
+  }, profileDigest);
 }
 
 /**

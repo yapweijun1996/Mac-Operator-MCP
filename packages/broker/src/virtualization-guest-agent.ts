@@ -21,6 +21,12 @@ import {
   sameVirtualizationGuestIdentity,
   type VirtualizationGuestIdentity
 } from "./virtualization-guest-attestation.js";
+import {
+  VirtualizationGuestProfileExecutor,
+  VirtualizationGuestTaskProfileRegistry,
+  type VirtualizationGuestProcessAdapter,
+  type VirtualizationGuestTaskProfile
+} from "./virtualization-guest-executor.js";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024 + 64 * 1024;
@@ -37,6 +43,41 @@ export interface VirtualizationGuestAgentOptions {
   now?: () => number;
   maxRequestBytes?: number;
   maxResponseBytes?: number;
+}
+
+/** Startup-owned composition for the concrete profile-bound guest service. */
+export interface VirtualizationGuestProfileAgentOptions extends Omit<VirtualizationGuestAgentOptions, "execute" | "lookup"> {
+  profiles: readonly VirtualizationGuestTaskProfile[];
+  processAdapter: VirtualizationGuestProcessAdapter;
+  maxConcurrent?: number;
+}
+
+/**
+ * Creates the guest protocol service with a digest-bound manifest registry and
+ * a bounded execution adapter. The returned executor must be closed by the
+ * guest process after the bootstrap source has drained its active streams.
+ */
+export function createVirtualizationGuestProfileAgent(options: VirtualizationGuestProfileAgentOptions): {
+  agent: VirtualizationGuestAgent;
+  executor: VirtualizationGuestProfileExecutor;
+} {
+  const registry = new VirtualizationGuestTaskProfileRegistry(options.profiles);
+  const executor = new VirtualizationGuestProfileExecutor(registry, options.processAdapter, {
+    ...(options.maxConcurrent === undefined ? {} : { maxConcurrent: options.maxConcurrent })
+  });
+  const agent = new VirtualizationGuestAgent({
+    authenticationKey: options.authenticationKey,
+    replayGuard: options.replayGuard,
+    expectedGuestIdentity: options.expectedGuestIdentity,
+    expectedSandboxProfile: options.expectedSandboxProfile,
+    expectedProfileDigest: options.expectedProfileDigest,
+    execute: (request, signal) => executor.execute(request, signal),
+    lookup: (request) => executor.lookup(request),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.maxRequestBytes === undefined ? {} : { maxRequestBytes: options.maxRequestBytes }),
+    ...(options.maxResponseBytes === undefined ? {} : { maxResponseBytes: options.maxResponseBytes })
+  });
+  return { agent, executor };
 }
 
 /**

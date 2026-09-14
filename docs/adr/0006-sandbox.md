@@ -238,3 +238,20 @@ synthetic VM configuration before creation, so no guest server or connection
 was exercised; this is a native framing/connector boundary, not VM boot,
 guest isolation, attestation production, or release enablement. Evidence:
 [`evidence/2026-09-15-virtualization-guest-virtio-connector.md`](../../evidence/2026-09-15-virtualization-guest-virtio-connector.md).
+
+## Guest profile manifest executor
+
+The Guest-side execution seam now includes a startup-owned
+`VirtualizationGuestTaskProfileRegistry` and `VirtualizationGuestProfileExecutor`.
+The registry recomputes the canonical profile/task digests shared with the
+Broker, rejects shell executables and unsafe environment keys, denies broad
+protected roots, rechecks canonical executable/cwd/filesystem targets before
+dispatch, and never accepts paths or commands from the authenticated request.
+The executor keeps a bounded terminal ledger for fresh status recovery and
+maps adapter failures to stable redacted result summaries. A concrete
+`VirtualizationGuestProcessExecutor` uses the existing bounded
+`ProcessSupervisor`, but remains unavailable until explicit enablement and
+independent guest isolation evidence are accepted. This is manifest-binding
+and executor semantics evidence only; it does not claim a bootable image,
+guest isolation, attestation production, or `mac_task_run` enablement. Evidence:
+[`evidence/2026-09-15-virtualization-guest-executor.md`](../../evidence/2026-09-15-virtualization-guest-executor.md).

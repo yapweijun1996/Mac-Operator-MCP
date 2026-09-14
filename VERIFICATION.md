@@ -26,6 +26,17 @@ guest AF_VSOCK service, bootable image, guest isolation, attestation production,
 or `mac_task_run` enablement. Evidence:
 `evidence/2026-09-15-virtualization-guest-vsock-listener.md`.
 
+Guest profile executor addendum: the Guest registry verifies the shared
+profile/task digest material, denies shell and unsafe environment manifests,
+rechecks canonical executable/cwd/filesystem targets, bounds concurrency and
+output, and records terminal results for authenticated status recovery. Error
+summaries are fixed redacted values, and the concrete process adapter is
+unavailable without explicit isolation evidence. Focused guest-executor tests
+pass 6/6 and the complete physical-Darwin suite passes 568/568 with 0 skipped
+tests; typecheck, lint, and diff checks pass. This proves manifest/executor
+semantics only, not VM boot or real guest isolation. Evidence:
+`evidence/2026-09-15-virtualization-guest-executor.md`.
+
 Latest startup composition addendum: the startup-only
 `virtualizationGuest` seam composes image identity verification, native VM
 lifecycle, a fixed virtio port, an optional guest-initiated listener source,
