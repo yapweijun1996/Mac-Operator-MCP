@@ -529,6 +529,48 @@ test("process supervisor recovers a persisted detached descendant after root exi
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor keeps a dead root unresolved after persisted descendants disappear", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Persisted descendant absence is a macOS native boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 25, terminationGraceMs: 50 });
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let resolveDescendant!: () => void;
+  const descendantReady = new Promise<void>((resolve) => { resolveDescendant = resolve; });
+  const running = supervisor.run({
+    executable: "/usr/bin/python3",
+    args: ["-c", "import os,time; child=os.fork(); (time.sleep(0.05), os._exit(0)) if child == 0 else (os.waitpid(child, 0), time.sleep(30))"],
+    cwd: CWD,
+    timeoutMs: 35_000,
+    outputCapBytes: 100,
+    onStarted: (value) => { snapshot = value; },
+    onOwnershipChanged: (value) => {
+      snapshot = value;
+      if (value.descendants.length > 0) resolveDescendant();
+    }
+  });
+  try {
+    await Promise.race([
+      descendantReady,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("descendant snapshot timeout")), 5_000))
+    ]);
+    assert.ok(snapshot);
+    assert.ok(snapshot!.descendants.length > 0);
+    // Let the observed child exit while the persisted root remains alive.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    process.kill(snapshot!.identity.pid, "SIGKILL");
+    await running;
+    const recovered = await supervisor.recoverOwnedProcess(snapshot!, 250);
+    assert.equal(recovered.outcome, "unknown");
+    assert.equal(recovered.terminationObserved, false);
+  } finally {
+    await running;
+    await supervisor.close();
+  }
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 async function assertProcessGone(pid: number): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (Date.now() < deadline) {

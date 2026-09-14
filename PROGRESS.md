@@ -25,6 +25,16 @@ This reduces the close-event reparenting race but does not prove descendants
 created after the final window, remount resistance, or credential isolation.
 Evidence: `evidence/2026-09-14-exit-observation-window.md`.
 
+Latest restart-recovery addendum: a persisted task snapshot is not a complete
+post-exit process census. When the root and all previously observed
+descendants are gone, recovery therefore remains `UNKNOWN_OUTCOME` with no
+termination claim instead of reporting `PROCESS_ABSENT`; a descendant could
+have been created after the final persisted observation and escaped into
+another process group. The Darwin regression passes 21/21 focused
+process-supervisor tests, and the full real sandbox/Keychain run passes
+478/479 with one explicit install skip. Evidence:
+`evidence/2026-09-14-restart-descendant-absence.md`.
+
 Latest packaged-startup addendum: the compiled Broker service entrypoint now
 requires an owner-controlled audit-anchor path plus fixed Keychain
 service/account/key-id configuration, constructs `BrokerStore` with the

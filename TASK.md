@@ -419,6 +419,16 @@ remount resistance, credential isolation, or production task enablement.
 Evidence:
 `evidence/2026-09-14-exit-observation-window.md`.
 
+Latest restart-recovery addendum: when a persisted task root has exited and
+its previously observed descendants are gone, the Broker no longer reports
+`PROCESS_ABSENT`. A persisted snapshot is not a complete post-exit census, so
+descendants created after the last observation could have escaped into another
+process group; recovery now remains `UNKNOWN_OUTCOME` with no termination
+claim. The Darwin regression and full real sandbox/Keychain run pass 21/21
+focused process-supervisor tests and 478/479 tests with one explicit install
+skip. Evidence:
+`evidence/2026-09-14-restart-descendant-absence.md`.
+
 Latest packaged-startup addendum: the compiled Broker service entrypoint now
 requires the owner-controlled audit-anchor path and fixed Keychain
 service/account/key-id configuration, loads the HMAC source through the

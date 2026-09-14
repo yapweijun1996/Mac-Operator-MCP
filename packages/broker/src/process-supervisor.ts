@@ -369,15 +369,16 @@ export class ProcessSupervisor {
           terminationObserved: descendantRecovery
         };
       }
-      const groupAlive = processGroupAlive(identity.processGroupId);
       return {
-        // An empty persisted snapshot cannot prove that no descendant was
-        // created after the last observation and escaped the process group.
-        // Keep the outcome unresolved rather than inferring absence.
-        outcome: groupAlive || snapshot.descendants.length === 0 ? "unknown" : "absent",
+        // A dead root and an empty current group still cannot prove that no
+        // descendant was created after the last persisted observation and
+        // escaped to another process group. The prior snapshot is evidence of
+        // ownership, not a complete post-exit process census, so recovery must
+        // remain unresolved instead of publishing absence.
+        outcome: "unknown",
         processId: identity.pid,
         processGroupId: identity.processGroupId,
-        terminationObserved: !groupAlive && snapshot.descendants.length > 0
+        terminationObserved: false
       };
     }
     if (rootAlive !== true) {
