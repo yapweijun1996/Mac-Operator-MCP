@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
@@ -86,7 +87,7 @@ const MAX_JOB_LEASE_MS = 120_000;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 4;
+export const BROKER_SCHEMA_VERSION = 5;
 
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
@@ -316,6 +317,12 @@ export interface BrokerStoreOptions {
   /** @internal Test-only; never configure this in a production Broker. */
   faultInjector?: (point: PersistenceFaultPoint) => void;
   /**
+   * Claim a persisted Broker runtime fence. Packaged Broker startup enables
+   * this so a later service instance invalidates every stale writer from the
+   * prior instance; generic persistence fixtures may leave it disabled.
+   */
+  runtimeFence?: boolean;
+  /**
    * Optional keyed audit-tail anchor. Production startup must load its key
    * from a protected source (normally Keychain) and use a single Broker owner
    * until cross-process sidecar locking is separately accepted.
@@ -327,12 +334,18 @@ export class BrokerStore {
   private readonly database: DatabaseSync;
   private readonly faultInjector: ((point: PersistenceFaultPoint) => void) | undefined;
   private readonly auditAnchor: AuditAnchorManager | undefined;
+  private readonly runtimeFenceEnabled: boolean;
+  /** Unique process-instance token used to fence stale Broker writers after restart. */
+  private readonly runtimeFenceToken = `fence:${randomUUID()}`;
+  private runtimeFenceGeneration = 0;
+  private runtimeFenceAcquired = false;
   private pendingAuditAnchor: { sequence: number; eventHash: string } | undefined;
   private auditAnchorUnavailable = false;
 
   constructor(path: string, options: BrokerStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
     this.auditAnchor = options.auditAnchor ? new AuditAnchorManager(options.auditAnchor) : undefined;
+    this.runtimeFenceEnabled = options.runtimeFence === true;
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA busy_timeout = 5000;");
     this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
@@ -362,6 +375,12 @@ export class BrokerStore {
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         applied_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS broker_runtime_fence (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        generation INTEGER NOT NULL,
+        token TEXT NOT NULL,
+        acquired_at_ms INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS approval_nonces (
         issuer_id TEXT NOT NULL,
@@ -585,6 +604,7 @@ export class BrokerStore {
       this.migrateSchema(schemaVersion);
       this.verifyAuditIntegrity();
       this.verifyExternalAuditAnchor();
+      if (this.runtimeFenceEnabled) this.acquireRuntimeFence(Date.now());
       this.reconcileInterruptedRequests(Date.now());
       this.reconcileInterruptedJobs(Date.now());
     } catch (error) {
@@ -595,6 +615,7 @@ export class BrokerStore {
   }
 
   close(): void {
+    this.runtimeFenceAcquired = false;
     this.database.close();
     this.auditAnchor?.close();
   }
@@ -2505,6 +2526,7 @@ export class BrokerStore {
     this.database.exec("BEGIN IMMEDIATE");
     let committed = false;
     try {
+      this.assertRuntimeFence();
       const result = operation();
       const pendingAnchor = this.pendingAuditAnchor;
       this.database.exec("COMMIT");
@@ -2551,7 +2573,8 @@ export class BrokerStore {
         { version: 1, name: "baseline", apply: () => undefined },
         { version: 2, name: "revocations-edge-and-operator-key-kinds", apply: () => this.migrateRevocationsSchema() },
         { version: 3, name: "request-approval-and-job-linkage", apply: () => this.migrateRequestsSchema() },
-        { version: 4, name: "job-lease-process-and-helper-metadata", apply: () => this.migrateJobsSchema() }
+        { version: 4, name: "job-lease-process-and-helper-metadata", apply: () => this.migrateJobsSchema() },
+        { version: 5, name: "broker-runtime-fence", apply: () => this.migrateRuntimeFenceSchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -2652,6 +2675,61 @@ export class BrokerStore {
     }
     if (!names.has("privileged_payload_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN privileged_payload_json TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  private migrateRuntimeFenceSchema(): void {
+    const table = this.database.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'broker_runtime_fence'"
+    ).get() as { sql?: unknown } | undefined;
+    if (typeof table?.sql !== "string" || !table.sql.includes("singleton") || !table.sql.includes("generation") ||
+        !table.sql.includes("token") || !table.sql.includes("acquired_at_ms") || !table.sql.includes("STRICT")) {
+      throw new Error("Broker runtime fence schema is unavailable");
+    }
+    const columns = this.database.prepare("PRAGMA table_info(broker_runtime_fence)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (names.size !== 4 || !names.has("singleton") || !names.has("generation") || !names.has("token") || !names.has("acquired_at_ms")) {
+      throw new Error("Broker runtime fence schema is malformed");
+    }
+  }
+
+  private acquireRuntimeFence(nowMs: number): void {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Broker runtime fence timestamp is malformed");
+    this.database.exec("BEGIN IMMEDIATE");
+    let committed = false;
+    try {
+      const current = this.database.prepare(
+        "SELECT generation FROM broker_runtime_fence WHERE singleton = 1"
+      ).get() as { generation?: unknown } | undefined;
+      const previousGeneration = current?.generation ?? 0;
+      if (!Number.isSafeInteger(previousGeneration) || (previousGeneration as number) < 0 ||
+          (previousGeneration as number) >= Number.MAX_SAFE_INTEGER) {
+        throw new Error("Broker runtime fence generation is malformed");
+      }
+      const generation = (previousGeneration as number) + 1;
+      this.database.prepare(`
+        INSERT INTO broker_runtime_fence(singleton, generation, token, acquired_at_ms)
+        VALUES (1, ?, ?, ?)
+        ON CONFLICT(singleton) DO UPDATE SET generation = excluded.generation,
+          token = excluded.token, acquired_at_ms = excluded.acquired_at_ms
+      `).run(generation, this.runtimeFenceToken, nowMs);
+      this.database.exec("COMMIT");
+      committed = true;
+      this.runtimeFenceGeneration = generation;
+      this.runtimeFenceAcquired = true;
+    } catch (error) {
+      if (!committed) this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private assertRuntimeFence(): void {
+    if (!this.runtimeFenceEnabled || !this.runtimeFenceAcquired) return;
+    const current = this.database.prepare(
+      "SELECT generation, token FROM broker_runtime_fence WHERE singleton = 1"
+    ).get() as { generation?: unknown; token?: unknown } | undefined;
+    if (current === undefined || current.generation !== this.runtimeFenceGeneration || current.token !== this.runtimeFenceToken) {
+      throw new BrokerError("CONFLICT", "Broker runtime fence is no longer active; restart is required");
     }
   }
 }

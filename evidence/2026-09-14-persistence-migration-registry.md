@@ -14,9 +14,9 @@ node --test packages/broker/dist/persistence.test.js
 
 ## Observed result
 
-- Focused persistence suite: 39 tests, 39 passed, 0 failed, 0 skipped.
-- A fresh database records migration versions 1 through 4 with stable names in
-  `schema_migrations` and reads back `PRAGMA user_version = 4`.
+- Focused persistence suite: 42 tests, 42 passed, 0 failed, 0 skipped.
+- A fresh database records migration versions 1 through 5 with stable names in
+  `schema_migrations` and reads back `PRAGMA user_version = 5`.
 - Legacy databases are upgraded inside one `BEGIN IMMEDIATE` transaction and
   preserve existing revocation, request, and Job data.
 - Future schema markers and registry gaps or identity changes are rejected

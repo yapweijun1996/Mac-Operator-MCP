@@ -80,6 +80,20 @@ stopped-service recovery primitive, not proof of external immutable anchoring
 or production operator authentication. Evidence:
 `evidence/2026-09-14-audit-anchor-lock-recovery.md`.
 
+Latest Broker runtime-fence addendum: packaged Broker startup now enables a
+persisted singleton runtime fence in SQLite. Each service instance claims the
+next monotonic generation and a fresh token before restart reconciliation;
+every subsequent write transaction verifies that generation/token pair while
+holding the SQLite write lock. A later instance therefore invalidates stale
+`BrokerStore` writers, which fail closed with stable `CONFLICT` instead of
+publishing an old terminal Job, audit, or authority write. The focused
+persistence suite passes 42/42; the complete real sandbox/Keychain regression
+passes 484/485 with one explicit install skip. This is persistence-level Broker
+fencing, not kernel process ownership: generic fixture stores may leave the
+option off, and crashed-process, detached-worker, launchd, and installed-service
+evidence remain open. Evidence:
+`evidence/2026-09-14-broker-runtime-fence.md`.
+
 Latest controller-secret-zone addendum: Broker-owned sandbox profiles now
 deny `.codex` and `.openai` controller-state directories in addition to the
 existing SSH, cloud, Docker, browser, Mail, Messages, and Keychain zones. The
@@ -116,11 +130,12 @@ Focused persistence and credential tests pass 47/47. Evidence:
 Latest persistence-schema addendum: `BrokerStore` now reads SQLite
 `user_version` before initialization, rejects a database marked newer than the
 runtime, and applies a versioned forward-only migration registry transactionally
-before publishing schema version `4`. Each known migration is shape-checked and
+before publishing schema version `5`. Each known migration is shape-checked and
 recorded in `schema_migrations`; registry gaps, identity changes, malformed
 timestamps, and future markers fail closed. Fresh initialization, legacy data
-preservation, future-version refusal, registry-integrity refusal, and failed
-migration rollback pass 39/39 focused persistence tests. Rollback is explicitly
+preservation, future-version refusal, registry-integrity refusal, failed
+migration rollback, and persisted runtime-fence takeover pass 42/42 focused
+persistence tests. Rollback is explicitly
 restore-from-encrypted-backup only; no automatic down-migration is exposed.
 ADR-0005 acceptance remains open.
 Evidence:

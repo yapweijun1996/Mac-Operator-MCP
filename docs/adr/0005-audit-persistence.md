@@ -108,8 +108,11 @@ registry of idempotent revocation, request, and Job migrations inside one
 `BEGIN IMMEDIATE` transaction. Each migration records its version and stable
 identity in `schema_migrations`; gaps, identity changes, malformed rows, and a
 database marked with a newer version are rejected before any Broker authority
-or recovery work. The marker advances to version `4` only after every known
-step and registry record commit. Down-migrations are intentionally unsupported:
+or recovery work. The marker advances to version `5` only after every known
+step and registry record commit. Version 5 also creates a singleton persisted
+Broker runtime fence. Packaged service startup claims the next generation and
+fresh token before recovery; each write transaction verifies that pair so a
+later service instance invalidates stale writers. Down-migrations are intentionally unsupported:
 rollback requires stopping the Broker and restoring an authenticated encrypted
 backup into a fresh destination, followed by a separately reviewed operator
 cutover. The focused migration suite covers fresh initialization, legacy

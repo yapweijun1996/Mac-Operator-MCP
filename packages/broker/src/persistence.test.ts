@@ -28,12 +28,48 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 1, name: "baseline" },
         { version: 2, name: "revocations-edge-and-operator-key-kinds" },
         { version: 3, name: "request-approval-and-job-linkage" },
-        { version: 4, name: "job-lease-process-and-helper-metadata" }
+        { version: 4, name: "job-lease-process-and-helper-metadata" },
+        { version: 5, name: "broker-runtime-fence" }
       ]);
     } finally {
       database.close();
     }
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("enabled Broker runtime fencing rejects stale writers after takeover", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-runtime-fence-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const firstStore = new BrokerStore(databasePath, { runtimeFence: true });
+  let secondStore: BrokerStore | undefined;
+  try {
+    firstStore.createJob({
+      jobId: "job:runtime-fence",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task_profile:tests.sleep",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "runtime-fence",
+      createdAtMs: 1
+    });
+    const lease = { ownerId: "broker:old", token: "lease:runtime-fence-1234", expiresAtMs: 30_000 };
+    const started = firstStore.startJob("job:runtime-fence", "principal-1", 0, 2, lease);
+    secondStore = new BrokerStore(databasePath, { runtimeFence: true });
+    assert.equal(secondStore.ownedJob("job:runtime-fence", "principal-1")?.state, "unknown");
+    assert.throws(
+      () => firstStore.finishJob("job:runtime-fence", "principal-1", started.revision, {
+        state: "completed", resultClass: "success", finishedAtMs: 3
+      }, lease, 3),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(secondStore.ownedJob("job:runtime-fence", "principal-1")?.state, "unknown");
+  } finally {
+    secondStore?.close();
+    firstStore.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

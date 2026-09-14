@@ -194,6 +194,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
     // proves that no prior Broker instance is still serving requests.
     await assertSocketNotActive(config.brokerSocketPath);
     const activeStore = new BrokerStore(config.brokerDatabasePath, {
+      runtimeFence: true,
       auditAnchor: {
         path: config.auditAnchorPath,
         keySource: createKeychainAuditAnchorKeySource(
