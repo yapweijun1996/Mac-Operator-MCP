@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "exports": "./dist/index.js",
+  "bin": {
+    "mac-operator-authority": "./dist/authority-control-cli.js"
+  },
   "scripts": {
     "build:native": "sh scripts/build-peer-credentials.sh",
     "build:native:fault-test": "sh scripts/build-peer-credentials-fault-test.sh",

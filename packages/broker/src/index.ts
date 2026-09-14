@@ -39,6 +39,7 @@ export * from "./approval-keyring.js";
 export * from "./approval-ipc-server.js";
 export * from "./authority-control-ipc.js";
 export * from "./authority-control-keyring.js";
+export * from "./authority-control-cli.js";
 export * from "./privileged-helper.js";
 export * from "./privileged-helper-keyring.js";
 export * from "./privileged-helper-runtime.js";

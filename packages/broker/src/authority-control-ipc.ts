@@ -9,8 +9,10 @@ import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
 
 const AUTHORITY_CONTROL_DOMAIN = "mac-operator-authority-control-v0.1\0";
 const AUTHORITY_CONTROL_RESPONSE_DOMAIN = "mac-operator-authority-control-response-v0.1\0";
-const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
-const REVOCATION_KINDS: readonly RevocationKind[] = ["principal", "session", "edge", "edge_key", "approval_key", "policy_signer", "authority_key", "helper_key"];
+export const AUTHORITY_CONTROL_SWITCH_NAMES = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"] as const satisfies readonly SwitchName[];
+export const AUTHORITY_CONTROL_REVOCATION_KINDS = ["principal", "session", "edge", "edge_key", "approval_key", "policy_signer", "authority_key", "helper_key", "guest_attestation_key"] as const satisfies readonly RevocationKind[];
+const SWITCH_NAMES: readonly SwitchName[] = AUTHORITY_CONTROL_SWITCH_NAMES;
+const REVOCATION_KINDS: readonly RevocationKind[] = AUTHORITY_CONTROL_REVOCATION_KINDS;
 
 export type AuthorityControlOperation = "set_switch" | "revoke" | "read";
 
