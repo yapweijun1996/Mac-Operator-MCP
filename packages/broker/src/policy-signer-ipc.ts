@@ -251,7 +251,8 @@ export function authenticatePolicySignerCommand(
   if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Policy signer IPC key is invalid");
   const parsed = parseSignedPolicySignerCommand(raw);
   const command = parsed.unsigned;
-  if (command.timestampMs > nowMs + allowedClockSkewMs || nowMs - command.timestampMs > maxRequestAgeMs) {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || command.timestampMs > nowMs + allowedClockSkewMs ||
+      nowMs - command.timestampMs > maxRequestAgeMs || command.nonceExpiresAtMs <= nowMs) {
     throw new BrokerError("AUTH_EXPIRED", "Policy signer command timestamp is outside the accepted window");
   }
   if (command.nonceExpiresAtMs <= command.timestampMs ||

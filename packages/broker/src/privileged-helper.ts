@@ -586,6 +586,7 @@ export class PrivilegedHelperIpcServer {
         let statusRequest: UnsignedPrivilegedHelperStatusRequest | undefined;
         let statusResponse: PrivilegedHelperStatusResponse;
         try {
+          statusRequest = unsignedPrivilegedHelperStatusCandidate(raw);
           statusRequest = authenticatePrivilegedHelperStatusRequest(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
           if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
             throw new BrokerError("PRECONDITION_FAILED", "Privileged helper request contained trailing data");
@@ -613,6 +614,7 @@ export class PrivilegedHelperIpcServer {
       let response: PrivilegedHelperResponse;
       let command: UnsignedPrivilegedHelperCommand | undefined;
       try {
+        command = unsignedPrivilegedHelperCommandCandidate(raw);
         command = authenticatePrivilegedHelperCommand(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
         if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
           throw new BrokerError("PRECONDITION_FAILED", "Privileged helper request contained trailing data");
@@ -962,7 +964,8 @@ export function authenticatePrivilegedHelperCommand(
   if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Privileged helper key is invalid");
   const parsed = parseSignedCommand(raw);
   const command = parsed.unsigned;
-  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || command.timestampMs > nowMs + allowedClockSkewMs || nowMs - command.timestampMs > maxRequestAgeMs) {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || command.timestampMs > nowMs + allowedClockSkewMs ||
+      nowMs - command.timestampMs > maxRequestAgeMs || command.nonceExpiresAtMs <= nowMs || command.expiresAtMs <= nowMs) {
     throw new BrokerError("AUTH_EXPIRED", "Privileged helper command timestamp is outside the accepted window");
   }
   if (command.nonceExpiresAtMs <= command.timestampMs || command.nonceExpiresAtMs > command.timestampMs + maxRequestAgeMs + allowedClockSkewMs ||
@@ -1101,6 +1104,19 @@ function parseSignedCommand(value: unknown): { unsigned: UnsignedPrivilegedHelpe
   } satisfies UnsignedPrivilegedHelperCommand;
   validateUnsignedPrivilegedHelperCommand(unsigned);
   return { unsigned, authenticationProof: record.authenticationProof as string };
+}
+
+/**
+ * Recover a structurally valid unsigned helper command before freshness/auth
+ * checks so callers can authenticate stable failures. The candidate is never
+ * admitted, authorized, or executed by itself.
+ */
+function unsignedPrivilegedHelperCommandCandidate(raw: unknown): UnsignedPrivilegedHelperCommand | undefined {
+  try {
+    return parseSignedCommand(raw).unsigned;
+  } catch {
+    return undefined;
+  }
 }
 
 function commandProof(command: UnsignedPrivilegedHelperCommand, key: Buffer): string {
@@ -1252,6 +1268,36 @@ function parseSignedStatusRequest(value: unknown): { unsigned: UnsignedPrivilege
   } satisfies UnsignedPrivilegedHelperStatusRequest;
   validateUnsignedPrivilegedHelperStatusRequest(unsigned);
   return { unsigned, authenticationProof: record.authenticationProof as string };
+}
+
+/**
+ * Recover a structurally valid unsigned status request before freshness/auth
+ * checks so callers can authenticate stable failures. The candidate is never
+ * admitted, authorized, or used for status access by itself.
+ */
+function unsignedPrivilegedHelperStatusCandidate(raw: unknown): UnsignedPrivilegedHelperStatusRequest | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const allowed = [
+    "protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "authenticationProof"
+  ];
+  if (Object.keys(record).length !== allowed.length || allowed.some((key) => !Object.hasOwn(record, key)) ||
+      typeof record.authenticationProof !== "string") return undefined;
+  const candidate = {
+    protocolVersion: record.protocolVersion as typeof PROTOCOL_VERSION,
+    contractVersion: record.contractVersion as typeof CONTRACT_VERSION,
+    requestId: record.requestId as string,
+    nonce: record.nonce as string,
+    timestampMs: record.timestampMs as number,
+    expiresAtMs: record.expiresAtMs as number,
+    kind: record.kind as "status"
+  } satisfies UnsignedPrivilegedHelperStatusRequest;
+  try {
+    validateUnsignedPrivilegedHelperStatusRequest(candidate);
+    return candidate;
+  } catch {
+    return undefined;
+  }
 }
 
 function success(command: UnsignedPrivilegedHelperCommand, result: PrivilegedHelperExecutionResult, key: Buffer): PrivilegedHelperSuccessResponse {

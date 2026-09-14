@@ -233,6 +233,21 @@ test("privileged helper IPC authenticates the peer and command, rejects replay, 
     assert.equal(wrongKey.ok, false);
     if (!wrongKey.ok) assert.equal(wrongKey.resultClass, "AUTH_INVALID");
 
+    const stale = {
+      ...command(9),
+      timestampMs: NOW - 120_000,
+      nonceExpiresAtMs: NOW - 60_000,
+      expiresAtMs: NOW - 60_000
+    };
+    const staleResponse = await sendCommand(socketPath, signPrivilegedHelperCommand(stale, key));
+    assert.equal(staleResponse.ok, false);
+    if (!staleResponse.ok) {
+      assert.equal(staleResponse.resultClass, "AUTH_EXPIRED");
+      const authenticated = authenticatePrivilegedHelperResponse(staleResponse, stale, key);
+      assert.equal(authenticated.ok, false);
+      if (!authenticated.ok) assert.equal(authenticated.resultClass, "AUTH_EXPIRED");
+    }
+
     keyAvailable = false;
     const expired = await sendCommand(socketPath, signPrivilegedHelperCommand(command(7), key));
     assert.equal(expired.ok, false);
@@ -286,6 +301,23 @@ test("privileged helper status readback is separately authenticated, replay-prot
     const replay = await sendStatus(socketPath, signPrivilegedHelperStatusRequest(request, key));
     assert.equal(replay.ok, false);
     if (!replay.ok) assert.equal(replay.resultClass, "REPLAY_DENIED");
+
+    const expired = {
+      ...request,
+      requestId: "request:status-expired-1",
+      nonce: "status-nonce-expired-1",
+      timestampMs: NOW - 120_000,
+      expiresAtMs: NOW - 60_000
+    };
+    const expiredResponse = await sendStatus(socketPath, signPrivilegedHelperStatusRequest(expired, key));
+    assert.equal(expiredResponse.ok, false);
+    if (!expiredResponse.ok) {
+      assert.equal(expiredResponse.resultClass, "AUTH_EXPIRED");
+      const authenticated = authenticatePrivilegedHelperStatusResponse(expiredResponse, expired, key);
+      assert.equal(authenticated.ok, false);
+      if (!authenticated.ok) assert.equal(authenticated.resultClass, "AUTH_EXPIRED");
+    }
+    assert.equal(statusCalls, 1);
 
     const clientStatus = await readPrivilegedHelperStatus({ socketPath, authenticationKey: key, now: () => NOW });
     assert.deepEqual(clientStatus, status);

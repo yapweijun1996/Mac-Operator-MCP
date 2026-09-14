@@ -109,6 +109,16 @@ test("policy signer IPC authenticates, rejects replay, and performs audited oper
     await server.listen();
 
     await writePolicySignerKeyConfig(configPath, secondConfig);
+    const expired = {
+      ...command("revoke", 99, { keyId: "policy-key-1", reason: "EXPIRED" }),
+      timestampMs: NOW - 1_000,
+      nonceExpiresAtMs: NOW - 1
+    } satisfies UnsignedPolicySignerCommand;
+    const expiredResponse = await sendCommand(socketPath, signPolicySignerCommand(expired, authenticationKey));
+    assert.equal(expiredResponse.ok, false);
+    if (!expiredResponse.ok) assert.equal(expiredResponse.result_class, "AUTH_EXPIRED");
+    assert.equal(store.isRevoked("policy_signer", "policy-key-1"), false);
+
     const reload = command("reload", 1, { expectedPreviousRevision: 1 });
     const trailingReloadResponse = await sendCommand(socketPath, signPolicySignerCommand(reload, authenticationKey), "{}\n");
     assert.deepEqual(trailingReloadResponse, {
