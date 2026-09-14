@@ -201,6 +201,7 @@ export class AuthorityControlIpcServer {
       let command: UnsignedAuthorityControlCommand | undefined;
       try {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+        command = unsignedAuthorityControlCandidate(raw);
         command = authenticateAuthorityControlCommand(
           raw,
           this.authenticationKey,
@@ -267,6 +268,37 @@ export class AuthorityControlIpcServer {
       revoked: this.options.store.isRevoked(command.revocationKind!, command.subjectId!),
       responseProof: ""
     };
+  }
+}
+
+/**
+ * Recover a structurally valid unsigned command before freshness/auth checks
+ * so a client can authenticate stable failures such as AUTH_EXPIRED or
+ * REPLAY_DENIED. This candidate is never admitted or executed on its own.
+ */
+function unsignedAuthorityControlCandidate(raw: unknown): UnsignedAuthorityControlCommand | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.authenticationProof !== "string") return undefined;
+  const candidate: UnsignedAuthorityControlCommand = {
+    protocolVersion: record.protocolVersion as "0.1",
+    requestId: record.requestId as string,
+    nonce: record.nonce as string,
+    nonceExpiresAtMs: record.nonceExpiresAtMs as number,
+    timestampMs: record.timestampMs as number,
+    operation: record.operation as AuthorityControlOperation,
+    ...(record.switchName !== undefined ? { switchName: record.switchName as SwitchName } : {}),
+    ...(record.disabled !== undefined ? { disabled: record.disabled as boolean } : {}),
+    ...(record.expectedDisabled !== undefined ? { expectedDisabled: record.expectedDisabled as boolean } : {}),
+    ...(record.revocationKind !== undefined ? { revocationKind: record.revocationKind as RevocationKind } : {}),
+    ...(record.subjectId !== undefined ? { subjectId: record.subjectId as string } : {}),
+    reason: record.reason as string
+  };
+  try {
+    validateUnsignedAuthorityControlCommand(candidate);
+    return candidate;
+  } catch {
+    return undefined;
   }
 }
 

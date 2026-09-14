@@ -252,6 +252,45 @@ test("authority control IPC drops a denied peer before parsing or auditing", asy
   }
 });
 
+test("authority control IPC signs a stable expiry error for a structurally valid stale command", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "ace-"));
+  const socketPath = join(directory, "a.sock");
+  const databasePath = join(directory, "broker.sqlite");
+  const authenticationKey = randomBytes(32);
+  const store = new BrokerStore(databasePath);
+  const server = new AuthorityControlIpcServer({
+    socketPath,
+    store,
+    authenticationKey,
+    peerCredentialVerifier: { verify: () => undefined },
+    now: () => NOW
+  });
+  const expired = {
+    ...command("set_switch", 90, {
+      switchName: "process" as SwitchName,
+      disabled: true,
+      expectedDisabled: false
+    }),
+    timestampMs: NOW - 120_000,
+    nonceExpiresAtMs: NOW - 60_000
+  } satisfies UnsignedAuthorityControlCommand;
+  try {
+    await server.listen();
+    const response = await sendCommand(socketPath, signAuthorityControlCommand(expired, authenticationKey));
+    assert.equal(response.ok, false);
+    if (!response.ok) {
+      assert.equal(response.result_class, "AUTH_EXPIRED");
+      assert.equal(authenticateAuthorityControlResponse(response, expired, authenticationKey).ok, false);
+    }
+    assert.equal(store.isSwitchDisabled("process"), false);
+    assert.deepEqual(store.auditRows(), []);
+  } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function currentProcessPeerPolicy(): { expectedUid: number; expectedGid: number; allowedProcessIds: ReadonlySet<number> } {
   const uid = process.getuid?.();
   const gid = process.getgid?.();
