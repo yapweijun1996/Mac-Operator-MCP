@@ -8,6 +8,7 @@ import {
   verifyRequestAuthentication,
   type UnsignedBrokerRequest
 } from "@mac-operator/contracts";
+import { authorizePrincipalProjection, authorizeTarget, type BrokerPolicy } from "./policy.js";
 import { FilesystemInspector, type FilesystemNativeAdapter } from "./filesystem-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import {
@@ -224,4 +225,45 @@ test("path mutation corpus cannot escape the authorized root or secret zones", (
   expectBrokerError(() => inspector.planPath(`${rootPath}/${"x".repeat(4_100)}`, "metadata"), ["PRECONDITION_FAILED"]);
   expectBrokerError(() => inspector.planPath(`${rootPath}/bad\0path`, "metadata"), ["PRECONDITION_FAILED"]);
   expectBrokerError(() => inspector.planPath("relative/path", "metadata"), ["PRECONDITION_FAILED"]);
+});
+
+test("policy mutation corpus never expands projected scopes or deny-overrides-allow", () => {
+  const principalId = "principal-policy-fuzz";
+  const target = { kind: "path" as const, reference: "path:fuzz-root" };
+  const readScope = "mac.files.read" as const;
+  const writeScope = "mac.files.write" as const;
+  for (let sequence = 0; sequence < 256; sequence += 1) {
+    const requireWrite = sequence % 3 === 0;
+    const includeDeny = sequence % 5 === 0;
+    const requiredScopes = requireWrite ? [readScope, writeScope] : [readScope];
+    const targetRules = [
+      { ruleId: `allow-read-${sequence}`, effect: "allow" as const, principalId, scope: readScope, target },
+      ...(requireWrite ? [{ ruleId: `allow-write-${sequence}`, effect: "allow" as const, principalId, scope: writeScope, target }] : []),
+      ...(includeDeny ? [{ ruleId: `deny-read-${sequence}`, effect: "deny" as const, principalId, scope: readScope, target }] : [])
+    ];
+    const policy = { targetRules } as unknown as BrokerPolicy;
+    if (includeDeny) {
+      expectBrokerError(() => authorizeTarget(policy, principalId, requiredScopes, target), ["POLICY_DENIED"]);
+    } else {
+      authorizeTarget(policy, principalId, requiredScopes, target);
+    }
+
+    const projection = sequence % 4 === 0 ? [writeScope] : [readScope];
+    const projectionPolicy = {
+      principalGrants: new Map([[principalId, {
+        principalId,
+        issuer: "issuer-policy-fuzz",
+        scopes: [readScope],
+        enabled: true
+      }]])
+    } as unknown as BrokerPolicy;
+    if (projection[0] === writeScope) {
+      expectBrokerError(
+        () => authorizePrincipalProjection(projectionPolicy, principalId, "issuer-policy-fuzz", projection),
+        ["SCOPE_DENIED"]
+      );
+    } else {
+      authorizePrincipalProjection(projectionPolicy, principalId, "issuer-policy-fuzz", projection);
+    }
+  }
 });
