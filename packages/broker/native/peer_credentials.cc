@@ -121,6 +121,36 @@ std::string Sha256Hex(const std::vector<unsigned char>& content) {
   return result;
 }
 
+napi_value Sha256Utf8(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "sha256Utf8 requires one string");
+    return nullptr;
+  }
+  size_t length = 0;
+  constexpr size_t MAX_INPUT_BYTES = 1 * 1024 * 1024;
+  if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
+    napi_throw_type_error(env, nullptr, "sha256Utf8 input must be a string");
+    return nullptr;
+  }
+  if (length > MAX_INPUT_BYTES) {
+    napi_throw_range_error(env, nullptr, "sha256Utf8 input exceeds the byte limit");
+    return nullptr;
+  }
+  std::string value(length, '\0');
+  size_t copied = 0;
+  if (napi_get_value_string_utf8(env, args[0], value.data(), length + 1, &copied) != napi_ok || copied != length) {
+    napi_throw_type_error(env, nullptr, "sha256Utf8 input is not a valid string");
+    return nullptr;
+  }
+  const std::vector<unsigned char> bytes(value.begin(), value.end());
+  const std::string digest = Sha256Hex(bytes);
+  napi_value result;
+  napi_create_string_utf8(env, digest.c_str(), digest.size(), &result);
+  return result;
+}
+
 std::string HexDigest(const unsigned char* digest, size_t length) {
   static const char* hex = "0123456789abcdef";
   std::string result;
@@ -2428,6 +2458,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value napi_version;
   napi_create_uint32(env, NAPI_VERSION, &napi_version);
   napi_set_named_property(env, exports, "nativeNapiVersion", napi_version);
+  napi_create_function(env, "sha256Utf8", NAPI_AUTO_LENGTH, Sha256Utf8, nullptr, &function);
+  napi_set_named_property(env, exports, "sha256Utf8", function);
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);
   napi_set_named_property(env, exports, "getPeerCredentials", function);
   napi_create_function(env, "createUnixListener", NAPI_AUTO_LENGTH, CreateUnixListener, nullptr, &function);

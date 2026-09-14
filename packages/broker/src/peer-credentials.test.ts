@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   capturePeerProcessIdentity,
@@ -10,6 +11,8 @@ import {
   MacOsPeerCredentialVerifier,
   validateNativeAdapterPath
 } from "./peer-credentials.js";
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 test("macOS peer credentials bind an accepted UDS connection to uid, gid, and pid", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-peer-"));
@@ -136,6 +139,24 @@ test("native adapter binds its compiled N-API version to the runtime", () => {
   const runtimeNapiVersion = Number.parseInt(process.versions.napi ?? "", 10);
   assert.ok(native.nativeNapiVersion >= 8);
   assert.ok(native.nativeNapiVersion <= runtimeNapiVersion);
+});
+
+test("native adapter reproduces canonical JSON vector digests", async () => {
+  const vectors = JSON.parse(await readFile(join(repositoryRoot, "schemas", "canonical-json-vectors.json"), "utf8")) as {
+    vectors: readonly { name: string; canonical: string; sha256: string }[];
+  };
+  const native = loadNativePeerAdapter();
+  for (const vector of vectors.vectors) {
+    const digest = native.sha256Utf8(vector.canonical);
+    assert.equal(digest, vector.sha256, vector.name);
+  }
+});
+
+test("native canonical digest boundary rejects oversized input", () => {
+  const native = loadNativePeerAdapter();
+  assert.equal(native.sha256Utf8(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+  assert.throws(() => native.sha256Utf8("x".repeat(1_048_577)), /byte limit/u);
+  assert.throws(() => native.sha256Utf8(42 as never), /must be a string/u);
 });
 
 test("native adapter path validation rejects symlinks and writable artifacts", async () => {

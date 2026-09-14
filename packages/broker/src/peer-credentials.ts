@@ -40,6 +40,7 @@ export interface PeerCredentialPolicy {
 
 interface NativePeerCredentials {
   nativeNapiVersion: number;
+  sha256Utf8(value: string): unknown;
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
   statStorageVolumeWithinRoot(rootPath: string): unknown;
@@ -60,7 +61,7 @@ interface SocketWithHandle extends Socket {
 const require = createRequire(import.meta.url);
 const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
 const REQUIRED_NATIVE_EXPORTS = [
-  "getPeerCredentials", "createUnixListener", "acceptUnixClient", "closeUnixDescriptor",
+  "sha256Utf8", "getPeerCredentials", "createUnixListener", "acceptUnixClient", "closeUnixDescriptor",
   "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot",
   "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity",
