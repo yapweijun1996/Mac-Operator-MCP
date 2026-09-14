@@ -23,6 +23,18 @@ JSON probe passes 5/5 vectors, and the complete physical-Darwin regression
 passes 588/588 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-strict-json-parser.md`.
 
+Durable request-capacity addendum: source revision `31e89f0` moves active
+request admission limits into the BrokerStore `BEGIN IMMEDIATE` transaction.
+The Broker now supplies a default global cap of 64 and principal/session cap
+of 8 (hard maxima 256 and 64); saturation returns retryable `CONFLICT` before
+nonce/request persistence, and terminal/restart reconciliation releases
+capacity. Two SQLite handles prove session and global conflicts, no durable
+record for rejected requests, and release after terminal failure. Focused
+Broker/persistence tests pass 125 cases with 119 pass and 6 explicit
+non-Darwin/real-sandbox skips; full physical-Darwin regression passes 589/589
+with 0 skipped tests. Evidence:
+`evidence/2026-09-15-durable-request-capacity.md`.
+
 Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` validate
 request-age and clock-skew limits at Broker startup and bounds active work per
 authenticated principal/session (default 8, maximum 64). Capacity rejection

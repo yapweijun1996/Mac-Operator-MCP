@@ -1,7 +1,7 @@
 # Strict JSON Parser Boundary Evidence
 
-Date: 2026-09-15  
-Source commit: `ecc3a98`  
+Date: 2026-09-15
+Source commit: `ecc3a98`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
