@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Native Virtualization guest-preflight addendum: commit `7de8385` adds a
+protected, artifact-validated `virtualization_guest.node` N-API seam. Its
+startup-only image readback binds canonical owner-only device/inode/size/SHA-256
+identity, creates a read-only Virtualization.framework disk attachment, and
+confirms no host network or directory-sharing devices are configured. Focused
+tests pass 2/2 and the full physical-Darwin regression passes 539/539 with 0
+skipped tests. This advances MOP-086/MOP-010 native boundary evidence only;
+the artifact does not boot a VM or provide guest execution, attestation
+production, isolation proof, or `mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-native-virtualization-guest-preflight.md`.
+
 Canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`, `1aa0eea`,
 and `ae2e9eb` export
 the versioned `jcs-utf8-v1` profile, exact UTF-8 byte helper, and a bounded

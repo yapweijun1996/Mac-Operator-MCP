@@ -4,6 +4,20 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest native Virtualization guest-preflight addendum: commit `7de8385` adds a
+protected `virtualization_guest.node` N-API artifact and startup-only wrapper.
+The artifact accepts only a canonical owner-only image whose device/inode/size
+and SHA-256 are supplied by the host preflight, opens it with `O_NOFOLLOW`,
+constructs a read-only `VZDiskImageStorageDeviceAttachment`, and reports that
+network and directory-sharing devices are absent. It never boots a VM. Focused
+native tests pass 2/2 and the full physical-Darwin regression passes 539/539
+with 0 skipped tests. This is a real native image/configuration boundary, not
+guest execution or isolation evidence: a bootable production image, VM
+lifecycle, guest channel serving, signed attestation production, independent
+credential/filesystem/network/process isolation, and `mac_task_run`
+enablement remain open. Evidence:
+`evidence/2026-09-15-native-virtualization-guest-preflight.md`.
+
 Latest canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`,
 `1aa0eea`, and `ae2e9eb`
 publish the versioned `jcs-utf8-v1` profile, exact UTF-8 byte helper, and a

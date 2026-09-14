@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest native Virtualization guest-preflight addendum: commit `7de8385` adds a
+protected N-API artifact that revalidates a startup-bound canonical image,
+constructs a read-only `VZDiskImageStorageDeviceAttachment`, and reports empty
+host network/directory-sharing device sets without booting a VM. Focused native
+tests pass 2/2; the full
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 539/539 with 0 skipped tests. This is native
+image/configuration readback only. A valid production image, VM boot/lifecycle,
+guest channel server, signed attestation producer, isolation evidence, and
+production `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-native-virtualization-guest-preflight.md`.
+
 Latest canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`,
 `1aa0eea`, and `ae2e9eb`
 publish the versioned `jcs-utf8-v1` serialization profile, exact

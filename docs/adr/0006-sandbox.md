@@ -157,3 +157,14 @@ and the dedicated `guest_attestation_key` revocation kind are covered by
 focused tests. This protects the verification boundary but does not provision
 or distribute guest private signing keys and does not change the disabled
 runtime/VM release gate.
+
+Commit `7de8385` adds a separate protected `virtualization_guest.node` native
+artifact. Its startup-only N-API entry point revalidates a canonical
+owner-only image through a bounded descriptor, binds device/inode/size/SHA-256
+identity, and creates a read-only `VZDiskImageStorageDeviceAttachment` with no
+network or directory-sharing devices. It reports configuration metadata but
+never boots a VM. Focused native tests pass 2/2 and the full physical-Darwin
+regression passes 539/539 with 0 skipped tests. This is a native preflight
+boundary only; a bootable production image, guest server, signed attestation
+producer, isolation proof, and release enablement remain required before this
+ADR can be accepted.
