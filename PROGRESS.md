@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest process-crash addendum: `ProcessSupervisor` treats a non-null child
+termination signal as an abnormal exit, so a real self-`SIGKILL` returns
+`EXECUTION_FAILED` rather than `SUCCEEDED` even when `exitCode` is null.
+Focused process-supervisor tests pass 16/16; the full real-sandbox suite passes
+451/452 with one explicit host-boundary/opt-in skip. This prevents false-success
+readback but does not provide mutation actor attribution or production sandbox
+evidence. Evidence:
+`evidence/2026-09-14-process-supervisor-crash-attribution.md`.
+
 Latest real Broker network addendum: an opt-in Darwin integration sends a
 signed `mac_task_run` request through a profile-owned loopback TCP allowlist.
 The Broker fixes `/usr/bin/curl`, URL, empty environment, and no extra args;

@@ -180,6 +180,23 @@ test("process supervisor terminates the process group on timeout and output over
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor attributes an unexpected signal exit as execution failure", async () => {
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: ["-c", "import os; os.kill(os.getpid(), 9)"],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 100
+  });
+  assert.equal(result.state, "failed");
+  assert.equal(result.resultClass, "EXECUTION_FAILED");
+  assert.equal(result.exitCode, null);
+  assert.equal(result.signal, "SIGKILL");
+  assert.equal(result.terminationObserved, true);
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor terminates a tracked detached descendant", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Detached descendant identity tracking is a macOS native boundary");

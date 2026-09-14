@@ -4,6 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Process-crash addendum: an observed child termination signal is now classified
+as `EXECUTION_FAILED` even when `exitCode` is null, preventing false-success
+task readback. Evidence:
+`evidence/2026-09-14-process-supervisor-crash-attribution.md`.
+
 Real Broker network addendum: an opt-in Darwin integration verifies a signed
 task can reach only its profile-owned loopback TCP destination and return
 verified readback. Evidence:

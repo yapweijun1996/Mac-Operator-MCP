@@ -521,16 +521,17 @@ export class ProcessSupervisor {
         clearTimers();
         release();
         const durationMs = Math.max(0, Date.now() - startedAtMs);
+        const abnormalExit = spawnError || code !== 0 || signal !== null;
         const state = terminationReason === "cancelled" ? "cancelled" :
           terminationReason === "timed_out" ? "timed_out" :
           terminationReason === "orphaned" ? "unknown" :
           terminationReason === "output_limit" ? "failed" :
-          spawnError || code !== 0 ? "failed" : "completed";
+          abnormalExit ? "failed" : "completed";
         const resultClass = terminationReason === "cancelled" ? "CANCELLED" :
           terminationReason === "timed_out" ? "TIMEOUT" :
           terminationReason === "orphaned" ? "UNKNOWN_OUTCOME" :
           terminationReason === "output_limit" ? "OUTPUT_LIMIT" :
-          spawnError || code !== 0 ? "EXECUTION_FAILED" : "SUCCEEDED";
+          abnormalExit ? "EXECUTION_FAILED" : "SUCCEEDED";
         resolveResult({
           state,
           resultClass,

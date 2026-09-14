@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest process-crash addendum: `ProcessSupervisor` treats a non-null child
+termination signal as an abnormal exit, so a real self-`SIGKILL` returns
+`EXECUTION_FAILED` rather than `SUCCEEDED` even when `exitCode` is null.
+Focused process-supervisor tests pass 16/16; the full real-sandbox suite passes
+451/452 with one explicit host-boundary/opt-in skip. This prevents false-success
+readback but does not provide mutation actor attribution or production sandbox
+evidence. Evidence:
+`evidence/2026-09-14-process-supervisor-crash-attribution.md`.
+
 Latest real Broker network addendum: an opt-in Darwin integration exercises a
 profile-owned loopback TCP allowlist through the signed Broker task path. The
 fixed curl executable, URL, empty environment, and arguments return verified
