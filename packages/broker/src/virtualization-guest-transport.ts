@@ -515,6 +515,10 @@ export class VirtualizationGuestTransportClient {
   private readonly maxResponseBytes: number;
   private readonly cancellationPollMs: number;
   private readonly authorizeStatusLookup: ((input: VirtualizationGuestStatusLookupInput) => void) | undefined;
+  private readonly activeExchanges = new Set<{
+    controller: AbortController;
+    reject: (reason: BrokerError) => void;
+  }>();
   private closed = false;
 
   constructor(options: VirtualizationGuestTransportClientOptions) {
@@ -539,7 +543,13 @@ export class VirtualizationGuestTransportClient {
   }
 
   close(): void {
+    if (this.closed) return;
     this.closed = true;
+    for (const exchange of this.activeExchanges) {
+      exchange.controller.abort();
+      exchange.reject(new BrokerError("CANCELLED", "Virtualization guest transport was closed while a request was active"));
+    }
+    this.activeExchanges.clear();
     this.authenticationKey.fill(0);
   }
 
@@ -565,6 +575,7 @@ export class VirtualizationGuestTransportClient {
       throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest request exceeded the byte limit");
     }
     const responseFrame = await this.exchangeFrame(frame, request.timeoutMs, options, "task");
+    if (this.closed) throw new BrokerError("CANCELLED", "Virtualization guest transport was closed while a request was active");
     let raw: unknown;
     try {
       raw = JSON.parse(Buffer.from(responseFrame).toString("utf8")) as unknown;
@@ -617,6 +628,7 @@ export class VirtualizationGuestTransportClient {
       throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest status request exceeded the byte limit");
     }
     const responseFrame = await this.exchangeFrame(frame, request.timeoutMs, options, "status");
+    if (this.closed) throw new BrokerError("CANCELLED", "Virtualization guest transport was closed while a request was active");
     let raw: unknown;
     try {
       raw = JSON.parse(Buffer.from(responseFrame).toString("utf8")) as unknown;
@@ -635,6 +647,7 @@ export class VirtualizationGuestTransportClient {
     options: VirtualizationGuestExchangeOptions,
     operation: "task" | "status"
   ): Promise<Uint8Array> {
+    if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest transport is closed");
     const controller = new AbortController();
     let timeoutExpired = false;
     let cancelled = false;
@@ -642,6 +655,8 @@ export class VirtualizationGuestTransportClient {
     const abortOutcome = new Promise<Uint8Array>((_resolve, reject) => {
       rejectAbort = reject;
     });
+    const activeExchange = { controller, reject: (reason: BrokerError): void => rejectAbort?.(reason) };
+    this.activeExchanges.add(activeExchange);
     const timeout = setTimeout(() => {
       timeoutExpired = true;
       controller.abort();
@@ -667,6 +682,7 @@ export class VirtualizationGuestTransportClient {
         this.channel.exchange(frame, controller.signal),
         abortOutcome
       ]);
+      if (this.closed) throw new BrokerError("CANCELLED", "Virtualization guest transport was closed while a request was active");
       if (timeoutExpired) throw new BrokerError("TIMEOUT", `Virtualization guest ${operation} request exceeded its execution budget`);
       if (cancelled) throw new BrokerError("CANCELLED", `Virtualization guest ${operation} request was cancelled under active authority`);
       if (!Buffer.isBuffer(responseFrame) && !(responseFrame instanceof Uint8Array)) {
@@ -684,6 +700,7 @@ export class VirtualizationGuestTransportClient {
     } finally {
       clearTimeout(timeout);
       if (poller !== undefined) clearInterval(poller);
+      this.activeExchanges.delete(activeExchange);
     }
   }
 }

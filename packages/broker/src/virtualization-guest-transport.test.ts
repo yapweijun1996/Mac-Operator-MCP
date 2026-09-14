@@ -389,6 +389,71 @@ test("transport timeout and cancellation fail closed after request admission", a
   );
 });
 
+test("transport close cancels active exchanges and blocks a post-admission send", async () => {
+  let exchangeStartedResolve!: () => void;
+  const exchangeStarted = new Promise<void>((resolve) => { exchangeStartedResolve = resolve; });
+  let exchangeCalls = 0;
+  const client = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    channel: {
+      async exchange(_frame, signal) {
+        exchangeCalls += 1;
+        exchangeStartedResolve();
+        await new Promise<void>((_resolve, reject) => {
+          if (signal.aborted) {
+            reject(new Error("aborted"));
+            return;
+          }
+          signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
+        return Buffer.alloc(0);
+      }
+    }
+  });
+  const running = client.execute({
+    guestIdentity,
+    sandboxProfile: "guest-task-v1",
+    profileDigest: "b".repeat(64),
+    taskDigest: "c".repeat(64),
+    processTreePolicy: "single_process",
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    requestId: "request:guest-close-1234567890",
+    nonce: "guest-nonce-close-1234567890",
+    timestampMs: now,
+    expiresAtMs: now + 30_000
+  });
+  await exchangeStarted;
+  client.close();
+  await assert.rejects(running, (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED");
+  assert.equal(exchangeCalls, 1);
+
+  const blockedClient = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    channel: { async exchange(): Promise<Uint8Array> { throw new Error("must not send after close"); } }
+  });
+  await assert.rejects(
+    blockedClient.execute({
+      guestIdentity,
+      sandboxProfile: "guest-task-v1",
+      profileDigest: "b".repeat(64),
+      taskDigest: "c".repeat(64),
+      processTreePolicy: "single_process",
+      timeoutMs: 1_000,
+      outputCapBytes: 1_024,
+      requestId: "request:guest-close-admit-1234567890",
+      nonce: "guest-nonce-close-admit-1234567890",
+      timestampMs: now,
+      expiresAtMs: now + 30_000
+    }, { onRequestAdmitted: () => blockedClient.close() }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+});
+
 test("transport loss after admission is an unknown outcome", async () => {
   const client = new VirtualizationGuestTransportClient({
     authenticationKey: key,
