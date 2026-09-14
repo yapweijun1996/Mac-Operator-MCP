@@ -88,6 +88,8 @@ export interface JobLease {
 const JOB_LEASE_OWNER_PATTERN = /^[A-Za-z0-9._:@/-]{1,128}$/u;
 const JOB_LEASE_TOKEN_PATTERN = /^lease:[A-Za-z0-9._:-]{16,128}$/u;
 const MAX_JOB_LEASE_MS = 120_000;
+const MAX_ACTIVE_REQUESTS_GLOBAL = 256;
+const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
 /**
  * SQLite schema revisions are monotonic. A Broker must never open a database
  * written by a newer runtime because unknown columns or invariants could make
@@ -251,6 +253,14 @@ export interface AdmitRequestInput {
   payloadDigest: string;
   mutation: boolean;
   receivedAtMs: number;
+}
+
+/** Durable request-capacity limits enforced inside the BrokerStore transaction. */
+export interface RequestAdmissionLimits {
+  /** Maximum number of non-terminal requests across all principals/sessions. */
+  maxActiveRequestsGlobal?: number;
+  /** Maximum number of non-terminal requests for one principal/session pair. */
+  maxActiveRequestsPerSession?: number;
 }
 
 export type ApprovalClass = "trusted_write" | "trusted_gui" | "trusted_profile" | "explicit_privileged_policy";
@@ -685,11 +695,13 @@ export class BrokerStore {
     return restoreBrokerBackup(backupPath, destinationPath, keySource);
   }
 
-  admitRequest(input: AdmitRequestInput): RequestRecord {
+  admitRequest(input: AdmitRequestInput, limits?: RequestAdmissionLimits): RequestRecord {
     validateRequestAdmission(input);
+    validateRequestAdmissionLimits(limits);
     try {
       return this.runTransaction(() => {
         this.database.prepare("DELETE FROM nonces WHERE expires_at_ms < ?").run(input.receivedAtMs);
+        enforceRequestAdmissionLimits(this.database, input, limits);
         this.database.prepare(
           "INSERT INTO nonces(edge_id, nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
         ).run(input.edgeId, input.nonce, input.requestId, input.receivedAtMs, input.nonceExpiresAtMs);
@@ -3581,6 +3593,50 @@ function validateRequestAdmission(input: AdmitRequestInput): void {
       !Number.isSafeInteger(input.receivedAtMs) || input.receivedAtMs < 0 ||
       !Number.isSafeInteger(input.nonceExpiresAtMs) || input.nonceExpiresAtMs <= input.receivedAtMs) {
     throw malformedRequest();
+  }
+}
+
+function validateRequestAdmissionLimits(limits: RequestAdmissionLimits | undefined): void {
+  if (limits === undefined) return;
+  if (limits === null || typeof limits !== "object" || Array.isArray(limits) ||
+      Object.keys(limits).some((key) => key !== "maxActiveRequestsGlobal" && key !== "maxActiveRequestsPerSession")) {
+    throw malformedRequest();
+  }
+  for (const value of [limits.maxActiveRequestsGlobal, limits.maxActiveRequestsPerSession]) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > MAX_ACTIVE_REQUESTS_GLOBAL)) {
+      throw malformedRequest();
+    }
+  }
+  if (limits.maxActiveRequestsPerSession !== undefined && limits.maxActiveRequestsPerSession > MAX_ACTIVE_REQUESTS_PER_SESSION) {
+    throw malformedRequest();
+  }
+}
+
+function enforceRequestAdmissionLimits(
+  database: DatabaseSync,
+  input: AdmitRequestInput,
+  limits: RequestAdmissionLimits | undefined
+): void {
+  if (limits === undefined) return;
+  const activeStates = "'RECEIVED', 'AUTHORIZED', 'INTENT_RECORDED', 'RUNNING'";
+  if (limits.maxActiveRequestsGlobal !== undefined) {
+    const row = database.prepare(`SELECT COUNT(*) AS count FROM requests WHERE state IN (${activeStates})`).get() as { count?: unknown } | undefined;
+    const count = row?.count;
+    if (!Number.isSafeInteger(count) || (count as number) < 0) throw new BrokerError("AUDIT_UNAVAILABLE", "Active request count is malformed");
+    if ((count as number) >= limits.maxActiveRequestsGlobal) {
+      throw new BrokerError("CONFLICT", "Global request capacity is exhausted", true);
+    }
+  }
+  if (limits.maxActiveRequestsPerSession !== undefined) {
+    const row = database.prepare(`
+      SELECT COUNT(*) AS count FROM requests
+      WHERE principal_id = ? AND session_id = ? AND state IN (${activeStates})
+    `).get(input.principalId, input.sessionId) as { count?: unknown } | undefined;
+    const count = row?.count;
+    if (!Number.isSafeInteger(count) || (count as number) < 0) throw new BrokerError("AUDIT_UNAVAILABLE", "Session request count is malformed");
+    if ((count as number) >= limits.maxActiveRequestsPerSession) {
+      throw new BrokerError("CONFLICT", "Session request capacity is exhausted", true);
+    }
   }
 }
 

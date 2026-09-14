@@ -56,6 +56,8 @@ export interface BrokerOptions {
   allowedClockSkewMs?: number;
   /** Maximum number of concurrently executing requests per principal/session. */
   maxActiveRequestsPerSession?: number;
+  /** Maximum number of concurrently admitted requests across this Broker store. */
+  maxActiveRequestsGlobal?: number;
   now?: () => number;
   filesystemExecutor?: FilesystemExecutor;
   processExecutor?: ProcessExecutor;
@@ -86,11 +88,14 @@ const MAX_REQUEST_AGE_MS = 600_000;
 const MAX_CLOCK_SKEW_MS = 60_000;
 const DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION = 8;
 const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
+const DEFAULT_MAX_ACTIVE_REQUESTS_GLOBAL = 64;
+const MAX_ACTIVE_REQUESTS_GLOBAL = 256;
 
 export class Broker {
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
   private readonly maxActiveRequestsPerSession: number;
+  private readonly maxActiveRequestsGlobal: number;
   private readonly now: () => number;
   private readonly filesystemExecutor: FilesystemExecutor;
   private readonly processExecutor: ProcessExecutor;
@@ -120,11 +125,14 @@ export class Broker {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
     this.maxActiveRequestsPerSession = options.maxActiveRequestsPerSession ?? DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION;
+    this.maxActiveRequestsGlobal = options.maxActiveRequestsGlobal ?? DEFAULT_MAX_ACTIVE_REQUESTS_GLOBAL;
     this.now = options.now ?? Date.now;
     if (!Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_REQUEST_AGE_MS ||
         !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > MAX_CLOCK_SKEW_MS ||
         !Number.isSafeInteger(this.maxActiveRequestsPerSession) || this.maxActiveRequestsPerSession < 1 ||
-        this.maxActiveRequestsPerSession > MAX_ACTIVE_REQUESTS_PER_SESSION) {
+        this.maxActiveRequestsPerSession > MAX_ACTIVE_REQUESTS_PER_SESSION ||
+        !Number.isSafeInteger(this.maxActiveRequestsGlobal) || this.maxActiveRequestsGlobal < 1 ||
+        this.maxActiveRequestsGlobal > MAX_ACTIVE_REQUESTS_GLOBAL) {
       throw new Error("Broker request or session limits are invalid");
     }
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();
@@ -629,6 +637,9 @@ export class Broker {
         payloadDigest: sha256(canonicalJson(request)),
         mutation: policy.tools.get(request.tool)?.mutation ?? false,
         receivedAtMs: startedAt
+      }, {
+        maxActiveRequestsGlobal: this.maxActiveRequestsGlobal,
+        maxActiveRequestsPerSession: this.maxActiveRequestsPerSession
       });
       admitted = true;
       if (request.policyVersion !== policy.version) {

@@ -447,7 +447,9 @@ test("Broker rejects unsafe request and session limits at construction", async (
       { allowedClockSkewMs: -1 },
       { allowedClockSkewMs: 60_001 },
       { maxActiveRequestsPerSession: 0 },
-      { maxActiveRequestsPerSession: 65 }
+      { maxActiveRequestsPerSession: 65 },
+      { maxActiveRequestsGlobal: 0 },
+      { maxActiveRequestsGlobal: 257 }
     ]) {
       assert.throws(
         () => new Broker({ ...base, ...limits }),

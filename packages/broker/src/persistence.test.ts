@@ -757,6 +757,62 @@ test("request admission atomically reserves replay identity and creates RECEIVED
   }
 });
 
+test("BrokerStore enforces durable global and session request capacity across handles", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-capacity-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const firstStore = new BrokerStore(databasePath);
+  const secondStore = new BrokerStore(databasePath);
+  const limits = { maxActiveRequestsGlobal: 2, maxActiveRequestsPerSession: 1 } as const;
+  try {
+    firstStore.admitRequest(requestInput("request-capacity-a", "nonce-capacity-a", false), limits);
+    secondStore.admitRequest({
+      ...requestInput("request-capacity-b", "nonce-capacity-b", false),
+      principalId: "principal-2",
+      sessionId: "session-2"
+    }, limits);
+    assert.throws(
+      () => secondStore.admitRequest({
+        ...requestInput("request-capacity-c", "nonce-capacity-c", false),
+        principalId: "principal-2",
+        sessionId: "session-2"
+      }, limits),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT" && error.retryable
+    );
+    assert.throws(
+      () => secondStore.admitRequest({
+        ...requestInput("request-capacity-d", "nonce-capacity-d", false),
+        principalId: "principal-3",
+        sessionId: "session-3"
+      }, limits),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT" && error.retryable
+    );
+    assert.equal(secondStore.requestRecord("request-capacity-c"), undefined);
+    assert.equal(secondStore.requestRecord("request-capacity-d"), undefined);
+
+    firstStore.failRequest({
+      requestId: "request-capacity-a",
+      principalId: "principal-1",
+      tool: "mac_health",
+      eventType: "decision",
+      decision: "deny",
+      resultClass: "SCOPE_DENIED",
+      targetRef: "unresolved",
+      policyVersion: "policy-0.1",
+      evidence: {},
+      timestampMs: 2
+    });
+    assert.equal(secondStore.admitRequest({
+      ...requestInput("request-capacity-d", "nonce-capacity-d", false),
+      principalId: "principal-3",
+      sessionId: "session-3"
+    }, limits).state, "RECEIVED");
+  } finally {
+    secondStore.close();
+    firstStore.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mutation request lifecycle keeps decision, intent, running, and completion ordered", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-lifecycle-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
