@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Runtime-policy snapshot addendum: source revision `0be82c4` deep-copies
+Broker policy authority at the plain-policy Broker boundary and inside
+PolicyManager transitions/readback. Mutable caller references to target rules,
+principal grants, kill switches, filesystem roots, ToolPolicy scopes, and
+capability families can no longer alter active authorization or capability
+state. The focused Broker/policy selection passes 82 tests (76 passed, 6
+explicit platform skips); the complete physical-Darwin regression passes
+601/601 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-policy-authority-snapshot.md`.
+
 Runtime-policy validation addendum: source revision `ee994a8` adds a
 Broker-owned validation gate for in-memory and signed `BrokerPolicy` values.
 Construction, activation, restore, rollback, and every tool authorization now

@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Runtime-policy snapshot addendum: source revision `0be82c4` isolates active
+Broker authority from mutable caller references by deep-copying policy maps,
+sets, arrays, and nested entries at plain-policy construction and every
+PolicyManager transition/readback. Target rules and kill switches therefore
+cannot be expanded or changed through a retained object reference after the
+authority handoff. Focused Broker/policy selection passes 82 tests (76 passed,
+6 explicit platform skips); the complete physical-Darwin regression passes
+601/601 with 0 skipped tests. Build, typecheck, lint, contract verification,
+native canonical probe, and diff checks pass. This closes the in-memory
+authority-reference boundary only; signed-policy provenance, package signing,
+installed-service evidence, and final release acceptance remain open.
+Evidence: `evidence/2026-09-15-policy-authority-snapshot.md`.
+
 Runtime-policy validation addendum: source revision `ee994a8` validates the
 Broker policy shape at construction, policy-manager transitions, and each
 authorization call. The gate rejects malformed metadata and ToolPolicy

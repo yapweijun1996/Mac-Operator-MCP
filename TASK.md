@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Runtime-policy snapshot addendum: source revision `0be82c4` deep-copies
+BrokerPolicy authority at plain Broker construction and PolicyManager
+activation/restore/rollback/current readback. Retained caller references to
+target rules, principal grants, kill switches, filesystem roots, or ToolPolicy
+entries cannot mutate active authorization after the trust-boundary handoff.
+Focused Broker/policy selection passes 82 tests (76 passed, 6 explicit
+platform skips); the complete physical-Darwin regression passes 601/601 with
+0 skipped tests. This closes the mutable-policy-reference boundary only;
+broader release gates remain open. Evidence:
+`evidence/2026-09-15-policy-authority-snapshot.md`.
+
 Runtime-policy validation addendum: source revision `ee994a8` makes the
 Broker final authority fail closed when its in-memory policy or any ToolPolicy
 entry is malformed. Validation is repeated at PolicyManager transitions and
