@@ -429,6 +429,13 @@ focused process-supervisor tests and 478/479 tests with one explicit install
 skip. Evidence:
 `evidence/2026-09-14-restart-descendant-absence.md`.
 
+Latest audit-outage addendum: a held owner-only audit-anchor lock now proves
+the post-commit publication failure boundary. The audit append returns
+retryable `AUDIT_UNAVAILABLE` after SQLite has committed, the sidecar remains
+at its previous tail, and the next BrokerStore startup rejects the mismatch.
+The focused persistence suite passes 41/41. Evidence:
+`evidence/2026-09-14-audit-anchor-publication-outage.md`.
+
 Latest packaged-startup addendum: the compiled Broker service entrypoint now
 requires the owner-controlled audit-anchor path and fixed Keychain
 service/account/key-id configuration, loads the HMAC source through the

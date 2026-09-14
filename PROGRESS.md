@@ -35,6 +35,14 @@ process-supervisor tests, and the full real sandbox/Keychain run passes
 478/479 with one explicit install skip. Evidence:
 `evidence/2026-09-14-restart-descendant-absence.md`.
 
+Latest audit-outage addendum: a held audit-anchor sidecar lock now has a
+physical regression proving that SQLite commit and keyed-tail publication are
+separate failure boundaries. A post-commit publication outage returns the
+retryable `AUDIT_UNAVAILABLE` error, leaves the database ahead of the sidecar,
+and makes the next BrokerStore startup reject the mismatch. The focused
+persistence suite passes 41/41. Evidence:
+`evidence/2026-09-14-audit-anchor-publication-outage.md`.
+
 Latest packaged-startup addendum: the compiled Broker service entrypoint now
 requires an owner-controlled audit-anchor path plus fixed Keychain
 service/account/key-id configuration, constructs `BrokerStore` with the

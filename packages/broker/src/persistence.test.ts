@@ -327,6 +327,52 @@ test("BrokerStore binds the audit tail to an owner-only keyed sidecar", async ()
   }
 });
 
+test("audit anchor publication outage leaves the store ahead and blocks restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-outage-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const anchorPath = join(directory, "audit.anchor");
+  const anchorOptions = {
+    path: anchorPath,
+    keySource: {
+      keyId: "audit-key-outage",
+      loadKey: () => Buffer.from("audit-anchor-outage-key-0123456789", "ascii")
+    }
+  };
+  let store: BrokerStore | undefined = new BrokerStore(databasePath, { auditAnchor: anchorOptions });
+  const auditEvent = (requestId: string) => ({
+    requestId,
+    principalId: "principal-1",
+    tool: "mac_health",
+    eventType: "completion" as const,
+    decision: "allow" as const,
+    resultClass: "SUCCEEDED",
+    targetRef: "host:broker",
+    policyVersion: "policy-0.1",
+    evidence: { outage: true },
+    timestampMs: requestId === "anchor-outage-before" ? 1 : 2
+  });
+  try {
+    store.appendAudit(auditEvent("anchor-outage-before"));
+    await writeFile(`${anchorPath}.lock`, "operator-held\n", { mode: 0o600 });
+    assert.throws(
+      () => store!.appendAudit(auditEvent("anchor-outage-after")),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    assert.equal(store.auditRows().length, 2);
+    await rm(`${anchorPath}.lock`, { force: true });
+    store.close();
+    store = undefined;
+    assert.throws(
+      () => new BrokerStore(databasePath, { auditAnchor: anchorOptions }),
+      /Audit anchor does not match/u
+    );
+  } finally {
+    await rm(`${anchorPath}.lock`, { force: true });
+    store?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore refuses plaintext backups and mismatched backup keys", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-key-boundary-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
