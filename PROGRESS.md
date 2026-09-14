@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority-control key lifecycle addendum: `AuthorityControlIpcClient` now
+copies its HMAC key, wipes it on explicit `dispose()`, and rejects further
+requests with `CANCELLED`. Authority Control and Privileged Helper servers
+also wipe copied keys when socket detachment or close cleanup fails. Focused
+Authority Control tests pass 2/2, Privileged Helper IPC tests pass 9/9, and
+the complete physical-Darwin regression passes 573/573 with 0 skipped tests.
+Evidence: `evidence/2026-09-15-authority-control-key-lifecycle.md`.
+
 Local IPC framing hardening addendum: the Privileged Helper, Policy Signer,
 and Broker Status owner-only channels now reject non-whitespace bytes after
 their authenticated first frame before replay admission, status readback, or

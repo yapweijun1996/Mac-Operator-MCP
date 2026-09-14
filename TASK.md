@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority-control key lifecycle addendum: the Authority Control client owns a
+copied HMAC key, wipes it on explicit disposal, and fails closed on all later
+requests. Authority Control and Privileged Helper server cleanup now wipes
+copied keys even if socket detachment raises. Focused Authority Control tests
+pass 2/2, Privileged Helper IPC tests pass 9/9, and the complete
+physical-Darwin regression passes 573/573 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-authority-control-key-lifecycle.md`.
+
 Local IPC framing hardening addendum: Privileged Helper, Policy Signer, and
 Broker Status channels now enforce one authenticated frame and reject
 non-whitespace trailing data before replay or side effects; clients reject

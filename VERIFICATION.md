@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Authority-control key lifecycle addendum: the Authority Control client copies
+and explicitly wipes its HMAC key, rejects use after disposal, and leaves the
+caller-owned source buffer under its original lifecycle. Authority Control
+and Privileged Helper servers wipe their copied keys even when socket
+detachment fails. Focused Authority Control tests pass 2/2, Privileged Helper
+IPC tests pass 9/9, and the complete physical-Darwin suite passes 573/573
+with 0 skipped tests; build, typecheck, lint, contract verification, and diff
+checks pass. Evidence:
+`evidence/2026-09-15-authority-control-key-lifecycle.md`.
+
 Local IPC framing hardening addendum: Privileged Helper, Policy Signer, and
 Broker Status servers and clients now fail closed on non-whitespace trailing
 frames after the first authenticated message; Policy Signer key copies are
