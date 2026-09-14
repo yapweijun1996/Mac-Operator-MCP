@@ -3,7 +3,7 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Latest guest-attestation keyring addendum: commits `73148a6` and `db83881` add a startup-only
+Latest guest-attestation keyring addendum: commits `73148a6`, `db83881`, and `c56aa0a` add a startup-only
 Broker manager for protected Ed25519 public-key configuration. Owner-only
 canonical files are opened with `O_NOFOLLOW`, device/inode and digest bound,
 size limited, and rejected on duplicate paths, weak modes, replacement, or
@@ -14,7 +14,9 @@ persistence/keyring tests pass 50/50 and the physical-Darwin full regression
 passes 533/533. Private guest signing keys are never loaded by the host; native
 producer, Keychain distribution, VM boot/isolation, and capability enablement
 remain open. The policy, policy-signer, and guest verification loaders also
-reject private-key material before constructing trusted public keys. Evidence:
+reject private-key material before constructing trusted public keys. Packaged
+startup restores an optional dataRoot-bound trust set before listeners or
+recovery. Evidence:
 `evidence/2026-09-15-virtualization-guest-attestation-keyring.md`.
 
 Latest signed guest-provenance addendum: commit `84da3e0` defines a versioned

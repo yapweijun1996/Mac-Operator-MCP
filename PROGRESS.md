@@ -4,7 +4,8 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Latest guest-attestation keyring addendum: commit `73148a6` adds a Broker
+Latest guest-attestation keyring addendum: commits `73148a6`, `db83881`, and
+`c56aa0a` add a Broker
 startup/operator key manager for signed guest provenance. It loads only
 owner-only canonical public-key files with `O_NOFOLLOW`, device/inode and
 digest binding, bounded sizes, and Ed25519 validation. BrokerStore schema
@@ -16,7 +17,8 @@ regression passes 533/533. Host private signing keys are never loaded; native
 guest signing, protected key distribution, VM boot, guest isolation, and
 capability enablement remain open. Commit `db83881` also makes the policy,
 policy-signer, and guest verification loaders reject private-key material
-instead of deriving a public key from it. Evidence:
+instead of deriving a public key from it; `c56aa0a` restores an optional
+dataRoot-bound guest trust set before packaged startup proceeds. Evidence:
 `evidence/2026-09-15-virtualization-guest-attestation-keyring.md`.
 
 Latest signed guest-provenance addendum: commit `84da3e0` extracts the

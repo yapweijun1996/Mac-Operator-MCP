@@ -2,7 +2,7 @@
 
 - Date: 2026-09-15
 - Host: physical Darwin arm64, macOS 26.2 (25C56)
-- Source revisions: `73148a6`, `db83881`
+- Source revisions: `73148a6`, `db83881`, `c56aa0a`
 - Status: guest attestation public-key loading, activation, revocation, and rollback implemented; VM execution remains disabled
 
 ## Boundary implemented
@@ -23,7 +23,14 @@ completion audit events, and survives restart through exact payload-digest
 readback. Operator rollback is restricted to a verified historical revision and
 requires an explicit reason code. Revocation uses the dedicated
 `guest_attestation_key` kind; queued work is cancelled conservatively and every
-new verifier checks revocation dynamically.
+new verifier checks revocation dynamically. Packaged Broker startup accepts an
+optional startup-owned config path only under `dataRoot`, restores its exact
+persisted identity before policy/listener construction or restart recovery, and
+exposes the restored manager only to host assembly code; the default service
+configuration remains unchanged and task execution stays disabled.
+When startup supplies `dataRoot`, every referenced key path must remain below
+that canonical root; path escapes and intermediate-directory symlinks fail
+before public-key reads.
 
 The manager creates the signed guest-attestation verifier with startup-owned
 validity windows, bounded lifetime, clock skew, and the durable revocation
