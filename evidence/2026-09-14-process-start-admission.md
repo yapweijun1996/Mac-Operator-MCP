@@ -16,6 +16,12 @@ cleanup instead of returning while an untracked child can still be starting.
 The native Darwin identity readback also includes the actual process-group ID;
 startup requires it to match the detached child PID, and every later root
 identity check fails closed if the group changes.
+For the validated `sandbox-exec` single-process profile, ownership snapshots
+carry the Broker-owned `sandbox-exec-no-fork-v1` proof. Recovery may report a
+dead root as `PROCESS_ABSENT` only when that proof is present, the snapshot has
+no descendants, and the original process group is gone. Generic or observed-
+descendant snapshots remain `UNKNOWN` after root exit because they cannot prove
+that a post-snapshot `setsid` escape did not occur.
 
 ## Verification
 
@@ -26,11 +32,11 @@ node --test packages/broker/dist/process-supervisor.test.js
 MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test
 ```
 
-Observed result: focused ProcessSupervisor suite passed 22/22 with zero
+Observed result: focused ProcessSupervisor suite passed 23/23 with zero
 failures. The new Darwin regression calls `close()` from the ownership-start
 callback, requires the run to fail closed as `CANCELLED`, waits for the same
 close promise, and confirms that no active process capacity remains.
-The complete real-host regression passed 486/486 with the temporary
+The complete real-host regression passed 488/488 with the temporary
 LaunchAgent smoke enabled and no skipped tests.
 
 ## Limits

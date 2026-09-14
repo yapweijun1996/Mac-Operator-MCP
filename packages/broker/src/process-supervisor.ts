@@ -68,6 +68,12 @@ export interface ProcessDescendantIdentity {
 export interface ProcessOwnershipSnapshot {
   identity: ProcessOwnershipIdentity;
   descendants: readonly ProcessDescendantIdentity[];
+  /**
+   * Host-owned proof that no post-snapshot descendant can be created. This
+   * marker is set only by a validated no-fork sandbox runner; it is not a
+   * caller-controlled permission.
+   */
+  ownershipProof?: "sandbox-exec-no-fork-v1";
 }
 
 export type ProcessRecoveryOutcome = "drained" | "absent" | "identity_mismatch" | "unknown";
@@ -193,10 +199,10 @@ export class ProcessSupervisor {
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
         throw new BrokerError("POLICY_DENIED", "Process tree observer is unavailable");
       }
-      if (request.onStarted !== undefined) {
+      if (request.onStarted !== undefined || request.requireCleanExitProof === true) {
         const startTimeMicros = processTree === undefined
           ? undefined
-          : await waitForRootProcessIdentity(processTree, child);
+          : await waitForRootProcessIdentity(processTree, child, request.requireCleanExitProof === true ? 500 : 100);
         if (processTree === undefined || startTimeMicros === undefined || processTree.rootProcessGroupId !== processId) {
           const drained = await this.abortUnownedProcess(child, processId, processTree);
           if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
@@ -207,10 +213,12 @@ export class ProcessSupervisor {
           if (processTree.observationFailed) {
             throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
           }
-          request.onStarted({
-            identity: { pid: processId, processGroupId: processId, startTimeMicros },
-            descendants: processTree.snapshotDescendants()
-          });
+          if (request.onStarted !== undefined) {
+            request.onStarted({
+              identity: { pid: processId, processGroupId: processId, startTimeMicros },
+              descendants: processTree.snapshotDescendants()
+            });
+          }
         } catch (error) {
           const drained = await this.abortUnownedProcess(child, processId, processTree);
           if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
@@ -386,6 +394,19 @@ export class ProcessSupervisor {
           processGroupId: identity.processGroupId,
           terminationObserved: descendantRecovery
         };
+      }
+      if (snapshot.ownershipProof === "sandbox-exec-no-fork-v1" && snapshot.descendants.length === 0) {
+        // The proof is bound to a Broker-validated single-process sandbox.
+        // With no fork-capable descendant and no surviving detached group,
+        // the dead root is the complete task boundary and absence is proven.
+        if (!processGroupAlive(identity.processGroupId)) {
+          return {
+            outcome: "absent",
+            processId: identity.pid,
+            processGroupId: identity.processGroupId,
+            terminationObserved: true
+          };
+        }
       }
       return {
         // A dead root and an empty current group still cannot prove that no
@@ -691,12 +712,13 @@ export class ProcessSupervisor {
         }
         // `close` waits for inherited stdout/stderr descriptors. A detached
         // child can keep those pipes open after the root exits, so anchor the
-        // ownership proof at `exit` and treat a live process group as unknown.
+        // ownership proof at `exit` and use a bounded group-drain window.
         processTree.sample();
         notifyOwnership();
-        strictExitProof = processGroupAlive(processId)
-          ? Promise.resolve(false)
-          : processTree.confirmNoDescendantsAfterExit(this.pollIntervalMs);
+        // The detached group can remain visible for a short interval after
+        // the root emits `exit`; let the bounded proof window distinguish
+        // that teardown lag from a surviving descendant.
+        strictExitProof = processTree.confirmNoDescendantsAfterExit(this.pollIntervalMs);
       });
 
       child.stdout?.on("data", (chunk: Buffer | string) => {
@@ -874,6 +896,12 @@ function validateProcessOwnershipSnapshot(snapshot: ProcessOwnershipSnapshot): v
     throw new BrokerError("PRECONDITION_FAILED", "Process ownership snapshot is malformed");
   }
   validateProcessOwnershipIdentity(snapshot.identity);
+  if (snapshot.ownershipProof !== undefined && snapshot.ownershipProof !== "sandbox-exec-no-fork-v1") {
+    throw new BrokerError("PRECONDITION_FAILED", "Process ownership proof is malformed");
+  }
+  if (snapshot.ownershipProof === "sandbox-exec-no-fork-v1" && snapshot.descendants.length > 0) {
+    throw new BrokerError("PRECONDITION_FAILED", "No-fork process ownership proof has descendants");
+  }
   if (snapshot.descendants.length > 256) {
     throw new BrokerError("PRECONDITION_FAILED", "Process ownership snapshot is too large");
   }
@@ -1079,10 +1107,14 @@ class ProcessTreeTracker {
     if (this.failed || this.rootIdentity === undefined) return false;
     this.sample();
     if (this.failed || this.aliveState() !== "none") return false;
-    await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
-    if (this.failed || this.rootState() === "unknown") return false;
+    const deadline = Date.now() + Math.max(settleDelayMs, 25);
+    while (processGroupAlive(this.processId) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+      if (this.failed || this.rootState() === "unknown") return false;
+    }
+    if (this.failed || this.rootState() === "unknown" || processGroupAlive(this.processId)) return false;
     this.sample();
-    return !this.failed && this.aliveState() === "none";
+    return !this.failed && this.aliveState() === "none" && !processGroupAlive(this.processId);
   }
 
   aliveState(): "none" | "alive" | "unknown" {

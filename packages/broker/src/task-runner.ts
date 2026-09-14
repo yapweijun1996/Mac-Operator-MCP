@@ -157,12 +157,22 @@ export class SandboxExecTaskRunner implements TaskRunner {
     const filesystemIdentity = captureTaskFilesystemIdentity(profile, this.filesystemIdentityObserver);
     const args = buildSandboxExecArguments(profile);
     const requiresOwnershipPersistence = control.onProcessStarted !== undefined || control.onProcessOwnershipChanged !== undefined;
+    const ownershipProof = profile.processTreePolicy === "single_process"
+      ? "sandbox-exec-no-fork-v1" as const
+      : undefined;
+    const annotateOwnership = (snapshot: ProcessOwnershipSnapshot): ProcessOwnershipSnapshot =>
+      ownershipProof === undefined ? snapshot : { ...snapshot, ownershipProof };
     const onStarted = requiresOwnershipPersistence
       ? (snapshot: ProcessOwnershipSnapshot): void => {
         assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
-        control.onProcessStarted?.(snapshot);
+        control.onProcessStarted?.(annotateOwnership(snapshot));
       }
       : undefined;
+    const onOwnershipChanged = control.onProcessOwnershipChanged === undefined
+      ? undefined
+      : (snapshot: ProcessOwnershipSnapshot): void => {
+        control.onProcessOwnershipChanged?.(annotateOwnership(snapshot));
+      };
     let result: ProcessExecutionResult;
     try {
       result = await this.supervisor.run({
@@ -175,7 +185,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
         requireCleanExitProof: true,
         shouldCancel: control.shouldCancel,
         ...(onStarted === undefined ? {} : { onStarted }),
-        ...(control.onProcessOwnershipChanged === undefined ? {} : { onOwnershipChanged: control.onProcessOwnershipChanged })
+        ...(onOwnershipChanged === undefined ? {} : { onOwnershipChanged })
       });
     } catch (error) {
       if (error instanceof BrokerError) throw error;

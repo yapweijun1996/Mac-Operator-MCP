@@ -99,12 +99,15 @@ child from validated spawn through PID/start-time observation and ownership
 persistence, so pending starts consume shared concurrency capacity. Broker
 shutdown also waits for those pending starts to abort and release their
 capacity; it cannot return while an untracked startup is still proving
-ownership. The focused Darwin ProcessSupervisor suite passes 22/22, and the
+ownership. The focused Darwin ProcessSupervisor suite passes 23/23, and the
 full `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
-regression passes 486/486, including the temporary LaunchAgent smoke. This is
+regression passes 488/488, including the temporary LaunchAgent smoke. This is
 an in-process admission and shutdown race fix; native Darwin root checks also
 bind the observed process-group ID to the detached PID. It is not kernel
-quotas or proof of crashed-Broker descendant ownership. Evidence:
+quotas or generic proof of crashed-Broker descendant ownership. A validated
+single-process sandbox snapshot now carries a no-fork proof and can report
+`PROCESS_ABSENT` only when its original process group is gone; observed-
+descendant snapshots remain unresolved after root exit. Evidence:
 `evidence/2026-09-14-process-start-admission.md`.
 
 Latest controller-secret-zone addendum: Broker-owned sandbox profiles now

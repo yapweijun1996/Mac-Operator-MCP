@@ -317,6 +317,7 @@ export class Broker {
             processGroupId: metadata.processGroupId,
             startTimeMicros: metadata.startTimeMicros
           },
+          ...(metadata.ownershipProof === undefined ? {} : { ownershipProof: metadata.ownershipProof }),
           descendants: metadata.descendants.map((descendant) => ({
             pid: descendant.pid,
             startTimeMicros: descendant.startTimeMicros
@@ -2573,6 +2574,7 @@ export class Broker {
           processGroupId: snapshot.identity.processGroupId,
           startTimeMicros: snapshot.identity.startTimeMicros,
           recordedAtMs,
+          ...(snapshot.ownershipProof === undefined ? {} : { ownershipProof: snapshot.ownershipProof }),
           descendants: snapshot.descendants.map((descendant) => ({
             pid: descendant.pid,
             startTimeMicros: descendant.startTimeMicros

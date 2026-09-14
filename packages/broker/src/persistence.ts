@@ -114,6 +114,8 @@ export interface ProcessJobMetadata {
   startTimeMicros: number;
   recordedAtMs: number;
   descendants: readonly ProcessDescendantMetadata[];
+  /** Host-owned proof that a dead root has no post-snapshot descendants. */
+  ownershipProof?: "sandbox-exec-no-fork-v1";
 }
 
 export interface ProcessDescendantMetadata {
@@ -1604,6 +1606,7 @@ export class BrokerStore {
           metadata.pid !== current.processMetadata.pid ||
           metadata.processGroupId !== current.processMetadata.processGroupId ||
           metadata.startTimeMicros !== current.processMetadata.startTimeMicros ||
+          metadata.ownershipProof !== current.processMetadata.ownershipProof ||
           metadata.recordedAtMs < current.processMetadata.recordedAtMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Task process ownership metadata is outside the active Job window");
       }
@@ -3012,6 +3015,12 @@ function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {
       !Array.isArray(metadata.descendants) || metadata.descendants.length > 256) {
     throw malformedJob();
   }
+  if (metadata.ownershipProof !== undefined && metadata.ownershipProof !== "sandbox-exec-no-fork-v1") {
+    throw malformedJob();
+  }
+  if (metadata.ownershipProof === "sandbox-exec-no-fork-v1" && metadata.descendants.length > 0) {
+    throw malformedJob();
+  }
   let previousPid = 0;
   for (const descendant of metadata.descendants) {
     if (descendant === null || typeof descendant !== "object" ||
@@ -3040,7 +3049,8 @@ function parseProcessJobMetadata(value: string): ProcessJobMetadata {
   const keys = Object.keys(parsed).sort();
   const legacyKeys = "pid,processGroupId,recordedAtMs,startTimeMicros";
   const currentKeys = "descendants,pid,processGroupId,recordedAtMs,startTimeMicros";
-  if (keys.join(",") !== legacyKeys && keys.join(",") !== currentKeys) {
+  const proofKeys = "descendants,ownershipProof,pid,processGroupId,recordedAtMs,startTimeMicros";
+  if (keys.join(",") !== legacyKeys && keys.join(",") !== currentKeys && keys.join(",") !== proofKeys) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
   }
   const metadata = parsed as Partial<ProcessJobMetadata>;
@@ -3049,7 +3059,8 @@ function parseProcessJobMetadata(value: string): ProcessJobMetadata {
     processGroupId: metadata.processGroupId,
     startTimeMicros: metadata.startTimeMicros,
     recordedAtMs: metadata.recordedAtMs,
-    descendants: metadata.descendants ?? []
+    descendants: metadata.descendants ?? [],
+    ...(metadata.ownershipProof === undefined ? {} : { ownershipProof: metadata.ownershipProof })
   } as ProcessJobMetadata;
   validateProcessJobMetadata(normalized);
   return normalized;

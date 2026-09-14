@@ -164,7 +164,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
       };
     }
   };
-  let startedSnapshot: { identity: { pid: number; processGroupId: number; startTimeMicros: number }; descendants: readonly { pid: number; startTimeMicros: number }[] } | undefined;
+  let startedSnapshot: { identity: { pid: number; processGroupId: number; startTimeMicros: number }; descendants: readonly { pid: number; startTimeMicros: number }[]; ownershipProof?: string } | undefined;
   try {
     const runner = new SandboxExecTaskRunner({
       enabled: true,
@@ -189,7 +189,11 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
     assert.equal(observed?.requireCleanExitProof, true);
     assert.equal(observed?.timeoutMs, 500);
     assert.equal(observed?.outputCapBytes, 1_024);
-    assert.deepEqual(startedSnapshot, { identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+    assert.deepEqual(startedSnapshot, {
+      identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 },
+      descendants: [],
+      ownershipProof: "sandbox-exec-no-fork-v1"
+    });
     assert.equal(observed?.args[0], "-p");
     assert.equal(observed?.args[2], "/usr/bin/printf");
     assert.equal(observed?.args.includes("/bin/sh"), false);

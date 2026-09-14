@@ -40,8 +40,8 @@ test("process supervisor requires a final native descendant readback for strict 
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   const result = await supervisor.run({
-    executable: "/usr/bin/printf",
-    args: ["strict-exit"],
+    executable: "/usr/bin/python3",
+    args: ["-c", "import time; print('strict-exit', flush=True); time.sleep(0.5)"],
     cwd: CWD,
     timeoutMs: 1_000,
     outputCapBytes: 100,
@@ -49,7 +49,7 @@ test("process supervisor requires a final native descendant readback for strict 
   });
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(result.terminationObserved, true);
-  assert.equal(result.stdout, "strict-exit");
+  assert.equal(result.stdout, "strict-exit\n");
   assert.equal(supervisor.activeCount(), 0);
 });
 
@@ -509,6 +509,40 @@ test("process supervisor keeps an empty snapshot unresolved after root exit", as
     const recovered = await supervisor.recoverOwnedProcess(snapshot!, 250);
     assert.equal(recovered.outcome, "unknown");
     assert.equal(recovered.terminationObserved, false);
+  } finally {
+    await running;
+    await supervisor.close();
+  }
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor proves absence for a validated no-fork snapshot", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("No-fork absence proof uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  const running = supervisor.run({
+    executable: "/bin/sleep",
+    args: ["10"],
+    cwd: CWD,
+    timeoutMs: 5_000,
+    outputCapBytes: 100,
+    onStarted: (value) => { snapshot = value; }
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(snapshot);
+    assert.deepEqual(snapshot!.descendants, []);
+    process.kill(snapshot!.identity.pid, "SIGKILL");
+    await running;
+    const recovered = await supervisor.recoverOwnedProcess({
+      ...snapshot!,
+      ownershipProof: "sandbox-exec-no-fork-v1"
+    }, 250);
+    assert.equal(recovered.outcome, "absent");
+    assert.equal(recovered.terminationObserved, true);
   } finally {
     await running;
     await supervisor.close();

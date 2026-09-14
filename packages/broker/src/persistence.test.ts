@@ -1543,6 +1543,44 @@ test("task process ownership metadata survives restart as UNKNOWN", async () => 
   }
 });
 
+test("task process no-fork ownership proof survives restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-process-proof-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const metadata = {
+    pid: 1234,
+    processGroupId: 1234,
+    startTimeMicros: 987654321,
+    recordedAtMs: 2,
+    descendants: [],
+    ownershipProof: "sandbox-exec-no-fork-v1"
+  } as const;
+  const lease = {
+    ownerId: "broker:test",
+    token: "lease:process-proof-1234",
+    expiresAtMs: 30
+  };
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:task-process-proof", "task-process-proof"));
+    const running = store.startJob("job:task-process-proof", "principal-1", 0, 1, lease);
+    const recorded = store.recordJobProcessOwnership(
+      "job:task-process-proof",
+      "principal-1",
+      running.revision,
+      metadata,
+      lease,
+      2
+    );
+    assert.deepEqual(recorded.processMetadata, metadata);
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.deepEqual(store.ownedJob("job:task-process-proof", "principal-1")?.processMetadata, metadata);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function jobInput(jobId: string, idempotencyKey: string) {
   return {
     jobId,

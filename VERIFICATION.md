@@ -7,14 +7,16 @@ Latest process-start admission addendum: `ProcessSupervisor` now counts
 pending child starts against the shared concurrency budget from spawn through
 PID/start-time observation and ownership persistence, and `close()` waits for
 those startups to abort and release capacity. The focused Darwin
-ProcessSupervisor suite passes 22/22. The complete
+ProcessSupervisor suite passes 23/23. The complete
 `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
-regression passes 486/486, including the temporary Edge/Broker LaunchAgent
+regression passes 488/488, including the temporary Edge/Broker LaunchAgent
 bootstrap, authenticated status readback, and cleanup. This closes an
 in-process admission/shutdown race only; native root readback also binds the
 detached process-group ID and fails closed if it changes. Crashed-process ownership,
-post-snapshot descendants, credential isolation, and production signing remain
-open. Evidence:
+post-snapshot descendants for generic process trees, credential isolation, and
+production signing remain open. The validated single-process sandbox path now
+records a no-fork proof and can distinguish a dead root as absent only after
+the original group disappears. Evidence:
 `evidence/2026-09-14-process-start-admission.md`.
 
 Latest strict-exit addendum: governed sandbox tasks request a final native
