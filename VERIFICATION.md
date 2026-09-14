@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Idempotency authorization addendum: source revision `d715512` hardens
+`BrokerStore.createJob` so idempotent Job reuse requires the same policy
+version as the original authorized operation, in addition to principal, tool,
+target, and payload digest. A policy-version substitution returns stable
+`CONFLICT` before reuse. Focused persistence and full regression tests pass;
+the mutation release gate remains open for broader crash, concurrency, and
+installed-service evidence. Evidence:
+`evidence/2026-09-15-idempotency-policy-binding.md`.
+
 Strict UTF-8 boundary addendum: source revision `1ce5bee` applies fatal
 UTF-8 decoding before JSON parsing across implemented local/guest IPC,
 protected configuration, persistence, audit, and Edge contract paths.

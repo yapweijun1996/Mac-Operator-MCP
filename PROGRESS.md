@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Idempotency authorization addendum: source revision `d715512` makes the
+BrokerStore Job reuse path bind
+the existing Job's policy version in addition to principal, tool, target, and
+payload digest. A repeated idempotency key under a different policy revision
+returns `CONFLICT` and cannot reuse the prior Job. Focused persistence and
+full regression tests pass. Evidence:
+`evidence/2026-09-15-idempotency-policy-binding.md`.
+
 Strict UTF-8 boundary addendum: source revision `1ce5bee` adds a shared fatal
 UTF-8 decoder and applies it to implemented Broker/Edge IPC, approval,
 policy-signer, authority-control, status, helper, Keychain, virtualization
