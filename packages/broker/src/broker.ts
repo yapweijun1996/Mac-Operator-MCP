@@ -22,6 +22,7 @@ import {
   authorizePrincipalProjection,
   authorizeTarget,
   authorizeTool,
+  cloneBrokerPolicy,
   isCapabilityFamilyDisabled,
   runtimeToolStates,
   validateBrokerPolicy,
@@ -132,13 +133,16 @@ export class Broker {
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
   private readonly privilegedHelperExecutor: PrivilegedHelperJobExecutor;
+  private readonly staticPolicy: BrokerPolicy | undefined;
   private readonly jobLeaseOwnerId: string;
   private readonly activeRequestsBySession = new Map<string, number>();
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
   constructor(private readonly options: BrokerOptions) {
-    validateBrokerPolicy(options.policy instanceof PolicyManager ? options.policy.current() : options.policy);
+    const initialPolicy = options.policy instanceof PolicyManager ? options.policy.current() : options.policy;
+    validateBrokerPolicy(initialPolicy);
+    this.staticPolicy = options.policy instanceof PolicyManager ? undefined : cloneBrokerPolicy(initialPolicy);
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
     this.maxActiveRequestsPerSession = options.maxActiveRequestsPerSession ?? DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION;
@@ -199,6 +203,10 @@ export class Broker {
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
   }
 
+  private currentPolicy(): BrokerPolicy {
+    return this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.staticPolicy!;
+  }
+
   /**
    * Close Broker-owned execution resources after transport shutdown. Active
    * worker-backed mutations fail through their existing UNKNOWN Job path and
@@ -233,7 +241,7 @@ export class Broker {
     absent: number;
     skipped: number;
   } {
-    const policy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+    const policy = this.currentPolicy();
     const jobs = this.options.store.restartUnknownWriteJobs(limit);
     if (jobs.length === 0) return { inspected: 0, removed: 0, absent: 0, skipped: 0 };
     if (policy.killSwitches.global || policy.killSwitches.mutations) {
@@ -424,7 +432,7 @@ export class Broker {
   }> {
     const jobs = this.options.store.restartUnknownGuestJobs(limit);
     if (jobs.length === 0) return { inspected: 0, recovered: 0, unavailable: 0, unknown: 0, skipped: 0 };
-    const policy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+    const policy = this.currentPolicy();
     let recovered = 0;
     let unavailable = 0;
     let unknown = 0;
@@ -485,7 +493,7 @@ export class Broker {
         continue;
       }
       const authorizeStatusLookup = (input: Parameters<NonNullable<TaskRecoveryRequest["authorizeStatusLookup"]>>[0]): void => {
-        const currentPolicy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+        const currentPolicy = this.currentPolicy();
         const currentTool = currentPolicy.tools.get("mac_task_run");
         if (input.originalRequestId !== metadata.requestId || input.originalNonce !== metadata.nonce ||
             input.originalRequestDigest !== metadata.requestDigest || input.timeoutMs !== metadata.timeoutMs ||
@@ -650,7 +658,7 @@ export class Broker {
 
   async handle(rawRequest: unknown): Promise<BrokerResult> {
     const startedAt = this.now();
-    const policy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+    const policy = this.currentPolicy();
     let request: BrokerRequest | undefined;
     let admitted = false;
     let authorized = false;
@@ -3647,7 +3655,7 @@ export class Broker {
     }
     try {
       this.checkRevocation(request);
-      const currentPolicy = this.options.policy instanceof PolicyManager ? this.options.policy.current() : this.options.policy;
+      const currentPolicy = this.currentPolicy();
       if (currentPolicy.version !== request.policyVersion) throw new Error("Policy changed");
       authorizePrincipalProjection(
         currentPolicy,

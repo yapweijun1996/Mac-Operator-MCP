@@ -82,6 +82,37 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
   for (const [name, tool] of policy.tools) validateToolPolicy(name, tool);
 }
 
+/**
+ * Copy policy authority at a trust-boundary handoff. JavaScript Map, Set, and
+ * nested arrays remain mutable even when their containing object is frozen;
+ * callers must never retain the Broker's active authority by reference.
+ */
+export function cloneBrokerPolicy(policy: BrokerPolicy): BrokerPolicy {
+  validateBrokerPolicy(policy);
+  return {
+    revision: policy.revision,
+    version: policy.version,
+    audience: policy.audience,
+    trustedEdgeIds: new Set(policy.trustedEdgeIds),
+    trustedEdgeKeys: new Map([...policy.trustedEdgeKeys].map(([identity, window]) => [identity, { ...window }])),
+    principalGrants: new Map([...policy.principalGrants].map(([principalId, grant]) => [principalId, {
+      ...grant,
+      scopes: [...grant.scopes]
+    }])),
+    targetRules: policy.targetRules.map((rule) => ({ ...rule, target: { ...rule.target } })),
+    filesystemRoots: policy.filesystemRoots.map((root) => ({
+      ...root,
+      denyRelativePaths: [...root.denyRelativePaths]
+    })),
+    killSwitches: { ...policy.killSwitches },
+    tools: new Map([...policy.tools].map(([name, tool]) => [name, {
+      ...tool,
+      requiredScopes: [...tool.requiredScopes],
+      capabilityFamilies: [...tool.capabilityFamilies]
+    }]))
+  };
+}
+
 function validateToolPolicy(name: string, tool: ToolPolicy): void {
   if (!PLANNED_TOOL_NAMES.includes(name as (typeof PLANNED_TOOL_NAMES)[number]) ||
       tool === null || typeof tool !== "object" || tool.tool !== name ||

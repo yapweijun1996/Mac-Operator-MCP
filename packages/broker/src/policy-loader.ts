@@ -13,7 +13,7 @@ import {
 } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
 import type { BrokerStore } from "./persistence.js";
-import { validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type PrincipalGrant, type TargetRule } from "./policy.js";
+import { cloneBrokerPolicy, validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type PrincipalGrant, type TargetRule } from "./policy.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 
 const require = createRequire(import.meta.url);
@@ -229,12 +229,11 @@ export class PolicyManager {
     private readonly store?: BrokerStore,
     private readonly now: () => number = Date.now
   ) {
-    validateBrokerPolicy(initialPolicy);
-    this.activePolicy = initialPolicy;
+    this.activePolicy = cloneBrokerPolicy(initialPolicy);
   }
 
   current(): BrokerPolicy {
-    return this.activePolicy;
+    return cloneBrokerPolicy(this.activePolicy);
   }
 
   activate(verified: VerifiedPolicy): void {
@@ -250,7 +249,7 @@ export class PolicyManager {
       keyId: verified.keyId,
       activatedAtMs: this.now()
     }, currentRevision);
-    this.activePolicy = verified.policy;
+    this.activePolicy = cloneBrokerPolicy(verified.policy);
   }
 
   restore(verified: VerifiedPolicy): void {
@@ -266,7 +265,7 @@ export class PolicyManager {
     ) {
       throw new Error("Verified policy does not match persisted active policy identity");
     }
-    this.activePolicy = verified.policy;
+    this.activePolicy = cloneBrokerPolicy(verified.policy);
   }
 
   rollback(verified: VerifiedPolicy, precondition: { expectedCurrentRevision: number; reasonCode: string }): void {
@@ -281,7 +280,7 @@ export class PolicyManager {
       payloadDigest: verified.payloadDigest,
       keyId: verified.keyId
     }, precondition.expectedCurrentRevision, precondition.reasonCode, this.now());
-    this.activePolicy = verified.policy;
+    this.activePolicy = cloneBrokerPolicy(verified.policy);
   }
 }
 
