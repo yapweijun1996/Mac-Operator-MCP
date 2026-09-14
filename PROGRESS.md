@@ -68,6 +68,18 @@ stale-lock operator recovery, production Keychain rotation, Developer ID
 installation, and rollback-resistant external anchoring remain open. Evidence:
 `evidence/2026-09-14-audit-anchor-lock.md`.
 
+Latest audit-lock recovery addendum: a host-only `recoverAuditAnchorLock`
+boundary now requires an authenticated stopped-service callback and the exact
+owner-only lock device/inode captured by operator readback. On Darwin it uses
+the existing native descriptor-relative `unlinkat` + parent `fsync` boundary,
+validates the removal readback, and refuses replacement or symlink targets;
+startup and normal publication never invoke it automatically. Focused recovery
+tests pass 3/3, and the full `MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm
+test` regression passes 483/484 with one explicit skip. This is an explicit
+stopped-service recovery primitive, not proof of external immutable anchoring
+or production operator authentication. Evidence:
+`evidence/2026-09-14-audit-anchor-lock-recovery.md`.
+
 Latest controller-secret-zone addendum: Broker-owned sandbox profiles now
 deny `.codex` and `.openai` controller-state directories in addition to the
 existing SSH, cloud, Docker, browser, Mail, Messages, and Keychain zones. The

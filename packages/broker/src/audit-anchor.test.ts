@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AuditAnchorManager } from "./audit-anchor.js";
+import { AuditAnchorManager, recoverAuditAnchorLock } from "./audit-anchor.js";
 
 const key = Buffer.from("audit-anchor-test-key-0123456789abcdef", "ascii");
 const firstHash = "a".repeat(64);
@@ -91,3 +91,87 @@ test("AuditAnchorManager fails closed when another process holds the sidecar loc
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("stopped-service audit anchor recovery removes only the exact lock identity", {
+  skip: process.platform !== "darwin"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-recovery-"));
+  const path = join(await realpath(directory), "audit.anchor");
+  const lockPath = `${path}.lock`;
+  let stoppedReadbackCalls = 0;
+  try {
+    await writeFile(lockPath, "stopped-service-recovery\n", { mode: 0o600 });
+    const identity = await stat(lockPath);
+    const recovered = recoverAuditAnchorLock({
+      path,
+      expectedLockDevice: identity.dev,
+      expectedLockInode: identity.ino,
+      assertServiceStopped: () => { stoppedReadbackCalls += 1; }
+    });
+    assert.deepEqual(recovered, {
+      path,
+      lockPath,
+      removed: true,
+      device: identity.dev,
+      inode: identity.ino
+    });
+    assert.equal(stoppedReadbackCalls, 1);
+    await assertRejectsMissing(lockPath);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stopped-service audit anchor recovery refuses a replacement lock", {
+  skip: process.platform !== "darwin"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-recovery-swap-"));
+  const path = join(await realpath(directory), "audit.anchor");
+  const lockPath = `${path}.lock`;
+  try {
+    await writeFile(lockPath, "first\n", { mode: 0o600 });
+    const first = await stat(lockPath);
+    await unlink(lockPath);
+    await writeFile(lockPath, "replacement\n", { mode: 0o600 });
+    await assert.rejects(
+      async () => recoverAuditAnchorLock({
+        path,
+        expectedLockDevice: first.dev,
+        expectedLockInode: first.ino,
+        assertServiceStopped: () => undefined
+      }),
+      /identity precondition/u
+    );
+    assert.equal((await lstat(lockPath)).isFile(), true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stopped-service audit anchor recovery requires the host stop gate", {
+  skip: process.platform !== "darwin"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-recovery-gate-"));
+  const path = join(await realpath(directory), "audit.anchor");
+  const lockPath = `${path}.lock`;
+  try {
+    await writeFile(lockPath, "running-service\n", { mode: 0o600 });
+    const identity = await stat(lockPath);
+    assert.throws(
+      () => recoverAuditAnchorLock({
+        path,
+        expectedLockDevice: identity.dev,
+        expectedLockInode: identity.ino,
+        assertServiceStopped: () => { throw new Error("service is still running"); }
+      }),
+      /service is still running/u
+    );
+    assert.equal((await lstat(lockPath)).isFile(), true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+async function assertRejectsMissing(path: string): Promise<void> {
+  await assert.rejects(() => lstat(path), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT");
+}

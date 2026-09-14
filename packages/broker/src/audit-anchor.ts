@@ -2,6 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, chmodSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalJson } from "@mac-operator/contracts";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 
 const ANCHOR_FORMAT = "MOPS-AUDIT-ANCHOR-1" as const;
 const ANCHOR_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -27,6 +28,28 @@ export interface AuditAnchorOptions {
   /** Absolute owner-only path outside the SQLite database directory when possible. */
   path: string;
   keySource: AuditAnchorKeySource;
+}
+
+export interface AuditAnchorLockRecoveryOptions {
+  /** Canonical audit-anchor path whose sibling lock is being recovered. */
+  path: string;
+  /** Exact lock identity captured by a stopped-service operator readback. */
+  expectedLockDevice: number;
+  expectedLockInode: number;
+  /**
+   * Host-only stopped-service gate. The caller must hold its stop/recovery
+   * guard while this synchronous operation runs; no PID or age heuristic is
+   * accepted as proof that the lock is stale.
+   */
+  assertServiceStopped: () => void;
+}
+
+export interface AuditAnchorLockRecoveryResult {
+  path: string;
+  lockPath: string;
+  removed: true;
+  device: number;
+  inode: number;
 }
 
 /**
@@ -94,6 +117,58 @@ export class AuditAnchorManager {
       writeAnchor(this.options.path, record);
     });
   }
+}
+
+/**
+ * Removes one exact audit-anchor lock after an authenticated host stop
+ * readback. This is deliberately not used by startup or normal publication:
+ * stale locks are never reclaimed automatically. The native unlink boundary
+ * opens the canonical parent and uses unlinkat plus fsync, so a replacement
+ * pathname cannot be deleted after the expected device/inode check.
+ */
+export function recoverAuditAnchorLock(
+  options: AuditAnchorLockRecoveryOptions
+): AuditAnchorLockRecoveryResult {
+  validateAnchorPath(options.path);
+  validateLockIdentity(options.expectedLockDevice, options.expectedLockInode);
+  const anchorPath = canonicalAnchorPath(options.path);
+  validateAnchorDirectory(anchorPath);
+  options.assertServiceStopped();
+
+  const lockPath = `${anchorPath}.lock`;
+  const lock = lstatSync(lockPath);
+  const uid = process.getuid?.();
+  if (!lock.isFile() || lock.isSymbolicLink() || uid === undefined || lock.uid !== uid || (lock.mode & 0o077) !== 0 ||
+      lock.dev !== options.expectedLockDevice || lock.ino !== options.expectedLockInode) {
+    throw new Error("Audit anchor lock identity precondition failed");
+  }
+
+  const native = loadNativePeerAdapter();
+  const result = native.unlinkFileWithinRoot(
+    dirname(anchorPath),
+    lockPath,
+    true,
+    String(options.expectedLockDevice),
+    String(options.expectedLockInode)
+  ) as unknown;
+  if (!isNativeLockRecoveryResult(result) || !result.removed || result.rootPath !== dirname(anchorPath) ||
+      result.path !== lockPath || result.device !== String(options.expectedLockDevice) ||
+      result.inode !== String(options.expectedLockInode)) {
+    throw new Error("Audit anchor lock recovery readback failed");
+  }
+  try {
+    lstatSync(lockPath);
+    throw new Error("Audit anchor lock recovery left the target present");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return {
+    path: anchorPath,
+    lockPath,
+    removed: true,
+    device: options.expectedLockDevice,
+    inode: options.expectedLockInode
+  };
 }
 
 function anchorMac(key: Buffer, keyId: string, sequence: number, eventHash: string): string {
@@ -263,4 +338,24 @@ function validateAnchorDirectory(path: string): void {
 
 function validateKeyId(keyId: string): void {
   if (!ANCHOR_KEY_ID_PATTERN.test(keyId)) throw new Error("Audit anchor key ID is invalid");
+}
+
+function validateLockIdentity(device: number, inode: number): void {
+  if (!Number.isSafeInteger(device) || device < 0 || !Number.isSafeInteger(inode) || inode < 1) {
+    throw new Error("Audit anchor lock identity is invalid");
+  }
+}
+
+function isNativeLockRecoveryResult(value: unknown): value is {
+  rootPath: string;
+  path: string;
+  removed: boolean;
+  device: string;
+  inode: string;
+} {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.rootPath === "string" && typeof record.path === "string" &&
+    typeof record.removed === "boolean" && typeof record.device === "string" &&
+    typeof record.inode === "string";
 }

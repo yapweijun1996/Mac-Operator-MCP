@@ -47,6 +47,7 @@ interface NativePeerCredentials {
   writeKeychainGenericPassword(service: string, account: string, key: Buffer, trustedExecutablePath: string): unknown;
   inspectKeychainGenericPassword(service: string, account: string, trustedExecutablePath: string): unknown;
   deleteKeychainGenericPassword(service: string, account: string, key: Buffer, trustedExecutablePath: string): unknown;
+  unlinkFileWithinRoot(rootPath: string, targetPath: string, expectedPresent: boolean, expectedDevice: string, expectedInode: string): unknown;
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
