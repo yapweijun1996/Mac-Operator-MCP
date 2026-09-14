@@ -24,6 +24,7 @@ import {
   authorizeTool,
   isCapabilityFamilyDisabled,
   runtimeToolStates,
+  validateBrokerPolicy,
   type BrokerPolicy,
   type NormalizedTarget,
   type TargetKind,
@@ -137,6 +138,7 @@ export class Broker {
   private closePromise: Promise<void> | undefined;
 
   constructor(private readonly options: BrokerOptions) {
+    validateBrokerPolicy(options.policy instanceof PolicyManager ? options.policy.current() : options.policy);
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
     this.maxActiveRequestsPerSession = options.maxActiveRequestsPerSession ?? DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION;

@@ -13,7 +13,7 @@ import {
 } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
 import type { BrokerStore } from "./persistence.js";
-import type { BrokerPolicy, NormalizedTarget, PrincipalGrant, TargetRule } from "./policy.js";
+import { validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type PrincipalGrant, type TargetRule } from "./policy.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 
 const require = createRequire(import.meta.url);
@@ -229,6 +229,7 @@ export class PolicyManager {
     private readonly store?: BrokerStore,
     private readonly now: () => number = Date.now
   ) {
+    validateBrokerPolicy(initialPolicy);
     this.activePolicy = initialPolicy;
   }
 
@@ -237,6 +238,7 @@ export class PolicyManager {
   }
 
   activate(verified: VerifiedPolicy): void {
+    validateBrokerPolicy(verified.policy);
     const currentRevision = this.activePolicy.revision;
     if (verified.policy.revision <= currentRevision) {
       throw new Error("Policy revision must increase");
@@ -253,6 +255,7 @@ export class PolicyManager {
 
   restore(verified: VerifiedPolicy): void {
     if (!this.store) throw new Error("Policy restore requires a persistence store");
+    validateBrokerPolicy(verified.policy);
     const persisted = this.store.activePolicyIdentity();
     if (
       !persisted ||
@@ -268,6 +271,7 @@ export class PolicyManager {
 
   rollback(verified: VerifiedPolicy, precondition: { expectedCurrentRevision: number; reasonCode: string }): void {
     if (!this.store) throw new Error("Policy rollback requires a persistence store");
+    validateBrokerPolicy(verified.policy);
     if (this.activePolicy.revision !== precondition.expectedCurrentRevision) {
       throw new Error("In-memory active policy does not match rollback precondition");
     }

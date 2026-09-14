@@ -1,4 +1,4 @@
-import { BrokerError, PLANNED_TOOL_NAMES, type CapabilityFamily, type RuntimeToolState, type Scope } from "@mac-operator/contracts";
+import { BrokerError, CAPABILITY_FAMILIES, CONTRACT_VERSION, PLANNED_TOOL_NAMES, SCOPES, type CapabilityFamily, type RuntimeToolState, type Scope } from "@mac-operator/contracts";
 import type { BrokerStore, SwitchName } from "./persistence.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 
@@ -51,6 +51,57 @@ export interface TargetRule {
   target: NormalizedTarget;
 }
 
+const TARGET_TYPES = new Set<ToolPolicy["targetType"]>([
+  "broker", "policy_query", "path", "filesystem_roots", "project", "process", "service", "log_source",
+  "app_set", "app", "app_window", "ui_element", "docker_runtime", "docker_object", "job", "task_profile"
+]);
+const APPROVAL_POLICIES = new Set<ToolPolicy["approvalPolicy"]>([
+  "trusted_read", "trusted_write", "trusted_gui", "trusted_profile", "explicit_privileged_policy"
+]);
+const SWITCH_NAMES = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"] as const;
+
+/**
+ * Validate the runtime policy shape at the authority boundary. Signed policy
+ * loading already validates its source document, but Broker callers may also
+ * provide an in-memory policy and may mutate a Map after construction. A
+ * malformed ToolPolicy must therefore fail closed before it can authorize a
+ * request or advertise a capability.
+ */
+export function validateBrokerPolicy(policy: BrokerPolicy): void {
+  if (policy === null || typeof policy !== "object" ||
+      !Number.isSafeInteger(policy.revision) || policy.revision < 0 ||
+      typeof policy.version !== "string" || policy.version.length < 1 || policy.version.length > 128 ||
+      typeof policy.audience !== "string" || policy.audience.length < 1 || policy.audience.length > 256 ||
+      !(policy.trustedEdgeIds instanceof Set) || !(policy.trustedEdgeKeys instanceof Map) ||
+      !(policy.principalGrants instanceof Map) || !Array.isArray(policy.targetRules) ||
+      !Array.isArray(policy.filesystemRoots) || !(policy.tools instanceof Map) ||
+      policy.killSwitches === null || typeof policy.killSwitches !== "object" ||
+      SWITCH_NAMES.some((name) => typeof policy.killSwitches[name] !== "boolean")) {
+    throw new BrokerError("POLICY_DENIED", "Active Broker policy is malformed");
+  }
+  for (const [name, tool] of policy.tools) validateToolPolicy(name, tool);
+}
+
+function validateToolPolicy(name: string, tool: ToolPolicy): void {
+  if (!PLANNED_TOOL_NAMES.includes(name as (typeof PLANNED_TOOL_NAMES)[number]) ||
+      tool === null || typeof tool !== "object" || tool.tool !== name ||
+      tool.contractVersion !== CONTRACT_VERSION ||
+      !Array.isArray(tool.requiredScopes) || tool.requiredScopes.length < 1 ||
+      new Set(tool.requiredScopes).size !== tool.requiredScopes.length ||
+      tool.requiredScopes.some((scope) => !SCOPES.includes(scope)) ||
+      !Array.isArray(tool.capabilityFamilies) || tool.capabilityFamilies.length < 1 ||
+      new Set(tool.capabilityFamilies).size !== tool.capabilityFamilies.length ||
+      tool.capabilityFamilies.some((family) => !CAPABILITY_FAMILIES.includes(family)) ||
+      !TARGET_TYPES.has(tool.targetType) || typeof tool.mutation !== "boolean" ||
+      !APPROVAL_POLICIES.has(tool.approvalPolicy) ||
+      !Number.isSafeInteger(tool.outputCapBytes) || tool.outputCapBytes < 1 || tool.outputCapBytes > 8 * 1024 * 1024 ||
+      !Number.isSafeInteger(tool.timeoutMs) || tool.timeoutMs < 1 || tool.timeoutMs > 600_000 ||
+      typeof tool.implemented !== "boolean" || typeof tool.enabled !== "boolean" ||
+      (tool.enabled && !tool.implemented)) {
+    throw new BrokerError("POLICY_DENIED", "Active Broker policy contains a malformed tool policy");
+  }
+}
+
 export function authorizePrincipalProjection(
   policy: BrokerPolicy,
   principalId: string,
@@ -94,6 +145,7 @@ export function authorizeTool(
   contractVersion: string,
   principalScopes: readonly Scope[]
 ): ToolPolicy {
+  validateBrokerPolicy(policy);
   if (store.isSwitchDisabled("global") || policy.killSwitches.global) throw new BrokerError("REVOKED", "Broker admission is disabled");
   const tool = policy.tools.get(toolName);
   if (!tool || !tool.implemented) throw new BrokerError("UNSUPPORTED_CAPABILITY", "Tool is not implemented");
