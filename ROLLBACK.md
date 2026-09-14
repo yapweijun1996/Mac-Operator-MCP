@@ -18,3 +18,8 @@ Source and artifact version, contract and policy versions, persistence schema ve
 ## Evidence
 
 Each releasable phase requires a tested rollback procedure with exact artifacts, commands, expected state, failure handling, and post-rollback verification. The source-level launchd boundary now includes a non-executing install plan, double-`lstat` filesystem preflight, and a temporary-root-tested `applyMacOsPlistPlan` that uses descriptor-relative atomic install/upgrade/rollback/uninstall with target identity and postcondition readback. No installed artifact, live `launchctl` rollback, signed artifact, or production uninstall evidence exists yet.
+
+The Broker persistence-specific migration and recovery order is documented in
+[PERSISTENCE_CUTOVER.md](PERSISTENCE_CUTOVER.md). It restores only authenticated
+encrypted backups into fresh destinations and does not expose an in-place
+down-migration or force-reset operation.

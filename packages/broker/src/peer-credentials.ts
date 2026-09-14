@@ -19,6 +19,17 @@ export interface PeerProcessIdentity {
   startTimeMicros: number;
 }
 
+export type KeychainProtection = "file-based-acl" | "other";
+
+/** Non-secret attributes read back from one Broker-owned generic-password item. */
+export interface KeychainGenericPasswordMetadata {
+  identityMatches: boolean;
+  protection: KeychainProtection;
+  synchronizable: boolean;
+  synchronizableAttributePresent: boolean;
+  trustedApplicationMatches: boolean;
+}
+
 export interface PeerCredentialPolicy {
   expectedUid: number;
   expectedGid?: number;
@@ -32,8 +43,10 @@ interface NativePeerCredentials {
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
   statStorageVolumeWithinRoot(rootPath: string): unknown;
-  readKeychainGenericPassword(service: string, account: string): unknown;
-  writeKeychainGenericPassword(service: string, account: string, key: Buffer): unknown;
+  readKeychainGenericPassword(service: string, account: string, trustedExecutablePath: string): unknown;
+  writeKeychainGenericPassword(service: string, account: string, key: Buffer, trustedExecutablePath: string): unknown;
+  inspectKeychainGenericPassword(service: string, account: string, trustedExecutablePath: string): unknown;
+  deleteKeychainGenericPassword(service: string, account: string, key: Buffer, trustedExecutablePath: string): unknown;
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
@@ -50,7 +63,8 @@ const REQUIRED_NATIVE_EXPORTS = [
   "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot",
   "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity",
-  "readKeychainGenericPassword", "writeKeychainGenericPassword"
+  "readKeychainGenericPassword", "writeKeychainGenericPassword",
+  "inspectKeychainGenericPassword", "deleteKeychainGenericPassword"
 ] as const;
 const MIN_SUPPORTED_NAPI_VERSION = 8;
 
@@ -182,13 +196,15 @@ export function capturePeerProcessIdentity(pid: number): PeerProcessIdentity {
 }
 
 /**
- * Reads one exact Broker-owned generic-password item. The native adapter
+ * Reads one exact Broker-owned generic-password item after checking that the
+ * item ACL is bound to the canonical Broker executable. The native adapter
  * returns only a bounded raw key; callers must validate the service/account
  * namespace and never log or persist the returned bytes.
  */
-export function readKeychainGenericPassword(service: string, account: string): Buffer {
+export function readKeychainGenericPassword(service: string, account: string, trustedExecutablePath: string): Buffer {
   validateKeychainCoordinates(service, account);
-  const value = loadNativePeerAdapter().readKeychainGenericPassword(service, account);
+  validateKeychainTrustedExecutablePath(trustedExecutablePath);
+  const value = loadNativePeerAdapter().readKeychainGenericPassword(service, account, trustedExecutablePath);
   if (!Buffer.isBuffer(value) || value.byteLength !== 32) {
     throw new Error("Keychain generic password has an invalid length");
   }
@@ -196,16 +212,88 @@ export function readKeychainGenericPassword(service: string, account: string): B
 }
 
 /**
- * Provisions one exact 32-byte generic-password item with a device-bound
- * after-first-unlock accessibility class. Provisioning is explicit startup or
- * operator configuration work; MCP request arguments never select it.
+ * Provisions one exact 32-byte generic-password item with a file-based ACL
+ * bound to one canonical Broker executable. Provisioning is explicit startup
+ * or operator configuration work; MCP request arguments never select it.
  */
-export function writeKeychainGenericPassword(service: string, account: string, key: Buffer): void {
+export function writeKeychainGenericPassword(
+  service: string,
+  account: string,
+  key: Buffer,
+  trustedExecutablePath: string
+): void {
   validateKeychainCoordinates(service, account);
   if (!Buffer.isBuffer(key) || key.byteLength !== 32) {
     throw new Error("Keychain generic password must contain exactly 32 bytes");
   }
-  loadNativePeerAdapter().writeKeychainGenericPassword(service, account, Buffer.from(key));
+  validateKeychainTrustedExecutablePath(trustedExecutablePath);
+  loadNativePeerAdapter().writeKeychainGenericPassword(service, account, Buffer.from(key), trustedExecutablePath);
+}
+
+/**
+ * Reads only non-secret protection metadata for one exact generic-password item.
+ * The Broker uses this during startup/evidence checks; no MCP route exposes it.
+ */
+export function inspectKeychainGenericPassword(
+  service: string,
+  account: string,
+  trustedExecutablePath: string
+): KeychainGenericPasswordMetadata {
+  validateKeychainCoordinates(service, account);
+  validateKeychainTrustedExecutablePath(trustedExecutablePath);
+  return parseKeychainGenericPasswordMetadata(
+    loadNativePeerAdapter().inspectKeychainGenericPassword(service, account, trustedExecutablePath)
+  );
+}
+
+/**
+ * Deletes one exact item only after the caller proves the expected key digest.
+ * The native operation binds deletion to the item's exact item reference rather
+ * than deleting every item matching a mutable service/account lookup.
+ */
+export function deleteKeychainGenericPassword(
+  service: string,
+  account: string,
+  key: Buffer,
+  trustedExecutablePath: string
+): void {
+  validateKeychainCoordinates(service, account);
+  if (!Buffer.isBuffer(key) || key.byteLength !== 32) {
+    throw new Error("Keychain generic password must contain exactly 32 bytes");
+  }
+  validateKeychainTrustedExecutablePath(trustedExecutablePath);
+  loadNativePeerAdapter().deleteKeychainGenericPassword(service, account, Buffer.from(key), trustedExecutablePath);
+}
+
+export function parseKeychainGenericPasswordMetadata(value: unknown): KeychainGenericPasswordMetadata {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Keychain metadata is malformed");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.identityMatches !== "boolean" ||
+      (record.protection !== "file-based-acl" && record.protection !== "other") ||
+      typeof record.synchronizable !== "boolean" ||
+      typeof record.synchronizableAttributePresent !== "boolean" ||
+      typeof record.trustedApplicationMatches !== "boolean") {
+    throw new Error("Keychain metadata is malformed");
+  }
+  return {
+    identityMatches: record.identityMatches,
+    protection: record.protection,
+    synchronizable: record.synchronizable,
+    synchronizableAttributePresent: record.synchronizableAttributePresent,
+    trustedApplicationMatches: record.trustedApplicationMatches
+  };
+}
+
+export function validateKeychainTrustedExecutablePath(path: string): void {
+  if (!isAbsolute(path) || resolve(path) !== path || realpathSync.native(path) !== path) {
+    throw new Error("Keychain trusted executable path is not canonical");
+  }
+  const linkStat = lstatSync(path);
+  if (!linkStat.isFile() || linkStat.isSymbolicLink() || (linkStat.mode & 0o022) !== 0) {
+    throw new Error("Keychain trusted executable must be a protected regular file");
+  }
 }
 
 export function validateKeychainCoordinates(service: string, account: string): void {

@@ -33,7 +33,8 @@ copied only in memory and cleared after each operation.
 
 ## Limitations
 
-The test key is injected in memory. The macOS Keychain source factory is wired,
-but live Keychain ACL/readback and production backup scheduling are not claimed.
-External audit anchoring, production migration cutover, single-owner service
-deployment, and physical-erasure guarantees remain open.
+The test key is injected in memory. The macOS Keychain source factory is wired;
+the separate live ACL/readback result is recorded in
+`evidence/2026-09-14-keychain-acl.md`, but production backup scheduling is not
+claimed. External audit anchoring, production migration cutover, single-owner
+service deployment, and physical-erasure guarantees remain open.

@@ -35,6 +35,27 @@ work remains `UNKNOWN`; the full real-sandbox regression now passes 466/467
 with one explicit opt-in skip. Evidence:
 `evidence/2026-09-14-process-pid-reuse.md`.
 
+Latest Keychain ACL addendum: the macOS credential boundary now targets the
+file-based Keychain model required for launchd daemons. Provisioning accepts an
+explicit canonical protected Broker executable and creates a `SecAccess` ACL
+bound to its trusted-application requirement; native readback checks that ACL
+before touching secret bytes. Native search rejects duplicate service/account
+identities, and retirement requires the exact 32-byte value plus a bound item
+reference. A real physical-host run provisioned a random item, verified
+`file-based-acl` metadata, rejected a different executable identity, and
+retired the item; focused credential/native tests pass 16/16. The previous
+data-protection `SecAccessControl` attempt correctly failed with missing
+entitlement on the unsigned development host and is not used as a daemon
+fallback. Production Developer ID/provisioning, installed executable identity,
+cross-process rotation, and final ADR acceptance remain open. Evidence:
+`evidence/2026-09-14-keychain-acl.md`.
+
+Latest persistence operations addendum: `PERSISTENCE_CUTOVER.md` defines the
+forward migration, encrypted-backup restore, authority freeze, UNKNOWN-job
+handling, rollback, and final readback order without inventing an installer or
+in-place down-migration. This is a host/operator procedure; production service
+cutover and external audit anchoring remain open.
+
 Latest process-identity exit-window addendum: `ProcessSupervisor` now keeps
 the bounded 100ms native PID/start-time retry alive even when a short-lived
 child closes first, without inventing an identity or registering unowned work.

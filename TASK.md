@@ -78,6 +78,21 @@ readback. The default policy remains disabled; production execution is still
 blocked by MOP-086. Evidence:
 `evidence/2026-09-14-real-broker-task-path.md`.
 
+Keychain ACL addendum: the native credential boundary now uses the file-based
+Keychain model required by launchd daemons. Provisioning binds a canonical
+protected Broker executable through `SecAccess` ACL, readback checks the exact
+trusted-application identity before secret access, and digest-bound retirement
+uses the exact item reference. The protected loader now requires 21 native
+exports, including ACL inspection and retirement. Real host evidence covers
+wrong-executable denial and cleanup; production signing/provenance and
+installed rotation remain open. Evidence:
+`evidence/2026-09-14-keychain-acl.md`.
+
+Persistence operations addendum: `PERSISTENCE_CUTOVER.md` records the forward
+migration, encrypted-backup restore, authority freeze, UNKNOWN-job handling,
+rollback, and final readback procedure. It is host/operator documentation and
+does not imply an installed service cutover.
+
 Status values: `DONE`, `IN_PROGRESS`, `PLANNED`, `BLOCKED`. Completion requires repository evidence. Current implementation, test, and working-tree state is owned by `PROGRESS.md`; this ledger records task status and acceptance evidence. `BLOCKED` is reserved for an evidenced unmet prerequisite, not merely future-phase placement. Every blocked task records `blocked_by`, `unblock_condition`, and `expected_evidence`.
 
 Privileged-helper source-composition addendum: commit `1405b99` adds an
@@ -226,7 +241,7 @@ this does not claim persistent installation or signing provenance.
 - `MOP-001` — `DONE` — Git repository, npm workspace/package baseline, developer commands, dependency lockfile, ignore rules, and a least-privilege macOS CI definition exist. First remote CI execution remains verification evidence rather than bootstrap scope.
 - `MOP-002` — `DONE` — Materialized and synchronized GOAL, DESIGN, SPEC, EPIC, ROADMAP, TASK, PROGRESS, and GOAL_PROMPT with repository-state, consistency, whitespace, task-ID, and prompt-length checks.
 - `MOP-003` — `DONE` — Accepted TypeScript/Node 24+ for Edge/Broker/shared contracts; Swift remains available for native adapters/helper. Package direction and prototype evidence are recorded in ADR-0001.
-- `MOP-004` — `IN_PROGRESS` — Versioned request/result/failure/principal/scope types, signed policy schemas, and a shared stable failure schema exist. A versioned `schemas/ledger-records.schema.json` now machine-validates bounded Request, Approval, Job, and Audit record envelopes, including typed privileged payloads and rejection of raw authority fields; persistence runtime validation remains the implementation authority. Host-only SQLite backup/restore/retention primitives now add owner-only atomic encrypted publication, AES-256-GCM authentication, audit-chain/SQLite integrity checks, fresh-target restore refusal, numeric timestamp retention, and symlink/ownership/mode/size/target-swap guards; missing or mismatched Broker-owned key sources and legacy plaintext backup names fail closed. BrokerStore now records and enforces monotonic SQLite schema version `4`, applies a versioned forward-only migration registry transactionally, preserves legacy data, rejects future markers and inconsistent registry identities, and defines rollback as restore-from-encrypted-backup only; focused persistence/credential tests pass 47/47. Mutation-state invariants, disk-exhaustion behavior, Keychain ACL review, and final ADR acceptance remain incomplete.
+- `MOP-004` — `IN_PROGRESS` — Versioned request/result/failure/principal/scope types, signed policy schemas, and a shared stable failure schema exist. A versioned `schemas/ledger-records.schema.json` now machine-validates bounded Request, Approval, Job, and Audit record envelopes, including typed privileged payloads and rejection of raw authority fields; persistence runtime validation remains the implementation authority. Host-only SQLite backup/restore/retention primitives now add owner-only atomic encrypted publication, AES-256-GCM authentication, audit-chain/SQLite integrity checks, fresh-target restore refusal, numeric timestamp retention, and symlink/ownership/mode/size/target-swap guards; missing or mismatched Broker-owned key sources and legacy plaintext backup names fail closed. BrokerStore now records and enforces monotonic SQLite schema version `4`, applies a versioned forward-only migration registry transactionally, preserves legacy data, rejects future markers and inconsistent registry identities, and defines rollback as restore-from-encrypted-backup only. The macOS Keychain source now has a real file-based ACL readback and digest-bound retirement path; focused migration/credential/ACL tests pass on the recorded host. Mutation-state invariants, disk-exhaustion behavior, production code-signing/Keychain identity, and final ADR acceptance remain incomplete.
 - `MOP-005` — `DONE` — Materialized the locked capability taxonomy, lifecycle, catalog, standard, and all 44 KB tool contracts with unique provenance, deterministic mandatory fields, and canonical delivery-wave naming. Upstream KB writeback is tracked separately in `KB_SYNC.md`.
 - `MOP-006` — `DONE` — Created the initial threat model for remote client, Edge, IPC, Broker, adapters, child processes, GUI, helper, audit, policy, and secret stores, with verification targets.
 - `MOP-007` — `IN_PROGRESS` — Strict typecheck, build, Node test, AJV contract validation, dependency audit, unit/integration/adversarial foundation tests, a dependency-free tracked-file style/lint check, and a least-privilege macOS CI workflow exist. First remote CI evidence remains pending.

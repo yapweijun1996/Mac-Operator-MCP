@@ -181,86 +181,359 @@ struct NetworkInterfaceRecord {
   std::set<std::string> addresses;
 };
 
+bool ReadCanonicalExecutablePath(napi_env env, napi_value value, char* output, size_t capacity,
+                                 struct stat* identity);
+OSStatus FindExactKeychainItem(const char* service, const char* account, SecKeychainItemRef* item);
+bool ItemHasTrustedReadAcl(napi_env env, SecKeychainItemRef item, const char* trusted_path);
+bool CopyKeychainItemData(SecKeychainItemRef item, std::vector<unsigned char>* output);
+
 napi_value ReadKeychainGenericPassword(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value args[2];
-  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
-    napi_throw_type_error(env, nullptr, "readKeychainGenericPassword requires service and account");
+  size_t argc = 3;
+  napi_value args[3];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+    napi_throw_type_error(env, nullptr, "readKeychainGenericPassword requires service, account, and trusted executable");
     return nullptr;
   }
   char service[192];
   char account[192];
+  char trusted_path[PATH_MAX];
   if (!ReadComponent(env, args[0], service, sizeof(service), "com.mac-operator.") ||
-      !ReadComponent(env, args[1], account, sizeof(account))) {
-    napi_throw_type_error(env, nullptr, "Keychain service or account is malformed");
+      !ReadComponent(env, args[1], account, sizeof(account)) ||
+      !ReadCanonicalExecutablePath(env, args[2], trusted_path, sizeof(trusted_path), nullptr)) {
+    napi_throw_type_error(env, nullptr, "Keychain identity or trusted executable is malformed");
     return nullptr;
   }
-  CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
-  CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
-  if (service_value == nullptr || account_value == nullptr) {
-    if (service_value != nullptr) CFRelease(service_value);
-    if (account_value != nullptr) CFRelease(account_value);
-    ThrowSystemError(env, "Keychain identity could not be represented");
+  SecKeychainItemRef item = nullptr;
+  const OSStatus find_status = FindExactKeychainItem(service, account, &item);
+  if (find_status != errSecSuccess || item == nullptr) {
+    if (find_status == errSecDuplicateItem) {
+      ThrowSystemError(env, "Keychain generic password identity is ambiguous");
+    } else {
+      ThrowSystemError(env, "Keychain generic password is unavailable");
+    }
     return nullptr;
   }
-  CFMutableDictionaryRef query = CFDictionaryCreateMutable(
-      kCFAllocatorDefault, 6, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  if (query == nullptr) {
-    CFRelease(service_value);
-    CFRelease(account_value);
-    ThrowSystemError(env, "Keychain query could not be created");
+  if (!ItemHasTrustedReadAcl(env, item, trusted_path)) {
+    CFRelease(item);
+    ThrowSystemError(env, "Keychain generic password ACL is not authorized");
     return nullptr;
   }
-  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(query, kSecAttrService, service_value);
-  CFDictionarySetValue(query, kSecAttrAccount, account_value);
-  CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
-  CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  // Fail rather than presenting a Keychain authentication UI to a background Broker.
-  CFDictionarySetValue(query, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
-#pragma clang diagnostic pop
-  CFRelease(service_value);
-  CFRelease(account_value);
-
-  CFTypeRef matches = nullptr;
-  const OSStatus status = SecItemCopyMatching(query, &matches);
-  CFRelease(query);
-  if (status != errSecSuccess || matches == nullptr || CFGetTypeID(matches) != CFArrayGetTypeID() ||
-      CFArrayGetCount(static_cast<CFArrayRef>(matches)) != 1) {
-    if (matches != nullptr) CFRelease(matches);
-    ThrowSystemError(env, "Keychain generic password is unavailable");
-    return nullptr;
-  }
-  CFTypeRef item = CFArrayGetValueAtIndex(static_cast<CFArrayRef>(matches), 0);
-  if (item == nullptr || CFGetTypeID(item) != CFDataGetTypeID()) {
-    CFRelease(matches);
-    ThrowSystemError(env, "Keychain generic password is unavailable");
-    return nullptr;
-  }
-  const CFIndex length = CFDataGetLength(static_cast<CFDataRef>(item));
-  if (length != 32) {
-    CFRelease(matches);
+  std::vector<unsigned char> data;
+  if (!CopyKeychainItemData(item, &data)) {
+    CFRelease(item);
     ThrowSystemError(env, "Keychain generic password has an invalid length");
     return nullptr;
   }
   napi_value result;
-  const void* bytes = CFDataGetBytePtr(static_cast<CFDataRef>(item));
-  if (bytes == nullptr || napi_create_buffer_copy(env, static_cast<size_t>(length), bytes, nullptr, &result) != napi_ok) {
-    CFRelease(matches);
+  if (napi_create_buffer_copy(env, data.size(), data.data(), nullptr, &result) != napi_ok) {
+    std::fill(data.begin(), data.end(), 0);
+    CFRelease(item);
     ThrowSystemError(env, "Keychain generic password could not be returned");
     return nullptr;
   }
-  CFRelease(matches);
+  std::fill(data.begin(), data.end(), 0);
+  CFRelease(item);
   return result;
 }
 
-napi_value WriteKeychainGenericPassword(napi_env env, napi_callback_info info) {
+bool ConstantTimeEqual(const unsigned char* left, const unsigned char* right, size_t length) {
+  unsigned char difference = 0;
+  for (size_t index = 0; index < length; ++index) {
+    difference = static_cast<unsigned char>(difference | (left[index] ^ right[index]));
+  }
+  return difference == 0;
+}
+
+bool ValidateCanonicalExecutablePath(const char* path, struct stat* identity) {
+  if (path == nullptr || path[0] != '/') return false;
+  char canonical[PATH_MAX];
+  if (realpath(path, canonical) == nullptr || strcmp(canonical, path) != 0) return false;
+  struct stat observed{};
+  if (lstat(path, &observed) != 0 || !S_ISREG(observed.st_mode) || S_ISLNK(observed.st_mode) ||
+      (observed.st_mode & (S_IWGRP | S_IWOTH)) != 0) return false;
+  if (identity != nullptr) *identity = observed;
+  return true;
+}
+
+bool SameExecutableIdentity(const struct stat& left, const struct stat& right) {
+  return left.st_dev == right.st_dev && left.st_ino == right.st_ino &&
+      left.st_size == right.st_size && left.st_mtimespec.tv_sec == right.st_mtimespec.tv_sec &&
+      left.st_mtimespec.tv_nsec == right.st_mtimespec.tv_nsec;
+}
+
+bool ReadCanonicalExecutablePath(napi_env env, napi_value value, char* output, size_t capacity,
+                                 struct stat* identity) {
+  size_t length = 0;
+  if (napi_get_value_string_utf8(env, value, nullptr, 0, &length) != napi_ok ||
+      length == 0 || length >= capacity) return false;
+  size_t copied = 0;
+  if (napi_get_value_string_utf8(env, value, output, capacity, &copied) != napi_ok ||
+      copied != length || strlen(output) != length || output[0] != '/') return false;
+  return ValidateCanonicalExecutablePath(output, identity);
+}
+
+bool CreateTrustedApplication(napi_env env, const char* path, SecTrustedApplicationRef* trusted) {
+  if (trusted == nullptr) return false;
+  struct stat before{};
+  if (!ValidateCanonicalExecutablePath(path, &before)) {
+    ThrowSystemError(env, "Keychain trusted executable could not be represented");
+    return false;
+  }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  const OSStatus status = SecTrustedApplicationCreateFromPath(path, trusted);
+#pragma clang diagnostic pop
+  if (status != errSecSuccess || *trusted == nullptr) {
+    ThrowSystemError(env, "Keychain trusted executable could not be represented");
+    return false;
+  }
+  struct stat after{};
+  if (!ValidateCanonicalExecutablePath(path, &after) || !SameExecutableIdentity(before, after)) {
+    CFRelease(*trusted);
+    *trusted = nullptr;
+    ThrowSystemError(env, "Keychain trusted executable changed while loading");
+    return false;
+  }
+  return true;
+}
+
+bool TrustedApplicationMatchesAcl(SecAccessRef access, SecTrustedApplicationRef expected) {
+  if (access == nullptr || expected == nullptr) return false;
+  CFDataRef expected_data = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  OSStatus status = SecTrustedApplicationCopyData(expected, &expected_data);
+#pragma clang diagnostic pop
+  if (status != errSecSuccess || expected_data == nullptr) return false;
+  CFArrayRef acl_list = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  // Enumerate the complete legacy ACL. SecAccessCreate may encode the
+  // trusted application under the broad `any` authorization tag rather than
+  // the per-operation read tag, so filtering here would make a valid ACL look
+  // absent.
+  const OSStatus acl_status = SecAccessCopyACLList(access, &acl_list);
+#pragma clang diagnostic pop
+  bool found = false;
+  if (acl_status == errSecSuccess && acl_list != nullptr && CFGetTypeID(acl_list) == CFArrayGetTypeID()) {
+    const CFIndex acl_count = CFArrayGetCount(acl_list);
+    for (CFIndex acl_index = 0; acl_index < acl_count && !found; ++acl_index) {
+      CFTypeRef acl_value = CFArrayGetValueAtIndex(acl_list, acl_index);
+      bool is_acl = false;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      is_acl = acl_value != nullptr && CFGetTypeID(acl_value) == SecACLGetTypeID();
+#pragma clang diagnostic pop
+      if (!is_acl) continue;
+      CFArrayRef application_list = nullptr;
+      CFStringRef description = nullptr;
+      SecKeychainPromptSelector prompt_selector{};
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      status = SecACLCopyContents(reinterpret_cast<SecACLRef>(const_cast<void*>(acl_value)), &application_list, &description,
+                                  &prompt_selector);
+#pragma clang diagnostic pop
+      if (status != errSecSuccess || application_list == nullptr ||
+          CFGetTypeID(application_list) != CFArrayGetTypeID()) {
+        if (application_list != nullptr) CFRelease(application_list);
+        if (description != nullptr) CFRelease(description);
+        continue;
+      }
+      const CFIndex application_count = CFArrayGetCount(application_list);
+      for (CFIndex application_index = 0; application_index < application_count && !found; ++application_index) {
+        CFTypeRef application = CFArrayGetValueAtIndex(application_list, application_index);
+        bool is_trusted_application = false;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        is_trusted_application = application != nullptr && CFGetTypeID(application) == SecTrustedApplicationGetTypeID();
+#pragma clang diagnostic pop
+        if (!is_trusted_application) continue;
+        CFDataRef application_data = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        status = SecTrustedApplicationCopyData(
+            reinterpret_cast<SecTrustedApplicationRef>(const_cast<void*>(application)), &application_data);
+#pragma clang diagnostic pop
+        if (status == errSecSuccess && application_data != nullptr &&
+            CFDataGetLength(application_data) == CFDataGetLength(expected_data) &&
+            ConstantTimeEqual(reinterpret_cast<const unsigned char*>(CFDataGetBytePtr(application_data)),
+                              reinterpret_cast<const unsigned char*>(CFDataGetBytePtr(expected_data)),
+                              static_cast<size_t>(CFDataGetLength(expected_data)))) {
+          found = true;
+        }
+        if (application_data != nullptr) CFRelease(application_data);
+      }
+      CFRelease(application_list);
+      if (description != nullptr) CFRelease(description);
+    }
+  }
+  if (acl_list != nullptr) CFRelease(acl_list);
+  CFRelease(expected_data);
+  return found;
+}
+
+OSStatus FindExactKeychainItem(const char* service, const char* account, SecKeychainItemRef* item) {
+  if (service == nullptr || account == nullptr || item == nullptr) return errSecParam;
+  *item = nullptr;
+  SecKeychainAttribute attributes[2] = {};
+  attributes[0].tag = kSecServiceItemAttr;
+  attributes[0].length = static_cast<UInt32>(strlen(service));
+  attributes[0].data = const_cast<char*>(service);
+  attributes[1].tag = kSecAccountItemAttr;
+  attributes[1].length = static_cast<UInt32>(strlen(account));
+  attributes[1].data = const_cast<char*>(account);
+  SecKeychainAttributeList attribute_list = { 2, attributes };
+  SecKeychainSearchRef search = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  OSStatus status = SecKeychainSearchCreateFromAttributes(
+      nullptr, kSecGenericPasswordItemClass, &attribute_list, &search);
+#pragma clang diagnostic pop
+  if (status != errSecSuccess || search == nullptr) return status;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  status = SecKeychainSearchCopyNext(search, item);
+#pragma clang diagnostic pop
+  if (status != errSecSuccess || *item == nullptr) {
+    CFRelease(search);
+    return status;
+  }
+  SecKeychainItemRef second = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  const OSStatus second_status = SecKeychainSearchCopyNext(search, &second);
+#pragma clang diagnostic pop
+  CFRelease(search);
+  if (second_status == errSecSuccess && second != nullptr) {
+    CFRelease(second);
+    CFRelease(*item);
+    *item = nullptr;
+    return errSecDuplicateItem;
+  }
+  if (second_status != errSecItemNotFound) {
+    CFRelease(*item);
+    *item = nullptr;
+    return second_status;
+  }
+  return errSecSuccess;
+}
+
+bool CreateFileKeychainAccess(napi_env env, const char* service, const char* trusted_path,
+                              SecAccessRef* access) {
+  if (access == nullptr) return false;
+  *access = nullptr;
+  SecTrustedApplicationRef trusted = nullptr;
+  if (!CreateTrustedApplication(env, trusted_path, &trusted)) return false;
+  const void* trusted_values[] = { trusted };
+  CFArrayRef trusted_list = CFArrayCreate(kCFAllocatorDefault, trusted_values, 1, &kCFTypeArrayCallBacks);
+  CFStringRef descriptor = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
+  if (trusted_list == nullptr || descriptor == nullptr) {
+    if (trusted_list != nullptr) CFRelease(trusted_list);
+    if (descriptor != nullptr) CFRelease(descriptor);
+    CFRelease(trusted);
+    ThrowSystemError(env, "Keychain ACL could not be created");
+    return false;
+  }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  const OSStatus status = SecAccessCreate(descriptor, trusted_list, access);
+#pragma clang diagnostic pop
+  CFRelease(descriptor);
+  CFRelease(trusted_list);
+  CFRelease(trusted);
+  if (status != errSecSuccess || *access == nullptr) {
+    ThrowSystemError(env, "Keychain ACL could not be created");
+    return false;
+  }
+  return true;
+}
+
+bool ItemHasTrustedReadAcl(napi_env env, SecKeychainItemRef item, const char* trusted_path) {
+  if (item == nullptr || trusted_path == nullptr) return false;
+  SecTrustedApplicationRef expected = nullptr;
+  if (!CreateTrustedApplication(env, trusted_path, &expected)) return false;
+  SecAccessRef access = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  const OSStatus status = SecKeychainItemCopyAccess(item, &access);
+#pragma clang diagnostic pop
+  bool matches = false;
+  if (status == errSecSuccess && access != nullptr) matches = TrustedApplicationMatchesAcl(access, expected);
+  if (access != nullptr) CFRelease(access);
+  CFRelease(expected);
+  return matches;
+}
+
+bool CopyKeychainItemData(SecKeychainItemRef item, std::vector<unsigned char>* output) {
+  if (item == nullptr || output == nullptr) return false;
+  UInt32 length = 0;
+  void* data = nullptr;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  const OSStatus status = SecKeychainItemCopyContent(item, nullptr, nullptr, &length, &data);
+#pragma clang diagnostic pop
+  if (status != errSecSuccess || data == nullptr || length != 32) {
+    if (data != nullptr) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      SecKeychainItemFreeContent(nullptr, data);
+#pragma clang diagnostic pop
+    }
+    return false;
+  }
+  output->assign(static_cast<const unsigned char*>(data), static_cast<const unsigned char*>(data) + length);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  SecKeychainItemFreeContent(nullptr, data);
+#pragma clang diagnostic pop
+  return true;
+}
+
+napi_value InspectKeychainGenericPassword(napi_env env, napi_callback_info info) {
   size_t argc = 3;
   napi_value args[3];
   if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
-    napi_throw_type_error(env, nullptr, "writeKeychainGenericPassword requires service, account, and key");
+    napi_throw_type_error(env, nullptr, "inspectKeychainGenericPassword requires service, account, and trusted executable");
+    return nullptr;
+  }
+  char service[192];
+  char account[192];
+  char trusted_path[PATH_MAX];
+  if (!ReadComponent(env, args[0], service, sizeof(service), "com.mac-operator.") ||
+      !ReadComponent(env, args[1], account, sizeof(account)) ||
+      !ReadCanonicalExecutablePath(env, args[2], trusted_path, sizeof(trusted_path), nullptr)) {
+    napi_throw_type_error(env, nullptr, "Keychain service or account is malformed");
+    return nullptr;
+  }
+  SecKeychainItemRef item = nullptr;
+  const OSStatus find_status = FindExactKeychainItem(service, account, &item);
+  if (find_status != errSecSuccess || item == nullptr) {
+    if (find_status == errSecDuplicateItem) {
+      ThrowSystemError(env, "Keychain generic password identity is ambiguous");
+    } else {
+      ThrowSystemError(env, "Keychain generic password metadata is unavailable");
+    }
+    return nullptr;
+  }
+  const bool trusted_application_matches = ItemHasTrustedReadAcl(env, item, trusted_path);
+  CFRelease(item);
+  napi_value result;
+  napi_create_object(env, &result);
+  SetBoolean(env, result, "identityMatches", true);
+  SetString(env, result, "protection", trusted_application_matches ? "file-based-acl" : "other");
+  // SecKeychain is the file-based store used by launchd daemons. It has no
+  // synchronizable attribute in the returned legacy item record.
+  SetBoolean(env, result, "synchronizable", false);
+  SetBoolean(env, result, "synchronizableAttributePresent", false);
+  SetBoolean(env, result, "trustedApplicationMatches", trusted_application_matches);
+  return result;
+}
+
+napi_value DeleteKeychainGenericPassword(napi_env env, napi_callback_info info) {
+  size_t argc = 4;
+  napi_value args[4];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+    napi_throw_type_error(env, nullptr, "deleteKeychainGenericPassword requires service, account, key, and trusted executable");
     return nullptr;
   }
   char service[192];
@@ -281,74 +554,107 @@ napi_value WriteKeychainGenericPassword(napi_env env, napi_callback_info info) {
     napi_throw_type_error(env, nullptr, "Keychain generic password must contain exactly 32 bytes");
     return nullptr;
   }
-
-  CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
-  CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
-  CFDataRef key_value = CFDataCreate(kCFAllocatorDefault, static_cast<const UInt8*>(key_bytes), 32);
-  if (service_value == nullptr || account_value == nullptr || key_value == nullptr) {
-    if (service_value != nullptr) CFRelease(service_value);
-    if (account_value != nullptr) CFRelease(account_value);
-    if (key_value != nullptr) CFRelease(key_value);
-    ThrowSystemError(env, "Keychain identity could not be represented");
+  char trusted_path[PATH_MAX];
+  if (!ReadCanonicalExecutablePath(env, args[3], trusted_path, sizeof(trusted_path), nullptr)) {
+    napi_throw_type_error(env, nullptr, "Keychain trusted executable must be a canonical protected file");
     return nullptr;
   }
-
-  CFMutableDictionaryRef lookup = CFDictionaryCreateMutable(
-      kCFAllocatorDefault, 6, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  if (lookup == nullptr) {
-    CFRelease(service_value);
-    CFRelease(account_value);
-    CFRelease(key_value);
-    ThrowSystemError(env, "Keychain query could not be created");
+  SecKeychainItemRef item = nullptr;
+  const OSStatus find_status = FindExactKeychainItem(service, account, &item);
+  if (find_status != errSecSuccess || item == nullptr) {
+    ThrowSystemError(env, find_status == errSecDuplicateItem
+        ? "Keychain generic password identity is ambiguous"
+        : "Keychain generic password is unavailable");
     return nullptr;
   }
-  CFDictionarySetValue(lookup, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(lookup, kSecAttrService, service_value);
-  CFDictionarySetValue(lookup, kSecAttrAccount, account_value);
-  CFDictionarySetValue(lookup, kSecReturnAttributes, kCFBooleanTrue);
-  CFDictionarySetValue(lookup, kSecMatchLimit, kSecMatchLimitAll);
+  if (!ItemHasTrustedReadAcl(env, item, trusted_path)) {
+    CFRelease(item);
+    ThrowSystemError(env, "Keychain generic password ACL is not authorized");
+    return nullptr;
+  }
+  std::vector<unsigned char> stored_data;
+  if (!CopyKeychainItemData(item, &stored_data)) {
+    CFRelease(item);
+    ThrowSystemError(env, "Keychain generic password has an invalid length");
+    return nullptr;
+  }
+  const bool matches = ConstantTimeEqual(stored_data.data(), static_cast<const unsigned char*>(key_bytes), 32);
+  std::fill(stored_data.begin(), stored_data.end(), 0);
+  if (!matches) {
+    CFRelease(item);
+    ThrowSystemError(env, "Keychain generic password digest precondition failed");
+    return nullptr;
+  }
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  CFDictionarySetValue(lookup, kSecUseAuthenticationUI, kSecUseAuthenticationUIFail);
+  const OSStatus delete_status = SecKeychainItemDelete(item);
 #pragma clang diagnostic pop
-  CFTypeRef existing = nullptr;
-  const OSStatus lookup_status = SecItemCopyMatching(lookup, &existing);
-  if (existing != nullptr) CFRelease(existing);
-  CFRelease(lookup);
-  if (lookup_status == errSecSuccess || lookup_status == errSecDuplicateItem) {
-    CFRelease(service_value);
-    CFRelease(account_value);
-    CFRelease(key_value);
+  CFRelease(item);
+  if (delete_status != errSecSuccess) {
+    ThrowSystemError(env, "Keychain generic password could not be retired");
+    return nullptr;
+  }
+  napi_value undefined;
+  napi_get_undefined(env, &undefined);
+  return undefined;
+}
+
+napi_value WriteKeychainGenericPassword(napi_env env, napi_callback_info info) {
+  size_t argc = 4;
+  napi_value args[4];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+    napi_throw_type_error(env, nullptr, "writeKeychainGenericPassword requires service, account, key, and trusted executable");
+    return nullptr;
+  }
+  char service[192];
+  char account[192];
+  if (!ReadComponent(env, args[0], service, sizeof(service), "com.mac-operator.") ||
+      !ReadComponent(env, args[1], account, sizeof(account))) {
+    napi_throw_type_error(env, nullptr, "Keychain service or account is malformed");
+    return nullptr;
+  }
+  bool is_buffer = false;
+  if (napi_is_buffer(env, args[2], &is_buffer) != napi_ok || !is_buffer) {
+    napi_throw_type_error(env, nullptr, "Keychain generic password must be a Buffer");
+    return nullptr;
+  }
+  void* key_bytes = nullptr;
+  size_t key_length = 0;
+  if (napi_get_buffer_info(env, args[2], &key_bytes, &key_length) != napi_ok || key_bytes == nullptr || key_length != 32) {
+    napi_throw_type_error(env, nullptr, "Keychain generic password must contain exactly 32 bytes");
+    return nullptr;
+  }
+  char trusted_path[PATH_MAX];
+  if (!ReadCanonicalExecutablePath(env, args[3], trusted_path, sizeof(trusted_path), nullptr)) {
+    napi_throw_type_error(env, nullptr, "Keychain trusted executable must be a canonical protected file");
+    return nullptr;
+  }
+
+  SecKeychainItemRef existing = nullptr;
+  const OSStatus lookup_status = FindExactKeychainItem(service, account, &existing);
+  if (lookup_status == errSecSuccess && existing != nullptr) {
+    CFRelease(existing);
     ThrowSystemError(env, "Keychain generic password already exists");
     return nullptr;
   }
-  if (lookup_status != errSecItemNotFound) {
-    CFRelease(service_value);
-    CFRelease(account_value);
-    CFRelease(key_value);
+  if (lookup_status != errSecItemNotFound && lookup_status != errSecSuccess) {
     ThrowSystemError(env, "Keychain generic password availability could not be checked");
     return nullptr;
   }
 
-  CFErrorRef access_error = nullptr;
-  SecAccessControlRef access = SecAccessControlCreateWithFlags(
-      kCFAllocatorDefault, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, 0, &access_error);
-  if (access == nullptr) {
-    if (access_error != nullptr) CFRelease(access_error);
-    CFRelease(service_value);
-    CFRelease(account_value);
-    CFRelease(key_value);
-    ThrowSystemError(env, "Keychain access control could not be created");
-    return nullptr;
-  }
-
+  SecAccessRef access = nullptr;
+  if (!CreateFileKeychainAccess(env, service, trusted_path, &access)) return nullptr;
+  CFStringRef service_value = CFStringCreateWithCString(kCFAllocatorDefault, service, kCFStringEncodingUTF8);
+  CFStringRef account_value = CFStringCreateWithCString(kCFAllocatorDefault, account, kCFStringEncodingUTF8);
+  CFDataRef key_value = CFDataCreate(kCFAllocatorDefault, static_cast<const UInt8*>(key_bytes), 32);
   CFMutableDictionaryRef attributes = CFDictionaryCreateMutable(
       kCFAllocatorDefault, 8, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  if (attributes == nullptr) {
+  if (service_value == nullptr || account_value == nullptr || key_value == nullptr || attributes == nullptr) {
+    if (attributes != nullptr) CFRelease(attributes);
+    if (service_value != nullptr) CFRelease(service_value);
+    if (account_value != nullptr) CFRelease(account_value);
+    if (key_value != nullptr) CFRelease(key_value);
     CFRelease(access);
-    CFRelease(service_value);
-    CFRelease(account_value);
-    CFRelease(key_value);
     ThrowSystemError(env, "Keychain attributes could not be created");
     return nullptr;
   }
@@ -356,14 +662,16 @@ napi_value WriteKeychainGenericPassword(napi_env env, napi_callback_info info) {
   CFDictionarySetValue(attributes, kSecAttrService, service_value);
   CFDictionarySetValue(attributes, kSecAttrAccount, account_value);
   CFDictionarySetValue(attributes, kSecValueData, key_value);
-  CFDictionarySetValue(attributes, kSecAttrAccessControl, access);
+  CFDictionarySetValue(attributes, kSecAttrAccess, access);
   CFDictionarySetValue(attributes, kSecAttrSynchronizable, kCFBooleanFalse);
-  const OSStatus add_status = SecItemAdd(attributes, nullptr);
+  CFTypeRef added_ref = nullptr;
+  const OSStatus add_status = SecItemAdd(attributes, &added_ref);
+  if (added_ref != nullptr) CFRelease(added_ref);
   CFRelease(attributes);
-  CFRelease(access);
   CFRelease(service_value);
   CFRelease(account_value);
   CFRelease(key_value);
+  CFRelease(access);
   if (add_status == errSecDuplicateItem) {
     ThrowSystemError(env, "Keychain generic password already exists");
     return nullptr;
@@ -2156,6 +2464,10 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "getProcessIdentity", function);
   napi_create_function(env, "readKeychainGenericPassword", NAPI_AUTO_LENGTH, ReadKeychainGenericPassword, nullptr, &function);
   napi_set_named_property(env, exports, "readKeychainGenericPassword", function);
+  napi_create_function(env, "inspectKeychainGenericPassword", NAPI_AUTO_LENGTH, InspectKeychainGenericPassword, nullptr, &function);
+  napi_set_named_property(env, exports, "inspectKeychainGenericPassword", function);
+  napi_create_function(env, "deleteKeychainGenericPassword", NAPI_AUTO_LENGTH, DeleteKeychainGenericPassword, nullptr, &function);
+  napi_set_named_property(env, exports, "deleteKeychainGenericPassword", function);
   napi_create_function(env, "writeKeychainGenericPassword", NAPI_AUTO_LENGTH, WriteKeychainGenericPassword, nullptr, &function);
   napi_set_named_property(env, exports, "writeKeychainGenericPassword", function);
   return exports;

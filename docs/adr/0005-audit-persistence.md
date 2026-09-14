@@ -70,6 +70,17 @@ Keychain-backed source factory available for macOS startup; missing, malformed,
 mismatched, or tampered keys/files fail closed. Legacy plaintext backup names
 are refused by retention until an explicit migration is performed.
 
+The macOS Keychain source now targets the file-based Keychain model required for
+launchd daemons. Provisioning binds a `SecAccess` read ACL to one canonical,
+protected Broker executable, and native read/retirement checks the exact
+trusted-application ACL before touching secret bytes. Retirement requires the
+expected 32-byte digest and deletes the item reference found by an exact
+service/account search. Real host evidence covers provisioning, ACL readback,
+wrong-executable denial, digest precondition failure, and cleanup; no MCP route
+can choose the Keychain coordinates or executable identity. Data-protection
+Keychain entitlements and production code-signing provenance remain packaging
+gates rather than runtime fallbacks.
+
 The persistence constructor now enforces a monotonic SQLite `user_version`
 gate. Fresh and legacy databases are upgraded through a versioned forward-only
 registry of idempotent revocation, request, and Job migrations inside one
@@ -83,4 +94,4 @@ backup into a fresh destination, followed by a separately reviewed operator
 cutover. The focused migration suite covers fresh initialization, legacy
 preservation, future-version refusal, and registry-integrity refusal.
 
-`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover runbook, Keychain ACL review, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, and the forward-only migration registry are implemented; production rollback execution remains host-only.
+`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover runbook, production code-signing/Keychain identity review, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, the forward-only migration registry, and the development-host Keychain ACL boundary are implemented; production rollback execution remains host-only.

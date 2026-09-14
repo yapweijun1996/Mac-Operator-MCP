@@ -39,6 +39,7 @@ See `PROGRESS.md` for current Git evidence, implementation and enablement state,
 - [Kill switch](KILL_SWITCH.md)
 - [Incident response](INCIDENT_RESPONSE.md)
 - [Rollback](ROLLBACK.md)
+- [Persistence cutover and migration runbook](PERSISTENCE_CUTOVER.md)
 
 ## Source-of-truth rules
 

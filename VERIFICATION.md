@@ -11,6 +11,19 @@ the key identity, and reject missing/mismatched keys, ciphertext tampering, and
 legacy plaintext backup names. Focused persistence and credential tests pass
 47/47. Evidence: `evidence/2026-09-14-encrypted-backup.md`.
 
+Latest Keychain ACL addendum: the file-based macOS Keychain boundary binds
+provisioning to an explicit canonical Broker executable through `SecAccess`,
+checks the trusted-application ACL before returning secret bytes, rejects
+duplicate identities, and retires only after an exact digest check. A real
+physical-host credential/native run passed 16/16, including wrong-executable
+denial and final deletion/readback. No secrets appear in the evidence.
+Evidence: `evidence/2026-09-14-keychain-acl.md`.
+
+Latest persistence operations addendum: `PERSISTENCE_CUTOVER.md` defines the
+host-only forward migration, encrypted-backup restore, authority freeze,
+UNKNOWN-job handling, rollback, and final readback sequence. It does not claim
+installed service cutover or automatic down-migration.
+
 Latest persistence-schema addendum: `BrokerStore` enforces SQLite
 `user_version` `4`, runs a versioned forward-only migration registry in one
 transaction, and rejects future-version or inconsistent-registry databases

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,9 +13,14 @@ import {
   provisionKeychainAuthenticationKey,
   provisionKeychainBrokerBackupKey,
   retireRevokedApprovalIssuerKey,
-  retireRevokedAuthenticationKey
+  retireRevokedAuthenticationKey,
+  retireKeychainAuthenticationKey,
+  verifyKeychainProtection
 } from "./credentials.js";
 import { BrokerStore } from "./persistence.js";
+import { parseKeychainGenericPasswordMetadata } from "./peer-credentials.js";
+
+const realKeychainEnabled = process.platform === "darwin" && process.env.MOPS_REAL_KEYCHAIN === "1";
 
 test("authentication key loader accepts an owner-only 32-byte file", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-key-"));
@@ -100,11 +105,11 @@ test("Keychain authentication source validates identity and fails closed when th
 
 test("Keychain authentication provisioning validates its explicit namespace without creating malformed items", async () => {
   await assert.rejects(
-    provisionKeychainAuthenticationKey("/tmp/attacker", `edge:invalid:${randomUUID()}`),
+    provisionKeychainAuthenticationKey("/tmp/attacker", `edge:invalid:${randomUUID()}`, process.execPath),
     /Keychain service or account is invalid/u
   );
   await assert.rejects(
-    provisionKeychainAuthenticationKey("com.mac-operator.test", `../escape`),
+    provisionKeychainAuthenticationKey("com.mac-operator.test", `../escape`, process.execPath),
     /Keychain service or account is invalid/u
   );
 });
@@ -118,9 +123,78 @@ test("Keychain backup key source binds a fixed Broker-owned item", async () => {
     /key ID is invalid/u
   );
   await assert.rejects(
-    provisionKeychainBrokerBackupKey("/tmp/attacker", "backup:primary"),
+    provisionKeychainBrokerBackupKey("/tmp/attacker", "backup:primary", process.execPath),
     /Keychain service or account is invalid/u
   );
+});
+
+test("Keychain protection metadata parser is strict and non-secret", () => {
+  assert.deepEqual(
+    parseKeychainGenericPasswordMetadata({
+      identityMatches: true,
+      protection: "file-based-acl",
+      synchronizable: false,
+      synchronizableAttributePresent: true,
+      trustedApplicationMatches: true
+    }),
+    {
+      identityMatches: true,
+      protection: "file-based-acl",
+      synchronizable: false,
+      synchronizableAttributePresent: true,
+      trustedApplicationMatches: true
+    }
+  );
+  assert.throws(
+    () => parseKeychainGenericPasswordMetadata({
+      identityMatches: true,
+      protection: "file-based-acl",
+      synchronizable: false,
+      synchronizableAttributePresent: true,
+      trustedApplicationMatches: "yes"
+    }),
+    /metadata is malformed/u
+  );
+});
+
+test("real macOS Keychain ACL binds one Broker executable and retires by digest", {
+  skip: !realKeychainEnabled
+}, async () => {
+  const service = "com.mac-operator.evidence";
+  const account = `acl:${randomUUID()}`;
+  let digest: string | undefined;
+  try {
+    const provisioned = await provisionKeychainAuthenticationKey(service, account, process.execPath);
+    digest = provisioned.digest;
+    const loaded = await loadKeychainAuthenticationKey(service, account);
+    try {
+      assert.equal(createHash("sha256").update(loaded).digest("hex"), digest);
+    } finally {
+      loaded.fill(0);
+    }
+    assert.deepEqual(verifyKeychainProtection(service, account, process.execPath), {
+      identityMatches: true,
+      protection: "file-based-acl",
+      synchronizable: false,
+      synchronizableAttributePresent: false,
+      trustedApplicationMatches: true
+    });
+    assert.throws(
+      () => verifyKeychainProtection(service, account, "/usr/bin/security"),
+      /protection is not approved/u
+    );
+    await assert.rejects(
+      retireKeychainAuthenticationKey(service, account, "0".repeat(64)),
+      /digest precondition failed/u
+    );
+    await retireKeychainAuthenticationKey(service, account, digest);
+    digest = undefined;
+    await assert.rejects(loadKeychainAuthenticationKey(service, account), /unavailable/u);
+  } finally {
+    if (digest !== undefined) {
+      await retireKeychainAuthenticationKey(service, account, digest).catch(() => undefined);
+    }
+  }
 });
 
 test("approval issuer key lifecycle requires durable revocation before retirement", async () => {

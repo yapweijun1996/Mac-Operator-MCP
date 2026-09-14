@@ -7,7 +7,14 @@ import { keyIdentity } from "./edge-keyring.js";
 import { approvalKeyIdentity, type ApprovalIssuerKey } from "./approval-authority.js";
 import type { BrokerStore, RevocationKind } from "./persistence.js";
 import type { BrokerBackupKeySource } from "./persistence-backup.js";
-import { readKeychainGenericPassword, validateKeychainCoordinates, writeKeychainGenericPassword } from "./peer-credentials.js";
+import {
+  deleteKeychainGenericPassword,
+  inspectKeychainGenericPassword,
+  readKeychainGenericPassword,
+  validateKeychainCoordinates,
+  writeKeychainGenericPassword,
+  type KeychainGenericPasswordMetadata
+} from "./peer-credentials.js";
 
 const HEX_KEY_PATTERN = /^[A-Fa-f0-9]{64}$/u;
 const BACKUP_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -18,22 +25,31 @@ const BACKUP_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
  * choose it deliberately and keep the returned bytes in memory only.
  */
 export async function loadKeychainAuthenticationKey(service: string, account: string): Promise<Buffer> {
-  return readKeychainGenericPassword(service, account);
+  return readKeychainGenericPassword(service, account, process.execPath);
 }
 
 /**
  * Explicitly provisions one random 32-byte authentication key in the
- * Broker-owned Keychain namespace. The secret is returned only as a digest;
- * callers must reload it through `loadKeychainAuthenticationKey`.
+ * Broker-owned file-based Keychain namespace. The item ACL is bound to the
+ * supplied canonical Broker executable. The secret is returned only as a
+ * digest; callers must reload it through `loadKeychainAuthenticationKey`.
  */
-export async function provisionKeychainAuthenticationKey(service: string, account: string): Promise<{ digest: string }> {
+export async function provisionKeychainAuthenticationKey(
+  service: string,
+  account: string,
+  trustedExecutablePath: string
+): Promise<{ digest: string }> {
   if (!/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(service) ||
       !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
     throw new Error("Keychain service or account is invalid");
   }
   const key = randomBytes(32);
-  writeKeychainGenericPassword(service, account, key);
-  return { digest: sha256(key) };
+  try {
+    writeKeychainGenericPassword(service, account, key, trustedExecutablePath);
+    return { digest: sha256(key) };
+  } finally {
+    key.fill(0);
+  }
 }
 
 /**
@@ -49,16 +65,60 @@ export function createKeychainBrokerBackupKeySource(
   if (!BACKUP_KEY_ID_PATTERN.test(keyId)) throw new Error("Broker backup key ID is invalid");
   return {
     keyId,
-    loadKey: () => readKeychainGenericPassword(service, account)
+    loadKey: () => readKeychainGenericPassword(service, account, process.execPath)
   };
 }
 
-/** Provisions a dedicated 32-byte backup key in the Broker-owned Keychain namespace. */
-export async function provisionKeychainBrokerBackupKey(service: string, account: string): Promise<{ digest: string }> {
+/** Provisions a dedicated 32-byte backup key with a Broker-executable ACL. */
+export async function provisionKeychainBrokerBackupKey(
+  service: string,
+  account: string,
+  trustedExecutablePath: string
+): Promise<{ digest: string }> {
   validateKeychainCoordinates(service, account);
   const key = randomBytes(32);
-  writeKeychainGenericPassword(service, account, key);
-  return { digest: sha256(key) };
+  try {
+    writeKeychainGenericPassword(service, account, key, trustedExecutablePath);
+    return { digest: sha256(key) };
+  } finally {
+    key.fill(0);
+  }
+}
+
+/**
+ * Reads and validates the non-secret protection attributes required by the
+ * Broker-owned Keychain contract. This is an operator/startup check only; it
+ * is deliberately not a model-facing tool and never returns key bytes.
+ */
+export function verifyKeychainProtection(
+  service: string,
+  account: string,
+  trustedExecutablePath: string
+): KeychainGenericPasswordMetadata {
+  validateKeychainCoordinates(service, account);
+  const metadata = inspectKeychainGenericPassword(service, account, trustedExecutablePath);
+  if (!metadata.identityMatches || metadata.protection !== "file-based-acl" ||
+      metadata.synchronizable || !metadata.trustedApplicationMatches) {
+    throw new Error("Keychain generic password protection is not approved");
+  }
+  return metadata;
+}
+
+/** Retires a Keychain item only after an exact secret digest and identity check. */
+export async function retireKeychainAuthenticationKey(
+  service: string,
+  account: string,
+  expectedDigest: string
+): Promise<void> {
+  validateKeychainCoordinates(service, account);
+  if (!/^[a-f0-9]{64}$/u.test(expectedDigest)) throw new Error("Expected Keychain key digest is malformed");
+  const key = await loadKeychainAuthenticationKey(service, account);
+  try {
+    if (sha256(key) !== expectedDigest) throw new Error("Keychain key digest precondition failed");
+    deleteKeychainGenericPassword(service, account, key, process.execPath);
+  } finally {
+    key.fill(0);
+  }
 }
 
 export async function loadAuthenticationKey(path: string): Promise<Buffer> {
