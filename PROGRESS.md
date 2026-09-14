@@ -11,10 +11,12 @@ digest binding, bounded sizes, and Ed25519 validation. BrokerStore schema
 version `8` persists this configuration independently with monotonic
 activation, exact restart restore, audited rollback, and a dedicated
 `guest_attestation_key` revocation kind checked dynamically by each verifier.
-Focused persistence/keyring tests pass 49/49 and the full physical-Darwin
-regression passes 530/530. Host private signing keys are never loaded; native
+Focused persistence/keyring tests pass 50/50 and the full physical-Darwin
+regression passes 533/533. Host private signing keys are never loaded; native
 guest signing, protected key distribution, VM boot, guest isolation, and
-capability enablement remain open. Evidence:
+capability enablement remain open. Commit `db83881` also makes the policy,
+policy-signer, and guest verification loaders reject private-key material
+instead of deriving a public key from it. Evidence:
 `evidence/2026-09-15-virtualization-guest-attestation-keyring.md`.
 
 Latest signed guest-provenance addendum: commit `84da3e0` extracts the

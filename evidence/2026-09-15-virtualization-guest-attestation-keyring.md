@@ -2,7 +2,7 @@
 
 - Date: 2026-09-15
 - Host: physical Darwin arm64, macOS 26.2 (25C56)
-- Source revision: `73148a6`
+- Source revisions: `73148a6`, `db83881`
 - Status: guest attestation public-key loading, activation, revocation, and rollback implemented; VM execution remains disabled
 
 ## Boundary implemented
@@ -13,7 +13,8 @@ canonical regular file and reads each Ed25519 public key through an owner-only,
 non-symlink, `O_NOFOLLOW` descriptor. Device/inode identity is checked between
 path inspection and open, file sizes are bounded, and each key is digest-bound
 to the configuration. Duplicate key IDs and paths, weak modes, traversal-like
-paths, non-Ed25519 keys, and digest replacement fail closed.
+paths, non-Ed25519 keys, private-key material, and digest replacement fail
+closed.
 
 The active configuration is persisted independently from policy, Edge, helper,
 and authority key state in BrokerStore schema version 8. Activation requires a
@@ -28,14 +29,17 @@ The manager creates the signed guest-attestation verifier with startup-owned
 validity windows, bounded lifetime, clock skew, and the durable revocation
 callback. No private signing key is loaded or persisted by the host; native
 guest-side signing and Keychain-backed distribution are separate future work.
+The same public-only check now applies to policy and policy-signer verification
+loaders, so a private-key PEM cannot be silently converted into trusted public
+verification material.
 
 ## Verification
 
-- Focused persistence and keyring tests: 49/49
-- Focused signed-attestation and runner tests: 15/15
+- Focused persistence and keyring tests: 50/50
+- Focused signed-attestation and runner tests: 16/16
 - Full physical-Darwin regression:
   `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
-  -> 530/530 passed
+  -> 533/533 passed
 - `npm run typecheck` passed
 - `npm run lint` passed
 - `git diff --check` passed

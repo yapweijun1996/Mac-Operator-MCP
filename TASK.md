@@ -4,17 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Guest-attestation keyring addendum: commit `73148a6` adds a startup-only
+Guest-attestation keyring addendum: commits `73148a6` and `db83881` add a startup-only
 Broker manager for protected Ed25519 public-key configuration. Owner-only
 canonical files are opened with `O_NOFOLLOW`, device/inode and digest bound,
 size limited, and rejected on duplicate paths, weak modes, replacement, or
 non-Ed25519 content. BrokerStore schema version `8` persists an independent
 revisioned activation/rollback history and `guest_attestation_key` revocation
 kind; verifier construction checks revocation dynamically. Focused
-persistence/keyring tests pass 49/49 and full physical-Darwin regression passes
-530/530. Guest private signing keys remain outside the host; native producer,
+persistence/keyring tests pass 50/50 and full physical-Darwin regression passes
+533/533. Guest private signing keys remain outside the host; native producer,
 Keychain distribution, VM boot/isolation, and capability enablement remain
-blocked. Evidence:
+blocked. The policy, policy-signer, and guest verification loaders also reject
+private-key material before constructing trusted public keys. Evidence:
 `evidence/2026-09-15-virtualization-guest-attestation-keyring.md`.
 
 Authority-lifecycle addendum: commit `d0c96be` adds a deterministic
