@@ -30,6 +30,24 @@ test("runtime Broker policy rejects malformed tool authority before use", () => 
     () => validateBrokerPolicy({ ...base, tools: unknownTool }),
     (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains a malformed tool policy"
   );
+
+  const malformedTargetRules = [...base.targetRules, {
+    ruleId: "bad-target-rule",
+    effect: "allow" as const,
+    principalId: "principal-1",
+    scope: "mac.control.read" as const,
+    target: { kind: "host" as const, reference: "*" }
+  }];
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, targetRules: malformedTargetRules }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed target authority"
+  );
+
+  const malformedKeyWindows = new Map(base.trustedEdgeKeys).set("edge-1:edge-key-1", null as never);
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, trustedEdgeKeys: malformedKeyWindows }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed key authority"
+  );
 });
 
 test("policy authority snapshots isolate mutable caller references", () => {

@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { BrokerError, CAPABILITY_FAMILIES, CONTRACT_VERSION, PLANNED_TOOL_NAMES, SCOPES, type CapabilityFamily, type RuntimeToolState, type Scope } from "@mac-operator/contracts";
 import type { BrokerStore, SwitchName } from "./persistence.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
@@ -59,6 +60,11 @@ const APPROVAL_POLICIES = new Set<ToolPolicy["approvalPolicy"]>([
   "trusted_read", "trusted_write", "trusted_gui", "trusted_profile", "explicit_privileged_policy"
 ]);
 const SWITCH_NAMES = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"] as const;
+const TARGET_KINDS = new Set<NormalizedTarget["kind"]>([
+  "host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element",
+  "service", "log_source", "docker_runtime", "docker_object", "package", "power"
+]);
+const POLICY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 /**
  * Validate the runtime policy shape at the authority boundary. Signed policy
@@ -69,6 +75,7 @@ const SWITCH_NAMES = ["global", "mutations", "process", "network", "gui", "destr
  */
 export function validateBrokerPolicy(policy: BrokerPolicy): void {
   if (policy === null || typeof policy !== "object" ||
+      !hasOnlyKeys(policy, ["revision", "version", "audience", "trustedEdgeIds", "trustedEdgeKeys", "principalGrants", "targetRules", "filesystemRoots", "killSwitches", "tools"]) ||
       !Number.isSafeInteger(policy.revision) || policy.revision < 0 ||
       typeof policy.version !== "string" || policy.version.length < 1 || policy.version.length > 128 ||
       typeof policy.audience !== "string" || policy.audience.length < 1 || policy.audience.length > 256 ||
@@ -78,6 +85,49 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
       policy.killSwitches === null || typeof policy.killSwitches !== "object" ||
       SWITCH_NAMES.some((name) => typeof policy.killSwitches[name] !== "boolean")) {
     throw new BrokerError("POLICY_DENIED", "Active Broker policy is malformed");
+  }
+  if (!hasOnlyKeys(policy.killSwitches, SWITCH_NAMES) ||
+      [...policy.trustedEdgeIds].some((edgeId) => !isPolicyId(edgeId)) ||
+      [...policy.trustedEdgeKeys].some(([identity, window]) =>
+        !isPolicyKeyIdentity(identity) || !hasOnlyKeys(window, ["notBeforeMs", "expiresAtMs"]) ||
+        !Number.isSafeInteger(window.notBeforeMs) || window.notBeforeMs < 0 ||
+        !Number.isSafeInteger(window.expiresAtMs) || window.expiresAtMs <= window.notBeforeMs)) {
+    throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed key authority");
+  }
+  const grantIds = new Set<string>();
+  for (const [principalId, grant] of policy.principalGrants) {
+    if (!isPolicyId(principalId) || grantIds.has(principalId) || grant === null || typeof grant !== "object" ||
+        !hasOnlyKeys(grant, ["principalId", "issuer", "scopes", "enabled"]) || grant.principalId !== principalId ||
+        !isPolicyId(grant.issuer) || !Array.isArray(grant.scopes) || grant.scopes.length < 1 ||
+        new Set(grant.scopes).size !== grant.scopes.length || grant.scopes.some((scope: unknown) => typeof scope !== "string" || !SCOPES.includes(scope as Scope)) ||
+        typeof grant.enabled !== "boolean") {
+      throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed principal authority");
+    }
+    grantIds.add(principalId);
+  }
+  const rootIds = new Set<string>();
+  for (const root of policy.filesystemRoots) {
+    if (root === null || typeof root !== "object" || !hasOnlyKeys(root, ["rootId", "path", "metadata", "contentRead", "write", "denyRelativePaths"]) ||
+        !isPolicyId(root.rootId) || rootIds.has(root.rootId) || !isCanonicalAbsolutePath(root.path) ||
+        typeof root.metadata !== "boolean" || typeof root.contentRead !== "boolean" ||
+        (root.write !== undefined && typeof root.write !== "boolean") ||
+        !Array.isArray(root.denyRelativePaths) || new Set(root.denyRelativePaths).size !== root.denyRelativePaths.length ||
+        root.denyRelativePaths.some((relativePath: unknown) => !isSafeRelativePath(relativePath))) {
+      throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed filesystem authority");
+    }
+    rootIds.add(root.rootId);
+  }
+  const ruleIds = new Set<string>();
+  for (const rule of policy.targetRules) {
+    if (rule === null || typeof rule !== "object" || !hasOnlyKeys(rule, ["ruleId", "effect", "principalId", "scope", "target"]) ||
+        !isPolicyId(rule.ruleId) || ruleIds.has(rule.ruleId) ||
+        (rule.effect !== "allow" && rule.effect !== "deny") || !isPolicyId(rule.principalId) ||
+        !policy.principalGrants.has(rule.principalId) || !SCOPES.includes(rule.scope) ||
+        !policy.principalGrants.get(rule.principalId)!.scopes.includes(rule.scope) ||
+        !isPolicyTarget(rule.target, rootIds)) {
+      throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed target authority");
+    }
+    ruleIds.add(rule.ruleId);
   }
   for (const [name, tool] of policy.tools) validateToolPolicy(name, tool);
 }
@@ -116,6 +166,7 @@ export function cloneBrokerPolicy(policy: BrokerPolicy): BrokerPolicy {
 function validateToolPolicy(name: string, tool: ToolPolicy): void {
   if (!PLANNED_TOOL_NAMES.includes(name as (typeof PLANNED_TOOL_NAMES)[number]) ||
       tool === null || typeof tool !== "object" || tool.tool !== name ||
+      !hasOnlyKeys(tool, ["tool", "contractVersion", "requiredScopes", "capabilityFamilies", "targetType", "mutation", "approvalPolicy", "outputCapBytes", "timeoutMs", "implemented", "enabled"]) ||
       tool.contractVersion !== CONTRACT_VERSION ||
       !Array.isArray(tool.requiredScopes) || tool.requiredScopes.length < 1 ||
       new Set(tool.requiredScopes).size !== tool.requiredScopes.length ||
@@ -131,6 +182,45 @@ function validateToolPolicy(name: string, tool: ToolPolicy): void {
       (tool.enabled && !tool.implemented)) {
     throw new BrokerError("POLICY_DENIED", "Active Broker policy contains a malformed tool policy");
   }
+}
+
+function hasOnlyKeys(value: unknown, keys: readonly string[]): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isPolicyId(value: unknown): value is string {
+  return typeof value === "string" && POLICY_ID_PATTERN.test(value);
+}
+
+function isPolicyKeyIdentity(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 3 && value.length <= 257 &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}:[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
+}
+
+function isCanonicalAbsolutePath(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 4_096 &&
+    value.startsWith("/") && resolve(value) === value && !value.includes("\0") && !value.includes("\n");
+}
+
+function isSafeRelativePath(value: unknown): value is string {
+  return typeof value === "string" && value.length >= 1 && value.length <= 4_096 &&
+    !value.includes("\0") && !value.startsWith("/") && resolve("/", value) === `/${value}`;
+}
+
+function isPolicyTarget(value: unknown, filesystemRootIds: ReadonlySet<string>): value is NormalizedTarget {
+  if (value === null || typeof value !== "object" || !hasOnlyKeys(value, ["kind", "reference"])) return false;
+  const target = value as NormalizedTarget;
+  if (!TARGET_KINDS.has(target.kind) || typeof target.reference !== "string" ||
+      target.reference.length < 1 || target.reference.length > 4_096 || target.reference.includes("\0") ||
+      target.reference.includes("*")) return false;
+  if (target.kind === "path" && !filesystemRootIds.has(target.reference)) return false;
+  if (target.kind === "project" && (!isCanonicalAbsolutePath(target.reference) || target.reference.includes("\n"))) return false;
+  if (target.kind === "app_set" && target.reference !== "all") return false;
+  if (target.kind === "app" && !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(target.reference)) return false;
+  if (target.kind === "app_window" && !/^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(target.reference)) return false;
+  return true;
 }
 
 export function authorizePrincipalProjection(
