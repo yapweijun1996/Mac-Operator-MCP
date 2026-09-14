@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
 import {
+  BrokerStoreVirtualizationGuestReplayGuard,
   InMemoryVirtualizationGuestReplayGuard,
   createVirtualizationGuestRequest,
   signVirtualizationGuestResponse,
@@ -10,6 +14,7 @@ import {
   virtualizationGuestRequestDigest,
   type UnsignedVirtualizationGuestResponse
 } from "./virtualization-guest-transport.js";
+import { BrokerStore } from "./persistence.js";
 
 const key = Buffer.alloc(32, 0x42);
 const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "macos-virtualization-1.0" } as const;
@@ -78,6 +83,34 @@ test("request nonce and request ID replay are denied", () => {
   const guard = new InMemoryVirtualizationGuestReplayGuard({ now: () => now });
   verifyVirtualizationGuestRequest(signedRequest, key, { replayGuard: guard, now });
   assert.throws(() => verifyVirtualizationGuestRequest(signedRequest, key, { replayGuard: guard, now }), (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED");
+});
+
+test("BrokerStore-backed guest replay admission survives a Broker restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-replay-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const signedRequest = request();
+  const firstStore = new BrokerStore(databasePath);
+  try {
+    verifyVirtualizationGuestRequest(signedRequest, key, {
+      replayGuard: new BrokerStoreVirtualizationGuestReplayGuard(firstStore, { now: () => now }),
+      now
+    });
+  } finally {
+    firstStore.close();
+  }
+  const reopened = new BrokerStore(databasePath);
+  try {
+    assert.throws(
+      () => verifyVirtualizationGuestRequest(signedRequest, key, {
+        replayGuard: new BrokerStoreVirtualizationGuestReplayGuard(reopened, { now: () => now }),
+        now
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED"
+    );
+  } finally {
+    reopened.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("response binding, guest mismatch, and proof tampering are rejected", () => {

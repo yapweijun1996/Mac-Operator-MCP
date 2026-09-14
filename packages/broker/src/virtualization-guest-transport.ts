@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, PROTOCOL_VERSION, sha256 } from "@mac-operator/contracts";
+import type { BrokerStore } from "./persistence.js";
 import type { VirtualizationGuestIdentity } from "./task-runner.js";
 
 const REQUEST_DOMAIN = "mac-operator-virtualization-guest-request-v0.1\0";
@@ -129,6 +130,27 @@ export class InMemoryVirtualizationGuestReplayGuard implements VirtualizationGue
     }
     this.accepted.set(requestKey, input.expiresAtMs);
     this.accepted.set(nonceKey, input.expiresAtMs);
+  }
+}
+
+/** Durable replay admission owned by the Broker persistence boundary. */
+export class BrokerStoreVirtualizationGuestReplayGuard implements VirtualizationGuestReplayGuard {
+  private readonly now: () => number;
+
+  constructor(
+    private readonly store: Pick<BrokerStore, "admitVirtualizationGuestRequest">,
+    options: { now?: () => number } = {}
+  ) {
+    this.now = options.now ?? Date.now;
+  }
+
+  admit(input: Pick<UnsignedVirtualizationGuestRequest, "requestId" | "nonce" | "expiresAtMs">): void {
+    this.store.admitVirtualizationGuestRequest({
+      requestId: input.requestId,
+      nonce: input.nonce,
+      acceptedAtMs: this.now(),
+      expiresAtMs: input.expiresAtMs
+    });
   }
 }
 

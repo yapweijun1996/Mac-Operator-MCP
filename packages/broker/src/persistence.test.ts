@@ -29,7 +29,8 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 2, name: "revocations-edge-and-operator-key-kinds" },
         { version: 3, name: "request-approval-and-job-linkage" },
         { version: 4, name: "job-lease-process-and-helper-metadata" },
-        { version: 5, name: "broker-runtime-fence" }
+        { version: 5, name: "broker-runtime-fence" },
+        { version: 6, name: "virtualization-guest-replay-ledger" }
       ]);
     } finally {
       database.close();

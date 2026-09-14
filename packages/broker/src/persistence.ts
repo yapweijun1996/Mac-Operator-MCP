@@ -87,7 +87,7 @@ const MAX_JOB_LEASE_MS = 120_000;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 5;
+export const BROKER_SCHEMA_VERSION = 6;
 
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
@@ -413,6 +413,12 @@ export class BrokerStore {
         expires_at_ms INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS broker_status_nonces (
+        nonce TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE,
+        accepted_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS virtualization_guest_nonces (
         nonce TEXT PRIMARY KEY,
         request_id TEXT NOT NULL UNIQUE,
         accepted_at_ms INTEGER NOT NULL,
@@ -1327,6 +1333,34 @@ export class BrokerStore {
       }
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Broker status request admission could not be persisted");
+    }
+  }
+
+  admitVirtualizationGuestRequest(input: {
+    requestId: string;
+    nonce: string;
+    acceptedAtMs: number;
+    expiresAtMs: number;
+  }): void {
+    if (!/^request:guest-[A-Za-z0-9._:-]{16,128}$/u.test(input.requestId) ||
+        !/^guest-nonce-[A-Za-z0-9._:-]{16,128}$/u.test(input.nonce) ||
+        !Number.isSafeInteger(input.acceptedAtMs) || input.acceptedAtMs < 0 ||
+        !Number.isSafeInteger(input.expiresAtMs) || input.expiresAtMs <= input.acceptedAtMs) {
+      throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest request admission is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        this.database.prepare("DELETE FROM virtualization_guest_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        this.database.prepare(
+          "INSERT INTO virtualization_guest_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
+        ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
+      });
+    } catch (error) {
+      if (String(error).includes("UNIQUE constraint failed")) {
+        throw new BrokerError("REPLAY_DENIED", "Virtualization guest request nonce or request ID was already accepted");
+      }
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest request admission could not be persisted");
     }
   }
 
@@ -2577,7 +2611,8 @@ export class BrokerStore {
         { version: 2, name: "revocations-edge-and-operator-key-kinds", apply: () => this.migrateRevocationsSchema() },
         { version: 3, name: "request-approval-and-job-linkage", apply: () => this.migrateRequestsSchema() },
         { version: 4, name: "job-lease-process-and-helper-metadata", apply: () => this.migrateJobsSchema() },
-        { version: 5, name: "broker-runtime-fence", apply: () => this.migrateRuntimeFenceSchema() }
+        { version: 5, name: "broker-runtime-fence", apply: () => this.migrateRuntimeFenceSchema() },
+        { version: 6, name: "virtualization-guest-replay-ledger", apply: () => this.migrateVirtualizationGuestReplaySchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -2693,6 +2728,21 @@ export class BrokerStore {
     const names = new Set(columns.map((column) => column.name));
     if (names.size !== 4 || !names.has("singleton") || !names.has("generation") || !names.has("token") || !names.has("acquired_at_ms")) {
       throw new Error("Broker runtime fence schema is malformed");
+    }
+  }
+
+  private migrateVirtualizationGuestReplaySchema(): void {
+    const table = this.database.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'virtualization_guest_nonces'"
+    ).get() as { sql?: unknown } | undefined;
+    if (typeof table?.sql !== "string" || !table.sql.includes("nonce") || !table.sql.includes("request_id") ||
+        !table.sql.includes("accepted_at_ms") || !table.sql.includes("expires_at_ms") || !table.sql.includes("STRICT")) {
+      throw new Error("Virtualization guest replay schema is unavailable");
+    }
+    const columns = this.database.prepare("PRAGMA table_info(virtualization_guest_nonces)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (names.size !== 4 || !names.has("nonce") || !names.has("request_id") || !names.has("accepted_at_ms") || !names.has("expires_at_ms")) {
+      throw new Error("Virtualization guest replay schema is malformed");
     }
   }
 

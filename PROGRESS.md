@@ -135,9 +135,10 @@ digests, nonce, freshness, process policy, and bounded budgets; response proofs
 bind the complete request digest, guest identity, result, verification, and
 Broker-redacted output. Strict envelope validation rejects unknown fields,
 wrong keys, stale requests, oversized output, and replayed request IDs/nonces.
-The checked-in replay guard is process-local and explicitly not durable across
-restart; a BrokerStore-backed guard remains required before enabling a native
-bridge. Focused transport tests pass 6/6. Evidence:
+Schema version 6 now adds a Broker-owned SQLite replay ledger and an adapter
+that rejects the same request after Broker restart; the in-memory guard remains
+test-only. Focused transport and persistence tests pass 7/7 and 50/50 in the
+combined run. Evidence:
 `evidence/2026-09-14-virtualization-guest-transport.md`.
 
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
@@ -164,7 +165,7 @@ Keychain source factory keeps the key out of files, logs, and MCP arguments.
 Focused persistence and credential tests pass 47/47. Evidence:
 `evidence/2026-09-14-encrypted-backup.md`.
 
-Latest persistence-schema addendum: `BrokerStore` now reads SQLite
+Persistence-schema addendum (v5): `BrokerStore` now reads SQLite
 `user_version` before initialization, rejects a database marked newer than the
 runtime, and applies a versioned forward-only migration registry transactionally
 before publishing schema version `5`. Each known migration is shape-checked and
@@ -177,6 +178,17 @@ restore-from-encrypted-backup only; no automatic down-migration is exposed.
 ADR-0005 acceptance remains open.
 Evidence:
 `evidence/2026-09-14-persistence-schema-version.md`.
+
+Latest persistence replay-ledger addendum: schema version `6` adds the
+owner-controlled `virtualization_guest_nonces` table and a strict
+`BrokerStore.admitVirtualizationGuestRequest()` boundary. The
+`BrokerStoreVirtualizationGuestReplayGuard` binds Guest transport admission to
+that ledger, so request IDs and nonces remain rejected after Broker restart;
+duplicate and persistence failures map to stable `REPLAY_DENIED` and
+`AUDIT_UNAVAILABLE` errors. Migration identity/shape checks remain
+transactional and future schema markers remain refused. The focused
+persistence plus Guest transport run passes 50/50. Evidence:
+`evidence/2026-09-14-virtualization-guest-transport.md`.
 
 Latest process-tree identity addendum: ProcessSupervisor now rejects a
 descendant PID whose start-time changes between observations, marks native
