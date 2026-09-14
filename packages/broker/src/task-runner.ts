@@ -4,6 +4,16 @@ import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSn
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
+import {
+  isVirtualizationGuestIdentity,
+  parseVirtualizationGuestIdentity,
+  sameVirtualizationGuestIdentity,
+  validateVirtualizationGuestAttestation,
+  type SignedVirtualizationGuestAttestation,
+  type VirtualizationGuestAttestation,
+  type VirtualizationGuestAttestationVerifier,
+  type VirtualizationGuestIdentity
+} from "./virtualization-guest-attestation.js";
 import { verifyVirtualizationGuestImage, type LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
 import { validateUnsignedVirtualizationGuestResponse, validateUnsignedVirtualizationGuestStatusResponse, virtualizationGuestRequestDigest } from "./virtualization-guest-transport.js";
 import type {
@@ -16,8 +26,13 @@ import type {
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
 const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
-const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
-const RUNTIME_VERSION_PATTERN = /^[A-Za-z0-9._:+/-]{1,128}$/u;
+
+export type {
+  SignedVirtualizationGuestAttestation,
+  VirtualizationGuestAttestation,
+  VirtualizationGuestIdentity
+} from "./virtualization-guest-attestation.js";
+export { validateVirtualizationGuestAttestation } from "./virtualization-guest-attestation.js";
 
 /** Mechanisms with a governed runner contract; availability remains evidence-gated. */
 export type TaskIsolationMechanism = "sandbox-exec" | "virtualization";
@@ -87,30 +102,6 @@ export interface TaskIsolationProof {
   evidenceRef: string;
   /** Required for Virtualization.framework guests; absent for host sandboxes. */
   virtualizationGuest?: VirtualizationGuestIdentity;
-}
-
-/** Host-owned guest identity, bound to an immutable image digest and runtime. */
-export interface VirtualizationGuestIdentity {
-  imageSha256: string;
-  runtimeVersion: string;
-}
-
-/**
- * Native-adapter attestation for the guest boundary. This is a structural
- * transport contract, not independent host evidence; the runner still
- * requires an externally accepted TaskIsolationProof before it can run.
- */
-export interface VirtualizationGuestAttestation {
-  schemaVersion: "0.1";
-  guestIdentity: VirtualizationGuestIdentity;
-  sandboxProfile: string;
-  filesystem: "guest-private";
-  network: "profile-bound";
-  credentials: "host-credentials-unavailable";
-  processTree: "guest-owned";
-  processTreePolicy: "single_process" | "owned_group";
-  evidenceRef: string;
-  attestationDigest: string;
 }
 
 /**
@@ -297,6 +288,8 @@ export interface VirtualizationTaskExecutor {
   readonly available: boolean;
   readonly guestIdentity: VirtualizationGuestIdentity | null;
   readonly attestation: VirtualizationGuestAttestation | null;
+  /** Optional cryptographic provenance for hosts that enable signed attestations. */
+  readonly signedAttestation?: SignedVirtualizationGuestAttestation;
   run(request: VirtualizationTaskExecutionRequest): Promise<TaskExecutionResult>;
   recoverUnknownTask?(request: TaskRecoveryRequest): Promise<TaskExecutionResult>;
   close?(): Promise<void>;
@@ -319,6 +312,7 @@ export interface VirtualizationGuestTransportExecutorOptions {
   transport: VirtualizationGuestTransport;
   guestIdentity: VirtualizationGuestIdentity;
   attestation: VirtualizationGuestAttestation;
+  signedAttestation?: SignedVirtualizationGuestAttestation;
 }
 
 /**
@@ -330,6 +324,7 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
   readonly available: boolean;
   readonly guestIdentity: VirtualizationGuestIdentity;
   readonly attestation: VirtualizationGuestAttestation;
+  readonly signedAttestation?: SignedVirtualizationGuestAttestation;
   private readonly transport: VirtualizationGuestTransport;
   private closed = false;
 
@@ -347,6 +342,7 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
     this.transport = options.transport;
     this.guestIdentity = guestIdentity;
     this.attestation = attestation;
+    if (options.signedAttestation !== undefined) this.signedAttestation = options.signedAttestation;
   }
 
   async run(request: VirtualizationTaskExecutionRequest): Promise<TaskExecutionResult> {
@@ -416,6 +412,8 @@ export interface VirtualizationTaskRunnerOptions {
   executor?: VirtualizationTaskExecutor;
   /** Host-startup image preflight; caller/MCP arguments cannot supply this. */
   guestImage?: LoadedVirtualizationGuestImage | null;
+  /** Optional host-owned verifier required when signed guest provenance is enabled. */
+  attestationVerifier?: VirtualizationGuestAttestationVerifier;
 }
 
 /**
@@ -431,6 +429,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
   readonly isolationProof: TaskIsolationProof | null;
   private readonly executor: VirtualizationTaskExecutor | undefined;
   private readonly guestImage: LoadedVirtualizationGuestImage | undefined;
+  private readonly attestationVerifier: VirtualizationGuestAttestationVerifier | undefined;
 
   constructor(options: VirtualizationTaskRunnerOptions = {}) {
     const proof = options.isolationProof === null || options.isolationProof === undefined
@@ -439,6 +438,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
     this.isolationProof = proof;
     this.executor = options.executor;
     this.guestImage = options.guestImage === null ? undefined : options.guestImage;
+    this.attestationVerifier = options.attestationVerifier;
     const guest = proof?.virtualizationGuest;
     this.available = process.platform === "darwin" &&
       options.enabled === true &&
@@ -450,7 +450,12 @@ export class VirtualizationTaskRunner implements TaskRunner {
       options.executor.guestIdentity !== null &&
       sameVirtualizationGuestIdentity(guest, options.executor.guestIdentity) &&
       options.executor.attestation !== null &&
-      virtualizationAttestationMatchesProof(options.executor.attestation, proof);
+      virtualizationAttestationMatchesProof(options.executor.attestation, proof) &&
+      (this.attestationVerifier === undefined || signedAttestationMatches(
+        options.executor.signedAttestation,
+        options.executor.attestation,
+        this.attestationVerifier
+      ));
   }
 
   close(): Promise<void> {
@@ -462,6 +467,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
       throw new BrokerError("POLICY_DENIED", "Virtualization task boundary is not enabled");
     }
     await this.assertGuestImageStable();
+    this.assertGuestAttestationStable();
     const guestIdentity = this.isolationProof.virtualizationGuest;
     if (guestIdentity === undefined || !this.executor.available ||
         this.executor.guestIdentity === null ||
@@ -485,6 +491,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest status recovery is not enabled");
     }
     await this.assertGuestImageStable();
+    this.assertGuestAttestationStable();
     const guestIdentity = this.isolationProof.virtualizationGuest;
     if (guestIdentity === undefined || !sameVirtualizationGuestIdentity(guestIdentity, this.executor.guestIdentity) ||
         this.executor.attestation === null || !virtualizationAttestationMatchesProof(this.executor.attestation, this.isolationProof) ||
@@ -509,6 +516,26 @@ export class VirtualizationTaskRunner implements TaskRunner {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("POLICY_DENIED", "Virtualization guest image identity could not be verified");
     }
+  }
+
+  private assertGuestAttestationStable(): void {
+    if (this.attestationVerifier === undefined) return;
+    if (!signedAttestationMatches(this.executor?.signedAttestation, this.executor?.attestation, this.attestationVerifier)) {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation is unavailable, revoked, or changed");
+    }
+  }
+}
+
+function signedAttestationMatches(
+  signed: SignedVirtualizationGuestAttestation | undefined,
+  attestation: VirtualizationGuestAttestation | null | undefined,
+  verifier: VirtualizationGuestAttestationVerifier
+): boolean {
+  if (signed === undefined || attestation === null || attestation === undefined) return false;
+  try {
+    return canonicalJson(verifier.verify(signed).attestation) === canonicalJson(attestation);
+  } catch {
+    return false;
   }
 }
 
@@ -611,73 +638,6 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
       ? { virtualizationGuest: parseVirtualizationGuestIdentity(proof.virtualizationGuest) }
       : {})
   };
-}
-
-function isVirtualizationGuestIdentity(value: unknown): value is VirtualizationGuestIdentity {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return Object.keys(record).every((key) => key === "imageSha256" || key === "runtimeVersion") &&
-    typeof record.imageSha256 === "string" && SHA256_PATTERN.test(record.imageSha256) &&
-    typeof record.runtimeVersion === "string" && RUNTIME_VERSION_PATTERN.test(record.runtimeVersion);
-}
-
-function parseVirtualizationGuestIdentity(value: unknown): VirtualizationGuestIdentity {
-  if (!isVirtualizationGuestIdentity(value)) {
-    throw new BrokerError("POLICY_DENIED", "Virtualization guest identity is malformed");
-  }
-  return { imageSha256: value.imageSha256, runtimeVersion: value.runtimeVersion };
-}
-
-function sameVirtualizationGuestIdentity(
-  expected: VirtualizationGuestIdentity,
-  actual: VirtualizationGuestIdentity | null
-): boolean {
-  return actual !== null &&
-    isVirtualizationGuestIdentity(actual) &&
-    actual.imageSha256 === expected.imageSha256 &&
-    actual.runtimeVersion === expected.runtimeVersion;
-}
-
-export function validateVirtualizationGuestAttestation(value: unknown): VirtualizationGuestAttestation {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation is unavailable");
-  }
-  const attestation = value as Partial<VirtualizationGuestAttestation>;
-  const allowedKeys = new Set([
-    "attestationDigest", "credentials", "evidenceRef", "filesystem", "guestIdentity",
-    "network", "processTree", "processTreePolicy", "sandboxProfile", "schemaVersion"
-  ]);
-  if (Object.keys(value).some((key) => !allowedKeys.has(key)) ||
-      attestation.schemaVersion !== "0.1" ||
-      !isVirtualizationGuestIdentity(attestation.guestIdentity) ||
-      typeof attestation.sandboxProfile !== "string" ||
-      !SANDBOX_PROFILE_PATTERN.test(attestation.sandboxProfile) ||
-      attestation.filesystem !== "guest-private" ||
-      attestation.network !== "profile-bound" ||
-      attestation.credentials !== "host-credentials-unavailable" ||
-      attestation.processTree !== "guest-owned" ||
-      (attestation.processTreePolicy !== "single_process" && attestation.processTreePolicy !== "owned_group") ||
-      typeof attestation.evidenceRef !== "string" ||
-      !EVIDENCE_REFERENCE_PATTERN.test(attestation.evidenceRef) ||
-      typeof attestation.attestationDigest !== "string" ||
-      !SHA256_PATTERN.test(attestation.attestationDigest)) {
-    throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation is malformed");
-  }
-  const unsigned = {
-    schemaVersion: "0.1" as const,
-    guestIdentity: parseVirtualizationGuestIdentity(attestation.guestIdentity),
-    sandboxProfile: attestation.sandboxProfile,
-    filesystem: "guest-private" as const,
-    network: "profile-bound" as const,
-    credentials: "host-credentials-unavailable" as const,
-    processTree: "guest-owned" as const,
-    processTreePolicy: attestation.processTreePolicy,
-    evidenceRef: attestation.evidenceRef
-  };
-  if (sha256(canonicalJson(unsigned)) !== attestation.attestationDigest) {
-    throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation digest is invalid");
-  }
-  return { ...unsigned, attestationDigest: attestation.attestationDigest };
 }
 
 function virtualizationAttestationMatchesProof(
