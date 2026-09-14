@@ -146,3 +146,14 @@ Signed guest provenance verification is now implemented in a separate
 fail-closed gate, but this still provides no native attestation producer,
 Keychain key distribution, VM boot, or guest isolation evidence, so the runner
 remains disabled by default.
+
+The host-side trust set is now loaded by the startup-only
+`VirtualizationGuestAttestationKeyManager` (commit `73148a6`). Schema version
+`8` persists its active payload digest and historical revisions independently
+from policy, Edge, authority, and helper keys. Protected public-key files are
+opened with `O_NOFOLLOW` after owner/mode/size/device/inode checks and are
+Ed25519- and digest-bound; activation, exact restart restore, audited rollback,
+and the dedicated `guest_attestation_key` revocation kind are covered by
+focused tests. This protects the verification boundary but does not provision
+or distribute guest private signing keys and does not change the disabled
+runtime/VM release gate.

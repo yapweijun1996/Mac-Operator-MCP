@@ -4,6 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest guest-attestation keyring addendum: commit `73148a6` adds a Broker
+startup/operator key manager for signed guest provenance. It loads only
+owner-only canonical public-key files with `O_NOFOLLOW`, device/inode and
+digest binding, bounded sizes, and Ed25519 validation. BrokerStore schema
+version `8` persists this configuration independently with monotonic
+activation, exact restart restore, audited rollback, and a dedicated
+`guest_attestation_key` revocation kind checked dynamically by each verifier.
+Focused persistence/keyring tests pass 49/49 and the full physical-Darwin
+regression passes 530/530. Host private signing keys are never loaded; native
+guest signing, protected key distribution, VM boot, guest isolation, and
+capability enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-guest-attestation-keyring.md`.
+
 Latest signed guest-provenance addendum: commit `84da3e0` extracts the
 Virtualization guest attestation contract into a dedicated module and adds a
 versioned Ed25519 envelope. The verifier binds key ID, algorithm, issue/expiry
@@ -313,6 +326,14 @@ paths, executable text, arguments, environment, credentials, or raw output;
 terminal recovery clears it after verified readback, while unresolved Jobs
 retain it for a later bounded lookup. Migration is forward-only and future
 schema markers remain refused.
+
+Schema version `8` adds independently persisted guest-attestation key
+configuration history and active identity, plus the dedicated
+`guest_attestation_key` revocation kind. Activation and rollback are monotonic,
+revision/precondition bound, and audited; restart restore requires an exact
+payload digest. The key manager loads only protected Ed25519 public keys and
+never handles guest private signing material. Evidence:
+`evidence/2026-09-15-virtualization-guest-attestation-keyring.md`.
 
 Latest process-tree identity addendum: ProcessSupervisor now rejects a
 descendant PID whose start-time changes between observations, marks native
