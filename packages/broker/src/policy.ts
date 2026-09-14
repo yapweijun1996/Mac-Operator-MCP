@@ -229,6 +229,7 @@ export function authorizePrincipalProjection(
   issuer: string,
   projectedScopes: readonly Scope[]
 ): void {
+  validateBrokerPolicy(policy);
   const grant = policy.principalGrants.get(principalId);
   if (!grant || !grant.enabled || grant.issuer !== issuer) {
     throw new BrokerError("AUTH_INVALID", "Principal authority is invalid");
@@ -253,6 +254,7 @@ export function isCapabilityFamilyDisabled(
   policy: BrokerPolicy,
   families: readonly CapabilityFamily[]
 ): boolean {
+  validateBrokerPolicy(policy);
   return families.some((family) => {
     const switchName = SWITCH_BY_FAMILY[family];
     return store.isSwitchDisabled(switchName) || policy.killSwitches[switchName];
@@ -290,6 +292,7 @@ export function authorizeTarget(
   scopes: readonly Scope[],
   target: NormalizedTarget
 ): void {
+  validateBrokerPolicy(policy);
   const matchingRules = policy.targetRules.filter((rule) =>
     rule.principalId === principalId &&
     scopes.includes(rule.scope) &&
@@ -307,6 +310,7 @@ export function authorizeTarget(
 }
 
 export function runtimeToolStates(policy: BrokerPolicy): RuntimeToolState[] {
+  validateBrokerPolicy(policy);
   return PLANNED_TOOL_NAMES.map((toolName) => {
     const tool = policy.tools.get(toolName);
     return {
