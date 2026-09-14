@@ -56,6 +56,10 @@ module through the Command Line Tools macOS 26.2 SDK. This is SDK availability
 only; no VM image, guest boot, or isolation guarantee is inferred from it. The
 host probe is recorded in
 [`evidence/2026-09-14-virtualization-framework-sdk.md`](../../evidence/2026-09-14-virtualization-framework-sdk.md).
+The checked-in native Objective-C probe links the framework and constructs a
+`VZVirtualMachineConfiguration` without booting a VM; Swift compilation remains
+unverified because the installed Command Line Tools compiler reports an
+SDK/interface-version mismatch.
 
 This change adds a disabled-by-default `VirtualizationTaskRunner` seam.
 It accepts only a native-adapter executor, requires an externally reviewed

@@ -886,7 +886,6 @@ async function waitForRootProcessIdentity(
   while (Date.now() < deadline) {
     const identity = processTree.captureRootIdentity();
     if (identity !== undefined) return identity;
-    if (child.exitCode !== null || child.signalCode !== null) break;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
   return processTree.captureRootIdentity();

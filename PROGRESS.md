@@ -4,9 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest process-identity exit-window addendum: `ProcessSupervisor` now keeps
+the bounded 100ms native PID/start-time retry alive even when a short-lived
+child closes first, without inventing an identity or registering unowned work.
+Five consecutive real Broker task/crash runs passed 2/2; the full regression
+passes 457/458 with one explicit host-boundary/opt-in skip. Evidence:
+`evidence/2026-09-14-process-identity-exit-window.md`.
+
 Latest Virtualization.framework candidate addendum: the active Darwin 26.2
-SDK exposes Virtualization.framework headers/modules, but Xcode is absent and
-no VM image or guest boot was attempted. A disabled-by-default
+SDK exposes Virtualization.framework headers/modules, and the checked-in native
+Objective-C probe links the framework and constructs a
+`VZVirtualMachineConfiguration`; Xcode is absent, Swift compiler/SDK versions
+do not match, and no VM image or guest boot was attempted. A disabled-by-default
 `VirtualizationTaskRunner` seam now requires an externally reviewed guest
 image SHA-256/runtime identity, a native-adapter executor, and a matching
 identity recheck immediately before dispatch; missing or changed identity
@@ -28,7 +37,8 @@ Evidence: `evidence/2026-09-14-process-supervisor-startup-authority.md`.
 
 Latest process-identity startup addendum: native PID/start-time capture now
 uses a bounded 100ms retry window for transient process-table visibility after
-spawn, without synthesizing identities or weakening fail-closed cleanup. The
+spawn, including short-lived children that exit while the table is settling,
+without synthesizing identities or weakening fail-closed cleanup. The
 focused process-supervisor/sandbox suite passes 29/29, and two consecutive full
 real-sandbox runs each pass 452/453 with one explicit host-boundary/opt-in skip.
 Evidence: `evidence/2026-09-14-process-identity-startup-retry.md`.

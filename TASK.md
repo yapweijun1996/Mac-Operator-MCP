@@ -4,8 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Process-identity exit-window addendum: short-lived children now retain the
+bounded native PID/start-time retry after close, without synthetic identity or
+unowned registration. Evidence:
+`evidence/2026-09-14-process-identity-exit-window.md`.
+
 Virtualization.framework candidate addendum: the current Darwin SDK exposes
-the framework surface, and a disabled `VirtualizationTaskRunner` seam now
+the framework surface and the native probe links it without booting a VM; a
+disabled `VirtualizationTaskRunner` seam now
 requires externally reviewed guest image digest/runtime evidence plus a
 matching native-adapter identity at dispatch. Identity mismatch, absent guest
 evidence, unavailable adapter, and adapter failure all fail closed or remain
@@ -18,8 +24,8 @@ and returning `CANCELLED` when authority is lost in that window. Evidence:
 `evidence/2026-09-14-process-supervisor-startup-authority.md`.
 
 Process-identity startup addendum: native PID/start-time capture retries for a
-bounded 100ms after spawn and never synthesizes an identity when the child has
-already exited. Evidence:
+bounded 100ms after spawn, including a child that exits while the process table
+settles, and never synthesizes an identity. Evidence:
 `evidence/2026-09-14-process-identity-startup-retry.md`.
 
 Task-crash mapping addendum: an observed child signal is retained as

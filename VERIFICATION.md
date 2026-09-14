@@ -3,9 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest process-identity exit-window addendum: `ProcessSupervisor` continues
+the bounded 100ms native PID/start-time retry when a short-lived child closes
+before the process table settles, while still refusing synthetic identities or
+unowned active registration. Five consecutive real Broker task/crash runs
+passed 2/2; the full regression passes 457/458 with one explicit
+host-boundary/opt-in skip. Evidence:
+`evidence/2026-09-14-process-identity-exit-window.md`.
+
 Latest Virtualization.framework candidate addendum: the active Darwin 26.2
 Command Line Tools SDK contains the Virtualization.framework module and
-headers. The new disabled-by-default `VirtualizationTaskRunner` requires an
+headers; the native Objective-C probe links it and constructs a
+`VZVirtualMachineConfiguration` without boot. The new disabled-by-default
+`VirtualizationTaskRunner` requires an
 external host-evidence gate, a native executor, and a proof-bound guest image
 SHA-256/runtime identity; it rechecks that identity before dispatch and fails
 closed on a target swap. Focused task-runner tests pass 7/7; the full
@@ -26,7 +36,8 @@ Evidence: `evidence/2026-09-14-process-supervisor-startup-authority.md`.
 
 Latest process-identity startup addendum: native PID/start-time capture now
 uses a bounded 100ms retry window for transient process-table visibility after
-spawn, without synthesizing identities or weakening fail-closed cleanup. The
+spawn, including short-lived children that exit while the table is settling,
+without synthesizing identities or weakening fail-closed cleanup. The
 focused process-supervisor/sandbox suite passes 29/29, and two consecutive full
 real-sandbox runs each pass 452/453 with one explicit host-boundary/opt-in skip.
 Evidence: `evidence/2026-09-14-process-identity-startup-retry.md`.

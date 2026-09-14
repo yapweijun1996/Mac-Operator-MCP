@@ -27,12 +27,18 @@ xcrun --find swiftc
 
 Virtualization.framework in the active macOS SDK
 present
+
+npm run build:native:virtualization-probe --workspace @mac-operator/broker
+{"vm_boot_attempted":false,"host_version":"Version 26.2 (Build 25C56)","framework":"Virtualization.framework","configuration_type":"VZVirtualMachineConfiguration"}
 ```
 
 The SDK contains the `Virtualization.framework` module and headers, including
 `VZVirtualMachine`, `VZMacOSVirtualMachine`, guest storage, directory-share,
-and network-device declarations. Xcode is not installed on this host, so this
-probe does not establish a production Swift build or code-signing pipeline.
+and network-device declarations. The native Objective-C probe links the
+framework and constructs a `VZVirtualMachineConfiguration` without booting a
+VM. Xcode is not installed on this host; the Command Line Tools `swiftc` also
+reports an SDK/compiler interface-version mismatch, so this probe does not
+establish a production Swift build or code-signing pipeline.
 
 ## Boundary and limitations
 
