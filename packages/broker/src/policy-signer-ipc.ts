@@ -56,6 +56,7 @@ export class PolicySignerIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
   private socketIdentity: SocketPathIdentity | undefined;
+  private readonly authenticationKey: Buffer;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
@@ -66,6 +67,7 @@ export class PolicySignerIpcServer {
       throw new Error("Policy signer IPC requires a peer verifier or native peer policy");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Policy signer IPC key must contain at least 32 bytes");
+    this.authenticationKey = Buffer.from(options.authenticationKey);
     this.maxRequestBytes = options.maxRequestBytes ?? 64 * 1024;
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
@@ -114,19 +116,27 @@ export class PolicySignerIpcServer {
     const nativeTransport = this.nativeTransport;
     this.nativeTransport = undefined;
     if (nativeTransport) {
-      await nativeTransport.close();
+      try { await nativeTransport.close(); }
+      finally { this.authenticationKey.fill(0); }
       return;
     }
     const server = this.server;
     this.server = undefined;
     const socketIdentity = this.socketIdentity;
     this.socketIdentity = undefined;
-    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
-    if (server) await new Promise<void>((resolve, reject) => server.close((error) => {
-      if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
-      else resolve();
-    }));
-    await removeDetachedSocket(detached);
+    try {
+      const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
+      try {
+        if (server) await new Promise<void>((resolve, reject) => server.close((error) => {
+          if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
+          else resolve();
+        }));
+      } finally {
+        await removeDetachedSocket(detached);
+      }
+    } finally {
+      this.authenticationKey.fill(0);
+    }
   }
 
   private handleSocket(socket: Socket): void {
@@ -163,7 +173,7 @@ export class PolicySignerIpcServer {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
         const command = authenticatePolicySignerCommand(
           raw,
-          this.options.authenticationKey,
+          this.authenticationKey,
           this.now(),
           this.maxRequestAgeMs,
           this.allowedClockSkewMs
