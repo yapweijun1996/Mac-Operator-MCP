@@ -8,12 +8,18 @@ import {
   BrokerStoreVirtualizationGuestReplayGuard,
   InMemoryVirtualizationGuestReplayGuard,
   VirtualizationGuestTransportClient,
+  createVirtualizationGuestStatusRequest,
   createVirtualizationGuestRequest,
+  signVirtualizationGuestStatusResponse,
   signVirtualizationGuestResponse,
+  verifyVirtualizationGuestStatusRequest,
+  verifyVirtualizationGuestStatusResponse,
   verifyVirtualizationGuestRequest,
   verifyVirtualizationGuestResponse,
+  virtualizationGuestStatusRequestDigest,
   virtualizationGuestRequestDigest,
-  type UnsignedVirtualizationGuestResponse
+  type UnsignedVirtualizationGuestResponse,
+  type UnsignedVirtualizationGuestStatusResponse
 } from "./virtualization-guest-transport.js";
 import { BrokerStore } from "./persistence.js";
 
@@ -62,6 +68,51 @@ function responseFor(signedRequest: ReturnType<typeof request>): UnsignedVirtual
   };
 }
 
+function statusRequest() {
+  const original = request();
+  const unsignedOriginal = { ...original };
+  delete (unsignedOriginal as Partial<typeof unsignedOriginal>).authenticationProof;
+  return createVirtualizationGuestStatusRequest({
+    guestIdentity,
+    originalRequestId: original.requestId,
+    originalNonce: original.nonce,
+    originalRequestDigest: virtualizationGuestRequestDigest(unsignedOriginal),
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    requestId: "request:guest-status-0123456789abcdef",
+    nonce: "guest-status-nonce-0123456789abcdef",
+    timestampMs: now,
+    expiresAtMs: now + 30_000
+  }, key, { now });
+}
+
+function statusResponseFor(signedRequest: ReturnType<typeof statusRequest>): UnsignedVirtualizationGuestStatusResponse {
+  const unsigned = { ...signedRequest };
+  delete (unsigned as Partial<typeof unsigned>).authenticationProof;
+  return {
+    schemaVersion: "0.1",
+    protocolVersion: "0.1",
+    contractVersion: "0.1",
+    kind: "virtualization_guest_task_status_result",
+    requestId: signedRequest.requestId,
+    nonce: signedRequest.nonce,
+    guestIdentity,
+    originalRequestId: signedRequest.originalRequestId,
+    originalNonce: signedRequest.originalNonce,
+    originalRequestDigest: signedRequest.originalRequestDigest,
+    statusRequestDigest: virtualizationGuestStatusRequestDigest(unsigned),
+    state: "completed",
+    resultClass: "SUCCEEDED",
+    exitCode: 0,
+    stdout: "recovered output",
+    stderr: "",
+    truncated: false,
+    durationMs: 14,
+    outputPolicy: "broker-redacted-v1",
+    verification: { status: "verified", summary: "recovered postcondition" }
+  };
+}
+
 test("authenticated request and response round trip binds guest identity and request digest", () => {
   const signedRequest = request();
   const guard = new InMemoryVirtualizationGuestReplayGuard({ now: () => now });
@@ -84,6 +135,40 @@ test("request nonce and request ID replay are denied", () => {
   const guard = new InMemoryVirtualizationGuestReplayGuard({ now: () => now });
   verifyVirtualizationGuestRequest(signedRequest, key, { replayGuard: guard, now });
   assert.throws(() => verifyVirtualizationGuestRequest(signedRequest, key, { replayGuard: guard, now }), (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED");
+});
+
+test("authenticated guest status lookup binds the original task and rejects replay", () => {
+  const signedRequest = statusRequest();
+  const guard = new InMemoryVirtualizationGuestReplayGuard({ now: () => now });
+  const verifiedRequest = verifyVirtualizationGuestStatusRequest(signedRequest, key, { replayGuard: guard, now });
+  const signedResponse = signVirtualizationGuestStatusResponse(statusResponseFor(signedRequest), key);
+  const verifiedResponse = verifyVirtualizationGuestStatusResponse(signedResponse, key, verifiedRequest, {
+    expectedGuestIdentity: guestIdentity,
+    expectedOutputCapBytes: 1_024
+  });
+  assert.equal(verifiedResponse.state, "completed");
+  assert.equal(verifiedResponse.originalRequestDigest, verifiedRequest.originalRequestDigest);
+  assert.throws(
+    () => verifyVirtualizationGuestStatusRequest(signedRequest, key, { replayGuard: guard, now }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED"
+  );
+});
+
+test("guest status lookup rejects original-task and response-proof tampering", () => {
+  const signedRequest = statusRequest();
+  const verifiedRequest = verifyVirtualizationGuestStatusRequest(signedRequest, key, {
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now
+  });
+  const signedResponse = signVirtualizationGuestStatusResponse(statusResponseFor(signedRequest), key);
+  assert.throws(
+    () => verifyVirtualizationGuestStatusResponse({ ...signedResponse, originalRequestDigest: "d".repeat(64) }, key, verifiedRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+  );
+  assert.throws(
+    () => verifyVirtualizationGuestStatusResponse({ ...signedResponse, responseProof: "0".repeat(64) }, key, verifiedRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
 });
 
 test("BrokerStore-backed guest replay admission survives a Broker restart", async () => {
@@ -176,6 +261,63 @@ test("bounded transport client admits before exchange and verifies the signed re
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(sentRequestId, "request:guest-abcdef0123456789");
   client.close();
+});
+
+test("bounded transport client performs authenticated guest status lookup", async () => {
+  let originalRequestId = "";
+  const client = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    expectedGuestIdentity: guestIdentity,
+    authorizeStatusLookup: () => undefined,
+    channel: {
+      async exchange(frame) {
+        const signedStatusRequest = JSON.parse(Buffer.from(frame).toString("utf8")) as ReturnType<typeof statusRequest>;
+        originalRequestId = signedStatusRequest.originalRequestId;
+        return Buffer.from(JSON.stringify(signVirtualizationGuestStatusResponse(statusResponseFor(signedStatusRequest), key)), "utf8");
+      }
+    }
+  });
+  const original = request();
+  const unsignedOriginal = { ...original };
+  delete (unsignedOriginal as Partial<typeof unsignedOriginal>).authenticationProof;
+  const result = await client.lookup({
+    guestIdentity,
+    originalRequestId: original.requestId,
+    originalNonce: original.nonce,
+    originalRequestDigest: virtualizationGuestRequestDigest(unsignedOriginal),
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    requestId: "request:guest-status-abcdef0123456789",
+    nonce: "guest-status-nonce-abcdef0123456789",
+    timestampMs: now,
+    expiresAtMs: now + 30_000
+  });
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(originalRequestId, original.requestId);
+  client.close();
+});
+
+test("guest status lookup fails closed without Broker-owned authority", async () => {
+  const signed = statusRequest();
+  const client = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    channel: { async exchange(): Promise<Uint8Array> { throw new Error("must not send unauthorized status"); } }
+  });
+  await assert.rejects(
+    client.lookup({
+      guestIdentity,
+      originalRequestId: signed.originalRequestId,
+      originalNonce: signed.originalNonce,
+      originalRequestDigest: signed.originalRequestDigest,
+      timeoutMs: 1_000,
+      outputCapBytes: 1_024
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
 });
 
 test("transport timeout and cancellation fail closed after request admission", async () => {
