@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { BrokerError } from "@mac-operator/contracts";
+import { BrokerError, sha256 } from "@mac-operator/contracts";
 import {
   executeAuthorityControlCliCommand,
   parseAuthorityControlCliArgs,
+  runAuthorityControlCli,
   type AuthorityControlCliClient
 } from "./authority-control-cli.js";
+import { AuthorityControlIpcServer } from "./authority-control-ipc.js";
+import { AuthorityControlKeyManager, writeAuthorityControlKeyConfig } from "./authority-control-keyring.js";
+import { BrokerStore } from "./persistence.js";
 
 const COMMON = [
   "--database", "/Users/operator/Library/Application Support/MacOperator/state/broker.sqlite",
@@ -89,4 +97,58 @@ test("authority CLI refuses to publish an unconfirmed revocation and verifies co
     revoked: true,
     verified: true
   });
+});
+
+test("authority CLI restores the active key and completes an authenticated switch readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "acli-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const socketPath = join(directory, "authority.sock");
+  const keyPath = join(directory, "authority.key");
+  const keyConfigPath = join(directory, "authority-key.json");
+  const key = randomBytes(32);
+  let store: BrokerStore | undefined;
+  let manager: AuthorityControlKeyManager | undefined;
+  let server: AuthorityControlIpcServer | undefined;
+  try {
+    await writeFile(keyPath, key, { mode: 0o600 });
+    await chmod(keyPath, 0o600);
+    store = new BrokerStore(databasePath);
+    await chmod(databasePath, 0o600);
+    const document = {
+      schemaVersion: "0.1" as const,
+      revision: 1,
+      keys: [{
+        keyId: "authority-cli-test",
+        keySource: "file" as const,
+        path: keyPath,
+        keyDigest: sha256(key),
+        notBeforeMs: 1_000,
+        expiresAtMs: 2_000_000_000_000
+      }]
+    };
+    await writeAuthorityControlKeyConfig(keyConfigPath, document);
+    manager = new AuthorityControlKeyManager(keyConfigPath, store);
+    await manager.activate();
+    server = new AuthorityControlIpcServer({
+      socketPath,
+      store,
+      authenticationKey: key,
+      peerCredentialVerifier: { verify: () => undefined },
+    });
+    await server.listen();
+
+    const result = await runAuthorityControlCli([
+      "set-switch", "--database", databasePath, "--socket", socketPath, "--key-config", keyConfigPath,
+      "--name", "process", "--disabled", "true", "--expected-disabled", "false",
+      "--reason", "INTEGRATION_CONTAINMENT", "--confirm", "set-switch"
+    ]);
+    assert.deepEqual(result, { schemaVersion: "0.1", operation: "set-switch", switchName: "process", disabled: true, verified: true });
+    assert.equal(store.isSwitchDisabled("process"), true);
+  } finally {
+    await server?.close();
+    manager?.dispose();
+    store?.close();
+    key.fill(0);
+    await rm(directory, { recursive: true, force: true });
+  }
 });
