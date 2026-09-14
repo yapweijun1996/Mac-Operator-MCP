@@ -3,15 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Broker session-concurrency addendum: source revision `d185f12` validates
+Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` validate
 request-age and clock-skew limits before Broker startup and reserves at most
 eight active requests per principal/session by default (hard maximum 64).
 Saturated sessions receive retryable `CONFLICT` before durable admission or
 audit; release is verified on success and failure paths. Broker focused tests
-pass 77/77 and the complete physical-Darwin suite passes 584/584 with 0
-skipped tests. Build, typecheck, lint, contract verification, and diff checks
-pass. Cross-process global quotas, installed service packaging, and final
-release evidence remain unproven. Evidence:
+pass 78/78, the native canonical JSON probe passes 5/5 vectors, and the
+complete physical-Darwin suite passes 585/585 with 0 skipped tests. Build,
+typecheck, lint, contract verification, and diff checks pass. Cross-process
+global quotas, installed service packaging, and final release evidence remain
+unproven. Evidence:
 `evidence/2026-09-15-broker-session-concurrency.md`.
 
 Approval TTL-gate addendum: source revision `0ab3fc9` checks the signed

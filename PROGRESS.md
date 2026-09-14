@@ -4,13 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Broker session-concurrency addendum: source revision `d185f12` validates
+Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` validate
 request-age and clock-skew limits at Broker startup and bounds active work per
 authenticated principal/session (default 8, maximum 64). Capacity rejection
 returns retryable `CONFLICT` before durable request admission or audit, and
-reservations release on every completion path. Broker focused tests pass 77/77
-and the complete physical-Darwin regression passes 584/584 with 0 skipped
-tests. Evidence: `evidence/2026-09-15-broker-session-concurrency.md`.
+reservations release on every completion path. Broker focused tests pass 78/78,
+the native canonical JSON probe passes 5/5 vectors, and the complete
+physical-Darwin regression passes 585/585 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-broker-session-concurrency.md`.
 
 Approval TTL-gate addendum: source revision `0ab3fc9` rejects a signed Approval
 whose own TTL has elapsed at the current Broker clock before persistence or
@@ -1960,7 +1961,7 @@ Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Run
 ## Pending decisions
 
 - Remote OAuth issuer and tunnel/provider deployment choice.
-- Native peer-adapter packaging, Node socket-descriptor compatibility, Edge process-ID lifecycle, cross-process/keychain distribution, storage-level erasure limits, session concurrency, and canonicalization compatibility.
+- Native peer-adapter packaging, Node socket-descriptor compatibility, Edge process-ID lifecycle, cross-process/keychain distribution, storage-level erasure limits, cross-process/global session quotas, and canonicalization compatibility.
 - Child-process sandbox technology on the target macOS version.
 - Installed startup wiring, native caller/process identity packaging, Keychain distribution, general schema-version framework, crash-window recovery, and rollback runbook.
 - Audit backend, integrity, retention, and read-only outage behavior.
