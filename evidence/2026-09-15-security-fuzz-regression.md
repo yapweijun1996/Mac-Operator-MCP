@@ -1,7 +1,7 @@
 # Deterministic Security Fuzz Regression Evidence
 
 Date: 2026-09-15
-Source commit: `92bf395`
+Source commit: `bccc02d` (with the documented baseline in `92bf395`)
 Host: physical Darwin arm64 development host
 Scope: bounded hardening regression only; no capability enablement
 
@@ -13,8 +13,8 @@ MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test
 
 ## Observed result
 
-- Full suite: 515/515 passed, 0 failed, 0 cancelled, 0 skipped.
-- Focused security-fuzz suite: 6/6 passed.
+- Full suite: 516/516 passed, 0 failed, 0 cancelled, 0 skipped.
+- Focused security-fuzz suite: 7/7 passed.
 - `npm run typecheck` and `npm run build` passed before the full run.
 
 ## Coverage added
@@ -32,6 +32,8 @@ mutations rather than unseeded randomness. It exercises:
 - Oversized canonical JSON/redaction inputs and non-finite/unsupported values.
 - Traversal, NUL, overlong, relative, and protected-zone path mutations against
   the Broker-owned filesystem root planner.
+- Policy target mutations and principal scope projections, including
+  deny-overrides-allow and scope-expansion attempts.
 
 All cases assert stable fail-closed classes or bounded output; no test grants
 authority, launches a privileged helper, boots a VM, or writes outside its
