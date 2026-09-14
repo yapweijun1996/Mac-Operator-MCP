@@ -1,4 +1,4 @@
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { redactLogText } from "./secret-policy.js";
 import type { AppExecutionControl, AppInventoryInspector, SafeAppInventory } from "./app-inspector.js";
@@ -180,7 +180,7 @@ export function parseAppFocusResult(result: ProcessExecutionResult, appId: strin
     throw new BrokerError("EXECUTION_FAILED", "App focus failed");
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata"); }
+  try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata");
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {

@@ -1,4 +1,4 @@
-import { BrokerError } from "@mac-operator/contracts";
+import { BrokerError, parseJsonStrict } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { redactLogText } from "./secret-policy.js";
 
@@ -138,7 +138,7 @@ export function parseAppInventoryResult(result: ProcessExecutionResult, runningO
   if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "App inventory exceeded its output limit");
   if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "App inventory failed");
   let parsed: unknown;
-  try { parsed = JSON.parse(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "App inventory returned malformed metadata"); }
+  try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "App inventory returned malformed metadata"); }
   if (!Array.isArray(parsed) || parsed.length > MAX_APPS) {
     throw new BrokerError("VERIFICATION_FAILED", "App inventory exceeded its result limit");
   }

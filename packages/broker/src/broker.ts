@@ -5,6 +5,7 @@ import {
   PROTOCOL_VERSION,
   sha256,
   signBrokerResponse,
+  parseJsonStrict,
   verifyRequestAuthentication,
   type AuthenticatedBrokerResponse,
   type BrokerFailure,
@@ -4022,7 +4023,7 @@ function appOpenDispatchResult(job: BrokerJob, data: AppOpenResultData, reused: 
 
 function parseStoredAppOpenResult(value: string): AppOpenResultData {
   let parsed: unknown;
-  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed"); }
+  try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed");
   }
@@ -4050,7 +4051,7 @@ function parseStoredAppOpenResult(value: string): AppOpenResultData {
 
 function parseStoredAppFocusResult(value: string): AppFocusResultData {
   let parsed: unknown;
-  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed"); }
+  try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed");
   const record = parsed as Record<string, unknown>;
   if (typeof record.app_id !== "string" || !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(record.app_id) ||
@@ -4073,7 +4074,7 @@ function parseStoredAppFocusResult(value: string): AppFocusResultData {
 
 function parseStoredUiActionResult(value: string): UiActionResultData {
   let parsed: unknown;
-  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed"); }
+  try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
   const record = parsed as Record<string, unknown>;
   const reobserved = record.reobserved;
@@ -4106,7 +4107,7 @@ function parseStoredUiActionResult(value: string): UiActionResultData {
 
 function parseStoredWriteResult(value: string): WriteResultData {
   let parsed: unknown;
-  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem write result is malformed"); }
+  try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem write result is malformed"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem write result is malformed");
   }
@@ -4153,7 +4154,7 @@ function patchResultData(result: FilesystemPatchResult): PatchResultData {
 
 function parseStoredPatchResult(value: string): PatchResultData {
   let parsed: unknown;
-  try { parsed = JSON.parse(value) as unknown; } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed"); }
+  try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed");
   }

@@ -2,7 +2,7 @@ import { lstat, realpath, chmod } from "node:fs/promises";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonUtf8Strict, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonStrict, parseJsonUtf8Strict, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
@@ -482,7 +482,7 @@ export class AuthorityControlIpcClient {
       socket.on("end", () => {
         try {
           const text = decodeUtf8Strict(Buffer.concat(chunks)).trim();
-          finish(undefined, JSON.parse(text) as unknown);
+          finish(undefined, parseJsonStrict(text) as unknown);
         } catch { finish(new BrokerError("AUTH_INVALID", "Authority control IPC response is not valid JSON")); }
       });
       socket.on("error", () => finish(new BrokerError("EXECUTION_FAILED", "Authority control IPC transport failed", true)));

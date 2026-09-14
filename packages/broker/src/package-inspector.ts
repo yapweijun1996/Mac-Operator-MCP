@@ -1,6 +1,6 @@
 import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { BrokerError, decodeUtf8Strict } from "@mac-operator/contracts";
+import { BrokerError, decodeUtf8Strict, parseJsonStrict } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed, redactLogText } from "./secret-policy.js";
 
 export const PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "pip", "uv", "poetry", "brew"] as const;
@@ -210,7 +210,7 @@ function parseManifest(manager: PackageManager, manifest: SafeFile, context: Pac
 function parseNodeManifest(text: string, context: PackageParseContext): void {
   let value: unknown;
   try {
-    value = JSON.parse(text);
+    value = parseJsonStrict(text);
   } catch {
     addWarning(context.warnings, "The Node package manifest is not valid JSON");
     return;

@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { BrokerError } from "@mac-operator/contracts";
+import { BrokerError, parseJsonStrict } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { redactBoundedText, redactLogText } from "./secret-policy.js";
 
@@ -281,7 +281,7 @@ function parseImageLines(output: string, warnings: string[]): SafeDockerImage[] 
 
 function parseInspection(objectType: DockerObjectType, requestedId: string, output: string, truncated: boolean): SafeDockerInspection {
   let parsed: unknown;
-  try { parsed = JSON.parse(output) as unknown; } catch { throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned malformed metadata"); }
+  try { parsed = parseJsonStrict(output); } catch { throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned malformed metadata"); }
   if (!Array.isArray(parsed) || parsed.length !== 1 || !isRecord(parsed[0])) {
     throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned an unexpected object shape");
   }
@@ -382,7 +382,7 @@ function parseMounts(value: unknown, warnings: string[]): SafeDockerMount[] {
 
 function parseJsonObject(line: string, warnings: string[]): Record<string, unknown> | undefined {
   try {
-    const parsed = JSON.parse(line) as unknown;
+    const parsed = parseJsonStrict(line) as unknown;
     if (isRecord(parsed)) return parsed;
   } catch {
     // A malformed line is omitted and does not cross the result boundary.

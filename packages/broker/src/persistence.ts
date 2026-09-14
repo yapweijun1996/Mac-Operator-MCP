@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 import { AuditAnchorManager, type AuditAnchorOptions } from "./audit-anchor.js";
 import {
@@ -2675,7 +2675,7 @@ export class BrokerStore {
       }
       let evidence: unknown;
       try {
-        evidence = JSON.parse(row.evidence_json);
+        evidence = parseJsonStrict(row.evidence_json);
       } catch {
         throw new BrokerError("AUDIT_UNAVAILABLE", "Audit evidence chain failed integrity verification");
       }
@@ -2834,7 +2834,7 @@ export class BrokerStore {
     const evidenceJson = canonicalJson(redactEvidence(event.evidence));
     const previous = this.database.prepare("SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1").get() as { event_hash: string } | undefined;
     const previousHash = previous?.event_hash ?? "0".repeat(64);
-    const eventHash = sha256(canonicalJson({ ...event, evidence: JSON.parse(evidenceJson), previousHash }));
+    const eventHash = sha256(canonicalJson({ ...event, evidence: parseJsonStrict(evidenceJson), previousHash }));
     this.database.prepare(`
       INSERT INTO audit_events(request_id, principal_id, tool, event_type, decision, result_class, target_ref, policy_version, evidence_json, timestamp_ms, previous_hash, event_hash)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -3369,7 +3369,7 @@ function parsePrivilegedHelperPayload(value: string): PrivilegedHelperPayload {
   if (value.length < 1 || value.length > 4_096) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker privileged payload is malformed");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(value) as unknown;
+    parsed = parseJsonStrict(value);
   } catch {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker privileged payload is malformed");
   }
@@ -3467,7 +3467,7 @@ function parseGuestTaskJobMetadata(value: string): GuestTaskJobMetadata {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task metadata is malformed");
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(value) as unknown; }
+  try { parsed = parseJsonStrict(value); }
   catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task metadata is malformed"); }
   try { validateGuestTaskJobMetadata(parsed as GuestTaskJobMetadata); }
   catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task metadata is malformed"); }
@@ -3501,7 +3501,7 @@ function validateGuestTaskJobMetadata(metadata: GuestTaskJobMetadata): void {
 function parseProcessJobMetadata(value: string): ProcessJobMetadata {
   if (value.length < 1 || value.length > 2_000) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
   let parsed: unknown;
-  try { parsed = JSON.parse(value) as unknown; }
+  try { parsed = parseJsonStrict(value); }
   catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
@@ -3530,7 +3530,7 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
   if (value.length < 1 || value.length > 20_000) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(value) as unknown;
+    parsed = parseJsonStrict(value);
   } catch {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   }

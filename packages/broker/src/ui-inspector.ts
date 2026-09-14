@@ -1,4 +1,4 @@
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { redactLogText } from "./secret-policy.js";
 
@@ -379,7 +379,7 @@ export function parseUiActionResult(
     throw new BrokerError("EXECUTION_FAILED", "Accessibility action failed");
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata"); }
+  try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
@@ -435,7 +435,7 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
     throw new BrokerError("EXECUTION_FAILED", "Accessibility observation failed");
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata"); }
+  try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata"); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
   }
