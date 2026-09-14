@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-agent protocol addendum: commit `c8a856e` adds a bounded
+`VirtualizationGuestAgent` service for the future native guest channel. It
+performs HMAC/freshness/profile/guest-identity verification and replay admission
+before guest execution, binds signed task and status responses to their
+admitted requests, enforces frame budgets, and keeps host paths, commands, and
+credentials out of the executor surface. Focused tests pass 3/3 and the full
+physical-Darwin regression passes 542/542 with 0 skipped tests. This advances
+the guest protocol boundary only; VM lifecycle, bootable image deployment,
+guest isolation, native serving integration, and `mac_task_run` enablement
+remain blocked. Evidence:
+`evidence/2026-09-15-virtualization-guest-agent.md`.
+
 Native Virtualization guest-preflight addendum: commit `7de8385` adds a
 protected, artifact-validated `virtualization_guest.node` N-API seam. Its
 startup-only image readback binds canonical owner-only device/inode/size/SHA-256

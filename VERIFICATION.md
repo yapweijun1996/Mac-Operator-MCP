@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest guest-agent addendum: commit `c8a856e` adds a bounded
+`VirtualizationGuestAgent` protocol service. It verifies signed request
+freshness, guest/profile binding, and replay identity before invoking a
+guest-owned executor, signs request-bound task/status responses, enforces
+bounded frames, and exposes no host paths, executable arguments, or
+credentials. Focused tests pass 3/3; the complete
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 542/542 with 0 skipped tests. This does not prove a native
+guest server, VM boot, guest isolation, or production `mac_task_run`
+enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-agent.md`.
+
 Latest native Virtualization guest-preflight addendum: commit `7de8385` adds a
 protected N-API artifact that revalidates a startup-bound canonical image,
 constructs a read-only `VZDiskImageStorageDeviceAttachment`, and reports empty

@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest guest-agent addendum: commit `c8a856e` adds `VirtualizationGuestAgent`,
+a bounded guest-side protocol service for the future native virtio channel. It
+verifies HMAC, freshness, guest/profile digest binding, and replay identity
+before invoking a guest-owned executor; it signs request-bound task/status
+responses, enforces frame limits, excludes host paths/commands/credentials from
+the executor API, and clears its guest-only key on close. Focused guest-agent
+tests pass 3/3 and the full physical-Darwin regression passes 542/542 with 0
+skipped tests. This is protocol-serving code only: native VM lifecycle,
+bootable image deployment, guest isolation evidence, and `mac_task_run`
+enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-guest-agent.md`.
+
 Latest native Virtualization guest-preflight addendum: commit `7de8385` adds a
 protected `virtualization_guest.node` N-API artifact and startup-only wrapper.
 The artifact accepts only a canonical owner-only image whose device/inode/size

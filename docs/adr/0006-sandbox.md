@@ -168,3 +168,12 @@ regression passes 539/539 with 0 skipped tests. This is a native preflight
 boundary only; a bootable production image, guest server, signed attestation
 producer, isolation proof, and release enablement remain required before this
 ADR can be accepted.
+
+Commit `c8a856e` adds `VirtualizationGuestAgent`, a guest-side protocol service
+that verifies HMAC/freshness/identity/profile bindings and replay admission,
+then signs only request-bound task or status responses under strict frame
+budgets. Its executor API carries no host path, raw command, or credential. The
+service is ready to be hosted by the native virtio adapter, but it does not
+create or boot a VM, install a guest image, or provide independent isolation
+evidence; this ADR remains proposed and the production task capability remains
+disabled.
