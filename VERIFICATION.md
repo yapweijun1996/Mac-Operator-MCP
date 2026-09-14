@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest-agent shutdown hardening addendum: `VirtualizationGuestAgent` now
+tracks active task/status handlers, propagates caller aborts, aborts all active
+handlers during close, and checks authority again before response signing.
+Focused tests pass 4/4 and the complete physical-Darwin suite passes 570/570
+with 0 skipped tests. This proves only the protocol-service shutdown race is
+closed; VM boot, guest isolation, and `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-guest-agent.md`.
+
 Latest guest bootstrap addendum: a bounded guest-side frame service now keeps
 the protocol loop independent from the native vsock acceptor. It enforces an
 explicit enable gate, one request/response per connection, frame/response and

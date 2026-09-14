@@ -98,6 +98,7 @@ export class VirtualizationGuestAgent {
   private readonly maxRequestBytes: number;
   private readonly maxResponseBytes: number;
   private readonly now: () => number;
+  private readonly activeControllers = new Set<AbortController>();
   private closed = false;
 
   constructor(options: VirtualizationGuestAgentOptions) {
@@ -154,7 +155,10 @@ export class VirtualizationGuestAgent {
   }
 
   close(): void {
+    if (this.closed) return;
     this.closed = true;
+    for (const controller of this.activeControllers) controller.abort();
+    this.activeControllers.clear();
     this.authenticationKey.fill(0);
   }
 
@@ -166,11 +170,15 @@ export class VirtualizationGuestAgent {
       expectedSandboxProfile: this.expectedSandboxProfile,
       expectedProfileDigest: this.expectedProfileDigest
     });
-    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled");
-    const response = await this.executeRequest({ ...request, guestIdentity: { ...request.guestIdentity } }, signal);
-    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled");
-    const signed = bindAndSignTaskResponse(response, request, this.authenticationKey, this.expectedGuestIdentity);
-    return encodeResponse(signed, this.maxResponseBytes, "Virtualization guest response");
+    const control = this.beginRequest(signal);
+    try {
+      const response = await this.executeRequest({ ...request, guestIdentity: { ...request.guestIdentity } }, control.controller.signal);
+      if (control.controller.signal.aborted || this.closed) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled");
+      const signed = bindAndSignTaskResponse(response, request, this.authenticationKey, this.expectedGuestIdentity);
+      return encodeResponse(signed, this.maxResponseBytes, "Virtualization guest response");
+    } finally {
+      control.dispose();
+    }
   }
 
   private async handleStatus(raw: unknown, signal?: AbortSignal): Promise<Uint8Array> {
@@ -182,11 +190,31 @@ export class VirtualizationGuestAgent {
     if (this.lookupRequest === undefined) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest status service is not enabled");
     }
-    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest status was cancelled");
-    const response = await this.lookupRequest({ ...request, guestIdentity: { ...request.guestIdentity } }, signal);
-    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest status was cancelled");
-    const signed = bindAndSignStatusResponse(response, request, this.authenticationKey, this.expectedGuestIdentity);
-    return encodeResponse(signed, this.maxResponseBytes, "Virtualization guest status response");
+    const control = this.beginRequest(signal);
+    try {
+      const response = await this.lookupRequest({ ...request, guestIdentity: { ...request.guestIdentity } }, control.controller.signal);
+      if (control.controller.signal.aborted || this.closed) throw new BrokerError("CANCELLED", "Virtualization guest status was cancelled");
+      const signed = bindAndSignStatusResponse(response, request, this.authenticationKey, this.expectedGuestIdentity);
+      return encodeResponse(signed, this.maxResponseBytes, "Virtualization guest status response");
+    } finally {
+      control.dispose();
+    }
+  }
+
+  private beginRequest(signal?: AbortSignal): { controller: AbortController; dispose: () => void } {
+    if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest agent is closed");
+    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest request was cancelled");
+    const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort();
+    signal?.addEventListener("abort", abortFromCaller, { once: true });
+    this.activeControllers.add(controller);
+    return {
+      controller,
+      dispose: () => {
+        signal?.removeEventListener("abort", abortFromCaller);
+        this.activeControllers.delete(controller);
+      }
+    };
   }
 }
 

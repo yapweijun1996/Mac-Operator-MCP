@@ -188,3 +188,36 @@ test("guest agent rejects an executor response that changes the admitted identit
   );
   agent.close();
 });
+
+test("guest agent cancels active work before close can publish a signed success", async () => {
+  let startedResolve!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { startedResolve = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const agent = new VirtualizationGuestAgent({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    expectedGuestIdentity: guestIdentity,
+    expectedSandboxProfile: "guest-task-v1",
+    expectedProfileDigest: "b".repeat(64),
+    now: () => now,
+    execute: async (request) => {
+      startedResolve();
+      await blocked;
+      return taskResponse(request);
+    }
+  });
+  const signed = createVirtualizationGuestRequest(
+    requestInput("request:guest-agent-close-0123456789", "guest-nonce-agent-close-0123456789"),
+    key,
+    { now }
+  );
+  const running = agent.exchange(Buffer.from(JSON.stringify(signed), "utf8"));
+  await started;
+  agent.close();
+  release();
+  await assert.rejects(
+    running,
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+  );
+});
