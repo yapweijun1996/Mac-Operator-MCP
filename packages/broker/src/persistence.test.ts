@@ -1358,7 +1358,11 @@ test("job creation is principal-scoped and payload-bound idempotent", async () =
     assert.equal(repeated.job.jobId, "job:first");
     assert.throws(
       () => store.createJob({ ...jobInput("job:different", "idem-1"), payloadDigest: "b".repeat(64) }),
-      /different job payload/u
+      /different authorized job/u
+    );
+    assert.throws(
+      () => store.createJob({ ...jobInput("job:policy-different", "idem-1"), policyVersion: "policy-0.2" }),
+      /different authorized job/u
     );
     const otherPrincipal = store.createJob({
       ...jobInput("job:other", "idem-1"),

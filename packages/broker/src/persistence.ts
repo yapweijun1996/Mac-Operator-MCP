@@ -1544,8 +1544,9 @@ export class BrokerStore {
         "SELECT * FROM jobs WHERE owner_principal_id = ? AND idempotency_key = ?"
       ).get(input.ownerPrincipalId, input.idempotencyKey) as JobRow | undefined;
       if (existing) {
-        if (existing.payload_digest !== input.payloadDigest || existing.tool !== input.tool || existing.target_ref !== input.targetRef) {
-          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different job payload");
+        if (existing.payload_digest !== input.payloadDigest || existing.tool !== input.tool ||
+            existing.target_ref !== input.targetRef || existing.policy_version !== input.policyVersion) {
+          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different authorized job");
         }
         return { job: mapJob(existing), reused: true };
       }
