@@ -6,6 +6,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import {
   ApprovalAuthority,
   approvalPreviewDigest,
@@ -67,7 +68,7 @@ async function fixture() {
     authority,
     key,
     store,
-    close: async () => { store.close(); await rm(directory, { recursive: true, force: true }); }
+    close: async () => { authority.dispose(); store.close(); await rm(directory, { recursive: true, force: true }); }
   };
 }
 
@@ -101,6 +102,7 @@ test("approval issuance nonce replay is denied after BrokerStore reopen", async 
     notBeforeMs: NOW - 1_000, expiresAtMs: NOW + 60_000, allowUnattended: false
   }], { now: () => NOW });
   authority.issue(issuance);
+  authority.dispose();
   store.close();
   store = new BrokerStore(databasePath);
   authority = new ApprovalAuthority(store, [{
@@ -112,6 +114,7 @@ test("approval issuance nonce replay is denied after BrokerStore reopen", async 
     assert.equal(store.approvalRecord("approval:replay")?.usedCount, 0);
     assert.equal(store.auditRows().length, 2);
   } finally {
+    authority.dispose();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
@@ -215,6 +218,32 @@ test("approval IPC drops a denied local peer before parsing or auditing", async 
     await server.close();
     await context.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("approval authority disposal wipes issuer keys and rejects later use", async () => {
+  const context = await fixture();
+  try {
+    const originalKey = Buffer.from(context.key);
+    context.authority.dispose();
+    context.authority.dispose();
+    assert.throws(
+      () => context.authority.issue(signed(approval({ approvalId: "approval:disposed" }), originalKey)),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+    );
+    assert.throws(
+      () => context.authority.addKey({
+        issuerId: "operator-2",
+        keyId: "operator-key-2",
+        key: randomBytes(32),
+        notBeforeMs: NOW - 1_000,
+        expiresAtMs: NOW + 60_000,
+        allowUnattended: false
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+    );
+  } finally {
+    await context.close();
   }
 });
 

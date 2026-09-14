@@ -56,6 +56,7 @@ export class ApprovalAuthority {
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
   private readonly now: () => number;
+  private disposed = false;
 
   constructor(private readonly store: BrokerStore, keys: readonly ApprovalIssuerKey[], options: ApprovalAuthorityOptions = {}) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -69,6 +70,7 @@ export class ApprovalAuthority {
   }
 
   addKey(record: ApprovalIssuerKey): void {
+    if (this.disposed) throw new BrokerError("CANCELLED", "Approval authority is disposed");
     if (!/^[A-Za-z0-9._:@/-]{1,128}$/u.test(record.issuerId) ||
         !/^[A-Za-z0-9._:-]{1,128}$/u.test(record.keyId) ||
         record.key.byteLength < 32 ||
@@ -83,6 +85,7 @@ export class ApprovalAuthority {
   }
 
   issue(raw: unknown): ApprovalRecord {
+    if (this.disposed) throw new BrokerError("CANCELLED", "Approval authority is disposed");
     const issuance = parseSignedIssuance(raw);
     const key = this.keys.get(issuerKeyIdentity(issuance.issuerId, issuance.keyId));
     if (!key) throw new BrokerError("AUTH_INVALID", "Approval issuer key is not trusted");
@@ -137,6 +140,14 @@ export class ApprovalAuthority {
       approval: issuance.approval
     };
     return this.store.issueAuthenticatedApproval(record);
+  }
+
+  /** Wipe issuer HMAC keys after the owner-only approval channel shuts down. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const record of this.keys.values()) record.key.fill(0);
+    this.keys.clear();
   }
 }
 
