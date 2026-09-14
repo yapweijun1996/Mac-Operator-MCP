@@ -37,7 +37,11 @@ function approval(overrides: Partial<IssueApprovalInput> = {}): IssueApprovalInp
   };
 }
 
-function signed(input: IssueApprovalInput, key: Buffer): ReturnType<typeof signApprovalIssuance> {
+function signed(
+  input: IssueApprovalInput,
+  key: Buffer,
+  overrides: Partial<UnsignedApprovalIssuance> = {}
+): ReturnType<typeof signApprovalIssuance> {
   const unsigned: UnsignedApprovalIssuance = {
     protocolVersion: "0.1",
     requestId: "approval-issue:authority-test",
@@ -47,7 +51,8 @@ function signed(input: IssueApprovalInput, key: Buffer): ReturnType<typeof signA
     keyId: "operator-key-1",
     timestampMs: NOW,
     approval: input,
-    previewDigest: approvalPreviewDigest(input)
+    previewDigest: approvalPreviewDigest(input),
+    ...overrides
   };
   return signApprovalIssuance(unsigned, key);
 }
@@ -86,6 +91,24 @@ test("authenticated approval issuance binds issuer, preview, provenance, and aud
     const evidence = JSON.parse(decision.evidence_json as string) as Record<string, unknown>;
     assert.equal(evidence.issuerKeyId, "operator-key-1");
     assert.equal(evidence.previewDigest, approvalPreviewDigest(approval()));
+  } finally {
+    await context.close();
+  }
+});
+
+test("approval issuance rejects a current-expired nonce before persistence", async () => {
+  const context = await fixture();
+  try {
+    const issuedAtMs = NOW - 1_000;
+    const approvalId = "approval:expired-nonce";
+    const issuance = signed(
+      approval({ approvalId, issuedAtMs }),
+      context.key,
+      { timestampMs: issuedAtMs, nonceExpiresAtMs: NOW - 1 }
+    );
+    assert.throws(() => context.authority.issue(issuance), /nonce has expired/u);
+    assert.equal(context.store.approvalRecord(approvalId), undefined);
+    assert.equal(context.store.auditRows().length, 0);
   } finally {
     await context.close();
   }

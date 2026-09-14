@@ -96,8 +96,13 @@ export class ApprovalAuthority {
     if (nowMs < key.notBeforeMs || nowMs >= key.expiresAtMs) {
       throw new BrokerError("AUTH_EXPIRED", "Approval issuer key is not currently valid");
     }
-    if (issuance.timestampMs > nowMs + this.allowedClockSkewMs || nowMs - issuance.timestampMs > this.maxRequestAgeMs) {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0 ||
+        issuance.timestampMs > nowMs + this.allowedClockSkewMs ||
+        nowMs - issuance.timestampMs > this.maxRequestAgeMs) {
       throw new BrokerError("AUTH_EXPIRED", "Approval issuance timestamp is outside the accepted window");
+    }
+    if (issuance.nonceExpiresAtMs <= nowMs) {
+      throw new BrokerError("AUTH_EXPIRED", "Approval issuance nonce has expired");
     }
     if (issuance.nonceExpiresAtMs <= issuance.timestampMs ||
         issuance.nonceExpiresAtMs > issuance.timestampMs + this.maxRequestAgeMs + this.allowedClockSkewMs) {
