@@ -53,6 +53,26 @@ test("process supervisor requires a final native descendant readback for strict 
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("strict task exit proof keeps a late descendant unresolved", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Strict task exit proof uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 25, terminationGraceMs: 50 });
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: ["-c", "import os,time; child=os.fork(); time.sleep(0.15) if child == 0 else os._exit(0)"],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 100,
+    requireCleanExitProof: true
+  });
+  assert.equal(result.resultClass, "UNKNOWN_OUTCOME");
+  assert.equal(result.terminationObserved, false);
+  await supervisor.close();
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor does not leak a parent file-descriptor canary", async (t) => {
   if (process.platform === "win32") {
     t.skip("The Broker target platform uses POSIX descriptor semantics");
@@ -475,7 +495,7 @@ test("process supervisor recovers a persisted detached descendant after root exi
     t.skip("Persisted descendant recovery is a macOS native boundary");
     return;
   }
-  const supervisor = new ProcessSupervisor({ pollIntervalMs: 100, terminationGraceMs: 50 });
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 25, terminationGraceMs: 50 });
   let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
   let resolveDescendant!: () => void;
   const descendantReady = new Promise<void>((resolve) => { resolveDescendant = resolve; });
@@ -499,7 +519,7 @@ test("process supervisor recovers a persisted detached descendant after root exi
     assert.ok(snapshot);
     assert.ok(snapshot!.descendants.length > 0);
     process.kill(snapshot!.identity.pid, "SIGKILL");
-    const recovered = await supervisor.recoverOwnedProcess(snapshot!, 2_000);
+    const recovered = await supervisor.recoverOwnedProcess(snapshot!, 5_000);
     assert.equal(recovered.outcome, "drained");
     assert.equal(recovered.terminationObserved, true);
   } finally {

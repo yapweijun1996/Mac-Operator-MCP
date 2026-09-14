@@ -34,3 +34,12 @@ the last observable snapshot could not escape, nor does it prove in-syscall
 remount resistance or credential-store isolation. The single-process sandbox
 profile's fork denial and production enablement remain separately evidence-
 gated under MOP-086.
+
+## Exit-event observation update
+
+The strict proof now starts at the native child `exit` event and records a
+live process group before waiting for stream `close`. A bounded second sample
+after one supervisor poll interval catches a detached child that keeps the
+output pipe open and would otherwise disappear from the root's descendant
+chain before `close`. Such a case remains `UNKNOWN_OUTCOME`. Detailed evidence:
+`evidence/2026-09-14-exit-observation-window.md`.

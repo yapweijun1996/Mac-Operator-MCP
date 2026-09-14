@@ -40,10 +40,10 @@ export interface ProcessExecutionRequest {
   timeoutMs: number;
   outputCapBytes: number;
   /**
-   * Require a final native process-tree observation before a successful exit
-   * may be published. Governed task runners set this only when their sandbox
-   * proof forbids process creation; ordinary fixed adapters keep the legacy
-   * bounded child-exit behavior.
+   * Require a bounded final native process-tree observation window before a
+   * successful exit may be published. Governed task runners set this only
+   * when their sandbox proof forbids process creation; ordinary fixed adapters
+   * keep the legacy bounded child-exit behavior.
    */
   requireCleanExitProof?: boolean;
   shouldCancel?: () => boolean;
@@ -482,6 +482,7 @@ export class ProcessSupervisor {
       let groupDrainDeadlineMs: number | undefined;
       let childExitCode: number | null = null;
       let childExitSignal: NodeJS.Signals | null = null;
+      let strictExitProof: Promise<boolean> | undefined;
       let released = false;
       let stdoutBytes = 0;
       let stderrBytes = 0;
@@ -657,6 +658,24 @@ export class ProcessSupervisor {
       };
       notifyOwnership();
 
+      child.once("exit", (code, signal) => {
+        childExitCode = code;
+        childExitSignal = signal;
+        if (request.requireCleanExitProof !== true || strictExitProof !== undefined) return;
+        if (processTree === undefined) {
+          strictExitProof = Promise.resolve(false);
+          return;
+        }
+        // `close` waits for inherited stdout/stderr descriptors. A detached
+        // child can keep those pipes open after the root exits, so anchor the
+        // ownership proof at `exit` and treat a live process group as unknown.
+        processTree.sample();
+        notifyOwnership();
+        strictExitProof = processGroupAlive(processId)
+          ? Promise.resolve(false)
+          : processTree.confirmNoDescendantsAfterExit(this.pollIntervalMs);
+      });
+
       child.stdout?.on("data", (chunk: Buffer | string) => {
         if (settled) return;
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -677,26 +696,32 @@ export class ProcessSupervisor {
       child.once("close", (code, signal) => {
         childExitCode = code;
         childExitSignal = signal;
-        if (settled) return;
-        processTree?.sample();
-        notifyOwnership();
-        const rootState = processTree?.rootState() ?? "alive";
-        const descendantState = processTree?.aliveState() ?? "none";
-        const currentGroupState = groupState();
-        if (rootState === "unknown" || processTree?.observationFailed || descendantState === "unknown" || currentGroupState === "unknown") {
-          finishUnknown();
-        } else if (currentGroupState === "alive" || descendantState === "alive") {
-          if (terminationReason === null) {
-            groupDrainDeadlineMs ??= Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
-            terminate("orphaned");
+        void (async () => {
+          if (settled) return;
+          processTree?.sample();
+          notifyOwnership();
+          const rootState = processTree?.rootState() ?? "alive";
+          const descendantState = processTree?.aliveState() ?? "none";
+          const currentGroupState = groupState();
+          if (rootState === "unknown" || processTree?.observationFailed || descendantState === "unknown" || currentGroupState === "unknown") {
+            finishUnknown();
+          } else if (currentGroupState === "alive" || descendantState === "alive") {
+            if (terminationReason === null) {
+              groupDrainDeadlineMs ??= Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
+              terminate("orphaned");
+            }
+            waitForGroupDrain();
+          } else if (request.requireCleanExitProof === true) {
+            const clean = processTree === undefined
+              ? false
+              : await (strictExitProof ?? processTree.confirmNoDescendantsAfterExit(this.pollIntervalMs));
+            if (settled) return;
+            if (!clean) finishUnknown();
+            else finish(childExitCode, childExitSignal);
+          } else {
+            finish(code, signal);
           }
-          waitForGroupDrain();
-        } else if (request.requireCleanExitProof === true &&
-                   (processTree === undefined || !processTree.confirmNoDescendantsAfterExit())) {
-          finishUnknown();
-        } else {
-          finish(code, signal);
-        }
+        })();
       });
 
       timeoutTimer = setTimeout(() => terminate("timed_out"), request.timeoutMs);
@@ -1017,8 +1042,12 @@ class ProcessTreeTracker {
    * intentionally stricter than the ordinary adapter path: any observer
    * uncertainty, truncation, or PID replacement keeps the task unresolved.
    */
-  confirmNoDescendantsAfterExit(): boolean {
+  async confirmNoDescendantsAfterExit(settleDelayMs: number): Promise<boolean> {
     if (this.failed || this.rootIdentity === undefined) return false;
+    this.sample();
+    if (this.failed || this.aliveState() !== "none") return false;
+    await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+    if (this.failed || this.rootState() === "unknown") return false;
     this.sample();
     return !this.failed && this.aliveState() === "none";
   }

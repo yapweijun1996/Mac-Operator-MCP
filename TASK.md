@@ -408,6 +408,17 @@ real sandbox/Keychain regression is 475/476 with one explicit skip. This is an
 observation guard only; post-snapshot detached descendants, remount identity,
 credential-store isolation, and production task enablement remain open.
 
+Latest exit-event addendum: strict task proof now begins at child `exit`,
+records process-group survival before stream `close`, and performs a second
+native descendant sample after one bounded poll interval. A Darwin
+fork-and-detach fixture that keeps the output pipe open remains
+`UNKNOWN_OUTCOME`; focused process-supervisor tests pass 20/20 and the full
+real sandbox/Keychain regression passes 477/478 with one explicit skip. This
+closes the close-event reparenting race but not post-window descendants,
+remount resistance, credential isolation, or production task enablement.
+Evidence:
+`evidence/2026-09-14-exit-observation-window.md`.
+
 Latest packaged-startup addendum: the compiled Broker service entrypoint now
 requires the owner-controlled audit-anchor path and fixed Keychain
 service/account/key-id configuration, loads the HMAC source through the

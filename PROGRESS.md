@@ -15,6 +15,16 @@ post-snapshot detached descendants, in-syscall remounts, credential contents,
 and task enablement remain open. Evidence:
 `evidence/2026-09-14-post-snapshot-exit-proof.md`.
 
+Latest exit-event addendum: strict task proof now begins at the native child
+`exit` event, records process-group survival before Node stream `close`, and
+performs a second descendant observation after one bounded poll interval. A
+Darwin fork-and-detach fixture that keeps the output pipe open is rejected as
+`UNKNOWN_OUTCOME`; the focused process-supervisor suite passes 20/20 and the
+full real sandbox/Keychain regression passes 477/478 with one explicit skip.
+This reduces the close-event reparenting race but does not prove descendants
+created after the final window, remount resistance, or credential isolation.
+Evidence: `evidence/2026-09-14-exit-observation-window.md`.
+
 Latest packaged-startup addendum: the compiled Broker service entrypoint now
 requires an owner-controlled audit-anchor path plus fixed Keychain
 service/account/key-id configuration, constructs `BrokerStore` with the
