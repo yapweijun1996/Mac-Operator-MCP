@@ -4,16 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Authority Control CLI addendum: source revisions `447e4aa` and `f359360` add
+Authority Control CLI and IPC error-proof addendum: source revisions
+`447e4aa`, `f359360`, and `5962efc` add
 the bounded
 `mac-operator-authority` operator entrypoint. It accepts only switch readback,
 expected-state switch changes, and identity revocation; restores the exact
 active key through the Broker key manager, requires explicit confirmation for
 mutations, verifies each mutation with authenticated readback, and exposes no
 raw key, command, executable, or capability grant. The revocation allowlist
-includes guest-attestation keys. Focused tests pass 4/4, including a protected
-file/authenticated-IPC round trip; the complete physical-Darwin regression
-passes 580/580 with 0 skipped tests. Evidence:
+includes guest-attestation keys. Focused CLI tests pass 4/4, including a
+protected file/authenticated-IPC round trip; Authority Control IPC tests pass
+3/3, including stable authenticated `AUTH_EXPIRED` readback without
+admission, audit, or mutation side effects. The complete physical-Darwin
+regression passes 581/581 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-authority-control-cli.md`.
 
 Privileged helper command-factory disposal addendum: the Broker-owned helper

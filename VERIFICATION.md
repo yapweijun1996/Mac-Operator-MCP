@@ -3,15 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Authority Control CLI addendum: source revisions `447e4aa` and `f359360`
+Authority Control CLI and IPC error-proof addendum: source revisions
+`447e4aa`, `f359360`, and `5962efc`
 provide a bounded
 operator entrypoint for switch readback, expected-state switch mutation, and
 identity revocation. It restores the exact active key through the Broker key
 manager, rejects raw key/command/capability inputs, requires explicit mutation
 confirmation, and performs authenticated readback before reporting success.
-Focused tests pass 4/4, including a protected-file/authenticated-IPC round
-trip; the complete physical-Darwin suite passes 580/580
-with 0 skipped tests. Build, typecheck, lint, contract verification, and diff
+Focused CLI tests pass 4/4, including a protected-file/authenticated-IPC
+round trip; Authority Control IPC tests pass 3/3, including stable
+authenticated `AUTH_EXPIRED` readback without admission, audit, or mutation
+side effects. The complete physical-Darwin suite passes 581/581 with 0 skipped
+tests. Build, typecheck, lint, contract verification, and diff
 checks pass. This verifies only the source-level operator boundary; installed
 launchd ownership, active process-tree termination, and production key
 distribution remain unproven. Evidence:
