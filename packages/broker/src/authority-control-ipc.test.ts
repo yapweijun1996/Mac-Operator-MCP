@@ -187,6 +187,11 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
     });
     try {
       await reopenedServer.listen();
+      const reopenedClient = new AuthorityControlIpcClient({ socketPath, authenticationKey, now: () => NOW });
+      assert.equal(await reopenedClient.readSwitch("global"), true);
+      assert.equal(await reopenedClient.readSwitch("process"), false);
+      assert.equal(await reopenedClient.readRevocation("session", "session-1"), true);
+      assert.equal(await reopenedClient.readRevocation("edge", "edge-1"), true);
       const replayAfterRestart = await sendCommand(socketPath, signAuthorityControlCommand(enable, authenticationKey));
       assert.equal(replayAfterRestart.ok, false);
       if (!replayAfterRestart.ok) assert.equal(replayAfterRestart.result_class, "REPLAY_DENIED");
