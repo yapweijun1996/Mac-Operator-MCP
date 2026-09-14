@@ -1,25 +1,28 @@
 # Local IPC Framing Hardening Evidence
 
 Date: 2026-09-15
-Source commits: `0dee251`, `64954e0`
+Source commits: `0dee251`, `64954e0`, `afc1342`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
 
-The privileged helper, policy-signer, and Broker status Unix-socket servers
+The privileged helper, policy-signer, Broker status, and owner-only approval
+Unix-socket servers
 now authenticate the first newline-delimited frame and reject any subsequent
 non-ASCII-whitespace bytes before replay admission, status readback, mutation,
-or helper dispatch. Their response clients apply the same single-frame rule
-and fail closed on appended response data. A rejected trailing frame does not
-consume the valid request nonce, so a clean retry is still governed by the
-normal durable replay boundary. The Policy Signer server copies its HMAC key
-and wipes the copy on every close path, including native-transport cleanup.
+or helper/approval dispatch. Their response clients apply the same single-frame
+rule and fail closed on appended response data. A rejected trailing frame does
+not consume the valid request nonce or create an approval, so a clean retry is
+still governed by the normal durable replay boundary. The Policy Signer server
+copies its HMAC key and wipes the copy on every close path, including
+native-transport cleanup.
 
 ## Verification
 
 - Privileged helper, policy-signer, and Broker status IPC framing tests pass.
-- The helper regression covers command and status frames and proves that
-  trailing data cannot dispatch or consume replay state.
+- The helper regression covers command and status frames; the approval IPC
+  regression proves that trailing data cannot dispatch, create an approval, or
+  consume replay state.
 - Full physical-Darwin regression with install, sandbox, and Keychain gates:
   573/573 pass, 0 skipped, 0 failed.
 - `npm run build`, `npm run typecheck`, `npm run lint`,

@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Approval IPC framing addendum: the owner-only approval server rejects
+non-whitespace trailing bytes after its first authenticated frame, before
+issuer verification, replay admission, approval creation, or audit. The
+trailing-frame regression and clean retry pass; the complete physical-Darwin
+suite passes 574/574 with 0 skipped tests. Build, typecheck, lint, contract
+verification, and diff checks pass. Evidence:
+`evidence/2026-09-15-local-ipc-framing-hardening.md`.
+
 Approval issuer key lifecycle addendum: `ApprovalAuthority` keeps only
 defensive issuer-key copies, wipes and clears them on idempotent disposal,
 and returns stable `CANCELLED` failures after disposal. The focused approval

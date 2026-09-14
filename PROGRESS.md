@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval IPC framing addendum: the owner-only approval channel now rejects
+non-whitespace bytes after its authenticated newline frame before issuer
+verification, durable replay, approval creation, or audit. The regression
+proves the same signed issuance can be retried cleanly after a trailing-frame
+rejection; focused approval tests pass 8/8 and the full physical-Darwin
+regression remains 574/574 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-local-ipc-framing-hardening.md`.
+
 Approval issuer key lifecycle addendum: `ApprovalAuthority` now owns
 defensive issuer-key copies, wipes and clears them through an idempotent
 `dispose()` boundary, and rejects later issuance or key addition with

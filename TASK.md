@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval IPC framing addendum: the owner-only approval channel enforces one
+authenticated newline-delimited frame and rejects non-whitespace trailing data
+before replay admission, approval persistence, or audit. A clean retry of the
+same signed issuance succeeds after the rejection. Focused approval tests pass
+8/8 and the complete physical-Darwin regression passes 574/574 with 0 skipped
+tests. Evidence: `evidence/2026-09-15-local-ipc-framing-hardening.md`.
+
 Approval issuer key lifecycle addendum: the Broker-owned approval authority
 now wipes its defensive issuer HMAC-key copies on idempotent disposal and
 fails closed on all later issuance or key addition. Approval authority and
