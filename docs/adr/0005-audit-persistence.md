@@ -59,4 +59,12 @@ Before the copy begins, the source page count/size and destination-volume
 `statfs` available bytes are checked with bounded headroom for sidecars; an
 insufficient-capacity preflight fails before creating a temporary file.
 
-`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, general versioned migrations, encrypted/Keychain-protected backup storage, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested.
+The persistence constructor now enforces a monotonic SQLite `user_version`
+gate. Fresh and legacy databases are upgraded through the known idempotent
+revocation, request, and Job migrations inside one `BEGIN IMMEDIATE` transaction
+and publish schema version `4` only after all steps succeed. A database marked
+with a newer version is rejected before any Broker authority or recovery work;
+the focused migration suite covers fresh initialization, legacy preservation,
+and future-version refusal.
+
+`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, encrypted/Keychain-protected backup storage, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested. Schema versioning is now implemented for the current migration set; a general migration registry and rollback policy remain open.

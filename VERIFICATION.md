@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest persistence-schema addendum: `BrokerStore` enforces SQLite
+`user_version` `4`, runs the known legacy migrations in one transaction, and
+rejects future-version databases before authority or recovery work. Fresh,
+legacy, and future-version cases pass 35/35 focused persistence tests. This
+closes the current schema-version compatibility gate but not encrypted backup
+storage, a general migration registry/rollback policy, or ADR-0005 acceptance.
+Evidence: `evidence/2026-09-14-persistence-schema-version.md`.
+
 Latest process-identity exit-window addendum: `ProcessSupervisor` continues
 the bounded 100ms native PID/start-time retry when a short-lived child closes
 before the process table settles, while still refusing synthetic identities or
@@ -20,7 +28,7 @@ without boot. The new disabled-by-default
 external host-evidence gate, a native executor, and a proof-bound guest image
 SHA-256/runtime identity; it rechecks that identity before dispatch and fails
 closed on a target swap. Focused task-runner tests pass 8/8; the full
-`MOPS_REAL_SANDBOX=1 npm test` regression passes 458/459 with one explicit
+`MOPS_REAL_SANDBOX=1 npm test` regression passes 460/461 with one explicit
 host-boundary/opt-in skip. No VM boot, guest isolation, or production task
 enablement is claimed. Evidence:
 `evidence/2026-09-14-virtualization-framework-sdk.md`.

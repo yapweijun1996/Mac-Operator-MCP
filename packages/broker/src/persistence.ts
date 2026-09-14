@@ -79,6 +79,12 @@ export interface JobLease {
 const JOB_LEASE_OWNER_PATTERN = /^[A-Za-z0-9._:@/-]{1,128}$/u;
 const JOB_LEASE_TOKEN_PATTERN = /^lease:[A-Za-z0-9._:-]{16,128}$/u;
 const MAX_JOB_LEASE_MS = 120_000;
+/**
+ * SQLite schema revisions are monotonic. A Broker must never open a database
+ * written by a newer runtime because unknown columns or invariants could make
+ * authority and recovery decisions unsafe.
+ */
+export const BROKER_SCHEMA_VERSION = 4;
 
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
@@ -318,6 +324,17 @@ export class BrokerStore {
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA busy_timeout = 5000;");
     this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
+    let schemaVersion: number;
+    try {
+      schemaVersion = this.readSchemaVersion();
+    } catch (error) {
+      this.database.close();
+      throw error;
+    }
+    if (schemaVersion > BROKER_SCHEMA_VERSION) {
+      this.database.close();
+      throw new Error("Broker persistence schema version is newer than this runtime");
+    }
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS nonces (
         edge_id TEXT NOT NULL,
@@ -547,9 +564,7 @@ export class BrokerStore {
         payload_digest, policy_version, approval_class, issued_at_ms, approval_id
       );
     `);
-    this.migrateRevocationsSchema();
-    this.migrateRequestsSchema();
-    this.migrateJobsSchema();
+    this.migrateSchema(schemaVersion);
     this.verifyAuditIntegrity();
     this.reconcileInterruptedRequests(Date.now());
     this.reconcileInterruptedJobs(Date.now());
@@ -2457,24 +2472,49 @@ export class BrokerStore {
     this.faultInjector?.(point);
   }
 
+  private readSchemaVersion(): number {
+    const row = this.database.prepare("PRAGMA user_version").get() as { user_version?: unknown } | undefined;
+    if (!Number.isSafeInteger(row?.user_version) || (row?.user_version as number) < 0) {
+      throw new Error("Broker persistence schema version is malformed");
+    }
+    return row?.user_version as number;
+  }
+
+  private migrateSchema(previousVersion: number): void {
+    this.runTransaction(() => {
+      // Each migration is idempotent so a database created before the version
+      // marker, or one interrupted before the marker commit, can be resumed.
+      if (previousVersion < 2) this.migrateRevocationsSchema();
+      if (previousVersion < 3) this.migrateRequestsSchema();
+      if (previousVersion < 4) this.migrateJobsSchema();
+      // Also re-check all known shapes when the marker already claims the
+      // current version; this detects manually altered legacy tables before
+      // the Broker performs any authority or recovery work.
+      if (previousVersion >= BROKER_SCHEMA_VERSION) {
+        this.migrateRevocationsSchema();
+        this.migrateRequestsSchema();
+        this.migrateJobsSchema();
+      }
+      this.database.exec(`PRAGMA user_version = ${BROKER_SCHEMA_VERSION}`);
+    });
+  }
+
   private migrateRevocationsSchema(): void {
     const row = this.database.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revocations'").get() as { sql: string };
     if (row.sql.includes("'approval_key'") && row.sql.includes("'policy_signer'") && row.sql.includes("'authority_key'") && row.sql.includes("'helper_key'")) return;
-    this.runTransaction(() => {
-      this.database.exec(`
-        ALTER TABLE revocations RENAME TO revocations_v0;
-        CREATE TABLE revocations (
-          kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key', 'policy_signer', 'authority_key', 'helper_key')),
-          subject_id TEXT NOT NULL,
-          revoked_at_ms INTEGER NOT NULL,
-          reason TEXT NOT NULL,
-          PRIMARY KEY (kind, subject_id)
-        ) STRICT;
-        INSERT INTO revocations(kind, subject_id, revoked_at_ms, reason)
-          SELECT kind, subject_id, revoked_at_ms, reason FROM revocations_v0;
-        DROP TABLE revocations_v0;
-      `);
-    });
+    this.database.exec(`
+      ALTER TABLE revocations RENAME TO revocations_v0;
+      CREATE TABLE revocations (
+        kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key', 'policy_signer', 'authority_key', 'helper_key')),
+        subject_id TEXT NOT NULL,
+        revoked_at_ms INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        PRIMARY KEY (kind, subject_id)
+      ) STRICT;
+      INSERT INTO revocations(kind, subject_id, revoked_at_ms, reason)
+        SELECT kind, subject_id, revoked_at_ms, reason FROM revocations_v0;
+      DROP TABLE revocations_v0;
+    `);
   }
 
   private migrateRequestsSchema(): void {

@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest persistence-schema addendum: `BrokerStore` now reads SQLite
+`user_version` before initialization, rejects a database marked newer than the
+runtime, and applies the known revocation/request/Job migrations transactionally
+before publishing schema version `4`. Fresh initialization, legacy data
+preservation, and future-version refusal pass 35/35 focused persistence tests.
+This is a monotonic compatibility gate; encrypted backups, a general migration
+registry/rollback policy, and ADR-0005 acceptance remain open. Evidence:
+`evidence/2026-09-14-persistence-schema-version.md`.
+
 Latest process-identity exit-window addendum: `ProcessSupervisor` now keeps
 the bounded 100ms native PID/start-time retry alive even when a short-lived
 child closes first, without inventing an identity or registering unowned work.
@@ -22,7 +31,7 @@ image SHA-256/runtime identity, a native-adapter executor, and a matching
 identity recheck immediately before dispatch; missing or changed identity
 fails closed, and adapter failures remain retryable `UNKNOWN_OUTCOME`. New
 proof-validation, target-swap, and adapter-failure tests pass 8/8; the full
-real-sandbox regression passes 458/459 with one explicit host-boundary/opt-in
+real-sandbox regression passes 460/461 with one explicit host-boundary/opt-in
 skip. This is SDK and
 boundary evidence only, not VM isolation or `mac_task_run` enablement.
 Evidence: `evidence/2026-09-14-virtualization-framework-sdk.md`.

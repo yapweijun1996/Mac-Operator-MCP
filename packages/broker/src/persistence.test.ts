@@ -6,7 +6,41 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
-import { BrokerStore } from "./persistence.js";
+import { BROKER_SCHEMA_VERSION, BrokerStore } from "./persistence.js";
+
+test("BrokerStore records a monotonic schema version after initialization", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-schema-version-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      const row = database.prepare("PRAGMA user_version").get() as { user_version?: unknown };
+      assert.equal(row.user_version, BROKER_SCHEMA_VERSION);
+    } finally {
+      database.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore refuses a database from a newer schema runtime", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-schema-future-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const database = new DatabaseSync(databasePath);
+  database.exec(`PRAGMA user_version = ${BROKER_SCHEMA_VERSION + 1}`);
+  database.close();
+  try {
+    assert.throws(
+      () => new BrokerStore(databasePath),
+      /schema version is newer than this runtime/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("BrokerStore migrates the legacy revocation constraint without losing data", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-migration-"));
@@ -36,6 +70,13 @@ test("BrokerStore migrates the legacy revocation constraint without losing data"
     assert.equal(store.isRevoked("authority_key", "authority-key-old"), true);
     store.revoke("helper_key", "helper-key-old", "ROTATED", 6);
     assert.equal(store.isRevoked("helper_key", "helper-key-old"), true);
+    const migrated = new DatabaseSync(databasePath);
+    try {
+      const row = migrated.prepare("PRAGMA user_version").get() as { user_version?: unknown };
+      assert.equal(row.user_version, BROKER_SCHEMA_VERSION);
+    } finally {
+      migrated.close();
+    }
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
