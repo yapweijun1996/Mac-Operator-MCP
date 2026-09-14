@@ -106,3 +106,8 @@ original request. Only an authenticated, signed, verified terminal response
 can close the Job; uncertain or unavailable responses remain `UNKNOWN`. This
 closes the Broker-side Job boundary but does not provide a native guest status
 server or VM isolation evidence.
+
+The 2026-09-15 host probe was rerun on the physical Darwin arm64 host and
+returned framework support with the expected invalid guest-less configuration;
+it did not boot or fetch a VM. Evidence is recorded in
+[`evidence/2026-09-15-virtualization-framework-probe.md`](../../evidence/2026-09-15-virtualization-framework-probe.md).

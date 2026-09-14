@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest Virtualization.framework host probe: source revision `75c8fd7` links the
+active macOS 26.2 SDK on the physical Darwin arm64 host and reports framework
+support. The intentionally guest-less configuration remains invalid, and no
+VM boot, image fetch, guest channel, or capability enablement was attempted.
+This refreshes SDK evidence only; guest image provenance, attestation, VM
+isolation, credential/process/network proof, and production signing remain
+open. Evidence:
+`evidence/2026-09-15-virtualization-framework-probe.md`.
+
 Latest hardening addendum: commit `bccc02d` adds deterministic bounded security
 fuzz regression suites for Broker and guest authentication mutation, replay,
 strict envelopes, traversal/protected zones, secret and prompt-injection-shaped
