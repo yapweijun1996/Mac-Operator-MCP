@@ -26,7 +26,7 @@ close, and checks the close state before signing or publishing a response.
 Focused guest-agent tests pass 4/4, covering task authentication and replay
 denial, authenticated status recovery, response identity tampering, and close
 cancellation before signed-success publication. The full physical-Darwin
-regression passes 570/570 with 0 skipped tests.
+regression passes 571/571 with 0 skipped tests.
 
 ## Boundary
 

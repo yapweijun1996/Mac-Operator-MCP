@@ -8,7 +8,7 @@ Guest-agent shutdown hardening addendum: the guest protocol service now tracks
 each admitted request with a Broker-owned abort controller, propagates caller
 cancellation, aborts active work on close, and refuses to sign a success after
 shutdown. Focused guest-agent tests pass 4/4; the full physical-Darwin
-regression passes 570/570 with 0 skipped tests. This is protocol shutdown
+regression passes 571/571 with 0 skipped tests. This is protocol shutdown
 evidence only; VM boot, guest isolation, and `mac_task_run` enablement remain
 open. Evidence: `evidence/2026-09-15-virtualization-guest-agent.md`.
 

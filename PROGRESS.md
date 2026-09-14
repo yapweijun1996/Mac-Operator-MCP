@@ -8,7 +8,7 @@ Guest-agent shutdown hardening addendum: `VirtualizationGuestAgent` now owns
 an abort controller for every admitted task/status request, propagates caller
 cancellation, aborts all active work on close, and checks the close state
 before signing or publishing a response. Focused guest-agent tests pass 4/4
-and the full physical-Darwin regression passes 570/570 with 0 skipped tests.
+and the full physical-Darwin regression passes 571/571 with 0 skipped tests.
 This closes only the protocol-service shutdown race; VM boot, guest
 isolation, and `mac_task_run` enablement remain open. Evidence:
 `evidence/2026-09-15-virtualization-guest-agent.md`.
