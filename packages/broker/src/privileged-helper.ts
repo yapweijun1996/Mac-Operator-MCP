@@ -242,6 +242,7 @@ export class BrokerPrivilegedHelperCommandFactory {
   private readonly maxLifetimeMs: number;
   private readonly authenticationKey: Buffer;
   private readonly options: Omit<BrokerPrivilegedHelperCommandFactoryOptions, "authenticationKey">;
+  private disposed = false;
 
   constructor(options: BrokerPrivilegedHelperCommandFactoryOptions) {
     if (!options.store) throw new Error("Privileged helper command factory requires a BrokerStore");
@@ -258,6 +259,7 @@ export class BrokerPrivilegedHelperCommandFactory {
   }
 
   issue(input: PrivilegedHelperCommandIssueInput): SignedPrivilegedHelperCommand {
+    if (this.disposed) throw new BrokerError("CANCELLED", "Privileged helper command factory is disposed");
     const nowMs = input.nowMs ?? this.now();
     this.options.keyAuthorityCheck?.();
     if (this.options.keyRevocationCheck?.()) {
@@ -338,6 +340,8 @@ export class BrokerPrivilegedHelperCommandFactory {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.authenticationKey.fill(0);
   }
 

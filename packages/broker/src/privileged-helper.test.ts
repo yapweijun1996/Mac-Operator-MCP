@@ -517,6 +517,13 @@ test("Broker helper command factory binds a running approved Job without raw aut
     assert.equal(second.commandId, signed.commandId);
     assert.equal(second.requestId, signed.requestId);
     assert.notEqual(second.nonce, signed.nonce);
+
+    factory.dispose();
+    assert.throws(
+      () => factory.issue(identity),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+    );
+    factory.dispose();
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
