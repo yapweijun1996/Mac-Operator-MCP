@@ -24,6 +24,10 @@ export type CapabilityFamily =
   | "destructive"
   | "privileged";
 
+export const CAPABILITY_FAMILIES = [
+  "read", "write", "process", "network", "gui", "destructive", "privileged"
+] as const satisfies readonly CapabilityFamily[];
+
 export interface PrincipalContext {
   principalId: string;
   sessionId: string;

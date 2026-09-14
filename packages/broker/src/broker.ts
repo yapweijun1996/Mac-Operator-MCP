@@ -1,5 +1,6 @@
 import {
   BrokerError,
+  CAPABILITY_FAMILIES,
   canonicalJson,
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
@@ -10,7 +11,8 @@ import {
   type AuthenticatedBrokerResponse,
   type BrokerFailure,
   type BrokerRequest,
-  type BrokerResult
+  type BrokerResult,
+  type CapabilityFamily
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
@@ -59,6 +61,8 @@ export interface BrokerOptions {
   maxActiveRequestsPerSession?: number;
   /** Maximum number of concurrently admitted requests across this Broker store. */
   maxActiveRequestsGlobal?: number;
+  /** Maximum number of concurrently admitted requests for each capability family. */
+  maxActiveRequestsByFamily?: Partial<Record<CapabilityFamily, number>>;
   now?: () => number;
   filesystemExecutor?: FilesystemExecutor;
   processExecutor?: ProcessExecutor;
@@ -91,12 +95,22 @@ const DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION = 8;
 const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
 const DEFAULT_MAX_ACTIVE_REQUESTS_GLOBAL = 64;
 const MAX_ACTIVE_REQUESTS_GLOBAL = 256;
+const DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY: Readonly<Record<CapabilityFamily, number>> = {
+  read: 48,
+  write: 16,
+  process: 8,
+  network: 8,
+  gui: 4,
+  destructive: 2,
+  privileged: 1
+};
 
 export class Broker {
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
   private readonly maxActiveRequestsPerSession: number;
   private readonly maxActiveRequestsGlobal: number;
+  private readonly maxActiveRequestsByFamily: Readonly<Record<CapabilityFamily, number>>;
   private readonly now: () => number;
   private readonly filesystemExecutor: FilesystemExecutor;
   private readonly processExecutor: ProcessExecutor;
@@ -127,6 +141,10 @@ export class Broker {
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
     this.maxActiveRequestsPerSession = options.maxActiveRequestsPerSession ?? DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION;
     this.maxActiveRequestsGlobal = options.maxActiveRequestsGlobal ?? DEFAULT_MAX_ACTIVE_REQUESTS_GLOBAL;
+    this.maxActiveRequestsByFamily = {
+      ...DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY,
+      ...(options.maxActiveRequestsByFamily ?? {})
+    };
     this.now = options.now ?? Date.now;
     if (!Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_REQUEST_AGE_MS ||
         !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > MAX_CLOCK_SKEW_MS ||
@@ -135,6 +153,21 @@ export class Broker {
         !Number.isSafeInteger(this.maxActiveRequestsGlobal) || this.maxActiveRequestsGlobal < 1 ||
         this.maxActiveRequestsGlobal > MAX_ACTIVE_REQUESTS_GLOBAL) {
       throw new Error("Broker request or session limits are invalid");
+    }
+    if (options.maxActiveRequestsByFamily !== undefined &&
+        (options.maxActiveRequestsByFamily === null || typeof options.maxActiveRequestsByFamily !== "object" || Array.isArray(options.maxActiveRequestsByFamily))) {
+      throw new Error("Broker request or session limits are invalid");
+    }
+    for (const [family, limit] of Object.entries(this.maxActiveRequestsByFamily)) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_ACTIVE_REQUESTS_GLOBAL ||
+          !(CAPABILITY_FAMILIES as readonly string[]).includes(family)) {
+        throw new Error("Broker request or session limits are invalid");
+      }
+    }
+    if (options.maxActiveRequestsByFamily !== undefined) {
+      for (const family of Object.keys(options.maxActiveRequestsByFamily)) {
+        if (!(family in DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY)) throw new Error("Broker request or session limits are invalid");
+      }
     }
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();
     this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
@@ -626,6 +659,7 @@ export class Broker {
       this.authenticate(request, startedAt, policy);
       this.reserveSessionRequest(request.principal.principalId, request.principal.sessionId);
       sessionReserved = true;
+      const requestedToolPolicy = policy.tools.get(request.tool);
       this.options.store.admitRequest({
         requestId: request.requestId,
         edgeId: request.principal.edgeId,
@@ -636,11 +670,13 @@ export class Broker {
         tool: request.tool,
         policyVersion: request.policyVersion,
         payloadDigest: sha256(canonicalJson(request)),
-        mutation: policy.tools.get(request.tool)?.mutation ?? false,
+        mutation: requestedToolPolicy?.mutation ?? false,
+        ...(requestedToolPolicy === undefined ? {} : { capabilityFamilies: requestedToolPolicy.capabilityFamilies }),
         receivedAtMs: startedAt
       }, {
         maxActiveRequestsGlobal: this.maxActiveRequestsGlobal,
-        maxActiveRequestsPerSession: this.maxActiveRequestsPerSession
+        maxActiveRequestsPerSession: this.maxActiveRequestsPerSession,
+        maxActiveRequestsByFamily: this.maxActiveRequestsByFamily
       });
       admitted = true;
       if (request.policyVersion !== policy.version) {

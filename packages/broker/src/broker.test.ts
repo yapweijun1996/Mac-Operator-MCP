@@ -431,6 +431,64 @@ test("Broker bounds concurrent requests per principal session", async () => {
   }
 });
 
+test("Broker applies durable capability-family capacity across sessions", async () => {
+  const key = randomBytes(32);
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-family-broker-capacity-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let startedResolve!: () => void;
+  const started = new Promise<void>((resolve) => { startedResolve = resolve; });
+  const processExecutor: ProcessExecutor = {
+    async list() {
+      startedResolve();
+      await gate;
+      return { processes: [], truncated: false };
+    },
+    async inspect() { throw new Error("process inspect was not expected"); }
+  };
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.process.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    processExecutor,
+    maxActiveRequestsPerSession: 8,
+    maxActiveRequestsGlobal: 8,
+    maxActiveRequestsByFamily: { process: 1 },
+    now: () => NOW
+  });
+  try {
+    const first = broker.handle(signRequest(unsigned({
+      requestId: "family-broker-first",
+      nonce: "family-broker-first-nonce",
+      tool: "mac_process_list",
+      arguments: { limit: 1, sort: "pid" }
+    }, ["mac.process.read"]), key));
+    await started;
+    const second = await broker.handle(signRequest(unsigned({
+      requestId: "family-broker-second",
+      nonce: "family-broker-second-nonce",
+      tool: "mac_process_list",
+      arguments: { limit: 1, sort: "pid" },
+      principal: { ...unsigned().principal, sessionId: "session-family-2" }
+    }, ["mac.process.read"]), key));
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(second.result_class, "CONFLICT");
+      assert.equal(second.error.retryable, true);
+    }
+    assert.equal(store.requestRecord("family-broker-second"), undefined);
+    release();
+    const firstResult = await first;
+    assert.equal(firstResult.ok, true, JSON.stringify(firstResult));
+  } finally {
+    release();
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Broker rejects unsafe request and session limits at construction", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-limits-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -449,7 +507,10 @@ test("Broker rejects unsafe request and session limits at construction", async (
       { maxActiveRequestsPerSession: 0 },
       { maxActiveRequestsPerSession: 65 },
       { maxActiveRequestsGlobal: 0 },
-      { maxActiveRequestsGlobal: 257 }
+      { maxActiveRequestsGlobal: 257 },
+      { maxActiveRequestsByFamily: { read: 0 } },
+      { maxActiveRequestsByFamily: { read: 257 } },
+      { maxActiveRequestsByFamily: { unsupported: 1 } }
     ]) {
       assert.throws(
         () => new Broker({ ...base, ...limits }),

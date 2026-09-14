@@ -32,7 +32,8 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 5, name: "broker-runtime-fence" },
         { version: 6, name: "virtualization-guest-replay-ledger" },
         { version: 7, name: "virtualization-guest-task-metadata" },
-        { version: 8, name: "virtualization-guest-attestation-key-config" }
+        { version: 8, name: "virtualization-guest-attestation-key-config" },
+        { version: 9, name: "request-capability-family-capacity" }
       ]);
     } finally {
       database.close();
@@ -809,6 +810,90 @@ test("BrokerStore enforces durable global and session request capacity across ha
   } finally {
     secondStore.close();
     firstStore.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore enforces independent capability-family capacity across handles", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-family-capacity-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const firstStore = new BrokerStore(databasePath);
+  const secondStore = new BrokerStore(databasePath);
+  const limits = {
+    maxActiveRequestsGlobal: 8,
+    maxActiveRequestsPerSession: 8,
+    maxActiveRequestsByFamily: { read: 1, write: 1 }
+  } as const;
+  try {
+    firstStore.admitRequest({
+      ...requestInput("request-family-read", "nonce-family-read", false),
+      capabilityFamilies: ["read"]
+    }, limits);
+    assert.throws(
+      () => secondStore.admitRequest({
+        ...requestInput("request-family-read-2", "nonce-family-read-2", false),
+        capabilityFamilies: ["read"]
+      }, limits),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT" && error.retryable
+    );
+    const write = secondStore.admitRequest({
+      ...requestInput("request-family-write", "nonce-family-write", true),
+      capabilityFamilies: ["write"]
+    }, limits);
+    assert.equal(write.state, "RECEIVED");
+    assert.equal(secondStore.requestRecord("request-family-read-2"), undefined);
+
+    firstStore.failRequest({
+      requestId: "request-family-read",
+      principalId: "principal-1",
+      tool: "mac_health",
+      eventType: "decision",
+      decision: "deny",
+      resultClass: "SCOPE_DENIED",
+      targetRef: "unresolved",
+      policyVersion: "policy-0.1",
+      evidence: {},
+      timestampMs: 2
+    });
+    const released = secondStore.admitRequest({
+      ...requestInput("request-family-read-3", "nonce-family-read-3", false),
+      capabilityFamilies: ["read"]
+    }, limits);
+    assert.equal(released.state, "RECEIVED");
+  } finally {
+    secondStore.close();
+    firstStore.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore fails closed when a persisted capability-family marker is malformed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-family-corruption-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  const limits = { maxActiveRequestsByFamily: { read: 2 } } as const;
+  try {
+    store.admitRequest({
+      ...requestInput("request-family-corrupt", "nonce-family-corrupt", false),
+      capabilityFamilies: ["read"]
+    }, limits);
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE requests SET capability_families = ? WHERE request_id = ?")
+        .run("|unsupported|", "request-family-corrupt");
+    } finally {
+      database.close();
+    }
+    assert.throws(
+      () => store.admitRequest({
+        ...requestInput("request-family-corrupt-2", "nonce-family-corrupt-2", false),
+        capabilityFamilies: ["read"]
+      }, limits),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    assert.equal(store.requestRecord("request-family-corrupt-2"), undefined);
+  } finally {
+    store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

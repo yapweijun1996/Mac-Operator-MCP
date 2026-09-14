@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
+import { BrokerError, CAPABILITY_FAMILIES, canonicalJson, parseJsonStrict, sha256, type CapabilityFamily } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 import { AuditAnchorManager, type AuditAnchorOptions } from "./audit-anchor.js";
 import {
@@ -95,7 +95,7 @@ const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 8;
+export const BROKER_SCHEMA_VERSION = 9;
 const MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS = 4096;
 
 /**
@@ -252,6 +252,8 @@ export interface AdmitRequestInput {
   policyVersion: string;
   payloadDigest: string;
   mutation: boolean;
+  /** Broker-resolved capability families used for durable independent quotas. */
+  capabilityFamilies?: readonly CapabilityFamily[];
   receivedAtMs: number;
 }
 
@@ -261,6 +263,8 @@ export interface RequestAdmissionLimits {
   maxActiveRequestsGlobal?: number;
   /** Maximum number of non-terminal requests for one principal/session pair. */
   maxActiveRequestsPerSession?: number;
+  /** Maximum number of non-terminal requests for each Broker capability family. */
+  maxActiveRequestsByFamily?: Partial<Record<CapabilityFamily, number>>;
 }
 
 export type ApprovalClass = "trusted_write" | "trusted_gui" | "trusted_profile" | "explicit_privileged_policy";
@@ -620,6 +624,7 @@ export class BrokerStore {
         policy_version TEXT NOT NULL,
         payload_digest TEXT NOT NULL,
         mutation INTEGER NOT NULL CHECK (mutation IN (0, 1)),
+        capability_families TEXT NOT NULL DEFAULT '',
         state TEXT NOT NULL CHECK (state IN (
           'RECEIVED', 'AUTHORIZED', 'DENIED', 'INTENT_RECORDED', 'RUNNING',
           'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'VERIFICATION_FAILED', 'UNKNOWN'
@@ -708,12 +713,12 @@ export class BrokerStore {
         this.database.prepare(`
           INSERT INTO requests(
             request_id, edge_id, principal_id, session_id, tool, policy_version, payload_digest,
-            mutation, state, result_class, target_ref, received_at_ms, updated_at_ms, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', NULL, NULL, ?, ?, 0)
+            mutation, capability_families, state, result_class, target_ref, received_at_ms, updated_at_ms, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', NULL, NULL, ?, ?, 0)
         `).run(
           input.requestId, input.edgeId, input.principalId, input.sessionId, input.tool,
           input.policyVersion, input.payloadDigest, input.mutation ? 1 : 0,
-          input.receivedAtMs, input.receivedAtMs
+          encodeCapabilityFamilies(input.capabilityFamilies), input.receivedAtMs, input.receivedAtMs
         );
         return this.requireRequest(input.requestId);
       });
@@ -759,12 +764,12 @@ export class BrokerStore {
         this.database.prepare(`
           INSERT INTO requests(
             request_id, edge_id, principal_id, session_id, tool, policy_version, payload_digest,
-            mutation, state, result_class, target_ref, approval_id, job_id, received_at_ms, updated_at_ms, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'RECEIVED', NULL, NULL, NULL, NULL, ?, ?, 0)
+            mutation, capability_families, state, result_class, target_ref, approval_id, job_id, received_at_ms, updated_at_ms, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'RECEIVED', NULL, NULL, NULL, NULL, ?, ?, 0)
         `).run(
           input.request.requestId, input.request.edgeId, input.request.principalId, input.request.sessionId,
           input.request.tool, input.request.policyVersion, input.request.payloadDigest,
-          input.request.receivedAtMs, input.request.receivedAtMs
+          encodeCapabilityFamilies(input.request.capabilityFamilies), input.request.receivedAtMs, input.request.receivedAtMs
         );
         this.injectFault("admit_approved_job.after_request");
         const received = this.requireRequest(input.request.requestId);
@@ -2908,7 +2913,8 @@ export class BrokerStore {
         { version: 5, name: "broker-runtime-fence", apply: () => this.migrateRuntimeFenceSchema() },
         { version: 6, name: "virtualization-guest-replay-ledger", apply: () => this.migrateVirtualizationGuestReplaySchema() },
         { version: 7, name: "virtualization-guest-task-metadata", apply: () => this.migrateVirtualizationGuestTaskMetadataSchema() },
-        { version: 8, name: "virtualization-guest-attestation-key-config", apply: () => this.migrateVirtualizationGuestAttestationKeyConfigSchema() }
+        { version: 8, name: "virtualization-guest-attestation-key-config", apply: () => this.migrateVirtualizationGuestAttestationKeyConfigSchema() },
+        { version: 9, name: "request-capability-family-capacity", apply: () => this.migrateRequestCapabilityFamilySchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -3105,6 +3111,18 @@ export class BrokerStore {
           SELECT kind, subject_id, revoked_at_ms, reason FROM revocations_v7;
         DROP TABLE revocations_v7;
       `);
+    }
+  }
+
+  private migrateRequestCapabilityFamilySchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(requests)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("capability_families")) {
+      this.database.exec("ALTER TABLE requests ADD COLUMN capability_families TEXT NOT NULL DEFAULT ''");
+    }
+    const migratedColumns = this.database.prepare("PRAGMA table_info(requests)").all() as Array<{ name?: unknown }>;
+    if (!migratedColumns.some((column) => column.name === "capability_families")) {
+      throw new Error("Broker request capability-family schema is unavailable");
     }
   }
 
@@ -3594,12 +3612,13 @@ function validateRequestAdmission(input: AdmitRequestInput): void {
       !Number.isSafeInteger(input.nonceExpiresAtMs) || input.nonceExpiresAtMs <= input.receivedAtMs) {
     throw malformedRequest();
   }
+  normalizeCapabilityFamilies(input.capabilityFamilies);
 }
 
 function validateRequestAdmissionLimits(limits: RequestAdmissionLimits | undefined): void {
   if (limits === undefined) return;
   if (limits === null || typeof limits !== "object" || Array.isArray(limits) ||
-      Object.keys(limits).some((key) => key !== "maxActiveRequestsGlobal" && key !== "maxActiveRequestsPerSession")) {
+      Object.keys(limits).some((key) => key !== "maxActiveRequestsGlobal" && key !== "maxActiveRequestsPerSession" && key !== "maxActiveRequestsByFamily")) {
     throw malformedRequest();
   }
   for (const value of [limits.maxActiveRequestsGlobal, limits.maxActiveRequestsPerSession]) {
@@ -3609,6 +3628,17 @@ function validateRequestAdmissionLimits(limits: RequestAdmissionLimits | undefin
   }
   if (limits.maxActiveRequestsPerSession !== undefined && limits.maxActiveRequestsPerSession > MAX_ACTIVE_REQUESTS_PER_SESSION) {
     throw malformedRequest();
+  }
+  if (limits.maxActiveRequestsByFamily !== undefined) {
+    if (limits.maxActiveRequestsByFamily === null || typeof limits.maxActiveRequestsByFamily !== "object" || Array.isArray(limits.maxActiveRequestsByFamily)) {
+      throw malformedRequest();
+    }
+    for (const [family, value] of Object.entries(limits.maxActiveRequestsByFamily)) {
+      if (!(CAPABILITY_FAMILIES as readonly string[]).includes(family) ||
+          !Number.isSafeInteger(value) || value < 1 || value > MAX_ACTIVE_REQUESTS_GLOBAL) {
+        throw malformedRequest();
+      }
+    }
   }
 }
 
@@ -3637,6 +3667,67 @@ function enforceRequestAdmissionLimits(
     if ((count as number) >= limits.maxActiveRequestsPerSession) {
       throw new BrokerError("CONFLICT", "Session request capacity is exhausted", true);
     }
+  }
+  const requestedFamilies = new Set(normalizeCapabilityFamilies(input.capabilityFamilies));
+  const familyCounts = new Map<CapabilityFamily, number>();
+  if (requestedFamilies.size > 0 && Object.keys(limits.maxActiveRequestsByFamily ?? {}).length > 0) {
+    const rows = database.prepare(`
+      SELECT capability_families FROM requests WHERE state IN (${activeStates})
+    `).all() as Array<{ capability_families?: unknown }>;
+    for (const row of rows) {
+      const storedFamilies = decodeCapabilityFamilies(row.capability_families);
+      if (storedFamilies === null) {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Stored request capability families are malformed");
+      }
+      const countedFamilies = storedFamilies ?? CAPABILITY_FAMILIES;
+      for (const family of countedFamilies) {
+        familyCounts.set(family, (familyCounts.get(family) ?? 0) + 1);
+      }
+    }
+  }
+  for (const [family, limit] of Object.entries(limits.maxActiveRequestsByFamily ?? {})) {
+    if (!requestedFamilies.has(family as CapabilityFamily)) continue;
+    const count = familyCounts.get(family as CapabilityFamily) ?? 0;
+    if (!Number.isSafeInteger(count) || (count as number) < 0) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", `${family} request count is malformed`);
+    }
+    if ((count as number) >= limit) {
+      throw new BrokerError("CONFLICT", `${family} request capacity is exhausted`, true);
+    }
+  }
+}
+
+function normalizeCapabilityFamilies(families: readonly CapabilityFamily[] | undefined): CapabilityFamily[] {
+  if (families === undefined) return [];
+  if (!Array.isArray(families) || families.length > CAPABILITY_FAMILIES.length) throw malformedRequest();
+  const known = new Set<CapabilityFamily>();
+  for (const family of families) {
+    if (!(CAPABILITY_FAMILIES as readonly string[]).includes(family) || known.has(family)) throw malformedRequest();
+    known.add(family);
+  }
+  return [...known].sort();
+}
+
+function encodeCapabilityFamilies(families: readonly CapabilityFamily[] | undefined): string {
+  const normalized = normalizeCapabilityFamilies(families);
+  return normalized.length === 0 ? "" : `|${normalized.join("|")}|`;
+}
+
+/** Decode and validate the exact storage spelling used by the request ledger. */
+function decodeCapabilityFamilies(value: unknown): readonly CapabilityFamily[] | undefined | null {
+  if (value === "") return undefined;
+  if (typeof value !== "string" || !value.startsWith("|") || !value.endsWith("|")) return null;
+  const parts = value.slice(1, -1).split("|");
+  if (parts.length < 1 || parts.length > CAPABILITY_FAMILIES.length) return null;
+  const families: CapabilityFamily[] = [];
+  for (const part of parts) {
+    if (!(CAPABILITY_FAMILIES as readonly string[]).includes(part)) return null;
+    families.push(part as CapabilityFamily);
+  }
+  try {
+    return encodeCapabilityFamilies(families) === value ? families : null;
+  } catch {
+    return null;
   }
 }
 
