@@ -4,12 +4,26 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest authority-lifecycle addendum: commit `d0c96be` adds a bounded
+deterministic BrokerStore state-machine regression. Sixteen reproducible seeds
+run 72 actions each across independent kill switches, principal/session and
+upstream revocation, expected-state conflicts, queued/running cancellation,
+terminal completion, and restart reconciliation. Invariants prove blocked
+queued Jobs are cancelled without cross-principal impact, revisions never
+regress, terminal Jobs do not change state, and no queued/running Job survives
+restart reconciliation. The focused persistence suite passes 46/46 and the
+full physical-Darwin regression passes 524/524. This advances MOP-070 coverage
+but remains bounded model-based testing; exhaustive fuzzing, active
+process-tree proof, remote propagation, and installed-service evidence remain
+open. Evidence:
+`evidence/2026-09-15-authority-state-machine.md`.
+
 Latest guest-image binding addendum: commits `846eca5` and `81faff0` add a
 startup-owned, owner-only image preflight and require its immutable identity
 for `VirtualizationTaskRunner` availability. The Broker re-hashes and checks
 device/inode/size before every dispatch and restart status recovery, rejecting
 content replacement before the executor is called. Focused runner/image tests
-pass 15/15 and the full physical-Darwin regression remains 523/523. This is
+pass 15/15 and the full physical-Darwin regression remains 524/524. This is
 host image provenance and target-swap evidence only; signed guest provenance,
 VM boot, guest isolation, attestation, and capability enablement remain open.
 Evidence: `evidence/2026-09-15-virtualization-guest-image-preflight.md`.
@@ -22,7 +36,7 @@ through native UID/GID/PID credentials and optional PID/start-time identity
 before any response frame is accepted. One bounded length-prefixed frame is
 allowed per connection, with cancellation, timeout, output, trailing-data,
 symlink, and transport-loss handling. The physical Darwin regression passes
-523/523 and the focused channel tests pass 4/4. This closes only the local
+524/524 and the focused channel tests pass 4/4. This closes only the local
 Broker-to-adapter transport seam; native guest serving, VM boot, signed
 attestation, isolation evidence, and `mac_task_run` enablement remain open.
 Evidence: `evidence/2026-09-15-virtualization-guest-channel.md`.
@@ -41,10 +55,10 @@ fuzz regression suites for Broker and guest authentication mutation, replay,
 strict envelopes, traversal/protected zones, secret and prompt-injection-shaped
 content, canonicalization, policy precedence, and output/resource budgets. On the physical Darwin
 arm64 host, `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm
-test` passes 516/516, including the focused security-fuzz suite at 7/7. This
-advances MOP-070 to `IN_PROGRESS`; exhaustive fuzzing, revocation/policy
-state-machine campaigns, kernel-level resource/isolation evidence, and
-independent review remain open. Evidence:
+test` passes 524/524, including the focused security-fuzz suite at 7/7 and the
+authority state-machine regression. This advances MOP-070 coverage; exhaustive
+fuzzing, kernel-level resource/isolation evidence, and independent review
+remain open. Evidence:
 `evidence/2026-09-15-security-fuzz-regression.md`.
 
 Latest strict-exit addendum: governed sandbox tasks now request a final native
