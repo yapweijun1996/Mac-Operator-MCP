@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Capability kill-switch readback addendum: capability discovery now reflects
+both persisted runtime and signed-policy family kill-switches. Enabled
+process capabilities become `disabled_by_kill_switch` when the process family
+is disabled, and the regression covers both authority sources. The complete
+physical-Darwin regression passes 572/572 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-capability-kill-switch-readback.md`.
+
 Authority-control framing addendum: the owner-only IPC rejects non-whitespace
 trailing bytes after its one newline-delimited command and performs no replay
 admission, authority mutation, or audit for that frame. Focused IPC tests pass

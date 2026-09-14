@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Capability kill-switch readback addendum: `mac_capabilities` now evaluates
+both persisted runtime switches and signed-policy family kill-switches before
+advertising an enabled capability. Disabled families return the stable
+`disabled_by_kill_switch` reason, keeping Edge discovery consistent with the
+Broker's final execution authority. The focused regression covers persisted
+and policy `process` switches; the full physical-Darwin regression passes
+572/572 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-capability-kill-switch-readback.md`.
+
 Authority-control framing addendum: the owner-only IPC now rejects non-
 whitespace bytes after the single newline-delimited command. It authenticates
 the command but skips replay admission, authority mutation, and audit when

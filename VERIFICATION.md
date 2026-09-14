@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Capability kill-switch readback addendum: `mac_capabilities` now checks the
+Broker-owned persisted switch and signed policy kill-switch for each enabled
+family before reporting it as available. Focused coverage verifies both
+process-switch sources. The complete physical-Darwin regression passes
+572/572 with 0 skipped tests; typecheck, lint, contract verification, and diff
+checks pass. Evidence:
+`evidence/2026-09-15-capability-kill-switch-readback.md`.
+
 Authority-control framing addendum: non-whitespace trailing bytes after the
 single newline-delimited command are rejected before replay admission or any
 authority mutation. Focused tests pass 2/2 and the complete physical-Darwin
