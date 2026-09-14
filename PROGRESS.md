@@ -41,7 +41,7 @@ Focused canonical JSON tests pass 5/5 and the complete physical-Darwin
 regression passes 593/593 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-cross-runtime-json-number-canonicalization.md`.
 
-Capability-family capacity addendum: source revisions `db129b3`, `0b7d3b9`, and `d7c4689` add a schema-v9
+Capability-family capacity addendum: source revisions `db129b3`, `0b7d3b9`, `d7c4689`, and `8ad120b` add a schema-v9
 request-ledger marker and BrokerStore admission gates for independent
 `read`/`write`/`process`/`network`/`gui`/`destructive`/`privileged` families.
 Broker-resolved families are persisted before authorization and counted inside
@@ -51,6 +51,7 @@ markers fail closed as `AUDIT_UNAVAILABLE`; every admission validates existing
 markers even when the new request has no family. Focused Broker/persistence
 tests pass 123/123 with 6 explicit skips; RequestRecord and the versioned
 ledger schema expose the resolved family list while preserving legacy records;
+malformed readback is covered directly;
 the complete physical-Darwin
 regression passes 597/597 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-capability-family-capacity.md`.

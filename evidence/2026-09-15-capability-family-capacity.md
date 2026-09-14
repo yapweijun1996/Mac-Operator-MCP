@@ -1,7 +1,7 @@
 # Durable Capability-Family Capacity Evidence
 
 Date: 2026-09-15
-Source commits: `db129b3`, `0b7d3b9`, `d7c4689`
+Source commits: `db129b3`, `0b7d3b9`, `d7c4689`, `8ad120b`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
@@ -15,7 +15,8 @@ legacy markers conservatively count against every requested family, and
 malformed stored markers return `AUDIT_UNAVAILABLE` before nonce persistence,
 including for a family-less request. RequestRecord and the versioned ledger
 schema expose the resolved family list; legacy empty markers map to an empty
-list without weakening admission counting.
+list without weakening admission counting; malformed readback is rejected as
+`AUDIT_UNAVAILABLE`.
 
 ## Verification
 
@@ -31,5 +32,5 @@ installed-service evidence, and final release acceptance remain open.
 
 ## Rollback
 
-Revert `db129b3`. Requests would no longer carry durable independent family
-admission markers or per-family capacity gates.
+Revert `db129b3`, `0b7d3b9`, `d7c4689`, and `8ad120b`. Requests would no longer
+carry durable independent family admission markers or per-family capacity gates.
