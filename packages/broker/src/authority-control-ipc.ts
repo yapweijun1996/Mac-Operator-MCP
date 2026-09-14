@@ -196,6 +196,9 @@ export class AuthorityControlIpcServer {
           this.maxRequestAgeMs,
           this.allowedClockSkewMs
         );
+        if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+          throw new BrokerError("PRECONDITION_FAILED", "Authority control IPC request contained trailing data");
+        }
         this.options.store.admitAuthorityControlCommand({
           requestId: command.requestId,
           nonce: command.nonce,
@@ -568,6 +571,10 @@ function safeEqualHex(actual: string, expected: string): boolean {
 
 function writeAuthorityControlResponse(socket: Socket, response: AuthorityControlIpcResponse): void {
   if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
+}
+
+function isAsciiWhitespace(byte: number): boolean {
+  return byte === 0x09 || byte === 0x0a || byte === 0x0d || byte === 0x20;
 }
 
 function signAuthorityControlResponse(

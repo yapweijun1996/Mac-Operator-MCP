@@ -35,7 +35,7 @@ function command(
   };
 }
 
-async function sendCommand(socketPath: string, payload: unknown): Promise<AuthorityControlIpcResponse> {
+async function sendCommand(socketPath: string, payload: unknown, suffix = ""): Promise<AuthorityControlIpcResponse> {
   return new Promise((resolvePromise, reject) => {
     const socket = connect(socketPath);
     const chunks: Buffer[] = [];
@@ -55,7 +55,7 @@ async function sendCommand(socketPath: string, payload: unknown): Promise<Author
     socket.on("close", () => {
       if (chunks.length === 0) reject(new Error("Authority control IPC closed without a response"));
     });
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
   });
 }
 
@@ -85,6 +85,16 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
       createdAtMs: NOW
     });
     await server.listen();
+
+    const trailing = command("set_switch", 99, {
+      switchName: "process" as SwitchName,
+      disabled: true,
+      expectedDisabled: false
+    });
+    const trailingResponse = await sendCommand(socketPath, signAuthorityControlCommand(trailing, authenticationKey), "{}\n");
+    assert.equal(trailingResponse.ok, false);
+    if (!trailingResponse.ok) assert.equal(trailingResponse.result_class, "PRECONDITION_FAILED");
+    assert.equal(store.isSwitchDisabled("process"), false);
 
     const disable = command("set_switch", 1, {
       switchName: "process" as SwitchName,
