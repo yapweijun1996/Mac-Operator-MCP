@@ -12,7 +12,8 @@
     "lint": "node scripts/check-style.mjs",
     "test": "npm run build && npm run build:native:fault-test --workspace @mac-operator/broker && node --test packages/*/dist/**/*.test.js",
     "typecheck": "tsc -b --pretty false",
-    "verify:contracts": "npm run build && node packages/contracts/dist/verify-contracts.js"
+    "verify:contracts": "npm run build && node packages/contracts/dist/verify-contracts.js",
+    "verify:canonical:native": "sh scripts/verify-canonical-json-native.sh"
   },
   "workspaces": [
     "packages/*"
