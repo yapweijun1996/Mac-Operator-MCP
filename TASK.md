@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Runtime-policy validation addendum: source revision `ee994a8` makes the
+Broker final authority fail closed when its in-memory policy or any ToolPolicy
+entry is malformed. Validation is repeated at PolicyManager transitions and
+authorization, so post-construction Map mutation cannot expand capability
+advertising or execution. It covers contract version, known tool identity,
+independent scopes and capability families, target/approval types, bounded
+budgets, and implemented/enabled consistency. Policy and PolicyManager tests
+pass 17/17; the complete physical-Darwin regression passes 600/600 with
+0 skipped tests. This closes the runtime policy-shape boundary only; broader
+release gates and host evidence remain open. Evidence:
+`evidence/2026-09-15-runtime-policy-validation.md`.
+
 Strict UTF-8 boundary addendum: source revision `1ce5bee` makes implemented
 JSON protocol and protected configuration readers use fatal UTF-8 decoding.
 Malformed bytes fail closed before JSON parsing or replay admission, including

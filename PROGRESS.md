@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Runtime-policy validation addendum: source revision `ee994a8` adds a
+Broker-owned validation gate for in-memory and signed `BrokerPolicy` values.
+Construction, activation, restore, rollback, and every tool authorization now
+fail closed on malformed policy metadata or ToolPolicy fields, including
+unknown tools, contract-version drift, invalid scopes/capability families,
+invalid target or approval types, unsafe budgets, and an enabled-but-not-
+implemented state. This prevents a mutable caller-owned policy map from
+advertising or authorizing an unsafe contract. Policy and PolicyManager tests
+pass 17/17; the complete physical-Darwin regression passes 600/600 with
+0 skipped tests. Evidence:
+`evidence/2026-09-15-runtime-policy-validation.md`.
+
 Runtime contract-integrity addendum: source revision `2dedae0` makes the Edge
 contract loader reject group/other-writable contract directories and files,
 rejects symlinked paths, and rechecks device/inode/mode before and after each

@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Runtime-policy validation addendum: source revision `ee994a8` validates the
+Broker policy shape at construction, policy-manager transitions, and each
+authorization call. The gate rejects malformed metadata and ToolPolicy
+authority (unknown tool keys, contract drift, invalid scope/family/target or
+approval values, unsafe timeout/output budgets, and enabled unimplemented
+tools) before capability discovery or execution. Policy and PolicyManager
+tests pass 17/17; the complete physical-Darwin regression passes 600/600 with
+0 skipped tests. Build, typecheck, lint, contract verification, native
+canonical probe, and diff checks pass. This closes the in-memory policy
+shape boundary only; signed-policy supply-chain protection, package signing,
+installed-service evidence, and final release acceptance remain open.
+Evidence: `evidence/2026-09-15-runtime-policy-validation.md`.
+
 Runtime contract-integrity addendum: source revision `2dedae0` hardens Edge
 contract loading with non-symlink directory/file checks, group/other-write
 denial, and device/inode/mode readback before and after loading. Focused
