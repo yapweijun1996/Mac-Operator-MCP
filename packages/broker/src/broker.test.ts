@@ -20,6 +20,7 @@ import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
 import { UiSnapshotRegistry } from "./ui-inspector.js";
 import type { FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
+import type { ProcessExecutor } from "./process-executor.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -369,6 +370,62 @@ test("mac_process_list returns bounded redacted process metadata", async () => {
     assert.equal(data.processes.every((process) => process.memory_bytes >= 0), true);
     assert.equal(data.processes.every((process) => process.owner === undefined || /^uid:\d+$/u.test(process.owner)), true);
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Broker bounds concurrent requests per principal session", async () => {
+  const key = randomBytes(32);
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-session-capacity-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let startedResolve!: () => void;
+  const started = new Promise<void>((resolve) => { startedResolve = resolve; });
+  const processExecutor: ProcessExecutor = {
+    async list() {
+      startedResolve();
+      await gate;
+      return { processes: [], truncated: false };
+    },
+    async inspect() { throw new Error("process inspect was not expected"); }
+  };
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.process.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    processExecutor,
+    maxActiveRequestsPerSession: 1,
+    now: () => NOW
+  });
+  try {
+    const first = broker.handle(signRequest(unsigned({
+      requestId: "session-capacity-first",
+      nonce: "session-capacity-first-nonce",
+      tool: "mac_process_list",
+      arguments: { limit: 1, sort: "pid" }
+    }, ["mac.process.read"]), key));
+    await started;
+    const second = await broker.handle(signRequest(unsigned({
+      requestId: "session-capacity-second",
+      nonce: "session-capacity-second-nonce",
+      tool: "mac_process_list",
+      arguments: { limit: 1, sort: "pid" }
+    }, ["mac.process.read"]), key));
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(second.result_class, "CONFLICT");
+      assert.equal(second.error.retryable, true);
+    }
+    assert.equal(store.requestRecord("session-capacity-second"), undefined);
+    release();
+    const firstResult = await first;
+    assert.equal(firstResult.ok, true, JSON.stringify(firstResult));
+    assert.equal(store.requestRecord("session-capacity-first")?.state, "SUCCEEDED");
+  } finally {
+    release();
+    await broker.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }

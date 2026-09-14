@@ -54,6 +54,8 @@ export interface BrokerOptions {
   edgeAuthenticationKeys: EdgeKeyring;
   maxRequestAgeMs?: number;
   allowedClockSkewMs?: number;
+  /** Maximum number of concurrently executing requests per principal/session. */
+  maxActiveRequestsPerSession?: number;
   now?: () => number;
   filesystemExecutor?: FilesystemExecutor;
   processExecutor?: ProcessExecutor;
@@ -80,10 +82,15 @@ export interface BrokerOptions {
 
 const JOB_LEASE_DURATION_MS = 30_000;
 const JOB_LEASE_RENEW_INTERVAL_MS = 5_000;
+const MAX_REQUEST_AGE_MS = 600_000;
+const MAX_CLOCK_SKEW_MS = 60_000;
+const DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION = 8;
+const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
 
 export class Broker {
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
+  private readonly maxActiveRequestsPerSession: number;
   private readonly now: () => number;
   private readonly filesystemExecutor: FilesystemExecutor;
   private readonly processExecutor: ProcessExecutor;
@@ -105,13 +112,21 @@ export class Broker {
   private readonly taskRunner: TaskRunner;
   private readonly privilegedHelperExecutor: PrivilegedHelperJobExecutor;
   private readonly jobLeaseOwnerId: string;
+  private readonly activeRequestsBySession = new Map<string, number>();
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
   constructor(private readonly options: BrokerOptions) {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
+    this.maxActiveRequestsPerSession = options.maxActiveRequestsPerSession ?? DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION;
     this.now = options.now ?? Date.now;
+    if (!Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_REQUEST_AGE_MS ||
+        !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > MAX_CLOCK_SKEW_MS ||
+        !Number.isSafeInteger(this.maxActiveRequestsPerSession) || this.maxActiveRequestsPerSession < 1 ||
+        this.maxActiveRequestsPerSession > MAX_ACTIVE_REQUESTS_PER_SESSION) {
+      throw new Error("Broker request or session limits are invalid");
+    }
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();
     this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
     this.processSupervisor = options.processSupervisor ?? new ProcessSupervisor({
@@ -595,10 +610,13 @@ export class Broker {
     let request: BrokerRequest | undefined;
     let admitted = false;
     let authorized = false;
+    let sessionReserved = false;
     try {
       if (this.closing) throw new BrokerError("CANCELLED", "Broker is shutting down");
       request = parseBrokerRequest(rawRequest);
       this.authenticate(request, startedAt, policy);
+      this.reserveSessionRequest(request.principal.principalId, request.principal.sessionId);
+      sessionReserved = true;
       this.options.store.admitRequest({
         requestId: request.requestId,
         edgeId: request.principal.edgeId,
@@ -942,6 +960,10 @@ export class Broker {
         this.auditFailure(request, brokerError, this.now(), authorized);
       }
       return this.failure(request, brokerError, startedAt);
+    } finally {
+      if (sessionReserved && request !== undefined) {
+        this.releaseSessionRequest(request.principal.principalId, request.principal.sessionId);
+      }
     }
   }
 
@@ -960,6 +982,22 @@ export class Broker {
       // Invalid requests receive only an untrusted bounded error response.
     }
     return response;
+  }
+
+  private reserveSessionRequest(principalId: string, sessionId: string): void {
+    const key = `${principalId}\u0000${sessionId}`;
+    const active = this.activeRequestsBySession.get(key) ?? 0;
+    if (active >= this.maxActiveRequestsPerSession) {
+      throw new BrokerError("CONFLICT", "Session request capacity is exhausted", true);
+    }
+    this.activeRequestsBySession.set(key, active + 1);
+  }
+
+  private releaseSessionRequest(principalId: string, sessionId: string): void {
+    const key = `${principalId}\u0000${sessionId}`;
+    const active = this.activeRequestsBySession.get(key) ?? 0;
+    if (active <= 1) this.activeRequestsBySession.delete(key);
+    else this.activeRequestsBySession.set(key, active - 1);
   }
 
   private authenticate(request: BrokerRequest, nowMs: number, policy: BrokerPolicy): void {
