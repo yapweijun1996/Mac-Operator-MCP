@@ -124,3 +124,13 @@ remain `UNKNOWN_OUTCOME`. Evidence is recorded in
 This closes only the Broker-side local channel; it does not provide the native
 guest server, VM boot, attestation, isolation evidence, or capability
 enablement required to accept this ADR.
+
+The host image preflight is now part of the `VirtualizationTaskRunner` gate.
+Commits `846eca5` and `81faff0` require a startup-owned owner-only image,
+match its digest/runtime/device/inode/size to the isolation proof and native
+executor, and re-hash/recheck it before every dispatch and restart status
+lookup. Replacement content is denied before the executor is called. Evidence
+is recorded in
+[`evidence/2026-09-15-virtualization-guest-image-preflight.md`](../../evidence/2026-09-15-virtualization-guest-image-preflight.md).
+This still provides no signed guest provenance, VM boot, or guest isolation
+evidence, so the runner remains disabled by default.

@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-image binding addendum: commits `846eca5` and `81faff0` add a protected
+startup-owned image preflight and make its digest/runtime/device/inode/size
+identity a required `VirtualizationTaskRunner` gate. The Broker rechecks the
+image before dispatch and restart recovery; content replacement is denied
+before executor invocation. Focused runner/image tests pass 15/15 and the
+full physical-Darwin regression passes 523/523. Signed guest provenance, VM
+boot, isolation, and production enablement remain blocked.
+
 Virtualization channel addendum: commits `521eecc` and `4592cad` add a
 disabled-by-default Broker-side Unix-socket channel for the future native
 guest adapter. It verifies owner-only socket target/device/inode identity,

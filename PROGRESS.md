@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest guest-image binding addendum: commits `846eca5` and `81faff0` add a
+startup-owned, owner-only image preflight and require its immutable identity
+for `VirtualizationTaskRunner` availability. The Broker re-hashes and checks
+device/inode/size before every dispatch and restart status recovery, rejecting
+content replacement before the executor is called. Focused runner/image tests
+pass 15/15 and the full physical-Darwin regression remains 523/523. This is
+host image provenance and target-swap evidence only; signed guest provenance,
+VM boot, guest isolation, attestation, and capability enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-guest-image-preflight.md`.
+
 Latest virtualization channel addendum: commits `521eecc` and `4592cad` add a
 Broker-side, disabled-by-default Unix-socket channel for the future native
 guest adapter. The startup-owned socket target is owner-only and bound to
