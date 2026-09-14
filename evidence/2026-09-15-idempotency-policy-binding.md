@@ -16,8 +16,10 @@ is reused, preserving the Broker's current authorization boundary for retries.
 
 - Persistence regression covers successful reuse, payload substitution,
   policy-version substitution, and principal isolation.
-- The complete test command passes with zero failures; non-Darwin/real-host
-  cases remain explicit skips where applicable.
+- The complete physical-Darwin command
+  `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+  passes 597/597 tests with 0 skips and 0 failures, including temporary
+  LaunchAgent, sandbox, and Keychain checks.
 - `git diff --check` passes.
 
 ## Remaining boundary
