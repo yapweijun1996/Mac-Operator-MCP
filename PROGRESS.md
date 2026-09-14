@@ -23,6 +23,15 @@ JSON probe passes 5/5 vectors, and the complete physical-Darwin regression
 passes 588/588 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-strict-json-parser.md`.
 
+Runtime strict-JSON addendum: source revision `0bcb354` routes implemented
+child-adapter, Authority Control IPC, stored-result, Job metadata, audit, and
+encrypted-backup evidence readers through `parseJsonStrict` before validation
+or canonical hashing. Static schema loading and parser internals remain
+separate trusted implementation inputs. Targeted runtime-reader tests pass
+79/79; the complete physical-Darwin regression passes 592/592 with 0 skipped
+tests. Evidence:
+`evidence/2026-09-15-runtime-strict-json-boundaries.md`.
+
 Durable request-capacity addendum: source revision `31e89f0` moves active
 request admission limits into the BrokerStore `BEGIN IMMEDIATE` transaction.
 The Broker now supplies a default global cap of 64 and principal/session cap

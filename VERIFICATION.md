@@ -26,6 +26,17 @@ Broader numeric canonicalization compatibility, runtime fuzzing, and release
 evidence remain unproven. Evidence:
 `evidence/2026-09-15-strict-json-parser.md`.
 
+Runtime strict-JSON addendum: source revision `0bcb354` applies
+`parseJsonStrict` to implemented child-adapter, Authority Control IPC,
+stored-result, Job metadata, audit, and encrypted-backup evidence readers
+before validation or canonical hashing. Static schema loading and parser
+internals remain separate trusted implementation inputs. Targeted runtime-reader
+tests pass 79/79 and the complete physical-Darwin suite passes 592/592 with
+0 skipped tests. Build, typecheck, lint, contract verification, and diff
+checks pass. Broader numeric canonicalization compatibility, runtime fuzzing,
+and final release evidence remain unproven. Evidence:
+`evidence/2026-09-15-runtime-strict-json-boundaries.md`.
+
 Durable request-capacity addendum: source revision `31e89f0` enforces global
 and principal/session active-request limits inside BrokerStore's
 `BEGIN IMMEDIATE` admission transaction. Defaults are global 64 and per

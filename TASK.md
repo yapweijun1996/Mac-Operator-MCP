@@ -26,6 +26,16 @@ surrogate parser divergence; broader numeric canonicalization, runtime fuzzing,
 and release acceptance remain open. Evidence:
 `evidence/2026-09-15-strict-json-parser.md`.
 
+Runtime strict-JSON addendum: source revision `0bcb354` routes implemented
+child-adapter, Authority Control IPC, stored-result, Job metadata, audit, and
+encrypted-backup evidence readers through `parseJsonStrict` before validation
+or canonical hashing. Static schema loading and parser internals remain
+separate trusted implementation inputs. Targeted runtime-reader tests pass
+79/79; the complete physical-Darwin regression passes 592/592 with 0 skipped
+tests. This closes runtime parser divergence at these readers only; broader
+numeric canonicalization, fuzzing, and release acceptance remain open.
+Evidence: `evidence/2026-09-15-runtime-strict-json-boundaries.md`.
+
 Durable request-capacity addendum: source revision `31e89f0` adds a durable
 global and principal/session admission gate inside the SQLite write
 transaction. Default caps are global 64 and per principal/session 8, with
