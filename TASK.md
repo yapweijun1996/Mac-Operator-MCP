@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Virtualization.framework candidate addendum: the current Darwin SDK exposes
+the framework surface, and a disabled `VirtualizationTaskRunner` seam now
+requires externally reviewed guest image digest/runtime evidence plus a
+matching native-adapter identity at dispatch. Identity mismatch, absent guest
+evidence, unavailable adapter, and adapter failure all fail closed or remain
+`UNKNOWN_OUTCOME`; this does not enable `mac_task_run`.
+Evidence: `evidence/2026-09-14-virtualization-framework-sdk.md`.
+
 Startup-authority addendum: the Supervisor rechecks close/cancellation state
 after ownership sampling and before active-run registration, draining a child
 and returning `CANCELLED` when authority is lost in that window. Evidence:

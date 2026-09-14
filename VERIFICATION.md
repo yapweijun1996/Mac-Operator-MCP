@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest Virtualization.framework candidate addendum: the active Darwin 26.2
+Command Line Tools SDK contains the Virtualization.framework module and
+headers. The new disabled-by-default `VirtualizationTaskRunner` requires an
+external host-evidence gate, a native executor, and a proof-bound guest image
+SHA-256/runtime identity; it rechecks that identity before dispatch and fails
+closed on a target swap. Focused task-runner tests pass 7/7; the full
+`MOPS_REAL_SANDBOX=1 npm test` regression passes 457/458 with one explicit
+host-boundary/opt-in skip. No VM boot, guest isolation, or production task
+enablement is claimed. Evidence:
+`evidence/2026-09-14-virtualization-framework-sdk.md`.
+
 Latest startup-authority addendum: `ProcessSupervisor` rechecks close and
 cancellation authority after startup ownership sampling and before active-run
 registration. A real `/bin/sleep` closes this window by invoking `close()` from

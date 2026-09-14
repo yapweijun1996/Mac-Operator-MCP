@@ -6,9 +6,11 @@ import type { ResolvedTaskProfile } from "./task-profile.js";
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
 const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const RUNTIME_VERSION_PATTERN = /^[A-Za-z0-9._:+/-]{1,128}$/u;
 
-/** Mechanisms with an implemented runner and reviewable proof schema. */
-export type TaskIsolationMechanism = "sandbox-exec";
+/** Mechanisms with a governed runner contract; availability remains evidence-gated. */
+export type TaskIsolationMechanism = "sandbox-exec" | "virtualization";
 
 export interface TaskExecutionControl {
   timeoutMs: number;
@@ -49,6 +51,14 @@ export interface TaskIsolationProof {
   processTree: "owned";
   processTreePolicy: "single_process" | "owned_group";
   evidenceRef: string;
+  /** Required for Virtualization.framework guests; absent for host sandboxes. */
+  virtualizationGuest?: VirtualizationGuestIdentity;
+}
+
+/** Host-owned guest identity, bound to an immutable image digest and runtime. */
+export interface VirtualizationGuestIdentity {
+  imageSha256: string;
+  runtimeVersion: string;
 }
 
 /**
@@ -170,6 +180,86 @@ export class SandboxExecTaskRunner implements TaskRunner {
   }
 }
 
+export interface VirtualizationTaskExecutionRequest {
+  readonly profile: ResolvedTaskProfile;
+  readonly control: TaskExecutionControl;
+  readonly guestIdentity: VirtualizationGuestIdentity;
+}
+
+/**
+ * Native Virtualization.framework adapter seam. The adapter owns VM creation,
+ * guest boot, and guest-side evidence; the TypeScript Broker never accepts a
+ * caller-supplied image path or launches a host process as a substitute.
+ */
+export interface VirtualizationTaskExecutor {
+  readonly available: boolean;
+  readonly guestIdentity: VirtualizationGuestIdentity | null;
+  run(request: VirtualizationTaskExecutionRequest): Promise<TaskExecutionResult>;
+  close?(): Promise<void>;
+}
+
+export interface VirtualizationTaskRunnerOptions {
+  /** Explicit opt-in; production remains disabled until host evidence review. */
+  enabled?: boolean;
+  /** External evidence gate; this is not supplied by the MCP request. */
+  hostEvidenceAccepted?: boolean;
+  isolationProof?: TaskIsolationProof | null;
+  executor?: VirtualizationTaskExecutor;
+}
+
+/**
+ * Disabled-by-default Virtualization.framework runner boundary.
+ *
+ * This class deliberately contains no VM implementation. A future native
+ * adapter must provide an immutable guest identity and verified result; a
+ * missing, malformed, or changed identity keeps the Broker fail closed.
+ */
+export class VirtualizationTaskRunner implements TaskRunner {
+  readonly available: boolean;
+  readonly mechanism: TaskIsolationMechanism = "virtualization";
+  readonly isolationProof: TaskIsolationProof | null;
+  private readonly executor: VirtualizationTaskExecutor | undefined;
+
+  constructor(options: VirtualizationTaskRunnerOptions = {}) {
+    const proof = options.isolationProof === null || options.isolationProof === undefined
+      ? null
+      : validateTaskIsolationProof(options.isolationProof);
+    this.isolationProof = proof;
+    this.executor = options.executor;
+    const guest = proof?.virtualizationGuest;
+    this.available = process.platform === "darwin" &&
+      options.enabled === true &&
+      options.hostEvidenceAccepted === true &&
+      options.executor?.available === true &&
+      guest !== undefined &&
+      options.executor.guestIdentity !== null &&
+      sameVirtualizationGuestIdentity(guest, options.executor.guestIdentity);
+  }
+
+  close(): Promise<void> {
+    return this.executor?.close?.() ?? Promise.resolve();
+  }
+
+  async run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult> {
+    if (!this.available || this.isolationProof === null || this.executor === undefined) {
+      throw new BrokerError("POLICY_DENIED", "Virtualization task boundary is not enabled");
+    }
+    const guestIdentity = this.isolationProof.virtualizationGuest;
+    if (guestIdentity === undefined || !this.executor.available ||
+        this.executor.guestIdentity === null ||
+        !sameVirtualizationGuestIdentity(guestIdentity, this.executor.guestIdentity)) {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest identity is unavailable or changed");
+    }
+    requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
+    try {
+      return await this.executor.run({ profile, control, guestIdentity });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("UNKNOWN_OUTCOME", "Virtualized task outcome could not be established", true);
+    }
+  }
+}
+
 function captureTaskFilesystemIdentity(
   profile: ResolvedTaskProfile,
   observe: (rootPath: string) => unknown
@@ -231,11 +321,11 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
-  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "processTree", "processTreePolicy", "evidenceRef"]);
+  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "processTree", "processTreePolicy", "evidenceRef", "virtualizationGuest"]);
   if (
     Object.keys(value).some((key) => !allowedKeys.has(key)) ||
     proof.schemaVersion !== "0.1" ||
-    proof.sandboxMechanism !== "sandbox-exec" ||
+    (proof.sandboxMechanism !== "sandbox-exec" && proof.sandboxMechanism !== "virtualization") ||
     typeof proof.sandboxProfile !== "string" ||
     !SANDBOX_PROFILE_PATTERN.test(proof.sandboxProfile) ||
     proof.filesystem !== "enforced" ||
@@ -244,21 +334,51 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     proof.processTree !== "owned" ||
     (proof.processTreePolicy !== "single_process" && proof.processTreePolicy !== "owned_group") ||
     typeof proof.evidenceRef !== "string" ||
-    !EVIDENCE_REFERENCE_PATTERN.test(proof.evidenceRef)
+    !EVIDENCE_REFERENCE_PATTERN.test(proof.evidenceRef) ||
+    (proof.sandboxMechanism === "sandbox-exec" && proof.virtualizationGuest !== undefined) ||
+    (proof.sandboxMechanism === "virtualization" && !isVirtualizationGuestIdentity(proof.virtualizationGuest))
   ) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is not complete");
   }
   return {
     schemaVersion: "0.1",
-    sandboxMechanism: "sandbox-exec",
+    sandboxMechanism: proof.sandboxMechanism,
     sandboxProfile: proof.sandboxProfile,
     filesystem: "enforced",
     network: "enforced",
     credentials: "isolated",
     processTree: "owned",
     processTreePolicy: proof.processTreePolicy,
-    evidenceRef: proof.evidenceRef
+    evidenceRef: proof.evidenceRef,
+    ...(proof.sandboxMechanism === "virtualization"
+      ? { virtualizationGuest: parseVirtualizationGuestIdentity(proof.virtualizationGuest) }
+      : {})
   };
+}
+
+function isVirtualizationGuestIdentity(value: unknown): value is VirtualizationGuestIdentity {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).every((key) => key === "imageSha256" || key === "runtimeVersion") &&
+    typeof record.imageSha256 === "string" && SHA256_PATTERN.test(record.imageSha256) &&
+    typeof record.runtimeVersion === "string" && RUNTIME_VERSION_PATTERN.test(record.runtimeVersion);
+}
+
+function parseVirtualizationGuestIdentity(value: unknown): VirtualizationGuestIdentity {
+  if (!isVirtualizationGuestIdentity(value)) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest identity is malformed");
+  }
+  return { imageSha256: value.imageSha256, runtimeVersion: value.runtimeVersion };
+}
+
+function sameVirtualizationGuestIdentity(
+  expected: VirtualizationGuestIdentity,
+  actual: VirtualizationGuestIdentity | null
+): boolean {
+  return actual !== null &&
+    isVirtualizationGuestIdentity(actual) &&
+    actual.imageSha256 === expected.imageSha256 &&
+    actual.runtimeVersion === expected.runtimeVersion;
 }
 
 export function requireTaskIsolationProof(

@@ -48,3 +48,21 @@ The real-host smoke is recorded in
 [`evidence/2026-09-13-sandbox-profile-runner.md`](../../evidence/2026-09-13-sandbox-profile-runner.md)
 and remains partial. The runner is not wired into the production Broker
 capability state, and this ADR remains proposed.
+
+## Virtualization.framework candidate seam
+
+The current Darwin host exposes the `Virtualization.framework` headers and
+module through the Command Line Tools macOS 26.2 SDK. This is SDK availability
+only; no VM image, guest boot, or isolation guarantee is inferred from it. The
+host probe is recorded in
+[`evidence/2026-09-14-virtualization-framework-sdk.md`](../../evidence/2026-09-14-virtualization-framework-sdk.md).
+
+This change adds a disabled-by-default `VirtualizationTaskRunner` seam.
+It accepts only a native-adapter executor, requires an externally reviewed
+guest image SHA-256/runtime identity in `TaskIsolationProof`, compares that
+identity again immediately before dispatch, and maps an adapter failure to
+retryable `UNKNOWN_OUTCOME`. It never accepts a caller image path and does not
+pretend that an injected test executor is production isolation evidence. A
+future Swift/native adapter must own VM lifecycle, guest transport, process
+limits, credential isolation, and guest postcondition readback before this
+runner can be enabled.

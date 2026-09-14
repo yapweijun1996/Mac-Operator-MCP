@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest Virtualization.framework candidate addendum: the active Darwin 26.2
+SDK exposes Virtualization.framework headers/modules, but Xcode is absent and
+no VM image or guest boot was attempted. A disabled-by-default
+`VirtualizationTaskRunner` seam now requires an externally reviewed guest
+image SHA-256/runtime identity, a native-adapter executor, and a matching
+identity recheck immediately before dispatch; missing or changed identity
+fails closed, and adapter failures remain retryable `UNKNOWN_OUTCOME`. New
+proof-validation and target-swap tests pass; the full real-sandbox regression
+passes 457/458 with one explicit host-boundary/opt-in skip. This is SDK and
+boundary evidence only, not VM isolation or `mac_task_run` enablement.
+Evidence: `evidence/2026-09-14-virtualization-framework-sdk.md`.
+
 Latest startup-authority addendum: `ProcessSupervisor` rechecks close and
 cancellation authority after startup ownership sampling and before active-run
 registration. A real `/bin/sleep` closes this window by invoking `close()` from
