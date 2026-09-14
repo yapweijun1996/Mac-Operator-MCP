@@ -76,6 +76,17 @@ const SWITCH_BY_FAMILY: Record<CapabilityFamily, SwitchName> = {
   privileged: "privileged"
 };
 
+export function isCapabilityFamilyDisabled(
+  store: BrokerStore,
+  policy: BrokerPolicy,
+  families: readonly CapabilityFamily[]
+): boolean {
+  return families.some((family) => {
+    const switchName = SWITCH_BY_FAMILY[family];
+    return store.isSwitchDisabled(switchName) || policy.killSwitches[switchName];
+  });
+}
+
 export function authorizeTool(
   store: BrokerStore,
   policy: BrokerPolicy,

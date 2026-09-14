@@ -960,6 +960,62 @@ test("capability discovery separates planned, implemented, and enabled", async (
   } finally { await context.close(); }
 });
 
+test("capability discovery reflects persisted and policy kill switches", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-capability-kill-switch-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const scopes: Scope[] = ["mac.control.read", "mac.process.read"];
+  let broker: Broker | undefined;
+  try {
+    const policy = createDefaultPolicy("edge-1", true, scopes);
+    broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+    store.setSwitch("process", true, "test-runtime-kill-switch", NOW);
+    const runtimeResult = await broker.handle(signRequest(unsigned({
+      requestId: "capabilities-runtime-kill-switch",
+      nonce: "capabilities-runtime-kill-switch-nonce",
+      tool: "mac_capabilities"
+    }, scopes), key));
+    assert.equal(runtimeResult.ok, true, JSON.stringify(runtimeResult));
+    if (runtimeResult.ok) {
+      const processCapability = (runtimeResult.data as { capabilities: Array<{ name: string; enabled: boolean; reason: string }> }).capabilities
+        .find((capability) => capability.name === "mac_process_list");
+      assert.deepEqual(processCapability, {
+        name: "mac_process_list",
+        enabled: false,
+        scopes: ["mac.process.read"],
+        contract_version: "0.1",
+        reason: "disabled_by_kill_switch"
+      });
+    }
+
+    store.setSwitch("process", false, "test-runtime-kill-switch-clear", NOW + 1);
+    await broker.close();
+    const policyKillSwitch = { ...policy, killSwitches: { ...policy.killSwitches, process: true } };
+    broker = new Broker({ store, policy: policyKillSwitch, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+    const policyResult = await broker.handle(signRequest(unsigned({
+      requestId: "capabilities-policy-kill-switch",
+      nonce: "capabilities-policy-kill-switch-nonce",
+      tool: "mac_capabilities"
+    }, scopes), key));
+    assert.equal(policyResult.ok, true, JSON.stringify(policyResult));
+    if (policyResult.ok) {
+      const processCapability = (policyResult.data as { capabilities: Array<{ name: string; enabled: boolean; reason: string }> }).capabilities
+        .find((capability) => capability.name === "mac_process_list");
+      assert.deepEqual(processCapability, {
+        name: "mac_process_list",
+        enabled: false,
+        scopes: ["mac.process.read"],
+        contract_version: "0.1",
+        reason: "disabled_by_kill_switch"
+      });
+    }
+  } finally {
+    await broker?.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_app_list binds app-set authority and returns sanitized metadata", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-list-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));

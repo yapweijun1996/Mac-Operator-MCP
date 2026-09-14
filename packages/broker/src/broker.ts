@@ -19,6 +19,7 @@ import {
   authorizePrincipalProjection,
   authorizeTarget,
   authorizeTool,
+  isCapabilityFamilyDisabled,
   runtimeToolStates,
   type BrokerPolicy,
   type NormalizedTarget,
@@ -1030,6 +1031,9 @@ export class Broker {
           if (!state.enabled) return state;
           const candidate = policy.tools.get(state.tool);
           if (!candidate) return { ...state, enabled: false, disabledReason: "not_implemented" };
+          if (isCapabilityFamilyDisabled(this.options.store, policy, candidate.capabilityFamilies)) {
+            return { ...state, enabled: false, disabledReason: "disabled_by_kill_switch" };
+          }
           if (candidate.requiredScopes.some((scope) => !request.principal.scopes.includes(scope))) {
             return { ...state, enabled: false, disabledReason: "scope_not_granted" };
           }
