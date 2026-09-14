@@ -41,9 +41,18 @@ identity and refuses a `SUCCEEDED` result unless the guest reports verified
 postcondition status. The executor remains explicitly unavailable unless its
 host-evidence gate is set by a reviewed adapter.
 
+The same client now exposes an authenticated status lookup for recovery after
+transport loss. Each lookup receives a fresh request ID and nonce, is admitted
+through the durable replay guard, and binds the original task request ID,
+nonce, and digest. The signed status response repeats those identities and the
+guest identity, carries the same bounded/redacted result shape, and is rejected
+if any binding or proof changes. The lookup path requires an explicit
+Broker-owned authority callback before a frame can leave the Broker; it cannot
+be used as an execution or target-granting primitive.
+
 ## Verification
 
-Focused task-runner plus transport tests pass 21/21, covering round-trip
+Focused task-runner plus transport tests pass 25/25, covering round-trip
 authentication,
 request tampering, wrong keys, nonce/request-ID replay, response binding,
 guest mismatch, proof tampering, freshness, strict envelopes, output limits,
@@ -51,10 +60,16 @@ exclusion of raw host paths/credential-shaped fields, durable replay after
 restart, bounded exchange, timeout, cancellation, transport loss, digest-only
 executor mapping, guest identity mismatch, and unverified-success rejection.
 The persistence regression plus the transport file passes 54/54 in the
-focused combined run; the complete `MOPS_REAL_INSTALL=1
-MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test` regression passes 502/502.
+focused combined run; status lookup authentication, original-task binding,
+authority gating, and recovery response mapping are also covered. The complete
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 506/506.
 
 This evidence does not establish VM boot, entitlement/signing, guest
 filesystem or network enforcement, host-credential isolation, process-tree
 ownership, cancellation, postcondition readback, native guest execution, or
 production capability enablement. `mac_task_run` remains disabled.
+
+This does not yet prove that a native guest can serve status requests, that
+Broker Jobs reconcile unknown outcomes through this API, or that a VM image
+boots with the claimed filesystem, network, credential, and process isolation.

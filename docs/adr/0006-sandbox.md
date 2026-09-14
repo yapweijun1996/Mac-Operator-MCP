@@ -89,3 +89,11 @@ test-only. `VirtualizationGuestTransportClient` enforces the same admission
 before a bounded frame exchange and maps timeout, cancellation, malformed
 responses, and transport loss to stable Broker errors. Evidence is recorded in
 [`evidence/2026-09-14-virtualization-guest-transport.md`](../../evidence/2026-09-14-virtualization-guest-transport.md).
+
+The client also defines a separate authenticated status lookup for recovery
+after transport loss. Each lookup has a fresh replay-protected identity and is
+bound to the original task request ID, nonce, digest, and guest identity; a
+Broker-owned authority callback is mandatory before sending it. This is a
+protocol and adapter boundary only. Broker Job reconciliation, native guest
+status serving, VM boot, and independent isolation evidence remain required
+before this ADR can be accepted or `mac_task_run` enabled.

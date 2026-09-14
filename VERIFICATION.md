@@ -4,7 +4,7 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Latest authenticated Virtualization guest-transport addendum: commits
-`e768a74`, `0dcc3cc`, `a5f053a`, `a872fbc`, and `2761bbb` define a versioned domain-separated
+`e768a74`, `0dcc3cc`, `a5f053a`, `a872fbc`, `2761bbb`, and `c2a7888` define a versioned domain-separated
 HMAC request/response contract, bind guest identity and attestation-related
 profile/task digests, persist request ID/nonce admission in BrokerStore schema
 version 6 with a 4,096-row bounded ledger and expired-row cleanup, and add a bounded exchange client with hard response framing,
@@ -13,9 +13,11 @@ timeout, cancellation, malformed-response handling, and retryable
 `VirtualizationGuestTransportExecutor` binds resolved profile/task digests,
 bounded budgets, response schema, guest identity, and verified-success status
 to the `TaskRunner` contract without sending raw host paths or commands.
-Focused task-runner plus transport tests pass 21/21;
+The authenticated status envelope adds fresh replay admission and original
+task ID/nonce/digest binding, and lookup requires a Broker-owned authority
+callback before transport. Focused task-runner plus transport tests pass 25/25;
 the complete `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1
-npm test` regression passes 502/502. This closes only VT-VZ-01's protocol
+npm test` regression passes 506/506. This closes only VT-VZ-01's protocol
 boundary; it does not prove VM boot, entitlements, guest filesystem/network or
 credential isolation, process ownership, native channel implementation, or
 production `mac_task_run` enablement. Evidence:
@@ -527,7 +529,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 | VT-CON-02 | Per-tool functional input/output schemas are complete | T-019, T-021 | MOP-084 | Every contract has bounded `input_schema` and `output_schema`, functional schema compilation, forbidden-field checks, and catalog parity; runtime compatibility remains a separate gate | Documentation | PASS |
 | VT-AUTH-01 | Broker final authority | T-001, T-003 | MOP-011, MOP-013 | Forged scope/principal integration tests | Local/Remote | OPEN — a real RS256-authenticated MCP client now reaches `mac_health` through signed, peer-checked local IPC and Broker-owned capability discovery; separately spawned Broker and Edge package-process fixtures now complete a signed request/response over native UDS under a captured PID/start-time identity and verify the Broker response proof; the fixed Broker service entrypoint restores exact persisted signed Policy/Edge-key authority before native listener construction; exact scope/host target, signed Edge/key metadata, protected owner-only Authority Control key source with digest/revocation/activation binding, startup assembly with separate native-peer Authority channel, key rotation/revocation, macOS UID/GID/PID and optional PID/start-time peer denial, caller-filtered discovery and bearer isolation pass; installed launchd process identity, native code identity, and real remote issuer chain remain |
 | VT-AUTH-02 | Replay rejection | T-002 | MOP-012 | Duplicate nonce, stale timestamp, altered payload, restart tests | Local/Remote | OPEN — atomic nonce/request admission, local duplicate/restart and authenticated-denial reservation cases pass; corruption/retention/remote evidence remains |
-| VT-VZ-01 | Authenticated Virtualization guest transport | T-023 | MOP-086, MOP-012 | Guest request/response HMAC, durable replay, identity/profile binding, bounded frame, timeout/cancel, malformed/transport-loss tests | L2/L5 | OPEN — versioned HMAC envelopes, request/response digest binding, guest identity checks, schema-6 replay persistence, hard frame/timeout/cancel bounds, malformed-response rejection, retryable unknown-outcome mapping, and Broker-side digest-bound executor mapping pass focused 21/21; native guest channel, signed attestation source, and production enablement remain |
+| VT-VZ-01 | Authenticated Virtualization guest transport | T-023 | MOP-086, MOP-012 | Guest request/response HMAC, durable replay, identity/profile binding, bounded frame, timeout/cancel, malformed/transport-loss tests | L2/L5 | OPEN — versioned HMAC envelopes, request/response digest binding, guest identity checks, schema-6 replay persistence, hard frame/timeout/cancel bounds, authenticated status lookup bound to the original task, malformed-response rejection, retryable unknown-outcome mapping, and Broker-side digest-bound executor mapping pass focused 25/25; Broker Job reconciliation, native guest channel/status server, signed attestation source, and production enablement remain |
 | VT-VZ-02 | Real guest isolation and readback | T-024 | MOP-086, MOP-045 | Signed VM image/runtime identity, VM boot, guest filesystem/network/credential/process escape, cancellation, postcondition and restart evidence | L2 | BLOCKED — SDK/header availability and an intentionally invalid guest-less configuration probe are recorded only; no VM image, boot, entitlement, guest isolation, or production capability evidence exists |
 | VT-AUTH-03 | Compromised Edge cannot expand target | T-003 | MOP-013 | Broker policy negative matrix | Local | OPEN — exact host and signed filesystem-root authorization, deny/default-deny, and Broker-owned path-to-root mapping pass; app/resource normalizers remain |
 | VT-FS-01 | F0-F5 and precedence | T-004 | MOP-018, MOP-036 | Traversal, symlink, mount, deny-inside-allow real-Mac tests | L0/L1 | OPEN — descriptor metadata/read/hash/list/tree traversal, symlink escape, same-volume/local-volume containment, independent root enablement, protected-entry filtering, deny-after-resolution, single-link inode, plan-captured volume identity, native `f_fsid`/filesystem-type checks, Unix-domain-socket denial, FIFO `O_NONBLOCK` denial, `/dev` pseudo-device volume denial, observed character/block-device denial, bounded listing/tree/search pressure, post-operation stability, lexical case-alias rejection, and NFKC-normalized Unicode search identity cases pass; physical remount identity, broader device/pseudo-filesystem coverage, production-scale resource exhaustion, and configurable secret matrix remain |

@@ -559,6 +559,12 @@ for production enablement until a native VM adapter, host/guest credential and
 filesystem/network evidence, cancellation/readback proof, and signing are
 available. Evidence: `evidence/2026-09-14-virtualization-guest-transport.md`.
 
+Latest guest recovery addendum: commit `c2a7888` adds a separate
+HMAC-authenticated status lookup bound to the original task request and a
+Broker-owned authority callback. It provides a tested recovery protocol but
+does not yet reconcile Broker Jobs, serve status from a native guest, boot a
+VM, or enable `mac_task_run`; the capability remains `PLANNED` for production.
+
 ## Definition of Done
 
 A task is `DONE` only when implementation, focused verification, affected regression and security checks, real-Mac evidence where relevant, documentation updates, and final repository readback are complete. Code existence alone is insufficient.

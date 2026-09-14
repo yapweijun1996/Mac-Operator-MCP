@@ -158,6 +158,19 @@ Virtualization channel, VM boot, signed attestation source, guest isolation,
 and production `mac_task_run` enablement remain open. Evidence:
 `evidence/2026-09-14-virtualization-guest-transport.md`.
 
+Latest guest-recovery addendum: commit `c2a7888` adds a separate authenticated
+guest status envelope. A lookup uses a fresh replay-protected request ID and
+nonce, binds the original task request ID/nonce/digest and immutable guest
+identity, applies bounded timeout/output limits, and verifies a signed status
+response. The client requires an explicit Broker-owned authority callback
+before sending any lookup, so status queries cannot become a new execution
+authority. Focused task-runner plus guest-transport tests pass 25/25, and the
+complete `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm
+test` regression passes 506/506. This is a recovery protocol boundary only;
+Broker Job reconciliation, native guest status serving, VM boot, and production
+enablement remain open. Evidence:
+`evidence/2026-09-14-virtualization-guest-transport.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now
