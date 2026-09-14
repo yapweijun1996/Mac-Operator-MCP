@@ -105,9 +105,12 @@ export class ApprovalIpcServer {
     socket.setTimeout(15_000, () => socket.destroy());
     let chunks: Buffer[] = [];
     let total = 0;
+    let handled = false;
     socket.on("data", (chunk: Buffer) => {
+      if (handled) return;
       total += chunk.byteLength;
       if (total > this.maxRequestBytes) {
+        handled = true;
         writeApprovalResponse(socket, failure("OUTPUT_LIMIT", "Approval IPC request exceeded the byte limit"));
         return;
       }
@@ -115,10 +118,17 @@ export class ApprovalIpcServer {
       const combined = Buffer.concat(chunks);
       const newline = combined.indexOf(0x0a);
       if (newline === -1) return;
+      handled = true;
       socket.pause();
       chunks = [];
       let response: ApprovalIpcResponse;
       try {
+        const trailing = combined.subarray(newline + 1);
+        if (trailing.some((byte) => !isAsciiWhitespace(byte))) {
+          response = failure("PRECONDITION_FAILED", "Approval IPC request contains trailing data");
+          writeApprovalResponse(socket, response);
+          return;
+        }
         const request = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
         const approval = this.options.authority.issue(request);
         response = {
@@ -136,6 +146,10 @@ export class ApprovalIpcServer {
       writeApprovalResponse(socket, response);
     });
   }
+}
+
+function isAsciiWhitespace(byte: number): boolean {
+  return byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20;
 }
 
 function writeApprovalResponse(socket: Socket, response: ApprovalIpcResponse): void {

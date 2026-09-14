@@ -193,7 +193,16 @@ test("approval issuance uses a separate owner-only local IPC channel", async () 
   await server.listen();
   try {
     assert.equal((await stat(socketPath)).mode & 0o777, 0o600);
-    const response = await sendApproval(socketPath, `${JSON.stringify(signed(approval({ approvalId: "approval:ipc" }), context.key))}\n`);
+    const issuance = signed(approval({ approvalId: "approval:ipc" }), context.key);
+    const trailing = await sendApproval(socketPath, `${JSON.stringify(issuance)}\n{}\n`);
+    assert.deepEqual(trailing, {
+      ok: false,
+      result_class: "PRECONDITION_FAILED",
+      error: { message: "Approval IPC request contains trailing data", retryable: false }
+    });
+    assert.equal(context.store.approvalRecord("approval:ipc"), undefined);
+    assert.deepEqual(context.store.auditRows(), []);
+    const response = await sendApproval(socketPath, `${JSON.stringify(issuance)}\n`);
     assert.deepEqual(response, { ok: true, approval_id: "approval:ipc", expires_at_ms: NOW + 30_000, revision: 0 });
   } finally {
     await server.close();
