@@ -26,6 +26,13 @@ install-plan suite passes 21/21; no production certificate or persistent
 LaunchAgent was available. Evidence:
 `evidence/2026-09-14-production-signature-gate.md`.
 
+Latest task credential-proof addendum: `TaskIsolationProof` now requires a
+mechanism-bound credential-isolation value and rejects generic or cross-runner
+claims before dispatch. The focused runner/sandbox suite passes 18/21 with
+three explicit Darwin skips; this strengthens the contract but does not prove
+production credential-store isolation. Evidence:
+`evidence/2026-09-14-task-credential-isolation-proof.md`.
+
 Latest persistence operations addendum: `PERSISTENCE_CUTOVER.md` defines the
 host-only forward migration, encrypted-backup restore, authority freeze,
 UNKNOWN-job handling, rollback, and final readback sequence. It does not claim

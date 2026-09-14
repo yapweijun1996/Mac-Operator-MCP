@@ -11,6 +11,9 @@ const RUNTIME_VERSION_PATTERN = /^[A-Za-z0-9._:+/-]{1,128}$/u;
 
 /** Mechanisms with a governed runner contract; availability remains evidence-gated. */
 export type TaskIsolationMechanism = "sandbox-exec" | "virtualization";
+export type TaskCredentialIsolationProof =
+  | "sandbox-exec-empty-env-deny-secret-zones-v1"
+  | "virtualization-no-host-credentials-v1";
 
 export interface TaskExecutionControl {
   timeoutMs: number;
@@ -48,6 +51,8 @@ export interface TaskIsolationProof {
   filesystem: "enforced";
   network: "enforced";
   credentials: "isolated";
+  /** Mechanism-bound proof that host/controller credentials are not inherited. */
+  credentialIsolation: TaskCredentialIsolationProof;
   processTree: "owned";
   processTreePolicy: "single_process" | "owned_group";
   evidenceRef: string;
@@ -321,7 +326,10 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
-  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "processTree", "processTreePolicy", "evidenceRef", "virtualizationGuest"]);
+  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "credentialIsolation", "processTree", "processTreePolicy", "evidenceRef", "virtualizationGuest"]);
+  const expectedCredentialIsolation = proof.sandboxMechanism === "sandbox-exec"
+    ? "sandbox-exec-empty-env-deny-secret-zones-v1"
+    : "virtualization-no-host-credentials-v1";
   if (
     Object.keys(value).some((key) => !allowedKeys.has(key)) ||
     proof.schemaVersion !== "0.1" ||
@@ -331,6 +339,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     proof.filesystem !== "enforced" ||
     proof.network !== "enforced" ||
     proof.credentials !== "isolated" ||
+    proof.credentialIsolation !== expectedCredentialIsolation ||
     proof.processTree !== "owned" ||
     (proof.processTreePolicy !== "single_process" && proof.processTreePolicy !== "owned_group") ||
     typeof proof.evidenceRef !== "string" ||
@@ -347,6 +356,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     filesystem: "enforced",
     network: "enforced",
     credentials: "isolated",
+    credentialIsolation: proof.credentialIsolation,
     processTree: "owned",
     processTreePolicy: proof.processTreePolicy,
     evidenceRef: proof.evidenceRef,

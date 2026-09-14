@@ -58,6 +58,14 @@ limited to zero-capability temporary fixtures. The focused install-plan suite
 passes 21/21; no Developer ID artifact or persistent service was available on
 the host. Evidence: `evidence/2026-09-14-production-signature-gate.md`.
 
+Latest task credential-proof addendum: `TaskIsolationProof` now binds an
+explicit credential-isolation statement to the selected `sandbox-exec` or
+virtualization mechanism. The host sandbox proof names empty inherited
+environment plus secret-zone denial; a future guest proof names no host
+credentials. Mechanism mismatch fails closed before dispatch. Focused
+runner/sandbox tests pass 18/21 with three explicit Darwin skips. Evidence:
+`evidence/2026-09-14-task-credential-isolation-proof.md`.
+
 Latest persistence operations addendum: `PERSISTENCE_CUTOVER.md` defines the
 forward migration, encrypted-backup restore, authority freeze, UNKNOWN-job
 handling, rollback, and final readback order without inventing an installer or

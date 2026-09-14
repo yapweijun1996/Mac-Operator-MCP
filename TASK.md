@@ -95,6 +95,14 @@ capabilities. Focused install-plan tests pass 21/21. Developer ID artifact,
 notarization, and persistent launchd evidence remain open. Evidence:
 `evidence/2026-09-14-production-signature-gate.md`.
 
+Task credential-proof addendum: `TaskIsolationProof` now requires a
+mechanism-bound credential-isolation value for sandbox-exec or virtualization;
+generic `credentials: isolated` claims are insufficient. Mechanism mismatch is
+rejected before child dispatch. Focused runner/sandbox tests pass 18/21 with
+three explicit Darwin skips. Production credential-store isolation remains
+open. Evidence:
+`evidence/2026-09-14-task-credential-isolation-proof.md`.
+
 Persistence operations addendum: `PERSISTENCE_CUTOVER.md` records the forward
 migration, encrypted-backup restore, authority freeze, UNKNOWN-job handling,
 rollback, and final readback procedure. It is host/operator documentation and

@@ -19,6 +19,7 @@ function proof(): TaskIsolationProof {
     filesystem: "enforced",
     network: "enforced",
     credentials: "isolated",
+    credentialIsolation: "sandbox-exec-empty-env-deny-secret-zones-v1",
     processTree: "owned",
     processTreePolicy: "single_process",
     evidenceRef: "test://sandbox-profile"
