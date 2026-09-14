@@ -48,15 +48,16 @@ diff checks pass. Independent native number-vector expansion and final release
 evidence remain unproven. Evidence:
 `evidence/2026-09-15-cross-runtime-json-number-canonicalization.md`.
 
-Capability-family capacity addendum: source revision `db129b3` adds schema-v9
+Capability-family capacity addendum: source revisions `db129b3` and `0b7d3b9` add schema-v9
 request markers and durable BrokerStore admission gates for independent
 read/write/process/network/gui/destructive/privileged families. Family
 selection comes from the active Broker policy, is persisted before
 authorization, and is counted under the same SQLite `BEGIN IMMEDIATE`
 transaction across handles. Empty legacy markers count against every requested
-family; malformed stored markers fail closed as `AUDIT_UNAVAILABLE`.
-Focused Broker/persistence tests pass 122/122 with 6 explicit skips; the
-complete physical-Darwin suite passes 596/596 with 0 skipped tests. Build,
+family; malformed stored markers fail closed as `AUDIT_UNAVAILABLE`, including
+when the new request is family-less. Focused Broker/persistence tests pass
+123/123 with 6 explicit skips; the complete physical-Darwin suite passes
+597/597 with 0 skipped tests. Build,
 typecheck, lint, contract verification, native canonical probe, and diff
 checks pass. Adapter-specific semantic quotas, kernel/disk/depth limits,
 installed service evidence, and final release acceptance remain unproven.
@@ -1009,7 +1010,7 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Release gates
 
-Durable capability-family clarification: source revision `db129b3` closes the
+Durable capability-family clarification: source revisions `db129b3` and `0b7d3b9` close the
 cross-handle BrokerStore quota boundary for read, write, process, network, GUI,
 destructive, and privileged families. The remaining resource-bound gate is
 adapter-specific semantic enforcement plus kernel/disk/depth limits and
