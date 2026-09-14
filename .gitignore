@@ -30,6 +30,10 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+**/.npmrc
+*.token
+*.secret
+*.secrets
 
 # Local certificates and private keys
 *.key
@@ -37,6 +41,12 @@ pnpm-debug.log*
 *.p12
 *.pfx
 *.crt
+*.p8
+*.der
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
 
 # Local scratch state
 .tmp/
