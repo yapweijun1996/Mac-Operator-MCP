@@ -1,5 +1,8 @@
 # Persistence Backup and Restore Evidence
 
+> Superseded by `evidence/2026-09-14-encrypted-backup.md`. This record is
+> retained as historical evidence for the pre-encryption implementation.
+
 Status: Implemented, host-only, disabled as an MCP capability
 
 ## Scope
@@ -11,17 +14,18 @@ does not select external storage, encryption, or automatic scheduling.
 ## Boundary
 
 - `BrokerStore.backupTo(directory, options)` calls SQLite's bounded backup API,
-  writes a same-directory temporary file, applies owner-only `0600` mode,
-  fsyncs the file and directory, then atomically publishes the generated
-  `broker-backup-<timestamp>-<random>.sqlite` name.
+  writes a protected raw snapshot, streams it through the Broker-owned
+  encryption envelope, applies owner-only `0600` mode, fsyncs the encrypted
+  file and directory, then atomically publishes the generated
+  `broker-backup-<timestamp>-<random>.sqlite.enc` name.
 - Publication and final readback require SQLite `quick_check`, a recomputed
   SHA-256 audit-event chain, a bounded file size, owner identity, exact file
   mode, and a stable device/inode/size/mtime identity.
-- `BrokerStore.restoreBackup(source, destination)` verifies the source again,
-  copies it to a protected temporary file, checks the source identity again,
-  fsyncs and atomically publishes only to a new destination. Existing targets,
-  symlinks, malformed names, unsafe parents, and changed source identities are
-  rejected.
+- `BrokerStore.restoreBackup(source, destination, keySource)` verifies and
+  authenticates the encrypted source, decrypts it to a protected temporary
+  file, checks the source identity again, fsyncs and atomically publishes only
+  to a new destination. Existing targets, symlinks, malformed names, unsafe
+  parents, key mismatches, and changed source identities are rejected.
 - `BrokerStore.pruneBackups(directory, retainCount)` matches only the exact
   generated filename shape, orders by numeric timestamp, retains a bounded
   newest set, and refuses unsafe entries before deleting any file.
@@ -43,7 +47,7 @@ does not select external storage, encryption, or automatic scheduling.
 7. a deterministic insufficient-capacity preflight that fails before any
    temporary file is created.
 
-The focused persistence suite passes 33/33 tests after this slice. Full-suite
+The focused persistence suite passed 33/33 tests for the pre-encryption slice. Full-suite
 counts and the exact local commit are recorded in `PROGRESS.md` and
 `VERIFICATION.md` after the final verification run.
 
@@ -56,8 +60,8 @@ kernel-level quota exhaustion or an installed production launchd service.
 
 ## Remaining acceptance work
 
-This evidence does not prove encrypted or Keychain-protected backup storage,
+This historical evidence does not prove live Keychain-protected backup storage,
 disk quota/exhaustion behavior, crash injection across every filesystem
 boundary, multi-process ownership, external audit anchoring, general schema
-migration policy, or a production rollback/runbook decision. ADR-0005 remains
-`Proposed`, and the primitives remain host-only and disabled by default.
+migration policy, corruption handling, or a production rollback/runbook decision.
+See the superseding encrypted-backup evidence for current backup behavior.

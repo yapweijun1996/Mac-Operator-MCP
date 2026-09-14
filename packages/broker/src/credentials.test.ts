@@ -5,11 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  createKeychainBrokerBackupKeySource,
   loadAuthenticationKey,
   loadApprovalIssuerKey,
   loadKeychainAuthenticationKey,
   provisionAuthenticationKey,
   provisionKeychainAuthenticationKey,
+  provisionKeychainBrokerBackupKey,
   retireRevokedApprovalIssuerKey,
   retireRevokedAuthenticationKey
 } from "./credentials.js";
@@ -103,6 +105,20 @@ test("Keychain authentication provisioning validates its explicit namespace with
   );
   await assert.rejects(
     provisionKeychainAuthenticationKey("com.mac-operator.test", `../escape`),
+    /Keychain service or account is invalid/u
+  );
+});
+
+test("Keychain backup key source binds a fixed Broker-owned item", async () => {
+  const source = createKeychainBrokerBackupKeySource("com.mac-operator.test", "backup:primary", "backup-key-1");
+  assert.equal(source.keyId, "backup-key-1");
+  await assert.rejects(async () => source.loadKey(), /Keychain generic password is unavailable/u);
+  assert.throws(
+    () => createKeychainBrokerBackupKeySource("com.mac-operator.test", "backup:primary", "../escape"),
+    /key ID is invalid/u
+  );
+  await assert.rejects(
+    provisionKeychainBrokerBackupKey("/tmp/attacker", "backup:primary"),
     /Keychain service or account is invalid/u
   );
 });

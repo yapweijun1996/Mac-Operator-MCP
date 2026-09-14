@@ -39,18 +39,20 @@ and compatibility guard; BrokerStore's runtime validators remain authoritative
 for cross-field target, digest, approval, and state-transition invariants.
 
 The Broker now has a host-only backup/recovery slice. `BrokerStore.backupTo`
-uses SQLite's backup API, publishes an owner-only `0600` file through a
-same-directory temporary rename, verifies `quick_check`, recomputes the audit
-hash chain, and returns a bounded SHA-256 manifest. `restoreBackup` validates
-the source again, copies to a protected temporary file, rechecks source
-device/inode/size/mtime, refuses an existing destination, and performs final
-integrity readback. `pruneBackups` accepts only the exact generated filename
-shape, retains the newest numeric timestamps, and refuses symlinks, foreign
-owners, unsafe modes, oversized files, and target swaps. These are not MCP
-tools and do not enable backup automation or external storage. SQLite backup
-WAL/SHM/journal sidecars are removed with the temporary base. A hard-crashed
-backup child is covered by a recovery test: stale hidden temporary artifacts
-and sidecars are removed only after an age threshold and identity recheck.
+uses SQLite's backup API, streams the snapshot through a Broker-owned
+AES-256-GCM envelope, publishes an owner-only `0600` `.sqlite.enc` file through
+a same-directory temporary rename, verifies `quick_check`, recomputes the
+audit hash chain, and returns a bounded SHA-256 manifest. `restoreBackup`
+authenticates and decrypts the source into a protected temporary file,
+rechecks source device/inode/size/mtime, refuses an existing destination, and
+performs final integrity readback. `pruneBackups` accepts only the exact
+encrypted filename shape, retains the newest numeric timestamps, and refuses
+legacy plaintext names, symlinks, foreign owners, unsafe modes, oversized
+files, and target swaps. These are not MCP tools and do not enable backup
+automation or external storage. SQLite backup WAL/SHM/journal sidecars are
+removed with the temporary base. A hard-crashed backup child is covered by a
+recovery test: stale hidden temporary artifacts and sidecars are removed only
+after an age threshold and identity recheck.
 Broker SQLite connections use a bounded busy timeout, and two independent
 process writers have been verified to preserve the audit hash chain under
 `BEGIN IMMEDIATE`. A simulated `ENOSPC` at publication maps to retryable
@@ -58,6 +60,15 @@ process writers have been verified to preserve the audit hash chain under
 Before the copy begins, the source page count/size and destination-volume
 `statfs` available bytes are checked with bounded headroom for sidecars; an
 insufficient-capacity preflight fails before creating a temporary file.
+
+Backups are now encrypted by default with a Broker-owned AES-256-GCM key
+source. The on-disk `.sqlite.enc` envelope binds a version, key identity, nonce,
+ciphertext, and authentication tag; creation decrypts a verification copy before
+atomic publication, and restore authenticates/decrypts before SQLite and audit
+readback. Keys are loaded only through an injected source, with a dedicated
+Keychain-backed source factory available for macOS startup; missing, malformed,
+mismatched, or tampered keys/files fail closed. Legacy plaintext backup names
+are refused by retention until an explicit migration is performed.
 
 The persistence constructor now enforces a monotonic SQLite `user_version`
 gate. Fresh and legacy databases are upgraded through the known idempotent
@@ -67,4 +78,4 @@ with a newer version is rejected before any Broker authority or recovery work;
 the focused migration suite covers fresh initialization, legacy preservation,
 and future-version refusal.
 
-`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, encrypted/Keychain-protected backup storage, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested. Schema versioning is now implemented for the current migration set; a general migration registry and rollback policy remain open.
+`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested. Encrypted backup storage and the current schema-version gate are implemented; a general migration registry and rollback policy, Keychain ACL review, and final ADR acceptance remain open.

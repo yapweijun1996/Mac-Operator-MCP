@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { lstat, mkdtemp, readdir, rm, symlink, utimes } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BROKER_SCHEMA_VERSION, BrokerStore } from "./persistence.js";
+
+const testBackupKeySource = {
+  keyId: "backup-test-1",
+  loadKey: () => Buffer.from("0123456789abcdef0123456789abcdef", "ascii")
+};
 
 test("BrokerStore records a monotonic schema version after initialization", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-schema-version-"));
@@ -225,6 +230,37 @@ test("BrokerStore rejects a tampered audit chain on reopen", async () => {
   }
 });
 
+test("BrokerStore refuses plaintext backups and mismatched backup keys", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-key-boundary-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    await assert.rejects(
+      store.backupTo(directory),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    const manifest = await store.backupTo(directory, { keySource: testBackupKeySource, nowMs: 500 });
+    const wrongKey = {
+      keyId: "backup-other",
+      loadKey: () => Buffer.from("fedcba9876543210fedcba9876543210", "ascii")
+    };
+    await assert.rejects(
+      BrokerStore.restoreBackup(manifest.path, join(directory, "wrong-key.sqlite"), wrongKey),
+      /key identity does not match/u
+    );
+    const wrongMaterial = {
+      keyId: testBackupKeySource.keyId,
+      loadKey: () => Buffer.from("fedcba9876543210fedcba9876543210", "ascii")
+    };
+    await assert.rejects(
+      BrokerStore.restoreBackup(manifest.path, join(directory, "wrong-material.sqlite"), wrongMaterial),
+      /decrypted/u
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore creates an owner-only backup and restores it with integrity readback", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-restore-"));
   const databasePath = join(directory, "broker.sqlite");
@@ -242,8 +278,13 @@ test("BrokerStore creates an owner-only backup and restores it with integrity re
     timestampMs: 1
   });
   try {
-    const manifest = await store.backupTo(directory, { nowMs: 1_700_000_000_000, retainCount: 2 });
-    assert.match(manifest.path, /broker-backup-1700000000000-[a-f0-9]{24}\.sqlite$/u);
+    const manifest = await store.backupTo(directory, { keySource: testBackupKeySource, nowMs: 1_700_000_000_000, retainCount: 2 });
+    assert.match(manifest.path, /broker-backup-1700000000000-[a-f0-9]{24}\.sqlite\.enc$/u);
+    assert.equal(manifest.encrypted, true);
+    assert.equal(manifest.keyId, testBackupKeySource.keyId);
+    const encryptedBytes = await readFile(manifest.path);
+    assert.equal(encryptedBytes.subarray(0, 8).toString("ascii"), "MOPSBAK1");
+    assert.equal(encryptedBytes.includes(Buffer.from("SQLite format 3", "ascii")), false);
     assert.equal(manifest.auditEventCount, 1);
     assert.notEqual(manifest.auditTailHash, "0".repeat(64));
     assert.equal((await lstat(manifest.path)).mode & 0o777, 0o600);
@@ -251,7 +292,7 @@ test("BrokerStore creates an owner-only backup and restores it with integrity re
 
     store.close();
     const restoredPath = join(directory, "restored.sqlite");
-    const restoredManifest = await BrokerStore.restoreBackup(manifest.path, restoredPath);
+    const restoredManifest = await BrokerStore.restoreBackup(manifest.path, restoredPath, testBackupKeySource);
     assert.equal(restoredManifest.sha256, manifest.sha256);
     assert.equal(restoredManifest.auditTailHash, manifest.auditTailHash);
     store = new BrokerStore(restoredPath);
@@ -267,16 +308,29 @@ test("BrokerStore retention is bounded and rejects symlink backup entries", asyn
   const databasePath = join(directory, "broker.sqlite");
   const store = new BrokerStore(databasePath);
   try {
-    await store.backupTo(directory, { nowMs: 100, retainCount: 3 });
-    await store.backupTo(directory, { nowMs: 200, retainCount: 3 });
-    await store.backupTo(directory, { nowMs: 300, retainCount: 3 });
+    await store.backupTo(directory, { keySource: testBackupKeySource, nowMs: 100, retainCount: 3 });
+    await store.backupTo(directory, { keySource: testBackupKeySource, nowMs: 200, retainCount: 3 });
+    await store.backupTo(directory, { keySource: testBackupKeySource, nowMs: 300, retainCount: 3 });
     const pruned = await store.pruneBackups(directory, 2);
     assert.equal(pruned.removed.length, 1);
     assert.equal(pruned.retained.length, 2);
 
-    const unsafe = join(directory, `broker-backup-999-${"a".repeat(24)}.sqlite`);
+    const unsafe = join(directory, `broker-backup-999-${"a".repeat(24)}.sqlite.enc`);
     await symlink(databasePath, unsafe);
     await assert.rejects(store.pruneBackups(directory, 2), /unsafe backup entry/u);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore retention refuses legacy plaintext backup names", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-plaintext-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const legacyPath = join(directory, `broker-backup-999-${"b".repeat(24)}.sqlite`);
+    await writeFile(legacyPath, "legacy", { mode: 0o600 });
+    await assert.rejects(store.pruneBackups(directory, 2), /Unencrypted Broker backup entries/u);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -296,6 +350,7 @@ test("BrokerStore removes stale backup temporaries left by a hard-crashed backup
       const { DatabaseSync } = await import("node:sqlite");
       const database = new DatabaseSync(databasePath);
       await createBrokerBackup(database, directory, {
+        keySource: { keyId: "backup-test-1", loadKey: () => Buffer.from("0123456789abcdef0123456789abcdef", "ascii") },
         faultInjector: (point) => { if (point === "after_backup") process.kill(process.pid, "SIGKILL"); }
       });
     `;
@@ -381,6 +436,7 @@ test("BrokerStore maps a simulated ENOSPC publication failure to retryable audit
   try {
     await assert.rejects(
       store.backupTo(directory, {
+        keySource: testBackupKeySource,
         faultInjector: (point) => {
           if (point !== "after_temp_verify") return;
           const error = Object.assign(new Error("No space left on device"), { code: "ENOSPC" });
@@ -407,7 +463,7 @@ test("BrokerStore fails closed on an insufficient backup-capacity preflight", as
   const store = new BrokerStore(databasePath);
   try {
     await assert.rejects(
-      store.backupTo(directory, { capacityProbe: async () => 0 }),
+      store.backupTo(directory, { keySource: testBackupKeySource, capacityProbe: async () => 0 }),
       (error: unknown) => {
         assert.equal(error instanceof BrokerError, true);
         assert.equal((error as BrokerError).errorClass, "AUDIT_UNAVAILABLE");
@@ -440,15 +496,15 @@ test("BrokerStore restore rejects a backup whose audit chain was modified", asyn
     timestampMs: 1
   });
   try {
-    const manifest = await store.backupTo(directory, { nowMs: 400, retainCount: 2 });
+    const manifest = await store.backupTo(directory, { keySource: testBackupKeySource, nowMs: 400, retainCount: 2 });
     store.close();
     storeOpen = false;
-    const tamper = new DatabaseSync(manifest.path);
-    tamper.prepare("UPDATE audit_events SET result_class = 'FORGED' WHERE sequence = 1").run();
-    tamper.close();
+    const tampered = await readFile(manifest.path);
+    tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 0xff;
+    await writeFile(manifest.path, tampered, { mode: 0o600 });
     await assert.rejects(
-      BrokerStore.restoreBackup(manifest.path, join(directory, "corrupt-restored.sqlite")),
-      /audit (?:hash|integrity) verification/u
+      BrokerStore.restoreBackup(manifest.path, join(directory, "corrupt-restored.sqlite"), testBackupKeySource),
+      /(?:decrypted|integrity)/u
     );
   } finally {
     if (storeOpen) store.close();

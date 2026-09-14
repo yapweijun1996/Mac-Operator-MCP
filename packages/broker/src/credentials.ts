@@ -6,9 +6,11 @@ import { sha256 } from "@mac-operator/contracts";
 import { keyIdentity } from "./edge-keyring.js";
 import { approvalKeyIdentity, type ApprovalIssuerKey } from "./approval-authority.js";
 import type { BrokerStore, RevocationKind } from "./persistence.js";
-import { readKeychainGenericPassword, writeKeychainGenericPassword } from "./peer-credentials.js";
+import type { BrokerBackupKeySource } from "./persistence-backup.js";
+import { readKeychainGenericPassword, validateKeychainCoordinates, writeKeychainGenericPassword } from "./peer-credentials.js";
 
 const HEX_KEY_PATTERN = /^[A-Fa-f0-9]{64}$/u;
+const BACKUP_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 /**
  * Explicit Keychain source for a 32-byte authentication key. This is not
@@ -29,6 +31,31 @@ export async function provisionKeychainAuthenticationKey(service: string, accoun
       !/^[A-Za-z0-9._:-]{1,128}$/u.test(account)) {
     throw new Error("Keychain service or account is invalid");
   }
+  const key = randomBytes(32);
+  writeKeychainGenericPassword(service, account, key);
+  return { digest: sha256(key) };
+}
+
+/**
+ * Returns an explicit Keychain-backed source for encrypted Broker backups.
+ * The source is configuration-owned; MCP arguments cannot select its item.
+ */
+export function createKeychainBrokerBackupKeySource(
+  service: string,
+  account: string,
+  keyId: string
+): BrokerBackupKeySource {
+  validateKeychainCoordinates(service, account);
+  if (!BACKUP_KEY_ID_PATTERN.test(keyId)) throw new Error("Broker backup key ID is invalid");
+  return {
+    keyId,
+    loadKey: () => readKeychainGenericPassword(service, account)
+  };
+}
+
+/** Provisions a dedicated 32-byte backup key in the Broker-owned Keychain namespace. */
+export async function provisionKeychainBrokerBackupKey(service: string, account: string): Promise<{ digest: string }> {
+  validateKeychainCoordinates(service, account);
   const key = randomBytes(32);
   writeKeychainGenericPassword(service, account, key);
   return { digest: sha256(key) };

@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest encrypted-backup addendum: Broker persistence backups now require an
+explicit Broker-owned 32-byte key source and publish only authenticated
+AES-256-GCM `.sqlite.enc` files. Creation and restore use descriptor-backed
+streaming, decrypt-and-verify SQLite/audit readback, identity checks before
+rename, and owner-only temporary cleanup; missing or mismatched keys,
+ciphertext tampering, and legacy plaintext names fail closed. The dedicated
+Keychain source factory keeps the key out of files, logs, and MCP arguments.
+Focused persistence and credential tests pass 45/45. Evidence:
+`evidence/2026-09-14-encrypted-backup.md`.
+
 Latest persistence-schema addendum: `BrokerStore` now reads SQLite
 `user_version` before initialization, rejects a database marked newer than the
 runtime, and applies the known revocation/request/Job migrations transactionally
@@ -31,7 +41,7 @@ image SHA-256/runtime identity, a native-adapter executor, and a matching
 identity recheck immediately before dispatch; missing or changed identity
 fails closed, and adapter failures remain retryable `UNKNOWN_OUTCOME`. New
 proof-validation, target-swap, and adapter-failure tests pass 8/8; the full
-real-sandbox regression passes 460/461 with one explicit host-boundary/opt-in
+real-sandbox regression passes 463/464 with one explicit host-boundary/opt-in
 skip. This is SDK and
 boundary evidence only, not VM isolation or `mac_task_run` enablement.
 Evidence: `evidence/2026-09-14-virtualization-framework-sdk.md`.

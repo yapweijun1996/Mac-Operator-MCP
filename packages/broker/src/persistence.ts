@@ -6,6 +6,7 @@ import {
   createBrokerBackup,
   pruneBrokerBackups,
   restoreBrokerBackup,
+  type BrokerBackupKeySource,
   type BrokerBackupManifest,
   type BrokerBackupOptions,
   type BrokerBackupPruneResult
@@ -574,7 +575,7 @@ export class BrokerStore {
     this.database.close();
   }
 
-  /** Creates a verified, owner-only backup without exposing the live database handle. */
+  /** Creates a verified, owner-only encrypted backup without exposing the live database handle. */
   backupTo(directory: string, options: BrokerBackupOptions = {}): Promise<BrokerBackupManifest> {
     return createBrokerBackup(this.database, directory, options);
   }
@@ -584,9 +585,9 @@ export class BrokerStore {
     return pruneBrokerBackups(directory, retainCount);
   }
 
-  /** Restores a verified backup into a fresh destination without replacing an existing database. */
-  static restoreBackup(backupPath: string, destinationPath: string): Promise<BrokerBackupManifest> {
-    return restoreBrokerBackup(backupPath, destinationPath);
+  /** Restores a verified encrypted backup into a fresh destination without replacing an existing database. */
+  static restoreBackup(backupPath: string, destinationPath: string, keySource?: BrokerBackupKeySource): Promise<BrokerBackupManifest> {
+    return restoreBrokerBackup(backupPath, destinationPath, keySource);
   }
 
   admitRequest(input: AdmitRequestInput): RequestRecord {

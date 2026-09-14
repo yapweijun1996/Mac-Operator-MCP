@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest encrypted-backup addendum: Broker backups require a configured
+Broker-owned key source and are published as authenticated AES-256-GCM
+`.sqlite.enc` envelopes. Creation and restore stream through descriptor-backed
+files, verify decrypted SQLite/audit content before and after publication, bind
+the key identity, and reject missing/mismatched keys, ciphertext tampering, and
+legacy plaintext backup names. Focused persistence and credential tests pass
+45/45. Evidence: `evidence/2026-09-14-encrypted-backup.md`.
+
 Latest persistence-schema addendum: `BrokerStore` enforces SQLite
 `user_version` `4`, runs the known legacy migrations in one transaction, and
 rejects future-version databases before authority or recovery work. Fresh,
@@ -28,7 +36,7 @@ without boot. The new disabled-by-default
 external host-evidence gate, a native executor, and a proof-bound guest image
 SHA-256/runtime identity; it rechecks that identity before dispatch and fails
 closed on a target swap. Focused task-runner tests pass 8/8; the full
-`MOPS_REAL_SANDBOX=1 npm test` regression passes 460/461 with one explicit
+`MOPS_REAL_SANDBOX=1 npm test` regression passes 463/464 with one explicit
 host-boundary/opt-in skip. No VM boot, guest isolation, or production task
 enablement is claimed. Evidence:
 `evidence/2026-09-14-virtualization-framework-sdk.md`.

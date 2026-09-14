@@ -1,18 +1,29 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { constants, createReadStream, type Dirent } from "node:fs";
-import { chmod, copyFile, lstat, open, readdir, rename, statfs, unlink } from "node:fs/promises";
+import { chmod, lstat, open, readdir, rename, statfs, unlink } from "node:fs/promises";
 import { backup, DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 
-const BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite$/u;
-const BACKUP_TEMP_NAME_PATTERN = /^\.broker-backup-(\d{1,16})-[a-f0-9]{24}\.sqlite\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?$/u;
+const BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite\.enc$/u;
+const LEGACY_PLAINTEXT_BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite$/u;
+const BACKUP_TEMP_NAME_PATTERN = /^\.broker-backup-(\d{1,16})-[a-f0-9]{24}\.(?:sqlite|sqlite\.enc)\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?$/u;
 const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 const MAX_BACKUP_FILES = 256;
 const MAX_BACKUP_TEMP_FILES = 256;
 const BACKUP_TEMP_STALE_MS = 60 * 60 * 1000;
 const BACKUP_HEADROOM_BYTES = 4 * 1024 * 1024;
 const DEFAULT_RETAIN_COUNT = 7;
+const BACKUP_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const BACKUP_CIPHER = "aes-256-gcm" as const;
+const BACKUP_MAGIC = Buffer.from("MOPSBAK1", "ascii");
+const BACKUP_FORMAT_VERSION = 1;
+const BACKUP_NONCE_BYTES = 12;
+const BACKUP_TAG_BYTES = 16;
+const BACKUP_HEADER_PREFIX_BYTES = BACKUP_MAGIC.byteLength + 1 + 2;
+const BACKUP_MAX_KEY_ID_BYTES = 128;
+const MAX_ENCRYPTED_BACKUP_BYTES = MAX_BACKUP_BYTES + BACKUP_MAX_KEY_ID_BYTES + 64;
+const BACKUP_READ_CHUNK_BYTES = 64 * 1024;
 
 export type BrokerBackupFaultPoint = "after_backup" | "after_temp_verify";
 
@@ -23,9 +34,22 @@ export interface BrokerBackupManifest {
   sha256: string;
   auditEventCount: number;
   auditTailHash: string;
+  encrypted: true;
+  keyId: string;
+}
+
+/**
+ * Broker-owned backup key source. Production startup should implement this
+ * with a protected Keychain item; callers must never persist or log the key.
+ */
+export interface BrokerBackupKeySource {
+  keyId: string;
+  loadKey: () => Promise<Uint8Array> | Uint8Array;
 }
 
 export interface BrokerBackupOptions {
+  /** Required encrypted-backup key source; absence fails closed. */
+  keySource?: BrokerBackupKeySource;
   retainCount?: number;
   nowMs?: number;
   /** @internal Test-only crash-boundary hook; production callers must leave unset. */
@@ -51,36 +75,56 @@ export async function createBrokerBackup(
   options: BrokerBackupOptions = {}
 ): Promise<BrokerBackupManifest> {
   if (!source) throw new BrokerError("PRECONDITION_FAILED", "Broker persistence source is unavailable");
+  const keySource = validateBackupKeySource(options.keySource);
   const nowMs = options.nowMs ?? Date.now();
   validateNow(nowMs);
   const retainCount = options.retainCount ?? DEFAULT_RETAIN_COUNT;
   validateRetainCount(retainCount);
   const protectedDirectory = await validateProtectedDirectory(directory);
-  const name = `broker-backup-${nowMs}-${randomBytes(12).toString("hex")}.sqlite`;
+  const name = `broker-backup-${nowMs}-${randomBytes(12).toString("hex")}.sqlite.enc`;
   const destination = join(protectedDirectory, name);
-  const temporary = join(protectedDirectory, `.${name}.tmp-${randomBytes(12).toString("hex")}`);
+  const rawTemporary = join(protectedDirectory, `.${name.replace(/\.enc$/u, "")}.tmp-${randomBytes(12).toString("hex")}`);
+  const encryptedTemporary = join(protectedDirectory, `.${name}.tmp-${randomBytes(12).toString("hex")}`);
+  const verifyTemporary = join(protectedDirectory, `.${name.replace(/\.enc$/u, "")}.tmp-${randomBytes(12).toString("hex")}`);
+  let encryptedTemporaryIdentity: Awaited<ReturnType<typeof lstat>> | undefined;
   try {
     await assertBackupCapacity(protectedDirectory, source, options.capacityProbe);
-    await backup(source, temporary, { rate: 64 });
+    await backup(source, rawTemporary, { rate: 64 });
     options.faultInjector?.("after_backup");
-    await chmod(temporary, 0o600);
-    await syncFile(temporary);
-    const verified = await inspectSnapshot(temporary);
+    await chmod(rawTemporary, 0o600);
+    await syncFile(rawTemporary);
+    const verified = await inspectSnapshot(rawTemporary);
+    await encryptBackupSnapshot(rawTemporary, encryptedTemporary, keySource);
+    await decryptBackupSnapshot(encryptedTemporary, verifyTemporary, keySource);
+    await chmod(verifyTemporary, 0o600);
+    const decrypted = await inspectSnapshot(verifyTemporary);
+    if (decrypted.sha256 !== verified.sha256 || decrypted.auditTailHash !== verified.auditTailHash ||
+        decrypted.auditEventCount !== verified.auditEventCount) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker persistence backup failed integrity readback");
+    }
+    encryptedTemporaryIdentity = await lstat(encryptedTemporary);
     options.faultInjector?.("after_temp_verify");
-    await rename(temporary, destination);
-    await cleanupTemporaryBackupFiles(temporary);
+    const encryptedBeforeRename = await lstat(encryptedTemporary);
+    if (!sameFileIdentity(encryptedTemporaryIdentity, encryptedBeforeRename)) {
+      throw new BrokerError("CONFLICT", "Encrypted Broker backup changed before publication", true);
+    }
+    await rename(encryptedTemporary, destination);
+    await cleanupTemporaryBackupFiles(rawTemporary);
+    await cleanupTemporaryBackupFiles(verifyTemporary);
     await syncDirectory(protectedDirectory);
-    const final = await inspectSnapshot(destination);
-    if (final.sha256 !== verified.sha256 || final.auditTailHash !== verified.auditTailHash) {
+    const final = await inspectEncryptedBackup(destination, keySource, verifyTemporary);
+    if (final.auditEventCount !== verified.auditEventCount || final.auditTailHash !== verified.auditTailHash) {
       throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence backup changed during publication");
     }
     await pruneBrokerBackups(protectedDirectory, retainCount);
-    return { ...final, path: destination, createdAtMs: nowMs };
+    return { ...final, path: destination, createdAtMs: nowMs, encrypted: true, keyId: keySource.keyId };
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence backup could not be created", true);
   } finally {
-    await cleanupTemporaryBackupFiles(temporary).catch(() => undefined);
+    await cleanupTemporaryBackupFiles(rawTemporary).catch(() => undefined);
+    await cleanupTemporaryBackupFiles(encryptedTemporary).catch(() => undefined);
+    await cleanupTemporaryBackupFiles(verifyTemporary).catch(() => undefined);
   }
 }
 
@@ -98,7 +142,9 @@ async function assertBackupCapacity(
   if (!Number.isSafeInteger(databaseBytes) || databaseBytes > MAX_BACKUP_BYTES) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence exceeds the backup byte budget");
   }
-  const requiredBytes = Math.min(MAX_BACKUP_BYTES, databaseBytes * 2 + BACKUP_HEADROOM_BYTES);
+  // Backup creation briefly holds the raw SQLite snapshot, encrypted output,
+  // and a decrypted verification copy in the same protected directory.
+  const requiredBytes = databaseBytes * 4 + BACKUP_HEADROOM_BYTES;
   let availableBytes: number;
   if (capacityProbe !== undefined) {
     try {
@@ -127,10 +173,12 @@ async function assertBackupCapacity(
  */
 export async function restoreBrokerBackup(
   backupPath: string,
-  destinationPath: string
+  destinationPath: string,
+  keySource?: BrokerBackupKeySource
 ): Promise<BrokerBackupManifest> {
   const source = await validateProtectedFile(backupPath);
-  const sourceSummary = await inspectSnapshot(source.path);
+  const validatedKeySource = validateBackupKeySource(keySource);
+  const sourceSummary = await inspectEncryptedBackup(source.path, validatedKeySource);
   const destination = validateAbsolutePath(destinationPath, "Broker restore destination");
   const protectedDirectory = await validateProtectedDirectory(dirname(destination));
   if (resolve(destination) === resolve(source.path)) {
@@ -138,33 +186,60 @@ export async function restoreBrokerBackup(
   }
   const existing = await lstat(destination).catch(() => undefined);
   if (existing) throw new BrokerError("CONFLICT", "Broker restore destination already exists");
-  const temporary = join(protectedDirectory, `.broker-restore-${randomBytes(12).toString("hex")}.tmp`);
+  const temporary = join(protectedDirectory, `.${basename(source.path).replace(/\.enc$/u, "")}.tmp-${randomBytes(12).toString("hex")}`);
+  let temporaryIdentity: Awaited<ReturnType<typeof lstat>> | undefined;
   let moved = false;
   try {
-    await copyFile(source.path, temporary, constants.COPYFILE_EXCL);
+    await decryptBackupSnapshot(source.path, temporary, validatedKeySource);
     await chmod(temporary, 0o600);
     await syncFile(temporary);
+    temporaryIdentity = await lstat(temporary);
     const sourceAfterCopy = await validateProtectedFile(source.path);
     if (!sameFileIdentity(source.stat, sourceAfterCopy.stat)) {
       throw new BrokerError("CONFLICT", "Broker backup changed during restore", true);
     }
     const copiedSummary = await inspectSnapshot(temporary);
-    if (copiedSummary.sha256 !== sourceSummary.sha256 || copiedSummary.auditTailHash !== sourceSummary.auditTailHash) {
+    if (copiedSummary.sha256 !== sourceSummary.plaintextSha256 || copiedSummary.auditTailHash !== sourceSummary.auditTailHash ||
+        copiedSummary.auditEventCount !== sourceSummary.auditEventCount) {
       throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup integrity changed during restore");
+    }
+    const temporaryBeforeRename = await lstat(temporary);
+    if (!sameFileIdentity(temporaryIdentity, temporaryBeforeRename)) {
+      throw new BrokerError("CONFLICT", "Broker restore temporary changed before publication", true);
     }
     await rename(temporary, destination);
     moved = true;
     await syncDirectory(protectedDirectory);
-    const final = await inspectSnapshot(destination);
-    if (final.sha256 !== sourceSummary.sha256 || final.auditTailHash !== sourceSummary.auditTailHash) {
+    const restored = await inspectSnapshot(destination);
+    if (restored.sha256 !== sourceSummary.plaintextSha256 || restored.auditTailHash !== sourceSummary.auditTailHash ||
+        restored.auditEventCount !== sourceSummary.auditEventCount) {
       throw new BrokerError("AUDIT_UNAVAILABLE", "Restored Broker database failed final integrity readback");
     }
-    return { ...final, path: destination, createdAtMs: Date.now() };
+    const encryptedHash = await hashFile(source.path);
+    const sourceAfterHash = await validateProtectedFile(source.path);
+    if (!sameFileIdentity(source.stat, sourceAfterHash.stat)) {
+      throw new BrokerError("CONFLICT", "Broker backup changed during restore hashing", true);
+    }
+    return {
+      bytes: Number(source.stat.size),
+      sha256: encryptedHash,
+      auditEventCount: restored.auditEventCount,
+      auditTailHash: restored.auditTailHash,
+      encrypted: true,
+      keyId: validatedKeySource.keyId,
+      path: destination,
+      createdAtMs: Date.now()
+    };
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence restore could not be completed", true);
   } finally {
-    if (!moved) await unlink(temporary).catch(() => undefined);
+    if (!moved && temporaryIdentity !== undefined) {
+      const current = await lstat(temporary).catch(() => undefined);
+      if (current !== undefined && sameFileIdentity(temporaryIdentity, current)) {
+        await unlink(temporary).catch(() => undefined);
+      }
+    }
   }
 }
 
@@ -173,6 +248,9 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
   validateRetainCount(retainCount);
   const protectedDirectory = await validateProtectedDirectory(directory);
   const entries = await readdir(protectedDirectory, { withFileTypes: true });
+  if (entries.some((entry) => LEGACY_PLAINTEXT_BACKUP_NAME_PATTERN.test(entry.name))) {
+    throw new BrokerError("POLICY_DENIED", "Unencrypted Broker backup entries require explicit migration");
+  }
   const temporaryEntries = entries.filter((entry) => BACKUP_TEMP_NAME_PATTERN.test(entry.name));
   if (temporaryEntries.length > MAX_BACKUP_TEMP_FILES) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory exceeds the bounded temporary-file budget");
@@ -189,7 +267,7 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600 || !isOwnedByCurrentUser(stat.uid)) {
       throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory contains an unsafe backup entry");
     }
-    if (stat.size > MAX_BACKUP_BYTES) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup exceeds the byte budget");
+    if (stat.size > MAX_ENCRYPTED_BACKUP_BYTES) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup exceeds the byte budget");
     files.push({ name: entry.name, path, stat });
   }
   files.sort((left, right) => {
@@ -265,11 +343,12 @@ async function validateProtectedDirectory(directory: string): Promise<string> {
 
 async function validateProtectedFile(pathValue: string): Promise<ProtectedFile> {
   const path = validateAbsolutePath(pathValue, "Broker backup path");
+  await validateProtectedDirectory(dirname(path));
   const stat = await lstat(path).catch(() => undefined);
   if (!stat || !stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600 || !isOwnedByCurrentUser(stat.uid)) {
     throw new BrokerError("POLICY_DENIED", "Broker backup must be an owner-only regular file");
   }
-  if (!BACKUP_NAME_PATTERN.test(basename(path)) || stat.size > MAX_BACKUP_BYTES) {
+  if (!BACKUP_NAME_PATTERN.test(basename(path)) || stat.size > MAX_ENCRYPTED_BACKUP_BYTES) {
     throw new BrokerError("PRECONDITION_FAILED", "Broker backup filename or size is invalid");
   }
   return { path, stat };
@@ -327,14 +406,244 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
-async function inspectSnapshot(path: string): Promise<Omit<BrokerBackupManifest, "path" | "createdAtMs">> {
+function validateBackupKeySource(value: BrokerBackupKeySource | undefined): BrokerBackupKeySource {
+  if (value === undefined || value === null || typeof value !== "object" ||
+      typeof value.keyId !== "string" || !BACKUP_KEY_ID_PATTERN.test(value.keyId) ||
+      Buffer.byteLength(value.keyId, "utf8") > BACKUP_MAX_KEY_ID_BYTES ||
+      typeof value.loadKey !== "function") {
+    throw new BrokerError("POLICY_DENIED", "Encrypted Broker backups require a valid protected key source");
+  }
+  return value;
+}
+
+async function loadBackupKey(source: BrokerBackupKeySource): Promise<Buffer> {
+  let loaded: Uint8Array;
+  try {
+    loaded = await source.loadKey();
+  } catch {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup encryption key is unavailable", true);
+  }
+  if (!(loaded instanceof Uint8Array) || loaded.byteLength !== 32) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup encryption key has an invalid length");
+  }
+  return Buffer.from(loaded);
+}
+
+interface BackupHeader {
+  bytes: Buffer;
+  keyId: string;
+  nonce: Buffer;
+  ciphertextStart: number;
+  ciphertextEnd: number;
+  tag: Buffer;
+}
+
+function buildBackupHeader(keyId: string, nonce: Buffer): Buffer {
+  const keyIdBytes = Buffer.from(keyId, "utf8");
+  if (!BACKUP_KEY_ID_PATTERN.test(keyId) || keyIdBytes.byteLength > BACKUP_MAX_KEY_ID_BYTES || nonce.byteLength !== BACKUP_NONCE_BYTES) {
+    throw new BrokerError("PRECONDITION_FAILED", "Broker backup encryption header is malformed");
+  }
+  const header = Buffer.alloc(BACKUP_HEADER_PREFIX_BYTES + keyIdBytes.byteLength + BACKUP_NONCE_BYTES);
+  BACKUP_MAGIC.copy(header, 0);
+  header.writeUInt8(BACKUP_FORMAT_VERSION, BACKUP_MAGIC.byteLength);
+  header.writeUInt16BE(keyIdBytes.byteLength, BACKUP_MAGIC.byteLength + 1);
+  keyIdBytes.copy(header, BACKUP_HEADER_PREFIX_BYTES);
+  nonce.copy(header, BACKUP_HEADER_PREFIX_BYTES + keyIdBytes.byteLength);
+  return header;
+}
+
+async function readAt(handle: Awaited<ReturnType<typeof open>>, target: Buffer, position: number): Promise<void> {
+  let offset = 0;
+  while (offset < target.byteLength) {
+    const result = await handle.read(target, offset, target.byteLength - offset, position + offset);
+    if (result.bytesRead <= 0) throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup is truncated");
+    offset += result.bytesRead;
+  }
+}
+
+async function writeAll(handle: Awaited<ReturnType<typeof open>>, value: Uint8Array): Promise<void> {
+  let offset = 0;
+  while (offset < value.byteLength) {
+    const result = await handle.write(value, offset, value.byteLength - offset);
+    if (result.bytesWritten <= 0) throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup could not be written", true);
+    offset += result.bytesWritten;
+  }
+}
+
+async function readBackupHeader(
+  handle: Awaited<ReturnType<typeof open>>,
+  fileSize: number
+): Promise<BackupHeader> {
+  if (!Number.isSafeInteger(fileSize) || fileSize > MAX_ENCRYPTED_BACKUP_BYTES || fileSize < BACKUP_HEADER_PREFIX_BYTES + BACKUP_NONCE_BYTES + BACKUP_TAG_BYTES) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup size is invalid");
+  }
+  const prefix = Buffer.alloc(BACKUP_HEADER_PREFIX_BYTES);
+  await readAt(handle, prefix, 0);
+  if (!prefix.subarray(0, BACKUP_MAGIC.byteLength).equals(BACKUP_MAGIC) ||
+      prefix.readUInt8(BACKUP_MAGIC.byteLength) !== BACKUP_FORMAT_VERSION) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup format is unsupported");
+  }
+  const keyIdBytes = prefix.readUInt16BE(BACKUP_MAGIC.byteLength + 1);
+  if (keyIdBytes < 1 || keyIdBytes > BACKUP_MAX_KEY_ID_BYTES) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup key identity is malformed");
+  }
+  const header = Buffer.alloc(BACKUP_HEADER_PREFIX_BYTES + keyIdBytes + BACKUP_NONCE_BYTES);
+  prefix.copy(header);
+  await readAt(handle, header.subarray(BACKUP_HEADER_PREFIX_BYTES), BACKUP_HEADER_PREFIX_BYTES);
+  const keyId = header.subarray(BACKUP_HEADER_PREFIX_BYTES, BACKUP_HEADER_PREFIX_BYTES + keyIdBytes).toString("utf8");
+  if (!BACKUP_KEY_ID_PATTERN.test(keyId) || Buffer.byteLength(keyId, "utf8") !== keyIdBytes) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup key identity is malformed");
+  }
+  const nonce = Buffer.from(header.subarray(BACKUP_HEADER_PREFIX_BYTES + keyIdBytes));
+  const tagOffset = fileSize - BACKUP_TAG_BYTES;
+  const tag = Buffer.alloc(BACKUP_TAG_BYTES);
+  await readAt(handle, tag, tagOffset);
+  return {
+    bytes: header,
+    keyId,
+    nonce,
+    ciphertextStart: header.byteLength,
+    ciphertextEnd: tagOffset - 1,
+    tag
+  };
+}
+
+async function encryptBackupSnapshot(sourcePath: string, destinationPath: string, keySource: BrokerBackupKeySource): Promise<void> {
+  const source = await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let destination: Awaited<ReturnType<typeof open>> | undefined;
+  let key: Buffer | undefined;
+  try {
+    destination = await open(destinationPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+    const sourceStat = await source.stat();
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || (sourceStat.mode & 0o777) !== 0o600 || !isOwnedByCurrentUser(sourceStat.uid)) {
+      throw new BrokerError("POLICY_DENIED", "Broker backup source is not protected");
+    }
+    key = await loadBackupKey(keySource);
+    const header = buildBackupHeader(keySource.keyId, randomBytes(BACKUP_NONCE_BYTES));
+    const cipher = createCipheriv(BACKUP_CIPHER, key, header.subarray(header.byteLength - BACKUP_NONCE_BYTES));
+    cipher.setAAD(header);
+    await writeAll(destination, header);
+    const buffer = Buffer.alloc(BACKUP_READ_CHUNK_BYTES);
+    let position = 0;
+    while (position < sourceStat.size) {
+      const result = await source.read(buffer, 0, Math.min(buffer.byteLength, sourceStat.size - position), position);
+      if (result.bytesRead <= 0) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup source ended unexpectedly");
+      position += result.bytesRead;
+      await writeAll(destination, cipher.update(buffer.subarray(0, result.bytesRead)));
+    }
+    await writeAll(destination, cipher.final());
+    await writeAll(destination, cipher.getAuthTag());
+    await destination.sync();
+    const sourceAfter = await source.stat();
+    if (!sameFileIdentity(sourceStat, sourceAfter)) throw new BrokerError("CONFLICT", "Broker backup source changed during encryption", true);
+  } finally {
+    key?.fill(0);
+    await destination?.close();
+    await source.close();
+  }
+}
+
+async function decryptBackupSnapshot(sourcePath: string, destinationPath: string, keySource: BrokerBackupKeySource): Promise<void> {
+  const source = await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let destination: Awaited<ReturnType<typeof open>> | undefined;
+  let destinationIdentity: Awaited<ReturnType<typeof lstat>> | undefined;
+  let key: Buffer | undefined;
+  try {
+    destination = await open(destinationPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+    destinationIdentity = await destination.stat();
+    const sourceStat = await source.stat();
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || (sourceStat.mode & 0o777) !== 0o600 || !isOwnedByCurrentUser(sourceStat.uid)) {
+      throw new BrokerError("POLICY_DENIED", "Encrypted Broker backup source is not protected");
+    }
+    const parsed = await readBackupHeader(source, sourceStat.size);
+    if (parsed.keyId !== keySource.keyId) throw new BrokerError("POLICY_DENIED", "Broker backup key identity does not match the configured source");
+    key = await loadBackupKey(keySource);
+    const decipher = createDecipheriv(BACKUP_CIPHER, key, parsed.nonce);
+    decipher.setAAD(parsed.bytes);
+    decipher.setAuthTag(parsed.tag);
+    let position = parsed.ciphertextStart;
+    const buffer = Buffer.alloc(BACKUP_READ_CHUNK_BYTES);
+    while (position <= parsed.ciphertextEnd) {
+      const amount = Math.min(buffer.byteLength, parsed.ciphertextEnd - position + 1);
+      const result = await source.read(buffer, 0, amount, position);
+      if (result.bytesRead <= 0) throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup ciphertext is truncated");
+      position += result.bytesRead;
+      await writeAll(destination, decipher.update(buffer.subarray(0, result.bytesRead)));
+    }
+    await writeAll(destination, decipher.final());
+    await destination.sync();
+    const sourceAfter = await source.stat();
+    if (!sameFileIdentity(sourceStat, sourceAfter)) throw new BrokerError("CONFLICT", "Encrypted Broker backup changed during decryption", true);
+  } catch (error) {
+    if (destinationIdentity !== undefined) {
+      const current = await lstat(destinationPath).catch(() => undefined);
+      if (current !== undefined && sameFileIdentity(destinationIdentity, current)) {
+        await unlink(destinationPath).catch(() => undefined);
+      }
+    }
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup could not be decrypted", true);
+  } finally {
+    key?.fill(0);
+    await destination?.close();
+    await source.close();
+  }
+}
+
+interface EncryptedBackupSummary {
+  bytes: number;
+  sha256: string;
+  auditEventCount: number;
+  auditTailHash: string;
+  plaintextSha256: string;
+  keyId: string;
+}
+
+async function inspectEncryptedBackup(
+  path: string,
+  keySource: BrokerBackupKeySource,
+  verificationPath = join(dirname(path), `.${basename(path).replace(/\.enc$/u, "")}.tmp-${randomBytes(12).toString("hex")}`)
+): Promise<EncryptedBackupSummary> {
+  const source = await validateProtectedFile(path);
+  const handle = await open(source.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const parsed = await readBackupHeader(handle, Number(source.stat.size));
+    if (parsed.keyId !== keySource.keyId) throw new BrokerError("POLICY_DENIED", "Broker backup key identity does not match the configured source");
+  } finally {
+    await handle.close();
+  }
+  try {
+    await decryptBackupSnapshot(source.path, verificationPath, keySource);
+    await chmod(verificationPath, 0o600);
+    const plaintext = await inspectSnapshot(verificationPath);
+    const sourceAfter = await lstat(source.path);
+    if (!sameFileIdentity(source.stat, sourceAfter)) throw new BrokerError("CONFLICT", "Encrypted Broker backup changed during inspection", true);
+    const encryptedHash = await hashFile(source.path);
+    const sourceAfterHash = await lstat(source.path);
+    if (!sameFileIdentity(source.stat, sourceAfterHash)) throw new BrokerError("CONFLICT", "Encrypted Broker backup changed during hashing", true);
+    return {
+      bytes: Number(sourceAfterHash.size),
+      sha256: encryptedHash,
+      auditEventCount: plaintext.auditEventCount,
+      auditTailHash: plaintext.auditTailHash,
+      plaintextSha256: plaintext.sha256,
+      keyId: keySource.keyId
+    };
+  } finally {
+    await cleanupTemporaryBackupFiles(verificationPath).catch(() => undefined);
+  }
+}
+
+type BrokerBackupSnapshotSummary = Pick<BrokerBackupManifest, "bytes" | "sha256" | "auditEventCount" | "auditTailHash">;
+
+async function inspectSnapshot(path: string): Promise<BrokerBackupSnapshotSummary> {
   const stat = await lstat(path);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600 || !isOwnedByCurrentUser(stat.uid)) {
     throw new BrokerError("POLICY_DENIED", "Broker persistence snapshot must be an owner-only regular file");
   }
   if (stat.size > MAX_BACKUP_BYTES) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence snapshot exceeds the byte budget");
   const database = new DatabaseSync(path, { readOnly: true });
-  let summary: Omit<BrokerBackupManifest, "path" | "createdAtMs">;
+  let summary: BrokerBackupSnapshotSummary;
   try {
     const check = database.prepare("PRAGMA quick_check").get() as { quick_check?: unknown } | undefined;
     if (check?.quick_check !== "ok") throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence snapshot failed SQLite integrity check");
