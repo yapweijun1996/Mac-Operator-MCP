@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged helper command-factory disposal addendum: the command factory now
+wipes its defensive HMAC-key copy at an idempotent disposal boundary and
+rejects later issuance with stable `CANCELLED`. Focused privileged-helper
+tests pass 9/9; the complete physical-Darwin suite passes 576/576 with 0
+skipped tests. Build, typecheck, lint, contract verification, and diff checks
+pass. This verifies Broker-side factory credential lifetime only; production
+operator-key distribution, Developer ID/root helper installation, real
+privileged adapters, and deployed kill-switch readback remain unproven.
+Evidence: `evidence/2026-09-15-privileged-helper-factory-disposal.md`.
+
 Virtualization guest active-I/O drain addendum: Native VM handles track
 Broker-owned Virtio connections and close tracked connections before stop or
 close, while late callbacks close immediately after the atomic shutdown state

@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged helper command-factory disposal addendum: the Broker-owned helper
+command factory now wipes its defensive authentication-key copy at an
+idempotent disposal boundary and rejects all later issuance with stable
+`CANCELLED`, preventing stale factories from signing with cleared material.
+Focused privileged-helper tests pass 9/9; the complete physical-Darwin
+regression passes 576/576 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-privileged-helper-factory-disposal.md`.
+
 Virtualization guest active-I/O drain addendum: the Native VM handle now
 tracks every Broker-owned Virtio exchange, closes tracked connections before a
 VM stop or close, and closes a late connection immediately after shutdown is

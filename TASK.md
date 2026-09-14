@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged helper command-factory disposal addendum: the Broker-owned helper
+command factory now owns a one-way disposal boundary, wipes its copied HMAC
+key once, and fails closed with `CANCELLED` on every later command issuance;
+repeated disposal is harmless. Focused privileged-helper tests pass 9/9 and
+the complete physical-Darwin regression passes 576/576 with 0 skipped tests.
+This closes factory key lifetime only; production operator-key distribution,
+root helper installation, real privileged execution, and deployed kill-switch
+readback remain open. Evidence:
+`evidence/2026-09-15-privileged-helper-factory-disposal.md`.
+
 Virtualization guest active-I/O drain addendum: the Native VM lifecycle now
 tracks Broker-owned Virtio exchanges and closes them before stop/close. Late
 connection callbacks observe the atomic closed state and close immediately;
