@@ -3,15 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Latest canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`, and
-`1aa0eea`
+Latest canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`,
+`1aa0eea`, and `ae2e9eb`
 publish the versioned `jcs-utf8-v1` serialization profile, exact
 `canonicalJsonUtf8` byte helper, and an independent bounded native Swift
 standard-library probe. Five fixed vectors cover nested values, escaping,
 number formatting, Unicode ordering without normalization, and empty values;
 focused TypeScript tests pass 2/2, native readback passes 5/5, the full
 physical-Darwin regression passes 535/535 with 0 skipped tests, and typecheck
-passes. Production
+passes. The protected C++ N-API artifact passes the same five digest vectors
+plus empty-input and 1 MiB cap checks. Production
 Swift/C++ adapter interoperability, VM isolation, and release acceptance
 remain open. Evidence:
 `evidence/2026-09-15-canonical-json-wire-profile.md`.

@@ -3,7 +3,7 @@
 - Date: 2026-09-15
 - Host: physical Darwin arm64, macOS 26.2 (25C56)
 - Scope: request/response/ledger digest serialization; no capability enablement
-- Source revision: `1aa0eea`
+- Source revision: `ae2e9eb`
 
 ## Boundary
 
@@ -26,6 +26,12 @@ and SHA-256) and checks the same vector file. It reports `vectors:5,
 passed:5` on this host, including the ECMAScript notation thresholds at
 `1e-6`, `1e-7`, `1e20`, and `1e21`.
 
+The compiled C++ N-API artifact also exposes a bounded `sha256Utf8` primitive.
+`peer-credentials.test.ts` loads that protected `.node` artifact and verifies
+all five canonical byte digests, the empty-input digest, and the 1 MiB input
+limit. This checks the digest byte boundary used by the native module without
+granting it any new host authority.
+
 ```text
 npm run typecheck
 node --test packages/contracts/dist/canonical-json.test.js
@@ -33,8 +39,9 @@ npm run verify:canonical:native
 MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test
 ```
 
-Result: 2/2 focused TypeScript tests, 5/5 native vectors, and the full
-physical-Darwin regression passed 535/535 with 0 skipped tests.
+Result: 2/2 focused TypeScript tests, 5/5 Swift vectors, 2/2 C++ native digest
+checks, and the full physical-Darwin regression passed 535/535 with 0 skipped
+tests.
 
 ## Limits
 
