@@ -1,4 +1,4 @@
-import { BrokerError, canonicalJson } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict } from "@mac-operator/contracts";
 import {
   signVirtualizationGuestResponse,
   signVirtualizationGuestStatusResponse,
@@ -141,7 +141,7 @@ export class VirtualizationGuestAgent {
     }
     let raw: unknown;
     try {
-      raw = JSON.parse(Buffer.from(frame).toString("utf8")) as unknown;
+      raw = JSON.parse(decodeUtf8Strict(Buffer.from(frame))) as unknown;
     } catch {
       throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest request frame is not valid JSON");
     }

@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { decodeUtf8Strict } from "@mac-operator/contracts";
 
 const MAX_CONTRACT_FILES = 64;
 const MAX_CONTRACT_FILE_BYTES = 1_048_576;
@@ -110,7 +111,7 @@ async function readContractFile(path: string): Promise<string> {
       throw new Error("Tool contract exceeds the supported size");
     }
     if (after.size !== bytesRead) throw new Error("Tool contract changed while loading");
-    return buffer.subarray(0, bytesRead).toString("utf8");
+    return decodeUtf8Strict(buffer.subarray(0, bytesRead));
   } finally {
     await handle.close();
   }

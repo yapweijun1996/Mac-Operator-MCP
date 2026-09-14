@@ -66,6 +66,45 @@ test("IPC socket is owner-only and transports an authenticated request", async (
   }
 });
 
+test("IPC rejects malformed UTF-8 before JSON parsing", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-utf8-"));
+  const socketPath = join(directory, "broker.sock");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const now = Date.now();
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: new EdgeKeyring([{
+      edgeId: "edge-1", keyId: "edge-key-1", key,
+      notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+    }]),
+    now: () => now
+  });
+  const server = new BrokerIpcServer({ socketPath, broker, peerCredentialVerifier: currentProcessVerifier() });
+  await server.listen();
+  try {
+    const response = JSON.parse(await sendBytes(socketPath, Buffer.from([0x7b, 0xc3, 0x28, 0x7d, 0x0a]))) as {
+      ok: boolean;
+      result_class: string;
+      error: { message: string; retryable: boolean };
+    };
+    assert.deepEqual(response, {
+      ok: false,
+      request_id: "invalid-request",
+      tool: "unknown",
+      result_class: "AUTH_INVALID",
+      error: { message: "IPC request is not valid JSON", retryable: false },
+      duration_ms: 0
+    });
+    assert.deepEqual(store.auditRows(), []);
+  } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("IPC close drains an idle accepted socket", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-close-"));
   const socketPath = join(directory, "broker.sock");
@@ -214,6 +253,18 @@ test("IPC server drops a connection when OS peer credential policy denies it", a
 });
 
 function send(socketPath: string, body: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(socketPath);
+    let response = "";
+    socket.setEncoding("utf8");
+    socket.on("connect", () => socket.write(body));
+    socket.on("data", (chunk: string) => { response += chunk; });
+    socket.on("end", () => resolve(response.trim()));
+    socket.on("error", reject);
+  });
+}
+
+function sendBytes(socketPath: string, body: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
     let response = "";

@@ -3,6 +3,7 @@ import { createConnection, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
 import {
   BrokerError,
+  decodeUtf8Strict,
   type AuthenticatedBrokerResponse,
   type BrokerRequest,
   type BrokerResult
@@ -85,7 +86,10 @@ export class BrokerIpcClient {
         if (total > this.maxResponseBytes) return finish(new BrokerError("OUTPUT_LIMIT", "Broker IPC response exceeded the byte limit"));
         chunks.push(chunk);
       });
-      socket.on("end", () => finish(undefined, Buffer.concat(chunks).toString("utf8").trim()));
+      socket.on("end", () => {
+        try { finish(undefined, decodeUtf8Strict(Buffer.concat(chunks)).trim()); }
+        catch { finish(new BrokerError("AUTH_INVALID", "Broker IPC response is not valid UTF-8")); }
+      });
       socket.on("error", () => finish(new BrokerError("EXECUTION_FAILED", "Broker IPC transport failed", true)));
     });
   }

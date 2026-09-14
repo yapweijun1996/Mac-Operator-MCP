@@ -1,6 +1,6 @@
 import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { BrokerError } from "@mac-operator/contracts";
+import { BrokerError, decodeUtf8Strict } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed, redactLogText } from "./secret-policy.js";
 
 export const PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "pip", "uv", "poetry", "brew"] as const;
@@ -184,7 +184,12 @@ function firstPresentPath(projectRoot: string, candidates: readonly string[], ch
 }
 
 function parseManifest(manager: PackageManager, manifest: SafeFile, context: PackageParseContext): void {
-  const text = manifest.content.toString("utf8");
+  let text: string;
+  try { text = decodeUtf8Strict(manifest.content); }
+  catch {
+    addWarning(context.warnings, "The selected package manifest is not valid UTF-8");
+    return;
+  }
   if (manager === "npm" || manager === "pnpm" || manager === "yarn") {
     if (manifest.relativePath.endsWith(".json")) {
       parseNodeManifest(text, context);

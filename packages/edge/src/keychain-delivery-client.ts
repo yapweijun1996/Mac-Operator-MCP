@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
-import { sha256, parseKeychainDeliveryChallenge, parseKeychainDeliveryResponse, type KeychainDeliveryRequest, type KeychainDeliveryResponse } from "@mac-operator/contracts";
+import { decodeUtf8Strict, sha256, parseKeychainDeliveryChallenge, parseKeychainDeliveryResponse, type KeychainDeliveryRequest, type KeychainDeliveryResponse } from "@mac-operator/contracts";
 import { BrokerError } from "@mac-operator/contracts";
 import { validateBrokerSocketTarget } from "./ipc-client.js";
 
@@ -94,7 +94,12 @@ function exchangeKeychainDelivery(
       while (!settled) {
         const newline = buffer.indexOf(0x0a);
         if (newline === -1) return;
-        const line = buffer.subarray(0, newline).toString("utf8").trim();
+        let line: string;
+        try { line = decodeUtf8Strict(buffer.subarray(0, newline)).trim(); }
+        catch {
+          finish(new BrokerError("AUTH_INVALID", "Keychain delivery response is not valid UTF-8"));
+          return;
+        }
         buffer = buffer.subarray(newline + 1);
         if (!requestSent) {
           try {

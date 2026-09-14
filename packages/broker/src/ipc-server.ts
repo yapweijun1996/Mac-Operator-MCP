@@ -2,7 +2,7 @@ import { chmod, lstat, rename, stat, symlink, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { BrokerError, type AuthenticatedBrokerResponse, type BrokerResult } from "@mac-operator/contracts";
+import { BrokerError, decodeUtf8Strict, type AuthenticatedBrokerResponse, type BrokerResult } from "@mac-operator/contracts";
 import type { Broker } from "./broker.js";
 import type { PeerCredentialVerifier } from "./peer-credentials.js";
 
@@ -108,7 +108,7 @@ export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestByt
         writeResult(socket, failure("PRECONDITION_FAILED", "IPC request contains trailing data"));
         return;
       }
-      const request = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+      const request = JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown;
       writeResult(socket, await broker.handleForIpc(request));
     } catch {
       writeResult(socket, failure("AUTH_INVALID", "IPC request is not valid JSON"));

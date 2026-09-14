@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { lstat, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, sha256 } from "@mac-operator/contracts";
 import {
   assertProtectedSecretDirectory,
   loadAuthenticationKey,
@@ -306,7 +306,7 @@ async function rejectUnsafeExistingConfig(path: string): Promise<void> {
 
 function parseConfig(content: Buffer): PrivilegedHelperKeyConfig {
   let value: unknown;
-  try { value = JSON.parse(content.toString("utf8")) as unknown; }
+  try { value = JSON.parse(decodeUtf8Strict(content)) as unknown; }
   catch { throw new Error("Privileged helper key config is not valid JSON"); }
   validateConfig(value);
   return value as PrivilegedHelperKeyConfig;

@@ -3,7 +3,7 @@ import { constants, createReadStream, type Dirent } from "node:fs";
 import { chmod, lstat, open, readdir, rename, statfs, unlink } from "node:fs/promises";
 import { backup, DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, sha256 } from "@mac-operator/contracts";
 
 const BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite\.enc$/u;
 const LEGACY_PLAINTEXT_BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite$/u;
@@ -490,7 +490,12 @@ async function readBackupHeader(
   const header = Buffer.alloc(BACKUP_HEADER_PREFIX_BYTES + keyIdBytes + BACKUP_NONCE_BYTES);
   prefix.copy(header);
   await readAt(handle, header.subarray(BACKUP_HEADER_PREFIX_BYTES), BACKUP_HEADER_PREFIX_BYTES);
-  const keyId = header.subarray(BACKUP_HEADER_PREFIX_BYTES, BACKUP_HEADER_PREFIX_BYTES + keyIdBytes).toString("utf8");
+  let keyId: string;
+  try {
+    keyId = decodeUtf8Strict(header.subarray(BACKUP_HEADER_PREFIX_BYTES, BACKUP_HEADER_PREFIX_BYTES + keyIdBytes));
+  } catch {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup key identity is malformed");
+  }
   if (!BACKUP_KEY_ID_PATTERN.test(keyId) || Buffer.byteLength(keyId, "utf8") !== keyIdBytes) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Encrypted Broker backup key identity is malformed");
   }

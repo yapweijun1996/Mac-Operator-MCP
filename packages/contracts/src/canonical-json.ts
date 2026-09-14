@@ -36,6 +36,16 @@ export function canonicalJsonUtf8(value: unknown): Buffer {
   return Buffer.from(canonicalJson(value), "utf8");
 }
 
+/** Decode protocol bytes without silently replacing malformed UTF-8. */
+export function decodeUtf8Strict(value: Uint8Array): string {
+  if (!(value instanceof Uint8Array)) throw new TypeError("UTF-8 input must be bytes");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(value);
+  } catch {
+    throw new TypeError("Input is not valid UTF-8");
+  }
+}
+
 export function sha256(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }

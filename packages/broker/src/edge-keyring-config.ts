@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { lstat, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, sha256 } from "@mac-operator/contracts";
 import { EdgeKeyring, type EdgeAuthenticationKey } from "./edge-keyring.js";
 import {
   assertProtectedSecretDirectory,
@@ -214,7 +214,7 @@ function validateConfigPath(path: string): void {
 function parseConfig(content: Buffer): EdgeAuthenticationKeyConfig {
   let value: unknown;
   try {
-    value = JSON.parse(content.toString("utf8")) as unknown;
+    value = JSON.parse(decodeUtf8Strict(content)) as unknown;
   } catch {
     throw new Error("Edge authentication key config is not valid JSON");
   }

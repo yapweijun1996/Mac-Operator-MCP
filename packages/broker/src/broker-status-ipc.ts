@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, lstat, realpath } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, CONTRACT_VERSION, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, CONTRACT_VERSION, decodeUtf8Strict, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import type { BrokerServiceReadback } from "./service-entrypoint.js";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
@@ -208,7 +208,7 @@ export class BrokerStatusIpcServer {
       let request: UnsignedBrokerStatusRequest | undefined;
       let response: BrokerStatusResponse;
       try {
-        const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+        const raw = JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown;
         request = unsignedBrokerStatusCandidate(raw);
         request = authenticateBrokerStatusRequest(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
         if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
@@ -497,7 +497,7 @@ function exchangeStatusSocket(socketPath: string, body: string, timeoutMs: numbe
         finish(new BrokerError("AUTH_INVALID", "Broker status response contained trailing data"));
         return;
       }
-      try { finish(undefined, JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown); }
+      try { finish(undefined, JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown); }
       catch { finish(new BrokerError("AUTH_INVALID", "Broker status response is not valid JSON")); }
     });
     socket.once("connect", () => {

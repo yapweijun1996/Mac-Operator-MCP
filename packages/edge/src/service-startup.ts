@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { decodeUtf8Strict } from "@mac-operator/contracts";
 import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { OAuthMetadata, OAuthTokenVerifier } from "@modelcontextprotocol/server";
 import { BrokerIpcClient } from "./ipc-client.js";
@@ -184,7 +185,7 @@ export async function loadEdgeServiceStartupConfig(path: string): Promise<EdgeSe
   const content = await readProtectedConfig(path);
   let value: unknown;
   try {
-    value = JSON.parse(content.toString("utf8")) as unknown;
+    value = JSON.parse(decodeUtf8Strict(content)) as unknown;
   } catch {
     throw new Error("Edge service startup config is not valid JSON");
   }

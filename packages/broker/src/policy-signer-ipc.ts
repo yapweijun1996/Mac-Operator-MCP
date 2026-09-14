@@ -1,7 +1,7 @@
 import { chmod } from "node:fs/promises";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
-import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { PolicySignerKeyManager } from "./policy-signer-keyring.js";
@@ -177,7 +177,7 @@ export class PolicySignerIpcServer {
       socket.pause();
       let response: PolicySignerIpcResponse;
       try {
-        const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+        const raw = JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown;
         const command = authenticatePolicySignerCommand(
           raw,
           this.authenticationKey,

@@ -2,7 +2,7 @@ import { lstat, realpath, chmod } from "node:fs/promises";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
@@ -200,7 +200,7 @@ export class AuthorityControlIpcServer {
       let response: AuthorityControlIpcResponse;
       let command: UnsignedAuthorityControlCommand | undefined;
       try {
-        const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
+        const raw = JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown;
         command = unsignedAuthorityControlCandidate(raw);
         command = authenticateAuthorityControlCommand(
           raw,
@@ -480,9 +480,10 @@ export class AuthorityControlIpcClient {
         chunks.push(chunk);
       });
       socket.on("end", () => {
-        const text = Buffer.concat(chunks).toString("utf8").trim();
-        try { finish(undefined, JSON.parse(text) as unknown); }
-        catch { finish(new BrokerError("AUTH_INVALID", "Authority control IPC response is not valid JSON")); }
+        try {
+          const text = decodeUtf8Strict(Buffer.concat(chunks)).trim();
+          finish(undefined, JSON.parse(text) as unknown);
+        } catch { finish(new BrokerError("AUTH_INVALID", "Authority control IPC response is not valid JSON")); }
       });
       socket.on("error", () => finish(new BrokerError("EXECUTION_FAILED", "Authority control IPC transport failed", true)));
     });

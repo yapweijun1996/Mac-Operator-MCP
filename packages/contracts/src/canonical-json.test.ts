@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { canonicalJson, canonicalJsonUtf8, CANONICAL_JSON_PROFILE, sha256 } from "./index.js";
+import { canonicalJson, canonicalJsonUtf8, CANONICAL_JSON_PROFILE, decodeUtf8Strict, sha256 } from "./index.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -41,4 +41,9 @@ test("canonical JSON UTF-8 encoding preserves Unicode without normalization", ()
   const canonical = canonicalJson(value);
   assert.equal(canonical, '{"é":"é","é":"é","😀":"😀"}');
   assert.equal(new TextDecoder().decode(canonicalJsonUtf8(value)), canonical);
+});
+
+test("strict UTF-8 decoding rejects malformed protocol bytes", () => {
+  assert.equal(decodeUtf8Strict(Buffer.from("é", "utf8")), "é");
+  assert.throws(() => decodeUtf8Strict(Buffer.from([0xc3, 0x28])), /valid UTF-8/u);
 });

@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, chmodSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { canonicalJson } from "@mac-operator/contracts";
+import { canonicalJson, decodeUtf8Strict } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 
 const ANCHOR_FORMAT = "MOPS-AUDIT-ANCHOR-1" as const;
@@ -200,7 +200,7 @@ function readAnchorIfPresent(path: string): AuditAnchorRecord | undefined {
   }
   let value: unknown;
   try {
-    value = JSON.parse(content.toString("utf8")) as unknown;
+    value = JSON.parse(decodeUtf8Strict(content)) as unknown;
   } catch {
     throw new Error("Audit anchor is not valid JSON");
   }

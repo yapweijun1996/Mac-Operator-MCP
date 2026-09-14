@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { BrokerError, canonicalJson, CONTRACT_VERSION, PROTOCOL_VERSION, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, CONTRACT_VERSION, decodeUtf8Strict, PROTOCOL_VERSION, sha256 } from "@mac-operator/contracts";
 import type { BrokerStore } from "./persistence.js";
 import type { VirtualizationGuestIdentity } from "./task-runner.js";
 
@@ -578,7 +578,7 @@ export class VirtualizationGuestTransportClient {
     if (this.closed) throw new BrokerError("CANCELLED", "Virtualization guest transport was closed while a request was active");
     let raw: unknown;
     try {
-      raw = JSON.parse(Buffer.from(responseFrame).toString("utf8")) as unknown;
+      raw = JSON.parse(decodeUtf8Strict(Buffer.from(responseFrame))) as unknown;
     } catch {
       throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest response frame is not valid JSON");
     }
@@ -631,7 +631,7 @@ export class VirtualizationGuestTransportClient {
     if (this.closed) throw new BrokerError("CANCELLED", "Virtualization guest transport was closed while a request was active");
     let raw: unknown;
     try {
-      raw = JSON.parse(Buffer.from(responseFrame).toString("utf8")) as unknown;
+      raw = JSON.parse(decodeUtf8Strict(Buffer.from(responseFrame))) as unknown;
     } catch {
       throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest status response frame is not valid JSON");
     }
