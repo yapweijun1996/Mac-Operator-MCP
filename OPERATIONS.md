@@ -1,6 +1,6 @@
 # Operations Guide
 
-Status: Draft; operational commands will be added after runtime selection
+Status: Draft; bounded authority commands are available in the source-level Broker package CLI
 
 ## Operator responsibilities
 
@@ -19,6 +19,22 @@ Monitor Edge, Broker, persistence, audit, jobs, disk budgets, policy version, cr
 
 The persistence-specific order, preconditions, rollback path, and final
 readback are recorded in [PERSISTENCE_CUTOVER.md](PERSISTENCE_CUTOVER.md).
+
+## Authority control CLI
+
+After `npm run build`, the package exposes
+`node packages/broker/dist/authority-control-cli.js` (or the package bin
+`mac-operator-authority`). It accepts only `status`, `set-switch`, and
+`revoke`; all paths are explicit canonical owner-only paths, the key is loaded
+only through the activated `AuthorityControlKeyManager`, and mutations require
+an expected state plus an exact `--confirm` token. Every mutation performs an
+authenticated readback before returning `verified: true`. Use the commands in
+`KILL_SWITCH.md`; never pass a key, command, executable, or capability grant on
+the command line.
+
+The CLI is an operator interface, not a production install proof. It does not
+replace launchd identity, job-status reconciliation, or active process-tree
+termination evidence.
 
 ## Current limitation
 

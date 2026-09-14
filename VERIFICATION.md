@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Authority Control CLI addendum: source revision `447e4aa` provides a bounded
+operator entrypoint for switch readback, expected-state switch mutation, and
+identity revocation. It restores the exact active key through the Broker key
+manager, rejects raw key/command/capability inputs, requires explicit mutation
+confirmation, and performs authenticated readback before reporting success.
+Focused tests pass 3/3; the complete physical-Darwin suite passes 579/579
+with 0 skipped tests. Build, typecheck, lint, contract verification, and diff
+checks pass. This verifies only the source-level operator boundary; installed
+launchd ownership, active process-tree termination, and production key
+distribution remain unproven. Evidence:
+`evidence/2026-09-15-authority-control-cli.md`.
+
 Privileged helper command-factory disposal addendum: the command factory now
 wipes its defensive HMAC-key copy at an idempotent disposal boundary and
 rejects later issuance with stable `CANCELLED`. Focused privileged-helper

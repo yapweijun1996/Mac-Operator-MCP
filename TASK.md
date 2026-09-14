@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority Control CLI addendum: a source-level `mac-operator-authority`
+entrypoint now exposes only bounded switch readback, expected-state switch
+changes, and identity revocation. It requires canonical protected paths,
+restores the persisted active key through `AuthorityControlKeyManager`, uses
+explicit mutation confirmation, and verifies mutations by authenticated
+readback; guest-attestation key revocation is included. Focused tests pass
+3/3; the complete physical-Darwin regression passes 579/579 with 0 skipped
+tests. Installed launchd ownership, active process-tree termination, and
+production operator-key distribution remain open. Evidence:
+`evidence/2026-09-15-authority-control-cli.md`.
+
 Privileged helper command-factory disposal addendum: the Broker-owned helper
 command factory now owns a one-way disposal boundary, wipes its copied HMAC
 key once, and fails closed with `CANCELLED` on every later command issuance;
