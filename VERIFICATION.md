@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Task isolation proof addendum: source revision `7a101d9` requires and
+normalizes `persistence: "isolated"` in every `TaskIsolationProof`; strict
+validation rejects missing or non-isolated persistence claims before a runner
+can be available. Proof/guest-startup tests and the complete physical-Darwin
+suite pass (582/582, 0 skipped); build, typecheck, lint, contract verification,
+and diff checks pass. This is contract hardening, not real host persistence,
+credential, VM isolation, or `mac_task_run` enablement evidence. Evidence:
+`evidence/2026-09-15-task-persistence-proof.md`.
+
 Approval issuance expiry-gate addendum: source revision `8552210` checks the
 current clock against the signed Approval issuance nonce expiry before
 approval persistence or audit. A current-expired signed request leaves no

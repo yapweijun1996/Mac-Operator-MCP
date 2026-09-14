@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Task isolation proof addendum: source revision `7a101d9` requires an explicit
+`persistence: "isolated"` claim alongside filesystem, network, credentials,
+and process-tree guarantees. Strict validation rejects missing or non-isolated
+persistence claims before runner availability; all proof fixtures and guest
+startup paths preserve the new field. The complete physical-Darwin regression
+passes 582/582 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-task-persistence-proof.md`.
+
 Approval issuance expiry-gate addendum: source revision `8552210` makes the
 Broker-owned Approval Authority reject a current-expired signed issuance nonce
 before approval persistence or audit. The regression leaves both the Approval

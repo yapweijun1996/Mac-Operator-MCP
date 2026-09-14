@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Task isolation proof addendum: source revision `7a101d9` adds a required
+`persistence: "isolated"` field to the Broker-owned `TaskIsolationProof` and
+rejects missing or non-isolated claims before runner availability. Proof and
+guest-startup fixtures pass, and the complete physical-Darwin regression
+passes 582/582 with 0 skipped tests. This strengthens the contract only;
+real persistence/credential/VM isolation evidence and `mac_task_run`
+enablement remain blocked. Evidence:
+`evidence/2026-09-15-task-persistence-proof.md`.
+
 Approval issuance expiry-gate addendum: source revision `8552210` rejects a
 current-expired signed Approval issuance nonce before persistence or audit.
 Approval Authority/IPC tests pass 9/9 and the complete physical-Darwin
