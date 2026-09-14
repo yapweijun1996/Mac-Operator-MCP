@@ -15,6 +15,7 @@ import type {
   VirtualizationGuestVmStatusResult,
   VirtualizationGuestVmStopResult
 } from "./virtualization-guest-lifecycle.js";
+import type { VirtualizationGuestChannel } from "./virtualization-guest-transport.js";
 
 const require = createRequire(import.meta.url);
 const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
@@ -36,6 +37,24 @@ export interface NativeVirtualizationGuestVmBinding {
   stopGuestVm(handle: unknown, bootId: string): Promise<unknown>;
   statusGuestVm(handle: unknown): Promise<unknown>;
   closeGuestVm(handle: unknown): void;
+  exchangeGuestFrame(
+    handle: unknown,
+    port: number,
+    frame: Buffer,
+    maxResponseBytes: number,
+    timeoutMs: number
+  ): Promise<unknown>;
+}
+
+export interface NativeVirtualizationGuestChannelOptions {
+  /** Guest-owned virtio-socket port; the Broker startup config owns it. */
+  port: number;
+  maxFrameBytes?: number;
+  timeoutMs?: number;
+}
+
+export interface NativeVirtualizationGuestVmAdapter extends VirtualizationGuestVmAdapter {
+  createChannel(options: NativeVirtualizationGuestChannelOptions): VirtualizationGuestChannel;
 }
 
 interface NativeAdapterArtifact {
@@ -69,7 +88,7 @@ export function loadNativeVirtualizationGuestVmBinding(): NativeVirtualizationGu
         native.nativeNapiVersion > runtimeNapiVersion ||
         typeof native.createGuestVm !== "function" || typeof native.startGuestVm !== "function" ||
         typeof native.stopGuestVm !== "function" || typeof native.statusGuestVm !== "function" ||
-        typeof native.closeGuestVm !== "function") {
+        typeof native.closeGuestVm !== "function" || typeof native.exchangeGuestFrame !== "function") {
       throw new Error("Virtualization guest VM adapter exports are incompatible");
     }
     loadedArtifact = after;
@@ -94,7 +113,7 @@ export interface NativeVirtualizationGuestVmOptions {
  */
 export async function createNativeVirtualizationGuestVm(
   options: NativeVirtualizationGuestVmOptions
-): Promise<VirtualizationGuestVmAdapter> {
+): Promise<NativeVirtualizationGuestVmAdapter> {
   if (options === null || typeof options !== "object" || options.enabled !== true ||
       options.hostEvidenceAccepted !== true) {
     return unavailableAdapter();
@@ -117,10 +136,10 @@ export async function createNativeVirtualizationGuestVm(
   if (handle === null || handle === undefined) {
     throw new BrokerError("POLICY_DENIED", "Virtualization guest VM handle is unavailable");
   }
-  return new NativeVirtualizationGuestVmAdapter(native, handle, guestIdentity, image);
+  return new NativeVirtualizationGuestVmAdapterImpl(native, handle, guestIdentity, image);
 }
 
-class NativeVirtualizationGuestVmAdapter implements VirtualizationGuestVmAdapter {
+class NativeVirtualizationGuestVmAdapterImpl implements NativeVirtualizationGuestVmAdapter {
   readonly available = true;
   readonly guestIdentity: VirtualizationGuestIdentity;
   private closed = false;
@@ -190,6 +209,12 @@ class NativeVirtualizationGuestVmAdapter implements VirtualizationGuestVmAdapter
     this.closed = true;
   }
 
+  createChannel(options: NativeVirtualizationGuestChannelOptions): VirtualizationGuestChannel {
+    this.assertOpen();
+    validateChannelOptions(options);
+    return new NativeVirtualizationGuestChannel(this.native, this.handle, options);
+  }
+
   private assertOpen(): void {
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest VM adapter is closed");
   }
@@ -209,7 +234,43 @@ class NativeVirtualizationGuestVmAdapter implements VirtualizationGuestVmAdapter
   }
 }
 
-function unavailableAdapter(): VirtualizationGuestVmAdapter {
+export class NativeVirtualizationGuestChannel implements VirtualizationGuestChannel {
+  private readonly port: number;
+  private readonly maxFrameBytes: number;
+  private readonly timeoutMs: number;
+
+  constructor(
+    private readonly native: NativeVirtualizationGuestVmBinding,
+    private readonly handle: unknown,
+    options: NativeVirtualizationGuestChannelOptions
+  ) {
+    validateChannelOptions(options);
+    this.port = options.port;
+    this.maxFrameBytes = options.maxFrameBytes ?? 4 * 1024 * 1024;
+    this.timeoutMs = options.timeoutMs ?? 15_000;
+  }
+
+  async exchange(frame: Uint8Array, signal: AbortSignal): Promise<Uint8Array> {
+    if (!(frame instanceof Uint8Array) || frame.byteLength < 1 || frame.byteLength > this.maxFrameBytes) {
+      throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest frame exceeded the byte limit");
+    }
+    if (signal.aborted) throw new BrokerError("CANCELLED", "Virtualization guest frame exchange was cancelled");
+    const result = await raceAbort(
+      this.native.exchangeGuestFrame(this.handle, this.port, Buffer.from(frame), this.maxFrameBytes, this.timeoutMs),
+      signal,
+      "Virtualization guest frame exchange was cancelled"
+    );
+    if (!Buffer.isBuffer(result) && !(result instanceof Uint8Array)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest frame response is malformed");
+    }
+    if (result.byteLength < 1 || result.byteLength > this.maxFrameBytes) {
+      throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest frame response exceeded the byte limit");
+    }
+    return new Uint8Array(result);
+  }
+}
+
+function unavailableAdapter(): NativeVirtualizationGuestVmAdapter {
   const reject = async (): Promise<never> => {
     throw new BrokerError("POLICY_DENIED", "Virtualization guest VM adapter is not enabled");
   };
@@ -218,8 +279,20 @@ function unavailableAdapter(): VirtualizationGuestVmAdapter {
     guestIdentity: null,
     start: reject,
     stop: reject,
-    status: reject
+    status: reject,
+    createChannel: () => {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest VM adapter is not enabled");
+    }
   };
+}
+
+function validateChannelOptions(options: NativeVirtualizationGuestChannelOptions): void {
+  if (options === null || typeof options !== "object" ||
+      !Number.isSafeInteger(options.port) || options.port < 1 || options.port > 65_535 ||
+      (options.maxFrameBytes !== undefined && (!Number.isSafeInteger(options.maxFrameBytes) || options.maxFrameBytes < 256 || options.maxFrameBytes > 4 * 1024 * 1024)) ||
+      (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 120_000))) {
+    throw new Error("Virtualization guest channel options are invalid");
+  }
 }
 
 function parseTransitionResult(

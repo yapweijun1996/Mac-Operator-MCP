@@ -9,6 +9,8 @@ import { BrokerError } from "@mac-operator/contracts";
 import {
   createNativeVirtualizationGuestVm,
   loadNativeVirtualizationGuestVmBinding,
+  NativeVirtualizationGuestChannel,
+  type NativeVirtualizationGuestVmBinding,
   validateNativeVirtualizationGuestVmAdapterPath
 } from "./virtualization-guest-vm-native.js";
 import { loadVirtualizationGuestImage } from "./virtualization-guest-image.js";
@@ -83,4 +85,39 @@ test("native Virtualization guest lifecycle creation fails closed without a vali
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("native virtio guest channel enforces bounded frames and forwards only handle-bound calls", async () => {
+  const calls: Array<{ handle: unknown; port: number; frame: Buffer; cap: number; timeout: number }> = [];
+  const native = {
+    exchangeGuestFrame: async (handle: unknown, port: number, frame: Buffer, cap: number, timeout: number): Promise<Buffer> => {
+      calls.push({ handle, port, frame, cap, timeout });
+      return Buffer.from("guest-response", "utf8");
+    }
+  } as unknown as NativeVirtualizationGuestVmBinding;
+  const handle = { privateHandle: true };
+  const channel = new NativeVirtualizationGuestChannel(native, handle, {
+    port: 1024,
+    maxFrameBytes: 1_024,
+    timeoutMs: 2_000
+  });
+  const response = await channel.exchange(new Uint8Array([1, 2, 3]), new AbortController().signal);
+  assert.equal(Buffer.from(response).toString("utf8"), "guest-response");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.handle, handle);
+  assert.equal(calls[0]?.port, 1024);
+  assert.deepEqual(calls[0]?.frame, Buffer.from([1, 2, 3]));
+  assert.equal(calls[0]?.cap, 1_024);
+  assert.equal(calls[0]?.timeout, 2_000);
+
+  await assert.rejects(
+    channel.exchange(new Uint8Array(1_025), new AbortController().signal),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "OUTPUT_LIMIT"
+  );
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    channel.exchange(new Uint8Array([1]), controller.signal),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+  );
 });

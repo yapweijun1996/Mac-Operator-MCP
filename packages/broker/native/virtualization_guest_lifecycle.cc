@@ -15,7 +15,10 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <poll.h>
+#include <time.h>
 #include <unistd.h>
 #include <vector>
 
@@ -41,6 +44,9 @@ constexpr uint64_t kMaxImageBytes = 512ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr size_t kDigestChunkBytes = 1024 * 1024;
 constexpr uint64_t kHandleMagic = 0x4d4f50565a4c4946ULL;
 constexpr uint64_t kNativeOperationTimeoutNs = 15ULL * 60ULL * 1000000000ULL;
+constexpr size_t kMaxFrameBytes = 4 * 1024 * 1024;
+constexpr uint32_t kMinVsockPort = 1;
+constexpr uint32_t kMaxVsockPort = 65535;
 
 void ThrowError(napi_env env, const char* message) {
   napi_throw_error(env, nullptr, message);
@@ -242,6 +248,17 @@ struct WaitState {
   std::string boot_id;
 };
 
+struct ChannelState {
+  dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+  std::mutex mutex;
+  void* retained_connection = nullptr;
+  int file_descriptor = -1;
+  bool abandoned = false;
+  bool completed = false;
+  std::string error;
+  std::vector<unsigned char> response;
+};
+
 struct AsyncOperation {
   napi_env env = nullptr;
   napi_async_work work = nullptr;
@@ -267,6 +284,21 @@ struct AsyncStatusOperation {
   bool timed_out = false;
 };
 
+struct AsyncChannelOperation {
+  napi_env env = nullptr;
+  napi_async_work work = nullptr;
+  napi_deferred deferred = nullptr;
+  void* retained_handle = nullptr;
+  MOPVirtualizationGuestHandle* handle = nullptr;
+  uint32_t port = 0;
+  uint32_t timeout_ms = 0;
+  size_t max_response_bytes = 0;
+  std::vector<unsigned char> request;
+  std::vector<unsigned char> response;
+  std::string error;
+  bool timed_out = false;
+};
+
 void RecordCompletion(const std::shared_ptr<WaitState>& wait, NSError* error) {
   {
     std::lock_guard<std::mutex> lock(wait->mutex);
@@ -276,6 +308,300 @@ void RecordCompletion(const std::shared_ptr<WaitState>& wait, NSError* error) {
     }
   }
   dispatch_semaphore_signal(wait->semaphore);
+}
+
+uint64_t MonotonicMilliseconds() {
+  struct timespec time_value{};
+  if (clock_gettime(CLOCK_MONOTONIC, &time_value) != 0) return 0;
+  return static_cast<uint64_t>(time_value.tv_sec) * 1000ULL +
+      static_cast<uint64_t>(time_value.tv_nsec) / 1000000ULL;
+}
+
+int RemainingMilliseconds(uint64_t deadline_ms) {
+  const uint64_t now_ms = MonotonicMilliseconds();
+  if (now_ms == 0 || now_ms >= deadline_ms) return 0;
+  const uint64_t remaining = deadline_ms - now_ms;
+  return remaining > static_cast<uint64_t>(INT_MAX) ? INT_MAX : static_cast<int>(remaining);
+}
+
+bool WaitForSocket(int descriptor, short events, uint64_t deadline_ms) {
+  struct pollfd poll_descriptor{};
+  poll_descriptor.fd = descriptor;
+  poll_descriptor.events = events;
+  while (true) {
+    const int remaining_ms = RemainingMilliseconds(deadline_ms);
+    if (remaining_ms < 1) return false;
+    const int result = poll(&poll_descriptor, 1, remaining_ms);
+    if (result > 0 && (poll_descriptor.revents & (events | POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      return (poll_descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) == 0;
+    }
+    if (result == 0) return false;
+    if (result < 0 && errno == EINTR) continue;
+    return false;
+  }
+}
+
+bool WriteAll(int descriptor, const unsigned char* bytes, size_t length, uint64_t deadline_ms) {
+  size_t offset = 0;
+  while (offset < length) {
+    if (!WaitForSocket(descriptor, POLLOUT, deadline_ms)) return false;
+    const ssize_t written = send(descriptor, bytes + offset, length - offset, MSG_NOSIGNAL);
+    if (written > 0) {
+      offset += static_cast<size_t>(written);
+      continue;
+    }
+    if (written < 0 && errno == EINTR) continue;
+    if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+    return false;
+  }
+  return true;
+}
+
+bool ReadAll(int descriptor, unsigned char* bytes, size_t length, uint64_t deadline_ms) {
+  size_t offset = 0;
+  while (offset < length) {
+    if (!WaitForSocket(descriptor, POLLIN, deadline_ms)) return false;
+    const ssize_t received = recv(descriptor, bytes + offset, length - offset, 0);
+    if (received > 0) {
+      offset += static_cast<size_t>(received);
+      continue;
+    }
+    if (received < 0 && errno == EINTR) continue;
+    if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+    return false;
+  }
+  return true;
+}
+
+uint32_t ReadBigEndian32(const unsigned char* bytes) {
+  return (static_cast<uint32_t>(bytes[0]) << 24) |
+      (static_cast<uint32_t>(bytes[1]) << 16) |
+      (static_cast<uint32_t>(bytes[2]) << 8) |
+      static_cast<uint32_t>(bytes[3]);
+}
+
+void WriteBigEndian32(unsigned char* bytes, uint32_t value) {
+  bytes[0] = static_cast<unsigned char>((value >> 24) & 0xff);
+  bytes[1] = static_cast<unsigned char>((value >> 16) & 0xff);
+  bytes[2] = static_cast<unsigned char>((value >> 8) & 0xff);
+  bytes[3] = static_cast<unsigned char>(value & 0xff);
+}
+
+void ReleaseVirtioConnection(void* retained_connection) {
+  if (retained_connection != nullptr) {
+    (void)(__bridge_transfer VZVirtioSocketConnection*)retained_connection;
+  }
+}
+
+void ExecuteChannel(AsyncChannelOperation* operation) {
+  MOPVirtualizationGuestHandle* handle = operation->handle;
+  const uint32_t port = operation->port;
+  const uint32_t timeout_ms = operation->timeout_ms;
+  const size_t max_response_bytes = operation->max_response_bytes;
+  const std::vector<unsigned char> request = operation->request;
+  const std::shared_ptr<ChannelState> channel = std::make_shared<ChannelState>();
+  dispatch_async(handle.queue, ^{
+    if (handle.closed || handle.machine == nil || handle.machine.state != VZVirtualMachineStateRunning) {
+      std::lock_guard<std::mutex> lock(channel->mutex);
+      channel->error = "Virtualization guest VM is not running";
+      channel->completed = true;
+      dispatch_semaphore_signal(channel->semaphore);
+      return;
+    }
+    NSArray<VZSocketDevice*>* devices = handle.machine.socketDevices;
+    VZVirtioSocketDevice* socket_device = devices.count == 1 &&
+        [devices.firstObject isKindOfClass:[VZVirtioSocketDevice class]]
+        ? (VZVirtioSocketDevice*)devices.firstObject : nil;
+    if (socket_device == nil) {
+      std::lock_guard<std::mutex> lock(channel->mutex);
+      channel->error = "Virtualization guest virtio socket device is unavailable";
+      channel->completed = true;
+      dispatch_semaphore_signal(channel->semaphore);
+      return;
+    }
+    [socket_device connectToPort:port completionHandler:^(VZVirtioSocketConnection* connection, NSError* error) {
+      void* retained_connection = connection == nil ? nullptr : (__bridge_retained void*)connection;
+      bool release_connection = false;
+      {
+        std::lock_guard<std::mutex> lock(channel->mutex);
+        if (channel->abandoned) {
+          release_connection = retained_connection != nullptr;
+        } else if (error != nil || retained_connection == nullptr || connection.fileDescriptor < 0) {
+          channel->error = "Virtualization guest virtio socket connection failed";
+          channel->completed = true;
+        } else {
+          channel->retained_connection = retained_connection;
+          channel->file_descriptor = connection.fileDescriptor;
+          channel->completed = true;
+        }
+      }
+      if (release_connection) ReleaseVirtioConnection(retained_connection);
+      dispatch_semaphore_signal(channel->semaphore);
+    }];
+  });
+
+  const uint64_t start_ms = MonotonicMilliseconds();
+  const uint64_t deadline_ms = start_ms == 0 ? 0 : start_ms + timeout_ms;
+  if (deadline_ms == 0 || dispatch_semaphore_wait(channel->semaphore,
+      dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(timeout_ms) * 1000000LL)) != 0) {
+    void* abandoned_connection = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(channel->mutex);
+      channel->abandoned = true;
+      abandoned_connection = channel->retained_connection;
+      channel->retained_connection = nullptr;
+    }
+    ReleaseVirtioConnection(abandoned_connection);
+    operation->timed_out = true;
+    operation->error = "Virtualization guest virtio socket connection timed out";
+    return;
+  }
+
+  void* retained_connection = nullptr;
+  int descriptor = -1;
+  {
+    std::lock_guard<std::mutex> lock(channel->mutex);
+    if (!channel->error.empty()) {
+      operation->error = channel->error;
+      return;
+    }
+    retained_connection = channel->retained_connection;
+    descriptor = channel->file_descriptor;
+  }
+  if (descriptor < 0 || retained_connection == nullptr) {
+    operation->error = "Virtualization guest virtio socket connection is unavailable";
+    return;
+  }
+  int no_sigpipe = 1;
+  (void)setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
+  std::vector<unsigned char> request_frame(4 + request.size());
+  WriteBigEndian32(request_frame.data(), static_cast<uint32_t>(request.size()));
+  std::copy(request.begin(), request.end(), request_frame.begin() + 4);
+  if (!WriteAll(descriptor, request_frame.data(), request_frame.size(), deadline_ms)) {
+    operation->error = "Virtualization guest virtio socket request failed";
+    ReleaseVirtioConnection(retained_connection);
+    return;
+  }
+  unsigned char response_header[4];
+  if (!ReadAll(descriptor, response_header, sizeof(response_header), deadline_ms)) {
+    operation->error = "Virtualization guest virtio socket response was unavailable";
+    ReleaseVirtioConnection(retained_connection);
+    return;
+  }
+  const uint32_t response_bytes = ReadBigEndian32(response_header);
+  if (response_bytes < 1 || response_bytes > max_response_bytes) {
+    operation->error = "Virtualization guest response frame exceeded the byte limit";
+    ReleaseVirtioConnection(retained_connection);
+    return;
+  }
+  operation->response.resize(response_bytes);
+  if (!ReadAll(descriptor, operation->response.data(), operation->response.size(), deadline_ms)) {
+    operation->error = "Virtualization guest virtio socket response was truncated";
+    operation->response.clear();
+    ReleaseVirtioConnection(retained_connection);
+    return;
+  }
+  struct pollfd trailing{};
+  trailing.fd = descriptor;
+  trailing.events = POLLIN;
+  if (poll(&trailing, 1, 0) > 0 && (trailing.revents & POLLIN) != 0) {
+    operation->error = "Virtualization guest response contained trailing frame data";
+    operation->response.clear();
+  }
+  ReleaseVirtioConnection(retained_connection);
+}
+
+void CompleteChannel(napi_env env, napi_status status, void* data) {
+  AsyncChannelOperation* operation = static_cast<AsyncChannelOperation*>(data);
+  if (status != napi_ok || operation->timed_out || !operation->error.empty()) {
+    napi_value error;
+    const char* message = operation->error.empty() ? "Virtualization guest virtio socket exchange failed" : operation->error.c_str();
+    napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &error);
+    napi_reject_deferred(env, operation->deferred, error);
+  } else {
+    napi_value result;
+    napi_create_buffer_copy(env, operation->response.size(), operation->response.data(), nullptr, &result);
+    napi_resolve_deferred(env, operation->deferred, result);
+  }
+  napi_delete_async_work(env, operation->work);
+  void* retained = operation->retained_handle;
+  delete operation;
+  if (retained != nullptr) (void)(__bridge_transfer MOPVirtualizationGuestHandle*)retained;
+}
+
+napi_value ExchangeGuestFrame(napi_env env, napi_callback_info info) {
+  size_t argc = 5;
+  napi_value args[5];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 5) {
+    napi_throw_type_error(env, nullptr, "exchangeGuestFrame requires a handle, port, frame, response cap, and timeout");
+    return nullptr;
+  }
+  MOPVirtualizationGuestHandle* handle = ReadHandle(env, args[0]);
+  if (handle == nullptr) return nullptr;
+  uint32_t port = 0;
+  uint32_t timeout_ms = 0;
+  uint32_t max_response_bytes = 0;
+  napi_valuetype port_type = napi_undefined;
+  napi_valuetype cap_type = napi_undefined;
+  napi_valuetype timeout_type = napi_undefined;
+  napi_typeof(env, args[1], &port_type);
+  napi_typeof(env, args[3], &cap_type);
+  napi_typeof(env, args[4], &timeout_type);
+  const bool is_port = port_type == napi_number;
+  const bool is_cap = cap_type == napi_number;
+  const bool is_timeout = timeout_type == napi_number;
+  if (!is_port || !is_cap || !is_timeout ||
+      napi_get_value_uint32(env, args[1], &port) != napi_ok ||
+      napi_get_value_uint32(env, args[3], &max_response_bytes) != napi_ok ||
+      napi_get_value_uint32(env, args[4], &timeout_ms) != napi_ok ||
+      port < kMinVsockPort || port > kMaxVsockPort || max_response_bytes < 1 ||
+      max_response_bytes > kMaxFrameBytes || timeout_ms < 1 || timeout_ms > 120000) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest virtio socket limits are invalid");
+    return nullptr;
+  }
+  bool is_buffer = false;
+  napi_is_buffer(env, args[2], &is_buffer);
+  if (!is_buffer) {
+    napi_throw_type_error(env, nullptr, "Virtualization guest frame must be a Buffer");
+    return nullptr;
+  }
+  void* data = nullptr;
+  size_t length = 0;
+  if (napi_get_buffer_info(env, args[2], &data, &length) != napi_ok ||
+      data == nullptr || length < 1 || length > kMaxFrameBytes) {
+    napi_throw_range_error(env, nullptr, "Virtualization guest frame exceeds the byte limit");
+    return nullptr;
+  }
+  AsyncChannelOperation* operation = new AsyncChannelOperation();
+  operation->env = env;
+  operation->handle = handle;
+  operation->port = port;
+  operation->timeout_ms = timeout_ms;
+  operation->max_response_bytes = max_response_bytes;
+  operation->request.assign(static_cast<unsigned char*>(data), static_cast<unsigned char*>(data) + length);
+  operation->retained_handle = (__bridge_retained void*)handle;
+  napi_value promise;
+  if (napi_create_promise(env, &operation->deferred, &promise) != napi_ok) {
+    (void)(__bridge_transfer MOPVirtualizationGuestHandle*)operation->retained_handle;
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest frame promise could not be created");
+    return nullptr;
+  }
+  napi_value resource_name;
+  napi_create_string_utf8(env, "virtualization-guest-frame", NAPI_AUTO_LENGTH, &resource_name);
+  if (napi_create_async_work(env, nullptr, resource_name,
+                             [](napi_env worker_env, void* data) {
+                               (void)worker_env;
+                               ExecuteChannel(static_cast<AsyncChannelOperation*>(data));
+                             }, CompleteChannel, operation, &operation->work) != napi_ok ||
+      napi_queue_async_work(env, operation->work) != napi_ok) {
+    if (operation->work != nullptr) napi_delete_async_work(env, operation->work);
+    (void)(__bridge_transfer MOPVirtualizationGuestHandle*)operation->retained_handle;
+    delete operation;
+    napi_throw_error(env, nullptr, "Virtualization guest frame could not be queued");
+    return nullptr;
+  }
+  return promise;
 }
 
 void ExecuteTransition(AsyncOperation* operation) {
@@ -678,6 +1004,7 @@ napi_value Initialize(napi_env env, napi_value exports) {
   SetFunction(env, exports, "stopGuestVm", StopGuestVm);
   SetFunction(env, exports, "statusGuestVm", StatusGuestVm);
   SetFunction(env, exports, "closeGuestVm", CloseGuestVm);
+  SetFunction(env, exports, "exchangeGuestFrame", ExchangeGuestFrame);
   return exports;
 }
 
