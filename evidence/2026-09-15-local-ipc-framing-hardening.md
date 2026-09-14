@@ -1,7 +1,7 @@
 # Local IPC Framing Hardening Evidence
 
 Date: 2026-09-15
-Source commit: `0dee251`
+Source commits: `0dee251`, `64954e0`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
@@ -12,7 +12,8 @@ non-ASCII-whitespace bytes before replay admission, status readback, mutation,
 or helper dispatch. Their response clients apply the same single-frame rule
 and fail closed on appended response data. A rejected trailing frame does not
 consume the valid request nonce, so a clean retry is still governed by the
-normal durable replay boundary.
+normal durable replay boundary. The Policy Signer server copies its HMAC key
+and wipes the copy on every close path, including native-transport cleanup.
 
 ## Verification
 
@@ -32,5 +33,5 @@ distribution, or active process-tree termination.
 
 ## Rollback
 
-Revert commit `0dee251`; the existing authentication and replay domains remain
-unchanged.
+Revert commits `0dee251` and `64954e0`; the existing authentication and replay
+domains remain unchanged.

@@ -7,7 +7,8 @@ Last verified: 2026-09-15
 Local IPC framing hardening addendum: Privileged Helper, Policy Signer, and
 Broker Status channels now enforce one authenticated frame and reject
 non-whitespace trailing data before replay or side effects; clients reject
-trailing response frames. The complete physical-Darwin regression passes
+trailing response frames, and the Policy Signer wipes its copied HMAC key on
+close. The complete physical-Darwin regression passes
 573/573 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-local-ipc-framing-hardening.md`.
 

@@ -7,7 +7,8 @@ Last verified: 2026-09-15
 Local IPC framing hardening addendum: the Privileged Helper, Policy Signer,
 and Broker Status owner-only channels now reject non-whitespace bytes after
 their authenticated first frame before replay admission, status readback, or
-mutation. Their clients reject appended response frames as well. The complete
+mutation. Their clients reject appended response frames as well, and the
+Policy Signer wipes its copied HMAC key on every close path. The complete
 physical-Darwin regression passes 573/573 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-local-ipc-framing-hardening.md`.
 
