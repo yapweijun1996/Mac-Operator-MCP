@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
-import { FailClosedTaskRunner, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, type TaskExecutionResult, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
+import { FailClosedTaskRunner, VirtualizationGuestTransportExecutor, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, virtualizationProfileDigest, virtualizationTaskDigest, type TaskExecutionResult, type VirtualizationGuestTransport, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 
 function guestAttestation(guestIdentity: VirtualizationGuestIdentity, evidenceRef = "evidence://virtualization-guest"): VirtualizationGuestAttestation {
@@ -17,6 +17,28 @@ function guestAttestation(guestIdentity: VirtualizationGuestIdentity, evidenceRe
     evidenceRef
   };
   return { ...unsigned, attestationDigest: sha256(canonicalJson(unsigned)) };
+}
+
+function resolvedGuestProfile(): ResolvedTaskProfile {
+  return {
+    profile: "guest-task",
+    cwd: "/tmp/mac-operator-guest",
+    process: {
+      executable: "/usr/bin/true",
+      args: ["--bounded"],
+      cwd: "/tmp/mac-operator-guest",
+      environment: { LANG: "C" },
+      timeoutMs: 2_000,
+      outputCapBytes: 4_096
+    },
+    filesystemRoots: ["/tmp/mac-operator-guest"],
+    networkPolicy: "none",
+    networkAllowlist: [],
+    credentialPolicy: "none",
+    processTreePolicy: "single_process",
+    sandboxProfile: "guest-deny-default-v0.1",
+    verificationStrategy: "exit_status_and_declared_task_verification"
+  };
 }
 
 test("default task runner is unavailable and fails closed", async () => {
@@ -303,5 +325,139 @@ test("VirtualizationTaskRunner maps native adapter transport loss to unknown", a
   await assert.rejects(
     runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable === true
+  );
+});
+
+test("VirtualizationGuestTransportExecutor sends only bound digests and maps verified results", async () => {
+  const guest: VirtualizationGuestIdentity = {
+    imageSha256: "f".repeat(64),
+    runtimeVersion: "macos-26.2-vz-1"
+  };
+  const profile = resolvedGuestProfile();
+  let sent: Record<string, unknown> | undefined;
+  let closed = false;
+  const transport: VirtualizationGuestTransport = {
+    async execute(input) {
+      sent = input as unknown as Record<string, unknown>;
+      return {
+        schemaVersion: "0.1",
+        protocolVersion: "0.1",
+        contractVersion: "0.1",
+        kind: "virtualization_guest_task_result",
+        requestId: "request:guest-0123456789abcdef",
+        nonce: "guest-nonce-0123456789abcdef",
+        guestIdentity: guest,
+        requestDigest: "a".repeat(64),
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "guest-ok",
+        stderr: "",
+        truncated: false,
+        durationMs: 4,
+        outputPolicy: "broker-redacted-v1",
+        verification: { status: "verified", summary: "guest postcondition readback" }
+      };
+    },
+    close() { closed = true; }
+  };
+  const executor = new VirtualizationGuestTransportExecutor({
+    available: true,
+    transport,
+    guestIdentity: guest,
+    attestation: guestAttestation(guest)
+  });
+  const result = await executor.run({
+    profile,
+    guestIdentity: guest,
+    control: { timeoutMs: 1_500, shouldCancel: () => false }
+  });
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(sent?.sandboxProfile, profile.sandboxProfile);
+  assert.equal(sent?.timeoutMs, 1_500);
+  assert.equal(sent?.outputCapBytes, 4_096);
+  assert.equal(sent?.profileDigest, virtualizationProfileDigest(profile));
+  assert.equal(sent?.taskDigest, virtualizationTaskDigest(profile));
+  assert.equal("cwd" in (sent ?? {}), false);
+  assert.equal("executable" in (sent ?? {}), false);
+  assert.equal("args" in (sent ?? {}), false);
+  assert.equal("environment" in (sent ?? {}), false);
+  await executor.close();
+  assert.equal(closed, true);
+  await assert.rejects(
+    executor.run({ profile, guestIdentity: guest, control: { timeoutMs: 1_500, shouldCancel: () => false } }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+});
+
+test("VirtualizationGuestTransportExecutor never publishes an unverified guest success", async () => {
+  const guest: VirtualizationGuestIdentity = {
+    imageSha256: "1".repeat(64),
+    runtimeVersion: "macos-26.2-vz-1"
+  };
+  const response = {
+    schemaVersion: "0.1" as const,
+    protocolVersion: "0.1" as const,
+    contractVersion: "0.1" as const,
+    kind: "virtualization_guest_task_result" as const,
+    requestId: "request:guest-0123456789abcdef",
+    nonce: "guest-nonce-0123456789abcdef",
+    guestIdentity: guest,
+    requestDigest: "b".repeat(64),
+    state: "completed" as const,
+    resultClass: "SUCCEEDED" as const,
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    truncated: false,
+    durationMs: 1,
+    outputPolicy: "broker-redacted-v1" as const,
+    verification: { status: "unknown" as const }
+  };
+  const executor = new VirtualizationGuestTransportExecutor({
+    available: true,
+    transport: { async execute() { return response; }, close() {} },
+    guestIdentity: guest,
+    attestation: guestAttestation(guest)
+  });
+  await assert.rejects(
+    executor.run({ profile: resolvedGuestProfile(), guestIdentity: guest, control: { timeoutMs: 1_500, shouldCancel: () => false } }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "VERIFICATION_FAILED"
+  );
+});
+
+test("VirtualizationGuestTransportExecutor rejects a response from another guest identity", async () => {
+  const guest: VirtualizationGuestIdentity = {
+    imageSha256: "2".repeat(64),
+    runtimeVersion: "macos-26.2-vz-1"
+  };
+  const response = {
+    schemaVersion: "0.1" as const,
+    protocolVersion: "0.1" as const,
+    contractVersion: "0.1" as const,
+    kind: "virtualization_guest_task_result" as const,
+    requestId: "request:guest-0123456789abcdef",
+    nonce: "guest-nonce-0123456789abcdef",
+    guestIdentity: { ...guest, imageSha256: "3".repeat(64) },
+    requestDigest: "c".repeat(64),
+    state: "completed" as const,
+    resultClass: "SUCCEEDED" as const,
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    truncated: false,
+    durationMs: 1,
+    outputPolicy: "broker-redacted-v1" as const,
+    verification: { status: "verified" as const }
+  };
+  const executor = new VirtualizationGuestTransportExecutor({
+    available: true,
+    transport: { async execute() { return response; }, close() {} },
+    guestIdentity: guest,
+    attestation: guestAttestation(guest)
+  });
+  await assert.rejects(
+    executor.run({ profile: resolvedGuestProfile(), guestIdentity: guest, control: { timeoutMs: 1_500, shouldCancel: () => false } }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "VERIFICATION_FAILED"
   );
 });

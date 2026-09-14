@@ -3,6 +3,12 @@ import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSn
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
+import { validateUnsignedVirtualizationGuestResponse } from "./virtualization-guest-transport.js";
+import type {
+  UnsignedVirtualizationGuestResponse,
+  VirtualizationGuestExchangeOptions,
+  VirtualizationGuestRequestInput
+} from "./virtualization-guest-transport.js";
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
 const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -221,6 +227,44 @@ export interface VirtualizationTaskExecutionRequest {
 }
 
 /**
+ * Digest of the Broker-owned policy material sent to a guest by reference.
+ * The digest is safe to cross the guest boundary; the underlying paths,
+ * executable, arguments, and environment never leave the Broker.
+ */
+export function virtualizationProfileDigest(profile: ResolvedTaskProfile): string {
+  return sha256(canonicalJson({
+    schemaVersion: "0.1",
+    profile: profile.profile,
+    sandboxProfile: profile.sandboxProfile,
+    filesystemRoots: [...profile.filesystemRoots],
+    networkPolicy: profile.networkPolicy,
+    networkAllowlist: [...profile.networkAllowlist],
+    credentialPolicy: profile.credentialPolicy,
+    processTreePolicy: profile.processTreePolicy,
+    verificationStrategy: profile.verificationStrategy
+  }));
+}
+
+/** Digest of one exact resolved task, including its Broker-owned process limits. */
+export function virtualizationTaskDigest(
+  profile: ResolvedTaskProfile,
+  profileDigest = virtualizationProfileDigest(profile)
+): string {
+  return sha256(canonicalJson({
+    schemaVersion: "0.1",
+    profileDigest,
+    process: {
+      executable: profile.process.executable,
+      args: [...profile.process.args],
+      cwd: profile.process.cwd,
+      environment: { ...(profile.process.environment ?? {}) },
+      timeoutMs: profile.process.timeoutMs,
+      outputCapBytes: profile.process.outputCapBytes
+    }
+  }));
+}
+
+/**
  * Native Virtualization.framework adapter seam. The adapter owns VM creation,
  * guest boot, and guest-side evidence; the TypeScript Broker never accepts a
  * caller-supplied image path or launches a host process as a substitute.
@@ -231,6 +275,76 @@ export interface VirtualizationTaskExecutor {
   readonly attestation: VirtualizationGuestAttestation | null;
   run(request: VirtualizationTaskExecutionRequest): Promise<TaskExecutionResult>;
   close?(): Promise<void>;
+}
+
+/**
+ * Minimal transport surface required by the Broker-owned guest executor.
+ * A native Virtualization.framework implementation can satisfy this interface
+ * without exposing its VM or virtio details to the TypeScript Broker.
+ */
+export interface VirtualizationGuestTransport {
+  execute(input: VirtualizationGuestRequestInput, options?: VirtualizationGuestExchangeOptions): Promise<UnsignedVirtualizationGuestResponse>;
+  close(): void;
+}
+
+export interface VirtualizationGuestTransportExecutorOptions {
+  /** Explicit host-evidence gate; false keeps the executor unavailable. */
+  available: boolean;
+  transport: VirtualizationGuestTransport;
+  guestIdentity: VirtualizationGuestIdentity;
+  attestation: VirtualizationGuestAttestation;
+}
+
+/**
+ * Adapts the authenticated guest transport to the TaskRunner contract.
+ * It sends only policy/task digests and bounded budgets; the guest response is
+ * accepted only after the transport has verified its request binding and HMAC.
+ */
+export class VirtualizationGuestTransportExecutor implements VirtualizationTaskExecutor {
+  readonly available: boolean;
+  readonly guestIdentity: VirtualizationGuestIdentity;
+  readonly attestation: VirtualizationGuestAttestation;
+  private readonly transport: VirtualizationGuestTransport;
+  private closed = false;
+
+  constructor(options: VirtualizationGuestTransportExecutorOptions) {
+    if (typeof options.available !== "boolean" || options.transport === undefined ||
+        typeof options.transport.execute !== "function" || typeof options.transport.close !== "function") {
+      throw new Error("Virtualization guest transport executor options are invalid");
+    }
+    const guestIdentity = parseVirtualizationGuestIdentity(options.guestIdentity);
+    const attestation = validateVirtualizationGuestAttestation(options.attestation);
+    if (!sameVirtualizationGuestIdentity(guestIdentity, attestation.guestIdentity)) {
+      throw new Error("Virtualization guest transport identity does not match its attestation");
+    }
+    this.available = options.available;
+    this.transport = options.transport;
+    this.guestIdentity = guestIdentity;
+    this.attestation = attestation;
+  }
+
+  async run(request: VirtualizationTaskExecutionRequest): Promise<TaskExecutionResult> {
+    if (this.closed || !this.available) {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest transport executor is not available");
+    }
+    const profileDigest = virtualizationProfileDigest(request.profile);
+    const taskDigest = virtualizationTaskDigest(request.profile, profileDigest);
+    const response = await this.transport.execute({
+      guestIdentity: this.guestIdentity,
+      sandboxProfile: request.profile.sandboxProfile,
+      profileDigest,
+      taskDigest,
+      processTreePolicy: request.profile.processTreePolicy,
+      timeoutMs: Math.min(request.control.timeoutMs, request.profile.process.timeoutMs),
+      outputCapBytes: request.profile.process.outputCapBytes
+    }, { shouldCancel: request.control.shouldCancel });
+    return mapVirtualizationGuestResponse(response, this.guestIdentity);
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    this.transport.close();
+  }
 }
 
 export interface VirtualizationTaskRunnerOptions {
@@ -541,4 +655,61 @@ function mapProcessResult(result: ProcessExecutionResult): TaskExecutionResult {
         ? { status: "unknown", summary: crashed ? "sandboxed process terminated by signal; task side effects are unresolved" : "sandboxed process termination was not observed" }
         : { status: "failed", summary: "sandboxed process did not satisfy exit-status verification" }
   };
+}
+
+function mapVirtualizationGuestResponse(
+  response: UnsignedVirtualizationGuestResponse,
+  expectedGuestIdentity: VirtualizationGuestIdentity
+): TaskExecutionResult {
+  validateUnsignedVirtualizationGuestResponse(response);
+  if (!sameVirtualizationGuestIdentity(response.guestIdentity, expectedGuestIdentity)) {
+    throw new BrokerError("VERIFICATION_FAILED", "Virtualization guest response identity does not match the executor");
+  }
+  if (response.resultClass === "SUCCEEDED" &&
+      (response.state !== "completed" || response.verification.status !== "verified")) {
+    throw new BrokerError("VERIFICATION_FAILED", "Virtualization guest success was not postcondition verified");
+  }
+  if (response.resultClass === "SUCCEEDED") {
+    return validateTaskExecutionResult({
+      state: response.state,
+      resultClass: "SUCCEEDED",
+      exitCode: response.exitCode,
+      stdout: response.stdout,
+      stderr: response.stderr,
+      truncated: response.truncated,
+      durationMs: response.durationMs,
+      verification: response.verification
+    });
+  }
+  if (response.resultClass === "VERIFICATION_FAILED") {
+    return validateTaskExecutionResult({
+      state: "failed",
+      resultClass: "EXECUTION_FAILED",
+      exitCode: response.exitCode,
+      stdout: response.stdout,
+      stderr: response.stderr,
+      truncated: response.truncated,
+      durationMs: response.durationMs,
+      verification: {
+        status: "failed",
+        ...(response.verification.summary === undefined ? {} : { summary: response.verification.summary })
+      }
+    });
+  }
+  const resultClass = response.resultClass;
+  if (resultClass === "EXECUTION_FAILED" || resultClass === "CANCELLED" ||
+      resultClass === "TIMEOUT" || resultClass === "OUTPUT_LIMIT" ||
+      resultClass === "UNKNOWN_OUTCOME") {
+    return validateTaskExecutionResult({
+      state: response.state,
+      resultClass,
+      exitCode: response.exitCode,
+      stdout: response.stdout,
+      stderr: response.stderr,
+      truncated: response.truncated,
+      durationMs: response.durationMs,
+      verification: response.verification
+    });
+  }
+  throw new BrokerError("EXECUTION_FAILED", "Virtualization guest returned an unsupported result class");
 }
