@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval TTL-gate addendum: source revision `0ab3fc9` rejects a signed Approval
+whose own TTL has elapsed at the current Broker clock before persistence or
+audit. Approval Authority/IPC tests pass 10/10, including current-expired
+nonce and Approval cases with no records created; the complete physical-Darwin
+regression passes 583/583 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-approval-ttl-gate.md`.
+
 Task isolation proof addendum: source revision `7a101d9` requires an explicit
 `persistence: "isolated"` claim alongside filesystem, network, credentials,
 and process-tree guarantees. Strict validation rejects missing or non-isolated

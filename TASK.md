@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval TTL-gate addendum: source revision `0ab3fc9` rejects a signed Approval
+whose TTL has already elapsed before Approval or audit persistence. Approval
+Authority/IPC tests pass 10/10 and the complete physical-Darwin regression
+passes 583/583 with 0 skipped tests. This closes only source-level Approval
+expiry admission; human approval UI, protected production issuer-key storage,
+and unattended profile ownership remain open. Evidence:
+`evidence/2026-09-15-approval-ttl-gate.md`.
+
 Task isolation proof addendum: source revision `7a101d9` adds a required
 `persistence: "isolated"` field to the Broker-owned `TaskIsolationProof` and
 rejects missing or non-isolated claims before runner availability. Proof and

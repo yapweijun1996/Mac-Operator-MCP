@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Approval TTL-gate addendum: source revision `0ab3fc9` checks the signed
+Approval TTL against the current Broker clock before Approval or audit
+persistence; current-expired nonce and Approval regressions pass without
+creating records. Approval Authority/IPC tests pass 10/10 and the complete
+physical-Darwin suite passes 583/583 with 0 skipped tests. Build, typecheck,
+lint, contract verification, and diff checks pass. Human approval UI,
+protected production issuer-key storage, and unattended profile ownership
+remain unproven. Evidence: `evidence/2026-09-15-approval-ttl-gate.md`.
+
 Task isolation proof addendum: source revision `7a101d9` requires and
 normalizes `persistence: "isolated"` in every `TaskIsolationProof`; strict
 validation rejects missing or non-isolated persistence claims before a runner
