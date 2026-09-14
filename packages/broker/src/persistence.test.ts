@@ -886,6 +886,10 @@ test("BrokerStore fails closed when a persisted capability-family marker is malf
       database.close();
     }
     assert.throws(
+      () => store.requestRecord("request-family-corrupt"),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    assert.throws(
       () => store.admitRequest({
         ...requestInput("request-family-corrupt-2", "nonce-family-corrupt-2", false),
         capabilityFamilies: ["read"]
