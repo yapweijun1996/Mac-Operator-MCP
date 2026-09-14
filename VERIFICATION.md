@@ -1009,6 +1009,12 @@ Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence 
 
 ## Release gates
 
+Durable capability-family clarification: source revision `db129b3` closes the
+cross-handle BrokerStore quota boundary for read, write, process, network, GUI,
+destructive, and privileged families. The remaining resource-bound gate is
+adapter-specific semantic enforcement plus kernel/disk/depth limits and
+installed-service evidence.
+
 - Documentation gate: locked decisions materialized; open decisions and conflicts explicit.
 - Local authority gate: identity, IPC, policy, replay, audit, revocation, and failure behavior pass.
 - L0/L1 gate: filesystem and secret tests pass on the supported Mac profile.
