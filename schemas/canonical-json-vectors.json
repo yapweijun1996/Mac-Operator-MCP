@@ -1,0 +1,55 @@
+{
+  "profile": "jcs-utf8-v1",
+  "encoding": "UTF-8",
+  "property_order": "UTF-16 code units",
+  "number_format": "ECMAScript JSON.stringify",
+  "vectors": [
+    {
+      "name": "nested-object-and-array",
+      "value": {
+        "z": 1,
+        "a": [2, 1],
+        "nested": {
+          "unicode": "é",
+          "quote": "\\\"",
+          "line": "\\n"
+        }
+      },
+      "canonical": "{\"a\":[2,1],\"nested\":{\"line\":\"\\\\n\",\"quote\":\"\\\\\\\"\",\"unicode\":\"é\"},\"z\":1}",
+      "sha256": "557b10bbef8ede3ad6a66485f293d8bc74bc7ade8ea2afc4928d7ab63b51a17f"
+    },
+    {
+      "name": "number-boundaries",
+      "value": {
+        "negative_zero": 0,
+        "small": 1e-7,
+        "large": 100000000000000000000,
+        "fraction": 1.25
+      },
+      "canonical": "{\"fraction\":1.25,\"large\":100000000000000000000,\"negative_zero\":0,\"small\":1e-7}",
+      "sha256": "4895b7cfde1a2589fc9e7fa094c484de5826e10d1ac8e8b926ff3230d8cbccfe"
+    },
+    {
+      "name": "utf8-property-order",
+      "value": {
+        "😀": "astral",
+        "é": "precomposed",
+        "é": "combining"
+      },
+      "canonical": "{\"é\":\"combining\",\"é\":\"precomposed\",\"😀\":\"astral\"}",
+      "sha256": "a06958404909c045f33b1e8db1e202c0688a7bec69c2f97c1b49cc28e6e864a9"
+    },
+    {
+      "name": "boolean-null-and-empty",
+      "value": {
+        "empty_array": [],
+        "empty_object": {},
+        "false": false,
+        "null": null,
+        "true": true
+      },
+      "canonical": "{\"empty_array\":[],\"empty_object\":{},\"false\":false,\"null\":null,\"true\":true}",
+      "sha256": "73c7ed158420a339bb71263154a44bd779001e10dcd3fd69cc88bbb232fd1308"
+    }
+  ]
+}

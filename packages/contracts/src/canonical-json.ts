@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 
+/**
+ * Versioned wire profile used for every request, response, and audit digest.
+ * The implementation follows ECMAScript JSON string escaping and UTF-16
+ * property-name ordering so native adapters can reproduce the exact bytes.
+ */
+export const CANONICAL_JSON_PROFILE = "jcs-utf8-v1" as const;
+
 function canonicalizeValue(value: unknown): string {
   if (value === null || typeof value === "boolean" || typeof value === "string") {
     return JSON.stringify(value);
@@ -22,6 +29,11 @@ function canonicalizeValue(value: unknown): string {
 
 export function canonicalJson(value: unknown): string {
   return canonicalizeValue(value);
+}
+
+/** Return the exact UTF-8 bytes covered by a canonical digest or signature. */
+export function canonicalJsonUtf8(value: unknown): Buffer {
+  return Buffer.from(canonicalJson(value), "utf8");
 }
 
 export function sha256(value: string | Buffer): string {

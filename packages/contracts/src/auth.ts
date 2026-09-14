@@ -1,12 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { canonicalJson, sha256 } from "./canonical-json.js";
+import { canonicalJsonUtf8, sha256 } from "./canonical-json.js";
 import type { AuthenticatedBrokerResponse, BrokerRequest, BrokerResult, UnsignedBrokerRequest } from "./types.js";
 
 const REQUEST_PROOF_DOMAIN = "mac-operator-request-v0.1\0";
 const RESPONSE_PROOF_DOMAIN = "mac-operator-response-v0.1\0";
 
 export function requestPayloadDigest(request: UnsignedBrokerRequest): string {
-  return sha256(canonicalJson(request));
+  return sha256(canonicalJsonUtf8(request));
 }
 
 export function requestAuthenticationProof(payloadDigest: string, key: Buffer): string {
@@ -18,7 +18,7 @@ export function signBrokerResponse(
   response: BrokerResult,
   key: Buffer
 ): AuthenticatedBrokerResponse {
-  const responseDigest = sha256(canonicalJson({
+  const responseDigest = sha256(canonicalJsonUtf8({
     protocolVersion: request.protocolVersion,
     requestPayloadDigest: request.payloadDigest,
     authenticationKeyId: request.authenticationKeyId,
@@ -48,7 +48,7 @@ export function verifyBrokerResponse(
       envelope.requestPayloadDigest !== request.payloadDigest ||
       envelope.authenticationKeyId !== request.authenticationKeyId
     ) return false;
-    const expectedDigest = sha256(canonicalJson({
+    const expectedDigest = sha256(canonicalJsonUtf8({
       protocolVersion: envelope.protocolVersion,
       requestPayloadDigest: envelope.requestPayloadDigest,
       authenticationKeyId: envelope.authenticationKeyId,
