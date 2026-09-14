@@ -279,7 +279,11 @@ export class AuthorityControlIpcServer {
 function unsignedAuthorityControlCandidate(raw: unknown): UnsignedAuthorityControlCommand | undefined {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;
-  if (typeof record.authenticationProof !== "string") return undefined;
+  const allowed = new Set([
+    "protocolVersion", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "operation",
+    "switchName", "disabled", "expectedDisabled", "revocationKind", "subjectId", "reason", "authenticationProof"
+  ]);
+  if (Object.keys(record).some((key) => !allowed.has(key)) || typeof record.authenticationProof !== "string") return undefined;
   const candidate: UnsignedAuthorityControlCommand = {
     protocolVersion: record.protocolVersion as "0.1",
     requestId: record.requestId as string,
