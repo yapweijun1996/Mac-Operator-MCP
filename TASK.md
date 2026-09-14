@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Policy-helper gate addendum: source revision `21559e7` routes principal
+projection, target authorization, family kill-switch checks, and capability
+discovery through the complete Broker policy validator before use. Security
+fuzz policy mutations now exercise full policy shapes; the complete physical-
+Darwin regression passes 601/601 with 0 skipped tests. This closes the
+helper-entry policy gate only; broader release evidence remains open. Evidence:
+`evidence/2026-09-15-policy-helper-gate.md`.
+
 Runtime-policy semantic-validation addendum: source revision `83a733e`
 extends the Broker final-authority gate to policy metadata, trusted-key
 windows, principal grants, target rules, filesystem roots, kill switches, and

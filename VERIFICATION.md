@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Policy-helper gate addendum: source revision `21559e7` applies full
+`BrokerPolicy` validation to every policy authorization/discovery helper, not
+only the main ToolPolicy authorization path. The updated 256-iteration policy
+mutation corpus uses complete policy objects and confirms projected scopes and
+deny-overrides-allow cannot be expanded through a partial or malformed object.
+The complete physical-Darwin regression passes 601/601 with 0 skipped tests;
+build, typecheck, lint, contract verification, native canonical probe, and
+diff checks pass. This closes helper-entry policy validation only; signed
+policy provenance, installed-service evidence, and final release acceptance
+remain open. Evidence: `evidence/2026-09-15-policy-helper-gate.md`.
+
 Runtime-policy semantic-validation addendum: source revision `83a733e`
 validates the full in-memory Broker authority shape before capability use,
 including exact top-level/nested fields, key validity windows, principal grant

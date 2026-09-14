@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Policy-helper gate addendum: source revision `21559e7` makes principal
+projection, target authorization, capability-family kill-switch evaluation,
+and capability discovery invoke the same complete Broker policy validator
+before acting. Partial or malformed policy objects can no longer use a helper
+entrypoint to bypass the authority gate. The security-fuzz policy corpus and
+full physical-Darwin regression pass; the latter is 601/601 with 0 skipped
+tests. Evidence:
+`evidence/2026-09-15-policy-helper-gate.md`.
+
 Runtime-policy semantic-validation addendum: source revision `83a733e`
 extends the Broker policy gate beyond ToolPolicy fields to validate exact
 policy keys, trusted-key windows, principal grants, target-rule identity and
