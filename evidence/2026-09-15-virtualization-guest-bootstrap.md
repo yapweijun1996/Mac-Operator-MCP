@@ -17,8 +17,10 @@ server lifecycle. It requires an explicit `enabled` gate, limits frame and
 response bytes, limits concurrent connections, applies one connection deadline
 across read/agent/write, rejects invalid lengths and coalesced trailing request
 data, closes every stream after one response, and closes the guest agent (which
-wipes its HMAC key) during shutdown. The `VirtualizationGuestConnectionSource`
-interface keeps AF_VSOCK/native accept policy outside the protocol loop.
+wipes its HMAC key) during shutdown. Per-connection cancellation now propagates
+through `VirtualizationGuestAgent` to the guest executor before the stream is
+drained. The `VirtualizationGuestConnectionSource` interface keeps
+AF_VSOCK/native accept policy outside the protocol loop.
 
 The service startup path remains host-owned: it composes the native VM,
 authenticated transport, and Broker task runner independently. A future guest
@@ -27,8 +29,8 @@ the authenticated frame or task contracts.
 
 ## Verification
 
-- Guest bootstrap tests: 4/4 pass.
-- Full physical-Darwin suite after this change: 559/559 pass, 0 skipped.
+- Guest bootstrap tests: 5/5 pass.
+- Full physical-Darwin suite after this change: 560/560 pass, 0 skipped.
 - `npm run typecheck`, `npm run lint`, and `git diff --check` pass.
 
 This evidence does not claim a production AF_VSOCK acceptor, bootable guest

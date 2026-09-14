@@ -9,8 +9,8 @@ default, transport-independent guest protocol loop. It accepts a native
 startup-owned connection source, admits exactly one bounded length-prefixed
 frame, delegates to the authenticated guest agent, writes one bounded response,
 rejects trailing data, and closes streams and key material deterministically.
-Focused bootstrap tests pass 4/4; the full physical-Darwin regression passes
-559/559 with 0 skipped tests. AF_VSOCK acceptance, bootable image, isolation,
+Focused bootstrap tests pass 5/5; the full physical-Darwin regression passes
+560/560 with 0 skipped tests. AF_VSOCK acceptance, bootable image, isolation,
 attestation production, and `mac_task_run` enablement remain open. Evidence:
 `evidence/2026-09-15-virtualization-guest-bootstrap.md`.
 

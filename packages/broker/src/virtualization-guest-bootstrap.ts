@@ -64,7 +64,7 @@ export class VirtualizationGuestBootstrap {
   private readonly connectionTimeoutMs: number;
   private readonly maxConnections: number;
   private stateValue: VirtualizationGuestBootstrapState;
-  private activeConnections = new Set<{ stream: VirtualizationGuestStream; promise: Promise<void> }>();
+  private activeConnections = new Set<{ stream: VirtualizationGuestStream; controller: AbortController; promise: Promise<void> }>();
   private acceptAbort: AbortController | undefined;
   private acceptLoop: Promise<void> | undefined;
   private operation: Promise<void> = Promise.resolve();
@@ -125,8 +125,8 @@ export class VirtualizationGuestBootstrap {
           await Promise.resolve(stream.close()).catch(() => undefined);
           continue;
         }
-        const record = { stream, promise: Promise.resolve() };
-        record.promise = this.serveStream(stream).finally(() => {
+        const record = { stream, controller: new AbortController(), promise: Promise.resolve() };
+        record.promise = this.serveStream(stream, record.controller.signal).finally(() => {
           this.activeConnections.delete(record);
           if (this.stateValue === "stopping" && this.activeConnections.size === 0) this.stateValue = "stopped";
         });
@@ -140,7 +140,7 @@ export class VirtualizationGuestBootstrap {
     }
   }
 
-  private async serveStream(stream: VirtualizationGuestStream): Promise<void> {
+  private async serveStream(stream: VirtualizationGuestStream, signal: AbortSignal): Promise<void> {
     const deadline = Date.now() + this.connectionTimeoutMs;
     try {
       const request = await withDeadline(
@@ -149,7 +149,7 @@ export class VirtualizationGuestBootstrap {
         "Virtualization guest request frame timed out"
       );
       const response = await withDeadline(
-        this.agent.exchange(request),
+        this.agent.exchange(request, signal),
         deadline,
         "Virtualization guest request execution timed out"
       );
@@ -187,7 +187,10 @@ export class VirtualizationGuestBootstrap {
       try { await this.acceptLoop; } catch (error) { firstError ??= error; }
     }
     const active = [...this.activeConnections];
-    for (const record of active) await Promise.resolve(record.stream.close()).catch(() => undefined);
+    for (const record of active) {
+      record.controller.abort();
+      await Promise.resolve(record.stream.close()).catch(() => undefined);
+    }
     await Promise.allSettled(active.map((record) => record.promise));
     try { this.agent.close(); } catch (error) { firstError ??= error; }
     this.stateValue = firstError === undefined ? "closed" : "failed";

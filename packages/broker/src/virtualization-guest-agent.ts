@@ -32,8 +32,8 @@ export interface VirtualizationGuestAgentOptions {
   expectedGuestIdentity: VirtualizationGuestIdentity;
   expectedSandboxProfile: string;
   expectedProfileDigest: string;
-  execute(request: UnsignedVirtualizationGuestRequest): Promise<UnsignedVirtualizationGuestResponse>;
-  lookup?(request: UnsignedVirtualizationGuestStatusRequest): Promise<UnsignedVirtualizationGuestStatusResponse>;
+  execute(request: UnsignedVirtualizationGuestRequest, signal?: AbortSignal): Promise<UnsignedVirtualizationGuestResponse>;
+  lookup?(request: UnsignedVirtualizationGuestStatusRequest, signal?: AbortSignal): Promise<UnsignedVirtualizationGuestStatusResponse>;
   now?: () => number;
   maxRequestBytes?: number;
   maxResponseBytes?: number;
@@ -91,8 +91,9 @@ export class VirtualizationGuestAgent {
    * Handles exactly one JSON request frame and returns exactly one signed JSON
    * response frame. A transport may wrap this method in a virtio-socket loop.
    */
-  async exchange(frame: Uint8Array): Promise<Uint8Array> {
+  async exchange(frame: Uint8Array, signal?: AbortSignal): Promise<Uint8Array> {
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest agent is closed");
+    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest request was cancelled");
     if (!(frame instanceof Uint8Array) || frame.byteLength < 1 || frame.byteLength > this.maxRequestBytes) {
       throw new BrokerError("OUTPUT_LIMIT", "Virtualization guest request frame exceeded the byte limit");
     }
@@ -103,10 +104,10 @@ export class VirtualizationGuestAgent {
       throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest request frame is not valid JSON");
     }
     if (raw !== null && typeof raw === "object" && (raw as { kind?: unknown }).kind === "virtualization_guest_task") {
-      return this.handleTask(raw);
+      return this.handleTask(raw, signal);
     }
     if (raw !== null && typeof raw === "object" && (raw as { kind?: unknown }).kind === "virtualization_guest_task_status") {
-      return this.handleStatus(raw);
+      return this.handleStatus(raw, signal);
     }
     throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest request kind is invalid");
   }
@@ -116,7 +117,7 @@ export class VirtualizationGuestAgent {
     this.authenticationKey.fill(0);
   }
 
-  private async handleTask(raw: unknown): Promise<Uint8Array> {
+  private async handleTask(raw: unknown, signal?: AbortSignal): Promise<Uint8Array> {
     const request = verifyVirtualizationGuestRequest(raw, this.authenticationKey, {
       replayGuard: this.replayGuard,
       now: this.now(),
@@ -124,12 +125,14 @@ export class VirtualizationGuestAgent {
       expectedSandboxProfile: this.expectedSandboxProfile,
       expectedProfileDigest: this.expectedProfileDigest
     });
-    const response = await this.executeRequest({ ...request, guestIdentity: { ...request.guestIdentity } });
+    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled");
+    const response = await this.executeRequest({ ...request, guestIdentity: { ...request.guestIdentity } }, signal);
+    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled");
     const signed = bindAndSignTaskResponse(response, request, this.authenticationKey, this.expectedGuestIdentity);
     return encodeResponse(signed, this.maxResponseBytes, "Virtualization guest response");
   }
 
-  private async handleStatus(raw: unknown): Promise<Uint8Array> {
+  private async handleStatus(raw: unknown, signal?: AbortSignal): Promise<Uint8Array> {
     const request = verifyVirtualizationGuestStatusRequest(raw, this.authenticationKey, {
       replayGuard: this.replayGuard,
       now: this.now(),
@@ -138,7 +141,9 @@ export class VirtualizationGuestAgent {
     if (this.lookupRequest === undefined) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest status service is not enabled");
     }
-    const response = await this.lookupRequest({ ...request, guestIdentity: { ...request.guestIdentity } });
+    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest status was cancelled");
+    const response = await this.lookupRequest({ ...request, guestIdentity: { ...request.guestIdentity } }, signal);
+    if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest status was cancelled");
     const signed = bindAndSignStatusResponse(response, request, this.authenticationKey, this.expectedGuestIdentity);
     return encodeResponse(signed, this.maxResponseBytes, "Virtualization guest status response");
   }
