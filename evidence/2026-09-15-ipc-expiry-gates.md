@@ -1,7 +1,7 @@
 # IPC Expiry-Gate Evidence
 
-Date: 2026-09-15  
-Source commit: `6947608`  
+Date: 2026-09-15
+Source commit: `6947608`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary

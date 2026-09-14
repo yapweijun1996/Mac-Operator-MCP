@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval issuance expiry-gate addendum: source revision `8552210` rejects a
+current-expired signed Approval issuance nonce before persistence or audit.
+Approval Authority/IPC tests pass 9/9 and the complete physical-Darwin
+regression passes 582/582 with 0 skipped tests. This closes only the
+source-level current-clock nonce boundary; human approval UI, protected
+production issuer-key storage, and unattended profile ownership remain open.
+Evidence: `evidence/2026-09-15-approval-expiry-gate.md`.
+
 IPC expiry-gate addendum: source revision `6947608` rejects current-expired
 Privileged Helper command/status requests before replay, authorization,
 dispatch, or readback, and rejects current-expired Policy Signer nonces before

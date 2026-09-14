@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Approval issuance expiry-gate addendum: source revision `8552210` checks the
+current clock against the signed Approval issuance nonce expiry before
+approval persistence or audit. A current-expired signed request leaves no
+Approval or audit record. Approval Authority/IPC tests pass 9/9; the complete
+physical-Darwin suite passes 582/582 with 0 skipped tests. Build, typecheck,
+lint, contract verification, and diff checks pass. This verifies only the
+source-level expiry gate; protected production issuer-key storage, human
+approval UI, and unattended profile ownership remain unproven. Evidence:
+`evidence/2026-09-15-approval-expiry-gate.md`.
+
 IPC expiry-gate addendum: source revision `6947608` checks current nonce and
 command expiry for Privileged Helper command/status authentication before
 replay admission, authorization, adapter dispatch, or status readback, and

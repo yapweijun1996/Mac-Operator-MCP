@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval issuance expiry-gate addendum: source revision `8552210` makes the
+Broker-owned Approval Authority reject a current-expired signed issuance nonce
+before approval persistence or audit. The regression leaves both the Approval
+record and audit ledger unchanged; Approval Authority/IPC tests pass 9/9 and
+the complete physical-Darwin regression passes 582/582 with 0 skipped tests.
+Evidence: `evidence/2026-09-15-approval-expiry-gate.md`.
+
 IPC expiry-gate addendum: source revision `6947608` makes Privileged Helper
 command/status authentication reject current-expired nonce/command windows
 before replay admission, authorization, adapter dispatch, or status readback;
