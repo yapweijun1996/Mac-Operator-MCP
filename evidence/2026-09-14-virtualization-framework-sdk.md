@@ -51,3 +51,12 @@ isolation, credential isolation, process-tree ownership, cancellation, or
 postcondition readback. The TypeScript `VirtualizationTaskRunner` therefore
 remains disabled unless an externally reviewed proof and a native adapter with
 a matching guest image identity are supplied. `mac_task_run` remains disabled.
+
+The TypeScript seam now also requires a versioned native-adapter attestation
+whose digest covers the immutable guest identity, selected sandbox profile,
+guest-private filesystem, profile-bound network, unavailable host credentials,
+guest-owned process tree/policy, and the same external evidence reference as the
+`TaskIsolationProof`. The runner validates that attestation at construction and
+again immediately before dispatch. This prevents a changed or structurally
+inconsistent adapter claim from passing the guest-identity check, but it is not
+independent host evidence and does not enable the capability.

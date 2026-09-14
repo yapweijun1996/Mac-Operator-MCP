@@ -119,6 +119,15 @@ deny-list evidence, not real credential-content isolation or production
 `sandbox-exec` enablement. Evidence:
 `evidence/2026-09-14-sandbox-controller-secret-zones.md`.
 
+Latest Virtualization seam addendum: the disabled runner now requires a
+digest-bound native guest attestation tied to the immutable guest identity,
+resolved profile, external evidence reference, guest-private filesystem,
+profile-bound network, unavailable host credentials, and guest-owned process
+tree/policy. Construction and dispatch both revalidate the attestation. This is a
+fail-closed adapter contract, not VM boot, entitlement, credential-isolation,
+or production enablement evidence. Evidence:
+`evidence/2026-09-14-virtualization-framework-sdk.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now

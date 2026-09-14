@@ -70,3 +70,11 @@ pretend that an injected test executor is production isolation evidence. A
 future Swift/native adapter must own VM lifecycle, guest transport, process
 limits, credential isolation, and guest postcondition readback before this
 runner can be enabled.
+
+The seam also requires a digest-bound `VirtualizationGuestAttestation` from the
+native adapter. Its claims are bound to the guest identity, resolved profile,
+external evidence reference, guest-private filesystem, profile-bound network,
+unavailable host credentials, and guest-owned process tree/policy; the runner checks
+the attestation both at construction and immediately before dispatch. This is a
+fail-closed adapter contract, not independent host evidence or capability
+enablement.

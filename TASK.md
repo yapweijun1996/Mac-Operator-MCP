@@ -414,6 +414,16 @@ real sandbox/Keychain regression is 475/476 with one explicit skip. This is an
 observation guard only; post-snapshot detached descendants, remount identity,
 credential-store isolation, and production task enablement remain open.
 
+Latest Virtualization seam addendum: the disabled `VirtualizationTaskRunner`
+now requires a digest-bound native guest attestation tied to the immutable
+guest identity, resolved sandbox profile, external evidence reference,
+guest-private filesystem, profile-bound network, unavailable host credentials,
+and guest-owned process tree/policy. Construction and dispatch both revalidate the
+attestation; SDK presence, guest-less configuration validation, and this
+structural check still do not prove VM boot, entitlement, credential isolation,
+or production enablement. Evidence:
+`evidence/2026-09-14-virtualization-framework-sdk.md`.
+
 Latest exit-event addendum: strict task proof now begins at child `exit`,
 records process-group survival before stream `close`, and performs a second
 native descendant sample after one bounded poll interval. A Darwin

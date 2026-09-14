@@ -1,8 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BrokerError } from "@mac-operator/contracts";
-import { FailClosedTaskRunner, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskExecutionResult, type VirtualizationGuestIdentity } from "./task-runner.js";
+import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { FailClosedTaskRunner, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, type TaskExecutionResult, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
+
+function guestAttestation(guestIdentity: VirtualizationGuestIdentity, evidenceRef = "evidence://virtualization-guest"): VirtualizationGuestAttestation {
+  const unsigned = {
+    schemaVersion: "0.1" as const,
+    guestIdentity,
+    sandboxProfile: "guest-deny-default-v0.1",
+    filesystem: "guest-private" as const,
+    network: "profile-bound" as const,
+    credentials: "host-credentials-unavailable" as const,
+    processTree: "guest-owned" as const,
+    processTreePolicy: "single_process" as const,
+    evidenceRef
+  };
+  return { ...unsigned, attestationDigest: sha256(canonicalJson(unsigned)) };
+}
 
 test("default task runner is unavailable and fails closed", async () => {
   const runner = new FailClosedTaskRunner();
@@ -132,6 +147,12 @@ test("virtualization isolation proofs require an immutable guest identity", () =
     virtualizationGuest: guest
   } as const;
   assert.deepEqual(validateTaskIsolationProof(proof), proof);
+  const attestation = guestAttestation(guest, proof.evidenceRef);
+  assert.deepEqual(validateVirtualizationGuestAttestation(attestation), attestation);
+  assert.throws(
+    () => validateVirtualizationGuestAttestation({ ...attestation, attestationDigest: "0".repeat(64) }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
   assert.throws(
     () => validateTaskIsolationProof({ ...proof, virtualizationGuest: { ...guest, imageSha256: "not-a-digest" } }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
@@ -170,6 +191,7 @@ test("VirtualizationTaskRunner stays unavailable without matched native guest ev
     executor: {
       available: true,
       guestIdentity: null,
+      attestation: null,
       async run() { throw new Error("must not execute"); }
     }
   });
@@ -186,6 +208,7 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
     runtimeVersion: "macos-26.2-vz-1"
   };
   let executorGuest: VirtualizationGuestIdentity | null = guest;
+  let executorAttestation: VirtualizationGuestAttestation | null = guestAttestation(guest);
   let calls = 0;
   const runner = new VirtualizationTaskRunner({
     enabled: true,
@@ -206,6 +229,7 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
     executor: {
       available: true,
       get guestIdentity() { return executorGuest; },
+      get attestation() { return executorAttestation; },
       async run() {
         calls += 1;
         return {
@@ -230,6 +254,13 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(calls, 1);
   executorGuest = { ...guest, imageSha256: "d".repeat(64) };
+  await assert.rejects(
+    runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.equal(calls, 1);
+  executorGuest = guest;
+  executorAttestation = guestAttestation(guest, "evidence://other-guest");
   await assert.rejects(
     runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
@@ -261,6 +292,7 @@ test("VirtualizationTaskRunner maps native adapter transport loss to unknown", a
     executor: {
       available: true,
       guestIdentity: guest,
+      attestation: guestAttestation(guest),
       async run() { throw new Error("native transport closed"); }
     }
   });
