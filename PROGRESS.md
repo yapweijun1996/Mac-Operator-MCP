@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Strict UTF-8 boundary addendum: source revision `1ce5bee` adds a shared fatal
+UTF-8 decoder and applies it to implemented Broker/Edge IPC, approval,
+policy-signer, authority-control, status, helper, Keychain, virtualization
+guest, contract, persistence, audit, lock, and protected configuration JSON
+paths. Malformed frames fail closed before parsing or replay admission. Focused
+boundary tests pass 78/78, the native canonical JSON probe passes 5/5 vectors,
+and the complete physical-Darwin regression passes 587/587 with 0 skipped
+tests. Evidence: `evidence/2026-09-15-strict-utf8-boundary.md`.
+
 Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` validate
 request-age and clock-skew limits at Broker startup and bounds active work per
 authenticated principal/session (default 8, maximum 64). Capacity rejection

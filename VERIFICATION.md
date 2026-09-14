@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Strict UTF-8 boundary addendum: source revision `1ce5bee` applies fatal
+UTF-8 decoding before JSON parsing across implemented local/guest IPC,
+protected configuration, persistence, audit, and Edge contract paths.
+Malformed bytes are rejected without replay admission or mutation. Focused
+boundary tests pass 78/78, the native canonical JSON probe passes 5/5
+vectors, and the complete physical-Darwin suite passes 587/587 with 0 skipped
+tests. Build, typecheck, lint, contract verification, and diff checks pass.
+Broader numeric canonicalization compatibility, duplicate-key handling, and
+release evidence remain unproven. Evidence:
+`evidence/2026-09-15-strict-utf8-boundary.md`.
+
 Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` validate
 request-age and clock-skew limits before Broker startup and reserves at most
 eight active requests per principal/session by default (hard maximum 64).

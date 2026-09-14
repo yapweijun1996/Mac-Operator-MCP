@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Strict UTF-8 boundary addendum: source revision `1ce5bee` makes implemented
+JSON protocol and protected configuration readers use fatal UTF-8 decoding.
+Malformed bytes fail closed before JSON parsing or replay admission, including
+Broker IPC, owner channels, helper, Keychain, guest, persistence, audit, and
+Edge contract/configuration paths. Focused boundary tests pass 78/78, the
+native canonical JSON probe passes 5/5 vectors, and the complete physical-
+Darwin regression passes 587/587 with 0 skipped tests. This closes malformed
+encoding handling only; full numeric canonicalization compatibility,
+duplicate-key handling, and release acceptance remain open. Evidence:
+`evidence/2026-09-15-strict-utf8-boundary.md`.
+
 Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` add bounded
 request-age/clock-skew constructor validation and an in-process active-request
 cap per authenticated principal/session (default 8, maximum 64). A saturated
