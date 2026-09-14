@@ -40,7 +40,7 @@ MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test
 ```
 
 Result: 2/2 focused TypeScript tests, 5/5 Swift vectors, 2/2 C++ native digest
-checks, and the full physical-Darwin regression passed 535/535 with 0 skipped
+checks, and the full physical-Darwin regression passed 537/537 with 0 skipped
 tests.
 
 ## Limits

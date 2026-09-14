@@ -10,7 +10,7 @@ publish the versioned `jcs-utf8-v1` serialization profile, exact
 standard-library probe. Five fixed vectors cover nested values, escaping,
 number formatting, Unicode ordering without normalization, and empty values;
 focused TypeScript tests pass 2/2, native readback passes 5/5, the full
-physical-Darwin regression passes 535/535 with 0 skipped tests, and typecheck
+physical-Darwin regression passes 537/537 with 0 skipped tests, and typecheck
 passes. The protected C++ N-API artifact passes the same five digest vectors
 plus empty-input and 1 MiB cap checks. Production
 Swift/C++ adapter interoperability, VM isolation, and release acceptance

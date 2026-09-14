@@ -9,7 +9,7 @@ Latest canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`,
 publish the versioned `jcs-utf8-v1` profile, exact UTF-8 byte helper, and a
 bounded read-only native Swift standard-library probe over five fixed SHA-256
 vectors. Focused TypeScript tests pass 2/2, the native probe passes 5/5, the
-full physical-Darwin regression passes 535/535 with 0 skipped tests, and
+full physical-Darwin regression passes 537/537 with 0 skipped tests, and
 typecheck passes. The protected C++ N-API artifact additionally reproduces all
 five native digest vectors and enforces a 1 MiB input cap. This establishes
 repository and independent native serialization readback without
