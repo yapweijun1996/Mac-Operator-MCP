@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority-control restart readback addendum: the owner-only IPC now has a
+cross-restart regression that reads back persisted switch and revocation state
+through a fresh authenticated client and confirms replay denial remains in
+force. Focused IPC tests pass 2/2; the full physical-Darwin regression passes
+571/571 with 0 skipped tests. Installed operator identity, active process
+termination, and safe re-enable procedures remain open. Evidence:
+`evidence/2026-09-15-authority-control-restart-readback.md`.
+
 Guest transport shutdown hardening addendum: the host transport client tracks
 active exchanges, aborts them on close, and rejects post-close sends or signed
 success publication. Focused transport tests pass 15/15; the full

@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority-control restart readback addendum: after closing and reopening the
+BrokerStore and Authority Control IPC server, a fresh authenticated client now
+reads back persisted global/process switches and session/Edge revocations;
+replayed mutation commands remain denied. Focused IPC tests pass 2/2 and the
+full physical-Darwin regression passes 571/571 with 0 skipped tests. Installed
+operator identity, active process termination, and safe re-enable procedures
+remain open. Evidence:
+`evidence/2026-09-15-authority-control-restart-readback.md`.
+
 Guest transport shutdown hardening addendum: the host transport client now
 tracks active exchanges, aborts them on close, rejects a stable `CANCELLED`
 outcome, and blocks a post-admission frame send or response success after
