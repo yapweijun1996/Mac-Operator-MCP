@@ -80,6 +80,7 @@ export class BrokerStatusIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
   private socketIdentity: SocketPathIdentity | undefined;
+  private readonly sockets = new Set<Socket>();
   private readonly authenticationKey: Buffer;
   private readonly maxRequestBytes: number;
   private readonly maxRequestAgeMs: number;
@@ -130,7 +131,11 @@ export class BrokerStatusIpcServer {
     }
     await validateSocketParent(this.options.socketPath);
     await removeStaleSocket(this.options.socketPath);
-    this.server = createServer((socket) => this.handleSocket(socket));
+    this.server = createServer((socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+      this.handleSocket(socket);
+    });
     await new Promise<void>((resolvePromise, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(this.options.socketPath, resolvePromise);
@@ -159,6 +164,8 @@ export class BrokerStatusIpcServer {
     try {
       const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
       try {
+        for (const socket of this.sockets) socket.destroy();
+        this.sockets.clear();
         if (server) {
           await new Promise<void>((resolvePromise, reject) => server.close((error) => {
             if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);

@@ -66,6 +66,38 @@ test("IPC socket is owner-only and transports an authenticated request", async (
   }
 });
 
+test("IPC close drains an idle accepted socket", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-close-"));
+  const socketPath = join(directory, "broker.sock");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const now = Date.now();
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", false, ["mac.control.read"]),
+    edgeAuthenticationKeys: new EdgeKeyring([{
+      edgeId: "edge-1", keyId: "edge-key-1", key,
+      notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+    }]),
+    now: () => now
+  });
+  const server = new BrokerIpcServer({ socketPath, broker, peerCredentialVerifier: currentProcessVerifier() });
+  await server.listen();
+  const socket = createConnection(socketPath);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    await server.close();
+    assert.equal(socket.destroyed, true);
+  } finally {
+    socket.destroy();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("IPC startup rejects a group-writable socket directory", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-unsafe-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));

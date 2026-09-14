@@ -27,6 +27,7 @@ export class ApprovalIpcServer {
   private server: Server | undefined;
   private nativeTransport: MacOsNativePeerIpcServer | undefined;
   private socketIdentity: SocketPathIdentity | undefined;
+  private readonly sockets = new Set<Socket>();
   private readonly maxRequestBytes: number;
 
   constructor(private readonly options: ApprovalIpcServerOptions) {
@@ -58,7 +59,11 @@ export class ApprovalIpcServer {
     }
     await validateSocketParent(this.options.socketPath);
     await removeStaleSocket(this.options.socketPath);
-    this.server = createServer((socket) => this.handleSocket(socket));
+    this.server = createServer((socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+      this.handleSocket(socket);
+    });
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(this.options.socketPath, resolve);
@@ -85,6 +90,8 @@ export class ApprovalIpcServer {
     this.socketIdentity = undefined;
     const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
     try {
+      for (const socket of this.sockets) socket.destroy();
+      this.sockets.clear();
       if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     } finally {
       await removeDetachedSocket(detached);
