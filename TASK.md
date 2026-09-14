@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker IPC framing addendum: the authenticated Broker socket rejects
+non-whitespace trailing data before JSON parsing or request admission; the
+same signed request retries successfully, so no replay or audit state is
+consumed by the rejected frame. Focused Broker IPC tests pass 6/6 and the
+complete physical-Darwin regression passes 574/574 with 0 skipped tests.
+Evidence: `evidence/2026-09-15-local-ipc-framing-hardening.md`.
+
 Approval IPC framing addendum: the owner-only approval channel enforces one
 authenticated newline-delimited frame and rejects non-whitespace trailing data
 before replay admission, approval persistence, or audit. A clean retry of the

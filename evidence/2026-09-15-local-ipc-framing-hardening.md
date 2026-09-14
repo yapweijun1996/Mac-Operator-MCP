@@ -1,16 +1,16 @@
 # Local IPC Framing Hardening Evidence
 
 Date: 2026-09-15
-Source commits: `0dee251`, `64954e0`, `afc1342`
+Source commits: `0dee251`, `64954e0`, `afc1342`, `41e95db`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
 
-The privileged helper, policy-signer, Broker status, and owner-only approval
-Unix-socket servers
+The Broker, privileged helper, policy-signer, Broker status, and owner-only
+approval Unix-socket servers
 now authenticate the first newline-delimited frame and reject any subsequent
 non-ASCII-whitespace bytes before replay admission, status readback, mutation,
-or helper/approval dispatch. Their response clients apply the same single-frame
+or Broker/helper/approval dispatch. Their response clients apply the same single-frame
 rule and fail closed on appended response data. A rejected trailing frame does
 not consume the valid request nonce or create an approval, so a clean retry is
 still governed by the normal durable replay boundary. The Policy Signer server
@@ -19,10 +19,10 @@ native-transport cleanup.
 
 ## Verification
 
-- Privileged helper, policy-signer, and Broker status IPC framing tests pass.
-- The helper regression covers command and status frames; the approval IPC
-  regression proves that trailing data cannot dispatch, create an approval, or
-  consume replay state.
+- Broker, privileged helper, policy-signer, and Broker status IPC framing
+  tests pass.
+- The Broker/helper/approval regressions prove that trailing data cannot
+  dispatch, create an approval, or consume replay state.
 - Full physical-Darwin regression with install, sandbox, and Keychain gates:
   573/573 pass, 0 skipped, 0 failed.
 - `npm run build`, `npm run typecheck`, `npm run lint`,
@@ -36,5 +36,5 @@ distribution, or active process-tree termination.
 
 ## Rollback
 
-Revert commits `0dee251` and `64954e0`; the existing authentication and replay
-domains remain unchanged.
+Revert commits `0dee251`, `64954e0`, `afc1342`, and `41e95db`; the existing
+authentication and replay domains remain unchanged.

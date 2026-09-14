@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker IPC framing addendum: the authenticated Broker socket now rejects
+non-whitespace bytes after its first newline frame before JSON parsing or
+Broker admission. The signed request can be retried cleanly, proving the
+rejection does not consume replay state or write audit. Focused Broker IPC
+tests pass 6/6 and the full physical-Darwin regression remains 574/574 with
+0 skipped tests. Evidence:
+`evidence/2026-09-15-local-ipc-framing-hardening.md`.
+
 Approval IPC framing addendum: the owner-only approval channel now rejects
 non-whitespace bytes after its authenticated newline frame before issuer
 verification, durable replay, approval creation, or audit. The regression
