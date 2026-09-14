@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC expiry-gate addendum: source revision `6947608` makes Privileged Helper
+command/status authentication reject current-expired nonce/command windows
+before replay admission, authorization, adapter dispatch, or status readback;
+Policy Signer applies the current nonce-expiry gate before manager mutation.
+Structurally valid stale Helper requests retain authenticated `AUTH_EXPIRED`
+proofs, while malformed envelopes use the fallback proof. Focused Helper tests
+pass 9/9 and Policy Signer tests pass 2/2; the complete physical-Darwin
+regression passes 581/581 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-ipc-expiry-gates.md`.
+
 Broker Status IPC error-proof addendum: source revision `ad3adc9` binds
 structurally valid status requests to authenticated `AUTH_EXPIRED` and
 `REPLAY_DENIED` failure responses before freshness/auth checks, while unknown

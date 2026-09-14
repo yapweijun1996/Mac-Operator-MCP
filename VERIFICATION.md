@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+IPC expiry-gate addendum: source revision `6947608` checks current nonce and
+command expiry for Privileged Helper command/status authentication before
+replay admission, authorization, adapter dispatch, or status readback, and
+checks current Policy Signer nonce expiry before manager mutation. Structurally
+valid stale Helper errors remain response-authenticated; malformed envelopes
+use the fallback proof. Focused Helper tests pass 9/9 and Policy Signer tests
+pass 2/2; the complete physical-Darwin suite passes 581/581 with 0 skipped
+tests. Build, typecheck, lint, contract verification, and diff checks pass.
+This verifies only source-level IPC expiry gates; installed launchd/root helper
+ownership, production key distribution, and real privileged execution remain
+unproven. Evidence: `evidence/2026-09-15-ipc-expiry-gates.md`.
+
 Broker Status IPC error-proof addendum: source revision `ad3adc9` binds
 structurally valid status requests to authenticated `AUTH_EXPIRED` and
 `REPLAY_DENIED` failure responses before freshness/auth checks. Unknown fields

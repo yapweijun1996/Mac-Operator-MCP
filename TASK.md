@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC expiry-gate addendum: source revision `6947608` rejects current-expired
+Privileged Helper command/status requests before replay, authorization,
+dispatch, or readback, and rejects current-expired Policy Signer nonces before
+manager mutation. Focused Helper tests pass 9/9 and Policy Signer tests pass
+2/2; the complete physical-Darwin regression passes 581/581 with 0 skipped
+tests. This closes only source-level current-clock expiry admission; installed
+helper provenance, production key distribution, and real privileged execution
+remain open. Evidence: `evidence/2026-09-15-ipc-expiry-gates.md`.
+
 Broker Status IPC error-proof addendum: source revision `ad3adc9` binds
 structurally valid status requests to authenticated `AUTH_EXPIRED` and
 `REPLAY_DENIED` failure responses before freshness/auth checks. Unknown fields
