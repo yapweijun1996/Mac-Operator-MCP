@@ -11,6 +11,7 @@ export * from "./native-ipc-server.js";
 export * from "./native-peer-ipc-server.js";
 export * from "./keychain-delivery.js";
 export * from "./persistence.js";
+export * from "./audit-anchor.js";
 export * from "./persistence-backup.js";
 export * from "./peer-credentials.js";
 export * from "./policy.js";

@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest keyed-audit addendum: the optional Broker-owned audit anchor binds the
+SQLite tail to a separate 0600 sidecar with an explicit HMAC key source; a
+dedicated Keychain factory binds that source to the Broker executable ACL. The
+Broker publishes only after commit and rejects missing, stale, forged, or
+key-mismatched anchors at startup. Persistence tests pass 43/43. This is local
+keyed-integrity evidence only; external immutable anchoring, production
+Keychain provisioning, cross-process locking, and packaged enablement remain
+open. Evidence: `evidence/2026-09-14-keyed-audit-anchor.md`.
+
 Latest encrypted-backup addendum: Broker backups require a configured
 Broker-owned key source and are published as authenticated AES-256-GCM
 `.sqlite.enc` envelopes. Creation and restore stream through descriptor-backed

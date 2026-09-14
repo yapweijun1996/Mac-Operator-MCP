@@ -31,6 +31,18 @@ The Broker prototype owns a SQLite database with full synchronous WAL mode, atom
 
 The Broker verifies the complete audit hash chain at startup and refuses a database whose stored event content no longer matches the chain. An atomic migration preserves legacy revocations while adding `edge_key` support. These checks detect accidental or unsophisticated modification; an unkeyed local chain is not proof against an attacker who can rewrite the database and recompute every hash.
 
+An optional keyed audit-tail boundary is now implemented for host startup. The
+Broker can receive an explicit memory-only HMAC key source and publish the
+latest SQLite sequence/event hash to a separate owner-only `0600` sidecar after
+each committing transaction. Startup verifies the sidecar against the SQLite
+tail and fails closed on absence, staleness, key identity change, or forged
+content. Publication is deliberately after the SQLite commit: a sidecar write
+failure leaves the database ahead and therefore unresolved on the next start,
+never falsely verified. This is stronger than an unkeyed local chain but is not
+an external immutable log; packaged startup does not enable it, and the
+production Keychain item, cross-process sidecar locking, and rollback-resistant
+external anchor remain acceptance gates.
+
 The persistence boundary also publishes `schemas/ledger-records.schema.json`,
 a versioned envelope contract for Request, Approval, Job, and Audit records.
 The verifier compiles it with the MCP contracts, while focused tests reject
@@ -94,4 +106,4 @@ backup into a fresh destination, followed by a separately reviewed operator
 cutover. The focused migration suite covers fresh initialization, legacy
 preservation, future-version refusal, and registry-integrity refusal.
 
-`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover runbook, production code-signing/Keychain identity review, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, the forward-only migration registry, and the development-host Keychain ACL boundary are implemented; production rollback execution remains host-only.
+`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, production Keychain anchor provisioning, cross-process sidecar locking, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover runbook, production code-signing/Keychain identity review, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, the forward-only migration registry, the keyed local anchor boundary, and the development-host Keychain ACL boundary are implemented; production rollback execution remains host-only.

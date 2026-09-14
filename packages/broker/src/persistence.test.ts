@@ -286,6 +286,47 @@ test("BrokerStore rejects a tampered audit chain on reopen", async () => {
   }
 });
 
+test("BrokerStore binds the audit tail to an owner-only keyed sidecar", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-store-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const anchorPath = join(directory, "audit.anchor");
+  const anchorOptions = {
+    path: anchorPath,
+    keySource: {
+      keyId: "audit-key-1",
+      loadKey: () => Buffer.from("audit-anchor-store-key-0123456789", "ascii")
+    }
+  };
+  let store: BrokerStore | undefined = new BrokerStore(databasePath, { auditAnchor: anchorOptions });
+  store.appendAudit({
+    requestId: "anchored-request",
+    principalId: "principal-1",
+    tool: "mac_health",
+    eventType: "completion",
+    decision: "allow",
+    resultClass: "SUCCEEDED",
+    targetRef: "host:broker",
+    policyVersion: "policy-0.1",
+    evidence: { persisted: true },
+    timestampMs: 1
+  });
+  store.close();
+  store = undefined;
+  try {
+    const reopened = new BrokerStore(databasePath, { auditAnchor: anchorOptions });
+    reopened.close();
+    const anchor = JSON.parse(await readFile(anchorPath, "utf8")) as { mac: string };
+    anchor.mac = "0".repeat(64);
+    await writeFile(anchorPath, `${JSON.stringify(anchor)}\n`, { mode: 0o600 });
+    assert.throws(
+      () => new BrokerStore(databasePath, { auditAnchor: anchorOptions }),
+      /Audit anchor does not match/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore refuses plaintext backups and mismatched backup keys", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-key-boundary-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));

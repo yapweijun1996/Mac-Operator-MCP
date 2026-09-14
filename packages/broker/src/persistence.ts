@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
+import { AuditAnchorManager, type AuditAnchorOptions } from "./audit-anchor.js";
 import {
   createBrokerBackup,
   pruneBrokerBackups,
@@ -314,14 +315,23 @@ export type PersistenceFaultPoint =
 export interface BrokerStoreOptions {
   /** @internal Test-only; never configure this in a production Broker. */
   faultInjector?: (point: PersistenceFaultPoint) => void;
+  /**
+   * Optional keyed audit-tail anchor. Production startup must load its key
+   * from a protected source (normally Keychain) and use a single Broker owner
+   * until cross-process sidecar locking is separately accepted.
+   */
+  auditAnchor?: AuditAnchorOptions;
 }
 
 export class BrokerStore {
   private readonly database: DatabaseSync;
   private readonly faultInjector: ((point: PersistenceFaultPoint) => void) | undefined;
+  private readonly auditAnchor: AuditAnchorManager | undefined;
+  private pendingAuditAnchor: { sequence: number; eventHash: string } | undefined;
 
   constructor(path: string, options: BrokerStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
+    this.auditAnchor = options.auditAnchor ? new AuditAnchorManager(options.auditAnchor) : undefined;
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA busy_timeout = 5000;");
     this.database.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
@@ -573,16 +583,19 @@ export class BrokerStore {
       `);
       this.migrateSchema(schemaVersion);
       this.verifyAuditIntegrity();
+      this.verifyExternalAuditAnchor();
       this.reconcileInterruptedRequests(Date.now());
       this.reconcileInterruptedJobs(Date.now());
     } catch (error) {
       this.database.close();
+      this.auditAnchor?.close();
       throw error;
     }
   }
 
   close(): void {
     this.database.close();
+    this.auditAnchor?.close();
   }
 
   /** Creates a verified, owner-only encrypted backup without exposing the live database handle. */
@@ -2333,6 +2346,15 @@ export class BrokerStore {
     }
   }
 
+  private verifyExternalAuditAnchor(): void {
+    if (this.auditAnchor === undefined) return;
+    const tail = this.database.prepare("SELECT sequence, event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1").get() as {
+      sequence: number;
+      event_hash: string;
+    } | undefined;
+    this.auditAnchor.verify(tail ? { sequence: tail.sequence, eventHash: tail.event_hash } : undefined);
+  }
+
   private transitionJob(
     jobId: string,
     principalId: string,
@@ -2464,23 +2486,42 @@ export class BrokerStore {
       INSERT INTO audit_events(request_id, principal_id, tool, event_type, decision, result_class, target_ref, policy_version, evidence_json, timestamp_ms, previous_hash, event_hash)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(event.requestId, event.principalId, event.tool, event.eventType, event.decision, event.resultClass, event.targetRef, event.policyVersion, evidenceJson, event.timestampMs, previousHash, eventHash);
+    const row = this.database.prepare("SELECT sequence FROM audit_events WHERE event_hash = ?").get(eventHash) as { sequence: number } | undefined;
+    if (this.auditAnchor !== undefined) {
+      if (row === undefined || !Number.isSafeInteger(row.sequence) || row.sequence < 1) {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Audit sequence could not be read back");
+      }
+      this.pendingAuditAnchor = { sequence: row.sequence, eventHash };
+    }
     return eventHash;
   }
 
   private runTransaction<T>(operation: () => T): T {
+    this.pendingAuditAnchor = undefined;
     this.database.exec("BEGIN IMMEDIATE");
+    let committed = false;
     try {
       const result = operation();
+      const pendingAnchor = this.pendingAuditAnchor;
       this.database.exec("COMMIT");
+      committed = true;
+      this.pendingAuditAnchor = undefined;
+      this.publishPendingAuditAnchor(pendingAnchor);
       return result;
     } catch (error) {
-      this.database.exec("ROLLBACK");
+      if (!committed) this.database.exec("ROLLBACK");
+      this.pendingAuditAnchor = undefined;
       throw error;
     }
   }
 
   private injectFault(point: PersistenceFaultPoint): void {
     this.faultInjector?.(point);
+  }
+
+  private publishPendingAuditAnchor(anchor: { sequence: number; eventHash: string } | undefined): void {
+    if (anchor === undefined) return;
+    this.auditAnchor?.publish(anchor.sequence, anchor.eventHash);
   }
 
   private readSchemaVersion(): number {

@@ -4,6 +4,20 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
+binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
+explicit memory-only HMAC key source; a dedicated Keychain source factory now
+loads that key through the Broker executable ACL. Every committed audit transaction
+publishes the latest sequence/event hash after commit; startup rejects a
+missing, stale, forged, or key-mismatched anchor, and a publication failure
+cannot be mistaken for verified persistence. The focused persistence suite
+passes 43/43, including restart and forged-sidecar readback; the full real
+sandbox/Keychain regression passes 474/475 with one explicit skip. This is a local
+keyed-integrity boundary, not an external immutable log; packaged startup,
+production Keychain anchor provisioning, cross-process locking, and rollback
+detection remain open. Evidence:
+`evidence/2026-09-14-keyed-audit-anchor.md`.
+
 Latest encrypted-backup addendum: Broker persistence backups now require an
 explicit Broker-owned 32-byte key source and publish only authenticated
 AES-256-GCM `.sqlite.enc` files. Creation and restore use descriptor-backed

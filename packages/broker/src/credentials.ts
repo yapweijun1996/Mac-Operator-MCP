@@ -5,6 +5,7 @@ import { dirname, isAbsolute } from "node:path";
 import { sha256 } from "@mac-operator/contracts";
 import { keyIdentity } from "./edge-keyring.js";
 import { approvalKeyIdentity, type ApprovalIssuerKey } from "./approval-authority.js";
+import type { AuditAnchorKeySource } from "./audit-anchor.js";
 import type { BrokerStore, RevocationKind } from "./persistence.js";
 import type { BrokerBackupKeySource } from "./persistence-backup.js";
 import {
@@ -63,6 +64,20 @@ export function createKeychainBrokerBackupKeySource(
 ): BrokerBackupKeySource {
   validateKeychainCoordinates(service, account);
   if (!BACKUP_KEY_ID_PATTERN.test(keyId)) throw new Error("Broker backup key ID is invalid");
+  return {
+    keyId,
+    loadKey: () => readKeychainGenericPassword(service, account, process.execPath)
+  };
+}
+
+/** Returns a synchronous Keychain-backed source for the optional audit anchor. */
+export function createKeychainAuditAnchorKeySource(
+  service: string,
+  account: string,
+  keyId: string
+): AuditAnchorKeySource {
+  validateKeychainCoordinates(service, account);
+  if (!BACKUP_KEY_ID_PATTERN.test(keyId)) throw new Error("Audit anchor key ID is invalid");
   return {
     keyId,
     loadKey: () => readKeychainGenericPassword(service, account, process.execPath)
