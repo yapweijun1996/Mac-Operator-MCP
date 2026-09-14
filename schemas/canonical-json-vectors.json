@@ -50,6 +50,19 @@
       },
       "canonical": "{\"empty_array\":[],\"empty_object\":{},\"false\":false,\"null\":null,\"true\":true}",
       "sha256": "73c7ed158420a339bb71263154a44bd779001e10dcd3fd69cc88bbb232fd1308"
+    },
+    {
+      "name": "number-notation-thresholds",
+      "value": {
+        "one_e_minus_six": 1e-6,
+        "one_e_minus_seven": 1e-7,
+        "one_e_twenty": 1e20,
+        "one_e_twenty_one": 1e21,
+        "decimal_trailing": 1.2300,
+        "negative_zero": -0
+      },
+      "canonical": "{\"decimal_trailing\":1.23,\"negative_zero\":0,\"one_e_minus_seven\":1e-7,\"one_e_minus_six\":0.000001,\"one_e_twenty\":100000000000000000000,\"one_e_twenty_one\":1e+21}",
+      "sha256": "5e69628adf52d3f19d2166001ade9f079cae5595228137c27d12915b8f81771a"
     }
   ]
 }
