@@ -41,6 +41,17 @@ Focused canonical JSON tests pass 5/5 and the complete physical-Darwin
 regression passes 593/593 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-cross-runtime-json-number-canonicalization.md`.
 
+Capability-family capacity addendum: source revision `db129b3` adds a schema-v9
+request-ledger marker and BrokerStore admission gates for independent
+`read`/`write`/`process`/`network`/`gui`/`destructive`/`privileged` families.
+Broker-resolved families are persisted before authorization and counted inside
+the same SQLite `BEGIN IMMEDIATE` transaction across Broker handles. Unknown
+legacy markers conservatively consume every requested family, while malformed
+markers fail closed as `AUDIT_UNAVAILABLE`. Focused Broker/persistence tests
+pass 122/122 with 6 explicit skips; the complete physical-Darwin regression
+passes 596/596 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-capability-family-capacity.md`.
+
 Durable request-capacity addendum: source revision `31e89f0` moves active
 request admission limits into the BrokerStore `BEGIN IMMEDIATE` transaction.
 The Broker now supplies a default global cap of 64 and principal/session cap

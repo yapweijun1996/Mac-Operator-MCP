@@ -46,6 +46,19 @@ boundary; broader independent native vector coverage and release acceptance
 remain open. Evidence:
 `evidence/2026-09-15-cross-runtime-json-number-canonicalization.md`.
 
+Capability-family capacity addendum: source revision `db129b3` persists the
+Broker-resolved capability families on each request and enforces independent
+durable active-request quotas for read, write, process, network, GUI,
+destructive, and privileged work inside the SQLite admission transaction.
+Cross-handle tests prove that one saturated family does not block another;
+unknown legacy markers are counted against every requested family and
+malformed markers return `AUDIT_UNAVAILABLE` before replay persistence.
+Focused Broker/persistence tests pass 122/122 with 6 explicit skips; the
+complete physical-Darwin suite passes 596/596 with 0 skipped tests. This closes
+the durable family-capacity boundary only; adapter-specific semantic quotas,
+kernel/disk/depth limits, and release acceptance remain open. Evidence:
+`evidence/2026-09-15-capability-family-capacity.md`.
+
 Durable request-capacity addendum: source revision `31e89f0` adds a durable
 global and principal/session admission gate inside the SQLite write
 transaction. Default caps are global 64 and per principal/session 8, with
