@@ -35,6 +35,15 @@ non-Darwin/real-sandbox skips; full physical-Darwin regression passes 589/589
 with 0 skipped tests. Evidence:
 `evidence/2026-09-15-durable-request-capacity.md`.
 
+Process-quota addendum: source revision `a135396` adds a Broker-owned
+per-executable admission gate to the shared ProcessSupervisor. Active and
+pending starts for the same canonical executable share a default cap of 4,
+bounded by the existing global cap of 16 in the Broker runtime; cancellation,
+startup abort, unknown-outcome drain, and close release both counters. Focused
+ProcessSupervisor tests pass 26/26, and the complete physical-Darwin suite
+passes 592/592 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-process-quota-isolation.md`.
+
 Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` validate
 request-age and clock-skew limits at Broker startup and bounds active work per
 authenticated principal/session (default 8, maximum 64). Capacity rejection
