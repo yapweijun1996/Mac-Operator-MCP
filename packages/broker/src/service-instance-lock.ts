@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { decodeUtf8Strict } from "@mac-operator/contracts";
+import { parseJsonUtf8Strict } from "@mac-operator/contracts";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 
 const LOCK_SCHEMA_VERSION = "0.1";
@@ -159,7 +159,7 @@ async function readLockFile(path: string, ownerUid: number): Promise<LockFileRec
       }
       const bytes = await handle.readFile();
       let value: unknown;
-      try { value = JSON.parse(decodeUtf8Strict(bytes)) as unknown; }
+      try { value = parseJsonUtf8Strict(bytes); }
       catch { throw new ServiceInstanceLockError("LOCK_INVALID", "Broker service lock is not valid JSON"); }
       const document = parseLockDocument(value);
       return { fileDevice: opened.dev, fileInode: opened.ino, document };

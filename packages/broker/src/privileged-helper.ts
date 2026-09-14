@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, CONTRACT_VERSION, decodeUtf8Strict, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, CONTRACT_VERSION, parseJsonUtf8Strict, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ApprovalRecord, type BrokerJob, type BrokerStore, type PrivilegedHelperPayload, type RequestRecord } from "./persistence.js";
@@ -577,7 +577,7 @@ export class PrivilegedHelperIpcServer {
       socket.pause();
       let raw: unknown;
       try {
-        raw = JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown;
+        raw = parseJsonUtf8Strict(combined.subarray(0, newline));
       } catch {
         writeResponse(socket, this.failure("PRECONDITION_FAILED", "Privileged helper request is not valid JSON", "invalid-command", "invalid-request"));
         return;
@@ -866,7 +866,7 @@ export async function readPrivilegedHelperStatus(options: PrivilegedHelperStatus
         settled = true;
         socket.destroy();
         try {
-          resolvePromise(JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown);
+          resolvePromise(parseJsonUtf8Strict(combined.subarray(0, newline)));
         } catch {
           reject(new BrokerError("EXECUTION_FAILED", "Privileged helper status response is not valid JSON"));
         }
@@ -1208,7 +1208,7 @@ async function exchangeHelperSocket(socketPath: string, serialized: string, time
       settled = true;
       socket.destroy();
       try {
-        resolvePromise(JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown);
+        resolvePromise(parseJsonUtf8Strict(combined.subarray(0, newline)));
       } catch {
         reject(new BrokerError("EXECUTION_FAILED", "Privileged helper command response is not valid JSON"));
       }

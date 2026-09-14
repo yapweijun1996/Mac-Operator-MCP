@@ -2,7 +2,7 @@ import { lstat, realpath, chmod } from "node:fs/promises";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, decodeUtf8Strict, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonUtf8Strict, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
@@ -200,7 +200,7 @@ export class AuthorityControlIpcServer {
       let response: AuthorityControlIpcResponse;
       let command: UnsignedAuthorityControlCommand | undefined;
       try {
-        const raw = JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown;
+        const raw = parseJsonUtf8Strict(combined.subarray(0, newline));
         command = unsignedAuthorityControlCandidate(raw);
         command = authenticateAuthorityControlCommand(
           raw,

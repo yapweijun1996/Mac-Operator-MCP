@@ -7,7 +7,7 @@ import {
   PLANNED_TOOL_NAMES,
   SCOPES,
   canonicalJson,
-  decodeUtf8Strict,
+  parseJsonUtf8Strict,
   sha256,
   type Scope
 } from "@mac-operator/contracts";
@@ -204,7 +204,7 @@ export class PolicyBundleVerifier {
     const content = await readProtectedPolicyFile(path);
     let parsed: unknown;
     try {
-      parsed = JSON.parse(decodeUtf8Strict(content)) as unknown;
+      parsed = parseJsonUtf8Strict(content);
     } catch {
       throw new Error("Policy bundle is not valid JSON");
     }

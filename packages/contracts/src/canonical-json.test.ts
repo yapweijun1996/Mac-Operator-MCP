@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { canonicalJson, canonicalJsonUtf8, CANONICAL_JSON_PROFILE, decodeUtf8Strict, sha256 } from "./index.js";
+import { canonicalJson, canonicalJsonUtf8, CANONICAL_JSON_PROFILE, decodeUtf8Strict, parseJsonStrict, parseJsonUtf8Strict, sha256 } from "./index.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -46,4 +46,13 @@ test("canonical JSON UTF-8 encoding preserves Unicode without normalization", ()
 test("strict UTF-8 decoding rejects malformed protocol bytes", () => {
   assert.equal(decodeUtf8Strict(Buffer.from("é", "utf8")), "é");
   assert.throws(() => decodeUtf8Strict(Buffer.from([0xc3, 0x28])), /valid UTF-8/u);
+});
+
+test("strict JSON parsing rejects duplicate keys and unpaired surrogates", () => {
+  assert.deepEqual(parseJsonUtf8Strict(Buffer.from('{"a":1,"nested":{"b":true}}')), { a: 1, nested: { b: true } });
+  assert.throws(() => parseJsonUtf8Strict(Buffer.from('{"a":1,"a":2}')), /duplicate key/u);
+  assert.throws(() => parseJsonUtf8Strict(Buffer.from('{"a":1,"\\u0061":2}')), /duplicate key/u);
+  assert.throws(() => parseJsonUtf8Strict(Buffer.from('"\\ud800"')), /unpaired surrogate/u);
+  assert.throws(() => parseJsonStrict('"\\udfff"'), /unpaired surrogate/u);
+  assert.throws(() => canonicalJson("\ud800"), /JSON string contains an unpaired surrogate/u);
 });

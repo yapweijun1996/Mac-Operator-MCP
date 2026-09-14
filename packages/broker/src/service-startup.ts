@@ -16,7 +16,7 @@ import { assertSocketNotActive } from "./ipc-server.js";
 import { BrokerServiceInstanceLock } from "./service-instance-lock.js";
 import { BrokerStatusIpcServer, BrokerStoreBrokerStatusReplayGuard } from "./broker-status-ipc.js";
 import { createKeychainAuditAnchorKeySource, loadAuthenticationKey } from "./credentials.js";
-import { BrokerError, decodeUtf8Strict, sha256 } from "@mac-operator/contracts";
+import { BrokerError, parseJsonUtf8Strict, sha256 } from "@mac-operator/contracts";
 import { VirtualizationGuestAttestationKeyManager } from "./virtualization-guest-attestation-keyring.js";
 import {
   createVirtualizationGuestRuntime,
@@ -92,7 +92,7 @@ export async function loadBrokerServiceStartupConfig(path: string): Promise<Brok
   const content = await readProtectedConfig(path);
   let value: unknown;
   try {
-    value = JSON.parse(decodeUtf8Strict(content)) as unknown;
+    value = parseJsonUtf8Strict(content);
   } catch {
     throw new Error("Broker service startup config is not valid JSON");
   }

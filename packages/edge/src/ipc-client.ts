@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import {
   BrokerError,
   decodeUtf8Strict,
+  parseJsonStrict,
   type AuthenticatedBrokerResponse,
   type BrokerRequest,
   type BrokerResult
@@ -33,7 +34,7 @@ export class BrokerIpcClient {
     const rawResponse = await this.exchange(`${JSON.stringify(request)}\n`, signal, socketIdentity);
     let parsed: unknown;
     try {
-      parsed = JSON.parse(rawResponse) as unknown;
+      parsed = parseJsonStrict(rawResponse);
     } catch {
       throw new BrokerError("AUTH_INVALID", "Broker IPC response is not valid JSON");
     }

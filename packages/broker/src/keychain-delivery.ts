@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { decodeUtf8Strict, sha256, parseKeychainDeliveryRequest, type KeychainDeliveryFailure, type KeychainDeliveryRequest, type KeychainDeliveryResponse, type KeychainDeliverySuccess } from "@mac-operator/contracts";
+import { decodeUtf8Strict, parseJsonStrict, sha256, parseKeychainDeliveryRequest, type KeychainDeliveryFailure, type KeychainDeliveryRequest, type KeychainDeliveryResponse, type KeychainDeliverySuccess } from "@mac-operator/contracts";
 import type { Socket } from "node:net";
 import { loadKeychainAuthenticationKey } from "./credentials.js";
 import { MacOsNativePeerIpcServer, type NativePeerIpcServerOptions } from "./native-peer-ipc-server.js";
@@ -131,7 +131,7 @@ export class KeychainDeliveryServer implements RuntimeChannel {
   private async respond(socket: Socket, body: string, challenge: string): Promise<void> {
     let request: KeychainDeliveryRequest;
     try {
-      request = parseKeychainDeliveryRequest(JSON.parse(body) as unknown);
+      request = parseKeychainDeliveryRequest(parseJsonStrict(body));
     } catch {
       this.writeResponse(socket, this.failure("INVALID_REQUEST", undefined, challenge));
       return;

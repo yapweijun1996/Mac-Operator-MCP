@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
-import { decodeUtf8Strict, sha256, parseKeychainDeliveryChallenge, parseKeychainDeliveryResponse, type KeychainDeliveryRequest, type KeychainDeliveryResponse } from "@mac-operator/contracts";
+import { decodeUtf8Strict, parseJsonStrict, sha256, parseKeychainDeliveryChallenge, parseKeychainDeliveryResponse, type KeychainDeliveryRequest, type KeychainDeliveryResponse } from "@mac-operator/contracts";
 import { BrokerError } from "@mac-operator/contracts";
 import { validateBrokerSocketTarget } from "./ipc-client.js";
 
@@ -40,7 +40,7 @@ export async function loadEdgeAuthenticationKeyFromBroker(options: KeychainDeliv
   const raw = exchange.raw;
   let parsed: KeychainDeliveryResponse;
   try {
-    parsed = parseKeychainDeliveryResponse(JSON.parse(raw) as unknown);
+    parsed = parseKeychainDeliveryResponse(parseJsonStrict(raw));
   } catch {
     throw new BrokerError("AUTH_INVALID", "Keychain delivery response is malformed");
   }
@@ -103,7 +103,7 @@ function exchangeKeychainDelivery(
         buffer = buffer.subarray(newline + 1);
         if (!requestSent) {
           try {
-            challenge = parseKeychainDeliveryChallenge(JSON.parse(line) as unknown).challenge;
+            challenge = parseKeychainDeliveryChallenge(parseJsonStrict(line)).challenge;
           } catch {
             finish(new BrokerError("AUTH_INVALID", "Keychain delivery challenge is malformed"));
             return;

@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { decodeUtf8Strict } from "@mac-operator/contracts";
+import { decodeUtf8Strict, parseJsonStrict } from "@mac-operator/contracts";
 
 const MAX_CONTRACT_FILES = 64;
 const MAX_CONTRACT_FILE_BYTES = 1_048_576;
@@ -44,7 +44,7 @@ export class ToolContractRegistry {
       if (totalBytes > MAX_CONTRACT_BYTES) throw new Error("Tool contracts exceed the supported size");
       let raw: unknown;
       try {
-        raw = JSON.parse(rawText) as unknown;
+        raw = parseJsonStrict(rawText);
       } catch {
         throw new Error(`${file}: tool contract is not valid JSON`);
       }

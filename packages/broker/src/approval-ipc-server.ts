@@ -1,6 +1,6 @@
 import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { BrokerError, decodeUtf8Strict, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, parseJsonUtf8Strict, type ErrorClass } from "@mac-operator/contracts";
 import type { ApprovalAuthority } from "./approval-authority.js";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
@@ -136,7 +136,7 @@ export class ApprovalIpcServer {
           writeApprovalResponse(socket, response);
           return;
         }
-        const request = JSON.parse(decodeUtf8Strict(combined.subarray(0, newline))) as unknown;
+        const request = parseJsonUtf8Strict(combined.subarray(0, newline));
         const approval = this.options.authority.issue(request);
         response = {
           ok: true,
