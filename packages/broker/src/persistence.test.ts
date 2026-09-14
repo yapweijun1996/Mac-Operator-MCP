@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
-import { BROKER_SCHEMA_VERSION, BrokerStore } from "./persistence.js";
+import { BROKER_SCHEMA_VERSION, BrokerStore, type CreateJobInput, type JobState, type SwitchName } from "./persistence.js";
 
 const testBackupKeySource = {
   keyId: "backup-test-1",
@@ -1441,6 +1441,187 @@ test("authority switches and revocations append redacted intent and completion e
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("deterministic authority state machine preserves job lifecycle invariants", async () => {
+  const switchNames: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
+  const switchAffects = (name: SwitchName, tool: string): boolean => {
+    if (name === "global" || name === "mutations") return true;
+    if (name === "process" || name === "network") return tool === "mac_task_run";
+    if (name === "gui") return tool === "mac_app_open" || tool === "mac_app_focus" || tool.startsWith("mac_ui_");
+    if (name === "destructive") return tool === "mac_apply_patch";
+    return tool.startsWith("mac_priv_");
+  };
+  const nextRandom = (seed: number): (() => number) => {
+    let state = seed >>> 0;
+    return () => {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      return (state >>> 0) / 0x1_0000_0000;
+    };
+  };
+  const terminalStates = new Set<JobState>(["completed", "failed", "cancelled", "unknown"]);
+
+  for (let seed = 1; seed <= 16; seed += 1) {
+    const directory = await mkdtemp(join(tmpdir(), `mac-operator-authority-state-${seed}-`));
+    const store = new BrokerStore(join(directory, "broker.sqlite"));
+    const random = nextRandom(0x9e3779b9 ^ seed);
+    const disabled = new Set<SwitchName>();
+    const revokedPrincipals = new Set<string>();
+    const revokedSessions = new Set<string>();
+    let upstreamRevoked = false;
+    let now = 10;
+    const jobs = new Map<string, { ownerPrincipalId: string; ownerSessionId: string; tool: string }>();
+    const previous = new Map<string, { state: JobState; revision: number }>();
+
+    const addJob = (input: CreateJobInput) => {
+      const ownerPrincipalId = input.ownerPrincipalId ?? "principal-1";
+      const ownerSessionId = input.ownerSessionId ?? "session-1";
+      const created = store.createJob({ ...input, ownerPrincipalId, ownerSessionId });
+      jobs.set(input.jobId, { ownerPrincipalId, ownerSessionId, tool: input.tool });
+      previous.set(input.jobId, { state: created.job.state, revision: created.job.revision });
+    };
+
+    const privilegedPayload = { operation: "power", action: "reboot" } as const;
+    addJob(jobInput(`job:state-${seed}-health`, `idem:state-${seed}-health`));
+    addJob({ ...jobInput(`job:state-${seed}-task`, `idem:state-${seed}-task`), targetRef: "task:state" });
+    addJob({ ...jobInput(`job:state-${seed}-write`, `idem:state-${seed}-write`), tool: "mac_write_file_atomic", targetRef: "path:state" });
+    addJob({ ...jobInput(`job:state-${seed}-gui`, `idem:state-${seed}-gui`), tool: "mac_app_open", targetRef: "app:state" });
+    addJob({ ...jobInput(`job:state-${seed}-destructive`, `idem:state-${seed}-destructive`), tool: "mac_apply_patch", targetRef: "path:state" });
+    addJob({
+      ...jobInput(`job:state-${seed}-privileged`, `idem:state-${seed}-privileged`),
+      tool: "mac_priv_power",
+      targetRef: "host:local",
+      payloadDigest: sha256(canonicalJson(privilegedPayload)),
+      privilegedPayload
+    });
+    addJob({ ...jobInput(`job:state-${seed}-other`, `idem:state-${seed}-other`), ownerPrincipalId: "principal-2", ownerSessionId: "session-2" });
+
+    const blocked = (meta: { ownerPrincipalId: string; ownerSessionId: string; tool: string }): boolean =>
+      upstreamRevoked || revokedPrincipals.has(meta.ownerPrincipalId) || revokedSessions.has(meta.ownerSessionId) ||
+      [...disabled].some((name) => switchAffects(name, meta.tool));
+
+    const assertInvariants = () => {
+      for (const [jobId, meta] of jobs) {
+        const job = store.ownedJob(jobId, meta.ownerPrincipalId);
+        assert.ok(job, `missing job ${jobId}`);
+        if (!job) continue;
+        const prior = previous.get(jobId);
+        assert.ok(prior);
+        if (prior) {
+          assert.ok(job.revision >= prior.revision, `revision regressed for ${jobId}`);
+          if (terminalStates.has(prior.state)) assert.equal(job.state, prior.state, `terminal job changed ${jobId}`);
+        }
+        if (job.state === "queued") {
+          assert.equal(job.resultClass, "queued");
+          assert.equal(job.cancelRequested, false);
+          assert.equal(blocked(meta), false, `blocked job remained queued ${jobId}`);
+        } else if (job.state === "running") {
+          assert.equal(job.resultClass, "accepted");
+        } else if (job.state === "cancelled") {
+          assert.equal(job.resultClass, "denied");
+          assert.equal(job.cancelRequested, true);
+          assert.ok(job.finishedAtMs !== null);
+        } else if (job.state === "completed") {
+          assert.equal(job.resultClass, "success");
+          assert.ok(job.finishedAtMs !== null);
+        } else if (job.state === "failed") {
+          assert.ok(["failed", "denied", "verification_failed"].includes(job.resultClass));
+          assert.ok(job.finishedAtMs !== null);
+        } else {
+          assert.equal(job.resultClass, "unknown");
+          assert.ok(job.finishedAtMs !== null);
+        }
+        previous.set(jobId, { state: job.state, revision: job.revision });
+      }
+    };
+
+    try {
+      for (let step = 0; step < 72; step += 1) {
+        now += 1;
+        const action = Math.floor(random() * 5);
+        const entries = [...jobs.entries()];
+        if (action === 0) {
+          const name = switchNames[Math.floor(random() * switchNames.length)]!;
+          const current = disabled.has(name);
+          const expected = random() < 0.2 ? !current : current;
+          if (expected !== current) {
+            assert.throws(
+              () => store.setSwitch(name, !current, "state-machine", now, expected),
+              (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+            );
+          } else {
+            const nextDisabled = random() < 0.55;
+            store.setSwitch(name, nextDisabled, "state-machine", now, current);
+            if (nextDisabled) disabled.add(name);
+            else disabled.delete(name);
+          }
+        } else if (action === 1) {
+          const kind = Math.floor(random() * 3);
+          if (kind === 0) {
+            revokedPrincipals.add("principal-1");
+            store.revoke("principal", "principal-1", "state-machine", now);
+          } else if (kind === 1) {
+            revokedSessions.add("session-1");
+            store.revoke("session", "session-1", "state-machine", now);
+          } else {
+            upstreamRevoked = true;
+            store.revoke("edge", "edge-1", "state-machine", now);
+          }
+        } else if (action === 2) {
+          const candidates = entries.filter(([jobId, meta]) => {
+            const job = store.ownedJob(jobId, meta.ownerPrincipalId);
+            return job?.state === "queued" && !blocked(meta);
+          });
+          if (candidates.length > 0) {
+            const [jobId, meta] = candidates[Math.floor(random() * candidates.length)]!;
+            const current = store.ownedJob(jobId, meta.ownerPrincipalId);
+            assert.ok(current);
+            if (current) store.startJob(jobId, meta.ownerPrincipalId, current.revision, now);
+          }
+        } else if (action === 3) {
+          const candidates = entries.filter(([jobId, meta]) => {
+            const job = store.ownedJob(jobId, meta.ownerPrincipalId);
+            return job?.state === "queued" || job?.state === "running";
+          });
+          if (candidates.length > 0) {
+            const [jobId, meta] = candidates[Math.floor(random() * candidates.length)]!;
+            store.requestJobCancellation(jobId, meta.ownerPrincipalId, "state-machine", now);
+          }
+        } else {
+          const candidates = entries.filter(([jobId, meta]) => store.ownedJob(jobId, meta.ownerPrincipalId)?.state === "running");
+          if (candidates.length > 0) {
+            const [jobId, meta] = candidates[Math.floor(random() * candidates.length)]!;
+            const current = store.ownedJob(jobId, meta.ownerPrincipalId);
+            assert.ok(current);
+            if (current) {
+              const outcome = current.cancelRequested
+                ? { state: "cancelled" as const, resultClass: "denied" as const }
+                : random() < 0.65
+                  ? { state: "completed" as const, resultClass: "success" as const }
+                  : { state: "failed" as const, resultClass: "failed" as const };
+              store.finishJob(jobId, meta.ownerPrincipalId, current.revision, { ...outcome, finishedAtMs: now });
+            }
+          }
+        }
+        assertInvariants();
+      }
+
+      const reconciled = store.reconcileInterruptedJobs(now + 100);
+      assert.equal(reconciled.queuedCancelled, 0);
+      for (const [jobId, meta] of jobs) {
+        const job = store.ownedJob(jobId, meta.ownerPrincipalId);
+        assert.ok(job);
+        if (job?.state === "running") assert.fail(`running job survived reconciliation: ${jobId}`);
+        if (job?.state === "queued") assert.fail(`queued job survived reconciliation: ${jobId}`);
+      }
+      assertInvariants();
+    } finally {
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
 
