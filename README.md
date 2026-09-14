@@ -41,6 +41,12 @@ See `PROGRESS.md` for current Git evidence, implementation and enablement state,
 - [Rollback](ROLLBACK.md)
 - [Persistence cutover and migration runbook](PERSISTENCE_CUTOVER.md)
 
+The source-level operator control entrypoint is built with `npm run build` and
+invoked as `node packages/broker/dist/authority-control-cli.js --help`. It
+only reads or changes bounded kill-switch/revocation state through the
+authenticated owner-only IPC; it does not install services, expose keys, run
+commands, or grant capabilities.
+
 ## Source-of-truth rules
 
 - Repository code and exact-revision evidence determine implementation truth.
