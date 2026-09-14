@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { FailClosedTaskRunner, VirtualizationGuestTransportExecutor, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, virtualizationProfileDigest, virtualizationTaskDigest, type TaskExecutionResult, type VirtualizationGuestTransport, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
+import type { LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 
 function guestAttestation(guestIdentity: VirtualizationGuestIdentity, evidenceRef = "evidence://virtualization-guest"): VirtualizationGuestAttestation {
@@ -38,6 +43,21 @@ function resolvedGuestProfile(): ResolvedTaskProfile {
     processTreePolicy: "single_process",
     sandboxProfile: "guest-deny-default-v0.1",
     verificationStrategy: "exit_status_and_declared_task_verification"
+  };
+}
+
+async function guestImageFixture(runtimeVersion: string): Promise<{ guest: VirtualizationGuestIdentity; image: LoadedVirtualizationGuestImage; directory: string }> {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-runner-guest-"));
+  const imagePath = join(directory, "guest.img");
+  const content = Buffer.from(`guest-image-${runtimeVersion}\n`, "utf8");
+  await writeFile(imagePath, content, { mode: 0o600 });
+  const digest = createHash("sha256").update(content).digest("hex");
+  const stat = await lstat(imagePath);
+  const guest = { imageSha256: digest, runtimeVersion };
+  return {
+    guest,
+    image: { path: imagePath, guestIdentity: guest, device: String(stat.dev), inode: String(stat.ino), sizeBytes: stat.size },
+    directory
   };
 }
 
@@ -225,16 +245,16 @@ test("VirtualizationTaskRunner stays unavailable without matched native guest ev
 });
 
 test("VirtualizationTaskRunner rechecks guest identity before dispatch", async () => {
-  const guest: VirtualizationGuestIdentity = {
-    imageSha256: "c".repeat(64),
-    runtimeVersion: "macos-26.2-vz-1"
-  };
-  let executorGuest: VirtualizationGuestIdentity | null = guest;
-  let executorAttestation: VirtualizationGuestAttestation | null = guestAttestation(guest);
-  let calls = 0;
-  const runner = new VirtualizationTaskRunner({
+  const fixture = await guestImageFixture("macos-26.2-vz-1");
+  const { guest, image, directory } = fixture;
+  try {
+    let executorGuest: VirtualizationGuestIdentity | null = guest;
+    let executorAttestation: VirtualizationGuestAttestation | null = guestAttestation(guest);
+    let calls = 0;
+    const runner = new VirtualizationTaskRunner({
     enabled: true,
     hostEvidenceAccepted: true,
+    guestImage: image,
     isolationProof: {
       schemaVersion: "0.1",
       sandboxMechanism: "virtualization",
@@ -266,38 +286,48 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
         };
       }
     }
-  });
-  if (process.platform !== "darwin") {
-    assert.equal(runner.available, false);
-    return;
+    });
+    if (process.platform !== "darwin") {
+      assert.equal(runner.available, false);
+      return;
+    }
+    assert.equal(runner.available, true);
+    const result = await runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false });
+    assert.equal(result.resultClass, "SUCCEEDED");
+    assert.equal(calls, 1);
+    await writeFile(image.path, "guest-image-replaced\n", { mode: 0o600 });
+    await assert.rejects(
+      runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.equal(calls, 1);
+    await writeFile(image.path, "guest-image-macos-26.2-vz-1\n", { mode: 0o600 });
+    executorGuest = { ...guest, imageSha256: "d".repeat(64) };
+    await assert.rejects(
+      runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.equal(calls, 1);
+    executorGuest = guest;
+    executorAttestation = guestAttestation(guest, "evidence://other-guest");
+    await assert.rejects(
+      runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.equal(calls, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
-  assert.equal(runner.available, true);
-  const result = await runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false });
-  assert.equal(result.resultClass, "SUCCEEDED");
-  assert.equal(calls, 1);
-  executorGuest = { ...guest, imageSha256: "d".repeat(64) };
-  await assert.rejects(
-    runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
-    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
-  );
-  assert.equal(calls, 1);
-  executorGuest = guest;
-  executorAttestation = guestAttestation(guest, "evidence://other-guest");
-  await assert.rejects(
-    runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
-    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
-  );
-  assert.equal(calls, 1);
 });
 
 test("VirtualizationTaskRunner maps native adapter transport loss to unknown", async () => {
-  const guest: VirtualizationGuestIdentity = {
-    imageSha256: "e".repeat(64),
-    runtimeVersion: "macos-26.2-vz-1"
-  };
-  const runner = new VirtualizationTaskRunner({
+  const fixture = await guestImageFixture("macos-26.2-vz-1");
+  const { guest, image, directory } = fixture;
+  try {
+    const runner = new VirtualizationTaskRunner({
     enabled: true,
     hostEvidenceAccepted: true,
+    guestImage: image,
     isolationProof: {
       schemaVersion: "0.1",
       sandboxMechanism: "virtualization",
@@ -317,15 +347,18 @@ test("VirtualizationTaskRunner maps native adapter transport loss to unknown", a
       attestation: guestAttestation(guest),
       async run() { throw new Error("native transport closed"); }
     }
-  });
-  if (process.platform !== "darwin") {
-    assert.equal(runner.available, false);
-    return;
+    });
+    if (process.platform !== "darwin") {
+      assert.equal(runner.available, false);
+      return;
+    }
+    await assert.rejects(
+      runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable === true
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
-  await assert.rejects(
-    runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
-    (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable === true
-  );
 });
 
 test("VirtualizationGuestTransportExecutor sends only bound digests and maps verified results", async () => {

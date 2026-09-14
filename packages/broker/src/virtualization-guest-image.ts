@@ -25,6 +25,31 @@ export interface LoadedVirtualizationGuestImage {
   sizeBytes: number;
 }
 
+/** Re-reads the startup-bound image before a VM dispatch or status recovery. */
+export async function verifyVirtualizationGuestImage(
+  loaded: LoadedVirtualizationGuestImage
+): Promise<LoadedVirtualizationGuestImage> {
+  if (loaded === null || typeof loaded !== "object" ||
+      typeof loaded.path !== "string" ||
+      loaded.guestIdentity === null || typeof loaded.guestIdentity !== "object" ||
+      typeof loaded.guestIdentity.imageSha256 !== "string" ||
+      typeof loaded.guestIdentity.runtimeVersion !== "string" ||
+      typeof loaded.sizeBytes !== "number" || !Number.isSafeInteger(loaded.sizeBytes) || loaded.sizeBytes < 1 ||
+      typeof loaded.device !== "string" || typeof loaded.inode !== "string") {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest image binding is malformed");
+  }
+  const verified = await loadVirtualizationGuestImage({
+    path: loaded.path,
+    expectedSha256: loaded.guestIdentity.imageSha256,
+    runtimeVersion: loaded.guestIdentity.runtimeVersion,
+    maxBytes: loaded.sizeBytes
+  });
+  if (verified.device !== loaded.device || verified.inode !== loaded.inode || verified.sizeBytes !== loaded.sizeBytes) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest image identity changed after preflight");
+  }
+  return verified;
+}
+
 /**
  * Reads a host-owned guest image through one protected descriptor and binds
  * the bytes to the immutable identity supplied by startup configuration.

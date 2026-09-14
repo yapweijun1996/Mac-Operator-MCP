@@ -4,6 +4,7 @@ import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSn
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
+import { verifyVirtualizationGuestImage, type LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
 import { validateUnsignedVirtualizationGuestResponse, validateUnsignedVirtualizationGuestStatusResponse, virtualizationGuestRequestDigest } from "./virtualization-guest-transport.js";
 import type {
   UnsignedVirtualizationGuestResponse,
@@ -413,6 +414,8 @@ export interface VirtualizationTaskRunnerOptions {
   hostEvidenceAccepted?: boolean;
   isolationProof?: TaskIsolationProof | null;
   executor?: VirtualizationTaskExecutor;
+  /** Host-startup image preflight; caller/MCP arguments cannot supply this. */
+  guestImage?: LoadedVirtualizationGuestImage | null;
 }
 
 /**
@@ -427,6 +430,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
   readonly mechanism: TaskIsolationMechanism = "virtualization";
   readonly isolationProof: TaskIsolationProof | null;
   private readonly executor: VirtualizationTaskExecutor | undefined;
+  private readonly guestImage: LoadedVirtualizationGuestImage | undefined;
 
   constructor(options: VirtualizationTaskRunnerOptions = {}) {
     const proof = options.isolationProof === null || options.isolationProof === undefined
@@ -434,12 +438,15 @@ export class VirtualizationTaskRunner implements TaskRunner {
       : validateTaskIsolationProof(options.isolationProof);
     this.isolationProof = proof;
     this.executor = options.executor;
+    this.guestImage = options.guestImage === null ? undefined : options.guestImage;
     const guest = proof?.virtualizationGuest;
     this.available = process.platform === "darwin" &&
       options.enabled === true &&
       options.hostEvidenceAccepted === true &&
       options.executor?.available === true &&
+      this.guestImage !== undefined &&
       guest !== undefined &&
+      sameVirtualizationGuestIdentity(guest, this.guestImage.guestIdentity) &&
       options.executor.guestIdentity !== null &&
       sameVirtualizationGuestIdentity(guest, options.executor.guestIdentity) &&
       options.executor.attestation !== null &&
@@ -454,6 +461,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
     if (!this.available || this.isolationProof === null || this.executor === undefined) {
       throw new BrokerError("POLICY_DENIED", "Virtualization task boundary is not enabled");
     }
+    await this.assertGuestImageStable();
     const guestIdentity = this.isolationProof.virtualizationGuest;
     if (guestIdentity === undefined || !this.executor.available ||
         this.executor.guestIdentity === null ||
@@ -476,6 +484,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
         typeof this.executor.recoverUnknownTask !== "function") {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest status recovery is not enabled");
     }
+    await this.assertGuestImageStable();
     const guestIdentity = this.isolationProof.virtualizationGuest;
     if (guestIdentity === undefined || !sameVirtualizationGuestIdentity(guestIdentity, this.executor.guestIdentity) ||
         this.executor.attestation === null || !virtualizationAttestationMatchesProof(this.executor.attestation, this.isolationProof) ||
@@ -487,6 +496,18 @@ export class VirtualizationTaskRunner implements TaskRunner {
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("UNKNOWN_OUTCOME", "Virtualized task status could not be established", true);
+    }
+  }
+
+  private async assertGuestImageStable(): Promise<void> {
+    if (this.guestImage === undefined) {
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest image preflight is unavailable");
+    }
+    try {
+      await verifyVirtualizationGuestImage(this.guestImage);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("POLICY_DENIED", "Virtualization guest image identity could not be verified");
     }
   }
 }
