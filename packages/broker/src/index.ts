@@ -28,6 +28,7 @@ export * from "./virtualization-guest-attestation.js";
 export * from "./virtualization-guest-attestation-keyring.js";
 export * from "./virtualization-guest-native.js";
 export * from "./virtualization-guest-agent.js";
+export * from "./virtualization-guest-bootstrap.js";
 export * from "./virtualization-guest-lifecycle.js";
 export * from "./virtualization-guest-vm-native.js";
 export * from "./virtualization-guest-startup.js";

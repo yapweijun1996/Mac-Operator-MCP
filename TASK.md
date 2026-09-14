@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest bootstrap addendum: `VirtualizationGuestBootstrap` adds a disabled-by-
+default, transport-independent guest protocol loop. It accepts a native
+startup-owned connection source, admits exactly one bounded length-prefixed
+frame, delegates to the authenticated guest agent, writes one bounded response,
+rejects trailing data, and closes streams and key material deterministically.
+Focused bootstrap tests pass 3/3; the full physical-Darwin regression passes
+558/558 with 0 skipped tests. AF_VSOCK acceptance, bootable image, isolation,
+attestation production, and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-guest-bootstrap.md`.
+
 Startup composition addendum: an optional startup-only factory now wires the
 native guest VM, serialized lifecycle, fixed virtio channel, HMAC transport,
 durable replay guard, and virtualization task runner into Broker service
