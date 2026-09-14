@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Virtualization guest active-I/O drain addendum: Native VM handles track
+Broker-owned Virtio connections and close tracked connections before stop or
+close, while late callbacks close immediately after the atomic shutdown state
+is set. Reference release is fenced by tracking removal. This verifies the
+host-side active-I/O cleanup boundary only; VM boot, guest isolation, and
+attestation remain unproven. Native lifecycle build, focused VM-native tests
+(7/7), typecheck, lint, contract verification, diff check, and the complete
+physical-Darwin suite (576/576, 0 skipped) pass. Evidence:
+`evidence/2026-09-15-virtualization-native-connection-drain.md`.
+
 Virtualization guest native-handle fencing addendum: the native lifecycle
 handle validity marker is atomic, is not reset by retained async transition
 completion, and the dispatch queue remains alive until the external handle is

@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization guest active-I/O drain addendum: the Native VM lifecycle now
+tracks Broker-owned Virtio exchanges and closes them before stop/close. Late
+connection callbacks observe the atomic closed state and close immediately;
+tracked Objective-C references are released only after set removal. Native
+build and focused VM-native tests pass 7/7; the complete physical-Darwin
+regression passes 576/576 with 0 skipped tests. This strengthens active-work
+shutdown but does not prove VM boot, guest isolation, attestation, or
+`mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-virtualization-native-connection-drain.md`.
+
 Virtualization guest native-handle fencing addendum: the Native
 Virtualization.framework lifecycle no longer resurrects a closed handle when
 retained async work completes. Its validity marker is atomic, and the serial

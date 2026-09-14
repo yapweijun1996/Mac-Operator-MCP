@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization guest active-I/O drain addendum: the Native VM handle now
+tracks every Broker-owned Virtio exchange, closes tracked connections before a
+VM stop or close, and closes a late connection immediately after shutdown is
+marked. Retained Objective-C references are released only after tracking is
+removed, so cancellation cannot race an invalid pointer. Native build,
+focused VM-native tests (7/7), and the complete physical-Darwin regression
+(576/576, 0 skipped) pass. Evidence:
+`evidence/2026-09-15-virtualization-native-connection-drain.md`.
+
 Virtualization guest native-handle fencing addendum: the native VM lifecycle
 adapter now uses an atomic handle-validity marker, never restores that marker
 after a retained async transition completes, and keeps the serial dispatch
