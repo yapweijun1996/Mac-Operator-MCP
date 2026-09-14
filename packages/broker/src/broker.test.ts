@@ -987,6 +987,17 @@ test("capability discovery reflects persisted and policy kill switches", async (
         reason: "disabled_by_kill_switch"
       });
     }
+    const scopeLimitedResult = await broker.handle(signRequest(unsigned({
+      requestId: "capabilities-runtime-kill-switch-scope-limited",
+      nonce: "capabilities-runtime-kill-switch-scope-limited-nonce",
+      tool: "mac_capabilities"
+    }), key));
+    assert.equal(scopeLimitedResult.ok, true, JSON.stringify(scopeLimitedResult));
+    if (scopeLimitedResult.ok) {
+      const processCapability = (scopeLimitedResult.data as { capabilities: Array<{ name: string; enabled: boolean; reason: string }> }).capabilities
+        .find((capability) => capability.name === "mac_process_list");
+      assert.equal(processCapability?.reason, "scope_not_granted");
+    }
 
     store.setSwitch("process", false, "test-runtime-kill-switch-clear", NOW + 1);
     await broker.close();
