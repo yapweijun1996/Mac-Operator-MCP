@@ -136,11 +136,12 @@ bind the complete request digest, guest identity, result, verification, and
 Broker-redacted output. Strict envelope validation rejects unknown fields,
 wrong keys, stale requests, oversized output, and replayed request IDs/nonces.
 Schema version 6 now adds a Broker-owned SQLite replay ledger and an adapter
-that rejects the same request after Broker restart; the in-memory guard remains
-test-only. The bounded `VirtualizationGuestTransportClient` now admits before
+that rejects the same request after Broker restart; the live ledger is capped
+at 4,096 rows and cleans expired entries before admission; the in-memory guard
+remains test-only. The bounded `VirtualizationGuestTransportClient` now admits before
 exchange, enforces response framing/timeout/cancellation, and maps transport
 loss to `UNKNOWN_OUTCOME`. Focused transport tests pass 10/10 and the
-persistence plus transport run passes 53/53. Evidence:
+persistence plus transport run passes 54/54. Evidence:
 `evidence/2026-09-14-virtualization-guest-transport.md`.
 
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now

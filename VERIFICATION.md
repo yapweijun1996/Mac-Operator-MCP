@@ -7,7 +7,7 @@ Latest authenticated Virtualization guest-transport addendum: commits
 `e768a74`, `0dcc3cc`, and `a5f053a` define a versioned domain-separated
 HMAC request/response contract, bind guest identity and attestation-related
 profile/task digests, persist request ID/nonce admission in BrokerStore schema
-version 6, and add a bounded exchange client with hard response framing,
+version 6 with a 4,096-row bounded ledger and expired-row cleanup, and add a bounded exchange client with hard response framing,
 timeout, cancellation, malformed-response handling, and retryable
 `UNKNOWN_OUTCOME` transport-loss mapping. Focused transport tests pass 10/10;
 the complete `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1

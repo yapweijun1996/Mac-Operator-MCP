@@ -88,6 +88,7 @@ const MAX_JOB_LEASE_MS = 120_000;
  * authority and recovery decisions unsafe.
  */
 export const BROKER_SCHEMA_VERSION = 6;
+const MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS = 4096;
 
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
@@ -1351,6 +1352,10 @@ export class BrokerStore {
     try {
       this.runTransaction(() => {
         this.database.prepare("DELETE FROM virtualization_guest_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        const row = this.database.prepare("SELECT COUNT(*) AS count FROM virtualization_guest_nonces").get() as { count?: unknown } | undefined;
+        if (!Number.isSafeInteger(row?.count) || (row?.count as number) < 0 || (row?.count as number) >= MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS) {
+          throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest replay ledger is at capacity");
+        }
         this.database.prepare(
           "INSERT INTO virtualization_guest_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
         ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);

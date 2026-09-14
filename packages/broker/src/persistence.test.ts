@@ -40,6 +40,41 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
   }
 });
 
+test("BrokerStore bounds virtualization guest replay ledger capacity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-replay-capacity-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    for (let index = 0; index < 4_096; index += 1) {
+      const suffix = String(index).padStart(16, "0");
+      store.admitVirtualizationGuestRequest({
+        requestId: `request:guest-capacity-${suffix}`,
+        nonce: `guest-nonce-capacity-${suffix}`,
+        acceptedAtMs: 1,
+        expiresAtMs: 100_000
+      });
+    }
+    assert.throws(
+      () => store.admitVirtualizationGuestRequest({
+        requestId: "request:guest-capacity-overflow-123456",
+        nonce: "guest-nonce-capacity-overflow-123456",
+        acceptedAtMs: 2,
+        expiresAtMs: 100_000
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    store.admitVirtualizationGuestRequest({
+      requestId: "request:guest-capacity-expired-123456",
+      nonce: "guest-nonce-capacity-expired-123456",
+      acceptedAtMs: 100_001,
+      expiresAtMs: 200_000
+    });
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("enabled Broker runtime fencing rejects stale writers after takeover", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-runtime-fence-"));
   const databasePath = join(directory, "broker.sqlite");
