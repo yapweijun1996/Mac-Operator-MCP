@@ -142,5 +142,7 @@ executor, and re-hash/recheck it before every dispatch and restart status
 lookup. Replacement content is denied before the executor is called. Evidence
 is recorded in
 [`evidence/2026-09-15-virtualization-guest-image-preflight.md`](../../evidence/2026-09-15-virtualization-guest-image-preflight.md).
-This still provides no signed guest provenance, VM boot, or guest isolation
-evidence, so the runner remains disabled by default.
+Signed guest provenance verification is now implemented in a separate
+fail-closed gate, but this still provides no native attestation producer,
+Keychain key distribution, VM boot, or guest isolation evidence, so the runner
+remains disabled by default.
