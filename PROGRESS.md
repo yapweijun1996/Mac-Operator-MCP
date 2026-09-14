@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Runtime-policy semantic-validation addendum: source revision `83a733e`
+extends the Broker policy gate beyond ToolPolicy fields to validate exact
+policy keys, trusted-key windows, principal grants, target-rule identity and
+scope binding, filesystem-root identifiers and normalized deny paths, and
+target-kind/reference constraints. Malformed in-memory authority now fails
+closed before authorization while planned-but-unimplemented tools remain
+supported. The complete physical-Darwin regression passes 601/601 with
+0 skipped tests. Evidence:
+`evidence/2026-09-15-runtime-policy-semantics.md`.
+
 Runtime-policy snapshot addendum: source revision `0be82c4` deep-copies
 Broker policy authority at the plain-policy Broker boundary and inside
 PolicyManager transitions/readback. Mutable caller references to target rules,

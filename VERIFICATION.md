@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Runtime-policy semantic-validation addendum: source revision `83a733e`
+validates the full in-memory Broker authority shape before capability use,
+including exact top-level/nested fields, key validity windows, principal grant
+scope membership, duplicate rule/root identities, normalized filesystem roots,
+and target-kind/reference binding. Malformed target or key authority fails
+closed with stable `POLICY_DENIED` errors. The complete physical-Darwin
+regression passes 601/601 with 0 skipped tests; build, typecheck, lint,
+contract verification, native canonical probe, and diff checks pass. This
+closes the runtime policy semantic boundary only; signed-policy provenance,
+installed-service evidence, and final release acceptance remain open.
+Evidence: `evidence/2026-09-15-runtime-policy-semantics.md`.
+
 Runtime-policy snapshot addendum: source revision `0be82c4` isolates active
 Broker authority from mutable caller references by deep-copying policy maps,
 sets, arrays, and nested entries at plain-policy construction and every

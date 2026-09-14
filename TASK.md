@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Runtime-policy semantic-validation addendum: source revision `83a733e`
+extends the Broker final-authority gate to policy metadata, trusted-key
+windows, principal grants, target rules, filesystem roots, kill switches, and
+target references. It rejects unknown fields, malformed identities, scope
+projection outside a grant, duplicate IDs, wildcard/path escapes, and invalid
+root deny paths before authorization. The complete physical-Darwin regression
+passes 601/601 with 0 skipped tests. This closes only the in-memory policy
+semantic boundary; broader release gates remain open. Evidence:
+`evidence/2026-09-15-runtime-policy-semantics.md`.
+
 Runtime-policy snapshot addendum: source revision `0be82c4` deep-copies
 BrokerPolicy authority at plain Broker construction and PolicyManager
 activation/restore/rollback/current readback. Retained caller references to
