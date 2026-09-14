@@ -4,6 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Process-identity startup addendum: native PID/start-time capture retries for a
+bounded 100ms after spawn and never synthesizes an identity when the child has
+already exited. Evidence:
+`evidence/2026-09-14-process-identity-startup-retry.md`.
+
 Task-crash mapping addendum: an observed child signal is retained as
 `UNKNOWN_OUTCOME` at the task boundary so writes-local work cannot be reported
 successful without post-crash attribution. Evidence:

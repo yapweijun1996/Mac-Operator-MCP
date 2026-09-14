@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest process-identity startup addendum: native PID/start-time capture now
+uses a bounded 100ms retry window for transient process-table visibility after
+spawn, without synthesizing identities or weakening fail-closed cleanup. The
+focused process-supervisor/sandbox suite passes 29/29, and two consecutive full
+real-sandbox runs each pass 452/453 with one explicit host-boundary/opt-in skip.
+Evidence: `evidence/2026-09-14-process-identity-startup-retry.md`.
+
 Latest task-crash mapping addendum: `SandboxExecTaskRunner` maps an observed
 `SIGKILL`/signal execution failure to `UNKNOWN_OUTCOME` with unknown
 verification, preserving a Broker Job as unresolved when a writes-local task

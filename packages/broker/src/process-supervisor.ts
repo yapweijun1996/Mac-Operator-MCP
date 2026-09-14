@@ -153,13 +153,17 @@ export class ProcessSupervisor {
     const processId = childPid;
     const processTree = createProcessTreeTracker(processId);
     if (process.platform === "darwin" && processTree === undefined) {
-      signalProcessGroup(child, processId, "SIGKILL");
+      const drained = await this.abortUnownedProcess(child, processId, processTree);
+      if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
       throw new BrokerError("POLICY_DENIED", "Process tree observer is unavailable");
     }
     if (request.onStarted !== undefined) {
-      const startTimeMicros = processTree?.rootStartTimeMicros;
+      const startTimeMicros = processTree === undefined
+        ? undefined
+        : await waitForRootProcessIdentity(processTree, child);
       if (processTree === undefined || startTimeMicros === undefined) {
-        signalProcessGroup(child, processId, "SIGKILL");
+        const drained = await this.abortUnownedProcess(child, processId, processTree);
+        if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
         throw new BrokerError("POLICY_DENIED", "Process identity could not be captured");
       }
       try {
@@ -221,7 +225,13 @@ export class ProcessSupervisor {
     processId: number,
     processTree: ProcessTreeTracker | undefined
   ): Promise<boolean> {
-    signalProcessGroup(child, processId, "SIGKILL");
+    if (processTree === undefined) {
+      signalProcessGroup(child, processId, "SIGKILL");
+    } else {
+      processTree.sample();
+      if (processTree.rootState() === "alive") signalProcessGroup(child, processId, "SIGKILL");
+      processTree.signal("SIGKILL");
+    }
     const deadline = Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
     while (Date.now() < deadline) {
       processTree?.sample();
@@ -851,10 +861,25 @@ function createProcessTreeTracker(processId: number): ProcessTreeTracker | undef
   }
 }
 
+async function waitForRootProcessIdentity(
+  processTree: ProcessTreeTracker,
+  child: ChildProcess,
+  timeoutMs = 100
+): Promise<number | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const identity = processTree.captureRootIdentity();
+    if (identity !== undefined) return identity;
+    if (child.exitCode !== null || child.signalCode !== null) break;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  return processTree.captureRootIdentity();
+}
+
 class ProcessTreeTracker {
   private readonly descendants = new Map<number, ProcessTreeIdentity>();
   private failed = false;
-  private readonly rootIdentity: ProcessTreeIdentity | undefined;
+  private rootIdentity: ProcessTreeIdentity | undefined;
 
   constructor(
     private readonly native: NativeProcessTreeAdapter,
@@ -881,6 +906,17 @@ class ProcessTreeTracker {
   }
 
   get rootStartTimeMicros(): number | undefined {
+    return this.rootIdentity?.startTimeMicros;
+  }
+
+  captureRootIdentity(): number | undefined {
+    if (this.rootIdentity !== undefined || this.failed) return this.rootIdentity?.startTimeMicros;
+    try {
+      const identity = parseProcessIdentity(this.native.getProcessIdentity(this.processId));
+      if (identity.pid === this.processId) this.rootIdentity = identity;
+    } catch {
+      // A short-lived process may not be visible in the native process table yet.
+    }
     return this.rootIdentity?.startTimeMicros;
   }
 
