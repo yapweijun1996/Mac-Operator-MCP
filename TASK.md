@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority-control framing addendum: the owner-only IPC rejects non-whitespace
+trailing bytes after its one newline-delimited command and performs no replay
+admission, authority mutation, or audit for that frame. Focused IPC tests pass
+2/2; the full physical-Darwin regression passes 571/571 with 0 skipped tests.
+Evidence: `evidence/2026-09-15-authority-control-framing.md`.
+
 Authority-control restart readback addendum: the owner-only IPC now has a
 cross-restart regression that reads back persisted switch and revocation state
 through a fresh authenticated client and confirms replay denial remains in

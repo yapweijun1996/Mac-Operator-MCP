@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority-control framing addendum: the owner-only IPC now rejects non-
+whitespace bytes after the single newline-delimited command. It authenticates
+the command but skips replay admission, authority mutation, and audit when
+trailing data is present. Focused IPC tests pass 2/2 and the full
+physical-Darwin regression passes 571/571 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-authority-control-framing.md`.
+
 Authority-control restart readback addendum: after closing and reopening the
 BrokerStore and Authority Control IPC server, a fresh authenticated client now
 reads back persisted global/process switches and session/Edge revocations;

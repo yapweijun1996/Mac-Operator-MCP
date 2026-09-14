@@ -3,6 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Authority-control framing addendum: non-whitespace trailing bytes after the
+single newline-delimited command are rejected before replay admission or any
+authority mutation. Focused tests pass 2/2 and the complete physical-Darwin
+suite passes 571/571 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-authority-control-framing.md`.
+
 Authority-control restart readback addendum: a fresh authenticated IPC client
 now reads persisted switch and revocation state after BrokerStore/server
 reopen, while replayed authority mutations remain denied. Focused tests pass
