@@ -7,7 +7,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "npm run build:native --workspace @mac-operator/broker && tsc -b",
+    "build": "npm run build:native --workspace @mac-operator/broker && npm run build:native:virtualization-guest --workspace @mac-operator/broker && tsc -b",
     "clean": "tsc -b --clean",
     "lint": "node scripts/check-style.mjs",
     "test": "npm run build && npm run build:native:fault-test --workspace @mac-operator/broker && node --test packages/*/dist/**/*.test.js",

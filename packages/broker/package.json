@@ -7,7 +7,8 @@
   "scripts": {
     "build:native": "sh scripts/build-peer-credentials.sh",
     "build:native:fault-test": "sh scripts/build-peer-credentials-fault-test.sh",
-    "build:native:virtualization-probe": "sh scripts/build-virtualization-probe.sh"
+    "build:native:virtualization-probe": "sh scripts/build-virtualization-probe.sh",
+    "build:native:virtualization-guest": "sh scripts/build-virtualization-guest.sh"
   },
   "dependencies": {
     "@mac-operator/contracts": "0.1.0",
