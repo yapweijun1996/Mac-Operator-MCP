@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest virtio connector addendum: commit `b8551d6` adds a native
+`VZVirtioSocketDevice.connectToPort` connector and TypeScript channel adapter.
+It accepts only an existing Broker VM handle, bounds port/request/response
+bytes and one monotonic deadline, rejects truncated or trailing frames, and
+releases connections on callback races. Focused lifecycle/native/channel tests
+pass 10/10. The complete
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 552/552 with 0 skipped tests; typecheck and lint pass. The
+current host rejects the synthetic VM configuration before creation, so no
+guest server, VM boot, or isolation is claimed. Evidence:
+`evidence/2026-09-15-virtualization-guest-virtio-connector.md`.
+
 Latest native virtualization lifecycle addendum: commit `40f0461` adds a
 separate Objective-C++ N-API artifact linked to `Virtualization.framework` and
 loads it through a protected, digest-bound startup path. The native config uses

@@ -4,6 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest virtio connector addendum: commit `b8551d6` adds a bounded native
+`exchangeGuestFrame` over `VZVirtioSocketDevice.connectToPort` and a
+`NativeVirtualizationGuestChannel` adapter for the existing authenticated guest
+transport. The connector is handle-only, uses a monotonic connect/write/read
+deadline, enforces port/frame/response caps, rejects truncation and trailing
+data, protects SIGPIPE, and releases connections across callback races. Focused
+lifecycle/native/channel tests pass 10/10 and the full physical-Darwin
+regression passes 552/552 with 0 skipped tests. The host still rejects the
+synthetic VM configuration before creation, so this is connector/framing
+evidence only; no guest server, VM boot, isolation, or `mac_task_run`
+enablement is claimed. Evidence:
+`evidence/2026-09-15-virtualization-guest-virtio-connector.md`.
+
 Latest native virtualization lifecycle addendum: commit `40f0461` connects the
 Broker-owned lifecycle controller to a separate Objective-C++ N-API artifact
 linked against `Virtualization.framework`. The startup constructor revalidates

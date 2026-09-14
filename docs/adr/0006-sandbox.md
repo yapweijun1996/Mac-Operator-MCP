@@ -219,3 +219,22 @@ Developer ID-signed entitled runtime, bootable reviewed image, virtio guest
 server, signed attestation producer, and independent isolation proof are still
 required before this ADR can be accepted or `mac_task_run` enabled. Evidence:
 [`evidence/2026-09-15-virtualization-guest-native-lifecycle.md`](../../evidence/2026-09-15-virtualization-guest-native-lifecycle.md).
+
+## Virtio-socket connector
+
+Commit `b8551d6` adds a bounded native `exchangeGuestFrame` operation over
+`VZVirtioSocketDevice.connectToPort` and the corresponding
+`NativeVirtualizationGuestChannel` adapter. The operation accepts only a
+Broker-owned VM handle, a startup-configured guest port, and a bounded frame;
+it uses one monotonic connect/write/read deadline, a four-byte length prefix,
+strict response and trailing-data checks, SIGPIPE protection, and cleanup for
+success, failure, timeout, and callback races. The existing
+`VirtualizationGuestTransportClient` remains responsible for HMAC, freshness,
+replay admission, request/response binding, redaction, and status recovery.
+
+Focused lifecycle/native/channel tests pass 10/10 and the full physical-Darwin
+regression passes 552/552 with 0 skipped tests. The current host rejects the
+synthetic VM configuration before creation, so no guest server or connection
+was exercised; this is a native framing/connector boundary, not VM boot,
+guest isolation, attestation production, or release enablement. Evidence:
+[`evidence/2026-09-15-virtualization-guest-virtio-connector.md`](../../evidence/2026-09-15-virtualization-guest-virtio-connector.md).

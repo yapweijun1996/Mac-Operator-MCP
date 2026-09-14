@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtio connector addendum: commit `b8551d6` connects the native VM handle to a
+bounded `VZVirtioSocketDevice` frame exchange and the existing authenticated
+guest transport client. Connect/write/read deadlines, port and frame caps,
+single-frame response parsing, trailing-data rejection, SIGPIPE protection,
+callback-race cleanup, and generic native errors are implemented and tested.
+Focused lifecycle/native/channel tests pass 10/10; the full physical-Darwin
+regression passes 552/552 with 0 skipped tests. The host rejects the synthetic
+VM configuration before creation, so guest serving, VM boot/isolation,
+attestation production, and `mac_task_run` enablement remain blocked. Evidence:
+`evidence/2026-09-15-virtualization-guest-virtio-connector.md`.
+
 Native virtualization lifecycle addendum: commit `40f0461` connects the
 Broker lifecycle state machine to a protected Objective-C++ N-API artifact.
 It revalidates the startup-owned image, builds a read-only Virtualization
