@@ -4,7 +4,7 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Authority Control CLI and IPC error-proof addendum: source revisions
-`447e4aa`, `f359360`, and `5962efc`
+`447e4aa`, `f359360`, `5962efc`, and `032bf8f`
 provide a bounded
 operator entrypoint for switch readback, expected-state switch mutation, and
 identity revocation. It restores the exact active key through the Broker key

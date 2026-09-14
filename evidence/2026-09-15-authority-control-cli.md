@@ -1,7 +1,7 @@
 # Authority Control CLI Evidence
 
 Date: 2026-09-15
-Source commits: `447e4aa`, `f359360`, `5962efc`
+Source commits: `447e4aa`, `f359360`, `5962efc`, `032bf8f`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
@@ -20,7 +20,8 @@ The IPC server now recovers a structurally valid unsigned command solely to
 bind stable failure responses. An expired or replayed signed command can
 therefore be verified as `AUTH_EXPIRED` or `REPLAY_DENIED` by the caller,
 while freshness and replay checks still happen before admission or execution.
-Malformed envelopes continue to use the invalid-command fallback proof.
+Malformed envelopes, including unknown fields, continue to use the
+invalid-command fallback proof.
 
 ## Verification
 
@@ -44,5 +45,5 @@ until active and `UNKNOWN` Jobs have separate authenticated readback.
 
 ## Rollback
 
-Revert commits `447e4aa`, `f359360`, and `5962efc`; the underlying owner-only
+Revert commits `447e4aa`, `f359360`, `5962efc`, and `032bf8f`; the underlying owner-only
 Authority Control IPC and its replay/audit semantics remain unchanged.

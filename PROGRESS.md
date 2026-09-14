@@ -5,7 +5,7 @@ Version: 0.1
 Last verified: 2026-09-15
 
 Authority Control CLI and IPC error-proof addendum: source revisions
-`447e4aa`, `f359360`, and `5962efc` add
+`447e4aa`, `f359360`, `5962efc`, and `032bf8f` add
 the bounded
 `mac-operator-authority` operator entrypoint. It accepts only switch readback,
 expected-state switch changes, and identity revocation; restores the exact
