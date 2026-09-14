@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Strict-exit addendum: the governed sandbox task path sets a Broker-owned
+`requireCleanExitProof` flag. `ProcessSupervisor` performs a final native
+descendant snapshot after child close and keeps the result `UNKNOWN_OUTCOME`
+on observer uncertainty, truncation, PID replacement, or unresolved
+descendants. Focused process-supervisor/sandbox tests pass 29/32 with three
+explicit Darwin-boundary skips; full real sandbox/Keychain regression passes
+475/476 with one explicit skip. This does not prove kernel-held process or
+remount isolation, post-snapshot detached-descendant prevention, credential
+contents, or task enablement. Evidence:
+`evidence/2026-09-14-post-snapshot-exit-proof.md`.
+
 Keyed-audit addendum: `BrokerStore` can bind its audit tail to an explicit
 owner-only 0600 sidecar with a memory-only HMAC key; a dedicated Keychain
 source factory binds that key to the Broker executable ACL. The Broker
@@ -389,6 +400,13 @@ typecheck, contract verification, audit, and diff checks pass. Evidence:
 gate; real credential/Docker/persistence isolation, remount identity,
 owned-group/post-snapshot process ownership, UDP, external allowlisted
 networking, and production packaging remain open.
+
+Latest MOP-086 exit-proof addendum: governed tasks now request a final native
+descendant snapshot after child close and retain `UNKNOWN_OUTCOME` when the
+observer is unavailable, truncated, replaced, or non-empty. The current full
+real sandbox/Keychain regression is 475/476 with one explicit skip. This is an
+observation guard only; post-snapshot detached descendants, remount identity,
+credential-store isolation, and production task enablement remain open.
 
 `MOP-061` signature addendum: source revision `46a3167` requires the exact
 helper identifier, Developer ID TeamIdentifier, and CDHash in the root-domain

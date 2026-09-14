@@ -186,6 +186,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
     assert.equal(observed?.executable, "/usr/bin/sandbox-exec");
     assert.equal(observed?.cwd, root);
     assert.deepEqual(observed?.environment, {});
+    assert.equal(observed?.requireCleanExitProof, true);
     assert.equal(observed?.timeoutMs, 500);
     assert.equal(observed?.outputCapBytes, 1_024);
     assert.deepEqual(startedSnapshot, { identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });

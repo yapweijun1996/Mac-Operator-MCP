@@ -172,6 +172,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
         ...(profile.process.environment === undefined ? {} : { environment: profile.process.environment }),
         timeoutMs: Math.min(control.timeoutMs, profile.process.timeoutMs),
         outputCapBytes: profile.process.outputCapBytes,
+        requireCleanExitProof: true,
         shouldCancel: control.shouldCancel,
         ...(onStarted === undefined ? {} : { onStarted }),
         ...(control.onProcessOwnershipChanged === undefined ? {} : { onOwnershipChanged: control.onProcessOwnershipChanged })

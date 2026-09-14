@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest strict-exit addendum: governed sandbox tasks request a final native
+process-tree readback after child close; uncertain, truncated, replaced, or
+non-empty descendant state remains `UNKNOWN_OUTCOME`. Focused
+process-supervisor/sandbox tests pass 29/32 with three explicit Darwin-boundary
+skips. Full `MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test` passes 475/476
+with one explicit skip. This is an observation guard only; post-snapshot
+detached descendants, remount resistance, credential-store isolation, and
+production task enablement remain open. Evidence:
+`evidence/2026-09-14-post-snapshot-exit-proof.md`.
+
 Latest keyed-audit addendum: the optional Broker-owned audit anchor binds the
 SQLite tail to a separate 0600 sidecar with an explicit HMAC key source; a
 dedicated Keychain factory binds that source to the Broker executable ACL. The

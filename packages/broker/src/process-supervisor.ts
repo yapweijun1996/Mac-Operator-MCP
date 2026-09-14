@@ -39,6 +39,13 @@ export interface ProcessExecutionRequest {
   environment?: Readonly<Record<string, string>>;
   timeoutMs: number;
   outputCapBytes: number;
+  /**
+   * Require a final native process-tree observation before a successful exit
+   * may be published. Governed task runners set this only when their sandbox
+   * proof forbids process creation; ordinary fixed adapters keep the legacy
+   * bounded child-exit behavior.
+   */
+  requireCleanExitProof?: boolean;
   shouldCancel?: () => boolean;
   /** Synchronous hook used to persist verified ownership before work proceeds. */
   onStarted?: (snapshot: ProcessOwnershipSnapshot) => void;
@@ -684,6 +691,9 @@ export class ProcessSupervisor {
             terminate("orphaned");
           }
           waitForGroupDrain();
+        } else if (request.requireCleanExitProof === true &&
+                   (processTree === undefined || !processTree.confirmNoDescendantsAfterExit())) {
+          finishUnknown();
         } else {
           finish(code, signal);
         }
@@ -713,6 +723,12 @@ async function validateRequest(request: ProcessExecutionRequest, allowedEnvironm
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
       !Number.isSafeInteger(request.outputCapBytes) || request.outputCapBytes < 1 || request.outputCapBytes > MAX_OUTPUT_BYTES) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
+  }
+  if (request.requireCleanExitProof !== undefined && typeof request.requireCleanExitProof !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "Process exit-proof policy is malformed");
+  }
+  if (request.requireCleanExitProof === true && process.platform !== "darwin") {
+    throw new BrokerError("POLICY_DENIED", "Clean process-tree exit proof is unavailable");
   }
   const argumentBytes = request.args.reduce((total, argument) => {
     if (typeof argument !== "string" || argument.includes("\0") || argument.length > 4_096) {
@@ -994,6 +1010,17 @@ class ProcessTreeTracker {
     } catch {
       this.failed = true;
     }
+  }
+
+  /**
+   * Take one final native snapshot after the root process has closed. This is
+   * intentionally stricter than the ordinary adapter path: any observer
+   * uncertainty, truncation, or PID replacement keeps the task unresolved.
+   */
+  confirmNoDescendantsAfterExit(): boolean {
+    if (this.failed || this.rootIdentity === undefined) return false;
+    this.sample();
+    return !this.failed && this.aliveState() === "none";
   }
 
   aliveState(): "none" | "alive" | "unknown" {

@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest strict-exit addendum: governed sandbox tasks now request a final native
+process-tree readback after child close. Missing observation, truncation, PID
+replacement, or unresolved descendants returns `UNKNOWN_OUTCOME`; ordinary
+fixed adapters retain their bounded exit behavior. Focused process-supervisor/
+sandbox tests pass 29/32 with three explicit Darwin-boundary skips, and the
+full real sandbox/Keychain regression passes 475/476 with one explicit skip.
+This is an observation guard, not kernel-held process or remount isolation;
+post-snapshot detached descendants, in-syscall remounts, credential contents,
+and task enablement remain open. Evidence:
+`evidence/2026-09-14-post-snapshot-exit-proof.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now

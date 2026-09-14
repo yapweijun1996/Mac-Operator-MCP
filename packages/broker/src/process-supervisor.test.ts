@@ -33,6 +33,26 @@ test("process supervisor uses an explicit environment and bounded output", async
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor requires a final native descendant readback for strict task exits", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Strict task exit proof uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const result = await supervisor.run({
+    executable: "/usr/bin/printf",
+    args: ["strict-exit"],
+    cwd: CWD,
+    timeoutMs: 1_000,
+    outputCapBytes: 100,
+    requireCleanExitProof: true
+  });
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(result.terminationObserved, true);
+  assert.equal(result.stdout, "strict-exit");
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor does not leak a parent file-descriptor canary", async (t) => {
   if (process.platform === "win32") {
     t.skip("The Broker target platform uses POSIX descriptor semantics");
