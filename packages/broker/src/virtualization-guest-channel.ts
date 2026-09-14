@@ -77,6 +77,8 @@ export class MacOsVirtualizationGuestChannel implements VirtualizationGuestChann
       this.activeSockets.add(socket);
       let settled = false;
       let requestSent = false;
+      let peerAuthenticated = false;
+      let ended = false;
       let expectedResponseBytes: number | undefined;
       let received = Buffer.alloc(0);
 
@@ -100,27 +102,8 @@ export class MacOsVirtualizationGuestChannel implements VirtualizationGuestChann
           : new BrokerError("EXECUTION_FAILED", "Virtualization guest adapter connection failed", true));
       };
 
-      signal.addEventListener("abort", onAbort, { once: true });
-      socket.setTimeout(this.timeoutMs, () => finish(new BrokerError("TIMEOUT", "Virtualization guest adapter channel timed out", true)));
-      socket.on("connect", () => {
-        void revalidateConnectedSocket(this.socketPath, expectedIdentity)
-          .then(() => authenticatePeer(socket, native, this.peerPolicy))
-          .then(() => {
-            if (settled) return;
-            const header = Buffer.allocUnsafe(4);
-            header.writeUInt32BE(frame.byteLength, 0);
-            requestSent = true;
-            socket.write(Buffer.concat([header, Buffer.from(frame)]));
-          })
-          .catch(() => finish(new BrokerError("AUTH_INVALID", "Virtualization guest adapter socket identity is not authorized")));
-      });
-      socket.on("data", (chunk: Buffer) => {
-        if (settled) return;
-        received = Buffer.concat([received, chunk]);
-        if (received.byteLength > this.maxFrameBytes + 4) {
-          finish(new BrokerError("OUTPUT_LIMIT", "Virtualization guest adapter response exceeded the byte limit"));
-          return;
-        }
+      const consumeResponse = (): void => {
+        if (settled || !peerAuthenticated || !requestSent) return;
         if (expectedResponseBytes === undefined && received.byteLength >= 4) {
           expectedResponseBytes = received.readUInt32BE(0);
           if (expectedResponseBytes < MIN_FRAME_BYTES || expectedResponseBytes > this.maxFrameBytes) {
@@ -135,9 +118,37 @@ export class MacOsVirtualizationGuestChannel implements VirtualizationGuestChann
           }
           finish(undefined, received.subarray(4));
         }
+        if (ended && !settled) failTransport();
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
+      socket.setTimeout(this.timeoutMs, () => finish(new BrokerError("TIMEOUT", "Virtualization guest adapter channel timed out", true)));
+      socket.on("connect", () => {
+        void revalidateConnectedSocket(this.socketPath, expectedIdentity)
+          .then(() => authenticatePeer(socket, native, this.peerPolicy))
+          .then(() => {
+            if (settled) return;
+            peerAuthenticated = true;
+            const header = Buffer.allocUnsafe(4);
+            header.writeUInt32BE(frame.byteLength, 0);
+            requestSent = true;
+            socket.write(Buffer.concat([header, Buffer.from(frame)]));
+            consumeResponse();
+          })
+          .catch(() => finish(new BrokerError("AUTH_INVALID", "Virtualization guest adapter socket identity is not authorized")));
+      });
+      socket.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        received = Buffer.concat([received, chunk]);
+        if (received.byteLength > this.maxFrameBytes + 4) {
+          finish(new BrokerError("OUTPUT_LIMIT", "Virtualization guest adapter response exceeded the byte limit"));
+          return;
+        }
+        consumeResponse();
       });
       socket.on("end", () => {
-        if (!settled) failTransport();
+        ended = true;
+        consumeResponse();
       });
       socket.on("error", () => {
         if (!settled) failTransport();
