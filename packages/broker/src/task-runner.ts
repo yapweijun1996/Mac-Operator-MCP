@@ -99,6 +99,8 @@ export interface TaskIsolationProof {
   filesystem: "enforced";
   network: "enforced";
   credentials: "isolated";
+  /** Host persistence surfaces are isolated from the task boundary. */
+  persistence: "isolated";
   /** Mechanism-bound proof that host/controller credentials are not inherited. */
   credentialIsolation: TaskCredentialIsolationProof;
   processTree: "owned";
@@ -598,7 +600,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
-  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "credentialIsolation", "processTree", "processTreePolicy", "evidenceRef", "virtualizationGuest"]);
+  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "persistence", "credentialIsolation", "processTree", "processTreePolicy", "evidenceRef", "virtualizationGuest"]);
   const expectedCredentialIsolation = proof.sandboxMechanism === "sandbox-exec"
     ? "sandbox-exec-empty-env-deny-secret-zones-v1"
     : "virtualization-no-host-credentials-v1";
@@ -611,6 +613,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     proof.filesystem !== "enforced" ||
     proof.network !== "enforced" ||
     proof.credentials !== "isolated" ||
+    proof.persistence !== "isolated" ||
     proof.credentialIsolation !== expectedCredentialIsolation ||
     proof.processTree !== "owned" ||
     (proof.processTreePolicy !== "single_process" && proof.processTreePolicy !== "owned_group") ||
@@ -628,6 +631,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     filesystem: "enforced",
     network: "enforced",
     credentials: "isolated",
+    persistence: "isolated",
     credentialIsolation: proof.credentialIsolation,
     processTree: "owned",
     processTreePolicy: proof.processTreePolicy,

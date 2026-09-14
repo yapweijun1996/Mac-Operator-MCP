@@ -121,6 +121,7 @@ test("task runner isolation proof requires every boundary and the selected sandb
     filesystem: "enforced",
     network: "enforced",
     credentials: "isolated",
+    persistence: "isolated",
     credentialIsolation: "sandbox-exec-empty-env-deny-secret-zones-v1",
     processTree: "owned",
     processTreePolicy: "single_process",
@@ -129,6 +130,10 @@ test("task runner isolation proof requires every boundary and the selected sandb
   assert.deepEqual(validateTaskIsolationProof(proof), proof);
   assert.throws(
     () => validateTaskIsolationProof({ ...proof, credentials: "unknown" }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.throws(
+    () => validateTaskIsolationProof({ ...proof, persistence: "unknown" }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
   assert.throws(
@@ -182,6 +187,7 @@ test("virtualization isolation proofs require an immutable guest identity", () =
     filesystem: "enforced",
     network: "enforced",
     credentials: "isolated",
+    persistence: "isolated",
     credentialIsolation: "virtualization-no-host-credentials-v1",
     processTree: "owned",
     processTreePolicy: "single_process",
@@ -224,6 +230,7 @@ test("VirtualizationTaskRunner stays unavailable without matched native guest ev
       filesystem: "enforced",
       network: "enforced",
       credentials: "isolated",
+      persistence: "isolated",
       credentialIsolation: "virtualization-no-host-credentials-v1",
       processTree: "owned",
       processTreePolicy: "single_process",
@@ -262,6 +269,7 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
       filesystem: "enforced",
       network: "enforced",
       credentials: "isolated",
+      persistence: "isolated",
       credentialIsolation: "virtualization-no-host-credentials-v1",
       processTree: "owned",
       processTreePolicy: "single_process",
@@ -335,6 +343,7 @@ test("VirtualizationTaskRunner maps native adapter transport loss to unknown", a
       filesystem: "enforced",
       network: "enforced",
       credentials: "isolated",
+      persistence: "isolated",
       credentialIsolation: "virtualization-no-host-credentials-v1",
       processTree: "owned",
       processTreePolicy: "single_process",

@@ -124,6 +124,7 @@ test("VirtualizationTaskRunner revalidates signed guest provenance before dispat
     filesystem: "enforced",
     network: "enforced",
     credentials: "isolated",
+    persistence: "isolated",
     credentialIsolation: "virtualization-no-host-credentials-v1",
     processTree: "owned",
     processTreePolicy: "single_process",

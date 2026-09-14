@@ -90,6 +90,7 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
     filesystem: "enforced" as const,
     network: "enforced" as const,
     credentials: "isolated" as const,
+    persistence: "isolated" as const,
     credentialIsolation: "virtualization-no-host-credentials-v1" as const,
     processTree: "owned" as const,
     processTreePolicy: "single_process" as const,
