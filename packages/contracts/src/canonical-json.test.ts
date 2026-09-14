@@ -56,3 +56,15 @@ test("strict JSON parsing rejects duplicate keys and unpaired surrogates", () =>
   assert.throws(() => parseJsonStrict('"\\udfff"'), /unpaired surrogate/u);
   assert.throws(() => canonicalJson("\ud800"), /JSON string contains an unpaired surrogate/u);
 });
+
+test("strict JSON parsing rejects numbers that cannot reproduce the canonical wire spelling", () => {
+  assert.deepEqual(parseJsonStrict('{"small":1e-7,"fraction":1.2300,"large":1e21}'), {
+    small: 1e-7,
+    fraction: 1.23,
+    large: 1e21
+  });
+  assert.throws(() => parseJsonStrict("9007199254740993"), /not representable/u);
+  assert.throws(() => parseJsonStrict("0.100000000000000005"), /not representable/u);
+  assert.throws(() => parseJsonStrict("1e400"), /not representable/u);
+  assert.throws(() => parseJsonStrict("1e-324"), /not representable/u);
+});

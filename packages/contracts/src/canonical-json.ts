@@ -103,8 +103,68 @@ function scanJsonValue(value: string, state: JsonScanState, depth: number): void
   }
   if (start === state.index) throw new TypeError("JSON value is missing");
   const token = value.slice(start, state.index);
-  try { JSON.parse(token); }
+  let parsed: unknown;
+  try { parsed = JSON.parse(token); }
   catch { throw new TypeError("JSON value is malformed"); }
+  if (typeof parsed === "number") {
+    if (!Number.isFinite(parsed) || JSON.stringify(parsed) !== canonicalizeJsonNumberToken(token)) {
+      throw new TypeError("JSON number is not representable by the canonical wire profile");
+    }
+  }
+}
+
+/**
+ * Normalize a syntactically valid JSON number without converting it through a
+ * floating-point runtime. The scanner compares this spelling with Node's
+ * ECMAScript JSON.stringify output so a native lexical canonicalizer observes
+ * the same IEEE-754 value and cannot silently preserve discarded precision.
+ */
+function canonicalizeJsonNumberToken(token: string): string {
+  let text = token;
+  let negative = false;
+  if (text.startsWith("-")) {
+    negative = true;
+    text = text.slice(1);
+  }
+  const exponentParts = text.split(/[eE]/u);
+  if (exponentParts.length > 2) throw new TypeError("JSON number exponent is malformed");
+  const mantissa = exponentParts[0] ?? "";
+  const exponentText = exponentParts.length === 2 ? exponentParts[1] ?? "" : "";
+  const exponent = exponentText.length === 0 ? 0 : Number(exponentText);
+  if (!Number.isSafeInteger(exponent) || exponent < -10_000 || exponent > 10_000) {
+    throw new TypeError("JSON number exponent is outside the supported range");
+  }
+  const mantissaParts = mantissa.split(".");
+  if (mantissaParts.length > 2) throw new TypeError("JSON number fraction is malformed");
+  const integerPart = mantissaParts[0] ?? "";
+  const fractionalPart = mantissaParts.length === 2 ? mantissaParts[1] ?? "" : "";
+  let digits = `${integerPart}${fractionalPart}`.split("");
+  if (digits.length === 0 || digits.some((digit) => digit < "0" || digit > "9")) {
+    throw new TypeError("JSON number digits are malformed");
+  }
+  let decimalPoint = integerPart.length + exponent;
+  while (digits.length > 1 && digits[0] === "0") {
+    digits = digits.slice(1);
+    decimalPoint -= 1;
+  }
+  while (digits.length > 1 && digits[digits.length - 1] === "0") digits.pop();
+  if (digits.every((digit) => digit === "0")) return "0";
+
+  const scientificExponent = decimalPoint - 1;
+  const useScientific = scientificExponent < -6 || scientificExponent >= 21;
+  let body: string;
+  if (useScientific) {
+    body = digits[0] ?? "";
+    if (digits.length > 1) body += `.${digits.slice(1).join("")}`;
+    body += `e${scientificExponent >= 0 ? "+" : ""}${scientificExponent}`;
+  } else if (decimalPoint <= 0) {
+    body = `0.${"0".repeat(-decimalPoint)}${digits.join("")}`;
+  } else if (decimalPoint >= digits.length) {
+    body = `${digits.join("")}${"0".repeat(decimalPoint - digits.length)}`;
+  } else {
+    body = `${digits.slice(0, decimalPoint).join("")}.${digits.slice(decimalPoint).join("")}`;
+  }
+  return negative ? `-${body}` : body;
 }
 
 function scanJsonObject(value: string, state: JsonScanState, depth: number): void {
