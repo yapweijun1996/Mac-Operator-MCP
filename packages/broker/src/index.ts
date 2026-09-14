@@ -25,6 +25,7 @@ export * from "./virtualization-guest-transport.js";
 export * from "./virtualization-guest-channel.js";
 export * from "./virtualization-guest-image.js";
 export * from "./virtualization-guest-attestation.js";
+export * from "./virtualization-guest-attestation-keyring.js";
 export * from "./sandbox-profile.js";
 export * from "./approval-authority.js";
 export * from "./approval-keyring.js";
