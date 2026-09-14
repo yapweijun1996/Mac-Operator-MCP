@@ -3,7 +3,7 @@
 - Date: 2026-09-15
 - Host: physical Darwin arm64, macOS 26.2 (25C56)
 - Scope: request/response/ledger digest serialization; no capability enablement
-- Source revision: `7860a00`
+- Source revision: `a26a188`
 
 ## Boundary
 
@@ -20,18 +20,24 @@ objects/arrays, escaping, number formatting, Unicode ordering without
 normalization, empty values, and SHA-256 readback. The contracts package test
 also compares a TextDecoder round trip to the expected canonical string.
 
+The native probe `scripts/verify-canonical-json-native.sh` compiles a bounded,
+read-only Swift standard-library implementation (including its own JSON parser
+and SHA-256) and checks the same vector file. It reports `vectors:4,
+passed:4` on this host.
+
 ```text
 npm run typecheck
 node --test packages/contracts/dist/canonical-json.test.js
+npm run verify:canonical:native
 ```
 
-Result: 2/2 focused tests passed and the full physical-Darwin regression on
-this source revision passed 535/535.
+Result: 2/2 focused TypeScript tests, 4/4 native vectors, and the full
+physical-Darwin regression on this source revision passed (535/535).
 
 ## Limits
 
-These vectors establish a stable repository contract, not interoperability
-evidence from a Swift/C++ guest implementation. Native adapters must consume
-the exact UTF-8 bytes and pass the same vectors before a cross-runtime release
-gate can close. This change does not alter authentication keys, VM boot,
-guest isolation, or capability enablement.
+The probe establishes an independent native serialization readback, but it is
+not the production Swift/C++ guest adapter and does not prove VM boot, guest
+isolation, credential/process/network limits, or capability enablement. A
+cross-runtime release gate still requires the actual adapter implementation to
+consume these exact UTF-8 bytes and pass the vectors.

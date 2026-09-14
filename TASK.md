@@ -4,12 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Canonical JSON wire-profile addendum: the contracts package now exports the
-versioned `jcs-utf8-v1` profile and exact UTF-8 byte helper, with four fixed
-digest vectors, 2/2 focused tests, and a 535/535 full Darwin regression. This
-advances `MOP-012` serialization
-compatibility but does not close corruption, retention, native cross-runtime
-readback, or accepted persistence design.
+Canonical JSON wire-profile addendum: commits `7860a00` and `a26a188` export
+the versioned `jcs-utf8-v1` profile, exact UTF-8 byte helper, and a bounded
+read-only native Swift standard-library probe. Four fixed digest vectors pass
+2/2 focused TypeScript tests, 4/4 native readback, and the 535/535 full Darwin
+regression. This advances `MOP-012` serialization compatibility but does not
+close production Swift/C++ adapter integration, corruption, retention, VM
+isolation, or accepted persistence design.
 
 Guest-attestation keyring addendum: commits `73148a6`, `db83881`, and `c56aa0a` add a startup-only
 Broker manager for protected Ed25519 public-key configuration. Owner-only
