@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-14
 
+Latest startup-authority addendum: `ProcessSupervisor` rechecks close and
+cancellation authority after startup ownership sampling and before active-run
+registration. A real `/bin/sleep` closes this window by invoking `close()` from
+the startup callback; the child is drained, `CANCELLED` is returned, and no
+active capacity remains. Focused process-supervisor tests pass 17/17; the full
+real-sandbox suite passes 454/455 with one explicit host-boundary/opt-in skip.
+Evidence: `evidence/2026-09-14-process-supervisor-startup-authority.md`.
+
 Latest process-identity startup addendum: native PID/start-time capture now
 uses a bounded 100ms retry window for transient process-table visibility after
 spawn, without synthesizing identities or weakening fail-closed cleanup. The

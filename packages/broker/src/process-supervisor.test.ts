@@ -335,6 +335,34 @@ test("process supervisor drains a child when startup ownership persistence fails
   await supervisor.close();
 });
 
+test("process supervisor aborts a child when authority closes during startup", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Startup authority binding uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let closePromise: Promise<void> | undefined;
+  await assert.rejects(
+    supervisor.run({
+      executable: "/bin/sleep",
+      args: ["10"],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 100,
+      onStarted: (value) => {
+        snapshot = value;
+        closePromise = supervisor.close();
+      }
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+  );
+  assert.ok(snapshot);
+  await assertProcessGone(snapshot!.identity.pid);
+  await closePromise;
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor captures and recovers an exact persisted root identity", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Persisted root identity recovery is a macOS native boundary");

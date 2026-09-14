@@ -182,6 +182,11 @@ export class ProcessSupervisor {
         throw new BrokerError("AUDIT_UNAVAILABLE", "Process identity could not be persisted");
       }
     }
+    if (this.closing || this.cancelled(request.shouldCancel)) {
+      const drained = await this.abortUnownedProcess(child, processId, processTree);
+      if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
+      throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
+    }
     this.activeProcesses += 1;
     let stopRun: (() => void) | undefined;
     let resolveDrained!: () => void;

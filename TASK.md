@@ -4,6 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-14
 
+Startup-authority addendum: the Supervisor rechecks close/cancellation state
+after ownership sampling and before active-run registration, draining a child
+and returning `CANCELLED` when authority is lost in that window. Evidence:
+`evidence/2026-09-14-process-supervisor-startup-authority.md`.
+
 Process-identity startup addendum: native PID/start-time capture retries for a
 bounded 100ms after spawn and never synthesizes an identity when the child has
 already exited. Evidence:
