@@ -354,7 +354,9 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
   const userHome = `/Users/${userInfo().username}`;
   const protectedSurfaces = [
     ["ssh", join(userHome, ".ssh")],
+    ["codex-config", join(userHome, ".codex")],
     ["docker-config", join(userHome, ".docker")],
+    ["openai-config", join(userHome, ".openai")],
     ["chrome", join(userHome, "Library/Application Support/Google/Chrome")],
     ["safari", join(userHome, "Library/Safari")],
     ["mail", join(userHome, "Library/Mail")],
@@ -394,7 +396,7 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
       }
     }, { timeoutMs: 2_000, shouldCancel: () => false });
     assert.equal(canary.resultClass, "SUCCEEDED");
-    assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied:ssh-denied:docker-config-denied:chrome-denied:safari-denied:mail-denied:messages-denied:keychain-denied:docker-socket-denied");
+    assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied:ssh-denied:codex-config-denied:docker-config-denied:openai-config-denied:chrome-denied:safari-denied:mail-denied:messages-denied:keychain-denied:docker-socket-denied");
     assert.equal(await readFile(join(root, "created.txt"), "utf8"), "created");
 
     const allowedServer = await startHttpServer("network-allowed");

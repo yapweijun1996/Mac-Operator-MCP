@@ -118,3 +118,15 @@ changes the Broker launch boundary from the historical sandbox-only
 `UNAVAILABLE` result to `PARTIAL` for environment construction, but it does
 not prove real credential-content isolation or make deprecated `sandbox-exec`
 a production selection. `mac_task_run` remains disabled.
+
+## 2026-09-14 controller-secret zone readback
+
+The current revision extends the Broker-owned deny list with `.codex` and
+`.openai` under the current user's home. The real sandbox canary now checks
+those controller-state directories alongside SSH, Docker, browser, Mail,
+Messages, and Keychains without opening their contents. The focused
+`MOPS_REAL_SANDBOX=1` sandbox/task-runner readback passes 21/21. This remains
+partial deny-list evidence: it does not prove real credential-content
+isolation, remount resistance, post-snapshot process escape, crash cleanup, or
+production support for deprecated `sandbox-exec`. Evidence:
+`evidence/2026-09-14-sandbox-controller-secret-zones.md`.

@@ -429,6 +429,15 @@ external immutable anchoring, production Keychain rotation, and Developer ID
 installation open. Evidence:
 `evidence/2026-09-14-audit-anchor-lock.md`.
 
+Latest controller-secret-zone addendum: Broker-owned sandbox profiles now
+deny `.codex` and `.openai` controller-state directories alongside SSH, cloud,
+Docker, browser, Mail, Messages, and Keychain zones. The real
+`MOPS_REAL_SANDBOX=1` sandbox/task-runner readback passes 21/21 and confirms
+those surfaces are denied without opening contents. This strengthens the
+credential-surface boundary but does not prove real credential-content
+isolation or production `sandbox-exec` enablement. Evidence:
+`evidence/2026-09-14-sandbox-controller-secret-zones.md`.
+
 `MOP-061` signature addendum: source revision `46a3167` requires the exact
 helper identifier, Developer ID TeamIdentifier, and CDHash in the root-domain
 package plan and final codesign readback. Missing fields fail closed before

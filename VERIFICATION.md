@@ -33,6 +33,15 @@ pass 44/44. This closes a local cross-process sidecar race but does not prove a
 kernel lease or external immutable anchoring. Evidence:
 `evidence/2026-09-14-audit-anchor-lock.md`.
 
+Latest controller-secret-zone addendum: Broker-owned sandbox profiles now
+deny `.codex` and `.openai` controller-state directories alongside SSH, cloud,
+Docker, browser, Mail, Messages, and Keychain zones. The real
+`MOPS_REAL_SANDBOX=1` sandbox/task-runner readback passes 21/21 and confirms
+those surfaces are denied without opening contents. This strengthens the
+credential-surface deny boundary but does not prove real credential-content
+isolation or production `sandbox-exec` enablement. Evidence:
+`evidence/2026-09-14-sandbox-controller-secret-zones.md`.
+
 Latest keyed-audit addendum: the optional Broker-owned audit anchor binds the
 SQLite tail to a separate 0600 sidecar with an explicit HMAC key source; a
 dedicated Keychain factory binds that source to the Broker executable ACL. The

@@ -11,7 +11,7 @@ const GLOBAL_SECRET_ZONES = [
   "/private/var/root", "/var/root"
 ] as const;
 const PROJECT_SECRET_DIRECTORIES = [
-  ".aws", ".config", ".docker", ".gnupg", ".kube", ".ssh",
+  ".aws", ".codex", ".config", ".docker", ".gnupg", ".kube", ".openai", ".ssh",
   "Library/Keychains", "Library/Application Support/Google/Chrome", "Library/Safari", "Library/Mail", "Library/Messages"
 ] as const;
 const PROJECT_SECRET_FILES = [

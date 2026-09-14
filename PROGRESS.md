@@ -39,6 +39,15 @@ stale-lock operator recovery, production Keychain rotation, Developer ID
 installation, and rollback-resistant external anchoring remain open. Evidence:
 `evidence/2026-09-14-audit-anchor-lock.md`.
 
+Latest controller-secret-zone addendum: Broker-owned sandbox profiles now
+deny `.codex` and `.openai` controller-state directories in addition to the
+existing SSH, cloud, Docker, browser, Mail, Messages, and Keychain zones. The
+real `MOPS_REAL_SANDBOX=1` sandbox/task-runner readback passes 21/21 and
+confirms those surfaces are denied without opening contents. This is stronger
+deny-list evidence, not real credential-content isolation or production
+`sandbox-exec` enablement. Evidence:
+`evidence/2026-09-14-sandbox-controller-secret-zones.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now
