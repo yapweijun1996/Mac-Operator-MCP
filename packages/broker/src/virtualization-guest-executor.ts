@@ -169,6 +169,7 @@ export class VirtualizationGuestTaskProfileRegistry {
  */
 export class VirtualizationGuestProfileExecutor {
   private readonly ledger = new GuestExecutionLedger();
+  private readonly activeControllers = new Set<AbortController>();
   private readonly maxConcurrent: number;
   private active = 0;
   private closed = false;
@@ -193,7 +194,12 @@ export class VirtualizationGuestProfileExecutor {
     if (signal?.aborted) return this.cancelled(request);
     if (this.active >= this.maxConcurrent) throw new BrokerError("CONFLICT", "Guest task executor capacity is exhausted", true);
     const profile = await this.registry.resolve(request);
+    if (this.closed) throw new BrokerError("POLICY_DENIED", "Guest task executor is not available");
     if (signal?.aborted) return this.cancelled(request);
+    const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort();
+    signal?.addEventListener("abort", abortFromCaller, { once: true });
+    this.activeControllers.add(controller);
     this.active += 1;
     this.ledger.start(request);
     try {
@@ -202,8 +208,13 @@ export class VirtualizationGuestProfileExecutor {
         profile,
         timeoutMs: Math.min(request.timeoutMs, profile.timeoutMs),
         outputCapBytes: Math.min(request.outputCapBytes, profile.outputCapBytes),
-        signal: signal ?? new AbortController().signal
+        signal: controller.signal
       });
+      if (controller.signal.aborted || this.closed) {
+        const cancelled = this.executionResult("cancelled", "CANCELLED", null, "Guest task was cancelled before result publication");
+        this.ledger.complete(request, cancelled);
+        return this.response(request, cancelled);
+      }
       const validated = redactGuestExecutionResult(
         validateGuestExecutionResult(result, request.outputCapBytes),
         request.outputCapBytes
@@ -211,6 +222,11 @@ export class VirtualizationGuestProfileExecutor {
       this.ledger.complete(request, validated);
       return this.response(request, validated);
     } catch (error) {
+      if (controller.signal.aborted || this.closed) {
+        const cancelled = this.executionResult("cancelled", "CANCELLED", null, "Guest task was cancelled before result publication");
+        this.ledger.complete(request, cancelled);
+        return this.response(request, cancelled);
+      }
       const result = error instanceof BrokerError
         ? error
         : new BrokerError("UNKNOWN_OUTCOME", "Guest task execution outcome could not be established", true);
@@ -223,6 +239,8 @@ export class VirtualizationGuestProfileExecutor {
       return this.response(request, mapped);
     } finally {
       this.active -= 1;
+      this.activeControllers.delete(controller);
+      signal?.removeEventListener("abort", abortFromCaller);
     }
   }
 
@@ -249,6 +267,7 @@ export class VirtualizationGuestProfileExecutor {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    for (const controller of this.activeControllers) controller.abort();
     await this.adapter.close?.();
   }
 

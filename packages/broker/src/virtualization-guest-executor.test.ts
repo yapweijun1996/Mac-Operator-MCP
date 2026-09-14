@@ -187,6 +187,38 @@ test("guest profile executor returns bounded results and serves terminal status 
   }
 });
 
+test("guest profile executor cancels active work before close can publish success", async () => {
+  const fixture = await profileFixture();
+  try {
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    let resolveRun!: (result: VirtualizationGuestExecutionResult) => void;
+    const run = new Promise<VirtualizationGuestExecutionResult>((resolve) => { resolveRun = resolve; });
+    let observedSignal: AbortSignal | undefined;
+    const executor = new VirtualizationGuestProfileExecutor(
+      new VirtualizationGuestTaskProfileRegistry([fixture.profile]),
+      {
+        available: true,
+        async run(input) {
+          observedSignal = input.signal;
+          resolveStarted();
+          return run;
+        }
+      }
+    );
+    const execution = executor.execute(fixture.request);
+    await started;
+    await executor.close();
+    assert.equal(observedSignal?.aborted, true);
+    resolveRun(successfulResult());
+    const result = await execution;
+    assert.equal(result.state, "cancelled");
+    assert.equal(result.resultClass, "CANCELLED");
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("profile agent factory exposes only the authenticated digest-bound service", async () => {
   const fixture = await profileFixture();
   try {

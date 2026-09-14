@@ -30,9 +30,11 @@ Guest profile executor addendum: the Guest registry verifies the shared
 profile/task digest material, denies shell and unsafe environment manifests,
 rechecks canonical executable/cwd/filesystem targets, bounds concurrency and
 output, and records terminal results for authenticated status recovery. Error
-summaries are fixed redacted values, and the concrete process adapter is
-unavailable without explicit isolation evidence. Focused guest-executor tests
-pass 6/6 and the complete physical-Darwin suite passes 568/568 with 0 skipped
+summaries and streams are redacted before transport, and active work is
+cancelled before executor close can publish success. The concrete process
+adapter is unavailable without explicit isolation evidence. Focused
+guest-executor tests pass 7/7 and the complete physical-Darwin suite passes
+569/569 with 0 skipped
 tests; typecheck, lint, and diff checks pass. This proves manifest/executor
 semantics only, not VM boot or real guest isolation. Evidence:
 `evidence/2026-09-15-virtualization-guest-executor.md`.

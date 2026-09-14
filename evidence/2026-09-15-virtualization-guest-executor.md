@@ -29,11 +29,11 @@ the reviewed Virtualization image and real-Mac evidence.
 
 ## Verification
 
-- Guest profile executor focused tests: 6/6 pass.
+- Guest profile executor focused tests: 7/7 pass.
 - Tests cover digest binding, target replacement, shell/environment rejection,
   bounded status recovery, factory composition, redacted failure mapping, and
   fail-closed adapter gating.
-- Full physical-Darwin regression after this change: 568/568 pass, 0 skipped.
+- Full physical-Darwin regression after this change: 569/569 pass, 0 skipped.
 - `npm run typecheck`, `npm run lint`, and `git diff --check` pass.
 
 ## Remaining evidence

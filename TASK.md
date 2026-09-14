@@ -29,9 +29,10 @@ Guest profile executor addendum: a startup-owned Guest manifest registry now
 recomputes profile/task digests, denies shell executables and unsafe
 environment entries, rechecks canonical targets, and passes only fixed
 manifest material to a bounded process adapter. Terminal outcomes are kept in
-a bounded status ledger with stable redacted summaries; the concrete process
-adapter remains evidence-gated. Focused guest-executor tests pass 6/6; the
-full physical-Darwin regression passes 568/568 with 0 skipped tests. Guest
+a bounded status ledger with stable redacted summaries; active work is
+cancelled before executor close can publish success; the concrete process
+adapter remains evidence-gated. Focused guest-executor tests pass 7/7; the
+full physical-Darwin regression passes 569/569 with 0 skipped tests. Guest
 isolation evidence, bootable image deployment, and `mac_task_run` enablement
 remain open. Evidence:
 `evidence/2026-09-15-virtualization-guest-executor.md`.
