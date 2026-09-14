@@ -84,10 +84,10 @@ class TestStream implements VirtualizationGuestStream {
 }
 
 class TestSource implements VirtualizationGuestConnectionSource {
-  private readonly streams: TestStream[];
+  private readonly streams: VirtualizationGuestStream[];
   closed = false;
 
-  constructor(...streams: TestStream[]) {
+  constructor(...streams: VirtualizationGuestStream[]) {
     this.streams = [...streams];
   }
 
@@ -98,6 +98,29 @@ class TestSource implements VirtualizationGuestConnectionSource {
   async close(): Promise<void> {
     this.closed = true;
     for (const stream of this.streams) stream.close();
+  }
+}
+
+class HangingStream implements VirtualizationGuestStream {
+  readonly readable: AsyncIterable<Uint8Array>;
+  closed = false;
+  private readonly release: () => void;
+
+  constructor() {
+    let resolveRelease!: () => void;
+    const gate = new Promise<void>((resolve) => { resolveRelease = resolve; });
+    this.release = resolveRelease;
+    this.readable = (async function* () {
+      await gate;
+    })();
+  }
+
+  async write(): Promise<void> { return undefined; }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.release();
   }
 }
 
@@ -156,6 +179,24 @@ test("guest bootstrap rejects trailing and oversized request frames", async () =
   assert.equal(bootstrap.readback().completedConnections, 0);
   assert.equal(bootstrap.readback().rejectedConnections, 2);
   await bootstrap.close();
+});
+
+test("guest bootstrap bounds concurrency and closes active streams", async () => {
+  const hanging = new HangingStream();
+  const rejected = new TestStream(encodeFrame(requestFrame()));
+  const bootstrap = new VirtualizationGuestBootstrap({
+    enabled: true,
+    agent: agent(),
+    source: new TestSource(hanging, rejected),
+    maxConnections: 1,
+    connectionTimeoutMs: 100
+  });
+  await bootstrap.start();
+  await rejected.closedPromise;
+  assert.equal(bootstrap.readback().rejectedConnections, 1);
+  await bootstrap.close();
+  assert.equal(hanging.closed, true);
+  assert.equal(bootstrap.readback().state, "closed");
 });
 
 function encodeFrame(frame: Uint8Array): Uint8Array {

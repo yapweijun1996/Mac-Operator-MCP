@@ -8,8 +8,8 @@ Latest guest bootstrap addendum: `VirtualizationGuestBootstrap` now serves one
 bounded length-prefixed authenticated frame per startup-owned connection. It
 keeps vsock acceptance transport-specific, enforces frame/response,
 connection-time, and concurrency budgets, rejects trailing request data, and
-wipes the guest agent key on close. Focused bootstrap tests pass 3/3 and the
-full physical-Darwin regression passes 558/558 with 0 skipped tests. This does
+wipes the guest agent key on close. Focused bootstrap tests pass 4/4 and the
+full physical-Darwin regression passes 559/559 with 0 skipped tests. This does
 not claim a production AF_VSOCK acceptor, bootable image, VM boot, guest
 isolation, or `mac_task_run` enablement. Evidence:
 `evidence/2026-09-15-virtualization-guest-bootstrap.md`.

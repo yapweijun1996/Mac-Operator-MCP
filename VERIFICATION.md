@@ -7,8 +7,8 @@ Latest guest bootstrap addendum: a bounded guest-side frame service now keeps
 the protocol loop independent from the native vsock acceptor. It enforces an
 explicit enable gate, one request/response per connection, frame/response and
 concurrency caps, one deadline across read/agent/write, trailing-data
-rejection, stream cleanup, and guest-agent key disposal. Focused tests pass 3/3
-and the complete physical-Darwin suite passes 558/558 with 0 skipped tests;
+rejection, stream cleanup, and guest-agent key disposal. Focused tests pass 4/4
+and the complete physical-Darwin suite passes 559/559 with 0 skipped tests;
 typecheck, lint, and diff checks pass. This does not prove a production
 AF_VSOCK acceptor, VM boot, guest isolation, or `mac_task_run` enablement.
 Evidence: `evidence/2026-09-15-virtualization-guest-bootstrap.md`.

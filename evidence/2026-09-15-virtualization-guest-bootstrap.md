@@ -27,8 +27,8 @@ the authenticated frame or task contracts.
 
 ## Verification
 
-- Guest bootstrap tests: 3/3 pass.
-- Full physical-Darwin suite after this change: 558/558 pass, 0 skipped.
+- Guest bootstrap tests: 4/4 pass.
+- Full physical-Darwin suite after this change: 559/559 pass, 0 skipped.
 - `npm run typecheck`, `npm run lint`, and `git diff --check` pass.
 
 This evidence does not claim a production AF_VSOCK acceptor, bootable guest

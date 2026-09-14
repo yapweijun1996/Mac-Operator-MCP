@@ -64,7 +64,7 @@ export class VirtualizationGuestBootstrap {
   private readonly connectionTimeoutMs: number;
   private readonly maxConnections: number;
   private stateValue: VirtualizationGuestBootstrapState;
-  private activeConnections = new Set<Promise<void>>();
+  private activeConnections = new Set<{ stream: VirtualizationGuestStream; promise: Promise<void> }>();
   private acceptAbort: AbortController | undefined;
   private acceptLoop: Promise<void> | undefined;
   private operation: Promise<void> = Promise.resolve();
@@ -125,12 +125,16 @@ export class VirtualizationGuestBootstrap {
           await Promise.resolve(stream.close()).catch(() => undefined);
           continue;
         }
-        const operation = this.serveStream(stream).finally(() => {
-          this.activeConnections.delete(operation);
+        const record = { stream, promise: Promise.resolve() };
+        record.promise = this.serveStream(stream).finally(() => {
+          this.activeConnections.delete(record);
+          if (this.stateValue === "stopping" && this.activeConnections.size === 0) this.stateValue = "stopped";
         });
-        this.activeConnections.add(operation);
+        this.activeConnections.add(record);
       }
-      if (!signal.aborted && this.stateValue === "running") this.stateValue = "stopped";
+      if (!signal.aborted && this.stateValue === "running") {
+        this.stateValue = this.activeConnections.size === 0 ? "stopped" : "stopping";
+      }
     } catch {
       if (!signal.aborted) this.stateValue = "failed";
     }
@@ -183,7 +187,8 @@ export class VirtualizationGuestBootstrap {
       try { await this.acceptLoop; } catch (error) { firstError ??= error; }
     }
     const active = [...this.activeConnections];
-    await Promise.allSettled(active);
+    for (const record of active) await Promise.resolve(record.stream.close()).catch(() => undefined);
+    await Promise.allSettled(active.map((record) => record.promise));
     try { this.agent.close(); } catch (error) { firstError ??= error; }
     this.stateValue = firstError === undefined ? "closed" : "failed";
     if (firstError !== undefined) throw firstError;
