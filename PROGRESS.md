@@ -11,16 +11,20 @@ streaming, decrypt-and-verify SQLite/audit readback, identity checks before
 rename, and owner-only temporary cleanup; missing or mismatched keys,
 ciphertext tampering, and legacy plaintext names fail closed. The dedicated
 Keychain source factory keeps the key out of files, logs, and MCP arguments.
-Focused persistence and credential tests pass 45/45. Evidence:
+Focused persistence and credential tests pass 47/47. Evidence:
 `evidence/2026-09-14-encrypted-backup.md`.
 
 Latest persistence-schema addendum: `BrokerStore` now reads SQLite
 `user_version` before initialization, rejects a database marked newer than the
-runtime, and applies the known revocation/request/Job migrations transactionally
-before publishing schema version `4`. Fresh initialization, legacy data
-preservation, and future-version refusal pass 35/35 focused persistence tests.
-This is a monotonic compatibility gate; encrypted backups, a general migration
-registry/rollback policy, and ADR-0005 acceptance remain open. Evidence:
+runtime, and applies a versioned forward-only migration registry transactionally
+before publishing schema version `4`. Each known migration is shape-checked and
+recorded in `schema_migrations`; registry gaps, identity changes, malformed
+timestamps, and future markers fail closed. Fresh initialization, legacy data
+preservation, future-version refusal, registry-integrity refusal, and failed
+migration rollback pass 39/39 focused persistence tests. Rollback is explicitly
+restore-from-encrypted-backup only; no automatic down-migration is exposed.
+ADR-0005 acceptance remains open.
+Evidence:
 `evidence/2026-09-14-persistence-schema-version.md`.
 
 Latest process-identity exit-window addendum: `ProcessSupervisor` now keeps

@@ -9,14 +9,16 @@ Broker-owned key source and are published as authenticated AES-256-GCM
 files, verify decrypted SQLite/audit content before and after publication, bind
 the key identity, and reject missing/mismatched keys, ciphertext tampering, and
 legacy plaintext backup names. Focused persistence and credential tests pass
-45/45. Evidence: `evidence/2026-09-14-encrypted-backup.md`.
+47/47. Evidence: `evidence/2026-09-14-encrypted-backup.md`.
 
 Latest persistence-schema addendum: `BrokerStore` enforces SQLite
-`user_version` `4`, runs the known legacy migrations in one transaction, and
-rejects future-version databases before authority or recovery work. Fresh,
-legacy, and future-version cases pass 35/35 focused persistence tests. This
-closes the current schema-version compatibility gate but not encrypted backup
-storage, a general migration registry/rollback policy, or ADR-0005 acceptance.
+`user_version` `4`, runs a versioned forward-only migration registry in one
+transaction, and rejects future-version or inconsistent-registry databases
+before authority or recovery work. Fresh, legacy, future-version, and registry
+integrity and failed-migration rollback cases pass 39/39 focused persistence
+tests. Rollback is explicitly restore-from-encrypted-backup only; no automatic
+down-migration is exposed.
+ADR-0005 acceptance remains open.
 Evidence: `evidence/2026-09-14-persistence-schema-version.md`.
 
 Latest process-identity exit-window addendum: `ProcessSupervisor` continues
@@ -1185,10 +1187,11 @@ covering Request, Approval, Job, and Audit envelopes. AJV positive/negative
 tests reject malformed lifecycle values and raw helper authority fields, and
 `verify:contracts` compiles the schema alongside all 44 MCP contracts. Runtime
 cross-field checks remain in BrokerStore. Host-only Broker backup/restore/
-retention primitives now provide owner-only atomic snapshots, SQLite quick
-check and audit-chain verification, fresh-target restore, numeric retention,
-and symlink/ownership/mode/size/target-swap refusal. Encrypted backup storage,
-disk exhaustion, general migrations, and stronger audit anchoring remain open.
+retention primitives now provide owner-only atomic encrypted snapshots, SQLite
+quick check and audit-chain verification, fresh-target restore, numeric
+retention, migration registry/rollback policy, and symlink/ownership/mode/
+size/target-swap refusal. Disk exhaustion, production migration cutover, and
+stronger audit anchoring remain open.
 Evidence: `evidence/2026-09-13-ledger-record-contracts.md`.
 
 The ledger-contract revision reran the full suite at 409 tests (406 passed,

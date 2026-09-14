@@ -336,7 +336,8 @@ export class BrokerStore {
       this.database.close();
       throw new Error("Broker persistence schema version is newer than this runtime");
     }
-    this.database.exec(`
+    try {
+      this.database.exec(`
       CREATE TABLE IF NOT EXISTS nonces (
         edge_id TEXT NOT NULL,
         nonce TEXT NOT NULL,
@@ -345,6 +346,11 @@ export class BrokerStore {
         expires_at_ms INTEGER NOT NULL,
         PRIMARY KEY (edge_id, nonce),
         UNIQUE (request_id)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        applied_at_ms INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS approval_nonces (
         issuer_id TEXT NOT NULL,
@@ -564,11 +570,15 @@ export class BrokerStore {
         requesting_principal_id, tool, contract_version, target_kind, target_ref,
         payload_digest, policy_version, approval_class, issued_at_ms, approval_id
       );
-    `);
-    this.migrateSchema(schemaVersion);
-    this.verifyAuditIntegrity();
-    this.reconcileInterruptedRequests(Date.now());
-    this.reconcileInterruptedJobs(Date.now());
+      `);
+      this.migrateSchema(schemaVersion);
+      this.verifyAuditIntegrity();
+      this.reconcileInterruptedRequests(Date.now());
+      this.reconcileInterruptedJobs(Date.now());
+    } catch (error) {
+      this.database.close();
+      throw error;
+    }
   }
 
   close(): void {
@@ -2483,21 +2493,59 @@ export class BrokerStore {
 
   private migrateSchema(previousVersion: number): void {
     this.runTransaction(() => {
-      // Each migration is idempotent so a database created before the version
-      // marker, or one interrupted before the marker commit, can be resumed.
-      if (previousVersion < 2) this.migrateRevocationsSchema();
-      if (previousVersion < 3) this.migrateRequestsSchema();
-      if (previousVersion < 4) this.migrateJobsSchema();
-      // Also re-check all known shapes when the marker already claims the
-      // current version; this detects manually altered legacy tables before
-      // the Broker performs any authority or recovery work.
-      if (previousVersion >= BROKER_SCHEMA_VERSION) {
-        this.migrateRevocationsSchema();
-        this.migrateRequestsSchema();
-        this.migrateJobsSchema();
+      this.validateSchemaMigrationsTable(previousVersion);
+      const migrations = [
+        { version: 1, name: "baseline", apply: () => undefined },
+        { version: 2, name: "revocations-edge-and-operator-key-kinds", apply: () => this.migrateRevocationsSchema() },
+        { version: 3, name: "request-approval-and-job-linkage", apply: () => this.migrateRequestsSchema() },
+        { version: 4, name: "job-lease-process-and-helper-metadata", apply: () => this.migrateJobsSchema() }
+      ] as const;
+      const recorded = new Map<number, string>();
+      const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
+      for (const row of rows) {
+        if (!Number.isSafeInteger(row.version) || (row.version as number) < 1 || (row.version as number) > BROKER_SCHEMA_VERSION ||
+            typeof row.name !== "string" || row.name.length < 1 || row.name.length > 128 ||
+            !Number.isSafeInteger(row.applied_at_ms) || (row.applied_at_ms as number) < 0) {
+          throw new Error("Broker schema migration registry is malformed");
+        }
+        const version = row.version as number;
+        if (version > previousVersion || recorded.has(version)) {
+          throw new Error("Broker schema migration registry is inconsistent");
+        }
+        recorded.set(version, row.name as string);
+      }
+      const maxRecorded = Math.max(0, ...recorded.keys());
+      for (let version = 1; version <= maxRecorded; version += 1) {
+        if (!recorded.has(version)) throw new Error("Broker schema migration registry is incomplete");
+      }
+      for (const migration of migrations) {
+        const existingName = recorded.get(migration.version);
+        if (existingName !== undefined && existingName !== migration.name) {
+          throw new Error("Broker schema migration identity changed");
+        }
+        // Migration bodies are intentionally idempotent and are re-run for
+        // every known version. This turns the registry into a shape check even
+        // when a database's user_version marker was edited out of band.
+        migration.apply();
+        if (existingName === undefined) {
+          this.database.prepare(
+            "INSERT INTO schema_migrations(version, name, applied_at_ms) VALUES (?, ?, ?)"
+          ).run(migration.version, migration.name, Date.now());
+        }
       }
       this.database.exec(`PRAGMA user_version = ${BROKER_SCHEMA_VERSION}`);
     });
+  }
+
+  private validateSchemaMigrationsTable(previousVersion: number): void {
+    const columns = this.database.prepare("PRAGMA table_info(schema_migrations)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("version") || !names.has("name") || !names.has("applied_at_ms")) {
+      throw new Error("Broker schema migration registry is unavailable");
+    }
+    if (!Number.isSafeInteger(previousVersion) || previousVersion < 0 || previousVersion > BROKER_SCHEMA_VERSION) {
+      throw new Error("Broker persistence schema version is malformed");
+    }
   }
 
   private migrateRevocationsSchema(): void {

@@ -23,8 +23,64 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
     try {
       const row = database.prepare("PRAGMA user_version").get() as { user_version?: unknown };
       assert.equal(row.user_version, BROKER_SCHEMA_VERSION);
+      const migrations = (database.prepare("SELECT version, name FROM schema_migrations ORDER BY version").all() as Array<{ version: number; name: string }>).map(({ version, name }) => ({ version, name }));
+      assert.deepEqual(migrations, [
+        { version: 1, name: "baseline" },
+        { version: 2, name: "revocations-edge-and-operator-key-kinds" },
+        { version: 3, name: "request-approval-and-job-linkage" },
+        { version: 4, name: "job-lease-process-and-helper-metadata" }
+      ]);
     } finally {
       database.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore refuses an inconsistent schema migration registry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-schema-registry-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.close();
+  const database = new DatabaseSync(databasePath);
+  database.prepare("DELETE FROM schema_migrations WHERE version = ?").run(2);
+  database.close();
+  try {
+    assert.throws(
+      () => new BrokerStore(databasePath),
+      /schema migration registry is incomplete/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore rolls back a failed schema migration before startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-schema-rollback-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE revocations (
+      kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge')),
+      subject_id TEXT NOT NULL,
+      revoked_at_ms INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      PRIMARY KEY (kind, subject_id)
+    ) STRICT;
+    CREATE TABLE revocations_v0 (marker INTEGER) STRICT;
+  `);
+  legacy.close();
+  try {
+    assert.throws(() => new BrokerStore(databasePath), /revocations_v0/u);
+    const check = new DatabaseSync(databasePath);
+    try {
+      const table = check.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revocations'").get() as { sql?: string } | undefined;
+      assert.match(table?.sql ?? "", /'edge'\)/u);
+      assert.equal((check.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 0);
+      assert.equal((check.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get() as { count: number }).count, 0);
+    } finally {
+      check.close();
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

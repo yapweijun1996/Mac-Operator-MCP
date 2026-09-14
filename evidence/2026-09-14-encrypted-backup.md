@@ -13,7 +13,7 @@ node --test packages/broker/dist/persistence.test.js packages/broker/dist/creden
 
 ## Observed result
 
-- Focused persistence and credential suites: 45 tests, 45 passed, 0 failed.
+- Focused persistence and credential suites: 47 tests, 47 passed, 0 failed.
 - Backup output uses the `.sqlite.enc` filename and `MOPSBAK1` envelope magic;
   the SQLite header is not present in the stored bytes.
 - Restore succeeds with the matching key source and fails with a mismatched key
@@ -35,5 +35,5 @@ copied only in memory and cleared after each operation.
 
 The test key is injected in memory. The macOS Keychain source factory is wired,
 but live Keychain ACL/readback and production backup scheduling are not claimed.
-External audit anchoring, general migration registry/rollback policy,
-single-owner service deployment, and physical-erasure guarantees remain open.
+External audit anchoring, production migration cutover, single-owner service
+deployment, and physical-erasure guarantees remain open.

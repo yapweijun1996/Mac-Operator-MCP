@@ -71,11 +71,16 @@ mismatched, or tampered keys/files fail closed. Legacy plaintext backup names
 are refused by retention until an explicit migration is performed.
 
 The persistence constructor now enforces a monotonic SQLite `user_version`
-gate. Fresh and legacy databases are upgraded through the known idempotent
-revocation, request, and Job migrations inside one `BEGIN IMMEDIATE` transaction
-and publish schema version `4` only after all steps succeed. A database marked
-with a newer version is rejected before any Broker authority or recovery work;
-the focused migration suite covers fresh initialization, legacy preservation,
-and future-version refusal.
+gate. Fresh and legacy databases are upgraded through a versioned forward-only
+registry of idempotent revocation, request, and Job migrations inside one
+`BEGIN IMMEDIATE` transaction. Each migration records its version and stable
+identity in `schema_migrations`; gaps, identity changes, malformed rows, and a
+database marked with a newer version are rejected before any Broker authority
+or recovery work. The marker advances to version `4` only after every known
+step and registry record commit. Down-migrations are intentionally unsupported:
+rollback requires stopping the Broker and restoring an authenticated encrypted
+backup into a fresh destination, followed by a separately reviewed operator
+cutover. The focused migration suite covers fresh initialization, legacy
+preservation, future-version refusal, and registry-integrity refusal.
 
-`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, and an operator rollback/runbook decision are implemented and tested. Encrypted backup storage and the current schema-version gate are implemented; a general migration registry and rollback policy, Keychain ACL review, and final ADR acceptance remain open.
+`node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, stronger integrity or external anchoring, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover runbook, Keychain ACL review, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, and the forward-only migration registry are implemented; production rollback execution remains host-only.
