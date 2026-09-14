@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <poll.h>
 #include <time.h>
+#include <unordered_set>
 #include <unistd.h>
 #include <vector>
 
@@ -65,6 +66,10 @@ struct GuestConnectionHandle {
   std::atomic<uint64_t> magic;
   std::mutex listener_mutex;
   std::unordered_map<uint32_t, std::shared_ptr<GuestListenerState>> listener_states;
+  // Broker-owned exchanges are tracked so stop/close can interrupt guest I/O.
+  std::mutex connection_mutex;
+  std::unordered_set<void*> active_connections;
+  std::atomic<bool> closed_atomic;
 }
 @property(nonatomic, strong) VZVirtualMachine* machine;
 @property(nonatomic, strong) dispatch_queue_t queue;
@@ -112,6 +117,8 @@ constexpr uint64_t kNativeOperationTimeoutNs = 15ULL * 60ULL * 1000000000ULL;
 constexpr size_t kMaxFrameBytes = 4 * 1024 * 1024;
 constexpr uint32_t kMinVsockPort = 1;
 constexpr uint32_t kMaxVsockPort = 65535;
+
+void CloseActiveVirtioConnections(MOPVirtualizationGuestHandle* handle);
 
 void ReleaseRetainedConnection(void* retained_connection) {
   if (retained_connection != nullptr) {
@@ -337,6 +344,8 @@ void FinalizeHandle(napi_env env, void* data, void* hint) {
   (void)hint;
   if (data != nullptr) {
     MOPVirtualizationGuestHandle* handle = (__bridge_transfer MOPVirtualizationGuestHandle*)data;
+    handle->closed_atomic.store(true, std::memory_order_release);
+    CloseActiveVirtioConnections(handle);
     CloseAllListeners(handle);
     handle->magic.store(0, std::memory_order_release);
     handle.machine = nil;
@@ -1047,6 +1056,55 @@ void ReleaseVirtioConnection(void* retained_connection) {
   }
 }
 
+bool TrackVirtioConnection(MOPVirtualizationGuestHandle* handle, void* retained_connection) {
+  if (handle == nullptr || retained_connection == nullptr) return false;
+  bool close_immediately = false;
+  {
+    std::lock_guard<std::mutex> lock(handle->connection_mutex);
+    if (handle->closed_atomic.load(std::memory_order_acquire)) {
+      close_immediately = true;
+    } else {
+      handle->active_connections.insert(retained_connection);
+    }
+  }
+  if (close_immediately) {
+    VZVirtioSocketConnection* connection =
+        (__bridge VZVirtioSocketConnection*)retained_connection;
+    if (connection != nil) [connection close];
+    return false;
+  }
+  return true;
+}
+
+void ReleaseTrackedVirtioConnection(MOPVirtualizationGuestHandle* handle, void* retained_connection) {
+  if (retained_connection == nullptr) return;
+  if (handle != nullptr) {
+    std::lock_guard<std::mutex> lock(handle->connection_mutex);
+    handle->active_connections.erase(retained_connection);
+  }
+  ReleaseVirtioConnection(retained_connection);
+}
+
+void CloseActiveVirtioConnections(MOPVirtualizationGuestHandle* handle) {
+  if (handle == nullptr) return;
+  std::vector<void*> retained_connections;
+  {
+    std::lock_guard<std::mutex> lock(handle->connection_mutex);
+    retained_connections.reserve(handle->active_connections.size());
+    for (void* active_connection : handle->active_connections) {
+      VZVirtioSocketConnection* connection =
+          (__bridge VZVirtioSocketConnection*)active_connection;
+      if (connection != nil) retained_connections.push_back((__bridge_retained void*)connection);
+    }
+  }
+  for (void* retained_connection : retained_connections) {
+    VZVirtioSocketConnection* connection =
+        (__bridge VZVirtioSocketConnection*)retained_connection;
+    if (connection != nil) [connection close];
+    ReleaseVirtioConnection(retained_connection);
+  }
+}
+
 void ExecuteChannel(AsyncChannelOperation* operation) {
   MOPVirtualizationGuestHandle* handle = operation->handle;
   const uint32_t port = operation->port;
@@ -1081,7 +1139,12 @@ void ExecuteChannel(AsyncChannelOperation* operation) {
         if (channel->abandoned) {
           release_connection = retained_connection != nullptr;
         } else if (error != nil || retained_connection == nullptr || connection.fileDescriptor < 0) {
+          release_connection = retained_connection != nullptr;
           channel->error = "Virtualization guest virtio socket connection failed";
+          channel->completed = true;
+        } else if (!TrackVirtioConnection(handle, retained_connection)) {
+          release_connection = true;
+          channel->error = "Virtualization guest VM is closed";
           channel->completed = true;
         } else {
           channel->retained_connection = retained_connection;
@@ -1105,7 +1168,7 @@ void ExecuteChannel(AsyncChannelOperation* operation) {
       abandoned_connection = channel->retained_connection;
       channel->retained_connection = nullptr;
     }
-    ReleaseVirtioConnection(abandoned_connection);
+    ReleaseTrackedVirtioConnection(handle, abandoned_connection);
     operation->timed_out = true;
     operation->error = "Virtualization guest virtio socket connection timed out";
     return;
@@ -1133,26 +1196,26 @@ void ExecuteChannel(AsyncChannelOperation* operation) {
   std::copy(request.begin(), request.end(), request_frame.begin() + 4);
   if (!WriteAll(descriptor, request_frame.data(), request_frame.size(), deadline_ms)) {
     operation->error = "Virtualization guest virtio socket request failed";
-    ReleaseVirtioConnection(retained_connection);
+    ReleaseTrackedVirtioConnection(handle, retained_connection);
     return;
   }
   unsigned char response_header[4];
   if (!ReadAll(descriptor, response_header, sizeof(response_header), deadline_ms)) {
     operation->error = "Virtualization guest virtio socket response was unavailable";
-    ReleaseVirtioConnection(retained_connection);
+    ReleaseTrackedVirtioConnection(handle, retained_connection);
     return;
   }
   const uint32_t response_bytes = ReadBigEndian32(response_header);
   if (response_bytes < 1 || response_bytes > max_response_bytes) {
     operation->error = "Virtualization guest response frame exceeded the byte limit";
-    ReleaseVirtioConnection(retained_connection);
+    ReleaseTrackedVirtioConnection(handle, retained_connection);
     return;
   }
   operation->response.resize(response_bytes);
   if (!ReadAll(descriptor, operation->response.data(), operation->response.size(), deadline_ms)) {
     operation->error = "Virtualization guest virtio socket response was truncated";
     operation->response.clear();
-    ReleaseVirtioConnection(retained_connection);
+    ReleaseTrackedVirtioConnection(handle, retained_connection);
     return;
   }
   struct pollfd trailing{};
@@ -1162,7 +1225,7 @@ void ExecuteChannel(AsyncChannelOperation* operation) {
     operation->error = "Virtualization guest response contained trailing frame data";
     operation->response.clear();
   }
-  ReleaseVirtioConnection(retained_connection);
+  ReleaseTrackedVirtioConnection(handle, retained_connection);
 }
 
 void CompleteChannel(napi_env env, napi_status status, void* data) {
@@ -1305,6 +1368,7 @@ void ExecuteTransition(AsyncOperation* operation) {
         dispatch_semaphore_signal(wait->semaphore);
         return;
       }
+      CloseActiveVirtioConnections(handle);
       [handle.machine stopWithCompletionHandler:^(NSError* error) {
         if (error == nil && handle.machine.state == VZVirtualMachineStateStopped) handle.bootId = nil;
         {
@@ -1583,6 +1647,7 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     dispatch_queue_t queue = dispatch_queue_create("com.mac-operator.virtualization-guest", DISPATCH_QUEUE_SERIAL);
     MOPVirtualizationGuestHandle* handle = [[MOPVirtualizationGuestHandle alloc] init];
     handle->magic.store(kHandleMagic, std::memory_order_release);
+    handle->closed_atomic.store(false, std::memory_order_release);
     handle.queue = queue;
     handle.machine = [[VZVirtualMachine alloc] initWithConfiguration:configuration queue:queue];
     handle.listeners = [NSMutableDictionary dictionary];
@@ -1595,6 +1660,7 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     napi_value result;
     if (napi_create_external(env, (__bridge_retained void*)handle, FinalizeHandle, nullptr, &result) != napi_ok) {
       handle->magic.store(0, std::memory_order_release);
+      handle->closed_atomic.store(true, std::memory_order_release);
       napi_throw_error(env, nullptr, "Virtualization guest VM handle could not be created");
       return nullptr;
     }
@@ -1639,12 +1705,14 @@ napi_value CloseGuestVm(napi_env env, napi_callback_info info) {
     if (handle.closed) return;
     handle.closed = YES;
     handle->magic.store(0, std::memory_order_release);
+    handle->closed_atomic.store(true, std::memory_order_release);
     handle.machine = nil;
     // Keep the serial queue alive until the external handle finalizer runs.
     // Async N-API work may still hold a retained handle after close; leaving
     // the queue available lets those callbacks observe `closed` and fail
     // closed instead of dispatching through a null queue.
   });
+  CloseActiveVirtioConnections(handle);
   napi_value undefined;
   napi_get_undefined(env, &undefined);
   return undefined;

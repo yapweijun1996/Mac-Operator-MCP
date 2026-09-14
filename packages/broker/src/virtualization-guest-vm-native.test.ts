@@ -39,6 +39,8 @@ test("native Virtualization guest close cannot resurrect a retained handle or di
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   const source = await readFile(join(repositoryRoot, "packages/broker/native/virtualization_guest_lifecycle.cc"), "utf8");
   assert.match(source, /std::atomic<uint64_t> magic/u);
+  assert.match(source, /active_connections/u);
+  assert.match(source, /CloseActiveVirtioConnections\(handle\);\s*\[handle\.machine stopWithCompletionHandler/u);
   assert.doesNotMatch(source, /operation->handle->magic\s*=\s*kHandleMagic/u);
   assert.match(source, /handle\.machine = nil;\s*\/\/ Keep the serial queue alive until the external handle finalizer runs\./u);
 });
