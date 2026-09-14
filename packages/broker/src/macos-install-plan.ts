@@ -17,6 +17,7 @@ const MAX_PLAN_BYTES = 512 * 1024;
 const MAX_CAPABILITIES = 128;
 
 export type MacOsInstallOperation = "install" | "upgrade" | "rollback" | "uninstall";
+export type MacOsSignaturePolicy = "developer-id" | "development-ad-hoc";
 
 export type MacOsInstallPlanErrorCode =
   | "INVALID_ARGUMENT"
@@ -105,6 +106,8 @@ export interface MacOsInstallPlanInput {
   service: LaunchdServiceConfig;
   metadata: BrokerServiceMetadata;
   signature: CodeSignatureExpectation;
+  /** Production is the default; ad-hoc artifacts require an explicit test/development mode. */
+  signaturePolicy?: MacOsSignaturePolicy;
   signedArtifactPath: string;
   enabledCapabilities?: readonly string[];
   expectedPreviousSourceRevision?: string;
@@ -145,6 +148,7 @@ export interface MacOsServiceInstallPlanBase {
   metadata: MacOsServiceMetadata;
   edgeListener?: { bindHost: string; bindPort: number };
   signature: CodeSignatureExpectation;
+  signaturePolicy: MacOsSignaturePolicy;
   signedArtifactPath: string;
   enabledCapabilities: readonly string[];
   expectedPreviousSourceRevision?: string;
@@ -414,7 +418,11 @@ function buildMacOsServiceInstallPlan(
   const capabilities = normalizeCapabilities(input.enabledCapabilities ?? []);
   const metadata = normalizeServiceMetadata(input.metadata, component);
   const edgeListener = component === "mac-operator-edge" ? normalizeEdgeListener(input) : undefined;
-  const signature = normalizeSignatureExpectation(input.signature);
+  const signaturePolicy = normalizeSignaturePolicy(input.signaturePolicy);
+  if (signaturePolicy === "development-ad-hoc" && capabilities.length > 0) {
+    fail("INVALID_SIGNATURE_EXPECTATION", "development ad-hoc installs must not enable capabilities");
+  }
+  const signature = normalizeSignatureExpectation(input.signature, signaturePolicy, expectedLabel);
   const expectedPreviousSourceRevision = normalizePreviousRevision(input.expectedPreviousSourceRevision, operation);
   const renderedPlist = renderLaunchdPlist(service);
   if (Buffer.byteLength(renderedPlist, "utf8") > MAX_PLAN_BYTES) {
@@ -455,6 +463,7 @@ function buildMacOsServiceInstallPlan(
     metadata,
     ...(edgeListener === undefined ? {} : { edgeListener }),
     signature,
+    signaturePolicy,
     signedArtifactPath,
     enabledCapabilities: capabilities,
     ...(expectedPreviousSourceRevision === undefined ? {} : { expectedPreviousSourceRevision }),
@@ -481,7 +490,12 @@ export function validateCodeSignatureReadback(
   actual: CodeSignatureReadback,
   expectedArtifactPath: string
 ): void {
-  const normalizedExpected = normalizeSignatureExpectation(expected);
+  const candidate = expected !== null && typeof expected === "object" ? expected as Partial<CodeSignatureExpectation> : undefined;
+  const normalizedExpected = normalizeSignatureExpectation(
+    expected,
+    candidate?.teamIdentifier === undefined || candidate.cdHash === undefined ? "development-ad-hoc" : "developer-id",
+    typeof candidate?.identifier === "string" ? candidate.identifier : ""
+  );
   if (actual === null || typeof actual !== "object" || actual.valid !== true ||
       actual.artifactPath !== expectedArtifactPath ||
       typeof actual.identifier !== "string" || actual.identifier !== normalizedExpected.identifier ||
@@ -1340,16 +1354,33 @@ function isWithin(root: string, target: string, allowEqual: boolean): boolean {
   return (allowEqual || relativePath.length > 0) && relativePath !== ".." && !relativePath.startsWith("../") && !relativePath.startsWith("/");
 }
 
-function normalizeSignatureExpectation(value: CodeSignatureExpectation): CodeSignatureExpectation {
+function normalizeSignaturePolicy(value: MacOsSignaturePolicy | undefined): MacOsSignaturePolicy {
+  if (value !== undefined && value !== "developer-id" && value !== "development-ad-hoc") {
+    fail("INVALID_SIGNATURE_EXPECTATION", "code signature policy is invalid");
+  }
+  return value ?? "developer-id";
+}
+
+function normalizeSignatureExpectation(
+  value: CodeSignatureExpectation,
+  policy: MacOsSignaturePolicy,
+  expectedIdentifier: string
+): CodeSignatureExpectation {
   if (value === null || typeof value !== "object" || typeof value.identifier !== "string" ||
       !/^[A-Za-z0-9.-]{1,128}$/u.test(value.identifier)) {
     fail("INVALID_SIGNATURE_EXPECTATION", "code signature identifier is invalid");
+  }
+  if (value.identifier !== expectedIdentifier) {
+    fail("INVALID_SIGNATURE_EXPECTATION", `code signature identifier must be ${expectedIdentifier}`);
   }
   if (value.teamIdentifier !== undefined && !/^[A-Z0-9]{10}$/u.test(value.teamIdentifier)) {
     fail("INVALID_SIGNATURE_EXPECTATION", "code signature team identifier is invalid");
   }
   if (value.cdHash !== undefined && !/^[A-Fa-f0-9]{20,64}$/u.test(value.cdHash)) {
     fail("INVALID_SIGNATURE_EXPECTATION", "code signature cdhash is invalid");
+  }
+  if (policy === "developer-id" && (value.teamIdentifier === undefined || value.cdHash === undefined)) {
+    fail("INVALID_SIGNATURE_EXPECTATION", "production install requires a Developer ID team identifier and CDHash");
   }
   return { identifier: value.identifier, ...(value.teamIdentifier === undefined ? {} : { teamIdentifier: value.teamIdentifier }), ...(value.cdHash === undefined ? {} : { cdHash: value.cdHash }) };
 }

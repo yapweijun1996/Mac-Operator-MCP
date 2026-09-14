@@ -88,6 +88,13 @@ wrong-executable denial and cleanup; production signing/provenance and
 installed rotation remain open. Evidence:
 `evidence/2026-09-14-keychain-acl.md`.
 
+Production-signature addendum: Broker and Edge install plans now default to a
+strict Developer ID identity gate requiring the exact component identifier,
+TeamIdentifier, and CDHash; explicit ad-hoc development plans cannot enable
+capabilities. Focused install-plan tests pass 21/21. Developer ID artifact,
+notarization, and persistent launchd evidence remain open. Evidence:
+`evidence/2026-09-14-production-signature-gate.md`.
+
 Persistence operations addendum: `PERSISTENCE_CUTOVER.md` records the forward
 migration, encrypted-backup restore, authority freeze, UNKNOWN-job handling,
 rollback, and final readback procedure. It is host/operator documentation and

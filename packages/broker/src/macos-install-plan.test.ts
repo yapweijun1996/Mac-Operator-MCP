@@ -126,6 +126,32 @@ test("install plan rejects root domains, daemon paths, escapes, and script-like 
   assert.throws(() => buildMacOsInstallPlan({ ...base, installRoot: "/Users/operator/Library/Application Support/MacOperator/../Other" }), /canonical absolute path/u);
 });
 
+test("production install plans require Developer ID identity and isolate ad-hoc development mode", () => {
+  assert.throws(
+    () => buildMacOsInstallPlan({ ...base, signature: { identifier: "com.mac-operator.broker" } }),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_SIGNATURE_EXPECTATION"
+  );
+  assert.throws(
+    () => buildMacOsInstallPlan({ ...base, signature: { ...base.signature, identifier: "com.attacker.broker" } }),
+    /identifier must be com\.mac-operator\.broker/u
+  );
+  const development = buildMacOsInstallPlan({
+    ...base,
+    signaturePolicy: "development-ad-hoc",
+    signature: { identifier: "com.mac-operator.broker" }
+  });
+  assert.equal(development.signaturePolicy, "development-ad-hoc");
+  assert.throws(
+    () => buildMacOsInstallPlan({
+      ...base,
+      signaturePolicy: "development-ad-hoc",
+      enabledCapabilities: ["mac.health.read"],
+      signature: { identifier: "com.mac-operator.broker" }
+    }),
+    /must not enable capabilities/u
+  );
+});
+
 test("Edge install plan binds the reviewed LaunchAgent to the Edge listener", async () => {
   const plan = buildMacOsEdgeInstallPlan(edgeBase);
   assert.equal(plan.component, "mac-operator-edge");
@@ -479,6 +505,7 @@ test("signature verification plan accepts a real temporary ad-hoc signed artifac
       installRoot,
       plistPath: join(userHome, "Library", "LaunchAgents", "com.mac-operator.broker.plist"),
       signedArtifactPath: artifact,
+      signaturePolicy: "development-ad-hoc",
       service: {
         ...base.service,
         program: join(installRoot, "bin", "node"),

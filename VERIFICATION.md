@@ -19,6 +19,13 @@ physical-host credential/native run passed 16/16, including wrong-executable
 denial and final deletion/readback. No secrets appear in the evidence.
 Evidence: `evidence/2026-09-14-keychain-acl.md`.
 
+Latest production-signature addendum: Broker and Edge install plans default to
+`developer-id`, require exact component identifiers plus TeamIdentifier and
+CDHash, and reject capability-bearing ad-hoc development plans. The focused
+install-plan suite passes 21/21; no production certificate or persistent
+LaunchAgent was available. Evidence:
+`evidence/2026-09-14-production-signature-gate.md`.
+
 Latest persistence operations addendum: `PERSISTENCE_CUTOVER.md` defines the
 host-only forward migration, encrypted-backup restore, authority freeze,
 UNKNOWN-job handling, rollback, and final readback sequence. It does not claim

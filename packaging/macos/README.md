@@ -26,6 +26,12 @@ The renderer intentionally emits no `EnvironmentVariables`, `UserName`, `Shell`,
 
 `buildMacOsEdgeInstallPlan` and `buildMacOsInstallPlan` are the non-executing installer boundaries for Edge and Broker. They require an explicit non-root UID, a package-owned JavaScript entrypoint, a signed artifact path, and an exact per-user plist path. The Edge plan additionally binds the expected listener host/port and requires a running, listening Edge readback; the Broker plan requires the running native transport and capability set. Both plans expose fixed `/usr/bin/codesign` and `/bin/launchctl` argv with `/` cwd, an empty environment, 5-second timeout, and 128 KiB output cap. They materialize write/bootstrap, bootout/restore, and bootout/remove actions without executing them.
 
+Production plans default to `signaturePolicy: "developer-id"` and require the
+component's exact code-signature identifier, a 10-character Developer ID Team
+Identifier, and a CDHash before a plan can be rendered. The explicit
+`development-ad-hoc` policy exists only for temporary host fixtures and rejects
+any enabled capability; it is never a production enablement path.
+
 `validateExistingServicePrecondition` binds upgrade, rollback, and uninstall to an exact previous source revision; install requires the service to be absent. `validateMacOsEdgeInstallReadback` and `validateMacOsInstallReadback` require the exact `gui/<uid>` domain, plist/program/**ProgramArguments**/log identity, native PID/start-time identity, descriptor-backed plist device/inode/digest, unprivileged/no-shell/no-environment launchd facts, matching source/contract/policy metadata, listener or native-transport readiness, and code-signature identity before readiness is accepted. `composeMacOsEdgeInstallReadback` and `composeMacOsInstallReadback` accept only bounded `launchctl print` readback whose argument list exactly matches the planned Node binary and component entrypoint.
 
 macOS can report a freshly bootstrapped LaunchAgent as `state = xpcproxy`

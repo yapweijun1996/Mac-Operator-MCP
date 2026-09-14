@@ -50,6 +50,14 @@ fallback. Production Developer ID/provisioning, installed executable identity,
 cross-process rotation, and final ADR acceptance remain open. Evidence:
 `evidence/2026-09-14-keychain-acl.md`.
 
+Latest production-signature addendum: Broker and Edge LaunchAgent install plans
+now default to a strict `developer-id` signature policy requiring the exact
+component identifier, Developer ID Team Identifier, and CDHash before any plan
+can render launchd mutation actions. An explicit `development-ad-hoc` mode is
+limited to zero-capability temporary fixtures. The focused install-plan suite
+passes 21/21; no Developer ID artifact or persistent service was available on
+the host. Evidence: `evidence/2026-09-14-production-signature-gate.md`.
+
 Latest persistence operations addendum: `PERSISTENCE_CUTOVER.md` defines the
 forward migration, encrypted-backup restore, authority freeze, UNKNOWN-job
 handling, rollback, and final readback order without inventing an installer or
