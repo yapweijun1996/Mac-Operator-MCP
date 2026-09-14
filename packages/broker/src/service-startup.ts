@@ -18,6 +18,12 @@ import { BrokerStatusIpcServer, BrokerStoreBrokerStatusReplayGuard } from "./bro
 import { createKeychainAuditAnchorKeySource, loadAuthenticationKey } from "./credentials.js";
 import { BrokerError, sha256 } from "@mac-operator/contracts";
 import { VirtualizationGuestAttestationKeyManager } from "./virtualization-guest-attestation-keyring.js";
+import {
+  createVirtualizationGuestRuntime,
+  type VirtualizationGuestRuntime,
+  type VirtualizationGuestRuntimeStartupOptions
+} from "./virtualization-guest-startup.js";
+import { BrokerStoreVirtualizationGuestReplayGuard } from "./virtualization-guest-transport.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -67,6 +73,8 @@ export interface BrokerServiceAssembly {
   readonly edgeKeyring: EdgeKeyring;
   /** Restored startup trust set, when signed guest provenance is configured. */
   readonly guestAttestationKeyManager?: VirtualizationGuestAttestationKeyManager;
+  /** Optional startup-owned VM/channel runtime; absent when virtualization is disabled. */
+  readonly virtualizationGuestRuntime?: VirtualizationGuestRuntime;
   close(): Promise<void>;
 }
 
@@ -184,6 +192,8 @@ export async function createBrokerServiceFromStartupConfig(options: {
   config: BrokerServiceStartupConfig;
   commandExecutor?: LaunchdIdentityCommandExecutor;
   now?: () => number;
+  /** Explicit host startup seam; MCP request arguments never reach this object. */
+  virtualizationGuest?: VirtualizationGuestRuntimeStartupOptions;
 }): Promise<BrokerServiceAssembly> {
   const config = validateBrokerServiceStartupConfig(options.config);
   await assertStartupDirectories(config);
@@ -193,6 +203,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
   let store: BrokerStore | undefined;
   let edgeKeyring: EdgeKeyring | undefined;
   let guestAttestationKeyManager: VirtualizationGuestAttestationKeyManager | undefined;
+  let virtualizationGuestRuntime: VirtualizationGuestRuntime | undefined;
   let broker: Broker | undefined;
   let service: BrokerServiceEntrypoint | undefined;
   let statusChannel: BrokerStatusIpcServer | undefined;
@@ -241,6 +252,17 @@ export async function createBrokerServiceFromStartupConfig(options: {
     }
     const policyManager = new PolicyManager(verifiedPolicy.policy, activeStore, now);
     policyManager.restore(verifiedPolicy);
+    if (options.virtualizationGuest !== undefined) {
+      const guestOptions = options.virtualizationGuest;
+      virtualizationGuestRuntime = await createVirtualizationGuestRuntime({
+        ...guestOptions,
+        replayGuard: guestOptions.replayGuard ?? new BrokerStoreVirtualizationGuestReplayGuard(activeStore, { now }),
+        ...(guestOptions.enabled === true && guestOptions.hostEvidenceAccepted === true &&
+        guestOptions.attestationVerifier === undefined && guestAttestationKeyManager !== undefined
+          ? { attestationVerifier: guestAttestationKeyManager.createVerifier() }
+          : {})
+      });
+    }
     const statusKey = await loadAuthenticationKey(config.statusKeyPath);
     try {
       if (sha256(statusKey) !== config.statusKeyDigest) {
@@ -276,16 +298,33 @@ export async function createBrokerServiceFromStartupConfig(options: {
       ...(options.commandExecutor === undefined ? {} : { commandExecutor: options.commandExecutor }),
       edgeKeyConfigPath: config.edgeKeyConfigPath,
       edgeKeyStore: activeStore,
-      operatorChannels: [statusChannel],
+      operatorChannels: [
+        ...(virtualizationGuestRuntime?.available ? [virtualizationGuestRuntime.runtimeChannel] : []),
+        statusChannel
+      ],
       createBroker: (edgeAuthenticationKeys) => {
         edgeKeyring = edgeAuthenticationKeys;
-        broker = new Broker({ store: activeStore, policy: policyManager, edgeAuthenticationKeys, now });
+        broker = new Broker({
+          store: activeStore,
+          policy: policyManager,
+          edgeAuthenticationKeys,
+          now,
+          ...(virtualizationGuestRuntime === undefined ? {} : { taskRunner: virtualizationGuestRuntime.taskRunner })
+        });
         return broker;
       }
     });
     if (!store) throw new Error("Broker service startup did not construct a BrokerStore");
     if (!edgeKeyring) throw new Error("Broker service startup did not construct an Edge keyring");
     if (!broker) throw new Error("Broker service startup did not construct a Broker");
+
+    // Bring an explicitly enabled guest to a known running state before Job
+    // Ledger recovery. Otherwise a persisted UNKNOWN guest task could be
+    // queried against a VM that has not yet booted. The runtime channel repeats
+    // this idempotently when the service listener starts.
+    if (virtualizationGuestRuntime?.available) {
+      await virtualizationGuestRuntime.start();
+    }
 
     // Reconcile interrupted work before the service can expose any IPC
     // listener. Recovery is bounded and conservative: unresolved process
@@ -324,12 +363,18 @@ export async function createBrokerServiceFromStartupConfig(options: {
       store: activeStore,
       edgeKeyring,
       ...(guestAttestationKeyManager === undefined ? {} : { guestAttestationKeyManager }),
+      ...(virtualizationGuestRuntime === undefined ? {} : { virtualizationGuestRuntime }),
       async close() {
         let firstError: unknown;
         try {
           await service?.stop();
         } catch (error) {
           firstError = error;
+        }
+        try {
+          await virtualizationGuestRuntime?.close();
+        } catch (error) {
+          firstError ??= error;
         }
         try {
           // LocalBrokerRuntime closes Broker resources after a running
@@ -359,6 +404,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
     };
   } catch (error) {
     await statusChannel?.close().catch(() => undefined);
+    await virtualizationGuestRuntime?.close().catch(() => undefined);
     await broker?.close().catch(() => undefined);
     try { edgeKeyring?.dispose(); } catch { /* preserve the startup error */ }
     try { store?.close(); } catch { /* preserve the startup error */ }

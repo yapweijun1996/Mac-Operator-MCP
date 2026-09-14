@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest startup composition addendum: the optional
+`virtualizationGuest` startup seam now composes the protected image, native VM
+lifecycle, fixed virtio channel, authenticated guest transport, and
+virtualization task runner. Enabled startup boots the guest before Job Ledger
+recovery and closes transport/VM resources before the Broker store; absent
+startup input leaves the existing fail-closed runner unchanged. Focused startup
+tests pass 3/3 and the full physical-Darwin regression passes 555/555 with 0
+skipped tests. The host still rejects the synthetic image before VM creation,
+so no production VM boot, guest handshake, isolation, attestation production,
+or `mac_task_run` enablement is claimed. Evidence:
+`evidence/2026-09-15-virtualization-guest-startup.md`.
+
 Latest virtio connector addendum: commit `b8551d6` adds a bounded native
 `exchangeGuestFrame` over `VZVirtioSocketDevice.connectToPort` and a
 `NativeVirtualizationGuestChannel` adapter for the existing authenticated guest

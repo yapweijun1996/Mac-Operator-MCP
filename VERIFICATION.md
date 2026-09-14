@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest startup composition addendum: the startup-only
+`virtualizationGuest` seam composes image identity verification, native VM
+lifecycle, a fixed virtio port, authenticated transport, replay admission, and
+the virtualization runner. If explicitly enabled, the guest starts before
+restart reconciliation and is closed before Broker persistence; with no seam,
+the prior fail-closed runner remains in force. Focused startup tests pass 3/3,
+the service-startup tests pass 3/3, and the complete physical-Darwin suite
+passes 555/555 with 0 skipped tests; typecheck, lint, and diff checks pass. The
+host still rejects the synthetic image before VM creation, so this is startup
+composition/ordering evidence only and does not prove VM boot, guest serving,
+isolation, attestation production, or production `mac_task_run` enablement.
+Evidence: `evidence/2026-09-15-virtualization-guest-startup.md`.
+
 Latest virtio connector addendum: commit `b8551d6` adds a native
 `VZVirtioSocketDevice.connectToPort` connector and TypeScript channel adapter.
 It accepts only an existing Broker VM handle, bounds port/request/response

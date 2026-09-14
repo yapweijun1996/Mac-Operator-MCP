@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Startup composition addendum: an optional startup-only factory now wires the
+native guest VM, serialized lifecycle, fixed virtio channel, HMAC transport,
+durable replay guard, and virtualization task runner into Broker service
+startup. It validates the immutable image before construction, starts an
+enabled guest before restart recovery, and drains it before store close. The
+default path remains disabled and fail closed. Focused startup tests pass 3/3;
+the full physical-Darwin regression passes 555/555 with 0 skipped tests. This
+does not close the bootable-image, guest-serving, isolation, attestation, or
+`mac_task_run` release gates. Evidence:
+`evidence/2026-09-15-virtualization-guest-startup.md`.
+
 Virtio connector addendum: commit `b8551d6` connects the native VM handle to a
 bounded `VZVirtioSocketDevice` frame exchange and the existing authenticated
 guest transport client. Connect/write/read deadlines, port and frame caps,

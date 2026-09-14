@@ -151,11 +151,21 @@ test("Broker service startup restores signed authority before native runtime sta
     assembly = await createBrokerServiceFromStartupConfig({
       config,
       now: () => now,
-      commandExecutor: new FakeLaunchdExecutor(`gui/${config.expectedEdgeUid}/com.mac-operator.edge`)
+      commandExecutor: new FakeLaunchdExecutor(`gui/${config.expectedEdgeUid}/com.mac-operator.edge`),
+      virtualizationGuest: {
+        image: {
+          path: join(canonicalDataRoot, "guest.img"),
+          expectedSha256: "a".repeat(64),
+          runtimeVersion: "macos-26.2-vz-1"
+        },
+        enabled: false,
+        hostEvidenceAccepted: true
+      }
     });
     assert.equal(assembly.service.readback().policyVersion, "policy-1");
     assert.ok(assembly.service.readback().enabledCapabilities.includes("mac_health"));
     assert.equal(assembly.guestAttestationKeyManager?.current().document.revision, 1);
+    assert.equal(assembly.virtualizationGuestRuntime?.available, false);
     await assembly.service.start();
     assert.equal(assembly.service.readback().runtimeState, "running");
     assert.equal((await stat(config.statusSocketPath)).isSocket(), true);
