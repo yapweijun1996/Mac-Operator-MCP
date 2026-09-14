@@ -144,6 +144,20 @@ loss to `UNKNOWN_OUTCOME`. Focused transport tests pass 10/10 and the
 persistence plus transport run passes 54/54. Evidence:
 `evidence/2026-09-14-virtualization-guest-transport.md`.
 
+Latest guest-executor addendum: commit `2761bbb` adds
+`VirtualizationGuestTransportExecutor`, which adapts the authenticated
+transport to the Broker `TaskRunner` contract. It derives separate SHA-256
+policy and exact-task digests from the resolved Broker-owned profile, sends
+only those digests plus the guest identity and bounded budgets, revalidates the
+response envelope and guest identity, and refuses to publish a guest success
+without verified postcondition status. Focused task-runner plus guest-transport
+tests pass 21/21, and the complete
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test`
+regression passes 502/502. This is Broker-side adapter wiring only; the native
+Virtualization channel, VM boot, signed attestation source, guest isolation,
+and production `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-14-virtualization-guest-transport.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now

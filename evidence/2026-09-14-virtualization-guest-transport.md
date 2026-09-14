@@ -1,8 +1,8 @@
 # Virtualization Guest Transport Boundary Evidence
 
 Date: 2026-09-14
-Scope: authenticated protocol contract and replay tests only; no VM boot or
-production capability enablement
+Scope: authenticated protocol contract and Broker-side executor wiring only;
+no VM boot or production capability enablement
 
 ## Implemented boundary
 
@@ -31,15 +31,28 @@ bounded JSON frame, enforces a hard response-size limit even when a channel
 ignores abort, maps timeout/cancellation/transport loss to stable errors, and
 verifies the response against the admitted request.
 
+`VirtualizationGuestTransportExecutor` is the Broker-side adapter from that
+client to `VirtualizationTaskRunner`. It computes a separate policy digest and
+exact-task digest from the already-resolved profile, sends only those digests,
+the immutable guest identity, process-tree policy, and bounded timeout/output
+budget, and never forwards executable paths, cwd, arguments, environment, or
+credentials. It independently validates the response schema and guest
+identity and refuses a `SUCCEEDED` result unless the guest reports verified
+postcondition status. The executor remains explicitly unavailable unless its
+host-evidence gate is set by a reviewed adapter.
+
 ## Verification
 
-Focused transport tests pass 10/10, covering round-trip authentication,
+Focused task-runner plus transport tests pass 21/21, covering round-trip
+authentication,
 request tampering, wrong keys, nonce/request-ID replay, response binding,
 guest mismatch, proof tampering, freshness, strict envelopes, output limits,
-exclusion of raw host paths/credential-shaped fields, and durable replay after
-restart, bounded exchange, timeout, cancellation, and transport loss. The
-persistence regression plus the transport file passes 54/54 in the focused
-combined run.
+exclusion of raw host paths/credential-shaped fields, durable replay after
+restart, bounded exchange, timeout, cancellation, transport loss, digest-only
+executor mapping, guest identity mismatch, and unverified-success rejection.
+The persistence regression plus the transport file passes 54/54 in the
+focused combined run; the complete `MOPS_REAL_INSTALL=1
+MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test` regression passes 502/502.
 
 This evidence does not establish VM boot, entitlement/signing, guest
 filesystem or network enforcement, host-credential isolation, process-tree
