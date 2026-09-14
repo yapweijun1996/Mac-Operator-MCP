@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { lstat, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { lstat, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
@@ -32,6 +33,14 @@ test("native Virtualization guest lifecycle artifact exposes handle-bound operat
   assert.equal(typeof native.writeGuestConnectionChunk, "function");
   assert.equal(typeof native.closeGuestConnection, "function");
   validateNativeVirtualizationGuestVmAdapterPath(require.resolve("./virtualization_guest_lifecycle.node"));
+});
+
+test("native Virtualization guest close cannot resurrect a retained handle or dispatch through a null queue", async () => {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const source = await readFile(join(repositoryRoot, "packages/broker/native/virtualization_guest_lifecycle.cc"), "utf8");
+  assert.match(source, /std::atomic<uint64_t> magic/u);
+  assert.doesNotMatch(source, /operation->handle->magic\s*=\s*kHandleMagic/u);
+  assert.match(source, /handle\.machine = nil;\s*\/\/ Keep the serial queue alive until the external handle finalizer runs\./u);
 });
 
 test("native Virtualization guest lifecycle remains disabled without explicit host gates", async () => {

@@ -7,6 +7,7 @@
 #include <dispatch/dispatch.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <condition_variable>
@@ -61,7 +62,7 @@ struct GuestConnectionHandle {
 
 @interface MOPVirtualizationGuestHandle : NSObject {
 @public
-  uint64_t magic;
+  std::atomic<uint64_t> magic;
   std::mutex listener_mutex;
   std::unordered_map<uint32_t, std::shared_ptr<GuestListenerState>> listener_states;
 }
@@ -259,7 +260,7 @@ MOPVirtualizationGuestHandle* ReadHandle(napi_env env, napi_value value) {
     return nullptr;
   }
   MOPVirtualizationGuestHandle* handle = (__bridge MOPVirtualizationGuestHandle*)data;
-  if (handle->magic != kHandleMagic) {
+  if (handle->magic.load(std::memory_order_acquire) != kHandleMagic) {
     napi_throw_type_error(env, nullptr, "Virtualization guest VM handle is invalid");
     return nullptr;
   }
@@ -337,7 +338,7 @@ void FinalizeHandle(napi_env env, void* data, void* hint) {
   if (data != nullptr) {
     MOPVirtualizationGuestHandle* handle = (__bridge_transfer MOPVirtualizationGuestHandle*)data;
     CloseAllListeners(handle);
-    handle->magic = 0;
+    handle->magic.store(0, std::memory_order_release);
     handle.machine = nil;
     handle.queue = nil;
   }
@@ -1361,7 +1362,6 @@ void CompleteTransition(napi_env env, napi_status status, void* data) {
   }
   napi_delete_async_work(env, operation->work);
   void* retained = operation->retained_handle;
-  operation->handle->magic = kHandleMagic;
   delete operation;
   if (retained != nullptr) {
     (void)(__bridge_transfer MOPVirtualizationGuestHandle*)retained;
@@ -1582,7 +1582,7 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     }
     dispatch_queue_t queue = dispatch_queue_create("com.mac-operator.virtualization-guest", DISPATCH_QUEUE_SERIAL);
     MOPVirtualizationGuestHandle* handle = [[MOPVirtualizationGuestHandle alloc] init];
-    handle->magic = kHandleMagic;
+    handle->magic.store(kHandleMagic, std::memory_order_release);
     handle.queue = queue;
     handle.machine = [[VZVirtualMachine alloc] initWithConfiguration:configuration queue:queue];
     handle.listeners = [NSMutableDictionary dictionary];
@@ -1594,7 +1594,7 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     handle.closed = NO;
     napi_value result;
     if (napi_create_external(env, (__bridge_retained void*)handle, FinalizeHandle, nullptr, &result) != napi_ok) {
-      handle->magic = 0;
+      handle->magic.store(0, std::memory_order_release);
       napi_throw_error(env, nullptr, "Virtualization guest VM handle could not be created");
       return nullptr;
     }
@@ -1638,9 +1638,12 @@ napi_value CloseGuestVm(napi_env env, napi_callback_info info) {
   dispatch_sync(handle.queue, ^{
     if (handle.closed) return;
     handle.closed = YES;
-    handle->magic = 0;
+    handle->magic.store(0, std::memory_order_release);
     handle.machine = nil;
-    handle.queue = nil;
+    // Keep the serial queue alive until the external handle finalizer runs.
+    // Async N-API work may still hold a retained handle after close; leaving
+    // the queue available lets those callbacks observe `closed` and fail
+    // closed instead of dispatching through a null queue.
   });
   napi_value undefined;
   napi_get_undefined(env, &undefined);
