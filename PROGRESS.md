@@ -32,6 +32,15 @@ separate trusted implementation inputs. Targeted runtime-reader tests pass
 tests. Evidence:
 `evidence/2026-09-15-runtime-strict-json-boundaries.md`.
 
+Cross-runtime number addendum: source revision `c31f82a` makes the strict JSON
+scanner compare every numeric token's lexical canonical form with Node's
+ECMAScript `JSON.stringify` representation. Precision-changing integers,
+floating-point spellings that round differently, underflow, overflow, and
+oversized exponents now fail closed before authentication or persistence.
+Focused canonical JSON tests pass 5/5 and the complete physical-Darwin
+regression passes 593/593 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-cross-runtime-json-number-canonicalization.md`.
+
 Durable request-capacity addendum: source revision `31e89f0` moves active
 request admission limits into the BrokerStore `BEGIN IMMEDIATE` transaction.
 The Broker now supplies a default global cap of 64 and principal/session cap

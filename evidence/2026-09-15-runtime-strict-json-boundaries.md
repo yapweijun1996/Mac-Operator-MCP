@@ -1,7 +1,7 @@
 # Runtime Strict JSON Boundary Evidence
 
-Date: 2026-09-15  
-Source commit: `0bcb354`  
+Date: 2026-09-15
+Source commit: `0bcb354`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary

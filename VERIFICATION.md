@@ -37,6 +37,17 @@ checks pass. Broader numeric canonicalization compatibility, runtime fuzzing,
 and final release evidence remain unproven. Evidence:
 `evidence/2026-09-15-runtime-strict-json-boundaries.md`.
 
+Cross-runtime number addendum: source revision `c31f82a` compares every strict
+JSON numeric token with the canonical lexical form emitted by Node's
+ECMAScript `JSON.stringify`, rejecting precision-changing integers,
+rounding-divergent fractions, underflow, overflow, and oversized exponents
+before authentication or persistence. Focused canonical JSON tests pass 5/5;
+the complete physical-Darwin suite passes 593/593 with 0 skipped tests.
+Build, typecheck, lint, contract verification, native canonical probe, and
+diff checks pass. Independent native number-vector expansion and final release
+evidence remain unproven. Evidence:
+`evidence/2026-09-15-cross-runtime-json-number-canonicalization.md`.
+
 Durable request-capacity addendum: source revision `31e89f0` enforces global
 and principal/session active-request limits inside BrokerStore's
 `BEGIN IMMEDIATE` admission transaction. Defaults are global 64 and per
