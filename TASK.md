@@ -393,6 +393,13 @@ Target, operation, secret-policy, and canonical digest checks run at Job
 creation and command validation. This is still disabled and does not unblock
 the privileged capability rows.
 
+`MOP-017` process-tree identity addendum: ProcessSupervisor now treats a
+changed start-time for an already tracked descendant PID as a target-swap
+failure, stops descendant signalling, and preserves unresolved work as
+`UNKNOWN`. The deterministic regression is covered; OS PID-reuse timing and
+post-snapshot descendant escapes remain open. Evidence:
+`evidence/2026-09-14-process-pid-reuse.md`.
+
 ## Immediate next steps
 
 1. Close `MOP-080` through `MOP-083` before implementing authority-sensitive handlers.

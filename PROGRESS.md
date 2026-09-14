@@ -27,6 +27,14 @@ ADR-0005 acceptance remains open.
 Evidence:
 `evidence/2026-09-14-persistence-schema-version.md`.
 
+Latest process-tree identity addendum: ProcessSupervisor now rejects a
+descendant PID whose start-time changes between observations, marks native
+observation failed, and stops descendant signalling instead of targeting a
+replacement process. The deterministic PID-reuse regression passes; unresolved
+work remains `UNKNOWN`; the full real-sandbox regression now passes 466/467
+with one explicit opt-in skip. Evidence:
+`evidence/2026-09-14-process-pid-reuse.md`.
+
 Latest process-identity exit-window addendum: `ProcessSupervisor` now keeps
 the bounded 100ms native PID/start-time retry alive even when a short-lived
 child closes first, without inventing an identity or registering unowned work.

@@ -71,6 +71,22 @@ export interface ProcessRecoveryResult {
   terminationObserved: boolean;
 }
 
+/**
+ * Returns true when a descendant PID observed in a later snapshot has a
+ * different start-time identity. PID reuse is an ownership boundary failure;
+ * callers must stop signalling and keep the outcome unresolved.
+ */
+export function detectProcessIdentityReplacement(
+  tracked: readonly ProcessDescendantIdentity[],
+  observed: readonly ProcessDescendantIdentity[]
+): boolean {
+  const trackedStartTimes = new Map(tracked.map((identity) => [identity.pid, identity.startTimeMicros]));
+  return observed.some((identity) => {
+    const previousStartTime = trackedStartTimes.get(identity.pid);
+    return previousStartTime !== undefined && previousStartTime !== identity.startTimeMicros;
+  });
+}
+
 export interface ProcessSupervisorOptions {
   maxConcurrent?: number;
   pollIntervalMs?: number;
@@ -967,6 +983,10 @@ class ProcessTreeTracker {
     try {
       const snapshot = parseProcessTreeSnapshot(this.native.listDescendantProcesses(this.processId));
       if (snapshot.truncated) {
+        this.failed = true;
+        return;
+      }
+      if (detectProcessIdentityReplacement(this.snapshotDescendants(), snapshot.processes)) {
         this.failed = true;
         return;
       }

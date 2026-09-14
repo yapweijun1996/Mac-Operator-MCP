@@ -4,9 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { ProcessSupervisor } from "./process-supervisor.js";
+import { detectProcessIdentityReplacement, ProcessSupervisor } from "./process-supervisor.js";
 
 const CWD = process.cwd();
+
+test("process supervisor rejects descendant PID identity replacement", () => {
+  const tracked = [{ pid: 42, startTimeMicros: 100 }];
+  assert.equal(detectProcessIdentityReplacement(tracked, [{ pid: 42, startTimeMicros: 100 }]), false);
+  assert.equal(detectProcessIdentityReplacement(tracked, [{ pid: 42, startTimeMicros: 101 }]), true);
+  assert.equal(detectProcessIdentityReplacement(tracked, [{ pid: 43, startTimeMicros: 101 }]), false);
+});
 
 test("process supervisor uses an explicit environment and bounded output", async () => {
   const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: ["SAFE_PROFILE"] });
