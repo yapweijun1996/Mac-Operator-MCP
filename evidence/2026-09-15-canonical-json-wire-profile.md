@@ -30,10 +30,11 @@ passed:5` on this host, including the ECMAScript notation thresholds at
 npm run typecheck
 node --test packages/contracts/dist/canonical-json.test.js
 npm run verify:canonical:native
+MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test
 ```
 
 Result: 2/2 focused TypeScript tests, 5/5 native vectors, and the full
-physical-Darwin regression on this source revision passed (535/535).
+physical-Darwin regression passed 535/535 with 0 skipped tests.
 
 ## Limits
 

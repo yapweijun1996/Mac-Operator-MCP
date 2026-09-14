@@ -9,7 +9,7 @@ Canonical JSON wire-profile addendum: commits `7860a00`, `a26a188`, and
 the versioned `jcs-utf8-v1` profile, exact UTF-8 byte helper, and a bounded
 read-only native Swift standard-library probe. Five fixed digest vectors pass
 2/2 focused TypeScript tests, 5/5 native readback, and the 535/535 full Darwin
-regression. This advances `MOP-012` serialization compatibility but does not
+regression with 0 skipped tests. This advances `MOP-012` serialization compatibility but does not
 close production Swift/C++ adapter integration, corruption, retention, VM
 isolation, or accepted persistence design.
 

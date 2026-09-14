@@ -10,7 +10,8 @@ publish the versioned `jcs-utf8-v1` serialization profile, exact
 standard-library probe. Five fixed vectors cover nested values, escaping,
 number formatting, Unicode ordering without normalization, and empty values;
 focused TypeScript tests pass 2/2, native readback passes 5/5, the full
-physical-Darwin regression passes 535/535, and typecheck passes. Production
+physical-Darwin regression passes 535/535 with 0 skipped tests, and typecheck
+passes. Production
 Swift/C++ adapter interoperability, VM isolation, and release acceptance
 remain open. Evidence:
 `evidence/2026-09-15-canonical-json-wire-profile.md`.
