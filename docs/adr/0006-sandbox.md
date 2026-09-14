@@ -111,3 +111,16 @@ The 2026-09-15 host probe was rerun on the physical Darwin arm64 host and
 returned framework support with the expected invalid guest-less configuration;
 it did not boot or fetch a VM. Evidence is recorded in
 [`evidence/2026-09-15-virtualization-framework-probe.md`](../../evidence/2026-09-15-virtualization-framework-probe.md).
+
+The Broker now has a separate disabled-by-default Unix-socket channel for a
+future native guest adapter. Commits `521eecc` and `4592cad` bind the
+startup-owned socket target to owner-only path/device/inode readback, verify
+the connected adapter through native UID/GID/PID peer credentials and optional
+PID/start-time identity, and parse exactly one bounded length-prefixed frame
+only after peer authentication. Timeout, cancellation, output overflow,
+trailing data, symlinked targets, and post-send transport loss fail closed or
+remain `UNKNOWN_OUTCOME`. Evidence is recorded in
+[`evidence/2026-09-15-virtualization-guest-channel.md`](../../evidence/2026-09-15-virtualization-guest-channel.md).
+This closes only the Broker-side local channel; it does not provide the native
+guest server, VM boot, attestation, isolation evidence, or capability
+enablement required to accept this ADR.

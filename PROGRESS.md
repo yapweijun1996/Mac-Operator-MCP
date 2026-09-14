@@ -4,6 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest virtualization channel addendum: commits `521eecc` and `4592cad` add a
+Broker-side, disabled-by-default Unix-socket channel for the future native
+guest adapter. The startup-owned socket target is owner-only and bound to
+device/inode identity before and after connect; the connected peer is checked
+through native UID/GID/PID credentials and optional PID/start-time identity
+before any response frame is accepted. One bounded length-prefixed frame is
+allowed per connection, with cancellation, timeout, output, trailing-data,
+symlink, and transport-loss handling. The physical Darwin regression passes
+523/523 and the focused channel tests pass 4/4. This closes only the local
+Broker-to-adapter transport seam; native guest serving, VM boot, signed
+attestation, isolation evidence, and `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-guest-channel.md`.
+
 Latest Virtualization.framework host probe: source revision `75c8fd7` links the
 active macOS 26.2 SDK on the physical Darwin arm64 host and reports framework
 support. The intentionally guest-less configuration remains invalid, and no

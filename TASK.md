@@ -2,7 +2,16 @@
 
 Status: Active
 Version: 0.1
-Last verified: 2026-09-14
+Last verified: 2026-09-15
+
+Virtualization channel addendum: commits `521eecc` and `4592cad` add a
+disabled-by-default Broker-side Unix-socket channel for the future native
+guest adapter. It verifies owner-only socket target/device/inode identity,
+native UID/GID/PID peer credentials with optional PID/start-time binding, and
+parses exactly one bounded frame only after peer authorization. Physical
+Darwin focused channel tests pass 4/4 and the full regression passes 523/523.
+This is transport evidence only; native guest serving, VM boot, attestation,
+isolation, and `mac_task_run` enablement remain blocked by MOP-086/MOP-045.
 
 Strict-exit addendum: the governed sandbox task path sets a Broker-owned
 `requireCleanExitProof` flag. `ProcessSupervisor` performs a final native
