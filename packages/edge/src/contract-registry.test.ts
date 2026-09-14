@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -61,6 +61,20 @@ test("contract registry rejects oversized files and invalid schema versions", as
   await withTempDirectory(async (directory) => {
     await writeContract(directory, { ...validContract, schema_version: "v0" });
     await assert.rejects(() => ToolContractRegistry.load(directory), /schema_version is invalid/u);
+  });
+});
+
+test("contract registry rejects writable contract directories and files", async () => {
+  await withTempDirectory(async (directory) => {
+    await chmod(directory, 0o770);
+    await writeContract(directory, validContract);
+    await assert.rejects(() => ToolContractRegistry.load(directory), /directory must not be writable/u);
+  });
+
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, validContract);
+    await chmod(join(directory, "mac_test.json"), 0o660);
+    await assert.rejects(() => ToolContractRegistry.load(directory), /contract must not be writable/u);
   });
 });
 

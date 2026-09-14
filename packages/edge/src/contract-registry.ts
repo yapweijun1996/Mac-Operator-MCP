@@ -30,7 +30,8 @@ export class ToolContractRegistry {
       throw new Error("Tool contract directory is invalid");
     }
     const directoryStat = await lstat(directory);
-    if (!directoryStat.isDirectory()) throw new Error("Tool contract path must be a directory");
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) throw new Error("Tool contract path must be a directory (regular non-symlink)");
+    if ((directoryStat.mode & 0o022) !== 0) throw new Error("Tool contract directory must not be writable by group or other users");
     const files = (await readdir(directory, { withFileTypes: true }))
       .filter((entry) => /^mac_[a-z0-9_]+\.json$/u.test(entry.name))
       .map((entry) => entry.name)
@@ -51,6 +52,12 @@ export class ToolContractRegistry {
       const contract = parseContract(raw, file);
       if (contracts.has(contract.toolName)) throw new Error(`Duplicate Edge tool contract: ${contract.toolName}`);
       contracts.set(contract.toolName, contract);
+    }
+    const finalDirectoryStat = await lstat(directory);
+    if (!finalDirectoryStat.isDirectory() || finalDirectoryStat.isSymbolicLink() ||
+        finalDirectoryStat.dev !== directoryStat.dev || finalDirectoryStat.ino !== directoryStat.ino ||
+        (finalDirectoryStat.mode & 0o022) !== 0) {
+      throw new Error("Tool contract directory changed while loading");
     }
     return new ToolContractRegistry(contracts);
   }
@@ -99,15 +106,20 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
 async function readContractFile(path: string): Promise<string> {
   const noFollow = constants.O_NOFOLLOW;
   if (typeof noFollow !== "number") throw new Error("Contract loading requires O_NOFOLLOW support");
+  const pathStat = await lstat(path);
+  if (!pathStat.isFile() || pathStat.isSymbolicLink()) throw new Error("Tool contract must be a regular non-symlink file");
+  if ((pathStat.mode & 0o022) !== 0) throw new Error("Tool contract must not be writable by group or other users");
   const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
     const before = await handle.stat();
-    if (!before.isFile()) throw new Error("Tool contract must be a regular file");
+    if (!before.isFile() || before.isSymbolicLink() || before.dev !== pathStat.dev || before.ino !== pathStat.ino ||
+        (before.mode & 0o022) !== 0) throw new Error("Tool contract target changed while opening");
     if (before.size > MAX_CONTRACT_FILE_BYTES) throw new Error("Tool contract exceeds the supported size");
     const buffer = Buffer.alloc(MAX_CONTRACT_FILE_BYTES + 1);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     const after = await handle.stat();
-    if (!after.isFile() || after.size > MAX_CONTRACT_FILE_BYTES || bytesRead > MAX_CONTRACT_FILE_BYTES) {
+    if (!after.isFile() || after.isSymbolicLink() || after.dev !== pathStat.dev || after.ino !== pathStat.ino ||
+        (after.mode & 0o022) !== 0 || after.size > MAX_CONTRACT_FILE_BYTES || bytesRead > MAX_CONTRACT_FILE_BYTES) {
       throw new Error("Tool contract exceeds the supported size");
     }
     if (after.size !== bytesRead) throw new Error("Tool contract changed while loading");
