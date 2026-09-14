@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval issuer key lifecycle addendum: the Broker-owned approval authority
+now wipes its defensive issuer HMAC-key copies on idempotent disposal and
+fails closed on all later issuance or key addition. Approval authority and
+owner-only IPC tests pass 8/8; build and diff checks pass. Evidence:
+`evidence/2026-09-15-approval-key-lifecycle.md`.
+
 Authority-control key lifecycle addendum: the Authority Control client owns a
 copied HMAC key, wipes it on explicit disposal, and fails closed on all later
 requests. Authority Control and Privileged Helper server cleanup now wipes

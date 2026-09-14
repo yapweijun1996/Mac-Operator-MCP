@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Approval issuer key lifecycle addendum: `ApprovalAuthority` now owns
+defensive issuer-key copies, wipes and clears them through an idempotent
+`dispose()` boundary, and rejects later issuance or key addition with
+`CANCELLED`. Approval authority and owner-only IPC tests pass 8/8; the
+implementation build and diff checks pass. Evidence:
+`evidence/2026-09-15-approval-key-lifecycle.md`.
+
 Authority-control key lifecycle addendum: `AuthorityControlIpcClient` now
 copies its HMAC key, wipes it on explicit `dispose()`, and rejects further
 requests with `CANCELLED`. Authority Control and Privileged Helper servers

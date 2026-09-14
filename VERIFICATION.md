@@ -3,6 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Approval issuer key lifecycle addendum: `ApprovalAuthority` keeps only
+defensive issuer-key copies, wipes and clears them on idempotent disposal,
+and returns stable `CANCELLED` failures after disposal. The focused approval
+authority/IPC suite passes 8/8; build and diff checks pass. Evidence:
+`evidence/2026-09-15-approval-key-lifecycle.md`.
+
 Authority-control key lifecycle addendum: the Authority Control client copies
 and explicitly wipes its HMAC key, rejects use after disposal, and leaves the
 caller-owned source buffer under its original lifecycle. Authority Control
