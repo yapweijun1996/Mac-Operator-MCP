@@ -125,7 +125,7 @@ N-API artifact now passes the same digest vectors. These checks do not provide
 the production guest/adapter transport; actual Swift/C++ guest integration and
 the release gate remain open.
 
-This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, cross-process/global session concurrency, canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The local Broker now enforces a bounded active-request cap per principal/session; that in-process guard does not establish a shared quota across multiple runtimes. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
+This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, cross-process/global session concurrency, broader numeric canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The local Broker now enforces a bounded active-request cap per principal/session; that in-process guard does not establish a shared quota across multiple runtimes. The strict parser boundary rejects duplicate keys and unpaired surrogates before trust-boundary `JSON.parse` calls. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
 
 ## Acceptance evidence
 

@@ -13,6 +13,16 @@ boundary tests pass 78/78, the native canonical JSON probe passes 5/5 vectors,
 and the complete physical-Darwin regression passes 587/587 with 0 skipped
 tests. Evidence: `evidence/2026-09-15-strict-utf8-boundary.md`.
 
+Strict JSON parser addendum: source revision `ecc3a98` adds a bounded recursive
+wire scanner before `JSON.parse`. Implemented protocol, protected
+configuration, persistence, audit, and Edge contract readers now reject
+duplicate object keys (including escaped equivalents), unpaired UTF-16
+surrogates, malformed grammar, and trailing data while preserving strict
+UTF-8 decoding. Focused trust-boundary tests pass 49/49, the native canonical
+JSON probe passes 5/5 vectors, and the complete physical-Darwin regression
+passes 588/588 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-strict-json-parser.md`.
+
 Broker session-concurrency addendum: source revisions `d185f12` and `9d92f0d` validate
 request-age and clock-skew limits at Broker startup and bounds active work per
 authenticated principal/session (default 8, maximum 64). Capacity rejection
@@ -1970,7 +1980,7 @@ Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Run
 ## Pending decisions
 
 - Remote OAuth issuer and tunnel/provider deployment choice.
-- Native peer-adapter packaging, Node socket-descriptor compatibility, Edge process-ID lifecycle, cross-process/keychain distribution, storage-level erasure limits, cross-process/global session quotas, and canonicalization compatibility.
+- Native peer-adapter packaging, Node socket-descriptor compatibility, Edge process-ID lifecycle, cross-process/keychain distribution, storage-level erasure limits, cross-process/global session quotas, and broader numeric canonicalization compatibility.
 - Child-process sandbox technology on the target macOS version.
 - Installed startup wiring, native caller/process identity packaging, Keychain distribution, general schema-version framework, crash-window recovery, and rollback runbook.
 - Audit backend, integrity, retention, and read-only outage behavior.
