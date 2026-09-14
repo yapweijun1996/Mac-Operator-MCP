@@ -13,10 +13,13 @@ import {
   ProcessSupervisor,
   BrokerStore,
   capturePeerProcessIdentity,
+  createKeychainAuditAnchorKeySource,
   loadAuthenticationKey,
   provisionAuthenticationKey,
+  provisionKeychainAuthenticationKey,
   readBrokerStatus,
   renderLaunchdPlist,
+  retireKeychainAuthenticationKey,
   writeEdgeAuthenticationKeyConfig,
   createDefaultPolicy,
   type EdgeAuthenticationKeyConfig,
@@ -75,6 +78,7 @@ test("opt-in packaged Edge and Broker LaunchAgents start, authenticate, and clea
   const brokerSocketPath = join(runtimeRoot, "broker.sock");
   const statusSocketPath = join(runtimeRoot, "broker-status.sock");
   const statusKeyPath = join(dataRoot, "broker-status.key");
+  const auditAnchorPath = join(dataRoot, "broker-audit.anchor");
   const edgeKeyPath = join(dataRoot, "edge.key");
   const edgeKeyConfigPath = join(dataRoot, "edge-keys.json");
   const policyBundlePath = join(dataRoot, "policy.json");
@@ -86,6 +90,10 @@ test("opt-in packaged Edge and Broker LaunchAgents start, authenticate, and clea
   let edgeBootstrapped = false;
   let brokerBootstrapped = false;
   let store: BrokerStore | undefined;
+  let auditKeyDigest: string | undefined;
+  const auditAnchorKeyService = "com.mac-operator.test";
+  const auditAnchorKeyAccount = `audit:packaged-${uid}`;
+  const auditAnchorKeyId = "audit-key-1";
   try {
     for (const directory of [dataRoot, runtimeRoot, logRoot, edgePackageRoot, brokerPackageRoot]) {
       await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -109,6 +117,12 @@ test("opt-in packaged Edge and Broker LaunchAgents start, authenticate, and clea
 
     const edgeKey = await provisionAuthenticationKey(edgeKeyPath);
     const statusKey = await provisionAuthenticationKey(statusKeyPath);
+    const auditKey = await provisionKeychainAuthenticationKey(
+      auditAnchorKeyService,
+      auditAnchorKeyAccount,
+      process.execPath
+    );
+    auditKeyDigest = auditKey.digest;
     const now = Date.now();
     const edgeKeyBytes = await loadAuthenticationKey(edgeKeyPath);
     try {
@@ -144,7 +158,16 @@ test("opt-in packaged Edge and Broker LaunchAgents start, authenticate, and clea
     };
     await writeFile(policyBundlePath, `${JSON.stringify(signedBundle)}\n`, { mode: 0o600 });
 
-    store = new BrokerStore(databasePath);
+    store = new BrokerStore(databasePath, {
+      auditAnchor: {
+        path: auditAnchorPath,
+        keySource: createKeychainAuditAnchorKeySource(
+          auditAnchorKeyService,
+          auditAnchorKeyAccount,
+          auditAnchorKeyId
+        )
+      }
+    });
     const edgeManager = new EdgeAuthenticationKeyManager(edgeKeyConfigPath, store, () => now);
     await edgeManager.activate();
     const policyVerifier = await PolicyBundleVerifier.create({
@@ -206,6 +229,10 @@ test("opt-in packaged Edge and Broker LaunchAgents start, authenticate, and clea
       statusSocketPath: join(canonicalRuntimeRoot, "broker-status.sock"),
       statusKeyPath: join(canonicalDataRoot, "broker-status.key"),
       statusKeyDigest: statusKey.digest,
+      auditAnchorPath: join(canonicalDataRoot, "broker-audit.anchor"),
+      auditAnchorKeyService,
+      auditAnchorKeyAccount,
+      auditAnchorKeyId,
       edgeId: "edge-1",
       edgeServiceId,
       expectedEdgeUid: uid,
@@ -284,6 +311,9 @@ test("opt-in packaged Edge and Broker LaunchAgents start, authenticate, and clea
       cleanupError = error;
     } finally {
       store?.close();
+      if (auditKeyDigest !== undefined) {
+        await retireKeychainAuthenticationKey(auditAnchorKeyService, auditAnchorKeyAccount, auditKeyDigest).catch(() => undefined);
+      }
       await rm(root, { recursive: true, force: true });
     }
     if (cleanupError !== undefined) throw cleanupError;

@@ -8,7 +8,13 @@ import test from "node:test";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeAuthenticationKeyManager, writeEdgeAuthenticationKeyConfig, type EdgeAuthenticationKeyConfig } from "./edge-keyring-config.js";
-import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials.js";
+import {
+  createKeychainAuditAnchorKeySource,
+  loadAuthenticationKey,
+  provisionAuthenticationKey,
+  provisionKeychainAuthenticationKey,
+  retireKeychainAuthenticationKey
+} from "./credentials.js";
 import { BrokerStore } from "./persistence.js";
 import { PolicyBundleVerifier, PolicyManager, type PolicyDocument, type SignedPolicyBundle } from "./policy-loader.js";
 import {
@@ -68,10 +74,17 @@ test("Broker service startup restores signed authority before native runtime sta
   const databasePath = config.brokerDatabasePath;
   let activationStore: BrokerStore | undefined;
   let assembly: Awaited<ReturnType<typeof createBrokerServiceFromStartupConfig>> | undefined;
+  let auditKeyDigest: string | undefined;
   try {
     await provisionAuthenticationKey(keyPath);
     const statusKey = await provisionAuthenticationKey(config.statusKeyPath);
     config = { ...config, statusKeyDigest: statusKey.digest };
+    const auditKey = await provisionKeychainAuthenticationKey(
+      config.auditAnchorKeyService,
+      config.auditAnchorKeyAccount,
+      process.execPath
+    );
+    auditKeyDigest = auditKey.digest;
     const edgeKey = await loadAuthenticationKey(keyPath);
     const edgeConfig: EdgeAuthenticationKeyConfig = {
       schemaVersion: "0.1",
@@ -87,7 +100,15 @@ test("Broker service startup restores signed authority before native runtime sta
     const document = policyDocument(now);
     const bundle = signedBundle(document, keyPair.privateKey);
     await writeFile(policyBundlePath, `${JSON.stringify(bundle)}\n`, { mode: 0o600 });
-    activationStore = new BrokerStore(databasePath);
+    const auditAnchor = {
+      path: config.auditAnchorPath,
+      keySource: createKeychainAuditAnchorKeySource(
+        config.auditAnchorKeyService,
+        config.auditAnchorKeyAccount,
+        config.auditAnchorKeyId
+      )
+    };
+    activationStore = new BrokerStore(databasePath, { auditAnchor });
     const edgeManager = new EdgeAuthenticationKeyManager(edgeConfigPath, activationStore, () => now);
     await edgeManager.activate();
     const verifier = await PolicyBundleVerifier.create({
@@ -123,6 +144,13 @@ test("Broker service startup restores signed authority before native runtime sta
   } finally {
     if (assembly) await assembly.close();
     activationStore?.close();
+    if (auditKeyDigest !== undefined) {
+      await retireKeychainAuthenticationKey(
+        config.auditAnchorKeyService,
+        config.auditAnchorKeyAccount,
+        auditKeyDigest
+      ).catch(() => undefined);
+    }
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -139,6 +167,10 @@ function baseConfig(packageRoot: string, dataRoot: string, runtimeRoot: string):
     statusSocketPath: resolve(join(runtimeRoot, "broker-status.sock")),
     statusKeyPath: resolve(join(dataRoot, "broker-status.key")),
     statusKeyDigest: "0".repeat(64),
+    auditAnchorPath: resolve(join(dataRoot, "broker-audit.anchor")),
+    auditAnchorKeyService: "com.mac-operator.test",
+    auditAnchorKeyAccount: "audit:service-startup",
+    auditAnchorKeyId: "audit-key-1",
     edgeId: "edge-1",
     edgeServiceId: `gui/${uid}/com.mac-operator.edge`,
     expectedEdgeUid: uid,

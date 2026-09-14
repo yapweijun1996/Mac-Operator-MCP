@@ -15,13 +15,14 @@ import { BrokerServiceEntrypoint, type BrokerServiceMetadata } from "./service-e
 import { assertSocketNotActive } from "./ipc-server.js";
 import { BrokerServiceInstanceLock } from "./service-instance-lock.js";
 import { BrokerStatusIpcServer, BrokerStoreBrokerStatusReplayGuard } from "./broker-status-ipc.js";
-import { loadAuthenticationKey } from "./credentials.js";
+import { createKeychainAuditAnchorKeySource, loadAuthenticationKey } from "./credentials.js";
 import { BrokerError, sha256 } from "@mac-operator/contracts";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
   "schemaVersion", "packageRoot", "dataRoot", "runtimeRoot", "brokerDatabasePath", "brokerSocketPath",
   "statusSocketPath", "statusKeyPath", "statusKeyDigest",
+  "auditAnchorPath", "auditAnchorKeyService", "auditAnchorKeyAccount", "auditAnchorKeyId",
   "edgeId", "edgeServiceId", "expectedEdgeUid", "expectedEdgeGid", "edgeKeyConfigPath",
   "policyBundlePath", "policySchemaDirectory", "policyVerificationKeyId", "policyVerificationKeyPath",
   "sourceRevision", "contractVersion"
@@ -40,6 +41,10 @@ export interface BrokerServiceStartupConfig {
   statusSocketPath: string;
   statusKeyPath: string;
   statusKeyDigest: string;
+  auditAnchorPath: string;
+  auditAnchorKeyService: string;
+  auditAnchorKeyAccount: string;
+  auditAnchorKeyId: string;
   edgeId: string;
   edgeServiceId: string;
   expectedEdgeUid: number;
@@ -91,7 +96,7 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
   }
   if (record.schemaVersion !== "0.1") throw new Error("Broker service startup config schema version is unsupported");
   const pathValues = [
-    "packageRoot", "dataRoot", "runtimeRoot", "brokerDatabasePath", "brokerSocketPath", "statusSocketPath", "statusKeyPath", "edgeKeyConfigPath",
+    "packageRoot", "dataRoot", "runtimeRoot", "brokerDatabasePath", "brokerSocketPath", "statusSocketPath", "statusKeyPath", "auditAnchorPath", "edgeKeyConfigPath",
     "policyBundlePath", "policySchemaDirectory", "policyVerificationKeyPath"
   ].map((key) => [key, record[key]] as const);
   for (const [key, pathValue] of pathValues) validateCanonicalPath(pathValue, key);
@@ -105,11 +110,16 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
   const brokerSocketPath = record.brokerSocketPath as string;
   const statusSocketPath = record.statusSocketPath as string;
   const statusKeyPath = record.statusKeyPath as string;
+  const auditAnchorPath = record.auditAnchorPath as string;
   if (!isDescendant(dataRoot, brokerDatabasePath) || !isDescendant(runtimeRoot, brokerSocketPath) ||
       !isDescendant(runtimeRoot, statusSocketPath) || !isDescendant(dataRoot, statusKeyPath) ||
+      !isDescendant(dataRoot, auditAnchorPath) || auditAnchorPath === brokerDatabasePath ||
       brokerSocketPath === statusSocketPath || !statusSocketPath.endsWith(".sock") ||
       Buffer.byteLength(statusSocketPath, "utf8") >= 104 ||
-      typeof record.statusKeyDigest !== "string" || !/^[a-f0-9]{64}$/u.test(record.statusKeyDigest)) {
+      typeof record.statusKeyDigest !== "string" || !/^[a-f0-9]{64}$/u.test(record.statusKeyDigest) ||
+      typeof record.auditAnchorKeyService !== "string" || !/^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(record.auditAnchorKeyService) ||
+      typeof record.auditAnchorKeyAccount !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(record.auditAnchorKeyAccount) ||
+      !ID_PATTERN.test(String(record.auditAnchorKeyId))) {
     throw new Error("Broker service state paths must remain inside their configured roots");
   }
   if (!isDescendant(dataRoot, record.edgeKeyConfigPath as string) || !isDescendant(dataRoot, record.policyBundlePath as string) ||
@@ -137,6 +147,10 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
     statusSocketPath,
     statusKeyPath,
     statusKeyDigest: record.statusKeyDigest as string,
+    auditAnchorPath,
+    auditAnchorKeyService: record.auditAnchorKeyService as string,
+    auditAnchorKeyAccount: record.auditAnchorKeyAccount as string,
+    auditAnchorKeyId: record.auditAnchorKeyId as string,
     edgeId: record.edgeId as string,
     edgeServiceId: record.edgeServiceId as string,
     expectedEdgeUid,
@@ -179,7 +193,16 @@ export async function createBrokerServiceFromStartupConfig(options: {
     // Do not reconcile a shared Job Ledger until the configured Broker socket
     // proves that no prior Broker instance is still serving requests.
     await assertSocketNotActive(config.brokerSocketPath);
-    const activeStore = new BrokerStore(config.brokerDatabasePath);
+    const activeStore = new BrokerStore(config.brokerDatabasePath, {
+      auditAnchor: {
+        path: config.auditAnchorPath,
+        keySource: createKeychainAuditAnchorKeySource(
+          config.auditAnchorKeyService,
+          config.auditAnchorKeyAccount,
+          config.auditAnchorKeyId
+        )
+      }
+    });
     store = activeStore;
     const verifier = await PolicyBundleVerifier.createFromKeyFile({
       schemaDirectory: config.policySchemaDirectory,
@@ -351,6 +374,7 @@ async function assertStartupDirectories(config: BrokerServiceStartupConfig): Pro
   await assertStartupTarget(config.runtimeRoot, config.brokerSocketPath);
   await assertStartupTarget(config.runtimeRoot, config.statusSocketPath);
   await assertStartupTarget(config.dataRoot, config.statusKeyPath);
+  await assertStartupTarget(config.dataRoot, config.auditAnchorPath);
   await assertStartupTarget(config.runtimeRoot, brokerServiceInstanceLockPath(config.runtimeRoot));
   await assertStartupTarget(config.dataRoot, config.edgeKeyConfigPath);
   await assertStartupTarget(config.dataRoot, config.policyBundlePath);

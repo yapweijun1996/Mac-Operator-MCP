@@ -22,7 +22,7 @@ boots out Broker before Edge and boundedly verifies both labels are absent.
 
 - Host: Darwin 25.2.0 arm64
 - Node: v25.5.0
-- Command: `MOPS_REAL_INSTALL=1 node --test packages/broker/dist/packaged-service-smoke.test.js`
+- Command: `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 node --test packages/broker/dist/packaged-service-smoke.test.js`
 - Result: 1 passed, 0 failed, 0 skipped
 
 ## Boundary observations
@@ -36,12 +36,16 @@ boots out Broker before Edge and boundedly verifies both labels are absent.
 - Native process identity was captured for both launchd PIDs.
 - Signed policy and Edge-key activation restored successfully; no capability
   was enabled in the smoke policy.
+- The compiled Broker loaded its audit-anchor HMAC key through the temporary
+  Keychain item bound to the packaged Broker executable and verified the
+  owner-only audit sidecar before reporting `running`.
 - The postcondition checked both services were absent after bootout.
 
 ## Limitations
 
 This is a temporary per-user LaunchAgent fixture. It does not prove Developer
-ID signing, notarization, Keychain ACLs, remote OAuth/JWKS interoperability,
-production package installation, upgrade/rollback, or privileged helper
-installation. The test copies runtime dependencies into the temporary package
-to avoid treating a workspace `node_modules` symlink as installed packaging.
+ID signing, notarization, production Keychain provisioning/rotation, remote
+OAuth/JWKS interoperability, production package installation, upgrade/rollback,
+or privileged helper installation. The test copies runtime dependencies into
+the temporary package to avoid treating a workspace `node_modules` symlink as
+installed packaging.

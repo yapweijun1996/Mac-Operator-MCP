@@ -39,9 +39,11 @@ tail and fails closed on absence, staleness, key identity change, or forged
 content. Publication is deliberately after the SQLite commit: a sidecar write
 failure leaves the database ahead and therefore unresolved on the next start,
 never falsely verified. This is stronger than an unkeyed local chain but is not
-an external immutable log; packaged startup does not enable it, and the
-production Keychain item, cross-process sidecar locking, and rollback-resistant
-external anchor remain acceptance gates.
+an external immutable log. Packaged Broker startup now requires the
+Keychain-backed anchor configuration and fails closed when the item or sidecar
+cannot be verified. Production Keychain provisioning/rotation, cross-process
+sidecar locking, and a rollback-resistant external anchor remain acceptance
+gates.
 
 The persistence boundary also publishes `schemas/ledger-records.schema.json`,
 a versioned envelope contract for Request, Approval, Job, and Audit records.

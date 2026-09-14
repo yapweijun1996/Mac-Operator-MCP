@@ -33,11 +33,21 @@ a missing, stale, forged, or unexpected sidecar.
 - `npm audit --omit=dev --audit-level=high` reported 0 vulnerabilities.
 - `git diff --check` passed.
 
+Packaged startup wiring was then exercised with:
+
+`MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 node --test packages/broker/dist/packaged-service-smoke.test.js`
+
+The temporary compiled Broker loaded the anchor through the executable-bound
+Keychain source and reached authenticated status only after the sidecar was
+verified: 1 passed, 0 failed, 0 skipped. The exact temporary Keychain item and
+LaunchAgents were removed during cleanup.
+
 ## Limits
 
 This is a local keyed-integrity boundary, not an external immutable log. An
 attacker who can read the configured HMAC key can forge the sidecar; an attacker
 who can roll back both the database and sidecar remains outside this evidence.
-The implementation is not enabled by packaged startup, and cross-process
-sidecar locking plus a production Keychain anchor item still require a reviewed
-single-owner service policy and real signed-artifact evidence.
+Packaged startup now enables and requires the Keychain-backed source, but this
+temporary smoke does not establish production Developer ID provisioning,
+rotation, cross-process sidecar locking, or a rollback-resistant external
+anchor.

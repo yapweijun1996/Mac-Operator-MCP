@@ -13,6 +13,17 @@ detached descendants, remount resistance, credential-store isolation, and
 production task enablement remain open. Evidence:
 `evidence/2026-09-14-post-snapshot-exit-proof.md`.
 
+Latest packaged-startup addendum: compiled Broker startup now requires the
+owner-controlled audit-anchor path and fixed Keychain coordinates, loads the
+HMAC source through the executable-bound ACL, and verifies the sidecar before
+readiness. Service-startup tests pass 3/3. The real temporary LaunchAgent
+smoke with `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1` passes 1/1 and removes
+the temporary Keychain item and service labels during cleanup. This is host
+startup evidence only; production Developer ID provisioning, persistent
+installation, cross-process locking, and external immutable anchoring remain
+open. Evidence:
+`evidence/2026-09-14-packaged-audit-anchor-startup.md`.
+
 Latest keyed-audit addendum: the optional Broker-owned audit anchor binds the
 SQLite tail to a separate 0600 sidecar with an explicit HMAC key source; a
 dedicated Keychain factory binds that source to the Broker executable ACL. The

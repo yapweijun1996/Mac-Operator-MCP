@@ -23,6 +23,12 @@ must remain usable by the authenticated installer process; it is not an Edge
 request channel.
 
 The renderer intentionally emits no `EnvironmentVariables`, `UserName`, `Shell`, or privileged launchd keys. The Edge entrypoint loads the adjacent protected `edge-service.json`; the Broker entrypoint assembles `createMacOsNativeBrokerRuntime`, starts with all capability switches disabled unless a verified policy enables them, and both stop on `SIGTERM`/`SIGINT`.
+The Broker startup configuration must also provide an owner-controlled audit
+anchor path below the Broker data root plus the fixed Keychain service,
+account, and key identifier. Startup loads the HMAC key through the
+Broker-executable ACL; a missing or mismatched Keychain item, unsafe anchor
+path, or failed sidecar verification aborts before the service reaches
+`running`. No environment variable or MCP argument can select these values.
 
 `buildMacOsEdgeInstallPlan` and `buildMacOsInstallPlan` are the non-executing installer boundaries for Edge and Broker. They require an explicit non-root UID, a package-owned JavaScript entrypoint, a signed artifact path, and an exact per-user plist path. The Edge plan additionally binds the expected listener host/port and requires a running, listening Edge readback; the Broker plan requires the running native transport and capability set. Both plans expose fixed `/usr/bin/codesign` and `/bin/launchctl` argv with `/` cwd, an empty environment, 5-second timeout, and 128 KiB output cap. They materialize write/bootstrap, bootout/restore, and bootout/remove actions without executing them.
 
@@ -66,10 +72,10 @@ they do not establish persistent Edge/Broker LaunchAgent installation,
 Developer ID provenance, remote issuer interoperability, or production key
 distribution.
 
-The opt-in packaged-service smoke (`MOPS_REAL_INSTALL=1 node --test
-packages/broker/dist/packaged-service-smoke.test.js`) starts both compiled
-entrypoints as real per-user LaunchAgents, reads back launchd and Broker
-status, and verifies bounded bootout/absence. It refuses to run when either
+The opt-in packaged-service smoke (`MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1
+node --test packages/broker/dist/packaged-service-smoke.test.js`) starts both compiled
+entrypoints as real per-user LaunchAgents, reads back launchd and Broker status
+plus the Keychain-backed audit anchor, and verifies bounded bootout/absence. It refuses to run when either
 fixed label is already loaded and copies dependencies into a temporary package
 root so workspace symlinks are not part of the evidence.
 

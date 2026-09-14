@@ -15,6 +15,20 @@ post-snapshot detached descendants, in-syscall remounts, credential contents,
 and task enablement remain open. Evidence:
 `evidence/2026-09-14-post-snapshot-exit-proof.md`.
 
+Latest packaged-startup addendum: the compiled Broker service entrypoint now
+requires an owner-controlled audit-anchor path plus fixed Keychain
+service/account/key-id configuration, constructs `BrokerStore` with the
+executable-bound Keychain HMAC source, and fails closed before readiness when
+the item or sidecar cannot be verified. The service-startup suite passes 3/3.
+The opt-in real temporary LaunchAgent smoke
+(`MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 node --test
+packages/broker/dist/packaged-service-smoke.test.js`) passes 1/1 and cleans up
+the exact temporary Keychain item and both labels. This is startup wiring and
+host evidence only; Developer ID/persistent production installation,
+cross-process sidecar locking, and external rollback-resistant anchoring remain
+open. Evidence:
+`evidence/2026-09-14-packaged-audit-anchor-startup.md`.
+
 Latest keyed-audit addendum: optional `BrokerStore` startup configuration now
 binds the SQLite audit tail to a separate Broker-owned 0600 sidecar using an
 explicit memory-only HMAC key source; a dedicated Keychain source factory now
