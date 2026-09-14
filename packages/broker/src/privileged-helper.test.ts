@@ -54,7 +54,7 @@ function command(sequence: number, operation: UnsignedPrivilegedHelperCommand["o
   };
 }
 
-async function sendCommand(socketPath: string, payload: unknown): Promise<PrivilegedHelperResponse> {
+async function sendCommand(socketPath: string, payload: unknown, suffix = ""): Promise<PrivilegedHelperResponse> {
   return new Promise((resolvePromise, reject) => {
     const socket = connect(socketPath);
     const chunks: Buffer[] = [];
@@ -74,11 +74,11 @@ async function sendCommand(socketPath: string, payload: unknown): Promise<Privil
     socket.on("close", () => {
       if (chunks.length === 0) reject(new Error("Privileged helper IPC closed without a response"));
     });
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
   });
 }
 
-async function sendStatus(socketPath: string, payload: unknown): Promise<PrivilegedHelperStatusResponse> {
+async function sendStatus(socketPath: string, payload: unknown, suffix = ""): Promise<PrivilegedHelperStatusResponse> {
   return new Promise((resolvePromise, reject) => {
     const socket = connect(socketPath);
     const chunks: Buffer[] = [];
@@ -98,7 +98,7 @@ async function sendStatus(socketPath: string, payload: unknown): Promise<Privile
     socket.on("close", () => {
       if (chunks.length === 0) reject(new Error("Privileged helper status IPC closed without a response"));
     });
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
   });
 }
 
@@ -290,6 +290,77 @@ test("privileged helper status readback is separately authenticated, replay-prot
     const clientStatus = await readPrivilegedHelperStatus({ socketPath, authenticationKey: key, now: () => NOW });
     assert.deepEqual(clientStatus, status);
     assert.equal(statusCalls, 2);
+  } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("privileged helper rejects trailing frames before replay admission or dispatch", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-framing-"));
+  const socketPath = join(directory, "helper.sock");
+  const brokerSocketPath = join(directory, "broker.sock");
+  const key = randomBytes(32);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  let commandCalls = 0;
+  let statusCalls = 0;
+  const status = statusReadback(socketPath, brokerSocketPath);
+  const server = new PrivilegedHelperIpcServer({
+    socketPath,
+    authenticationKey: key,
+    replayGuard: new BrokerStorePrivilegedHelperReplayGuard(store),
+    authorizeCommand: () => undefined,
+    authorizeStatus: () => undefined,
+    readStatus: () => {
+      statusCalls += 1;
+      return status;
+    },
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter: new AllowlistedPrivilegedHelper({
+      service_control: async (request) => {
+        commandCalls += 1;
+        return {
+          operation: request.operation,
+          targetRef: request.targetRef,
+          state: "completed",
+          resultClass: "SUCCEEDED",
+          evidence: {}, warnings: [], truncated: false,
+          verification: { status: "verified", strategy: "allowlisted_postcondition" }
+        };
+      }
+    }),
+    now: () => NOW
+  });
+  try {
+    await server.listen();
+    const commandRequest = command(20);
+    const trailingCommandResponse = await sendCommand(socketPath, signPrivilegedHelperCommand(commandRequest, key), "{}\n");
+    const trailingCommand = authenticatePrivilegedHelperResponse(trailingCommandResponse, commandRequest, key);
+    assert.equal(trailingCommand.ok, false);
+    if (!trailingCommand.ok) assert.equal(trailingCommand.resultClass, "PRECONDITION_FAILED");
+    assert.equal(commandCalls, 0);
+    const cleanCommandResponse = await sendCommand(socketPath, signPrivilegedHelperCommand(commandRequest, key));
+    assert.equal(cleanCommandResponse.ok, true);
+    assert.equal(commandCalls, 1);
+
+    const statusRequest = {
+      protocolVersion: "0.1" as const,
+      contractVersion: CONTRACT_VERSION,
+      requestId: "request:status-framing-1",
+      nonce: "status-nonce-framing-0001",
+      timestampMs: NOW,
+      expiresAtMs: NOW + 5_000,
+      kind: "status" as const
+    };
+    const trailingStatusResponse = await sendStatus(socketPath, signPrivilegedHelperStatusRequest(statusRequest, key), "{}\n");
+    const trailingStatus = authenticatePrivilegedHelperStatusResponse(trailingStatusResponse, statusRequest, key);
+    assert.equal(trailingStatus.ok, false);
+    if (!trailingStatus.ok) assert.equal(trailingStatus.resultClass, "PRECONDITION_FAILED");
+    assert.equal(statusCalls, 0);
+    const cleanStatusResponse = await sendStatus(socketPath, signPrivilegedHelperStatusRequest(statusRequest, key));
+    assert.equal(cleanStatusResponse.ok, true);
+    assert.equal(statusCalls, 1);
   } finally {
     await server.close();
     store.close();

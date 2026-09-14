@@ -573,6 +573,9 @@ export class PrivilegedHelperIpcServer {
         let statusResponse: PrivilegedHelperStatusResponse;
         try {
           statusRequest = authenticatePrivilegedHelperStatusRequest(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+          if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+            throw new BrokerError("PRECONDITION_FAILED", "Privileged helper request contained trailing data");
+          }
           this.options.keyAuthorityCheck?.();
           this.options.replayGuard.admit({
             requestId: statusRequest.requestId,
@@ -597,6 +600,9 @@ export class PrivilegedHelperIpcServer {
       let command: UnsignedPrivilegedHelperCommand | undefined;
       try {
         command = authenticatePrivilegedHelperCommand(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+        if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+          throw new BrokerError("PRECONDITION_FAILED", "Privileged helper request contained trailing data");
+        }
         this.options.keyAuthorityCheck?.();
         this.options.replayGuard.admit(command);
         this.options.authorizeCommand(command);
@@ -837,6 +843,10 @@ export async function readPrivilegedHelperStatus(options: PrivilegedHelperStatus
         const combined = Buffer.concat(chunks);
         const newline = combined.indexOf(0x0a);
         if (newline === -1) return;
+        if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+          fail(new BrokerError("AUTH_INVALID", "Privileged helper status response contained trailing data"));
+          return;
+        }
         settled = true;
         socket.destroy();
         try {
@@ -1161,6 +1171,10 @@ async function exchangeHelperSocket(socketPath: string, serialized: string, time
       const combined = Buffer.concat(chunks);
       const newline = combined.indexOf(0x0a);
       if (newline === -1) return;
+      if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+        fail(new BrokerError("AUTH_INVALID", "Privileged helper response contained trailing data"));
+        return;
+      }
       settled = true;
       socket.destroy();
       try {
@@ -1272,6 +1286,10 @@ function boundedMessage(value: string): string {
 
 function boundedStatusMessage(value: string): boolean {
   return value.length <= 512 && !value.includes("\0") && !/[\r\n]/u.test(value);
+}
+
+function isAsciiWhitespace(byte: number): boolean {
+  return byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20;
 }
 
 function fallbackCommand(): UnsignedPrivilegedHelperCommand {

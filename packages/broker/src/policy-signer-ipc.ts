@@ -168,6 +168,9 @@ export class PolicySignerIpcServer {
           this.maxRequestAgeMs,
           this.allowedClockSkewMs
         );
+        if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+          throw new BrokerError("PRECONDITION_FAILED", "Policy signer IPC request contained trailing data");
+        }
         this.options.store.admitPolicySignerCommand({
           requestId: command.requestId,
           nonce: command.nonce,
@@ -326,4 +329,8 @@ function writePolicySignerResponse(socket: Socket, response: PolicySignerIpcResp
 
 function failure(errorClass: ErrorClass, message: string, retryable = false): PolicySignerIpcResponse {
   return { ok: false, result_class: errorClass, error: { message, retryable } };
+}
+
+function isAsciiWhitespace(byte: number): boolean {
+  return byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20;
 }

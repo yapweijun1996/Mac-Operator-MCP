@@ -55,6 +55,9 @@ test("Broker status IPC authenticates readback and rejects durable replay", asyn
       expiresAtMs: NOW + 30_000,
       kind: "broker_status"
     };
+    const trailing = await sendStatus(socketPath, signBrokerStatusRequest(request, authenticationKey), "{}\n");
+    assert.equal(trailing.ok, false);
+    if (!trailing.ok) assert.equal(trailing.resultClass, "PRECONDITION_FAILED");
     const first = await sendStatus(socketPath, signBrokerStatusRequest(request, authenticationKey));
     assert.equal(first.ok, true);
     if (first.ok) {
@@ -93,7 +96,7 @@ test("Broker status IPC authenticates readback and rejects durable replay", asyn
   }
 });
 
-async function sendStatus(socketPath: string, payload: unknown): Promise<BrokerStatusResponse> {
+async function sendStatus(socketPath: string, payload: unknown, suffix = ""): Promise<BrokerStatusResponse> {
   return new Promise((resolvePromise, rejectPromise) => {
     const socket = connect(socketPath);
     const chunks: Buffer[] = [];
@@ -110,6 +113,6 @@ async function sendStatus(socketPath: string, payload: unknown): Promise<BrokerS
         rejectPromise(error);
       }
     });
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
   });
 }

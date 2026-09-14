@@ -47,7 +47,7 @@ function command(
   };
 }
 
-async function sendCommand(socketPath: string, payload: unknown): Promise<PolicySignerIpcResponse> {
+async function sendCommand(socketPath: string, payload: unknown, suffix = ""): Promise<PolicySignerIpcResponse> {
   return new Promise((resolvePromise, reject) => {
     const socket = connect(socketPath);
     let chunks: Buffer[] = [];
@@ -67,7 +67,7 @@ async function sendCommand(socketPath: string, payload: unknown): Promise<Policy
     socket.on("close", () => {
       if (chunks.length === 0) reject(new Error("Policy signer IPC closed without a response"));
     });
-    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
   });
 }
 
@@ -110,6 +110,12 @@ test("policy signer IPC authenticates, rejects replay, and performs audited oper
 
     await writePolicySignerKeyConfig(configPath, secondConfig);
     const reload = command("reload", 1, { expectedPreviousRevision: 1 });
+    const trailingReloadResponse = await sendCommand(socketPath, signPolicySignerCommand(reload, authenticationKey), "{}\n");
+    assert.deepEqual(trailingReloadResponse, {
+      ok: false,
+      result_class: "PRECONDITION_FAILED",
+      error: { message: "Policy signer IPC request contained trailing data", retryable: false }
+    });
     const reloadResponse = await sendCommand(socketPath, signPolicySignerCommand(reload, authenticationKey));
     assert.deepEqual(reloadResponse, { ok: true, operation: "reload", revision: 2 });
     const replayResponse = await sendCommand(socketPath, signPolicySignerCommand(reload, authenticationKey));

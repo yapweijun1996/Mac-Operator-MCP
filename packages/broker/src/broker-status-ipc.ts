@@ -203,6 +203,9 @@ export class BrokerStatusIpcServer {
       try {
         const raw = JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown;
         request = authenticateBrokerStatusRequest(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+        if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+          throw new BrokerError("PRECONDITION_FAILED", "Broker status request contained trailing data");
+        }
         this.options.replayGuard.admit(request);
         this.options.authorizeStatus();
         response = statusSuccess(request, validateBrokerStatusReadback(this.options.readStatus()), this.authenticationKey);
@@ -424,6 +427,10 @@ function canonicalStatusPath(path: string): boolean {
     !path.includes("\0") && !path.includes("\n") && !path.includes("\r");
 }
 
+function isAsciiWhitespace(byte: number): boolean {
+  return byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20;
+}
+
 function writeStatusResponse(socket: Socket, response: BrokerStatusResponse): void {
   if (socket.destroyed) return;
   const serialized = `${JSON.stringify(response)}\n`;
@@ -456,6 +463,10 @@ function exchangeStatusSocket(socketPath: string, body: string, timeoutMs: numbe
       const combined = Buffer.concat(chunks);
       const newline = combined.indexOf(0x0a);
       if (newline === -1) return;
+      if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+        finish(new BrokerError("AUTH_INVALID", "Broker status response contained trailing data"));
+        return;
+      }
       try { finish(undefined, JSON.parse(combined.subarray(0, newline).toString("utf8")) as unknown); }
       catch { finish(new BrokerError("AUTH_INVALID", "Broker status response is not valid JSON")); }
     });
