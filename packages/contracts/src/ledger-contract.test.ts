@@ -29,6 +29,7 @@ test("versioned ledger schemas accept bounded request, approval, Job, and audit 
         policyVersion: "policy-0.1",
         payloadDigest: digest,
         mutation: false,
+        capabilityFamilies: ["read"],
         state: "SUCCEEDED",
         resultClass: "SUCCEEDED",
         targetRef: "host:broker",

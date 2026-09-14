@@ -842,6 +842,7 @@ test("BrokerStore enforces independent capability-family capacity across handles
     }, limits);
     assert.equal(write.state, "RECEIVED");
     assert.equal(secondStore.requestRecord("request-family-read-2"), undefined);
+    assert.deepEqual(secondStore.requestRecord("request-family-read")?.capabilityFamilies, ["read"]);
 
     firstStore.failRequest({
       requestId: "request-family-read",

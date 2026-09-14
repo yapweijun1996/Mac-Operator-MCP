@@ -231,6 +231,8 @@ export interface RequestRecord {
   policyVersion: string;
   payloadDigest: string;
   mutation: boolean;
+  /** Broker-resolved capability families; legacy records expose an empty list. */
+  capabilityFamilies: readonly CapabilityFamily[];
   state: RequestState;
   resultClass: string | null;
   targetRef: string | null;
@@ -3220,6 +3222,7 @@ interface RequestRow {
   policy_version: string;
   payload_digest: string;
   mutation: number;
+  capability_families: unknown;
   state: RequestState;
   result_class: string | null;
   target_ref: string | null;
@@ -3254,6 +3257,10 @@ interface ApprovalRow {
 }
 
 function mapRequest(row: RequestRow): RequestRecord {
+  const capabilityFamilies = decodeCapabilityFamilies(row.capability_families);
+  if (capabilityFamilies === null) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored request capability families are malformed");
+  }
   return {
     requestId: row.request_id,
     edgeId: row.edge_id,
@@ -3263,6 +3270,7 @@ function mapRequest(row: RequestRow): RequestRecord {
     policyVersion: row.policy_version,
     payloadDigest: row.payload_digest,
     mutation: row.mutation === 1,
+    capabilityFamilies: capabilityFamilies ?? [],
     state: row.state,
     resultClass: row.result_class,
     targetRef: row.target_ref,

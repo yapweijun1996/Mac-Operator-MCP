@@ -163,6 +163,12 @@
         "policyVersion": { "$ref": "#/$defs/policy_version" },
         "payloadDigest": { "$ref": "#/$defs/digest" },
         "mutation": { "type": "boolean" },
+        "capabilityFamilies": {
+          "type": "array",
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": { "enum": ["read", "write", "process", "network", "gui", "destructive", "privileged"] }
+        },
         "state": { "$ref": "#/$defs/request_state" },
         "resultClass": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 64 }, { "type": "null" }] },
         "targetRef": { "$ref": "#/$defs/nullable_target" },
