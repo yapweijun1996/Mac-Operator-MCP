@@ -14,21 +14,32 @@ persistence suite passes 46/46 and the full physical-Darwin regression passes
 524/524. Evidence:
 `evidence/2026-09-15-authority-state-machine.md`.
 
+Signed guest-provenance addendum: commit `84da3e0` extracts the Virtualization
+guest attestation contract and adds a versioned Ed25519 envelope covering key,
+algorithm, freshness, payload digest, and complete claims. Startup-trusted key
+validity/revocation and bounded lifetime are enforced; a configured
+`VirtualizationTaskRunner` verifier rechecks provenance before dispatch and
+restart status lookup. Focused attestation/runner tests pass 15/15 and the
+full physical-Darwin regression passes 527/527. Native attestation production,
+Keychain key distribution, VM boot, guest isolation, and production enablement
+remain blocked. Evidence:
+`evidence/2026-09-15-virtualization-guest-attestation.md`.
+
 Guest-image binding addendum: commits `846eca5` and `81faff0` add a protected
 startup-owned image preflight and make its digest/runtime/device/inode/size
 identity a required `VirtualizationTaskRunner` gate. The Broker rechecks the
 image before dispatch and restart recovery; content replacement is denied
 before executor invocation. Focused runner/image tests pass 15/15 and the
-full physical-Darwin regression passes 524/524. Signed guest provenance, VM
-boot, isolation, and production enablement remain blocked.
+full physical-Darwin regression passes 527/527. Native signed-attestation
+production, VM boot, isolation, and production enablement remain blocked.
 
 Virtualization channel addendum: commits `521eecc` and `4592cad` add a
 disabled-by-default Broker-side Unix-socket channel for the future native
 guest adapter. It verifies owner-only socket target/device/inode identity,
 native UID/GID/PID peer credentials with optional PID/start-time binding, and
 parses exactly one bounded frame only after peer authorization. Physical
-Darwin focused channel tests pass 4/4 and the full regression passes 524/524.
-This is transport evidence only; native guest serving, VM boot, attestation,
+Darwin focused channel tests pass 4/4 and the full regression passes 527/527.
+This is transport evidence only; native guest serving, VM boot, guest
 isolation, and `mac_task_run` enablement remain blocked by MOP-086/MOP-045.
 
 Strict-exit addendum: the governed sandbox task path sets a Broker-owned
@@ -445,11 +456,13 @@ Latest Virtualization seam addendum: the disabled `VirtualizationTaskRunner`
 now requires a digest-bound native guest attestation tied to the immutable
 guest identity, resolved sandbox profile, external evidence reference,
 guest-private filesystem, profile-bound network, unavailable host credentials,
-and guest-owned process tree/policy. Construction and dispatch both revalidate the
-attestation; SDK presence, guest-less configuration validation, and this
-structural check still do not prove VM boot, entitlement, credential isolation,
-or production enablement. Evidence:
-`evidence/2026-09-14-virtualization-framework-sdk.md`.
+and guest-owned process tree/policy. Commit `84da3e0` additionally defines a
+versioned Ed25519 envelope with startup-trusted key validity/revocation and
+freshness checks; a configured runner revalidates the signed claims before
+dispatch and recovery. SDK presence, guest-less configuration validation, and
+this structural/signature check still do not prove VM boot, entitlement,
+credential isolation, or production enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-attestation.md`.
 
 Latest exit-event addendum: strict task proof now begins at child `exit`,
 records process-group survival before stream `close`, and performs a second

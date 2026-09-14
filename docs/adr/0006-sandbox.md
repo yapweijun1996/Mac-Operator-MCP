@@ -79,6 +79,16 @@ the attestation both at construction and immediately before dispatch. This is a
 fail-closed adapter contract, not independent host evidence or capability
 enablement.
 
+Commit `84da3e0` adds an optional signed-provenance gate around that contract.
+`VirtualizationGuestAttestationVerifier` accepts only a startup-trusted Ed25519
+key set, binds the key ID, algorithm, validity window, payload digest, and full
+claims in one canonical signed envelope, and checks key revocation plus claim
+freshness. When configured on `VirtualizationTaskRunner`, the signed envelope
+must match the native adapter's digest-bound claims at construction and is
+revalidated before dispatch and restart status recovery. This improves
+provenance authenticity but does not claim Keychain key distribution, a native
+attestation producer, VM boot, guest isolation, or release enablement.
+
 The future native bridge also has a separate authenticated transport contract
 in `virtualization-guest-transport.ts`. Domain-separated HMAC proofs bind
 requests to a guest identity, profile/task digests, nonce, freshness window,
