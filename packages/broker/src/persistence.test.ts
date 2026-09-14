@@ -898,6 +898,35 @@ test("BrokerStore fails closed when a persisted capability-family marker is malf
   }
 });
 
+test("BrokerStore validates persisted capability-family markers for family-less admissions", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-family-less-corruption-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    store.admitRequest({
+      ...requestInput("request-family-less-corrupt", "nonce-family-less-corrupt", false),
+      capabilityFamilies: ["read"]
+    }, { maxActiveRequestsByFamily: { read: 4 } });
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE requests SET capability_families = ? WHERE request_id = ?")
+        .run("|unsupported|", "request-family-less-corrupt");
+    } finally {
+      database.close();
+    }
+    assert.throws(
+      () => store.admitRequest(requestInput("request-family-less-corrupt-2", "nonce-family-less-corrupt-2", false), {
+        maxActiveRequestsByFamily: { read: 4 }
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    assert.equal(store.requestRecord("request-family-less-corrupt-2"), undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mutation request lifecycle keeps decision, intent, running, and completion ordered", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-lifecycle-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));

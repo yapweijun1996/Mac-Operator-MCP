@@ -3670,7 +3670,7 @@ function enforceRequestAdmissionLimits(
   }
   const requestedFamilies = new Set(normalizeCapabilityFamilies(input.capabilityFamilies));
   const familyCounts = new Map<CapabilityFamily, number>();
-  if (requestedFamilies.size > 0 && Object.keys(limits.maxActiveRequestsByFamily ?? {}).length > 0) {
+  if (Object.keys(limits.maxActiveRequestsByFamily ?? {}).length > 0) {
     const rows = database.prepare(`
       SELECT capability_families FROM requests WHERE state IN (${activeStates})
     `).all() as Array<{ capability_families?: unknown }>;
