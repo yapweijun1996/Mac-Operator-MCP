@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Broker Status IPC error-proof addendum: source revision `ad3adc9` binds
+structurally valid status requests to authenticated `AUTH_EXPIRED` and
+`REPLAY_DENIED` failure responses before freshness/auth checks. Unknown fields
+remain on the invalid-request fallback, and the candidate never reaches replay
+admission or status execution. The focused Broker Status IPC test passes 1/1;
+the complete physical-Darwin suite passes 581/581 with 0 skipped tests. Build,
+typecheck, lint, contract verification, and diff checks pass. Evidence:
+`evidence/2026-09-15-broker-status-error-proof.md`.
+
 Authority Control CLI and IPC error-proof addendum: source revisions
 `447e4aa`, `f359360`, `5962efc`, and `032bf8f`
 provide a bounded

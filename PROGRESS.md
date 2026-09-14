@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker Status IPC error-proof addendum: source revision `ad3adc9` binds
+structurally valid status requests to authenticated `AUTH_EXPIRED` and
+`REPLAY_DENIED` failure responses before freshness/auth checks, while unknown
+fields remain on the invalid-request fallback and no candidate reaches replay
+admission or status execution. The focused Broker Status IPC test passes 1/1;
+the complete physical-Darwin regression passes 581/581 with 0 skipped tests.
+Evidence: `evidence/2026-09-15-broker-status-error-proof.md`.
+
 Authority Control CLI and IPC error-proof addendum: source revisions
 `447e4aa`, `f359360`, `5962efc`, and `032bf8f` add
 the bounded
