@@ -1,7 +1,7 @@
 # Authority Control CLI Evidence
 
 Date: 2026-09-15
-Source commit: `447e4aa`
+Source commits: `447e4aa`, `f359360`
 Host: physical Darwin arm64 development host
 
 ## Implemented boundary
@@ -18,9 +18,10 @@ raw key, capability grant, or MCP-facing operation is representable.
 
 ## Verification
 
-- Authority CLI tests: 3/3 pass.
+- Authority CLI tests: 4/4 pass, including a protected-file and authenticated
+  IPC round trip.
 - Full physical-Darwin regression with install, sandbox, and Keychain gates:
-  579/579 pass, 0 skipped, 0 failed.
+  580/580 pass, 0 skipped, 0 failed.
 - `npm run build`, `npm run typecheck`, `npm run lint`,
   `npm run verify:contracts`, and `git diff --check` pass.
 - `--help` prints only the three bounded operation forms; malformed or
@@ -35,5 +36,5 @@ until active and `UNKNOWN` Jobs have separate authenticated readback.
 
 ## Rollback
 
-Revert commit `447e4aa`; the underlying owner-only Authority Control IPC and
-its replay/audit semantics remain unchanged.
+Revert commits `447e4aa` and `f359360`; the underlying owner-only Authority
+Control IPC and its replay/audit semantics remain unchanged.

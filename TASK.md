@@ -4,13 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Authority Control CLI addendum: a source-level `mac-operator-authority`
-entrypoint now exposes only bounded switch readback, expected-state switch
+Authority Control CLI addendum: source revisions `447e4aa` and `f359360` add a
+source-level `mac-operator-authority` entrypoint that exposes only bounded
+switch readback, expected-state switch
 changes, and identity revocation. It requires canonical protected paths,
 restores the persisted active key through `AuthorityControlKeyManager`, uses
 explicit mutation confirmation, and verifies mutations by authenticated
 readback; guest-attestation key revocation is included. Focused tests pass
-3/3; the complete physical-Darwin regression passes 579/579 with 0 skipped
+4/4, including a protected-file/authenticated-IPC round trip; the complete
+physical-Darwin regression passes 580/580 with 0 skipped
 tests. Installed launchd ownership, active process-tree termination, and
 production operator-key distribution remain open. Evidence:
 `evidence/2026-09-15-authority-control-cli.md`.
