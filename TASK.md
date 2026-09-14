@@ -14,6 +14,12 @@ rechecks native volume identity for every authorized task root, failing closed
 on a changed root or volume before publishing a result. Evidence:
 `evidence/2026-09-14-task-volume-identity.md`.
 
+Process-supervisor startup-abort addendum: startup ownership persistence
+failure now force-terminates the detached process group and waits for bounded
+native root/descendant drain before returning; an unproven drain is reported as
+retryable `UNKNOWN_OUTCOME`. Evidence:
+`evidence/2026-09-14-process-supervisor-startup-abort.md`.
+
 Task credential-policy addendum: versioned TaskProfiles explicitly declare
 `credentialPolicy: none`; registry, sandbox renderer, and isolation-proof
 admission reject unsupported credential-bearing values. Evidence:

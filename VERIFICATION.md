@@ -20,6 +20,17 @@ kernel-held mount namespace, so a swap during a child syscall remains open.
 Evidence:
 `evidence/2026-09-14-task-volume-identity.md`.
 
+Latest startup-abort addendum: `ProcessSupervisor` now force-terminates a
+spawned detached process group when startup ownership persistence fails, waits
+for the native root and tracked descendants to drain, and returns retryable
+`UNKNOWN_OUTCOME` if bounded cleanup cannot be proved. A real Darwin
+`/bin/sleep` callback-failure test confirms the PID disappears and capacity is
+released; focused process-supervisor/sandbox tests pass 27/27 and the full
+real-sandbox suite passes 450/451 with one explicit host-boundary/opt-in skip.
+This closes the process-start volume-identity failure path but does not select a
+production sandbox or prove in-syscall remount and credential isolation.
+Evidence: `evidence/2026-09-14-process-supervisor-startup-abort.md`.
+
 Latest task credential-policy addendum: TaskProfiles now carry an explicit
 `credentialPolicy`; only `none` is accepted. Registry resolution, sandbox
 rendering, and isolation-proof admission reject any unsupported credential

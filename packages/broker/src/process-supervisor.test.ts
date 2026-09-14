@@ -3,6 +3,7 @@ import { mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import { ProcessSupervisor } from "./process-supervisor.js";
 
 const CWD = process.cwd();
@@ -288,6 +289,33 @@ test("process supervisor does not retain a synchronously aborted ownership run",
   const closePromise = supervisor.close();
   await closePromise;
   assert.strictEqual(supervisor.close(), closePromise);
+});
+
+test("process supervisor drains a child when startup ownership persistence fails", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Startup ownership persistence uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  await assert.rejects(
+    supervisor.run({
+      executable: "/bin/sleep",
+      args: ["10"],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 100,
+      onStarted: (value) => {
+        snapshot = value;
+        throw new Error("startup ownership persistence failed");
+      }
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+  );
+  assert.ok(snapshot);
+  await assertProcessGone(snapshot!.identity.pid);
+  assert.equal(supervisor.activeCount(), 0);
+  await supervisor.close();
 });
 
 test("process supervisor captures and recovers an exact persisted root identity", async (t) => {

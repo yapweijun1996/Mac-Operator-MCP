@@ -165,7 +165,6 @@ export class ProcessSupervisor {
       try {
         processTree.sample();
         if (processTree.observationFailed) {
-          signalProcessGroup(child, processId, "SIGKILL");
           throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
         }
         request.onStarted({
@@ -173,7 +172,8 @@ export class ProcessSupervisor {
           descendants: processTree.snapshotDescendants()
         });
       } catch (error) {
-        signalProcessGroup(child, processId, "SIGKILL");
+        const drained = await this.abortUnownedProcess(child, processId, processTree);
+        if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
         if (error instanceof BrokerError) throw error;
         throw new BrokerError("AUDIT_UNAVAILABLE", "Process identity could not be persisted");
       }
@@ -209,6 +209,31 @@ export class ProcessSupervisor {
 
   activeCount(): number {
     return this.activeProcesses;
+  }
+
+  /**
+   * A startup ownership callback runs before the process enters activeRuns.
+   * If it fails, kill the detached group and prove that the root and every
+   * observed descendant disappeared before returning the callback error.
+   */
+  private async abortUnownedProcess(
+    child: ChildProcess,
+    processId: number,
+    processTree: ProcessTreeTracker | undefined
+  ): Promise<boolean> {
+    signalProcessGroup(child, processId, "SIGKILL");
+    const deadline = Date.now() + Math.max(this.terminationGraceMs * 3, 1_000);
+    while (Date.now() < deadline) {
+      processTree?.sample();
+      const rootState = processTree?.rootState() ?? "dead";
+      const descendants = processTree?.aliveState() ?? "none";
+      const groupAlive = processGroupAlive(processId);
+      if (rootState !== "unknown" && processTree?.observationFailed !== true && descendants === "none" && !groupAlive) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+    }
+    return false;
   }
 
   /**
