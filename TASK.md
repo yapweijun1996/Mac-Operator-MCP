@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker session-concurrency addendum: source revision `d185f12` adds bounded
+request-age/clock-skew constructor validation and an in-process active-request
+cap per authenticated principal/session (default 8, maximum 64). A saturated
+session receives retryable `CONFLICT` before request persistence or audit, and
+capacity is released on success or failure. Broker focused tests pass 77/77;
+the complete physical-Darwin regression passes 584/584 with 0 skipped tests.
+This closes only the local Broker budget boundary; cross-process quotas,
+installed service packaging, and release acceptance remain open. Evidence:
+`evidence/2026-09-15-broker-session-concurrency.md`.
+
 Approval TTL-gate addendum: source revision `0ab3fc9` rejects a signed Approval
 whose TTL has already elapsed before Approval or audit persistence. Approval
 Authority/IPC tests pass 10/10 and the complete physical-Darwin regression

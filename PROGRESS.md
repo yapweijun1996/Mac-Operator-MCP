@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker session-concurrency addendum: source revision `d185f12` validates
+request-age and clock-skew limits at Broker startup and bounds active work per
+authenticated principal/session (default 8, maximum 64). Capacity rejection
+returns retryable `CONFLICT` before durable request admission or audit, and
+reservations release on every completion path. Broker focused tests pass 77/77
+and the complete physical-Darwin regression passes 584/584 with 0 skipped
+tests. Evidence: `evidence/2026-09-15-broker-session-concurrency.md`.
+
 Approval TTL-gate addendum: source revision `0ab3fc9` rejects a signed Approval
 whose own TTL has elapsed at the current Broker clock before persistence or
 audit. Approval Authority/IPC tests pass 10/10, including current-expired
