@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest transport shutdown hardening addendum: the host transport client tracks
+active exchanges, aborts them on close, and rejects post-close sends or signed
+success publication. Focused transport tests pass 15/15; the full
+physical-Darwin regression passes 571/571 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-virtualization-guest-transport-close.md`.
+
 Guest-agent shutdown hardening addendum: the guest protocol service now tracks
 each admitted request with a Broker-owned abort controller, propagates caller
 cancellation, aborts active work on close, and refuses to sign a success after

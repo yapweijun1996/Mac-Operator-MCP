@@ -3,6 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest transport shutdown hardening addendum: active host exchanges are now
+abortable during client close, with closed-state checks before send and result
+publication. Focused transport tests pass 15/15 and the complete
+physical-Darwin suite passes 571/571 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-virtualization-guest-transport-close.md`.
+
 Guest-agent shutdown hardening addendum: `VirtualizationGuestAgent` now
 tracks active task/status handlers, propagates caller aborts, aborts all active
 handlers during close, and checks authority again before response signing.

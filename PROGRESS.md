@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest transport shutdown hardening addendum: the host transport client now
+tracks active exchanges, aborts them on close, rejects a stable `CANCELLED`
+outcome, and blocks a post-admission frame send or response success after
+shutdown. Focused transport tests pass 15/15 and the full physical-Darwin
+regression passes 571/571 with 0 skipped tests. Evidence:
+`evidence/2026-09-15-virtualization-guest-transport-close.md`.
+
 Guest-agent shutdown hardening addendum: `VirtualizationGuestAgent` now owns
 an abort controller for every admitted task/status request, propagates caller
 cancellation, aborts all active work on close, and checks the close state
