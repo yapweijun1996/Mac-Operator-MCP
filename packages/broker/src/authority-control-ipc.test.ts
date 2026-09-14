@@ -174,6 +174,11 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
     assert.equal(await client.readSwitch("global"), true);
     await client.revoke("edge", "edge-1", "client-test");
     assert.equal(await client.readRevocation("edge", "edge-1"), true);
+    client.dispose();
+    await assert.rejects(
+      () => client.readSwitch("global"),
+      (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "CANCELLED"
+    );
 
     const stale = command("set_switch", 5, {
       switchName: "process" as SwitchName,
@@ -205,6 +210,7 @@ test("authority control IPC authenticates, persists replay, and applies bounded 
       const replayAfterRestart = await sendCommand(socketPath, signAuthorityControlCommand(enable, authenticationKey));
       assert.equal(replayAfterRestart.ok, false);
       if (!replayAfterRestart.ok) assert.equal(replayAfterRestart.result_class, "REPLAY_DENIED");
+      reopenedClient.dispose();
     } finally {
       await reopenedServer.close();
     }

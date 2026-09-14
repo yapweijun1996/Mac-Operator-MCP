@@ -141,17 +141,20 @@ export class AuthorityControlIpcServer {
     this.server = undefined;
     const socketIdentity = this.socketIdentity;
     this.socketIdentity = undefined;
-    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
     try {
-      if (server) {
-        await new Promise<void>((resolvePromise, reject) => server.close((error) => {
-          if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
-          else resolvePromise();
-        }));
+      const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
+      try {
+        if (server) {
+          await new Promise<void>((resolvePromise, reject) => server.close((error) => {
+            if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
+            else resolvePromise();
+          }));
+        }
+      } finally {
+        await removeDetachedSocket(detached);
       }
     } finally {
-      try { await removeDetachedSocket(detached); }
-      finally { this.authenticationKey.fill(0); }
+      this.authenticationKey.fill(0);
     }
   }
 
@@ -299,17 +302,20 @@ export function authenticateAuthorityControlResponse(
 }
 
 export class AuthorityControlIpcClient {
+  private readonly authenticationKey: Buffer;
   private readonly timeoutMs: number;
   private readonly maxResponseBytes: number;
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
   private readonly now: () => number;
+  private disposed = false;
 
   constructor(private readonly options: AuthorityControlIpcClientOptions) {
     if (!isAbsolute(options.socketPath) || resolve(options.socketPath) !== options.socketPath || options.socketPath.includes("\0")) {
       throw new Error("Authority control IPC socket path must be canonical");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Authority control IPC key must contain at least 32 bytes");
+    this.authenticationKey = Buffer.from(options.authenticationKey);
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.maxResponseBytes = options.maxResponseBytes ?? 64 * 1024;
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -321,12 +327,20 @@ export class AuthorityControlIpcClient {
     }
   }
 
+  /** Wipe the client-owned HMAC key after the host operation completes. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.authenticationKey.fill(0);
+  }
+
   async execute(command: UnsignedAuthorityControlCommand, signal?: AbortSignal): Promise<AuthorityControlSuccessResponse> {
+    if (this.disposed) throw new BrokerError("CANCELLED", "Authority control IPC client is disposed");
     validateUnsignedAuthorityControlCommand(command);
-    const signed = signAuthorityControlCommand(command, this.options.authenticationKey);
+    const signed = signAuthorityControlCommand(command, this.authenticationKey);
     const identity = await validateAuthorityControlSocketTarget(this.options.socketPath);
     const raw = await this.exchange(`${JSON.stringify(signed)}\n`, command, identity, signal);
-    const response = authenticateAuthorityControlResponse(raw, command, this.options.authenticationKey);
+    const response = authenticateAuthorityControlResponse(raw, command, this.authenticationKey);
     if (!response.ok) throw new BrokerError(response.result_class, response.error.message, response.error.retryable);
     return response as AuthorityControlSuccessResponse;
   }

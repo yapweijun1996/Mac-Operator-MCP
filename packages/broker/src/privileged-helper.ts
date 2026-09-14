@@ -520,13 +520,16 @@ export class PrivilegedHelperIpcServer {
     this.server = undefined;
     const socketIdentity = this.socketIdentity;
     this.socketIdentity = undefined;
-    const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
-    if (server) await new Promise<void>((resolvePromise, reject) => server.close((error) => {
-      if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
-      else resolvePromise();
-    }));
     try {
-      await removeDetachedSocket(detached);
+      const detached = await detachOwnedSocket(this.options.socketPath, socketIdentity);
+      try {
+        if (server) await new Promise<void>((resolvePromise, reject) => server.close((error) => {
+          if (error && (error as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") reject(error);
+          else resolvePromise();
+        }));
+      } finally {
+        await removeDetachedSocket(detached);
+      }
     } finally {
       this.authenticationKey.fill(0);
     }
