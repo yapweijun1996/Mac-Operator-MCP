@@ -17,6 +17,7 @@ import { BrokerServiceInstanceLock } from "./service-instance-lock.js";
 import { BrokerStatusIpcServer, BrokerStoreBrokerStatusReplayGuard } from "./broker-status-ipc.js";
 import { createKeychainAuditAnchorKeySource, loadAuthenticationKey } from "./credentials.js";
 import { BrokerError, sha256 } from "@mac-operator/contracts";
+import { VirtualizationGuestAttestationKeyManager } from "./virtualization-guest-attestation-keyring.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -24,7 +25,7 @@ const CONFIG_KEYS = new Set([
   "statusSocketPath", "statusKeyPath", "statusKeyDigest",
   "auditAnchorPath", "auditAnchorKeyService", "auditAnchorKeyAccount", "auditAnchorKeyId",
   "edgeId", "edgeServiceId", "expectedEdgeUid", "expectedEdgeGid", "edgeKeyConfigPath",
-  "policyBundlePath", "policySchemaDirectory", "policyVerificationKeyId", "policyVerificationKeyPath",
+  "policyBundlePath", "policySchemaDirectory", "policyVerificationKeyId", "policyVerificationKeyPath", "guestAttestationKeyConfigPath",
   "sourceRevision", "contractVersion"
 ]);
 const REVISION_PATTERN = /^[0-9a-f]{7,64}$/u;
@@ -54,6 +55,8 @@ export interface BrokerServiceStartupConfig {
   policySchemaDirectory: string;
   policyVerificationKeyId: string;
   policyVerificationKeyPath: string;
+  /** Optional startup-only trust set for signed guest provenance. */
+  guestAttestationKeyConfigPath?: string;
   sourceRevision: string;
   contractVersion: string;
 }
@@ -62,6 +65,8 @@ export interface BrokerServiceAssembly {
   readonly service: BrokerServiceEntrypoint;
   readonly store: BrokerStore;
   readonly edgeKeyring: EdgeKeyring;
+  /** Restored startup trust set, when signed guest provenance is configured. */
+  readonly guestAttestationKeyManager?: VirtualizationGuestAttestationKeyManager;
   close(): Promise<void>;
 }
 
@@ -100,6 +105,9 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
     "policyBundlePath", "policySchemaDirectory", "policyVerificationKeyPath"
   ].map((key) => [key, record[key]] as const);
   for (const [key, pathValue] of pathValues) validateCanonicalPath(pathValue, key);
+  if (record.guestAttestationKeyConfigPath !== undefined) {
+    validateCanonicalPath(record.guestAttestationKeyConfigPath, "guestAttestationKeyConfigPath");
+  }
   const packageRoot = record.packageRoot as string;
   const dataRoot = record.dataRoot as string;
   const runtimeRoot = record.runtimeRoot as string;
@@ -123,7 +131,8 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
     throw new Error("Broker service state paths must remain inside their configured roots");
   }
   if (!isDescendant(dataRoot, record.edgeKeyConfigPath as string) || !isDescendant(dataRoot, record.policyBundlePath as string) ||
-      !isDescendant(dataRoot, record.policyVerificationKeyPath as string) || !isDescendant(packageRoot, record.policySchemaDirectory as string)) {
+      !isDescendant(dataRoot, record.policyVerificationKeyPath as string) || !isDescendant(packageRoot, record.policySchemaDirectory as string) ||
+      (record.guestAttestationKeyConfigPath !== undefined && !isDescendant(dataRoot, record.guestAttestationKeyConfigPath as string))) {
     throw new Error("Broker service configuration paths must remain inside their configured roots");
   }
   if (!brokerSocketPath.endsWith(".sock")) throw new Error("Broker service socket path must end in .sock");
@@ -160,6 +169,7 @@ export function validateBrokerServiceStartupConfig(value: unknown): BrokerServic
     policySchemaDirectory: record.policySchemaDirectory as string,
     policyVerificationKeyId: record.policyVerificationKeyId as string,
     policyVerificationKeyPath: record.policyVerificationKeyPath as string,
+    ...(record.guestAttestationKeyConfigPath === undefined ? {} : { guestAttestationKeyConfigPath: record.guestAttestationKeyConfigPath as string }),
     sourceRevision: record.sourceRevision as string,
     contractVersion: record.contractVersion as string
   };
@@ -182,6 +192,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
   let instanceLock: BrokerServiceInstanceLock | undefined;
   let store: BrokerStore | undefined;
   let edgeKeyring: EdgeKeyring | undefined;
+  let guestAttestationKeyManager: VirtualizationGuestAttestationKeyManager | undefined;
   let broker: Broker | undefined;
   let service: BrokerServiceEntrypoint | undefined;
   let statusChannel: BrokerStatusIpcServer | undefined;
@@ -205,6 +216,19 @@ export async function createBrokerServiceFromStartupConfig(options: {
       }
     });
     store = activeStore;
+    if (config.guestAttestationKeyConfigPath !== undefined) {
+      guestAttestationKeyManager = new VirtualizationGuestAttestationKeyManager(
+        config.guestAttestationKeyConfigPath,
+        activeStore,
+        now,
+        5_000,
+        24 * 60 * 60 * 1_000,
+        config.dataRoot
+      );
+      // Startup never silently activates a new trust set. An exact persisted
+      // revision/digest must already exist before listeners or recovery run.
+      await guestAttestationKeyManager.restore();
+    }
     const verifier = await PolicyBundleVerifier.createFromKeyFile({
       schemaDirectory: config.policySchemaDirectory,
       expectedKeyId: config.policyVerificationKeyId,
@@ -299,6 +323,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
       service,
       store: activeStore,
       edgeKeyring,
+      ...(guestAttestationKeyManager === undefined ? {} : { guestAttestationKeyManager }),
       async close() {
         let firstError: unknown;
         try {
@@ -385,6 +410,9 @@ async function assertStartupDirectories(config: BrokerServiceStartupConfig): Pro
   await assertStartupTarget(config.dataRoot, config.edgeKeyConfigPath);
   await assertStartupTarget(config.dataRoot, config.policyBundlePath);
   await assertStartupTarget(config.dataRoot, config.policyVerificationKeyPath);
+  if (config.guestAttestationKeyConfigPath !== undefined) {
+    await assertStartupTarget(config.dataRoot, config.guestAttestationKeyConfigPath);
+  }
 }
 
 async function assertStartupTarget(root: string, target: string): Promise<void> {

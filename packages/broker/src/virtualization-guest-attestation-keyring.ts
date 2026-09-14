@@ -1,6 +1,6 @@
-import { constants, lstat, open, rename, unlink } from "node:fs/promises";
+import { constants, lstat, open, realpath, rename, unlink } from "node:fs/promises";
 import { createPrivateKey, createPublicKey, randomUUID } from "node:crypto";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import {
   VirtualizationGuestAttestationVerifier,
@@ -51,11 +51,12 @@ export class VirtualizationGuestAttestationKeyManager {
     private readonly store: BrokerStore,
     private readonly now: () => number = Date.now,
     private readonly allowedClockSkewMs = 5_000,
-    private readonly maxAttestationLifetimeMs = 24 * 60 * 60 * 1_000
+    private readonly maxAttestationLifetimeMs = 24 * 60 * 60 * 1_000,
+    private readonly allowedRoot?: string
   ) {}
 
   async activate(expectedPreviousRevision?: number): Promise<LoadedVirtualizationGuestAttestationKeyConfig> {
-    const loaded = await loadVirtualizationGuestAttestationKeyConfig(this.configPath);
+    const loaded = await loadVirtualizationGuestAttestationKeyConfig(this.configPath, this.allowedRoot);
     const persisted = this.store.activeGuestAttestationKeyConfigIdentity();
     const persistedRevision = persisted?.revision ?? 0;
     const expected = expectedPreviousRevision ?? persistedRevision;
@@ -81,7 +82,7 @@ export class VirtualizationGuestAttestationKeyManager {
   }
 
   async restore(): Promise<LoadedVirtualizationGuestAttestationKeyConfig> {
-    const loaded = await loadVirtualizationGuestAttestationKeyConfig(this.configPath);
+    const loaded = await loadVirtualizationGuestAttestationKeyConfig(this.configPath, this.allowedRoot);
     const persisted = this.store.activeGuestAttestationKeyConfigIdentity();
     if (!persisted || persisted.revision !== loaded.document.revision || persisted.payloadDigest !== loaded.payloadDigest) {
       throw new BrokerError("PRECONDITION_FAILED", "Guest attestation key configuration does not match persisted activation");
@@ -94,7 +95,7 @@ export class VirtualizationGuestAttestationKeyManager {
     expectedCurrentRevision: number;
     reasonCode: string;
   }): Promise<LoadedVirtualizationGuestAttestationKeyConfig> {
-    const loaded = await loadVirtualizationGuestAttestationKeyConfig(this.configPath);
+    const loaded = await loadVirtualizationGuestAttestationKeyConfig(this.configPath, this.allowedRoot);
     const historical = this.store.guestAttestationKeyConfigHistoryIdentity(loaded.document.revision);
     if (!historical || historical.payloadDigest !== loaded.payloadDigest) {
       throw new BrokerError("PRECONDITION_FAILED", "Guest attestation key rollback target does not match verified history");
@@ -140,8 +141,12 @@ export class VirtualizationGuestAttestationKeyManager {
 }
 
 export async function loadVirtualizationGuestAttestationKeyConfig(
-  path: string
+  path: string,
+  allowedRoot?: string
 ): Promise<LoadedVirtualizationGuestAttestationKeyConfig> {
+  if (allowedRoot !== undefined && (!isAbsolute(allowedRoot) || resolve(allowedRoot) !== allowedRoot || allowedRoot.includes("\0"))) {
+    throw new Error("Guest attestation key root must be canonical and absolute");
+  }
   const document = parseConfig(await readProtectedConfig(path));
   const identities = new Set<string>();
   const paths = new Set<string>();
@@ -152,6 +157,9 @@ export async function loadVirtualizationGuestAttestationKeyConfig(
     }
     identities.add(entry.keyId);
     paths.add(entry.path);
+    if (allowedRoot !== undefined && !isWithinRoot(allowedRoot, entry.path)) {
+      throw new Error(`Guest attestation public key path escapes its configured root: ${entry.keyId}`);
+    }
     const publicKeyPem = await readProtectedPublicKey(entry.path);
     try {
       createPrivateKey(publicKeyPem);
@@ -176,6 +184,11 @@ export async function loadVirtualizationGuestAttestationKeyConfig(
   return { document, keys, payloadDigest: sha256(canonicalJson(document)) };
 }
 
+function isWithinRoot(root: string, target: string): boolean {
+  const child = relative(root, target);
+  return child.length > 0 && child !== ".." && !child.startsWith("..") && !isAbsolute(child);
+}
+
 /** Atomically writes metadata; guest private signing keys never enter this file. */
 export async function writeVirtualizationGuestAttestationKeyConfig(
   path: string,
@@ -185,7 +198,7 @@ export async function writeVirtualizationGuestAttestationKeyConfig(
   if (!isAbsolute(path) || resolve(path) !== path || path.includes("\0")) {
     throw new Error("Guest attestation key config path must be canonical and absolute");
   }
-  await assertProtectedSecretDirectory(dirname(path));
+  await assertCanonicalProtectedDirectory(dirname(path));
   const content = Buffer.from(`${canonicalJson(document)}\n`, "utf8");
   if (content.byteLength > MAX_CONFIG_BYTES) throw new Error("Guest attestation key config is too large");
   await rejectUnsafeExistingConfig(path);
@@ -218,7 +231,7 @@ async function readProtectedConfig(path: string): Promise<Buffer> {
   if (!isAbsolute(path) || resolve(path) !== path || path.includes("\0")) {
     throw new Error("Guest attestation key config path must be canonical and absolute");
   }
-  await assertProtectedSecretDirectory(dirname(path));
+  await assertCanonicalProtectedDirectory(dirname(path));
   const pathStat = await lstat(path);
   const currentUid = process.getuid?.();
   if (!pathStat.isFile() || pathStat.isSymbolicLink()) {
@@ -249,7 +262,7 @@ async function readProtectedPublicKey(path: string): Promise<Buffer> {
   if (!isAbsolute(path) || resolve(path) !== path || path.includes("\0")) {
     throw new Error("Guest attestation public key path must be canonical and absolute");
   }
-  await assertProtectedSecretDirectory(dirname(path));
+  await assertCanonicalProtectedDirectory(dirname(path));
   const pathStat = await lstat(path);
   const currentUid = process.getuid?.();
   if (!pathStat.isFile() || pathStat.isSymbolicLink()) {
@@ -333,4 +346,9 @@ function validateEntry(value: unknown): void {
       !Number.isSafeInteger(record.expiresAtMs) || (record.expiresAtMs as number) <= (record.notBeforeMs as number)) {
     throw new Error("Guest attestation key config entry is malformed");
   }
+}
+
+async function assertCanonicalProtectedDirectory(path: string): Promise<void> {
+  await assertProtectedSecretDirectory(path);
+  if (await realpath(path) !== path) throw new Error("Guest attestation key directory must be canonical");
 }

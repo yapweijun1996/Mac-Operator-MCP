@@ -24,6 +24,7 @@ import {
   type BrokerServiceStartupConfig
 } from "./service-startup.js";
 import { readBrokerStatus } from "./broker-status-ipc.js";
+import { VirtualizationGuestAttestationKeyManager, writeVirtualizationGuestAttestationKeyConfig, type VirtualizationGuestAttestationKeyConfig } from "./virtualization-guest-attestation-keyring.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -36,6 +37,8 @@ test("Broker service startup config is strict, canonical, and root-bound", () =>
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, policyBundlePath: "/Users/operator/other/policy.json" }), /configured roots/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, edgeServiceId: "system/com.mac-operator.edge" }), /launchd identity/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, expectedEdgeUid: 0 }), /positive non-root/u);
+  assert.equal(validateBrokerServiceStartupConfig({ ...config, guestAttestationKeyConfigPath: join(config.dataRoot, "guest-attestation-keys.json") }).guestAttestationKeyConfigPath, join(config.dataRoot, "guest-attestation-keys.json"));
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, guestAttestationKeyConfigPath: "/Users/operator/other/guest-keys.json" }), /configured roots/u);
 });
 
 test("Broker service startup config loader rejects weak and symlinked files", async () => {
@@ -66,11 +69,15 @@ test("Broker service startup restores signed authority before native runtime sta
   await mkdir(dataRoot, { mode: 0o700 });
   await mkdir(runtimeRoot, { mode: 0o700 });
   const now = Date.now();
-  let config = baseConfig(repositoryRoot, await realpath(dataRoot), await realpath(runtimeRoot));
+  const canonicalDataRoot = await realpath(dataRoot);
+  const canonicalRuntimeRoot = await realpath(runtimeRoot);
+  let config = baseConfig(repositoryRoot, canonicalDataRoot, canonicalRuntimeRoot);
   const keyPath = join(dataRoot, "edge.key");
   const edgeConfigPath = join(dataRoot, "edge-keys.json");
   const policyKeyPath = join(dataRoot, "policy-key.pem");
   const policyBundlePath = join(dataRoot, "policy.json");
+  const guestKeyPath = join(canonicalDataRoot, "guest-key.pem");
+  const guestKeyConfigPath = join(canonicalDataRoot, "guest-attestation-keys.json");
   const databasePath = config.brokerDatabasePath;
   let activationStore: BrokerStore | undefined;
   let assembly: Awaited<ReturnType<typeof createBrokerServiceFromStartupConfig>> | undefined;
@@ -100,6 +107,21 @@ test("Broker service startup restores signed authority before native runtime sta
     const document = policyDocument(now);
     const bundle = signedBundle(document, keyPair.privateKey);
     await writeFile(policyBundlePath, `${JSON.stringify(bundle)}\n`, { mode: 0o600 });
+    const guestKeys = generateKeyPairSync("ed25519");
+    const guestPublicKey = Buffer.from(guestKeys.publicKey.export({ type: "spki", format: "pem" }));
+    await writeFile(guestKeyPath, guestPublicKey, { mode: 0o600 });
+    const guestKeyConfig: VirtualizationGuestAttestationKeyConfig = {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        keyId: "guest-key-1",
+        path: guestKeyPath,
+        publicKeyDigest: sha256(guestPublicKey),
+        notBeforeMs: now - 1_000,
+        expiresAtMs: now + 60_000
+      }]
+    };
+    await writeVirtualizationGuestAttestationKeyConfig(guestKeyConfigPath, guestKeyConfig);
     const auditAnchor = {
       path: config.auditAnchorPath,
       keySource: createKeychainAuditAnchorKeySource(
@@ -120,6 +142,9 @@ test("Broker service startup restores signed authority before native runtime sta
     const verified = verifier.verify(bundle);
     const policyManager = new PolicyManager(createDefaultPolicy("edge-1"), activationStore, () => now);
     policyManager.activate(verified);
+    const guestManager = new VirtualizationGuestAttestationKeyManager(guestKeyConfigPath, activationStore, () => now);
+    await guestManager.activate();
+    config = { ...config, guestAttestationKeyConfigPath: guestKeyConfigPath };
     activationStore.close();
     activationStore = undefined;
 
@@ -130,6 +155,7 @@ test("Broker service startup restores signed authority before native runtime sta
     });
     assert.equal(assembly.service.readback().policyVersion, "policy-1");
     assert.ok(assembly.service.readback().enabledCapabilities.includes("mac_health"));
+    assert.equal(assembly.guestAttestationKeyManager?.current().document.revision, 1);
     await assembly.service.start();
     assert.equal(assembly.service.readback().runtimeState, "running");
     assert.equal((await stat(config.statusSocketPath)).isSocket(), true);

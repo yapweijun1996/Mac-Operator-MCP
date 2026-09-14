@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { chmod, lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
@@ -62,7 +62,8 @@ function signed(value: VirtualizationGuestAttestation, privateKey: ReturnType<ty
 }
 
 test("guest attestation key config is protected, digest-bound, and reloadable", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-config-"));
+  let directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-config-"));
+  directory = await realpath(directory);
   const configPath = join(directory, "guest-attestation-keys.json");
   const keyPath = join(directory, "guest-key-1.pem");
   const keys = generateKeyPairSync("ed25519");
@@ -88,7 +89,8 @@ test("guest attestation key config is protected, digest-bound, and reloadable", 
 });
 
 test("guest attestation key manager persists activation, revocation, restore, and rollback", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-manager-"));
+  let directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-manager-"));
+  directory = await realpath(directory);
   const configPath = join(directory, "guest-attestation-keys.json");
   const firstPath = join(directory, "guest-key-1.pem");
   const secondPath = join(directory, "guest-key-2.pem");
@@ -142,7 +144,8 @@ test("guest attestation key manager persists activation, revocation, restore, an
 });
 
 test("guest attestation key config rejects duplicate paths and symlinked configs", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-deny-"));
+  let directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-deny-"));
+  directory = await realpath(directory);
   const configPath = join(directory, "guest-attestation-keys.json");
   const linkPath = join(directory, "guest-attestation-link.json");
   const keyPath = join(directory, "guest-key.pem");
@@ -158,13 +161,21 @@ test("guest attestation key config rejects duplicate paths and symlinked configs
     await writeVirtualizationGuestAttestationKeyConfig(configPath, { schemaVersion: "0.1", revision: 1, keys: [entry("guest-key-1", keyPath, digest)] });
     await symlink(configPath, linkPath);
     await assert.rejects(loadVirtualizationGuestAttestationKeyConfig(linkPath), /non-symlink/u);
+    const escapedConfigPath = join(directory, "escaped.json");
+    await writeVirtualizationGuestAttestationKeyConfig(escapedConfigPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [entry("guest-key-escape", resolve(directory, "..", "escape.pem"), digest)]
+    });
+    await assert.rejects(loadVirtualizationGuestAttestationKeyConfig(escapedConfigPath, directory), /escapes its configured root/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
 test("guest attestation key loader rejects private-key files", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-private-"));
+  let directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-attestation-private-"));
+  directory = await realpath(directory);
   const configPath = join(directory, "guest-attestation-keys.json");
   const keyPath = join(directory, "guest-key-private.pem");
   const keys = generateKeyPairSync("ed25519");
