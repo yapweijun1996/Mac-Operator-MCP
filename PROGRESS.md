@@ -17,7 +17,7 @@ Physical helper signing, root-domain installation, real adapters, and
 production enablement remain open. Evidence:
 `evidence/2026-09-15-privileged-broker-dispatch.md`.
 
-Post-dispatch physical regression addendum: source revision `d3c90c3` runs the
+Post-dispatch physical regression addendum: source revision `9e76a9c` runs the
 non-overlapping built suite at 601/601 with zero skips and zero failures under
 `MOPS_REAL_INSTALL=1`, `MOPS_REAL_KEYCHAIN=1`, and `MOPS_REAL_SANDBOX=1`.
 This confirms the privileged dispatch wiring did not regress the existing
