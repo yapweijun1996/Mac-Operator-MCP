@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -8,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
+import { provisionKeychainAuthenticationKey, retireKeychainAuthenticationKey } from "./credentials.js";
 import { buildSandboxExecArguments, renderTaskSandboxProfile } from "./sandbox-profile.js";
 import { SandboxExecTaskRunner, type TaskIsolationProof } from "./task-runner.js";
 import type { ProcessExecutionRequest } from "./process-supervisor.js";
@@ -623,6 +625,39 @@ test("real macOS single-process profile denies a hostile fork and session escape
     assert.match(result.stdout, /fork-denied/u);
     await assert.rejects(readFile(marker, "utf8"), { code: "ENOENT" });
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real macOS sandbox denies a Broker-owned Keychain canary to a task process", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1" || process.env.MOPS_REAL_KEYCHAIN !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-keychain-"));
+  const root = await realpath(directory);
+  const service = "com.mac-operator.sandbox-canary";
+  const account = `canary:${randomUUID()}`;
+  let digest: string | undefined;
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof()
+  });
+  try {
+    const provisioned = await provisionKeychainAuthenticationKey(service, account, process.execPath);
+    digest = provisioned.digest;
+    const result = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.keychain-canary",
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/usr/bin/security",
+        args: ["find-generic-password", "-s", service, "-a", account, "-w"]
+      }
+    }, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.notEqual(result.resultClass, "SUCCEEDED");
+    assert.equal(result.stdout, "");
+  } finally {
+    if (digest !== undefined) await retireKeychainAuthenticationKey(service, account, digest);
     await rm(directory, { recursive: true, force: true });
   }
 });
