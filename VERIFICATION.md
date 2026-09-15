@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged cancellation and lease verification: source revision `70fd587`
+closes the pre-dispatch cancellation race, rechecks cancellation after helper
+command signing, preserves `UNKNOWN_OUTCOME` when cancellation occurs after
+helper dispatch, and proves bounded lease renewal for long helper calls. The
+focused executor/dispatch suite passes 12/12. The latest physical
+non-overlapping regression passes 606/606 with zero skips and zero failures
+under all three physical gates; the existing Broker/Persistence process was
+not restarted. Evidence:
+`evidence/2026-09-15-privileged-cancellation-lease-regression.md`.
+
 Privileged Broker dispatch verification: source revision `1f7451b` connects all
 three L5 contracts to normalized payload planning, explicit approval intent,
 Broker-owned Job lease transitions, and the separately authenticated helper

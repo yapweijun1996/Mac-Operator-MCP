@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged cancellation/lease addendum: source revision `70fd587` closes the
+running-Job cancellation race before helper IPC, rechecks cancellation after
+command signing, retains `UNKNOWN_OUTCOME` after a command may have crossed
+the helper boundary, and renews long helper leases at a bounded interval. The
+focused executor/dispatch suite passes 12/12. The latest physical
+non-overlapping suite passes 606/606 with zero skips and zero failures under
+the install, Keychain, and sandbox gates; the existing Broker/Persistence
+process remained undisturbed. This remains fail-closed candidate behavior:
+the default helper/policy are disabled and no privileged operation was run.
+Evidence: `evidence/2026-09-15-privileged-cancellation-lease-regression.md`.
+
 Privileged Broker dispatch addendum: source revision `1f7451b` wires all three
 L5 contracts through Broker planning, normalized payload validation, approval
 intent, Broker-owned Job creation/lease, and the separately authenticated
