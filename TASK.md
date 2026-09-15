@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process executable permission addendum: commit `3dc9219` rejects executable
+files with group/other write bits before child spawn and adds a focused
+regression; build, lint, and ProcessSupervisor tests pass 35/35. This is a
+preflight hardening boundary only and does not close descriptor/fexec,
+remount, or production task-runner evidence. Evidence:
+`evidence/2026-09-15-process-executable-permissions.md`.
+
 Packaged-service host addendum: source revision `42992e1` passes the physical
 Darwin `MOPS_REAL_INSTALL=1 node --test
 packages/broker/dist/packaged-service-smoke.test.js` smoke (1/1). Temporary
