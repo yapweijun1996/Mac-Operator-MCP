@@ -4,6 +4,20 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-042 Docker CLI code-signature addendum at source revision `60868eb`: the
+Broker default requires the fixed Docker adapter to verify the canonical CLI
+with strict `/usr/bin/codesign` commands, an empty environment, bounded
+budgets, and the Broker-owned Docker Inc identity (`Identifier=docker`,
+`TeamIdentifier=9BNSXJN65R`) before status, inspect, or logs. Missing,
+malformed, duplicate, or mismatched fields fail closed as `POLICY_DENIED`
+without returning raw signature output. Focused Docker tests pass 16/16 with
+one explicit opt-in skip; physical signature/status/inspect readback passes
+1/1. This closes current code-signature identity evidence only; notarization,
+kernel-held descriptor execution, atomic signature-to-exec binding, native
+daemon/socket isolation, VM isolation, mutation, and production evidence
+remain open. Evidence:
+`evidence/2026-09-16-docker-code-signature.md`.
+
 MOP-042 Docker object-identity addendum at source revision `13537e6`: the
 Docker inspect adapter and Broker response boundary bind returned metadata to
 the requested target before success. Exact IDs and one-way short hexadecimal
@@ -16,8 +30,9 @@ before invocation, and the Inspect/Logs contracts encode the same boundary.
 Focused identity/parser tests pass 14/14, the Broker
 mismatch test passes 1/1, and the physical Docker Desktop status/inspect
 readback passes 1/1. Same-name replacement races, kernel object handles,
-native daemon/socket isolation, code-signature provenance, mutation, and
-production evidence remain open. Evidence:
+native daemon/socket isolation, mutation, and production evidence remain open;
+code-signature provenance is covered by the newer `60868eb` addendum above.
+Evidence:
 `evidence/2026-09-16-docker-object-identity.md`.
 
 MOP-042 executable-boundary addendum at source revision `ff4f4d6`: the shared
@@ -25,8 +40,9 @@ ProcessSupervisor preserves root-owned execution by default and admits the
 Docker CLI only through a fixed Broker-listed canonical user-owned path with
 owner-only write permissions and an internal adapter flag. Focused tests pass
 49/49 with one explicit opt-in skip; the physical Docker Desktop readback
-passes 1/1. Code-signature provenance, native daemon isolation, OS-level
-socket denial, and production deployment remain open. Evidence:
+passes 1/1. Native daemon isolation, OS-level socket denial, and production
+deployment remain open; code-signature provenance is covered by the newer
+`60868eb` addendum above. Evidence:
 `evidence/2026-09-16-docker-cli-executable-boundary.md`.
 
 MOP-042 real Docker readback addendum at source revision `a0c753a`: Docker

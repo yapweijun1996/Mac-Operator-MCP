@@ -4,6 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Docker CLI code-signature addendum at source revision `60868eb`: the Broker
+default now requires `DockerInspectorImpl` to verify the canonical Docker CLI
+with fixed `/usr/bin/codesign` commands, an empty environment, bounded
+budgets, and the Broker-owned Docker Inc identity (`Identifier=docker`,
+`TeamIdentifier=9BNSXJN65R`) before status, inspect, or logs. Missing,
+malformed, duplicate, or mismatched readback fails closed as `POLICY_DENIED`
+without returning raw codesign output. Focused Docker tests pass 16/16 with
+one explicit opt-in skip; the physical signature/status/inspect readback
+passes 1/1. This proves current signature identity only, not notarization,
+kernel-held descriptor execution, atomic signature-to-exec binding, native
+daemon isolation, host socket denial, VM isolation, mutation, or production
+evidence. Evidence: `evidence/2026-09-16-docker-code-signature.md`.
+
 Docker inspect object-identity addendum at source revision `13537e6`: the
 fixed adapter and Broker boundary now bind a response to the requested Docker
 target before serialization. Exact IDs and one-way bounded hexadecimal
@@ -20,7 +33,7 @@ passes 1/1, the physical Docker Desktop status/inspect readback passes 1/1,
 and typecheck passes. This narrows result substitution but is not a
 kernel-held Docker object handle; same-name replacement between name
 resolution and command execution, native macOS daemon isolation, socket
-denial, code-signature provenance, mutation, and production evidence remain
+denial, mutation, and production evidence remain
 open. Evidence: `evidence/2026-09-16-docker-object-identity.md`.
 
 Docker CLI executable-boundary addendum at source revision `ff4f4d6`: the
@@ -29,9 +42,10 @@ fixed Docker adapter may use only a Broker-listed canonical app-bundle path
 owned by the current user with owner-only write permissions. The explicit
 exception is not available through MCP arguments or task profiles. Focused
 ProcessSupervisor/Docker tests pass 49/49 with one explicit opt-in skip, and
-the physical Docker Desktop readback passes 1/1. Docker code-signature
-provenance, native macOS daemon isolation, OS-level socket denial, and
-production deployment remain open. Evidence:
+the physical Docker Desktop readback passes 1/1. Native macOS daemon
+isolation, OS-level socket denial, and production deployment remain open;
+code-signature provenance is covered by the newer `60868eb` addendum above.
+Evidence:
 `evidence/2026-09-16-docker-cli-executable-boundary.md`.
 
 Real Docker readback addendum at source revision `a0c753a`: the strict local
