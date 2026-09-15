@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Descriptor launch capability-gate addendum: source revision `07ba885` adds a
+versioned host-owned descriptor-execution capability record and a stable
+`POLICY_DENIED` requirement gate. Availability requires both a native
+descriptor launcher and an attestation of immutable executable selection and
+close-on-exec behavior; missing or malformed adapter support stays unavailable
+and never falls back to pathname execution. The physical Darwin adapter lacks
+those optional exports, so the focused capability suite passes 3/3 with the
+gate denied, while typecheck and lint pass. This is an explicit fail-closed
+boundary, not a kernel launcher implementation; descriptor/fexec, remount, and
+production task enablement remain open. Evidence:
+`evidence/2026-09-15-descriptor-launch-capability-gate.md`.
+
 Serial physical regression addendum: source revision `339d932` passes 630/630
 tests with 0 skips and 0 failures under
 `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1`, using

@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Descriptor launch capability-gate addendum: source revision `07ba885` adds a
+versioned host-owned descriptor-execution capability contract and a stable
+fail-closed requirement gate. The gate requires a native launcher and
+attestation of immutable executable selection plus close-on-exec behavior;
+missing/malformed adapter support cannot silently fall back to pathname
+execution. The physical Darwin adapter has no such exports and the focused
+3/3 suite records the denial. This is boundary hardening only; descriptor/
+fexec, remount, immutable-snapshot, and production `mac_task_run` evidence
+remain open. Evidence:
+`evidence/2026-09-15-descriptor-launch-capability-gate.md`.
+
 Serial physical regression addendum: source revision `339d932` passes 630/630
 non-overlapping tests with 0 skips and 0 failures under the install, sandbox,
 and Keychain opt-ins. The three existing long-running Broker/persistence/

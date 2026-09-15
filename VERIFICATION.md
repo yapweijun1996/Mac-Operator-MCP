@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Descriptor launch capability-gate verification at source revision `07ba885`
+adds a versioned host-owned capability record. The requirement gate accepts
+only a native descriptor launcher plus attested immutable executable
+selection and close-on-exec properties; missing or malformed support returns
+unavailable and stable `POLICY_DENIED`, with no pathname fallback. On the
+physical Darwin host the optional native exports are absent, so the focused
+suite passes 3/3; typecheck and lint pass. This records and enforces the
+fail-closed boundary but does not close `VT-FS-02`, remount resistance, or
+production task enablement. Evidence:
+`evidence/2026-09-15-descriptor-launch-capability-gate.md`.
+
 Serial physical-Darwin regression at source revision `339d932` passes 630/630
 with 0 skips and 0 failures under the install, sandbox, and Keychain opt-ins,
 serializing test execution. It covers the root-owned fixed-adapter executable
