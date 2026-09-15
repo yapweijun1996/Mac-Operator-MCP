@@ -240,6 +240,24 @@ test("privileged helper nested result and payload records reject non-data fields
       operation: "service_control", targetRef: "service:system/com.example.test", state: "completed", resultClass: "SUCCEEDED",
       evidence: {}, warnings: [], truncated: false, verification: verification as never
     }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+
+  assert.throws(
+    () => validatePrivilegedHelperExecutionResult({
+      operation: "service_control", targetRef: "service:system/com.example.test", state: "completed", resultClass: "SUCCEEDED",
+      evidence: {}, warnings: [], truncated: false, verification: { status: "verified", strategy: "allowlisted_postcondition" },
+      extra: "must-be-rejected"
+    } as never),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+
+  assert.throws(
+    () => validatePrivilegedHelperExecutionResult({
+      operation: "service_control", targetRef: "service:system/com.example.test", state: "completed", resultClass: "SUCCEEDED",
+      evidence: {}, warnings: [], truncated: false,
+      verification: { status: "verified", strategy: "allowlisted_postcondition", extra: "must-be-rejected" }
+    } as never),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
   );
 

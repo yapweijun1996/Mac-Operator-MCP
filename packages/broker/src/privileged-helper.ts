@@ -916,6 +916,7 @@ export function authenticatePrivilegedHelperStatusResponse(
   }
   if (response.ok !== false || typeof response.resultClass !== "string" || !isHelperErrorClass(response.resultClass) ||
       !isPlainDataRecord(response.error) ||
+      !hasExactKeys(response.error as Record<string, unknown>, ["message", "retryable"]) ||
       typeof (response.error as Record<string, unknown>).message !== "string" ||
       typeof (response.error as Record<string, unknown>).retryable !== "boolean" ||
       !boundedStatusMessage((response.error as Record<string, unknown>).message as string)) {
@@ -1141,13 +1142,13 @@ export function validatePrivilegedHelperExecutionResult(
   result: PrivilegedHelperExecutionResult,
   command?: Pick<UnsignedPrivilegedHelperCommand, "operation" | "targetRef">
 ): PrivilegedHelperExecutionResult {
-  if (!isPlainDataRecord(result) ||
+  if (!isPlainDataRecord(result) || !hasExactKeys(result, ["operation", "targetRef", "state", "resultClass", "evidence", "warnings", "truncated", "verification"]) ||
       !["service_control", "package_install", "power"].includes(result.operation) ||
       !["accepted", "completed", "failed", "cancelled", "unknown"].includes(result.state) ||
       !["SUCCEEDED", "EXECUTION_FAILED", "CANCELLED", "TIMEOUT", "VERIFICATION_FAILED", "UNKNOWN_OUTCOME"].includes(result.resultClass) ||
       !validTarget(result.operation, result.targetRef) || !isEvidenceRecord(result.evidence) ||
       !Array.isArray(result.warnings) || result.warnings.length > MAX_WARNINGS || result.warnings.some((warning) => typeof warning !== "string" || warning.length < 1 || warning.length > 512 || warning.includes("\0")) ||
-      typeof result.truncated !== "boolean" || !isPlainDataRecord(result.verification) ||
+      typeof result.truncated !== "boolean" || !isPlainDataRecord(result.verification) || !hasExactKeys(result.verification, ["status", "strategy"], ["summary", "readbackHash"]) ||
       !["verified", "failed", "unknown"].includes(result.verification.status) || result.verification.strategy !== "allowlisted_postcondition") {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper returned a malformed result");
   }
@@ -1188,6 +1189,12 @@ export function authenticatePrivilegedHelperResponse(
   if (response.commandId !== command.commandId || response.requestId !== command.requestId || typeof response.responseProof !== "string") {
     throw new BrokerError("AUTH_INVALID", "Privileged helper response identity is invalid");
   }
+  const successKeys = ["ok", "commandId", "requestId", "result", "responseProof"];
+  const failureKeys = ["ok", "commandId", "requestId", "resultClass", "error", "responseProof"];
+  const expectedKeys = response.ok === true ? successKeys : response.ok === false ? failureKeys : [];
+  if (expectedKeys.length === 0 || !hasExactKeys(response, expectedKeys)) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper response fields are malformed");
+  }
   const body = { ...response };
   delete body.responseProof;
   if (!safeEqualHex(response.responseProof as string, responseProof(command, body, authenticationKey))) {
@@ -1199,7 +1206,9 @@ export function authenticatePrivilegedHelperResponse(
     return { ...(response as unknown as PrivilegedHelperSuccessResponse), result };
   }
   if (response.ok !== false || typeof response.resultClass !== "string" || !isPlainDataRecord(response.error) ||
-      typeof (response.error as Record<string, unknown>).message !== "string" || typeof (response.error as Record<string, unknown>).retryable !== "boolean") {
+      !hasExactKeys(response.error as Record<string, unknown>, ["message", "retryable"]) ||
+      typeof (response.error as Record<string, unknown>).message !== "string" || typeof (response.error as Record<string, unknown>).retryable !== "boolean" ||
+      !boundedStatusMessage((response.error as Record<string, unknown>).message as string)) {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper failure is malformed");
   }
   if (!(Object.values(["AUTH_REQUIRED", "AUTH_INVALID", "AUTH_EXPIRED", "REPLAY_DENIED", "REVOKED", "SCOPE_DENIED", "SECRET_BOUNDARY_DENIED", "PATH_DENIED", "NETWORK_DENIED", "PRIVILEGE_DENIED", "POLICY_DENIED", "TARGET_NOT_FOUND", "PRECONDITION_FAILED", "CONFLICT", "TIMEOUT", "OUTPUT_LIMIT", "CANCELLED", "EXECUTION_FAILED", "VERIFICATION_FAILED", "AUDIT_UNAVAILABLE", "UNKNOWN_OUTCOME", "UNSUPPORTED_CAPABILITY"] as const) as readonly string[]).includes(response.resultClass as string)) {
@@ -1476,6 +1485,12 @@ function isEvidenceRecord(value: unknown): value is Readonly<Record<string, stri
   return entries.every(([key, entry]) => /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/u.test(key) &&
     (entry === null || typeof entry === "boolean" || (typeof entry === "number" && Number.isFinite(entry) && Math.abs(entry) <= Number.MAX_SAFE_INTEGER) ||
       (typeof entry === "string" && entry.length <= 512 && !entry.includes("\0") && !/[\r\n]/u.test(entry))));
+}
+
+function hasExactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
+  const allowed = new Set([...required, ...optional]);
+  const keys = Object.keys(value);
+  return required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) && keys.every((key) => allowed.has(key));
 }
 
 function safeEqualHex(actual: string, expected: string): boolean {
