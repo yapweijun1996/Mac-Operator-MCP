@@ -1,6 +1,7 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { BrokerError, parseJsonStrict } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { redactBoundedText, redactLogText } from "./secret-policy.js";
 
 const DOCKER_EXECUTABLE_CANDIDATES = [
@@ -27,6 +28,14 @@ const SAFE_ENVIRONMENT = {
   DOCKER_HOST,
   HOME: DOCKER_HOME
 } as const;
+const CONTAINER_RECORD_FIELDS = new Set([
+  "ID", "Id", "Names", "State", "Image", "Command", "CreatedAt", "CreatedSince", "RunningFor",
+  "Ports", "Status", "Labels", "LocalVolumes", "Mounts", "Networks", "Size"
+]);
+const IMAGE_RECORD_FIELDS = new Set([
+  "ID", "Id", "Repository", "Name", "Tag", "Digest", "CreatedAt", "CreatedSince", "Size",
+  "SharedSize", "UniqueSize", "VirtualSize", "Containers"
+]);
 
 export type DockerObjectType = "container" | "image" | "network" | "volume";
 
@@ -254,11 +263,12 @@ function parseContainerLines(output: string, warnings: string[]): SafeDockerCont
   for (const line of boundedLines(output, MAX_ITEMS)) {
     if (!line.trim()) continue;
     const value = parseJsonObject(line, warnings);
-    const id = safeDockerId(value?.ID ?? value?.Id);
-    if (!id) continue;
-    const state = parseContainerState(value?.State);
-    const name = boundedValue(value?.Names, 256);
-    containers.push({ id, state, ...(name ? { name } : {}) });
+    const parsed = value ? parseDockerContainerRecord(value) : undefined;
+    if (!parsed) {
+      warnings.push("Some Docker container records were outside the supported shape and were omitted");
+      continue;
+    }
+    containers.push(parsed);
   }
   if (boundedLines(output, MAX_ITEMS + 1).length > MAX_ITEMS) warnings.push("Docker container results were capped");
   return containers;
@@ -269,11 +279,12 @@ function parseImageLines(output: string, warnings: string[]): SafeDockerImage[] 
   for (const line of boundedLines(output, MAX_ITEMS)) {
     if (!line.trim()) continue;
     const value = parseJsonObject(line, warnings);
-    const id = safeDockerId(value?.ID ?? value?.Id);
-    if (!id) continue;
-    const name = boundedValue(value?.Repository ?? value?.Name, 256);
-    const tag = boundedValue(value?.Tag, 256);
-    images.push({ id, ...(name ? { name } : {}), ...(tag ? { tag } : {}) });
+    const parsed = value ? parseDockerImageRecord(value) : undefined;
+    if (!parsed) {
+      warnings.push("Some Docker image records were outside the supported shape and were omitted");
+      continue;
+    }
+    images.push(parsed);
   }
   if (boundedLines(output, MAX_ITEMS + 1).length > MAX_ITEMS) warnings.push("Docker image results were capped");
   return images;
@@ -282,16 +293,20 @@ function parseImageLines(output: string, warnings: string[]): SafeDockerImage[] 
 function parseInspection(objectType: DockerObjectType, requestedId: string, output: string, truncated: boolean): SafeDockerInspection {
   let parsed: unknown;
   try { parsed = parseJsonStrict(output); } catch { throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned malformed metadata"); }
-  if (!Array.isArray(parsed) || parsed.length !== 1 || !isRecord(parsed[0])) {
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !isPlainDataRecord(parsed[0])) {
     throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned an unexpected object shape");
   }
   const value = parsed[0];
   const warnings: string[] = [];
-  const id = safeDockerId(value.Id ?? value.ID) ?? requestedId;
-  const name = boundedValue(value.Name ?? value.Name, 256);
-  const stateValue = isRecord(value.State) ? boundedValue(value.State.Status, 128) : "";
-  const imageValue = isRecord(value.Config) ? boundedValue(value.Config.Image, 256) : "";
-  const ports = objectType === "container" ? parsePorts(isRecord(value.NetworkSettings) ? value.NetworkSettings.Ports : undefined, warnings) : [];
+  const reportedId = parseAliasedDockerId(value.ID, value.Id);
+  if ((value.ID !== undefined || value.Id !== undefined) && !reportedId) {
+    throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned an ambiguous object identity");
+  }
+  const id = reportedId ?? requestedId;
+  const name = boundedValue(value.Name, 256);
+  const stateValue = isPlainDataRecord(value.State) ? boundedValue(value.State.Status, 128) : "";
+  const imageValue = isPlainDataRecord(value.Config) ? boundedValue(value.Config.Image, 256) : "";
+  const ports = objectType === "container" ? parsePorts(isPlainDataRecord(value.NetworkSettings) ? value.NetworkSettings.Ports : undefined, warnings) : [];
   const mounts = objectType === "container" ? parseMounts(value.Mounts, warnings) : [];
   if (truncated) warnings.push("Docker inspection output was truncated by a fixed adapter budget");
   return {
@@ -310,13 +325,20 @@ function parseInspection(objectType: DockerObjectType, requestedId: string, outp
 function parseLogs(containerId: string, tail: number, result: ProcessExecutionResult): SafeDockerLogs {
   const entries: SafeDockerLogEntry[] = [];
   const warnings: string[] = [];
-  for (const rawLine of result.stdout.split("\n")) {
+  const allLines = result.stdout.split("\n");
+  const lineCountCapped = allLines.length > MAX_LOG_LINES;
+  const rawLines = lineCountCapped ? allLines.slice(-MAX_LOG_LINES) : allLines;
+  if (lineCountCapped) warnings.push("Docker log lines were capped by a fixed adapter budget");
+  for (const originalLine of rawLines) {
+    const lineCapped = originalLine.length > MAX_LOG_LINE_BYTES;
+    const rawLine = lineCapped ? originalLine.slice(0, MAX_LOG_LINE_BYTES) : originalLine;
+    if (lineCapped) warnings.push("Docker log line length was capped by a fixed adapter budget");
     if (rawLine.length === 0) continue;
     const match = /^(\S+)\s(.*)$/u.exec(rawLine);
     const timestamp = match ? parseDockerTimestamp(match[1]!) : null;
     const rawMessage = match ? match[2]! : rawLine;
     const redacted = redactLogText(rawMessage);
-    entries.push({ timestamp, line: redacted.text });
+    entries.push({ timestamp, line: redacted.text.slice(0, MAX_LOG_LINE_BYTES) });
     if (redacted.redacted) warnings.push("Sensitive Docker log content was redacted");
   }
   const lineLimited = entries.length > tail;
@@ -325,7 +347,7 @@ function parseLogs(containerId: string, tail: number, result: ProcessExecutionRe
   return {
     containerId,
     entries,
-    truncated: result.truncated || lineLimited,
+    truncated: result.truncated || lineLimited || lineCountCapped,
     warnings: uniqueWarnings(warnings)
   };
 }
@@ -338,20 +360,20 @@ function throwForDockerProcess(result: ProcessExecutionResult, operation: string
 }
 
 function parsePorts(value: unknown, warnings: string[]): SafeDockerPort[] {
-  if (!isRecord(value)) return [];
+  if (!isPlainDataRecord(value)) return [];
   const ports: SafeDockerPort[] = [];
   for (const [key, bindings] of Object.entries(value)) {
     const match = /^(\d+)\/(tcp|udp)$/u.exec(key);
     if (!match) continue;
     const containerPort = Number(match[1]);
     if (!Number.isSafeInteger(containerPort) || containerPort < 1 || containerPort > 65_535) continue;
-    const items = Array.isArray(bindings) ? bindings : [];
+    const items = isDenseArray(bindings, MAX_PORTS) ? bindings : [];
     if (items.length === 0) {
       ports.push({ protocol: match[2] as "tcp" | "udp", containerPort, hostPort: null });
       continue;
     }
     for (const item of items.slice(0, MAX_PORTS - ports.length)) {
-      const hostPort = isRecord(item) && typeof item.HostPort === "string" ? Number(item.HostPort) : null;
+      const hostPort = isPlainDataRecord(item) && typeof item.HostPort === "string" ? Number(item.HostPort) : null;
       ports.push({
         protocol: match[2] as "tcp" | "udp",
         containerPort,
@@ -367,10 +389,10 @@ function parsePorts(value: unknown, warnings: string[]): SafeDockerPort[] {
 }
 
 function parseMounts(value: unknown, warnings: string[]): SafeDockerMount[] {
-  if (!Array.isArray(value)) return [];
+  if (!isDenseArray(value, MAX_MOUNTS)) return [];
   const mounts: SafeDockerMount[] = [];
   for (const item of value.slice(0, MAX_MOUNTS)) {
-    if (!isRecord(item) || typeof item.Destination !== "string") continue;
+    if (!isPlainDataRecord(item) || typeof item.Destination !== "string") continue;
     const target = redactBoundedText(item.Destination, 4_096).text;
     const source = typeof item.Source === "string" ? redactBoundedText(item.Source, 4_096).text : undefined;
     const readOnly = item.RW === false || item.Mode === "ro";
@@ -383,7 +405,7 @@ function parseMounts(value: unknown, warnings: string[]): SafeDockerMount[] {
 function parseJsonObject(line: string, warnings: string[]): Record<string, unknown> | undefined {
   try {
     const parsed = parseJsonStrict(line) as unknown;
-    if (isRecord(parsed)) return parsed;
+    if (isPlainDataRecord(parsed)) return parsed;
   } catch {
     // A malformed line is omitted and does not cross the result boundary.
   }
@@ -424,6 +446,42 @@ function isDockerObjectType(value: unknown): value is DockerObjectType {
   return value === "container" || value === "image" || value === "network" || value === "volume";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+export function parseDockerContainerRecord(value: unknown): SafeDockerContainer | undefined {
+  if (!isPlainDataRecord(value) || !hasOnlyKnownFields(value, CONTAINER_RECORD_FIELDS)) return undefined;
+  const id = parseAliasedDockerId(value.ID, value.Id);
+  if (!id) return undefined;
+  const state = parseContainerState(value.State);
+  const name = boundedValue(value.Names, 256);
+  return { id, state, ...(name ? { name } : {}) };
+}
+
+export function parseDockerImageRecord(value: unknown): SafeDockerImage | undefined {
+  if (!isPlainDataRecord(value) || !hasOnlyKnownFields(value, IMAGE_RECORD_FIELDS)) return undefined;
+  const id = parseAliasedDockerId(value.ID, value.Id);
+  if (!id) return undefined;
+  const name = boundedValue(value.Repository ?? value.Name, 256);
+  const tag = boundedValue(value.Tag, 256);
+  return { id, ...(name ? { name } : {}), ...(tag ? { tag } : {}) };
+}
+
+function parseAliasedDockerId(primary: unknown, alias: unknown): string | undefined {
+  const primaryId = safeDockerId(primary);
+  const aliasId = safeDockerId(alias);
+  if (primary !== undefined && primaryId === undefined) return undefined;
+  if (alias !== undefined && aliasId === undefined) return undefined;
+  if (primaryId && aliasId && primaryId !== aliasId) return undefined;
+  return primaryId ?? aliasId;
+}
+
+function hasOnlyKnownFields(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value)) return false;
+  const checkedLength = Math.min(value.length, maxLength);
+  for (let index = 0; index < checkedLength; index += 1) {
+    if (!Object.prototype.hasOwnProperty.call(value, index)) return false;
+  }
+  return true;
 }

@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
-import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest } from "./docker-inspector.js";
+import {
+  DockerInspectorImpl,
+  parseDockerContainerRecord,
+  parseDockerImageRecord,
+  validateDockerLogsRequest,
+  validateDockerObjectRequest
+} from "./docker-inspector.js";
 
 function result(stdout: string, overrides: Partial<ProcessExecutionResult> = {}): ProcessExecutionResult {
   return {
@@ -74,6 +80,15 @@ test("Docker inspect returns bounded sanitized container metadata without env va
   assert.deepEqual(supervisor.calls[0]?.args, ["inspect", "--type", "container", "abc123"]);
 });
 
+test("Docker inspect rejects conflicting native object identities", async () => {
+  const supervisor = new FakeSupervisor([result(JSON.stringify([{ Id: "abc123", ID: "different" }]))]);
+  const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+  await assert.rejects(
+    inspector.inspect("container", "abc123", { timeoutMs: 10_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+});
+
 test("Docker logs redact secrets and preserve bounded timestamped lines", async () => {
   const supervisor = new FakeSupervisor([result(
     "2026-09-13T01:02:03.000000000Z token=super-secret-value\nplain line\n",
@@ -112,4 +127,34 @@ test("Docker target validation rejects traversal-like and unsupported identifier
   assert.throws(() => validateDockerObjectRequest("container", "../secret"), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
   assert.throws(() => validateDockerObjectRequest("plugin" as never, "abc123"), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
   assert.throws(() => validateDockerLogsRequest("abc123", 0, 1), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
+});
+
+test("Docker line result parsers require plain known-field records and reject alias ambiguity", () => {
+  const accessorRecord: Record<string, unknown> = {};
+  Object.defineProperty(accessorRecord, "ID", { enumerable: true, get: () => "accessor-id" });
+  assert.equal(parseDockerContainerRecord(accessorRecord), undefined);
+  assert.equal(parseDockerContainerRecord({ ID: "abc123", State: "running", unexpected: "authority" }), undefined);
+  assert.equal(parseDockerContainerRecord({ ID: "abc123", Id: "different", State: "running" }), undefined);
+  assert.deepEqual(parseDockerContainerRecord({ ID: "abc123", Names: "web", State: "running" }), {
+    id: "abc123",
+    name: "web",
+    state: "running"
+  });
+  assert.equal(parseDockerImageRecord({ ID: "sha256:abc", Repository: "example/app", Tag: "latest", unexpected: true }), undefined);
+  assert.deepEqual(parseDockerImageRecord({ ID: "sha256:abc", Repository: "example/app", Tag: "latest" }), {
+    id: "sha256:abc",
+    name: "example/app",
+    tag: "latest"
+  });
+});
+
+test("Docker logs cap line count and individual line size", async () => {
+  const supervisor = new FakeSupervisor([result(`${"x\n".repeat(5_001)}${"y".repeat(9_000)}\n`)]);
+  const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+  const logs = await inspector.logs("abc123", 20, 0, { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(logs.entries.length, 20);
+  assert.equal(logs.truncated, true);
+  assert.ok(logs.entries.every((entry) => entry.line.length <= 8_192));
+  assert.ok(logs.warnings.some((warning) => warning.includes("lines were capped")));
+  assert.ok(logs.warnings.some((warning) => warning.includes("line length was capped")));
 });
