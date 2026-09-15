@@ -3,6 +3,21 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process-request boundary addendum: commit `78dd404` validates the
+ProcessSupervisor request at the Broker boundary before child admission.
+Only plain records with the declared fields are accepted; executable/cwd
+paths are canonical absolute paths, argument arrays are dense and bounded,
+environment data is plain and non-inherited, resource limits are bounded
+safe integers, and control callbacks must be functions. Hostile prototype,
+accessor, hidden/symbolic, unknown-field, sparse-array, environment, and
+callback shapes fail closed without spawning. Focused
+process-supervisor/task-profile/task-runner tests pass 49/49; the
+non-overlapping package regression passes 514 total (508 pass, 6 skipped,
+0 fail). This proves request-shape integrity only; it is not evidence of
+production sandbox, credential isolation, VM, persistence, or task
+enablement.
+Evidence: `evidence/2026-09-15-process-request-boundary.md`.
+
 Task-profile authority-shape addendum: commit `956e95f` makes named
 TaskProfile documents and task-run requests accept only plain records with
 known fields. Path, argument, and network arrays must be dense bounded string

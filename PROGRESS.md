@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-request boundary addendum: commit `78dd404` makes ProcessSupervisor
+admit only plain, exact-shape requests before spawning. Canonical executable
+and cwd paths, dense bounded string arguments, plain environment data,
+bounded integer limits, and callable control callbacks are validated; unknown,
+inherited, accessor, symbolic, sparse, malformed, and callback-substitution
+inputs fail closed. Focused process-supervisor/task-profile/task-runner tests
+pass 49/49; the non-overlapping package regression passes 514 total (508
+pass, 6 skipped, 0 fail). This closes local process-request representation
+integrity only; sandbox, credential, VM, persistence, and `mac_task_run`
+enablement evidence remains open.
+Evidence: `evidence/2026-09-15-process-request-boundary.md`.
+
 Task-profile authority-shape addendum: commit `956e95f` makes named
 TaskProfile documents and task-run requests accept only plain records with
 known fields. Path, argument, and network arrays are dense bounded string

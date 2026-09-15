@@ -4,6 +4,21 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-request boundary addendum: source revision `78dd404` makes
+ProcessSupervisor validate requests as plain data records with an exact
+allowlist before any child-process admission. Executable and cwd paths must
+be canonical absolute paths; argument arrays are dense bounded string arrays;
+environment records reject inherited/accessor authority; limits are safe
+bounded integers; and control callbacks must be callable. Unknown fields,
+prototype/accessor/symbol/sparse shapes, malformed environments, and invalid
+callbacks fail closed before spawning. The focused process-supervisor,
+task-profile, and task-runner suite passes 49/49; the non-overlapping package
+regression passes 514 total (508 pass, 6 skipped, 0 fail). Build, typecheck,
+lint, and diff checks are required before release. This closes local process
+request representation integrity only; child sandbox, credential isolation,
+VM, persistence, and `mac_task_run` enablement evidence remains open.
+Evidence: `evidence/2026-09-15-process-request-boundary.md`.
+
 Task-profile authority-shape addendum: source revision `956e95f` makes named
 TaskProfile documents and task-run requests accept only plain data records with
 known fields. Path, argument, and network arrays must be dense bounded string
