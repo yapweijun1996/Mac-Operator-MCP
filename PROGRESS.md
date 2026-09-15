@@ -12,7 +12,8 @@ Docker's single leading slash normalized), while ID-looking names remain ID
 targets. A different returned ID, object type, or missing identity fails
 closed, and the Broker repeats the check even for adapter-provided results.
 Object/log targets beginning with CLI option syntax, absolute paths, or
-socket/HTTP URL schemes are rejected before Docker is invoked. Focused Docker
+socket/HTTP URL schemes are rejected before Docker is invoked, and the
+Inspect/Logs contract schemas encode the same negative pattern. Focused Docker
 identity/parser tests pass 12/12, the Broker mismatch test
 passes 1/1, the physical Docker Desktop status/inspect readback passes 1/1,
 and typecheck passes. This narrows result substitution but is not a

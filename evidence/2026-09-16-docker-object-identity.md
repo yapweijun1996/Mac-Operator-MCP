@@ -17,7 +17,8 @@ hexadecimal ID remains an ID target. Missing identity, a mismatched object
 type, or a different reported ID fails closed; the Broker repeats this check
 for adapter-provided results. An ambiguous `ID`/`Id` pair remains an execution
 failure. Object and log targets beginning with CLI option syntax, absolute
-paths, or socket/HTTP URL schemes are rejected before Docker is invoked.
+paths, or socket/HTTP URL schemes are rejected before Docker is invoked. The
+Inspect and Logs JSON contracts carry the same negative target pattern.
 
 ## Verification
 
@@ -44,6 +45,9 @@ pass
 
 npm run verify:matrix
 pass
+
+npm run verify:contracts
+Validated 44 unique tool contracts and the versioned ledger-record schema.
 ```
 
 The negative test sends a different full ID while retaining a matching

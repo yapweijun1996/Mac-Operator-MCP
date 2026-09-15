@@ -11,7 +11,8 @@ ID prefixes are accepted; mutable names require exact normalized name
 readback, and ID-looking names cannot fall back to name matching. Different
 IDs, object types, or missing identity fail closed as `CONFLICT` or
 `EXECUTION_FAILED`; option-like targets, absolute paths, and socket/HTTP URL
-targets are rejected before invocation. Focused identity/parser tests pass 12/12, the Broker
+targets are rejected before invocation, and the Inspect/Logs contracts encode
+the same boundary. Focused identity/parser tests pass 12/12, the Broker
 mismatch test passes 1/1, and the physical Docker Desktop status/inspect
 readback passes 1/1. Same-name replacement races, kernel object handles,
 native daemon/socket isolation, code-signature provenance, mutation, and

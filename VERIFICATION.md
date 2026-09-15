@@ -12,7 +12,8 @@ its name matches; missing identity is rejected before response serialization,
 and the Broker repeats the check for adapter-provided results. Focused Docker
 identity/parser tests pass 12/12, the Broker mismatch test passes 1/1; target
 validation also rejects CLI-option, absolute-path, and socket/HTTP URL syntax
-before invocation. The physical Docker Desktop status/inspect readback passes
+before invocation; Inspect/Logs JSON contracts encode the same negative
+pattern. The physical Docker Desktop status/inspect readback passes
 1/1, and typecheck passes. This is an observation/result-binding fence, not a
 kernel-held Docker handle or same-name replacement guarantee. Native macOS
 daemon isolation, host socket denial, code-signature provenance, mutation,
