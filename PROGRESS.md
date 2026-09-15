@@ -3217,3 +3217,13 @@ The non-overlapping package regression after the authority-row change reports
 they were already running; this remains bounded local evidence rather than a
 fresh full-suite run. Evidence:
 `evidence/2026-09-15-authority-row-invariants.md`.
+
+Broker startup now scans all seven persisted replay ledgers after migration
+and rejects malformed identities, nonce formats, timestamp ordering, or guest
+ledger over-capacity as `AUDIT_UNAVAILABLE` before runtime or admission
+decisions (source revision `100133e`). Focused replay corruption tests pass
+7/7; the combined replay/Approval/Authority slice passes 12/12, and the
+non-overlapping package regression passes 572 total (566 passed, 6 explicitly
+skipped, 0 failed). Broader canonicalization, retention, protected Keychain,
+installed recovery, external rollback detection, and ADR acceptance remain
+open. Evidence: `evidence/2026-09-15-replay-row-invariants.md`.

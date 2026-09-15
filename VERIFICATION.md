@@ -2880,3 +2880,13 @@ The non-overlapping package regression after the authority-row change reports
 they were already running, so this is bounded local evidence rather than a
 fresh full-suite run. Evidence:
 `evidence/2026-09-15-authority-row-invariants.md`.
+
+Replay-ledger verification at source revision `100133e` scans all seven
+Broker-owned nonce tables after migration and fails closed on malformed
+identities, nonce formats, timestamp ordering, or guest-ledger over-capacity.
+Focused replay corruption tests pass 7/7; the combined replay/Approval/
+Authority slice passes 12/12. The non-overlapping package regression passes
+572 total (566 passed, 6 explicitly skipped, 0 failed). Broader
+canonicalization, retention, protected Keychain, installed recovery, external
+rollback detection, and ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-replay-row-invariants.md`.

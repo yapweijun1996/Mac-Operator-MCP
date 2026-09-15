@@ -1432,7 +1432,7 @@ non-cooperating-process lock evidence remain open.
 
 - `MOP-010` — `IN_PROGRESS` — Broker core plus local `mac_health`, `mac_capabilities`, `mac_policy_explain`, `mac_system_summary`, `mac_process_list`, `mac_process_inspect`, `mac_network_status`, `mac_service_status`, `mac_log_tail`, exact-target `mac_git_status`/`mac_git_branch_list`/`mac_git_log`, `mac_stat_path`, bounded `mac_read_file`, descriptor-backed `mac_hash_file`, bounded descriptor-backed `mac_list_directory`, bounded `mac_directory_tree`, metadata-only `mac_find_files`, metadata-only `mac_recent_files`, bounded secret-filtered `mac_search_text`, bounded `mac_project_discover`, bounded `mac_project_summary`, and bounded `mac_storage_analysis` handlers exist and pass tests. A fail-closed `LocalBrokerRuntime` now orders Broker IPC before operator channels, rolls back partial startup, retains failed cleanup for explicit recovery, and `createMacOsNativeBrokerRuntime` binds that lifecycle to the native Broker channel. The launchd startup assembly now restores the protected Authority key and places its separate native-peer channel under the same lifecycle. Installed launchd lifecycle, operator startup, listener ABI pinning, and production enablement remain open.
 - `MOP-011` — `IN_PROGRESS` — Mode-`0600` Unix IPC, macOS `getpeereid`/`LOCAL_PEERPID`, optional native PID/start-time identity binding, domain-separated request/response HMAC authentication, and a shared native accept path for Broker, policy-signer, and approval channels that hands descriptors through public `Socket({ fd })` pass prototype tests, including OS identity denial and rejection of a replacement socket using another key. The Edge IPC client now rejects non-plain or unknown-field response envelopes and malformed Broker success/failure results before MCP publication. Separate spawned Broker and Edge package-process fixtures now complete a signed request/response across native UDS under the captured Edge PID/start-time identity and verify the Broker response proof. A bounded read-only launchd readback adapter and real system-service smoke are also present. The fixed Broker service entrypoint restores exact persisted Policy/Edge-key activation before native listener construction and wipes loaded Edge keys on close. Production key lifecycle, native packaging/code identity, Edge PID lifecycle wiring, and installed transport selection remain open under ADR-0002. Evidence: `evidence/2026-09-15-edge-ipc-response-boundary.md`.
-- `MOP-012` — `IN_PROGRESS` — Timestamp/session expiry, canonical payload binding, atomic nonce/request admission, persistent replay denial, terminal request lookup, and restart replay/reconciliation tests exist. Corruption, canonicalization cross-runtime, retention, and accepted persistence design remain open.
+- `MOP-012` — `IN_PROGRESS` — Timestamp/session expiry, canonical payload binding, atomic nonce/request admission, persistent replay denial, terminal request lookup, and restart replay/reconciliation tests exist. Broker startup now validates every persisted replay ledger (request, approval, operator, helper, status, and virtualization guest) and fails closed on malformed identities or timestamp ordering; focused corruption tests pass. Broader canonicalization cross-runtime, retention, accepted persistence design, and production recovery evidence remain open.
 - MOP-012 clarification: the atomic admission boundary now includes durable
   global and principal/session active-request limits; corruption, broader
   numeric canonicalization, retention, and the accepted persistence design
@@ -1655,6 +1655,16 @@ corrupted rows fail closed as `AUDIT_UNAVAILABLE`; focused Authority Control
 IPC, Policy, and corruption tests pass 15/15. Production Keychain
 distribution, installed operator recovery, external rollback detection, and
 ADR acceptance remain open.
+
+Replay-row boundary addendum: source revision `100133e` scans all seven
+Broker-owned replay ledgers after migration and rejects malformed identities,
+nonce formats, timestamp ordering, or guest-ledger over-capacity as
+`AUDIT_UNAVAILABLE` before runtime or admission decisions. Focused replay,
+Approval, Authority Control, and Policy tests pass 12/12 in the replay-focused
+slice; the non-overlapping package regression passes 572 total (566 passed, 6
+explicitly skipped, 0 failed). Broader canonicalization, retention, protected
+Keychain, installed recovery, and ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-replay-row-invariants.md`.
 
 The non-overlapping package regression after the authority-row change reports
 565 tests total (559 passed, 6 explicitly skipped, 0 failed). The existing
