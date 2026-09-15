@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization lifecycle timeout-fence addendum: source revision `ea85237`
+keeps a timed-out or cancelled native lifecycle promise fenced until it
+settles, so a later status or transition cannot overlap an unknown VM
+mutation. Lifecycle tests pass 7/7; the focused guest/transport/lifecycle/
+startup/native/task-runner suite passes 86/86; and the non-overlapping
+physical-Darwin regression passes 486/486 with 0 skipped tests. Build,
+typecheck, lint, and diff checks pass. VM boot, guest isolation, and
+production `mac_task_run` enablement remain disabled. Evidence:
+`evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md`.
+
 Process-supervisor early-capture addendum: source revision `efb9d5c` fixes the
 spawn-to-observer race by capturing bounded child output and exit/close state
 immediately after spawn, then handing that state to the later path/process

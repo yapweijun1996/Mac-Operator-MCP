@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Virtualization lifecycle timeout-fence addendum: source revision `ea85237`
+fences a native lifecycle operation after caller-visible timeout or
+cancellation until the underlying promise settles. A delayed-start regression
+rejects overlapping status with retryable `UNKNOWN_OUTCOME` and then permits
+status recovery after settlement. Lifecycle tests pass 7/7; the focused
+guest/transport/lifecycle/startup/native/task-runner suite passes 86/86; and
+the non-overlapping physical-Darwin regression passes 486/486 with 0 skipped
+tests. Build, typecheck, lint, and diff checks pass. This does not claim VM
+boot, guest isolation, remount resistance, or production `mac_task_run`
+enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md`.
+
 Process-supervisor early-capture addendum: source revision `efb9d5c` records
 bounded child output and lifecycle events immediately after spawn so fast
 children cannot evade later observer registration. Process-supervisor tests

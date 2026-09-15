@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization lifecycle timeout-fence addendum: source revision `ea85237`
+retains a timed-out or cancelled native VM operation until its promise settles;
+later status or transition calls fail closed with retryable `UNKNOWN_OUTCOME`
+instead of overlapping an unknown mutation. Lifecycle tests pass 7/7; the
+focused guest/transport/lifecycle/startup/native/task-runner suite passes
+86/86; and the non-overlapping physical-Darwin regression passes 486/486 with
+0 skipped tests. Build, typecheck, lint, and diff checks pass. VM boot,
+guest isolation, descriptor/fexec, remount resistance, production isolation,
+and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md`.
+
 Process-supervisor early-capture addendum: source revision `efb9d5c` installs
 bounded stdout/stderr and exit/close capture immediately after child spawn,
 before asynchronous path and ownership checks, preventing short-lived child
