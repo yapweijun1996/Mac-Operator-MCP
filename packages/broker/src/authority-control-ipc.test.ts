@@ -12,6 +12,7 @@ import {
   authenticateAuthorityControlCommand,
   authenticateAuthorityControlResponse,
   signAuthorityControlCommand,
+  validateUnsignedAuthorityControlCommand,
   type AuthorityControlIpcResponse,
   type AuthorityControlOperation,
   type UnsignedAuthorityControlCommand
@@ -74,6 +75,17 @@ test("authority control parser rejects accessor command fields", () => {
       (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
   );
   key.fill(0);
+});
+
+test("authority control accepts the bounded maximum Edge-key revocation identity", () => {
+  const edgeId = `e${"x".repeat(127)}`;
+  const keyId = `k${"y".repeat(127)}`;
+  const subjectId = `${edgeId}:${keyId}`;
+  assert.equal(subjectId.length, 257);
+  assert.doesNotThrow(() => validateUnsignedAuthorityControlCommand(command("revoke", 1, {
+    revocationKind: "edge_key",
+    subjectId
+  })));
 });
 
 test("authority control IPC authenticates, persists replay, and applies bounded operator actions", async () => {

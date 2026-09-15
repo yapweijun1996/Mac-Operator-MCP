@@ -607,7 +607,7 @@ export function validateUnsignedAuthorityControlCommand(command: UnsignedAuthori
   }
   if (command.operation === "revoke") {
     if (typeof command.subjectId !== "string" ||
-        !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(command.subjectId) ||
+        !/^[A-Za-z0-9._:@/-]{1,257}$/u.test(command.subjectId) ||
         command.switchName !== undefined || command.disabled !== undefined || command.expectedDisabled !== undefined) {
       throw new BrokerError("PRECONDITION_FAILED", "Authority control revocation command is malformed");
     }
@@ -616,7 +616,7 @@ export function validateUnsignedAuthorityControlCommand(command: UnsignedAuthori
   if (command.operation === "read") {
     const switchRead = command.switchName !== undefined && SWITCH_NAMES.includes(command.switchName) && command.revocationKind === undefined && command.subjectId === undefined;
     const revocationRead = command.switchName === undefined && REVOCATION_KINDS.includes(command.revocationKind as RevocationKind) &&
-      typeof command.subjectId === "string" && /^[A-Za-z0-9._:@/-]{1,256}$/u.test(command.subjectId);
+      typeof command.subjectId === "string" && /^[A-Za-z0-9._:@/-]{1,257}$/u.test(command.subjectId);
     if ((!switchRead && !revocationRead) || command.disabled !== undefined || command.expectedDisabled !== undefined) {
       throw new BrokerError("PRECONDITION_FAILED", "Authority control read command is malformed");
     }

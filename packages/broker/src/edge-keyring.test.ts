@@ -7,7 +7,7 @@ import test from "node:test";
 import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
-import { EdgeKeyring, keyIdentity } from "./edge-keyring.js";
+import { EdgeKeyring, isValidEdgeId, isValidEdgeKeyId, keyIdentity } from "./edge-keyring.js";
 import { BrokerStore } from "./persistence.js";
 
 const NOW = 1_700_000_000_000;
@@ -70,6 +70,16 @@ test("Edge keyring rejects malformed identities before loading authority", () =>
       expiresAtMs: NOW + 60_000
     }]), /identity is malformed/u);
   }
+});
+
+test("Edge/key identity bounds preserve the full composite revocation identity", () => {
+  const edgeId = `e${"x".repeat(127)}`;
+  const keyId = `k${"y".repeat(127)}`;
+  const identity = keyIdentity(edgeId, keyId);
+  assert.equal(isValidEdgeId(edgeId), true);
+  assert.equal(isValidEdgeKeyId(keyId), true);
+  assert.equal(identity.length, 257);
+  assert.equal(identity.startsWith(`${edgeId}:`), true);
 });
 
 test("Edge keyring disposal removes loaded authentication authority", () => {

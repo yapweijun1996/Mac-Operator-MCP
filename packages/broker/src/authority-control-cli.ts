@@ -113,7 +113,7 @@ export function parseAuthorityControlCliArgs(args: readonly string[]): Authority
   const switchName = parseSwitch(values.get("--name"));
   const revocationKind = parseRevocationKind(values.get("--kind"));
   const subjectId = values.get("--subject-id");
-  if (subjectId !== undefined && !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(subjectId)) {
+  if (subjectId !== undefined && !/^[A-Za-z0-9._:@/-]{1,257}$/u.test(subjectId)) {
     throw usageError("Subject ID is malformed");
   }
   const reason = values.get("--reason");

@@ -14,7 +14,7 @@ import {
   type BrokerBackupOptions,
   type BrokerBackupPruneResult
 } from "./persistence-backup.js";
-import { isValidEdgeId } from "./edge-keyring.js";
+import { EDGE_KEY_IDENTITY_PATTERN, isValidEdgeId } from "./edge-keyring.js";
 
 export type SwitchName = "global" | "mutations" | "process" | "network" | "gui" | "destructive" | "privileged";
 const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
@@ -1266,7 +1266,7 @@ export class BrokerStore {
   }
 
   revoke(kind: RevocationKind, subjectId: string, reason: string, nowMs = Date.now(), auditRequestId?: string): void {
-    if (!REVOCATION_KINDS.includes(kind) || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(subjectId) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
+    if (!REVOCATION_KINDS.includes(kind) || !/^[A-Za-z0-9._:@/-]{1,257}$/u.test(subjectId) || typeof reason !== "string" || reason.length > 200 || reason.includes("\0") ||
         !Number.isSafeInteger(nowMs) || nowMs < 0 ||
         (auditRequestId !== undefined && !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(auditRequestId))) throw malformedJob();
     this.runTransaction(() => {
@@ -3453,7 +3453,7 @@ function validateJobCreation(input: CreateJobInput): void {
 
 function validEdgeKeyIdentity(value: unknown, edgeId: string | null | undefined): value is string {
   if (typeof value !== "string" || !isValidEdgeId(edgeId) ||
-      !/^[A-Za-z0-9._:-]{1,256}$/u.test(value) || !value.startsWith(`${edgeId}:`)) return false;
+      !EDGE_KEY_IDENTITY_PATTERN.test(value) || !value.startsWith(`${edgeId}:`)) return false;
   return EDGE_KEY_ID_PATTERN.test(value.slice(edgeId.length + 1));
 }
 
