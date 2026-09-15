@@ -4,6 +4,20 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 descriptor-admission addendum: source revision `a05cce8` wires the
+host-owned descriptor-execution capability requirement into the real
+`ProcessSupervisor` admission path. Descriptor-required supervisors reject
+unavailable or malformed native support after validation and before `spawn`,
+using stable `POLICY_DENIED` and never substituting pathname execution. The
+default `SandboxExecTaskRunner` supervisor is descriptor-required, keeping the
+deprecated host sandbox from becoming a production task boundary by accident.
+Focused process-supervisor tests pass 38/38; descriptor-capability,
+sandbox, and task-runner tests pass 15/20 with five explicit real-sandbox
+skips. Build, typecheck, lint, docs, and matrix checks pass. Native descriptor
+execution or an independently verified immutable snapshot, remount proof, and
+production task enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-admission-boundary.md`.
+
 MOP-046 write-recovery root-identity addendum: source revision `cd649e6`
 persists the canonical policy-root path/device/inode with new write Jobs and
 requires an exact match before restart cleanup or postcondition inspection.

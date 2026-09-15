@@ -3,6 +3,20 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Descriptor-required process admission verification at source revision
+`a05cce8`: `ProcessSupervisor` now checks the host-owned descriptor-execution
+capability after request validation and before any child spawn when its
+Broker-owned option requires that boundary. Missing or malformed native
+support returns stable `POLICY_DENIED`; pathname execution is not used as a
+fallback. The default `SandboxExecTaskRunner` supervisor enables this gate so
+the experimental sandbox cannot be mistaken for atomic executable selection.
+Focused process-supervisor tests pass 38/38; descriptor-capability,
+sandbox, and task-runner tests pass 15/20 with five explicit real-sandbox
+skips. Build, typecheck, lint, docs, and matrix checks pass. This verifies
+admission wiring only; `VT-FS-02`, native descriptor execution, immutable
+snapshot proof, remount resistance, and production task enablement remain
+open. Evidence: `evidence/2026-09-16-descriptor-admission-boundary.md`.
+
 Write-recovery root-identity verification at source revision `cd649e6` stores
 the canonical policy-root path/device/inode in new write Job metadata and
 requires an exact match before restart cleanup or postcondition inspection.
