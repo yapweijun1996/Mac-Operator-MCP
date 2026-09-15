@@ -4,6 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest regression addendum: the non-overlapping built suite passes 594 total
+(588 pass, 6 skipped, 0 fail), including audit-target and credential-field
+redaction coverage; the existing Broker/persistence process was left
+undisturbed. Evidence: `evidence/2026-09-15-latest-local-regression.md`.
+
 Audit-evidence redaction addendum: the persistence boundary now redacts
 common credential and key field aliases before canonicalization; the focused
 alias corpus passes. This is defense-in-depth only and leaves the broader
