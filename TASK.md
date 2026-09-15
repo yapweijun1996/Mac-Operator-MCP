@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Capability-list integrity addendum: source revision `399a17c` makes Edge
+capability parsing fail closed on duplicate or unregistered tool names and
+malformed name/version fields. The non-overlapping package regression passes
+494 total (488 pass, 6 skipped, 0 fail); Edge tests, contract validation,
+build, typecheck, lint, and diff checks pass. Capability enablement is
+unchanged and production host/VM/credential/privileged evidence remains open.
+Evidence: `evidence/2026-09-15-capability-list-integrity.md`.
+
 Capability lifecycle-state addendum: source revision `e22f025` exposes the
 Broker-owned `planned`, `implemented`, and `enabled` fields in every
 `mac_capabilities` item, requires them in the versioned contract, and makes

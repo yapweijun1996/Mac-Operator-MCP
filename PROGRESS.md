@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Capability-list integrity addendum: source revision `399a17c` makes the Edge
+reject duplicate or unregistered capability names and malformed name/version
+fields before MCP registration. The non-overlapping package regression passes
+494 total (488 pass, 6 skipped, 0 fail); Edge tests, contract validation,
+build, lint, and diff checks pass. This is a response-integrity guard only and
+does not enable capabilities or close production host/VM/credential/privileged
+evidence gates. Evidence:
+`evidence/2026-09-15-capability-list-integrity.md`.
+
 Capability lifecycle-state addendum: source revision `e22f025` carries
 `planned`, `implemented`, and `enabled` for every `mac_capabilities` item,
 requires those fields in the versioned output schema, and makes the Edge reject

@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Capability-list integrity addendum: source revision `399a17c` makes the Edge
+reject duplicate and unregistered capability names plus malformed name/version
+fields before registering MCP tools. The non-overlapping package regression
+passes 494 total (488 pass, 6 skipped, 0 fail); Edge tests, contract
+validation, build, lint, and diff checks pass. No capability is enabled by
+this change, and production host/VM/credential/privileged evidence remains
+open. Evidence: `evidence/2026-09-15-capability-list-integrity.md`.
+
 Capability lifecycle-state addendum: source revision `e22f025` adds required
 `planned`, `implemented`, and `enabled` fields to each `mac_capabilities` item.
 The Broker emits the full state and the Edge rejects an enabled item with an
