@@ -1,6 +1,6 @@
 # Docker inspect object identity evidence
 
-- Source revision: `8d81ef1`
+- Source revision: `9baf916`
 - Capture date: 2026-09-16 (Asia/Kuala_Lumpur)
 - Host: Apple silicon Mac mini, macOS 26.2, Darwin 25.2.0, arm64
 - Contract version: `0.1`
@@ -16,7 +16,8 @@ name after normalizing Docker's one leading `/`; a name that looks like a
 hexadecimal ID remains an ID target. Missing identity, a mismatched object
 type, or a different reported ID fails closed; the Broker repeats this check
 for adapter-provided results. An ambiguous `ID`/`Id` pair remains an execution
-failure.
+failure. Object and log targets beginning with CLI option syntax, absolute
+paths, or socket/HTTP URL schemes are rejected before Docker is invoked.
 
 ## Verification
 
@@ -34,6 +35,15 @@ MOPS_REAL_DOCKER=1 node --test --test-name-pattern='real Docker Desktop' \
 node --test --test-name-pattern='Docker handlers' \
   packages/broker/dist/broker.test.js
 1 test, 1 passed, 0 failed
+
+npm run lint
+pass
+
+npm run verify:docs
+pass
+
+npm run verify:matrix
+pass
 ```
 
 The negative test sends a different full ID while retaining a matching

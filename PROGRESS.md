@@ -4,14 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Docker inspect object-identity addendum at source revision `8d81ef1`: the
+Docker inspect object-identity addendum at source revision `9baf916`: the
 fixed adapter and Broker boundary now bind a response to the requested Docker
 target before serialization. Exact IDs and one-way bounded hexadecimal
 prefixes are accepted; non-ID names require exact `Name` readback (with
 Docker's single leading slash normalized), while ID-looking names remain ID
 targets. A different returned ID, object type, or missing identity fails
 closed, and the Broker repeats the check even for adapter-provided results.
-Focused Docker identity/parser tests pass 12/12, the Broker mismatch test
+Object/log targets beginning with CLI option syntax, absolute paths, or
+socket/HTTP URL schemes are rejected before Docker is invoked. Focused Docker
+identity/parser tests pass 12/12, the Broker mismatch test
 passes 1/1, the physical Docker Desktop status/inspect readback passes 1/1,
 and typecheck passes. This narrows result substitution but is not a
 kernel-held Docker object handle; same-name replacement between name
