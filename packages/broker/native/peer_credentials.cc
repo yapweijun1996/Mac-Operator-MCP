@@ -354,7 +354,8 @@ bool ValidateCanonicalExecutablePath(const char* path, struct stat* identity) {
 bool SameExecutableIdentity(const struct stat& left, const struct stat& right) {
   return left.st_dev == right.st_dev && left.st_ino == right.st_ino &&
       left.st_size == right.st_size && left.st_mtimespec.tv_sec == right.st_mtimespec.tv_sec &&
-      left.st_mtimespec.tv_nsec == right.st_mtimespec.tv_nsec;
+      left.st_mtimespec.tv_nsec == right.st_mtimespec.tv_nsec &&
+      left.st_uid == right.st_uid && left.st_mode == right.st_mode;
 }
 
 bool ReadCanonicalExecutablePath(napi_env env, napi_value value, char* output, size_t capacity,
