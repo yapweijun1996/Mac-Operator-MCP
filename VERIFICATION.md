@@ -2678,3 +2678,12 @@ non-overlapping package regression passes 541 total (535 passed, 6 skipped,
 0 failed). This does not close handler completeness, signing provenance,
 remote deployment, or capability enablement. Evidence:
 `evidence/2026-09-15-contract-registry-boundary.md`.
+
+MCP capability-readback verification at source revisions `0b8c7e2`, `3f65dc8`
+confirms plain response data, dense bounded arrays, governed fields, and
+optional `scopes`/`reason` metadata are validated before tool registration.
+Unknown, accessor, symbolic, and sparse fixtures are rejected. Focused Edge
+tests pass 2/2; the non-overlapping package regression passes 542 total (536
+passed, 6 skipped, 0 failed). This does not close Broker handler completeness,
+remote deployment, or capability enablement. Evidence:
+`evidence/2026-09-15-mcp-capability-boundary.md`.

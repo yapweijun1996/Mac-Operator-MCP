@@ -1783,3 +1783,11 @@ tests pass 2/2; the non-overlapping package regression passes 541 total (535
 passed, 6 skipped, 0 failed). Handler completeness, signing provenance,
 remote deployment, and capability gates remain open. Evidence:
 `evidence/2026-09-15-contract-registry-boundary.md`.
+
+MCP capability-readback addendum: commits `0b8c7e2` and `3f65dc8` enforce
+plain response data, dense bounded capability arrays, governed fields, and
+optional Broker `scopes`/`reason` metadata before tool registration. Focused
+Edge tests pass 2/2; the non-overlapping package regression passes 542 total
+(536 passed, 6 skipped, 0 failed). Broker handler completeness, remote
+deployment, and capability gates remain open. Evidence:
+`evidence/2026-09-15-mcp-capability-boundary.md`.
