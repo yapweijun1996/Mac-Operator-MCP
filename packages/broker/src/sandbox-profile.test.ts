@@ -10,6 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
 import { provisionKeychainAuthenticationKey, retireKeychainAuthenticationKey } from "./credentials.js";
+import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
 import { buildSandboxExecArguments, renderTaskSandboxProfile } from "./sandbox-profile.js";
 import { SandboxExecTaskRunner, type TaskIsolationProof } from "./task-runner.js";
 import type { ProcessExecutionRequest } from "./process-supervisor.js";
@@ -52,6 +53,15 @@ function resolvedProfile(root: string, overrides: Partial<ResolvedTaskProfile> =
     verificationStrategy: "exit_status_and_declared_task_verification",
     ...overrides
   };
+}
+
+function realSandboxCanRun(): boolean {
+  if (process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1") return false;
+  try {
+    return inspectProcessDescriptorExecutionCapability().available;
+  } catch {
+    return false;
+  }
 }
 
 test("sandbox profile renderer emits a deterministic deny-default no-network policy", async () => {
@@ -458,7 +468,7 @@ test("SandboxExecTaskRunner keeps a signal-terminated task unresolved", async ()
 });
 
 test("real macOS sandbox runner blocks inherited environment, protected files, and network", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-real-"));
   const root = await realpath(directory);
@@ -592,7 +602,7 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
 });
 
 test("real macOS single-process profile denies a hostile fork and session escape", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-descendant-"));
   const root = await realpath(directory);
@@ -630,7 +640,7 @@ test("real macOS single-process profile denies a hostile fork and session escape
 });
 
 test("real macOS sandbox denies a Broker-owned Keychain canary to a task process", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1" || process.env.MOPS_REAL_KEYCHAIN !== "1"
+  skip: !realSandboxCanRun() || process.env.MOPS_REAL_KEYCHAIN !== "1"
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-keychain-"));
   const root = await realpath(directory);
@@ -663,7 +673,7 @@ test("real macOS sandbox denies a Broker-owned Keychain canary to a task process
 });
 
 test("real macOS sandbox runner maps active cancellation to process-group termination", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-cancel-"));
   const root = await realpath(directory);
@@ -694,7 +704,7 @@ test("real macOS sandbox runner maps active cancellation to process-group termin
 });
 
 test("real macOS sandbox runner enforces UDP loopback allowlists", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-udp-"));
   const root = await realpath(directory);

@@ -25,6 +25,7 @@ import {
   validateBrokerServiceStartupConfig,
   type BrokerServiceStartupConfig
 } from "./service-startup.js";
+import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
 import { readBrokerStatus } from "./broker-status-ipc.js";
 import { VirtualizationGuestAttestationKeyManager, writeVirtualizationGuestAttestationKeyConfig, type VirtualizationGuestAttestationKeyConfig } from "./virtualization-guest-attestation-keyring.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
@@ -234,7 +235,7 @@ test("Broker service startup restores signed authority before native runtime sta
       statusAuthenticationKey.fill(0);
     }
 
-    if (process.env.MOPS_REAL_SANDBOX === "1") {
+    if (process.env.MOPS_REAL_SANDBOX === "1" && inspectProcessDescriptorExecutionCapability().available) {
       await assembly.close();
       assembly = undefined;
 
