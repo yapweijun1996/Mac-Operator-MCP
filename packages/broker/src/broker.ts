@@ -4381,6 +4381,9 @@ function privilegedToolResultData(
   if (payload.operation === "package_install") {
     const installedVersion = boundedString("installed_version", 128);
     const artifactId = boundedString("artifact_id", 256);
+    if (!/^[A-Za-z0-9._:@/+-]+$/u.test(artifactId)) {
+      throw new BrokerError("VERIFICATION_FAILED", "Privileged helper artifact identity is malformed");
+    }
     const alreadyInstalled = evidence.already_installed;
     const matchedVersion = evidence.matched_version;
     if (typeof alreadyInstalled !== "boolean" || typeof matchedVersion !== "boolean") {
