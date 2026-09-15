@@ -4,7 +4,7 @@ import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessSupervisorOptions } from "./process-supervisor.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
-import { containsKnownSecretSignature } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, containsKnownSecretSignature } from "./secret-policy.js";
 import { parseTaskNetworkDestination } from "./task-profile.js";
 import { redactBoundedText } from "./secret-policy.js";
 import {
@@ -597,6 +597,7 @@ function validateArguments(args: readonly string[]): void {
     bytes += Buffer.byteLength(argument, "utf8");
     if (bytes > MAX_ARGUMENT_BYTES) throw new Error("Guest task arguments exceed the supported size");
   }
+  assertArgumentsDoNotContainSecrets(args);
 }
 
 function validateEnvironment(environment: Readonly<Record<string, string>>): void {

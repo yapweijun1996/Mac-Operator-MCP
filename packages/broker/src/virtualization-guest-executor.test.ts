@@ -143,6 +143,7 @@ test("guest profile registry rejects shell executables and unsafe environment ma
       enabled: true
     };
     assert.throws(() => new VirtualizationGuestTaskProfileRegistry([base]), /manifest is malformed/u);
+    assert.throws(() => new VirtualizationGuestTaskProfileRegistry([{ ...base, executable: "/usr/bin/true", args: ["--token", "opaque-value"] }]), /protected secret option/u);
     assert.throws(() => new VirtualizationGuestTaskProfileRegistry([{ ...base, executable: "/usr/bin/true", environment: { API_TOKEN: "secret" } }]), /unsafe entry/u);
     assert.throws(() => new VirtualizationGuestTaskProfileRegistry([{ ...base, executable: "/usr/bin/true", environment: { PROFILE_DATA: "Bearer opaque-token-value-123456" } }]), /unsafe entry/u);
     assert.throws(() => new VirtualizationGuestTaskProfileRegistry([{ ...base, executable: "/usr/bin/true", extra: true } as never]), /manifest is malformed/u);
