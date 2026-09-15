@@ -14,6 +14,15 @@ fail-closed boundary but does not close `VT-FS-02`, remount resistance, or
 production task enablement. Evidence:
 `evidence/2026-09-15-descriptor-launch-capability-gate.md`.
 
+Filesystem mount-flag identity verification at source revision `eaca6c6`
+extends native `SameFilesystem` checks to include `f_flags` and records that
+field in storage-volume IDs. Physical Darwin readback shows the new bounded
+identity format; the filesystem/native focused regression passes 38/38 and
+typecheck/lint pass. This closes only detection of remount changes visible in
+the reported flags; it does not prove in-syscall remount resistance or close
+the production task gate. Evidence:
+`evidence/2026-09-15-filesystem-mount-flags.md`.
+
 Serial physical-Darwin regression at source revision `339d932` passes 630/630
 with 0 skips and 0 failures under the install, sandbox, and Keychain opt-ins,
 serializing test execution. It covers the root-owned fixed-adapter executable

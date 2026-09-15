@@ -16,6 +16,15 @@ boundary, not a kernel launcher implementation; descriptor/fexec, remount, and
 production task enablement remain open. Evidence:
 `evidence/2026-09-15-descriptor-launch-capability-gate.md`.
 
+Filesystem mount-flag identity addendum: source revision `eaca6c6` extends the
+native descriptor boundary to compare `f_fsid`, filesystem type, and `f_flags`
+and includes flags in storage-volume IDs. The physical Darwin adapter returns
+the new flags-bearing identity, and the filesystem/native focused regression
+passes 38/38 with typecheck and lint passing. This detects remounts that alter
+reported flags but is not an in-syscall mount namespace proof; physical
+remount durability and production task enablement remain open. Evidence:
+`evidence/2026-09-15-filesystem-mount-flags.md`.
+
 Serial physical regression addendum: source revision `339d932` passes 630/630
 tests with 0 skips and 0 failures under
 `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1`, using

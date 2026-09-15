@@ -15,6 +15,14 @@ fexec, remount, immutable-snapshot, and production `mac_task_run` evidence
 remain open. Evidence:
 `evidence/2026-09-15-descriptor-launch-capability-gate.md`.
 
+Filesystem mount-flag identity addendum: source revision `eaca6c6` binds the
+native filesystem identity to `f_fsid`, filesystem type, and `f_flags`, and
+includes flags in volume IDs. The physical adapter readback and focused
+38/38 filesystem regression pass. This detects flag-changing remounts but is
+not a kernel mount namespace or in-syscall remount proof; physical remount,
+descriptor-exec, and production task enablement remain release gates. Evidence:
+`evidence/2026-09-15-filesystem-mount-flags.md`.
+
 Serial physical regression addendum: source revision `339d932` passes 630/630
 non-overlapping tests with 0 skips and 0 failures under the install, sandbox,
 and Keychain opt-ins. The three existing long-running Broker/persistence/

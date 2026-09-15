@@ -1,7 +1,7 @@
 # Descriptor executable launch capability gate
 
-Date: 2026-09-15  
-Source revision: `07ba885`  
+Date: 2026-09-15
+Source revision: `07ba885`
 Host: Darwin 25.2.0, arm64, Node v25.5.0
 
 ## Result
@@ -31,7 +31,7 @@ npm run typecheck
 exit 0
 
 npm run lint
-Style check passed for 668 tracked files.
+Style check passed for 671 tracked files.
 ```
 
 The focused tests also reject incomplete attestation, unknown fields,
