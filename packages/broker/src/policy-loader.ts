@@ -15,6 +15,7 @@ import { createDefaultPolicy } from "./default-policy.js";
 import type { BrokerStore } from "./persistence.js";
 import { cloneBrokerPolicy, validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type PrincipalGrant, type TargetRule } from "./policy.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
+import { readProtectedFileAfterIdentity } from "./protected-file.js";
 
 const require = createRequire(import.meta.url);
 const Ajv2020 = require("ajv/dist/2020").default as new (options: Record<string, unknown>) => {
@@ -412,7 +413,7 @@ async function readProtectedRegularFile(path: string, maxBytes: number, label: s
     if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
       throw new Error(`${label} target changed while opening`);
     }
-    return await handle.readFile();
+    return await readProtectedFileAfterIdentity(handle, openedStat, maxBytes, label);
   } finally {
     await handle.close();
   }

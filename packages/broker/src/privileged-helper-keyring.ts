@@ -11,6 +11,7 @@ import {
   verifyKeychainProtection
 } from "./credentials.js";
 import type { HelperKeyConfigActivationIdentity, BrokerStore } from "./persistence.js";
+import { readProtectedFileAfterIdentity } from "./protected-file.js";
 import {
   BrokerPrivilegedHelperCommandFactory,
   PrivilegedHelperIpcServer,
@@ -370,7 +371,7 @@ async function readProtectedConfig(path: string): Promise<Buffer> {
   try {
     const openedStat = await handle.stat();
     if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) throw new Error("Privileged helper key config target changed while opening");
-    return await handle.readFile();
+    return await readProtectedFileAfterIdentity(handle, openedStat, MAX_CONFIG_BYTES, "Privileged helper key config");
   } finally {
     await handle.close();
   }

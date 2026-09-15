@@ -14,6 +14,7 @@ import type {
   BrokerStore,
   PolicySignerConfigActivationIdentity
 } from "./persistence.js";
+import { readProtectedFileAfterIdentity } from "./protected-file.js";
 
 const MAX_CONFIG_BYTES = 128 * 1024;
 const MAX_PUBLIC_KEY_BYTES = 64 * 1024;
@@ -233,7 +234,7 @@ async function readProtectedConfig(path: string): Promise<Buffer> {
     if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
       throw new Error("Policy signer key config target changed while opening");
     }
-    return await handle.readFile();
+    return await readProtectedFileAfterIdentity(handle, openedStat, MAX_CONFIG_BYTES, "Policy signer key config");
   } finally {
     await handle.close();
   }
@@ -264,7 +265,7 @@ async function readProtectedPublicKey(path: string): Promise<Buffer> {
     if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
       throw new Error("Policy signer public key target changed while opening");
     }
-    return await handle.readFile();
+    return await readProtectedFileAfterIdentity(handle, openedStat, MAX_PUBLIC_KEY_BYTES, "Policy signer public key");
   } finally {
     await handle.close();
   }
