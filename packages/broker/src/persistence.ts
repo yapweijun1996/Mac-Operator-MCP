@@ -3381,12 +3381,15 @@ function validateStoredRequestState(row: RequestRow): void {
   };
   const timestamp = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
   const identifier = (value: string | null, pattern: RegExp): boolean => value === null || pattern.test(value);
+  const boundedText = (value: string | null, maxLength: number): boolean =>
+    value === null || (value.length >= 1 && value.length <= maxLength && !value.includes("\0"));
   const activeResultClasses = new Set(["AUTHORIZED", "INTENT_RECORDED", "RUNNING", "SUCCEEDED"]);
 
   if (row.mutation !== 0 && row.mutation !== 1 ||
       !timestamp(row.received_at_ms) || !timestamp(row.updated_at_ms) ||
       row.updated_at_ms < row.received_at_ms ||
       !Number.isSafeInteger(row.revision) || row.revision < 0 ||
+      !boundedText(row.result_class, 128) || !boundedText(row.target_ref, 4096) ||
       !identifier(row.approval_id, /^approval:[A-Za-z0-9._:-]{1,240}$/u) ||
       !identifier(row.job_id, /^job:[A-Za-z0-9._-]{1,240}$/u)) {
     fail();

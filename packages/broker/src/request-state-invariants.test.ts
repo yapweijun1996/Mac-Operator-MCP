@@ -78,3 +78,31 @@ test("stored Request timestamp ordering is enforced before Broker decisions", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("stored Request target and result text remain bounded", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-text-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.admitRequest(requestInput("request:corrupt-text"));
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE requests SET state = 'FAILED', result_class = ?, target_ref = ? WHERE request_id = ?")
+        .run("EXECUTION_FAILED", `host:${"x".repeat(4_096)}`, "request:corrupt-text");
+    } finally {
+      database.close();
+    }
+    const reopened = new BrokerStore(databasePath);
+    try {
+      assert.throws(
+        () => reopened.requestRecord("request:corrupt-text"),
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+      );
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
