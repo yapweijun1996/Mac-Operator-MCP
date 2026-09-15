@@ -3,6 +3,7 @@ import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CONTRACT_VERSION, SCOPES, decodeUtf8Strict, parseJsonStrict } from "@mac-operator/contracts";
 import { isPlainDataRecord } from "./plain-record.js";
+import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
 
 const MAX_CONTRACT_FILES = 64;
 const MAX_CONTRACT_FILE_BYTES = 1_048_576;
@@ -234,18 +235,25 @@ async function readContractFile(path: string): Promise<string> {
   const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.isSymbolicLink() || before.dev !== pathStat.dev || before.ino !== pathStat.ino ||
+    if (!before.isFile() || before.isSymbolicLink() || !sameProtectedFileMetadata(pathStat, before) ||
         (before.mode & 0o022) !== 0) throw new Error("Tool contract target changed while opening");
     if (before.size > MAX_CONTRACT_FILE_BYTES) throw new Error("Tool contract exceeds the supported size");
     const buffer = Buffer.alloc(MAX_CONTRACT_FILE_BYTES + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const after = await handle.stat();
-    if (!after.isFile() || after.isSymbolicLink() || after.dev !== pathStat.dev || after.ino !== pathStat.ino ||
-        (after.mode & 0o022) !== 0 || after.size > MAX_CONTRACT_FILE_BYTES || bytesRead > MAX_CONTRACT_FILE_BYTES) {
-      throw new Error("Tool contract exceeds the supported size");
+    try {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      const content = buffer.subarray(0, bytesRead);
+      const readback = await readProtectedFileAfterIdentity({
+        readFile: async () => content,
+        stat: () => handle.stat()
+      }, before, MAX_CONTRACT_FILE_BYTES, "Tool contract");
+      try {
+        return decodeUtf8Strict(readback);
+      } finally {
+        readback.fill(0);
+      }
+    } finally {
+      buffer.fill(0);
     }
-    if (after.size !== bytesRead) throw new Error("Tool contract changed while loading");
-    return decodeUtf8Strict(buffer.subarray(0, bytesRead));
   } finally {
     await handle.close();
   }

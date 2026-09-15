@@ -11,3 +11,4 @@ export * from "./tls-material.js";
 export * from "./authentication-key.js";
 export * from "./keychain-delivery-client.js";
 export * from "./service-startup.js";
+export * from "./protected-file.js";

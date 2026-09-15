@@ -12,6 +12,7 @@ import { createHttpsMcpEdge, type HttpsMcpEdge } from "./https-edge.js";
 import { createJwtAccessTokenVerifier } from "./jwt-verifier.js";
 import { loadProtectedTlsMaterial } from "./tls-material.js";
 import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
+import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -200,13 +201,17 @@ export class EdgeServiceEntrypoint {
 /** Loads the fixed, non-secret startup document used by the packaged Edge. */
 export async function loadEdgeServiceStartupConfig(path: string): Promise<EdgeServiceStartupConfig> {
   const content = await readProtectedConfig(path);
-  let value: unknown;
   try {
-    value = parseJsonUtf8Strict(content);
-  } catch {
-    throw new Error("Edge service startup config is not valid JSON");
+    let value: unknown;
+    try {
+      value = parseJsonUtf8Strict(content);
+    } catch {
+      throw new Error("Edge service startup config is not valid JSON");
+    }
+    return validateEdgeServiceStartupConfig(value);
+  } finally {
+    content.fill(0);
   }
-  return validateEdgeServiceStartupConfig(value);
 }
 
 export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceStartupConfig {
@@ -420,12 +425,10 @@ async function readProtectedConfig(path: string): Promise<Buffer> {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const opened = await handle.stat();
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) {
+    if (!opened.isFile() || !sameProtectedFileMetadata(before, opened)) {
       throw new Error("Edge service startup config target changed while opening");
     }
-    const content = await handle.readFile();
-    if (content.byteLength !== before.size || content.byteLength > MAX_CONFIG_BYTES) throw new Error("Edge service startup config changed while reading");
-    return content;
+    return await readProtectedFileAfterIdentity(handle, opened, MAX_CONFIG_BYTES, "Edge service startup config");
   } finally {
     await handle.close();
   }

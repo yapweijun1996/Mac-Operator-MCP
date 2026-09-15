@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
 
 const MAX_TLS_FILE_BYTES = 256 * 1024;
 
@@ -58,16 +59,10 @@ async function readProtectedTlsFile(path: string, label: string): Promise<Buffer
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const opened = await handle.stat();
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) {
+    if (!opened.isFile() || !sameProtectedFileMetadata(before, opened)) {
       throw new Error(`${label} target changed while opening`);
     }
-    const content = await handle.readFile();
-    const after = await handle.stat();
-    if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino || after.size !== content.byteLength) {
-      throw new Error(`${label} changed while reading`);
-    }
-    if (content.byteLength > MAX_TLS_FILE_BYTES) throw new Error(`${label} exceeds the supported size`);
-    return content;
+    return await readProtectedFileAfterIdentity(handle, opened, MAX_TLS_FILE_BYTES, label);
   } finally {
     await handle.close();
   }

@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { sha256 } from "@mac-operator/contracts";
+import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
 
 const HEX_KEY_PATTERN = /^[A-Fa-f0-9]{64}$/u;
 
@@ -40,21 +41,22 @@ export async function loadProtectedEdgeAuthenticationKey(
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const opened = await handle.stat();
-    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) {
+    if (!opened.isFile() || !sameProtectedFileMetadata(before, opened)) {
       throw new Error("Edge authentication key target changed while opening");
     }
-    const content = await handle.readFile();
-    const after = await handle.stat();
-    if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino || after.size !== content.byteLength) {
-      throw new Error("Edge authentication key changed while reading");
+    const content = await readProtectedFileAfterIdentity(handle, opened, 65, "Edge authentication key");
+    try {
+      const key = content.byteLength === 32
+        ? Buffer.from(content)
+        : parseHexKey(content.toString("ascii"));
+      if (sha256(key) !== expectedDigest) {
+        key.fill(0);
+        throw new Error("Edge authentication key digest precondition failed");
+      }
+      return key;
+    } finally {
+      content.fill(0);
     }
-    const key = content.byteLength === 32
-      ? Buffer.from(content)
-      : parseHexKey(content.toString("ascii"));
-    if (sha256(key) !== expectedDigest) {
-      throw new Error("Edge authentication key digest precondition failed");
-    }
-    return key;
   } finally {
     await handle.close();
   }

@@ -16,9 +16,8 @@ export interface ProtectedFileHandle {
 }
 
 /**
- * Reads through an already-open protected descriptor and performs a second
- * metadata readback. In-place writes must not be able to change the bytes
- * accepted as policy or key material during the read window.
+ * Reads through an already-open protected descriptor and performs a second metadata readback.
+ * In-place writes must not be able to change bytes accepted as configuration or key material.
  */
 export async function readProtectedFileAfterIdentity(
   handle: ProtectedFileHandle,
