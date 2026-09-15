@@ -1854,10 +1854,10 @@ production service evidence remain open. Evidence:
 `evidence/2026-09-15-kill-switch-fail-closed.md`.
 
 BrokerStore Request state invariants are now enforced at the persistence
-readback boundary (source revision `8ffbc78`). Stored request states must agree
+readback boundary (source revision `f607f41`). Stored request states must agree
 with their result class, mutation approval and Job linkage, and lifecycle
 timestamps must be monotonic; malformed rows fail closed as
-`AUDIT_UNAVAILABLE`. Focused request corruption tests pass 2/2 and the
-non-overlapping package regression passes 557 total (551 passed, 6 skipped, 0
+`AUDIT_UNAVAILABLE`. Focused request corruption tests pass 3/3 and the
+non-overlapping package regression passes 558 total (552 passed, 6 skipped, 0
 failed). Disk exhaustion, production identity, and final ADR acceptance remain
 open. Evidence: `evidence/2026-09-15-request-state-invariants.md`.

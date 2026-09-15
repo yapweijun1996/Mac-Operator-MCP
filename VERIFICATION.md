@@ -2794,8 +2794,8 @@ production identity, or ADR acceptance. Evidence:
 Request-state verification confirms BrokerStore rejects corrupted request
 state/result combinations and timestamp rollback before request readback or
 recovery. Mutation approval and Job identifiers are also bounded and cannot be
-attached to a non-mutation request. Focused request invariant tests pass 2/2;
-the non-overlapping package regression passes 557 total (551 passed, 6
+attached to a non-mutation request. Focused request invariant tests pass 3/3;
+the non-overlapping package regression passes 558 total (552 passed, 6
 skipped, 0 failed). Production identity, disk-exhaustion behavior, and ADR
 acceptance remain open. Evidence:
 `evidence/2026-09-15-request-state-invariants.md`.
