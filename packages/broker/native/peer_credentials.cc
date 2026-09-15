@@ -2272,6 +2272,10 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
+  // Fault-test builds deliberately stop after the durable quarantine rename.
+  // This models a Broker crash at the exact boundary where Job metadata must
+  // already contain the temporary device/inode for restart recovery.
+  MaybeInjectWriteCrash("after_unlink_quarantine_rename");
   if (unlinkat(parent_descriptor, quarantine_name, 0) != 0 || fsync(parent_descriptor) != 0) {
     close(parent_descriptor);
     close(root_descriptor);
