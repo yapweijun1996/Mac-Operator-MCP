@@ -4,6 +4,20 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Docker inspect object-identity addendum at source revision `423985d`: the
+fixed adapter now binds a response to the requested Docker target before
+serialization. Exact IDs and one-way bounded hexadecimal prefixes are
+accepted; non-ID names require exact `Name` readback (with Docker's single
+leading slash normalized), while ID-looking names remain ID targets. A
+different returned ID fails closed as `CONFLICT`, and missing/ambiguous
+identity cannot be promoted to success. Focused Docker identity/parser tests
+pass 11/11, the physical Docker Desktop status/inspect readback passes 1/1,
+and typecheck passes. This narrows result substitution but is not a
+kernel-held Docker object handle; same-name replacement between name
+resolution and command execution, native macOS daemon isolation, socket
+denial, code-signature provenance, mutation, and production evidence remain
+open. Evidence: `evidence/2026-09-16-docker-object-identity.md`.
+
 Docker CLI executable-boundary addendum at source revision `ff4f4d6`: the
 shared `ProcessSupervisor` keeps root-owned execution as the default while a
 fixed Docker adapter may use only a Broker-listed canonical app-bundle path
