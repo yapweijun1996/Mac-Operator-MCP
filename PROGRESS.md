@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge capability-scope binding addendum: source revision `d4c9bbf` keeps the
+contract registry's required scopes and requires every authenticated Broker
+capability item to carry a non-empty, unique scope list that exactly matches
+the registered contract before MCP tool registration. Scope drift now fails
+closed alongside version and lifecycle mismatches; bearer tokens remain out of
+the Broker principal projection. Focused Edge contract/MCP tests pass 18/18;
+no runtime capability was enabled. Evidence:
+`evidence/2026-09-16-edge-capability-scope-binding.md`.
+
 Contract-policy parity addendum: source revision `20b5d9b` corrects six
 default-policy budget/target values that had drifted from the materialized
 contracts and adds a fail-closed parity test for all 44 tool entries. The

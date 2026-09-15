@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge capability-scope binding verification at source revision `d4c9bbf`: the
+contract registry retains each tool's required scopes, and the authenticated
+MCP factory requires Broker capability items to provide a non-empty unique
+scope list exactly equal to the registered contract before advertising a
+tool. Scope drift fails closed before registration. Focused Edge
+contract/MCP tests pass 18/18; no runtime capability was enabled. Evidence:
+`evidence/2026-09-16-edge-capability-scope-binding.md`.
+
 Contract-policy parity verification at source revision `20b5d9b`: the default
 Broker policy now matches all 44 materialized contracts for required scopes,
 Broker-normalized target type, timeout, output cap, approval policy, mutation

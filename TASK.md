@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-022 Edge capability-scope binding addendum: source revision `d4c9bbf`
+retains required scopes in the immutable contract view and rejects any
+Broker capability envelope whose non-empty scope list differs from the
+registered contract. Scope metadata is now checked before MCP registration,
+in addition to contract version and planned/implemented state. Focused Edge
+contract and MCP tests pass 18/18; no runtime capability was enabled. Evidence:
+`evidence/2026-09-16-edge-capability-scope-binding.md`.
+
 MOP-005 contract-policy parity addendum: source revision `20b5d9b` fixes six
 default Broker policy values that differed from the versioned contracts and
 adds a complete 44-tool parity regression. Required scopes, normalized target
