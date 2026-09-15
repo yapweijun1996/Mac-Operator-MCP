@@ -148,6 +148,22 @@ test("request parsing rejects inherited envelope, argument, and principal fields
     (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
   );
 
+  const cyclicArguments = {} as Record<string, unknown>;
+  cyclicArguments.self = cyclicArguments;
+  const cyclicRequest = { ...base, arguments: cyclicArguments };
+  assert.throws(
+    () => parseBrokerRequest(cyclicRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
+  const symbolicArguments = { safe: true } as Record<string, unknown>;
+  Object.defineProperty(symbolicArguments, Symbol("hidden"), { value: "/private" });
+  const symbolicRequest = { ...base, arguments: symbolicArguments };
+  assert.throws(
+    () => parseBrokerRequest(symbolicRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
   const sparseArguments = { values: [] } as Record<string, unknown>;
   (sparseArguments.values as unknown[]).length = 2;
   const sparseRequest = { ...base, arguments: sparseArguments };
