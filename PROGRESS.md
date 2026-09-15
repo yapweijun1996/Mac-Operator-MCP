@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem-worker result boundary addendum: commits `5657267` and `86a6792`
+apply exact-field, plain-data, dense-array, and bounded nested-record checks
+to all filesystem worker operations. Storage volume results are explicitly
+projected to their public fields, removing the internal `rootPath` authority
+before result validation. Focused filesystem/contract tests pass 3/3; the
+non-overlapping package regression passes 521 total (515 pass, 6 skipped,
+0 fail). Native provenance, remount, sandbox, credential, VM, persistence,
+and capability enablement evidence remains open.
+Evidence: `evidence/2026-09-15-filesystem-worker-result-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` applies plain-data
 and exact-field validation to native process inventory/detail results and
 worker envelopes. Owner identities and child PID arrays receive bounded,

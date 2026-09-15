@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem-worker result boundary addendum: source revisions `5657267` and
+`86a6792` harden every filesystem worker result as plain data with exact
+operation-specific fields, dense bounded arrays, and validated nested
+records. Storage volume results now explicitly project away the internal
+`rootPath` field before crossing the worker boundary, so internal planning
+authority cannot be exposed as public result data. Focused filesystem and
+contract-conformance tests pass 3/3; the non-overlapping package regression
+passes 521 total (515 pass, 6 skipped, 0 fail). This closes local filesystem
+result-shape integrity only; native provenance, remount, sandbox, credential,
+VM, persistence, and capability enablement evidence remain open.
+Evidence: `evidence/2026-09-15-filesystem-worker-result-boundary.md`.
+
 Process-worker result boundary addendum: source revision `a01b62e` hardens
 native process metadata and worker-result parsers. Inventory/detail records
 now require plain data and exact fields; owners are bounded uid identities,

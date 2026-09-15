@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Filesystem-worker result boundary addendum: commits `5657267` and `86a6792`
+enforce operation-specific exact fields, plain-data nested records, dense
+bounded arrays, and bounded scalar values before filesystem results reach the
+Broker. Storage analysis now strips the internal volume `rootPath` field at
+the producer boundary; contract conformance therefore cannot be broken by
+internal planning metadata. Focused filesystem and contract-conformance
+tests pass 3/3; the non-overlapping package regression passes 521 total
+(515 pass, 6 skipped, 0 fail). This proves local result-shape integrity only;
+native provenance, remount, sandbox/credential/VM isolation, persistence,
+and capability enablement remain unverified.
+Evidence: `evidence/2026-09-15-filesystem-worker-result-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` requires native
 process inventory/detail results to be plain records with exact fields and
 bounded uid/child identities. The generic worker envelope accepts only its
