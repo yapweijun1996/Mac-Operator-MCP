@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Audit-evidence redaction addendum: source revision `c2fdb4c` expands the
+recursive persistence redactor to cover common API/access/refresh token,
+client/HMAC/signing/SSH key, bearer/JWT, password/passphrase, cookie,
+credential, and private/secret field aliases. The dedicated alias corpus test
+passes; build and diff checks pass. This is an additional defense-in-depth
+layer and does not close the broader secret corpus or physical isolation
+gates. Evidence: `evidence/2026-09-15-audit-evidence-redaction.md`.
+
 Failure-audit target addendum: source revision `3ed2e02` carries the
 Broker-normalized target into post-authorization failure audit rows while
 preserving `unresolved` for earlier parse/auth/authorization failures. The

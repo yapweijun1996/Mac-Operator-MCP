@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Audit-evidence redaction verification: the persistence redactor now covers
+common API/access/refresh token, client/HMAC/signing/SSH key, bearer/JWT,
+password/passphrase, cookie, credential, and private/secret field aliases.
+The dedicated alias corpus test passes with canonical evidence unchanged for
+safe fields. This defense-in-depth check does not close VT-SEC-01/02 or prove
+physical credential isolation. Evidence:
+`evidence/2026-09-15-audit-evidence-redaction.md`.
+
 Failure-audit target verification at source revision `3ed2e02` confirms that
 post-authorization failures retain the Broker-normalized `host:broker` target
 in both decision and completion audit rows, while earlier failures remain

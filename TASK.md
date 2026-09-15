@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Audit-evidence redaction addendum: the persistence boundary now redacts
+common credential and key field aliases before canonicalization; the focused
+alias corpus passes. This is defense-in-depth only and leaves the broader
+secret-corpus, physical isolation, and release gates open. Evidence:
+`evidence/2026-09-15-audit-evidence-redaction.md`.
+
 Failure-audit target addendum: commit `3ed2e02` records the normalized target
 for post-authorization failure completion rows and keeps pre-authorization
 denials bounded as `unresolved`. Focused source assertions and an independent
