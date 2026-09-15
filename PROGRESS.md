@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Descriptor-launcher seam addendum at source revision `b228089`: a
+descriptor-required `ProcessSupervisor` now requires both the attested host
+capability and a Broker-owned concrete launcher seam. If the seam is absent,
+admission fails with stable `POLICY_DENIED`; pathname `spawn` is never used as
+a fallback. Focused process-supervisor and capability tests pass 42/42. The
+serial physical regression passes 649/654 with 0 failures and 5 explicit
+descriptor-capability skips; the three pre-existing long-running suites were
+excluded and left untouched. This closes the latent fallback condition only;
+native descriptor execution, immutable snapshots, remount resistance,
+production isolation, and task enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-launcher-seam.md`.
+
 Serial physical regression addendum at source revision `d3ebdf3`: with
 installation, sandbox, and Keychain opt-ins enabled, the bounded serial run
 passes 648/653 tests with 0 failures and 5 explicit descriptor-capability

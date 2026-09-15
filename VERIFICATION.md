@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Descriptor-launcher seam verification at source revision `b228089`:
+descriptor-required `ProcessSupervisor` admission now requires a concrete
+Broker-owned launcher seam after the host capability check. Missing wiring
+returns stable `POLICY_DENIED`; pathname `spawn` is not a fallback. Focused
+process-supervisor and capability tests pass 42/42, and the serial physical
+regression passes 649/654 with 0 failures and 5 explicit
+descriptor-capability skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes only the latent fallback condition;
+native immutable descriptor execution, remount resistance, production
+credential/process isolation, and task enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-launcher-seam.md`.
+
 Serial physical regression verification at source revision `d3ebdf3`: the
 installation, sandbox, and Keychain opt-in suite ran serially on Darwin
 25.2.0 arm64 and passed 648/653 tests with 0 failures and 5 explicit

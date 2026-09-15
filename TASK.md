@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 descriptor-launcher seam addendum at source revision `b228089`:
+descriptor-required process admission now requires a Broker-owned concrete
+launcher seam after host capability attestation. Missing wiring returns stable
+`POLICY_DENIED`, and pathname execution is never selected as a fallback.
+Focused process-supervisor and capability tests pass 42/42; the serial
+physical regression passes 649/654 with 0 failures and 5 explicit
+descriptor-capability skips. Native descriptor execution, immutable snapshot,
+remount, production isolation, and task enablement gates remain open.
+Evidence: `evidence/2026-09-16-descriptor-launcher-seam.md`.
+
 Serial physical regression addendum at source revision `d3ebdf3`: the
 installation, sandbox, and Keychain opt-in run passes 648/653 tests with 0
 failures and 5 explicit descriptor-capability skips. The three pre-existing
