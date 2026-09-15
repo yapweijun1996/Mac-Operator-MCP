@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 descriptor launcher FD-boundary addendum at source revision `2c2b10d`:
+descriptor-required ProcessSupervisor execution opens and identity-checks the
+Broker-validated executable, then passes only a borrowed descriptor FD to the
+native adapter. The adapter receives no executable pathname, and pathname
+spawn cannot be selected as fallback. Focused process/capability tests pass
+42/42; the serial physical regression passes 657/662 with 0 failures and 5
+explicit descriptor-capability skips. Native descriptor execution,
+close-on-exec, immutable snapshot, remount, production isolation, and task
+enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-launcher-fd-boundary.md`.
+
 MOP-080/081/084/085/086 Edge protected descriptor readback addendum at source
 revision `a01f540`: Edge authentication-key, TLS, startup-config, and
 tool-contract readers compare complete descriptor metadata after reading and

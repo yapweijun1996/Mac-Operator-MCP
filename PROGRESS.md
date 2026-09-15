@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Descriptor launcher FD-boundary addendum at source revision `2c2b10d`:
+descriptor-required `ProcessSupervisor` execution now opens the validated
+executable with `O_NOFOLLOW`, rechecks complete descriptor metadata, and gives
+the native adapter only a borrowed executable FD; the adapter receives no
+pathname and pathname spawn is never a fallback. Focused process/capability
+tests pass 42/42; the serial physical regression passes 657/662 with 0
+failures and 5 explicit descriptor-capability skips. This makes the future
+adapter seam truthful but does not provide native descriptor execution,
+close-on-exec, immutable snapshots, remount resistance, production isolation,
+or task enablement. Evidence:
+`evidence/2026-09-16-descriptor-launcher-fd-boundary.md`.
+
 Edge protected descriptor readback addendum at source revision `a01f540`:
 Edge authentication-key, TLS, startup-config, and tool-contract readers now
 compare device, inode, owner, group, mode, size, mtime, and ctime after

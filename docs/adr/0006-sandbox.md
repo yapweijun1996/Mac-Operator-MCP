@@ -76,6 +76,14 @@ or cleanup. These changes close the latent fallback and malformed-return
 boundaries only; they do not provide the native descriptor primitive or change
 the disabled `mac_task_run` gate.
 
+Commit `2c2b10d` makes that seam descriptor-bound: after Broker path validation,
+the supervisor opens the executable with `O_NOFOLLOW`, rechecks complete
+descriptor metadata, and passes only a borrowed FD to the adapter. The adapter
+must consume or duplicate the FD before returning and receives no executable
+pathname. This removes a pathname-reopen ambiguity but remains a contract
+boundary only; native atomic execution, close-on-exec, immutable snapshots,
+remount resistance, and production task enablement are still unproven.
+
 Commits `d68176b` and `28007cf` harden the virtualization startup seam's
 shutdown recovery: `VirtualizationGuestRuntimeImpl` clears a rejected close
 promise and remains retryable when transport, task-runner, or lifecycle
