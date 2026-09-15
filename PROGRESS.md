@@ -4,6 +4,20 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Signed policy target validation addendum at source revision `7e92fe9`:
+`validateBrokerPolicy` now applies target-kind-specific, bounded reference
+grammars to every active target rule after generic shape validation. Host and
+Docker runtime identities, filesystem root IDs, canonical projects,
+process/Job/profile IDs, app/window/UI identities, service/log sources, Docker
+objects, packages, and power targets cannot carry traversal or cross-kind
+references into active policy. Focused policy-target coverage passes 2/2 (18
+canonical/malformed target cases); the
+combined policy/policy-loader regression passes 29/29. Unknown but safely shaped
+caller targets retain normal default-deny behavior. This closes signed target
+reference syntax validation only; parameterized grant serialization, live
+resource identity readback, and release evidence remain open. Evidence:
+`evidence/2026-09-16-signed-policy-target-validation.md`.
+
 Policy-query target normalization addendum at source revision `81bf9fa`:
 `mac_policy_explain` now applies target-kind-specific reference grammars before
 policy lookup, including canonical app/window/UI identities, absolute
