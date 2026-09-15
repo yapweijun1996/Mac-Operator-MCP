@@ -14,6 +14,9 @@ factory error text is returned to an MCP caller.
 
 - `npm run build` — pass.
 - `node --test --test-concurrency=1 packages/broker/dist/worker-executor.test.js` — 8/8 pass.
+- Non-overlapping package regression (excluding the two pre-existing long-running broker test processes) — 492 total, 486 pass, 6 skipped, 0 fail.
+- `npm run typecheck` — pass.
+- `npm run lint` — pass.
 - `git diff --check` — pass.
 
 This closes only synchronous worker-construction error normalization. It does

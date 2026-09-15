@@ -7,9 +7,10 @@ Last verified: 2026-09-15
 Worker startup-failure addendum: `BoundedWorkerExecutor` now maps synchronous
 worker-factory exceptions to stable `EXECUTION_FAILED` without incrementing
 active capacity or exposing raw startup text. Worker-executor tests pass 8/8;
-build and diff checks pass. This closes error normalization only; worker
-sandboxing, credential separation, and production task-runner enablement
-remain open. Evidence:
+the non-overlapping package regression passes 492 total (486 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This closes error
+normalization only; worker sandboxing, credential separation, and production
+task-runner enablement remain open. Evidence:
 `evidence/2026-09-15-worker-startup-failure-boundary.md`.
 
 Edge JWKS response-status addendum: source revision `fc04641` requires the

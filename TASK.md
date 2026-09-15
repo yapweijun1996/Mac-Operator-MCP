@@ -6,8 +6,9 @@ Last verified: 2026-09-15
 
 Worker startup-failure addendum: `BoundedWorkerExecutor` catches synchronous
 worker-factory failures and returns the stable `EXECUTION_FAILED` class while
-leaving capacity unchanged. Worker-executor tests pass 8/8 and the build and
-diff checks pass. This is a bounded error-normalization fix; worker
+leaving capacity unchanged. Worker-executor tests pass 8/8; the non-overlapping
+package regression passes 492 total (486 pass, 6 skipped, 0 fail); build,
+typecheck, lint, and diff checks pass. This is a bounded error-normalization fix; worker
 sandboxing, credential/process isolation, and production task enablement
 remain governed by the existing MOP-045/MOP-086 gates. Evidence:
 `evidence/2026-09-15-worker-startup-failure-boundary.md`.

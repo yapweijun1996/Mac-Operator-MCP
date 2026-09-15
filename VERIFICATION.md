@@ -5,8 +5,9 @@ Version: 0.1
 
 Worker startup-failure addendum: `BoundedWorkerExecutor.run` catches a
 synchronous worker-factory exception, returns stable `EXECUTION_FAILED`, and
-does not consume active capacity. Worker-executor tests pass 8/8; build and
-diff checks pass. This does not prove worker sandboxing, credential
+does not consume active capacity. Worker-executor tests pass 8/8; the
+non-overlapping package regression passes 492 total (486 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This does not prove worker sandboxing, credential
 separation, or production task-runner enablement. Evidence:
 `evidence/2026-09-15-worker-startup-failure-boundary.md`.
 
