@@ -1,7 +1,8 @@
 import { isAbsolute, resolve } from "node:path";
+import { BrokerError } from "@mac-operator/contracts";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
-import { PrivilegedHelperKeyManager } from "./privileged-helper-keyring.js";
+import { loadPrivilegedHelperKeyConfigWithoutBroker, PrivilegedHelperKeyManager } from "./privileged-helper-keyring.js";
 import {
   PrivilegedHelperIpcServer,
   type PrivilegedHelperAdapter,
@@ -12,7 +13,7 @@ import {
 } from "./privileged-helper.js";
 import type { BrokerStore } from "./persistence.js";
 import type { NativePeerPolicy } from "./native-peer-ipc-server.js";
-import type { PrivilegedHelperAuthorityPoller } from "./privileged-helper-authority-ipc.js";
+import { PrivilegedHelperAuthorityClient, type PrivilegedHelperAuthorityPoller } from "./privileged-helper-authority-ipc.js";
 
 export type PrivilegedHelperRuntimeState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
@@ -58,6 +59,33 @@ export interface PrivilegedHelperRuntimeOptions {
   readStatus?: () => PrivilegedHelperStatusReadback;
   /** Broker-owned final authority gate for status reads. */
   authorizeStatus?: () => void;
+  serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "replayGuard" | "adapter" | "authorizeCommand" | "readStatus" | "authorizeStatus">;
+}
+
+/**
+ * Root-helper startup options. This deliberately has no BrokerStore field:
+ * the helper loads its protected key material locally and asks the Broker's
+ * authenticated authority channel before dispatching enabled operations.
+ */
+export interface PrivilegedHelperRuntimeKeyMaterialOptions {
+  helperKeyConfigPath: string;
+  socketPath: string;
+  /** The helper must never reuse the unprivileged Broker socket. */
+  brokerSocketPath: string;
+  /** Broker-owned authority polling socket; required when an adapter is enabled. */
+  authoritySocketPath?: string;
+  reservedSocketPaths?: readonly string[];
+  /** Broker identity for both the helper command and authority poll channels. */
+  peerPolicy: NativePeerPolicy;
+  replayGuard: PrivilegedHelperReplayGuard;
+  adapter: PrivilegedHelperAdapter;
+  /** Local command gate. Broker authority remains mandatory through polling. */
+  authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
+  authorityPoller?: PrivilegedHelperAuthorityPoller;
+  authorityPollIntervalMs?: number;
+  readStatus?: () => PrivilegedHelperStatusReadback;
+  authorizeStatus?: () => void;
+  keyAuthorityCheck?: () => void;
   serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "replayGuard" | "adapter" | "authorizeCommand" | "readStatus" | "authorizeStatus">;
 }
 
@@ -217,18 +245,7 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
   options: PrivilegedHelperRuntimeOptions
 ): Promise<PrivilegedHelperRuntime> {
   validateSocketBoundary(options);
-  if (options.peerPolicy.allowedProcessIdentity === undefined) {
-    throw new PrivilegedHelperStartupError(
-      "HELPER_PEER_POLICY_INVALID",
-      "Privileged helper startup requires an explicit native peer process identity"
-    );
-  }
-  if (!Number.isSafeInteger(options.peerPolicy.expectedUid) || options.peerPolicy.expectedUid < 1) {
-    throw new PrivilegedHelperStartupError(
-      "HELPER_PEER_POLICY_INVALID",
-      "Privileged helper startup requires a non-root Broker peer identity"
-    );
-  }
+  validateHelperPeerPolicy(options.peerPolicy);
   const manager = new PrivilegedHelperKeyManager(options.helperKeyConfigPath, options.helperKeyStore);
   let authorityPoller = options.authorityPoller;
   try {
@@ -276,7 +293,86 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
   }
 }
 
-function validateSocketBoundary(options: PrivilegedHelperRuntimeOptions): void {
+/**
+ * Root-helper startup that does not open BrokerStore. The helper key config
+ * and key are read from a protected root-owned source; revocation, rotation,
+ * request binding, and kill-switch decisions are supplied by the authenticated
+ * Broker authority poller before and during every enabled operation.
+ */
+export async function createPrivilegedHelperRuntimeFromKeyMaterial(
+  options: PrivilegedHelperRuntimeKeyMaterialOptions
+): Promise<PrivilegedHelperRuntime> {
+  validateSocketBoundary(options);
+  validateHelperPeerPolicy(options.peerPolicy);
+  let loaded: Awaited<ReturnType<typeof loadPrivilegedHelperKeyConfigWithoutBroker>> | undefined;
+  let authorityPoller = options.authorityPoller;
+  let server: PrivilegedHelperIpcServer | undefined;
+  try {
+    loaded = await loadPrivilegedHelperKeyConfigWithoutBroker(options.helperKeyConfigPath);
+    const now = options.serverOptions?.now ?? Date.now;
+    const notBeforeMs = loaded.key.notBeforeMs;
+    const expiresAtMs = loaded.key.expiresAtMs;
+    const assertConfiguredKeyUsable = (): void => {
+      const nowMs = now();
+      if (!Number.isSafeInteger(nowMs) || nowMs < notBeforeMs || nowMs >= expiresAtMs) {
+        throw new BrokerError("AUTH_EXPIRED", "Privileged helper key is outside its validity window");
+      }
+      options.keyAuthorityCheck?.();
+    };
+    assertConfiguredKeyUsable();
+    if (options.adapter.available && authorityPoller === undefined) {
+      if (options.authoritySocketPath === undefined) {
+        throw new PrivilegedHelperStartupError(
+          "HELPER_AUTHORITY_UNAVAILABLE",
+          "Privileged helper startup requires an authority socket when an adapter is enabled"
+        );
+      }
+      authorityPoller = new PrivilegedHelperAuthorityClient({
+        socketPath: options.authoritySocketPath,
+        authenticationKey: loaded.key.key,
+        peerPolicy: options.peerPolicy,
+        now,
+        keyAuthorityCheck: assertConfiguredKeyUsable
+      });
+    }
+    if (options.adapter.available && authorityPoller === undefined) {
+      throw new PrivilegedHelperStartupError(
+        "HELPER_AUTHORITY_UNAVAILABLE",
+        "Privileged helper startup requires a separately authenticated Broker authority poller when an adapter is enabled"
+      );
+    }
+    server = new PrivilegedHelperIpcServer({
+      ...(options.serverOptions ?? {}),
+      socketPath: options.socketPath,
+      authenticationKey: loaded.key.key,
+      peerPolicy: options.peerPolicy,
+      replayGuard: options.replayGuard,
+      adapter: options.adapter,
+      authorizeCommand: options.authorizeCommand,
+      keyAuthorityCheck: assertConfiguredKeyUsable,
+      ...(authorityPoller === undefined ? {} : { authorityPoller }),
+      ...(options.authorityPollIntervalMs === undefined ? {} : { authorityPollIntervalMs: options.authorityPollIntervalMs }),
+      ...(options.readStatus === undefined ? {} : { readStatus: options.readStatus }),
+      ...(options.authorizeStatus === undefined ? {} : { authorizeStatus: options.authorizeStatus })
+    });
+    loaded.key.key.fill(0);
+    loaded = undefined;
+    return new PrivilegedHelperRuntime(server, authorityPoller);
+  } catch (error) {
+    authorityPoller?.dispose?.();
+    loaded?.key.key.fill(0);
+    await server?.close().catch(() => undefined);
+    if (error instanceof PrivilegedHelperStartupError) throw error;
+    throw new PrivilegedHelperStartupError(
+      "HELPER_KEY_CONFIG_UNAVAILABLE",
+      error instanceof Error ? error.message : "Privileged helper key material could not be loaded"
+    );
+  }
+}
+
+type PrivilegedHelperSocketBoundaryOptions = Pick<PrivilegedHelperRuntimeOptions, "socketPath" | "brokerSocketPath" | "authoritySocketPath" | "reservedSocketPaths">;
+
+function validateSocketBoundary(options: PrivilegedHelperSocketBoundaryOptions): void {
   const paths = [
     options.socketPath,
     options.brokerSocketPath,
@@ -289,6 +385,21 @@ function validateSocketBoundary(options: PrivilegedHelperRuntimeOptions): void {
   const identities = new Set(paths);
   if (identities.size !== paths.length) {
     throw new PrivilegedHelperStartupError("HELPER_SOCKET_INVALID", "Privileged helper socket must be distinct from Broker and control sockets");
+  }
+}
+
+function validateHelperPeerPolicy(peerPolicy: NativePeerPolicy): void {
+  if (peerPolicy.allowedProcessIdentity === undefined) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_PEER_POLICY_INVALID",
+      "Privileged helper startup requires an explicit native peer process identity"
+    );
+  }
+  if (!Number.isSafeInteger(peerPolicy.expectedUid) || peerPolicy.expectedUid < 1) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_PEER_POLICY_INVALID",
+      "Privileged helper startup requires a non-root Broker peer identity"
+    );
   }
 }
 

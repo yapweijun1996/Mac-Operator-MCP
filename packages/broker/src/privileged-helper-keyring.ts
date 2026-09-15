@@ -263,9 +263,28 @@ export async function loadPrivilegedHelperKeyConfig(
   path: string,
   store: BrokerStore
 ): Promise<LoadedPrivilegedHelperKeyConfig> {
+  return loadPrivilegedHelperKeyConfigInternal(path, (keyId) => store.isRevoked("helper_key", keyId));
+}
+
+/**
+ * Loads helper key material without opening BrokerStore. This is the root
+ * helper path: revocation and active-configuration authority are supplied by
+ * the separately authenticated Broker authority channel instead of shared
+ * SQLite access.
+ */
+export async function loadPrivilegedHelperKeyConfigWithoutBroker(
+  path: string
+): Promise<LoadedPrivilegedHelperKeyConfig> {
+  return loadPrivilegedHelperKeyConfigInternal(path);
+}
+
+async function loadPrivilegedHelperKeyConfigInternal(
+  path: string,
+  isRevoked?: (keyId: string) => boolean
+): Promise<LoadedPrivilegedHelperKeyConfig> {
   const document = parseConfig(await readProtectedConfig(path));
   const entry = document.keys[0];
-  if (store.isRevoked("helper_key", entry.keyId)) {
+  if (isRevoked?.(entry.keyId)) {
     throw new Error(`Privileged helper key is revoked: ${entry.keyId}`);
   }
   const key = entry.keySource === "keychain"

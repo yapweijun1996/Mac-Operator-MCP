@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import test from "node:test";
 import { canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
 import {
   captureLaunchdBrokerProcessIdentity,
+  createPrivilegedHelperRuntimeFromKeyMaterial,
   createPrivilegedHelperRuntimeForLaunchdBroker,
   createPrivilegedHelperRuntimeFromActiveKeyConfig,
   PrivilegedHelperStartupError
@@ -196,6 +197,90 @@ test("privileged helper runtime auto-wires and disposes the Broker authority pol
     await runtime?.close().catch(() => undefined);
     await authority?.close().catch(() => undefined);
     store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("root-helper key-material startup does not require BrokerStore access", async () => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || uid < 1 || gid === undefined) throw new Error("POSIX non-root identity is unavailable");
+  const root = await mkdtemp(join(tmpdir(), "mops-root-helper-material-"));
+  const keyPath = join(root, "helper.key");
+  const configPath = join(root, "helper-keys.json");
+  const helperSocketPath = join(root, "helper.sock");
+  const brokerSocketPath = join(root, "broker.sock");
+  const authoritySocketPath = join(root, "authority.sock");
+  const now = Date.now();
+  const peerPolicy = { expectedUid: uid, expectedGid: gid, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) };
+  let authority: PrivilegedHelperAuthorityIpcServer | undefined;
+  let runtime: Awaited<ReturnType<typeof createPrivilegedHelperRuntimeFromKeyMaterial>> | undefined;
+  try {
+    const provisioned = await provisionAuthenticationKey(keyPath);
+    const key = await loadAuthenticationKey(keyPath);
+    await writePrivilegedHelperKeyConfig(configPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        keyId: "helper-key-root-material", keySource: "file", path: keyPath,
+        keyDigest: provisioned.digest, notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+      }]
+    });
+    authority = new PrivilegedHelperAuthorityIpcServer({
+      socketPath: authoritySocketPath,
+      authenticationKey: key,
+      replayGuard: { admit: () => undefined },
+      authorizeCommand: () => undefined,
+      peerPolicy,
+      now: () => now
+    });
+    await authority.listen();
+    runtime = await createPrivilegedHelperRuntimeFromKeyMaterial({
+      helperKeyConfigPath: configPath,
+      socketPath: helperSocketPath,
+      brokerSocketPath,
+      authoritySocketPath,
+      peerPolicy,
+      replayGuard: { admit: () => undefined },
+      adapter: new AllowlistedPrivilegedHelper({
+        service_control: async (command) => ({
+          operation: command.operation,
+          targetRef: command.targetRef,
+          state: "completed",
+          resultClass: "SUCCEEDED",
+          evidence: {}, warnings: [], truncated: false,
+          verification: { status: "verified", strategy: "allowlisted_postcondition" }
+        })
+      }),
+      authorizeCommand: () => undefined,
+      serverOptions: { now: () => now }
+    });
+    await runtime.start();
+    const payload = { operation: "service_control" as const, service_id: "system/com.example.test", action: "start" as const };
+    const unsigned: UnsignedPrivilegedHelperCommand = {
+      protocolVersion: "0.1",
+      contractVersion: CONTRACT_VERSION,
+      commandId: "priv-command:root-material-0001",
+      requestId: "request:root-material-0001",
+      nonce: "helper-nonce-root-material-0001",
+      nonceExpiresAtMs: now + 30_000,
+      timestampMs: now,
+      expiresAtMs: now + 30_000,
+      operation: "service_control",
+      targetRef: "service:system/com.example.test",
+      payload,
+      payloadDigest: sha256(canonicalJson(payload)),
+      policyVersion: "policy-test-1",
+      approvalId: "approval:root-material-0001",
+      intentId: "intent:root-material-0001"
+    };
+    const response = await sendHelperCommand(helperSocketPath, signPrivilegedHelperCommand(unsigned, key));
+    assert.equal(authenticatePrivilegedHelperResponse(response, unsigned, key).ok, true);
+    await assert.rejects(access(join(root, "broker.sqlite")));
+    key.fill(0);
+  } finally {
+    await runtime?.close().catch(() => undefined);
+    await authority?.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });
