@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 descriptor child-handle validation addendum at source revision
+`537bb37`: the future native launcher result is validated as a
+ChildProcess-like handle before output, identity, or cleanup handling. Invalid
+native shapes map to bounded `EXECUTION_FAILED`. Focused process-supervisor
+and capability tests pass 42/42; the serial physical regression passes
+649/654 with 0 failures and 5 explicit descriptor-capability skips. Native
+descriptor execution, immutable snapshot, remount, production isolation, and
+task enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-child-handle.md`.
+
 MOP-045 descriptor-launcher seam addendum at source revision `b228089`:
 descriptor-required process admission now requires a Broker-owned concrete
 launcher seam after host capability attestation. Missing wiring returns stable

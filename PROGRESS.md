@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Descriptor child-handle validation addendum at source revision `537bb37`:
+native launcher results are validated as ChildProcess-like handles before
+output capture, process identity observation, or cleanup; malformed native
+return shapes fail with bounded `EXECUTION_FAILED`. Focused
+process-supervisor and capability tests pass 42/42, and the serial physical
+regression passes 649/654 with 0 failures and 5 explicit
+descriptor-capability skips. This hardens the future native seam only;
+descriptor execution, immutable snapshots, remount resistance, production
+isolation, and task enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-child-handle.md`.
+
 Descriptor-launcher seam addendum at source revision `b228089`: a
 descriptor-required `ProcessSupervisor` now requires both the attested host
 capability and a Broker-owned concrete launcher seam. If the seam is absent,

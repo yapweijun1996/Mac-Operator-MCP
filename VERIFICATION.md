@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Descriptor child-handle validation verification at source revision `537bb37`:
+the Broker validates a future native launcher result as a ChildProcess-like
+handle before capture, identity observation, or cleanup. Invalid shapes fail
+with bounded `EXECUTION_FAILED`. Focused process-supervisor and capability
+tests pass 42/42, and the serial physical regression passes 649/654 with 0
+failures and 5 explicit descriptor-capability skips. The three pre-existing
+long-running suites were excluded and left untouched. This hardens the native
+return boundary only; descriptor execution, immutable selection, remount
+resistance, production isolation, and task enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-child-handle.md`.
+
 Descriptor-launcher seam verification at source revision `b228089`:
 descriptor-required `ProcessSupervisor` admission now requires a concrete
 Broker-owned launcher seam after the host capability check. Missing wiring
