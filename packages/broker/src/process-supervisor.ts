@@ -31,11 +31,13 @@ interface ActiveProcessRun {
   drained: Promise<void>;
 }
 
-interface ProcessPathIdentity {
+export interface ProcessPathIdentity {
   device: number;
   inode: number;
   mode: number;
 }
+
+export type ProcessPathKind = "executable" | "directory";
 
 interface ValidatedProcessPaths {
   executable: ProcessPathIdentity;
@@ -60,8 +62,8 @@ export interface ProcessExecutionRequest {
    */
   requireCleanExitProof?: boolean;
   shouldCancel?: () => boolean;
-  /** Synchronous hook used to persist verified ownership before work proceeds. */
-  onStarted?: (snapshot: ProcessOwnershipSnapshot) => void;
+  /** Hook used to persist verified ownership before work proceeds. */
+  onStarted?: (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
   /** Synchronous hook used to persist newly observed descendants. */
   onOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
 }
@@ -250,7 +252,7 @@ export class ProcessSupervisor {
             throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
           }
           if (request.onStarted !== undefined) {
-            request.onStarted({
+            await request.onStarted({
               identity: { pid: processId, processGroupId: processId, startTimeMicros },
               descendants: processTree.snapshotDescendants()
             });
@@ -887,6 +889,28 @@ function isCanonicalAbsolutePath(value: string): boolean {
     isAbsolute(value) && resolve(value) === value && !value.includes("\0") && !value.includes("\n");
 }
 
+export async function captureProcessPathIdentity(path: string, kind: ProcessPathKind): Promise<ProcessPathIdentity> {
+  return kind === "executable" ? validateExecutable(path) : validateDirectory(path);
+}
+
+export async function assertProcessPathIdentityStable(
+  path: string,
+  expected: ProcessPathIdentity,
+  kind: ProcessPathKind
+): Promise<void> {
+  const label = kind === "executable" ? "Executable" : "Process cwd";
+  let current: ProcessPathIdentity;
+  try {
+    current = await captureProcessPathIdentity(path, kind);
+  } catch (error) {
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
+  }
+  if (current.device !== expected.device || current.inode !== expected.inode || current.mode !== expected.mode) {
+    throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
+  }
+}
+
 async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
   const stat = await lstat(path);
   if (stat.isSymbolicLink()) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
@@ -902,16 +926,7 @@ async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
 }
 
 async function assertProcessPathStable(path: string, expected: ProcessPathIdentity, label: "Executable" | "Process cwd"): Promise<void> {
-  let current: ProcessPathIdentity;
-  try {
-    current = label === "Executable" ? await validateExecutable(path) : await validateDirectory(path);
-  } catch (error) {
-    if (error instanceof BrokerError) throw error;
-    throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
-  }
-  if (current.device !== expected.device || current.inode !== expected.inode || current.mode !== expected.mode) {
-    throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
-  }
+  await assertProcessPathIdentityStable(path, expected, label === "Executable" ? "executable" : "directory");
 }
 
 function validateEnvironmentKey(key: string): void {

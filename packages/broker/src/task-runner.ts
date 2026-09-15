@@ -1,6 +1,13 @@
 import { BrokerError, canonicalJson } from "@mac-operator/contracts";
 import type { GuestTaskJobMetadata } from "./persistence.js";
-import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
+import {
+  assertProcessPathIdentityStable,
+  captureProcessPathIdentity,
+  ProcessSupervisor,
+  type ProcessExecutionResult,
+  type ProcessOwnershipSnapshot,
+  type ProcessPathIdentity
+} from "./process-supervisor.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { buildSandboxExecArguments } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
@@ -199,6 +206,8 @@ export class SandboxExecTaskRunner implements TaskRunner {
       throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
     }
     requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
+    const taskExecutableIdentity = await captureTaskProcessPathIdentity(profile.process.executable, "executable");
+    const taskCwdIdentity = await captureTaskProcessPathIdentity(profile.cwd, "directory");
     const filesystemIdentity = captureTaskFilesystemIdentity(profile, this.filesystemIdentityObserver);
     const args = buildSandboxExecArguments(profile);
     const requiresOwnershipPersistence = control.onProcessStarted !== undefined || control.onProcessOwnershipChanged !== undefined;
@@ -208,8 +217,10 @@ export class SandboxExecTaskRunner implements TaskRunner {
     const annotateOwnership = (snapshot: ProcessOwnershipSnapshot): ProcessOwnershipSnapshot =>
       ownershipProof === undefined ? snapshot : { ...snapshot, ownershipProof };
     const onStarted = requiresOwnershipPersistence
-      ? (snapshot: ProcessOwnershipSnapshot): void => {
+      ? async (snapshot: ProcessOwnershipSnapshot): Promise<void> => {
         assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
+        await assertProcessPathIdentityStable(profile.process.executable, taskExecutableIdentity, "executable");
+        await assertProcessPathIdentityStable(profile.cwd, taskCwdIdentity, "directory");
         control.onProcessStarted?.(annotateOwnership(snapshot));
       }
       : undefined;
@@ -236,6 +247,8 @@ export class SandboxExecTaskRunner implements TaskRunner {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("EXECUTION_FAILED", "Sandboxed task could not be started");
     }
+    await assertProcessPathIdentityStable(profile.process.executable, taskExecutableIdentity, "executable");
+    await assertProcessPathIdentityStable(profile.cwd, taskCwdIdentity, "directory");
     assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
     return mapProcessResult(result);
   }
@@ -593,6 +606,18 @@ function parseTaskFilesystemIdentity(value: unknown, expectedRootPath: string): 
     throw new BrokerError("POLICY_DENIED", "Task filesystem volume identity is malformed");
   }
   return { rootPath: record.rootPath, id: record.id };
+}
+
+async function captureTaskProcessPathIdentity(
+  path: string,
+  kind: "executable" | "directory"
+): Promise<ProcessPathIdentity> {
+  try {
+    return await captureProcessPathIdentity(path, kind);
+  } catch (error) {
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("POLICY_DENIED", "Task process path identity could not be established");
+  }
 }
 
 export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {

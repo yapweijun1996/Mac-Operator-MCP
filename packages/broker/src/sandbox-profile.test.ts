@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { renameSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir, userInfo } from "node:os";
@@ -149,7 +150,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
   const supervisor = {
     run: async (request: ProcessExecutionRequest) => {
       observed = request;
-      request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+      await request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
       return {
         state: "completed" as const,
         resultClass: "SUCCEEDED" as const,
@@ -198,6 +199,55 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
     assert.equal(observed?.args[0], "-p");
     assert.equal(observed?.args[2], "/usr/bin/printf");
     assert.equal(observed?.args.includes("/bin/sh"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("SandboxExecTaskRunner rejects a task executable swap after authorization", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("The task executable identity callback uses the macOS runner boundary");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-executable-swap-"));
+  const root = await realpath(directory);
+  const executable = join(root, "runner");
+  const movedExecutable = join(root, "runner-authorized");
+  await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const base = resolvedProfile(root);
+  const profile = resolvedProfile(root, {
+    process: { ...base.process, executable }
+  });
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof(),
+    supervisor: {
+      run: async (request) => {
+        renameSync(executable, movedExecutable);
+        writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+        await request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+        return {
+          state: "completed" as const,
+          resultClass: "SUCCEEDED" as const,
+          exitCode: 0,
+          signal: null,
+          stdout: "must-not-publish",
+          stderr: "",
+          truncated: false,
+          durationMs: 1,
+          processId: 42,
+          processGroupId: 42,
+          terminationObserved: true
+        };
+      }
+    }
+  });
+  try {
+    await assert.rejects(
+      runner.run(profile, { timeoutMs: 1_000, shouldCancel: () => false, onProcessStarted: () => undefined }),
+      /Executable changed after authorization/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -288,7 +338,7 @@ test("SandboxExecTaskRunner rejects a task-root volume swap at process start", a
       run: async (request) => {
         supervisorCalled = true;
         identity = "volume:two";
-        request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+        await request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
         throw new Error("must not continue after a process-start swap");
       }
     }
@@ -318,7 +368,7 @@ test("SandboxExecTaskRunner keeps a signal-terminated task unresolved", async ()
     isolationProof: proof(),
     supervisor: {
       run: async (request) => {
-        request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+        await request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
         return {
           state: "failed" as const,
           resultClass: "EXECUTION_FAILED" as const,

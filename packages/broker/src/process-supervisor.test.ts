@@ -434,8 +434,9 @@ test("process supervisor drains a child when startup ownership persistence fails
       cwd: CWD,
       timeoutMs: 2_000,
       outputCapBytes: 100,
-      onStarted: (value) => {
+      onStarted: async (value) => {
         snapshot = value;
+        await new Promise((resolve) => setTimeout(resolve, 5));
         throw new Error("startup ownership persistence failed");
       }
     }),
