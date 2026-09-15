@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Credential-retirement verification at source revision `737ab3a` fences
+revoked file-backed key retirement with digest and owner/mode/device/inode/
+size/mtime checks before and after quarantine rename, non-overwriting recovery,
+and key-buffer clearing. The physical Keychain-enabled credential suite passes
+11/11; build, lint, typecheck, documentation-link, and diff checks pass.
+Production Keychain distribution, installed helper recovery, and final release
+approval remain open. Evidence:
+`evidence/2026-09-15-credential-retirement-fence.md`.
+
 UNKNOWN write recovery verification: source revision `2fadf8a` retries only a
 prior `TEMPORARY_CLEANUP_SKIPPED` result and reuses the persisted exact target
 and temporary name. Existing root, symlink, and device/inode checks remain in

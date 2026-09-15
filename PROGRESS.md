@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Credential retirement identity-fence addendum: source revision `737ab3a`
+checks the exact owner/mode/device/inode/size/mtime before and after moving a
+revoked file-backed authentication or approval key to quarantine. Failed
+retirement restores only through a non-overwriting hard link, and all loaded
+key buffers are cleared in `finally`. The physical Keychain-enabled credential
+suite passes 11/11; production Keychain distribution, installed recovery, and
+release enablement remain open. Evidence:
+`evidence/2026-09-15-credential-retirement-fence.md`.
+
 UNKNOWN write recovery addendum: source revision `2fadf8a` retries a prior
 `TEMPORARY_CLEANUP_SKIPPED` observation using only the persisted root, target,
 and exact temporary name. Filesystem root, symlink, and device/inode checks

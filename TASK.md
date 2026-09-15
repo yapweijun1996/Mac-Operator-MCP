@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Credential-retirement fence addendum: commit `737ab3a` validates the exact
+revoked key identity before and after quarantine rename, restores only with a
+non-overwriting hard link when retirement fails, and clears loaded key bytes on
+all paths. The physical Keychain-enabled credential suite passes 11/11.
+Production Keychain distribution, installed helper recovery, and final release
+gates remain open. Evidence:
+`evidence/2026-09-15-credential-retirement-fence.md`.
+
 Privileged policy-state addendum: source revision `7926c99` gives all 44
 catalog tools explicit default-policy lifecycle records. The three L5 helper
 tools carry independent scopes, privileged family, target types, budgets, and
