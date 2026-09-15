@@ -2865,3 +2865,18 @@ already-running `broker.test.js` and `persistence.test.js` processes were
 excluded, so this is a bounded regression result rather than a claim about a
 fresh full-suite run. Evidence:
 `evidence/2026-09-15-approval-row-invariants.md`.
+
+Authority-row verification at source revision `e11127e` validates revocation
+and kill-switch query identities and persisted fields before authority use.
+Malformed queries return `PRECONDITION_FAILED`; corrupted rows return stable
+`AUDIT_UNAVAILABLE`. Focused Authority Control IPC, Policy, and corruption
+tests pass 15/15. Production Keychain distribution, installed operator
+recovery, external rollback detection, and ADR acceptance remain open.
+Evidence: `evidence/2026-09-15-authority-row-invariants.md`.
+
+The non-overlapping package regression after the authority-row change reports
+565 tests total (559 passed, 6 explicitly skipped, 0 failed). The existing
+`broker.test.js` and `persistence.test.js` processes were excluded because
+they were already running, so this is bounded local evidence rather than a
+fresh full-suite run. Evidence:
+`evidence/2026-09-15-authority-row-invariants.md`.

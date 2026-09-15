@@ -3201,3 +3201,19 @@ reports 563 tests total (557 passed, 6 explicitly skipped, 0 failed). The
 existing `broker.test.js` and `persistence.test.js` processes were excluded
 because they were already running; no test was restarted or killed. Evidence:
 `evidence/2026-09-15-approval-row-invariants.md`.
+
+BrokerStore revocation and kill-switch readback now validates authority rows at
+source revision `e11127e`. Malformed query identities fail with
+`PRECONDITION_FAILED`; corrupted persisted rows fail closed as
+`AUDIT_UNAVAILABLE` before policy, Job cancellation, or capability evaluation.
+Focused Authority Control IPC, Policy, and corruption tests pass 15/15.
+Production Keychain distribution, installed operator recovery, external
+rollback detection, and ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-authority-row-invariants.md`.
+
+The non-overlapping package regression after the authority-row change reports
+565 tests total (559 passed, 6 explicitly skipped, 0 failed). The existing
+`broker.test.js` and `persistence.test.js` processes were excluded because
+they were already running; this remains bounded local evidence rather than a
+fresh full-suite run. Evidence:
+`evidence/2026-09-15-authority-row-invariants.md`.

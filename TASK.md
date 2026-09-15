@@ -1648,6 +1648,21 @@ and corruption tests pass 14/14. The non-overlapping package regression reports
 production Keychain/cross-process storage, human approval UI, unattended
 ownership, and ADR acceptance remain open.
 
+Authority-row boundary addendum: source revision `e11127e` validates persisted
+revocation and kill-switch rows before policy, Job cancellation, or capability
+evaluation. Malformed query identities fail with `PRECONDITION_FAILED` and
+corrupted rows fail closed as `AUDIT_UNAVAILABLE`; focused Authority Control
+IPC, Policy, and corruption tests pass 15/15. Production Keychain
+distribution, installed operator recovery, external rollback detection, and
+ADR acceptance remain open.
+
+The non-overlapping package regression after the authority-row change reports
+565 tests total (559 passed, 6 explicitly skipped, 0 failed). The existing
+`broker.test.js` and `persistence.test.js` processes were excluded because
+they were already running, so this is bounded local evidence rather than a
+fresh full-suite run. Evidence:
+`evidence/2026-09-15-authority-row-invariants.md`.
+
 Source revision `a1bd63c` additionally verifies that an already-created
 key-manager server rejects status reads immediately after helper-key revocation;
 the latest default suite is 400 tests with 397 passed and 3 sandbox tests
