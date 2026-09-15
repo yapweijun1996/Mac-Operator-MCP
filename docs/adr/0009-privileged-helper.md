@@ -237,6 +237,12 @@ socket reuse and rejects placing this endpoint inside the root-owned helper
 package; final readback must match the helper, Broker, and authority socket
 identities exactly.
 
+Revision `fe9d681` adds a separate readback source for the Broker-owned
+authority socket. Host verification requires the expected Broker UID/GID,
+owner-only mode, Unix-socket type, and stable device/inode/mode/ownership over
+two reads; this endpoint is deliberately excluded from root-owned helper file
+preflight.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

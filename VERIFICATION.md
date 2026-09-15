@@ -3,12 +3,21 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged helper authority-socket ACL verification: source revision
+`fe9d681` adds an independent Broker-owned socket readback. It requires a
+Unix socket at the planned endpoint, expected Broker UID/GID, no group/other
+permissions, and stable device/inode/mode/ownership across two reads. The
+socket remains outside the root-owned helper filesystem set. Focused package
+tests pass 14/14, and the latest physical non-overlapping regression passes
+615/615 with zero skips and zero failures. Evidence:
+`evidence/2026-09-15-privileged-helper-authority-socket-acl.md`.
+
 Privileged helper package authority-socket verification: source revision
 `ee2c934` binds the root-domain package plan and runtime status readback to the
 Broker-owned `helperAuthoritySocketPath`. The plan rejects socket reuse and
 rejects placing the authority endpoint inside the root-owned helper package;
 readback must match all three socket identities. Focused helper/package/status
-tests pass 31/31, and the latest physical non-overlapping regression passes
+tests pass 31/31, and the prior physical non-overlapping regression passes
 614/614 with zero skips and zero failures. Evidence:
 `evidence/2026-09-15-privileged-helper-package-authority-socket.md`.
 

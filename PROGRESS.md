@@ -4,12 +4,21 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged helper authority-socket ACL addendum: source revision `fe9d681`
+adds an independent Broker-owned Unix-socket readback. It checks expected
+Broker UID/GID, owner-only permissions, socket type, and stable
+device/inode/mode/ownership across two reads, while keeping the endpoint out
+of the root-owned helper filesystem set. Focused package tests pass 14/14 and
+the latest physical non-overlapping suite passes 615/615 with zero skips and
+zero failures. Evidence:
+`evidence/2026-09-15-privileged-helper-authority-socket-acl.md`.
+
 Privileged helper package authority-socket addendum: source revision
 `ee2c934` binds the root-domain package plan and helper status readback to the
 Broker-owned `helperAuthoritySocketPath`. The plan rejects reuse with the
 helper or Broker sockets and rejects an authority endpoint inside the
 root-owned helper package; readback checks the exact path. Focused
-helper/package/status tests pass 31/31, and the latest physical
+helper/package/status tests pass 31/31, and the prior physical
 non-overlapping suite passes 614/614 with zero skips and zero failures.
 Evidence: `evidence/2026-09-15-privileged-helper-package-authority-socket.md`.
 
