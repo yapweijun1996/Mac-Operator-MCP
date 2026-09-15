@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-supervisor early-capture addendum: source revision `efb9d5c` installs
+bounded stdout/stderr and exit/close capture immediately after child spawn,
+before asynchronous path and ownership checks, preventing short-lived child
+events from being lost. Process-supervisor tests pass 30/30; the physical-
+Darwin regression over non-overlapping test files passes 485/485 with 0
+skipped tests. Build, typecheck, lint, and diff checks pass. Descriptor/fexec,
+remount, production isolation, and `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-process-supervisor-early-capture.md`.
+
 Guest-executor close-drain addendum: source revision `9f772fe` tracks active
 adapter promises and makes executor close abort, invoke the adapter close hook,
 and await all active executions before returning. Guest executor tests pass

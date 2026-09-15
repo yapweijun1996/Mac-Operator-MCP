@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process-supervisor early-capture addendum: source revision `efb9d5c` records
+bounded child output and lifecycle events immediately after spawn so fast
+children cannot evade later observer registration. Process-supervisor tests
+pass 30/30; the non-overlapping physical-Darwin regression passes 485/485
+with 0 skipped tests. Build, typecheck, lint, and diff checks pass. This
+addresses an observer race only; descriptor/fexec atomicity, remount
+resistance, production isolation, and `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-process-supervisor-early-capture.md`.
+
 Guest-executor close-drain addendum: source revision `9f772fe` waits for
 tracked active adapter executions after cancellation and adapter shutdown,
 preventing close from returning while guest work remains live. Guest executor

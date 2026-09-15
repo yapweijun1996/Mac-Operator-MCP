@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-supervisor early-capture addendum: source revision `efb9d5c` fixes the
+spawn-to-observer race by capturing bounded child output and exit/close state
+immediately after spawn, then handing that state to the later path/process
+observer. The fast-child regression and cancellation/capacity path now pass;
+process-supervisor tests pass 30/30 and the non-overlapping physical-Darwin
+regression passes 485/485 with 0 skipped tests. Build, typecheck, lint, and
+diff checks pass. Descriptor/fexec, remount, production isolation, and
+`mac_task_run` enablement remain disabled. Evidence:
+`evidence/2026-09-15-process-supervisor-early-capture.md`.
+
 Guest-executor close-drain addendum: source revision `9f772fe` now waits for
 all tracked adapter promises after aborting active controllers and invoking
 the adapter close hook. The close regression stays pending until the adapter
