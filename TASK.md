@@ -1683,3 +1683,13 @@ A task is `DONE` only when implementation, focused verification, affected regres
 ## Related documents
 
 See `EPIC.md`, `ROADMAP.md`, `PROGRESS.md`, `VERIFICATION.md`, and `docs/adr/README.md`.
+
+Privileged-helper status request boundary addendum: commit `026a83f` now
+requires plain-data status envelopes before classification, candidate recovery,
+`Object.keys`, or field access. Accessor and inherited status fields fail closed
+with stable `PRECONDITION_FAILED` behavior. Focused status-boundary tests pass
+1/1 and the non-overlapping package regression passes 537 total (531 passed,
+6 skipped). This is representation evidence only; Developer ID, root-domain,
+production Keychain, real privileged adapter, crash-recovery, and helper
+enablement gates remain open. Evidence:
+`evidence/2026-09-15-helper-status-boundary.md`.

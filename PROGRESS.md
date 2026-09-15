@@ -2911,3 +2911,12 @@ before canonical hashing or persistence. Focused audit evidence tests pass
 2/2. SQLite corruption/disk exhaustion, external anchoring, production
 Keychain, installed recovery, and release acceptance remain open. Evidence:
 `evidence/2026-09-15-audit-evidence-boundary.md`.
+
+Privileged-helper status request hardening (source revision `026a83f`) now
+applies a shared plain-data boundary before status classification, candidate
+recovery, key enumeration, or field access. Focused hostile accessor/inherited
+status tests pass 1/1; the non-overlapping package regression passes 537 total
+(531 passed, 6 skipped, 0 failed). This does not close helper provenance,
+production Keychain, root-domain installation, real privileged execution,
+crash recovery, or enablement gates. Evidence:
+`evidence/2026-09-15-helper-status-boundary.md`.

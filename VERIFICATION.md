@@ -2570,3 +2570,13 @@ evidence tests pass 2/2, including accessor/inherited/symbolic fixtures. This
 does not close SQLite corruption/disk exhaustion, external anchoring,
 production Keychain, installed recovery, or release acceptance. Evidence:
 `evidence/2026-09-15-audit-evidence-boundary.md`.
+
+Privileged-helper status request verification at source revision `026a83f`
+confirms status envelope classification, candidate recovery, and unsigned
+validation reject accessor and inherited fields before authority-sensitive
+reads. The focused boundary test passes 1/1. The non-overlapping package
+regression passes 537 total (531 passed, 6 skipped, 0 failed). This remains
+representation evidence only and does not close helper provenance, production
+Keychain, root-domain installation, real privileged execution, crash recovery,
+or capability enablement. Evidence:
+`evidence/2026-09-15-helper-status-boundary.md`.
