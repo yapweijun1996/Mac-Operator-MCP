@@ -136,6 +136,44 @@ test("guest profile registry rejects shell executables and unsafe environment ma
   }
 });
 
+test("guest profile executor reserves capacity before asynchronous manifest readback", async () => {
+  const fixture = await profileFixture();
+  try {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let starts = 0;
+    const executor = new VirtualizationGuestProfileExecutor(
+      new VirtualizationGuestTaskProfileRegistry([fixture.profile]),
+      {
+        available: true,
+        async run() {
+          starts += 1;
+          await blocked;
+          return successfulResult();
+        }
+      },
+      { maxConcurrent: 1 }
+    );
+    const first = executor.execute(fixture.request);
+    const secondRequest = {
+      ...fixture.request,
+      requestId: "request:guest-executor-capacity-0123456789",
+      nonce: "guest-nonce-capacity-0123456789"
+    };
+    await assert.rejects(
+      executor.execute(secondRequest),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    release();
+    const result = await first;
+    assert.equal(result.resultClass, "SUCCEEDED");
+    assert.equal(starts, 1);
+    await executor.close();
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("guest profile executor returns bounded results and serves terminal status recovery", async () => {
   const fixture = await profileFixture();
   try {

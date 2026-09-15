@@ -172,6 +172,7 @@ export class VirtualizationGuestProfileExecutor {
   private readonly activeControllers = new Set<AbortController>();
   private readonly maxConcurrent: number;
   private active = 0;
+  private inFlight = 0;
   private closed = false;
 
   constructor(
@@ -192,8 +193,21 @@ export class VirtualizationGuestProfileExecutor {
   async execute(request: UnsignedVirtualizationGuestRequest, signal?: AbortSignal): Promise<UnsignedVirtualizationGuestResponse> {
     if (this.closed || !this.adapter.available) throw new BrokerError("POLICY_DENIED", "Guest task executor is not available");
     if (signal?.aborted) return this.cancelled(request);
-    if (this.active >= this.maxConcurrent) throw new BrokerError("CONFLICT", "Guest task executor capacity is exhausted", true);
-    const profile = await this.registry.resolve(request);
+    if (this.active + this.inFlight >= this.maxConcurrent) {
+      throw new BrokerError("CONFLICT", "Guest task executor capacity is exhausted", true);
+    }
+    // Reserve the slot synchronously before manifest resolution. The
+    // registry performs asynchronous target readback, so checking only
+    // `active` would let concurrent admissions oversubscribe the limit.
+    this.inFlight += 1;
+    let profile: VirtualizationGuestTaskProfile;
+    try {
+      profile = await this.registry.resolve(request);
+    } finally {
+      // Release the reservation even when manifest readback or admission
+      // fails before an adapter run starts.
+      this.inFlight -= 1;
+    }
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Guest task executor is not available");
     if (signal?.aborted) return this.cancelled(request);
     const controller = new AbortController();
