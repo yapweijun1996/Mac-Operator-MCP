@@ -4,6 +4,19 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Executable-content identity addendum: source revision `a6dfe01` extends the
+Broker-owned executable identity snapshot from device/inode/mode to include
+size, mtime, and ctime metadata. ProcessSupervisor rechecks these fields after
+spawn and awaited startup ownership capture; SandboxExecTaskRunner repeats the
+check on final readback. Directory identities remain device/inode/mode-only so
+legitimate task writes do not look like cwd replacement. A physical-Darwin
+regression rewrites an executable in place at the same path/inode and proves
+fail-closed rejection;
+the complete physical-Darwin suite passes 605/605 with 0 skipped tests. This
+catches ordinary in-place mutations only; cryptographic content binding,
+descriptor/fexec atomicity, and remount resistance remain open. Evidence:
+`evidence/2026-09-15-process-executable-content-identity.md`.
+
 Sandbox-root identity addendum: source revision `f562bc2` binds every
 Broker-owned task filesystem root to a device/inode/mode snapshot, with
 startup and post-execution rechecks alongside the existing volume identity
