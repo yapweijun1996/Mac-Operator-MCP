@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Contract-schema identity addendum: source revision `70302e0` makes the
+top-level `$schema` identity mandatory in the machine-readable tool-contract
+schema, matching the Edge loader's fail-closed validation. The focused
+contract-registry suite passes 9/9, all 44 contracts pass `verify:contracts`,
+and no runtime or host configuration was changed. Evidence:
+`evidence/2026-09-16-contract-schema-identity.md`.
+
 Task-descriptor persistence addendum: source revision `0229fe3` derives a
 non-secret SHA-256 digest from the complete Broker-resolved task descriptor
 (profile, executable, arguments, cwd, environment, filesystem/network/

@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Contract-schema identity verification at source revision `70302e0`: the
+machine-readable tool-contract schema now requires the top-level `$schema`
+identity already enforced by the Edge loader. The focused contract-registry
+suite passes 9/9 and `npm run verify:contracts` validates 44 unique contracts;
+no runtime or host configuration changed. Evidence:
+`evidence/2026-09-16-contract-schema-identity.md`.
+
 Task-descriptor persistence verification at source revision `0229fe3`: the
 Broker computes a non-secret SHA-256 digest over the complete resolved task
 descriptor and stores it with process ownership metadata. Every later

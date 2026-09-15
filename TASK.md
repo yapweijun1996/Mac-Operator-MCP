@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-084 contract-schema identity addendum: source revision `70302e0` requires
+the top-level `$schema` identity in the machine-readable tool-contract
+schema, matching the Edge loader. The focused contract-registry suite passes
+9/9 and `verify:contracts` validates all 44 contracts; no runtime or host
+configuration changed. Evidence:
+`evidence/2026-09-16-contract-schema-identity.md`.
+
 MOP-045 task-descriptor persistence addendum: source revision `0229fe3`
 derives and persists a non-secret SHA-256 digest of the complete
 Broker-resolved task descriptor, including executable, arguments, cwd,
