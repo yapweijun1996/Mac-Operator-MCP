@@ -271,7 +271,8 @@ bool ValidateImage(const char* requested_path, const char* expected_device,
   struct stat path_stat{};
   const uid_t current_uid = getuid();
   if (lstat(resolved_path, &path_stat) != 0 || !S_ISREG(path_stat.st_mode) ||
-      current_uid == static_cast<uid_t>(-1) || !IsSystemPublishedImage(resolved_path, path_stat) ||
+      current_uid == 0 || current_uid == static_cast<uid_t>(-1) ||
+      !IsSystemPublishedImage(resolved_path, path_stat) ||
       path_stat.st_size < 1 || static_cast<uint64_t>(path_stat.st_size) > kMaxImageBytes ||
       std::to_string(static_cast<unsigned long long>(path_stat.st_dev)) != expected_device ||
       std::to_string(static_cast<unsigned long long>(path_stat.st_ino)) != expected_inode) return false;

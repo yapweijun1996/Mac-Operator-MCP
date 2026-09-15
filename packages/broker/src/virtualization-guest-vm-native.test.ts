@@ -44,6 +44,7 @@ test("native Virtualization guest close cannot resurrect a retained handle or di
   assert.doesNotMatch(source, /operation->handle->magic\s*=\s*kHandleMagic/u);
   assert.match(source, /handle\.machine = nil;\s*\/\/ Keep the serial queue alive until the external handle finalizer runs\./u);
   assert.match(source, /IsSystemPublishedImage\(resolved_path, path_stat\)/u);
+  assert.match(source, /current_uid == 0/u);
   assert.match(source, /initWithURL:url readOnly:YES/u);
 });
 

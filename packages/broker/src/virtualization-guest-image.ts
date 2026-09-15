@@ -80,6 +80,7 @@ export async function loadVirtualizationGuestImage(
   const pathStat = canonicalPath === undefined ? undefined : await lstat(canonicalPath).catch(() => undefined);
   const currentUid = process.getuid?.();
   if (!pathStat || !pathStat.isFile() || pathStat.isSymbolicLink() || currentUid === undefined ||
+      (publication === "system-published" && currentUid === 0) ||
       !isProtectedImage(pathStat, currentUid, publication) || pathStat.size < 1 || pathStat.size > maxBytes) {
     throw new BrokerError("POLICY_DENIED", publication === "system-published"
       ? "Virtualization guest image is not a protected system-published regular file"
