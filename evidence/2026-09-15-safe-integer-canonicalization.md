@@ -19,6 +19,7 @@ Commands:
 ```text
 npm run build
 node --test packages/contracts/dist/canonical-json.test.js packages/contracts/dist/auth.test.js
+npm run verify:canonical:native
 npm run verify:contracts
 npm run lint
 git diff --check
@@ -27,6 +28,7 @@ git diff --check
 Results:
 
 - canonical JSON and authentication tests: 10 passed, 0 failed;
+- native canonical-vector check: 5 passed, 0 failed;
 - contract verification: 44 unique tool contracts and the versioned
   ledger-record schema validated;
 - dependency-free style check: 673 tracked files passed;

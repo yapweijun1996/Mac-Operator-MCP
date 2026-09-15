@@ -20,8 +20,9 @@ or audit-digest verification. The versioned ECMAScript `JSON.stringify`
 canonicalizer remains unchanged, so scientific-notation vectors such as
 `1e20` and `1e21` retain their locked wire representation and are still
 bounded by each consuming contract. The focused contracts/authentication
-suite passes 10/10, `verify:contracts` validates all 44 tool contracts and
-the ledger schema, and lint passes. Evidence:
+suite passes 10/10, the native canonical-vector check passes 5/5,
+`verify:contracts` validates all 44 tool contracts and the ledger schema, and
+lint passes. Evidence:
 `evidence/2026-09-15-safe-integer-canonicalization.md`.
 
 Descriptor launch capability-gate addendum: source revision `07ba885` adds a

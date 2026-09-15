@@ -15,8 +15,9 @@ plain decimal integer tokens outside JavaScript's safe-integer range before
 request, response, or audit-digest verification. Scientific notation remains
 governed by the locked ECMAScript `JSON.stringify` profile; field contracts
 continue to impose semantic bounds. The focused contracts/authentication
-suite passes 10/10, `verify:contracts` reports 44 unique tool contracts plus
-the versioned ledger schema, and lint passes. Evidence:
+suite passes 10/10, `verify:canonical:native` passes 5/5 fixed vectors,
+`verify:contracts` reports 44 unique tool contracts plus the versioned ledger
+schema, and lint passes. Evidence:
 `evidence/2026-09-15-safe-integer-canonicalization.md`.
 
 Descriptor launch capability-gate verification at source revision `07ba885`
