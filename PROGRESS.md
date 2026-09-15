@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Filesystem parent-directory identity addendum at source revision `bba64c1`:
+native write, unlink, and unlink-recovery operations now compare the
+canonical parent directory device/inode with the opened parent descriptor
+before acting on a child name. Focused filesystem tests pass 37/37; the
+serial physical regression passes 661/666 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-filesystem-parent-identity.md`.
+
 Edge runtime functional-schema addendum at source revision `e1c10a2`: the
 contract loader now recursively rejects forbidden authority-shaped input
 fields and bounds schema depth, nodes, arrays, and properties before MCP SDK

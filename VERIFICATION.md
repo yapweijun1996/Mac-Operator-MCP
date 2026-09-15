@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Filesystem parent-directory identity verification at source revision
+`bba64c1`: native write, unlink, and unlink-recovery operations compare the
+canonical parent directory device/inode with the opened parent descriptor
+before mutating a child name. Focused filesystem tests pass 37/37; the serial
+physical regression passes 661/666 with 0 failures and 5 explicit
+descriptor-capability skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes the implemented same-root parent
+replacement check only; kernel-held task execution, remount resistance,
+production isolation, installed provenance, and capability enablement remain
+open. Evidence:
+`evidence/2026-09-16-filesystem-parent-identity.md`.
+
 Edge runtime functional-schema verification at source revision `e1c10a2`: the
 contract loader recursively rejects forbidden authority-shaped input fields
 and bounds schema depth, node, array, and property structure before MCP SDK

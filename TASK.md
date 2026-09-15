@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045/080/081 Filesystem parent-directory identity addendum at source
+revision `bba64c1`: native write, unlink, and unlink-recovery operations bind
+the canonical parent directory device/inode to the opened descriptor before
+using child names. Focused filesystem tests pass 37/37; the serial physical
+regression passes 661/666 with 0 failures and 5 explicit descriptor-capability
+skips. Evidence:
+`evidence/2026-09-16-filesystem-parent-identity.md`.
+
 MOP-084/085 Edge runtime functional-schema addendum at source revision
 `e1c10a2`: recursively reject forbidden authority-shaped input fields and
 enforce bounded schema structure before MCP registration. Focused
