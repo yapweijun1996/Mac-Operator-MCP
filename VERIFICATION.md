@@ -12,9 +12,10 @@ credential-field redaction coverage. Evidence:
 Audit-evidence redaction verification: the persistence and privileged-helper
 response boundaries cover common API/access/refresh token, client/HMAC/
 signing/SSH key, bearer/JWT, password/passphrase, cookie, credential, and
-private/secret field aliases. Focused alias and helper tests pass with safe
-fields unchanged. This defense-in-depth check does not close VT-SEC-01/02 or
-prove physical credential isolation. Evidence:
+private/secret field aliases; persistence also sanitizes secret-shaped string
+values under ordinary fields. Focused alias/content and helper tests pass with
+safe fields unchanged. This defense-in-depth check does not close VT-SEC-01/02
+or prove physical credential isolation. Evidence:
 `evidence/2026-09-15-audit-evidence-redaction.md`.
 
 Failure-audit target verification at source revision `3ed2e02` confirms that

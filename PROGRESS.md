@@ -10,13 +10,14 @@ audit credential-field redaction test. Broker/persistence suites were not
 restarted because their existing long-running process remained active.
 Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 
-Audit-evidence redaction addendum: source revision `1e3233a` expands both the
+Audit-evidence redaction addendum: source revision `42ca30c` expands both the
 recursive persistence redactor and the separately authenticated privileged
 helper response redactor to cover common API/access/refresh token,
 client/HMAC/signing/SSH key, bearer/JWT, password/passphrase, cookie,
-credential, and private/secret field aliases. Focused alias/helper tests,
-build, and diff checks pass. This is defense-in-depth and does not close the
-broader secret corpus or physical isolation gates. Evidence:
+credential, and private/secret field aliases, and sanitizes secret-shaped
+string values under ordinary fields. Focused alias/content/helper tests, build,
+and diff checks pass. This is defense-in-depth and does not close the broader
+secret corpus or physical isolation gates. Evidence:
 `evidence/2026-09-15-audit-evidence-redaction.md`.
 
 Failure-audit target addendum: source revision `3ed2e02` carries the
