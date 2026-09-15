@@ -2792,9 +2792,13 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
 - Runtime implementation: local foundation only; no meaningful whole-program percentage is claimed.
 - Released tools: 0 of 44 planned.
-- Implemented local Broker handlers: 39 of 44 planned.
+- Implemented local Broker handlers: 41 of 44 planned. The three privileged
+  helper tools remain outside the default Broker policy until independent
+  root-domain signing, installation, and live readback evidence is accepted.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: 365 passing (two opt-in real-sandbox tests skipped by default).
+- Automated tests: the latest non-overlapping built regression passes 598
+  total (592 passed, 6 explicit opt-in skips, 0 failed); the existing
+  Broker/Persistence test process remains separately undisturbed.
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
 - Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
@@ -2806,7 +2810,10 @@ Percentages beyond these objective counts are intentionally omitted because the 
 
 - Contract envelope schema: complete and validated for all 44 materialized contracts. This covers identity, capability, policy, budgets, lifecycle, audit, delivery wave, provenance, and summary fields.
 - Per-tool functional input/output schema objects exist and compile for all 44 contracts. Success schemas use `SUCCEEDED`; failures use the shared stable-error schema.
-- Schema presence is complete. Semantic review, compatibility fixtures, and runtime conformance remain limited to the thirty-six implemented handlers, so this is not a 44-tool implementation claim.
+- Schema presence is complete. Semantic review, compatibility fixtures, and
+  runtime conformance currently cover the forty-one implemented local
+  handlers; the three privileged helper contracts remain planned until their
+  separately authenticated root-domain boundary is released.
 
 ## Current phase
 
@@ -2845,7 +2852,12 @@ There is no blocker to continued local implementation. Production enablement is 
 
 - Confirmed accepted documentation baseline `2e389b8` and implementation baseline `10ef33a`; the exact-revision evidence record is refreshed after the governed HTTPS Edge configuration, contract-loader, rate-limit/failure, Docker, process, hash, directory-listing, directory-tree, file-discovery, recent-file, text-search, project-discovery, project-summary, storage-analysis, network-status, process-inspect, service-status, log-tail, Git-status, Git-branch-list, Git-log, Git-diff, package-inspect, signed JWT/JWKS verifier, OAuth metadata consistency, rotated-key refresh, official MCP client HTTPS discovery, HTTP-level OAuth failure-boundary, fail-closed task-runner Job/approval, active-revocation, profile-budget, atomic post-decision task-admission, policy signer lifecycle, authenticated operator-channel, restart-persistent operator-command replay, and fail-closed local Broker runtime lifecycle slices.
 - Confirmed all 44 catalog tools have one valid JSON materialization, a unique tool name, a unique KB item ID, preserved source text, and a catalog link.
-- Confirmed the runtime catalog reports all 44 tools separately; thirty-seven have local handlers, the production default enables none, and the read-enabled test policy enables only bounded read tools including `mac_app_list` and `mac_ui_observe` (the latter still fails closed when host Accessibility permission is absent).
+- Confirmed the runtime catalog reports all 44 tools separately; forty-one
+  have local handlers and the three privileged helper tools remain planned in
+  the default policy. The production default enables none, and the read-
+  enabled test policy enables only bounded read tools including
+  `mac_app_list` and `mac_ui_observe` (the latter still fails closed when
+  host Accessibility permission is absent).
 - Confirmed all 44 contracts have one taxonomy-valid `audit_class` and one structured `postcondition_verification`; all remain `planned`.
 - Confirmed canonical contracts contain `tool_delivery_wave` and no top-level legacy `phase` field; roadmap lifecycle phases remain separate.
 - Validated all 44 contract envelopes and compiled all 44 functional input/output schemas; checked unique tool and provenance IDs, bounded fields, forbidden authority-field absence, and output/verification compatibility.
