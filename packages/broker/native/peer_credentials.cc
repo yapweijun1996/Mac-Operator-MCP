@@ -2183,14 +2183,57 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
-  if (unlinkat(parent_descriptor, base_name, 0) != 0 || fsync(parent_descriptor) != 0) {
+  char quarantine_name[128];
+  bool quarantine_created = false;
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    const unsigned long long random_value =
+        (static_cast<unsigned long long>(arc4random()) << 32) | arc4random();
+    if (snprintf(quarantine_name, sizeof(quarantine_name), ".mac-operator-unlink-%016llx", random_value) >=
+        static_cast<int>(sizeof(quarantine_name))) {
+      continue;
+    }
+    struct stat collision_stat;
+    if (fstatat(parent_descriptor, quarantine_name, &collision_stat, AT_SYMLINK_NOFOLLOW) != 0 && errno == ENOENT) {
+      quarantine_created = true;
+      break;
+    }
+  }
+  if (!quarantine_created || renameatx_np(parent_descriptor, base_name, parent_descriptor, quarantine_name, RENAME_EXCL) != 0) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink target could not be quarantined safely");
+    return nullptr;
+  }
+
+  struct stat quarantined_stat;
+  const bool quarantined_regular = fstatat(parent_descriptor, quarantine_name, &quarantined_stat, AT_SYMLINK_NOFOLLOW) == 0 &&
+      S_ISREG(quarantined_stat.st_mode) && quarantined_stat.st_nlink == 1 &&
+      quarantined_stat.st_dev == root_stat.st_dev &&
+      static_cast<unsigned long long>(quarantined_stat.st_dev) == expected_device_number &&
+      static_cast<unsigned long long>(quarantined_stat.st_ino) == expected_inode_number;
+  if (!quarantined_regular) {
+    // The pathname was atomically moved, but the inode no longer matches the
+    // caller's precondition. Restore that exact artifact without replacing a
+    // concurrent pathname occupant; if restoration cannot be proven safe,
+    // leave the quarantine for explicit operator recovery.
+    if (linkat(parent_descriptor, quarantine_name, parent_descriptor, base_name, 0) == 0) {
+      (void)fsync(parent_descriptor);
+      if (unlinkat(parent_descriptor, quarantine_name, 0) == 0) (void)fsync(parent_descriptor);
+    }
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink target identity changed during quarantine");
+    return nullptr;
+  }
+
+  if (unlinkat(parent_descriptor, quarantine_name, 0) != 0 || fsync(parent_descriptor) != 0) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink could not be durably committed");
     return nullptr;
   }
   struct stat after_stat;
-  if (fstatat(parent_descriptor, base_name, &after_stat, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT) {
+  if (fstatat(parent_descriptor, quarantine_name, &after_stat, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink postcondition failed");

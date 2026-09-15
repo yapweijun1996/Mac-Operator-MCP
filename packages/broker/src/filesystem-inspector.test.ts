@@ -21,6 +21,8 @@ test("native filesystem boundary opens targets relative to a pinned root descrip
   assert.match(source, /openat\(root_descriptor, relative_target/u);
   assert.match(source, /openat\(root_descriptor, relative_parent/u);
   assert.doesNotMatch(source, /int target_descriptor = open\(requested_target/u);
+  assert.match(source, /renameatx_np\(parent_descriptor, base_name, parent_descriptor, quarantine_name, RENAME_EXCL\)/u);
+  assert.match(source, /linkat\(parent_descriptor, quarantine_name, parent_descriptor, base_name, 0\)/u);
 });
 
 const nativeFaultChildSource = `
