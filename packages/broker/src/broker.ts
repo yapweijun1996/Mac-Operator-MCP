@@ -4076,7 +4076,7 @@ function appOpenDispatchResult(job: BrokerJob, data: AppOpenResultData, reused: 
   };
 }
 
-function parseStoredAppOpenResult(value: string): AppOpenResultData {
+export function parseStoredAppOpenResult(value: string): AppOpenResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed"); }
   if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["app_id", "state", "process_id", "target", "verified", "job_id"])) {
@@ -4104,7 +4104,7 @@ function parseStoredAppOpenResult(value: string): AppOpenResultData {
   };
 }
 
-function parseStoredAppFocusResult(value: string): AppFocusResultData {
+export function parseStoredAppFocusResult(value: string): AppFocusResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed"); }
   if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["app_id", "window_id", "focused", "reobserved_at", "verified", "job_id"], ["window_title"])) throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed");
@@ -4127,7 +4127,7 @@ function parseStoredAppFocusResult(value: string): AppFocusResultData {
   };
 }
 
-function parseStoredUiActionResult(value: string): UiActionResultData {
+export function parseStoredUiActionResult(value: string): UiActionResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed"); }
   if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["element_ref", "action", "accepted", "job_id", "reobserved"])) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
@@ -4160,7 +4160,7 @@ function parseStoredUiActionResult(value: string): UiActionResultData {
   };
 }
 
-function parseStoredWriteResult(value: string): WriteResultData {
+export function parseStoredWriteResult(value: string): WriteResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem write result is malformed"); }
   if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["path", "bytes_written", "sha256", "created", "precondition"])) {
@@ -4207,7 +4207,7 @@ function patchResultData(result: FilesystemPatchResult): PatchResultData {
   };
 }
 
-function parseStoredPatchResult(value: string): PatchResultData {
+export function parseStoredPatchResult(value: string): PatchResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed"); }
   if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["project_root", "result", "changed_paths", "precondition", "files"])) {
