@@ -14,6 +14,9 @@ const DOCKER_CWD = "/";
 const DOCKER_HOST = "unix:///var/run/docker.sock";
 const DOCKER_CONFIG = "/var/empty";
 const DOCKER_HOME = "/var/empty";
+const CODESIGN_EXECUTABLE = "/usr/bin/codesign";
+const CODE_SIGNATURE_TIMEOUT_MS = 5_000;
+const CODE_SIGNATURE_OUTPUT_BYTES = 131_072;
 const MAX_OUTPUT_BYTES = 1_048_576;
 const MAX_STATUS_OUTPUT_BYTES = 524_288;
 const MAX_TIMEOUT_MS = 15_000;
@@ -115,11 +118,29 @@ export interface DockerInspector {
 export interface DockerInspectorOptions {
   supervisor?: Pick<ProcessSupervisor, "run">;
   executable?: string;
+  /** Require a Broker-owned code-signature attestation before Docker calls. */
+  requireCodeSignature?: boolean;
+  /** Fixed expected identity for the Docker executable; never caller supplied. */
+  codeSignatureExpectation?: DockerCodeSignatureExpectation;
 }
+
+export interface DockerCodeSignatureExpectation {
+  identifier: string;
+  teamIdentifier?: string;
+  cdHash?: string;
+}
+
+/** Docker Inc's Developer ID identity observed on the supported Mac mini host. */
+export const DOCKER_CODE_SIGNATURE_EXPECTATION: DockerCodeSignatureExpectation = Object.freeze({
+  identifier: "docker",
+  teamIdentifier: "9BNSXJN65R"
+});
 
 export class DockerInspectorImpl implements DockerInspector {
   private readonly supervisor: Pick<ProcessSupervisor, "run">;
   private readonly executable: string;
+  private readonly requireCodeSignature: boolean;
+  private readonly codeSignatureExpectation: DockerCodeSignatureExpectation;
 
   constructor(options: DockerInspectorOptions = {}) {
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
@@ -127,10 +148,15 @@ export class DockerInspectorImpl implements DockerInspector {
       allowedEnvironmentKeys: Object.keys(SAFE_ENVIRONMENT)
     });
     this.executable = options.executable ?? resolveDockerExecutable();
+    this.requireCodeSignature = options.requireCodeSignature ?? false;
+    this.codeSignatureExpectation = normalizeCodeSignatureExpectation(
+      options.codeSignatureExpectation ?? DOCKER_CODE_SIGNATURE_EXPECTATION
+    );
   }
 
   async status(includeImages: boolean, includeStorage: boolean, control: DockerExecutionControl): Promise<SafeDockerStatus> {
     validateDockerStatusRequest(includeImages, includeStorage);
+    await this.verifyCodeSignature(control);
     const warnings: string[] = [];
     let version: ProcessExecutionResult;
     try {
@@ -193,6 +219,7 @@ export class DockerInspectorImpl implements DockerInspector {
 
   async inspect(objectType: DockerObjectType, id: string, control: DockerExecutionControl): Promise<SafeDockerInspection> {
     validateDockerObjectRequest(objectType, id);
+    await this.verifyCodeSignature(control);
     const deadlineMs = Date.now() + Math.min(control.timeoutMs, MAX_TIMEOUT_MS);
     const first = await this.inspectOnce(objectType, id, control, deadlineMs);
     if (DOCKER_HEX_ID_PATTERN.test(id)) return first;
@@ -214,6 +241,7 @@ export class DockerInspectorImpl implements DockerInspector {
 
   async logs(containerId: string, tail: number, sinceSeconds: number, control: DockerExecutionControl): Promise<SafeDockerLogs> {
     validateDockerLogsRequest(containerId, tail, sinceSeconds);
+    await this.verifyCodeSignature(control);
     const args = ["logs", "--timestamps", "--tail", String(tail)];
     if (sinceSeconds > 0) args.push("--since", `${sinceSeconds}s`);
     args.push(containerId);
@@ -238,6 +266,60 @@ export class DockerInspectorImpl implements DockerInspector {
     });
   }
 
+  /**
+   * Verify the fixed Docker executable through the host's fixed codesign
+   * utility. The result is intentionally not exposed to MCP callers; a
+   * mismatch denies the adapter before any Docker daemon request is started.
+   * This is a bounded observation fence, not a kernel-held executable handle.
+   */
+  private async verifyCodeSignature(control: DockerExecutionControl): Promise<void> {
+    if (!this.requireCodeSignature) return;
+    const timeoutMs = Math.min(control.timeoutMs, CODE_SIGNATURE_TIMEOUT_MS);
+    let verification: ProcessExecutionResult;
+    let details: ProcessExecutionResult;
+    try {
+      verification = await this.supervisor.run({
+        executable: CODESIGN_EXECUTABLE,
+        args: ["--verify", "--strict", "--deep", this.executable],
+        cwd: DOCKER_CWD,
+        environment: {},
+        timeoutMs,
+        outputCapBytes: CODE_SIGNATURE_OUTPUT_BYTES,
+        shouldCancel: control.shouldCancel
+      });
+      if (verification.resultClass !== "SUCCEEDED" || verification.truncated) {
+        throw new BrokerError("POLICY_DENIED", "Docker executable code signature is not trusted");
+      }
+      details = await this.supervisor.run({
+        executable: CODESIGN_EXECUTABLE,
+        args: ["-dv", "--verbose=4", this.executable],
+        cwd: DOCKER_CWD,
+        environment: {},
+        timeoutMs,
+        outputCapBytes: CODE_SIGNATURE_OUTPUT_BYTES,
+        shouldCancel: control.shouldCancel
+      });
+    } catch (error) {
+      if (error instanceof BrokerError && (error.errorClass === "CANCELLED" || error.errorClass === "TIMEOUT")) {
+        throw error;
+      }
+      if (error instanceof BrokerError && error.errorClass === "POLICY_DENIED") throw error;
+      throw new BrokerError("POLICY_DENIED", "Docker executable code signature is not trusted");
+    }
+    if (details.resultClass !== "SUCCEEDED" || details.truncated) {
+      throw new BrokerError("POLICY_DENIED", "Docker executable code signature details are unavailable");
+    }
+    const output = `${details.stdout}\n${details.stderr}`;
+    const identifier = readCodeSignatureField(output, "Identifier", /^[A-Za-z0-9._:-]{1,128}$/u);
+    const teamIdentifier = readCodeSignatureField(output, "TeamIdentifier", /^[A-Z0-9]{5,32}$/u);
+    const cdHash = readCodeSignatureField(output, "CDHash", /^[a-f0-9]{20,64}$/u);
+    if (identifier !== this.codeSignatureExpectation.identifier ||
+        (this.codeSignatureExpectation.teamIdentifier !== undefined && teamIdentifier !== this.codeSignatureExpectation.teamIdentifier) ||
+        (this.codeSignatureExpectation.cdHash !== undefined && cdHash !== this.codeSignatureExpectation.cdHash)) {
+      throw new BrokerError("POLICY_DENIED", "Docker executable code signature does not match the Broker trust policy");
+    }
+  }
+
   private async inspectOnce(
     objectType: DockerObjectType,
     id: string,
@@ -253,6 +335,31 @@ export class DockerInspectorImpl implements DockerInspector {
     if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "Docker inspection failed");
     return parseInspection(objectType, id, result.stdout, result.truncated);
   }
+}
+
+function normalizeCodeSignatureExpectation(value: DockerCodeSignatureExpectation): DockerCodeSignatureExpectation {
+  if (value === null || typeof value !== "object" || typeof value.identifier !== "string" ||
+      !/^[A-Za-z0-9._:-]{1,128}$/u.test(value.identifier) ||
+      (value.teamIdentifier !== undefined && (typeof value.teamIdentifier !== "string" || !/^[A-Z0-9]{5,32}$/u.test(value.teamIdentifier))) ||
+      (value.cdHash !== undefined && (typeof value.cdHash !== "string" || !/^[a-f0-9]{20,64}$/u.test(value.cdHash)))) {
+    throw new Error("Docker code-signature expectation is invalid");
+  }
+  return {
+    identifier: value.identifier,
+    ...(value.teamIdentifier === undefined ? {} : { teamIdentifier: value.teamIdentifier }),
+    ...(value.cdHash === undefined ? {} : { cdHash: value.cdHash })
+  };
+}
+
+function readCodeSignatureField(output: string, fieldName: string, pattern: RegExp): string | null {
+  const matches = [...output.matchAll(new RegExp(`^${fieldName}=([^\\r\\n]+)$`, "gmu"))];
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) throw new BrokerError("POLICY_DENIED", "Docker executable code signature details are ambiguous");
+  const value = matches[0]?.[1]?.trim();
+  if (value === undefined || !pattern.test(value)) {
+    throw new BrokerError("POLICY_DENIED", "Docker executable code signature details are malformed");
+  }
+  return value;
 }
 
 export function validateDockerStatusRequest(includeImages: boolean, includeStorage: boolean): void {

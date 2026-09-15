@@ -46,7 +46,7 @@ import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } fro
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
-import { DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
+import { DOCKER_CODE_SIGNATURE_EXPECTATION, DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import { FailClosedTaskRunner, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
@@ -198,7 +198,11 @@ export class Broker {
     this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl(this.processSupervisor);
     this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl(this.processSupervisor);
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
-    this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl({ supervisor: this.processSupervisor });
+    this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl({
+      supervisor: this.processSupervisor,
+      requireCodeSignature: true,
+      codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
+    });
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl(this.processSupervisor);
     this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, this.processSupervisor);
     this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(this.processSupervisor);

@@ -4,6 +4,7 @@ import { BrokerError } from "@mac-operator/contracts";
 import { ProcessSupervisor } from "./process-supervisor.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
 import {
+  DOCKER_CODE_SIGNATURE_EXPECTATION,
   DOCKER_EXECUTABLE_CANDIDATES,
   DockerInspectorImpl,
   dockerObjectIdentityMatches,
@@ -60,6 +61,46 @@ test("Docker status uses fixed local-only commands and omits raw daemon metadata
     HOME: "/var/empty"
   });
   assert.equal(supervisor.calls.some((call) => call.args.includes("-H") || call.args.includes("--host")), false);
+});
+
+test("Docker signature policy verifies the fixed executable before daemon access", async () => {
+  const supervisor = new FakeSupervisor([
+    result(""),
+    result("", { stderr: "Identifier=docker\nTeamIdentifier=9BNSXJN65R\nCDHash=56df8f23b2a6bfd9d54bb07516561e3e24805ccd\n" }),
+    result("27.5.1\n"),
+    result('')
+  ]);
+  const inspector = new DockerInspectorImpl({
+    supervisor,
+    executable: "/Applications/Docker.app/Contents/Resources/bin/docker",
+    requireCodeSignature: true,
+    codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
+  });
+  const status = await inspector.status(false, false, { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(status.daemon.available, true);
+  assert.deepEqual(supervisor.calls.slice(0, 2).map((call) => call.args), [
+    ["--verify", "--strict", "--deep", "/Applications/Docker.app/Contents/Resources/bin/docker"],
+    ["-dv", "--verbose=4", "/Applications/Docker.app/Contents/Resources/bin/docker"]
+  ]);
+  assert.deepEqual(supervisor.calls[0]?.environment, {});
+});
+
+test("Docker signature policy denies an untrusted executable before daemon access", async () => {
+  const supervisor = new FakeSupervisor([
+    result(""),
+    result("", { stderr: "Identifier=com.attacker.docker\nTeamIdentifier=9BNSXJN65R\n" })
+  ]);
+  const inspector = new DockerInspectorImpl({
+    supervisor,
+    executable: "/Applications/Docker.app/Contents/Resources/bin/docker",
+    requireCodeSignature: true,
+    codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
+  });
+  await assert.rejects(
+    inspector.status(false, false, { timeoutMs: 10_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.equal(supervisor.calls.length, 2);
 });
 
 test("Docker inspect returns bounded sanitized container metadata without env values", async () => {
@@ -196,7 +237,11 @@ test("real Docker Desktop readback uses the trusted executable exception", {
     allowedEnvironmentKeys: ["DOCKER_CONFIG", "DOCKER_HOST", "HOME"]
   });
   try {
-    const inspector = new DockerInspectorImpl({ supervisor });
+    const inspector = new DockerInspectorImpl({
+      supervisor,
+      requireCodeSignature: true,
+      codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
+    });
     const status = await inspector.status(false, false, { timeoutMs: 15_000, shouldCancel: () => false });
     assert.equal(status.daemon.available, true);
     assert.equal(status.daemon.context, "local");
