@@ -270,6 +270,32 @@ test("privileged helper nested result and payload records reject non-data fields
   );
 });
 
+test("allowlisted helper validates the command before invoking an operation handler", async () => {
+  const valid = command(20);
+  const invalid = { ...valid, extra: true } as never;
+  let handlerCalls = 0;
+  const helper = new AllowlistedPrivilegedHelper({
+    service_control: async () => {
+      handlerCalls += 1;
+      return {
+        operation: "service_control",
+        targetRef: valid.targetRef,
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        evidence: { post_state: "running" },
+        warnings: [],
+        truncated: false,
+        verification: { status: "verified", strategy: "allowlisted_postcondition" }
+      };
+    }
+  });
+  await assert.rejects(
+    () => helper.execute(invalid, { timeoutMs: 5_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+  assert.equal(handlerCalls, 0);
+});
+
 test("privileged helper IPC authenticates the peer and command, rejects replay, and dispatches only allowlisted operations", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-"));
   const socketPath = join(directory, "helper.sock");

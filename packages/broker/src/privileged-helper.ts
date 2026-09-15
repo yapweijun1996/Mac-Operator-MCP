@@ -498,6 +498,10 @@ export class AllowlistedPrivilegedHelper implements PrivilegedHelperAdapter {
   }
 
   async execute(command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperExecutionResult> {
+    // This adapter is also a callable boundary in tests and future native
+    // wiring. Validate before selecting or invoking a handler so an internal
+    // caller cannot bypass command shape, target, or payload binding checks.
+    validateUnsignedPrivilegedHelperCommand(command);
     const handler = this.handlers[command.operation];
     if (!handler) throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not allowlisted");
     return validatePrivilegedHelperExecutionResult(await handler(command, control), command);
@@ -1113,7 +1117,16 @@ export function authenticatePrivilegedHelperCommand(
 }
 
 export function validateUnsignedPrivilegedHelperCommand(command: UnsignedPrivilegedHelperCommand): void {
-  if (command === null || typeof command !== "object" || Array.isArray(command) ||
+  const expectedKeys = [
+    "protocolVersion", "contractVersion", "commandId", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs",
+    "expiresAtMs", "operation", "targetRef", "payload", "payloadDigest", "policyVersion", "approvalId", "intentId"
+  ];
+  const signedKeys = [...expectedKeys, "authenticationProof"];
+  const isSignedShape = isPlainDataRecord(command) && hasExactKeys(command, signedKeys);
+  const isUnsignedShape = isPlainDataRecord(command) && hasExactKeys(command, expectedKeys);
+  if (!isUnsignedShape && !isSignedShape ||
+      (isSignedShape && (typeof (command as unknown as Record<string, unknown>).authenticationProof !== "string" ||
+       !/^[a-f0-9]{64}$/u.test((command as unknown as Record<string, unknown>).authenticationProof as string))) ||
       command.protocolVersion !== PROTOCOL_VERSION || command.contractVersion !== CONTRACT_VERSION ||
       !/^priv-command:[A-Za-z0-9._:-]{1,240}$/u.test(command.commandId) ||
       !/^request:[A-Za-z0-9._:-]{1,240}$/u.test(command.requestId) || !NONCE_PATTERN.test(command.nonce) ||
