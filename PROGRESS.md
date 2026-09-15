@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Task sandbox Docker-socket denial addendum at source revision `314189c`:
+the Broker-owned Seatbelt renderer now emits explicit read/write denies for
+both `/var/run/docker.sock` and `/private/var/run/docker.sock`, independent of
+task arguments or filesystem-root grants. The deterministic sandbox-profile
+suite passes 13/13 with five real-macOS opt-in skips. This is static SBPL
+evidence only because the native descriptor launcher is unavailable in the
+current runtime; physical kernel enforcement, socket aliases, daemon/VM
+isolation, mutation, and production evidence remain open. Evidence:
+`evidence/2026-09-16-docker-sandbox-deny.md`.
+
 Docker CLI code-signature addendum at source revision `872198b`: the Broker
 default now requires `DockerInspectorImpl` to verify the canonical Docker CLI
 with fixed `/usr/bin/codesign` commands, an empty environment, bounded

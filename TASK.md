@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-042 task-sandbox Docker-socket denial addendum at source revision
+`314189c`: the Broker-owned Seatbelt renderer emits explicit read/write deny
+rules for `/var/run/docker.sock` and `/private/var/run/docker.sock`, even when
+task filesystem roots change. The deterministic sandbox-profile suite passes
+13/13 with five real-macOS opt-in skips. This is static profile evidence only;
+the current runtime lacks the native descriptor launcher, so physical kernel
+enforcement, socket aliases, daemon/VM isolation, mutation, and production
+evidence remain open. Evidence:
+`evidence/2026-09-16-docker-sandbox-deny.md`.
+
 MOP-042 Docker CLI code-signature addendum at source revision `872198b`: the
 Broker default requires the fixed Docker adapter to verify the canonical CLI
 with strict `/usr/bin/codesign` commands, an empty environment, bounded
