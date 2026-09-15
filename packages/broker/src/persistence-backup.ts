@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { constants, createReadStream, type Dirent } from "node:fs";
-import { chmod, link, lstat, open, readdir, statfs, unlink } from "node:fs/promises";
+import { chmod, link, lstat, open, readdir, rename, statfs, unlink } from "node:fs/promises";
 import { backup, DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonStrict, parseJsonUtf8Strict, sha256 } from "@mac-operator/contracts";
@@ -237,7 +237,7 @@ export async function restoreBrokerBackup(
     if (!moved && temporaryIdentity !== undefined) {
       const current = await lstat(temporary).catch(() => undefined);
       if (current !== undefined && sameFileIdentity(temporaryIdentity, current)) {
-        await unlink(temporary).catch(() => undefined);
+        await removeExactProtectedFile(temporary, temporaryIdentity).catch(() => undefined);
       }
     }
   }
@@ -279,7 +279,7 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
   for (const file of files.slice(retainCount)) {
     const current = await lstat(file.path);
     if (!sameFileIdentity(file.stat, current)) throw new BrokerError("CONFLICT", "Broker backup changed during retention cleanup", true);
-    await unlink(file.path);
+    await removeExactProtectedFile(file.path, file.stat);
     removed.push(file.path);
   }
   if (removed.length > 0) await syncDirectory(protectedDirectory);
@@ -301,7 +301,7 @@ async function cleanupStaleBackupTemps(
     if (nowMs - stat.mtimeMs < BACKUP_TEMP_STALE_MS) continue;
     const current = await lstat(path);
     if (!sameFileIdentity(stat, current)) throw new BrokerError("CONFLICT", "Broker backup temporary entry changed during cleanup", true);
-    await unlink(path);
+    await removeExactProtectedFile(path, stat);
     removed.push(path);
   }
   if (removed.length > 0) await syncDirectory(directory);
@@ -323,7 +323,7 @@ async function cleanupTemporaryBackupFiles(basePath: string): Promise<void> {
     }
     const current = await lstat(path);
     if (!sameFileIdentity(stat, current)) throw new BrokerError("CONFLICT", "Broker backup temporary target changed", true);
-    await unlink(path);
+    await removeExactProtectedFile(path, stat);
   }
 }
 
@@ -384,6 +384,49 @@ function sameFileIdentity(left: Awaited<ReturnType<typeof lstat>>, right: Awaite
 }
 
 /**
+ * Removes one protected regular file without unlinking a swapped pathname.
+ * The rename selects the inode atomically; the quarantine is then rechecked
+ * before deletion, and a mismatch is restored without replacing a newcomer.
+ */
+async function removeExactProtectedFile(
+  path: string,
+  expected: Awaited<ReturnType<typeof lstat>>
+): Promise<void> {
+  const initial = await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (initial === undefined) return;
+  if (!sameFileIdentity(expected, initial)) {
+    throw new BrokerError("CONFLICT", "Protected file changed before removal", true);
+  }
+  const quarantine = `${path}.unlink-${randomBytes(12).toString("hex")}`;
+  try {
+    await rename(path, quarantine);
+    const quarantined = await lstat(quarantine);
+    if (!sameFileIdentity(expected, quarantined)) {
+      throw new BrokerError("CONFLICT", "Protected file changed during removal", true);
+    }
+    await unlink(quarantine);
+    await syncDirectory(dirname(path));
+  } catch (error) {
+    const quarantined = await lstat(quarantine).catch(() => undefined);
+    if (quarantined !== undefined && sameFileIdentity(expected, quarantined)) {
+      try {
+        await link(quarantine, path);
+        await syncDirectory(dirname(path));
+        await unlink(quarantine);
+        await syncDirectory(dirname(path));
+      } catch {
+        // Preserve the exact quarantine artifact for explicit recovery.
+      }
+    }
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Protected file removal could not be verified", true);
+  }
+}
+
+/**
  * Publish a prepared backup without ever replacing an operator-selected
  * destination. `rename` is intentionally avoided here because it overwrites
  * an existing path after a prior existence check, leaving a target-swap race.
@@ -407,7 +450,7 @@ async function publishNewBackup(
       !sameFileIdentity(source, destination)) {
     throw new BrokerError("CONFLICT", "Broker backup publication identity could not be verified", true);
   }
-  await unlink(sourcePath);
+  await removeExactProtectedFile(sourcePath, expectedSourceIdentity);
 }
 
 function backupTimestamp(name: string): number {
@@ -611,7 +654,7 @@ async function decryptBackupSnapshot(sourcePath: string, destinationPath: string
     if (destinationIdentity !== undefined) {
       const current = await lstat(destinationPath).catch(() => undefined);
       if (current !== undefined && sameFileIdentity(destinationIdentity, current)) {
-        await unlink(destinationPath).catch(() => undefined);
+        await removeExactProtectedFile(destinationPath, destinationIdentity).catch(() => undefined);
       }
     }
     if (error instanceof BrokerError) throw error;
