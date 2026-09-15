@@ -4,6 +4,27 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Broker request-snapshot and IPC handoff addendum at source revision
+`0795958`: `parseBrokerRequest` now copies and recursively freezes the full
+validated envelope, and `Broker.handleForIpc` carries that snapshot through
+asynchronous dispatch and response signing. Focused request-boundary tests
+pass 3/3, including mutation of the original request during the first Broker
+time read. This closes same-process request-object substitution only; native
+transport, remote issuer, replay, policy, target, and installed-service gates
+remain independent. Evidence:
+`evidence/2026-09-16-broker-request-snapshot.md`.
+
+Replay-ledger capacity addendum at source revision `aec1bc8`: request,
+authenticated-approval, policy-signer, Authority Control, privileged-helper,
+Broker-status, and virtualization-guest nonce ledgers enforce a shared
+4,096-row transactional limit. Expired rows are reclaimed before admission;
+an over-capacity ledger fails closed without a partial request, while a full
+but bounded ledger may restart and reclaim expired rows. Focused capacity
+coverage passes 1/1. This closes unbounded local replay-ledger growth only;
+remote retention, disk exhaustion, cross-runtime, and installed recovery
+evidence remain open. Evidence:
+`evidence/2026-09-16-replay-ledger-capacity.md`.
+
 Guest identity authority-snapshot addendum at source revision `5d1084e`:
 the Guest Agent, transport client, VM lifecycle, and composed runtime now
 copy and freeze expected or published Guest identities at construction.
