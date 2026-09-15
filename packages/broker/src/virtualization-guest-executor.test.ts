@@ -227,6 +227,39 @@ test("guest profile executor reserves capacity before asynchronous manifest read
   }
 });
 
+test("guest profile executor snapshots requests before asynchronous target readback", async () => {
+  const fixture = await profileFixture();
+  try {
+    let captured: UnsignedVirtualizationGuestRequest | undefined;
+    const executor = new VirtualizationGuestProfileExecutor(
+      new VirtualizationGuestTaskProfileRegistry([fixture.profile]),
+      {
+        available: true,
+        async run(input) {
+          captured = input.request;
+          return successfulResult();
+        }
+      }
+    );
+    const expectedTaskDigest = fixture.request.taskDigest;
+    const execution = executor.execute(fixture.request);
+    fixture.request.requestId = "request:guest-mutated-0123456789";
+    fixture.request.nonce = "guest-nonce-mutated-0123456789";
+    fixture.request.taskDigest = "b".repeat(64);
+    fixture.request.timeoutMs = 1;
+    fixture.request.guestIdentity.imageSha256 = "b".repeat(64);
+    const result = await execution;
+    assert.equal(captured?.requestId, "request:guest-executor-0123456789");
+    assert.equal(captured?.nonce, "guest-nonce-executor-0123456789");
+    assert.equal(captured?.taskDigest, expectedTaskDigest);
+    assert.equal(result.requestId, "request:guest-executor-0123456789");
+    assert.equal(result.nonce, "guest-nonce-executor-0123456789");
+    await executor.close();
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("guest profile executor returns bounded results and serves terminal status recovery", async () => {
   const fixture = await profileFixture();
   try {

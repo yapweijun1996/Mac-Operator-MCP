@@ -21,6 +21,7 @@ import type { VirtualizationGuestIdentity } from "./virtualization-guest-attesta
 
 const PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const GUEST_RUNTIME_VERSION_PATTERN = /^[A-Za-z0-9._:+/-]{1,128}$/u;
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
 const MAX_ENVIRONMENT_KEYS = 64;
@@ -39,6 +40,12 @@ const PROFILE_KEYS = new Set([
   "networkAllowlist", "networkPolicy", "outputCapBytes", "processTreePolicy", "profile",
   "sandboxProfile", "schemaVersion", "timeoutMs", "verificationStrategy"
 ]);
+const GUEST_REQUEST_KEYS = new Set([
+  "schemaVersion", "protocolVersion", "contractVersion", "kind", "requestId", "nonce", "timestampMs",
+  "expiresAtMs", "guestIdentity", "sandboxProfile", "profileDigest", "taskDigest", "processTreePolicy",
+  "timeoutMs", "outputCapBytes", "operation"
+]);
+const GUEST_IDENTITY_KEYS = new Set(["imageSha256", "runtimeVersion"]);
 
 /**
  * Immutable task material packaged inside a reviewed guest image. A request
@@ -196,8 +203,9 @@ export class VirtualizationGuestProfileExecutor {
   }
 
   async execute(request: UnsignedVirtualizationGuestRequest, signal?: AbortSignal): Promise<UnsignedVirtualizationGuestResponse> {
+    const safeRequest = snapshotGuestRequest(request);
     if (this.closed || !this.adapter.available) throw new BrokerError("POLICY_DENIED", "Guest task executor is not available");
-    if (signal?.aborted) return this.cancelled(request);
+    if (signal?.aborted) return this.cancelled(safeRequest);
     if (this.active + this.inFlight >= this.maxConcurrent) {
       throw new BrokerError("CONFLICT", "Guest task executor capacity is exhausted", true);
     }
@@ -207,26 +215,26 @@ export class VirtualizationGuestProfileExecutor {
     this.inFlight += 1;
     let profile: VirtualizationGuestTaskProfile;
     try {
-      profile = await this.registry.resolve(request);
+      profile = await this.registry.resolve(safeRequest);
     } finally {
       // Release the reservation even when manifest readback or admission
       // fails before an adapter run starts.
       this.inFlight -= 1;
     }
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Guest task executor is not available");
-    if (signal?.aborted) return this.cancelled(request);
+    if (signal?.aborted) return this.cancelled(safeRequest);
     const controller = new AbortController();
     const abortFromCaller = (): void => controller.abort();
     signal?.addEventListener("abort", abortFromCaller, { once: true });
     this.activeControllers.add(controller);
     this.active += 1;
-    this.ledger.start(request);
+    this.ledger.start(safeRequest);
     try {
       const execution = this.adapter.run({
-        request,
+        request: safeRequest,
         profile,
-        timeoutMs: Math.min(request.timeoutMs, profile.timeoutMs),
-        outputCapBytes: Math.min(request.outputCapBytes, profile.outputCapBytes),
+        timeoutMs: Math.min(safeRequest.timeoutMs, profile.timeoutMs),
+        outputCapBytes: Math.min(safeRequest.outputCapBytes, profile.outputCapBytes),
         signal: controller.signal
       });
       this.activeExecutions.add(execution);
@@ -238,31 +246,31 @@ export class VirtualizationGuestProfileExecutor {
       }
       if (controller.signal.aborted || this.closed) {
         const cancelled = this.executionResult("cancelled", "CANCELLED", null, "Guest task was cancelled before result publication");
-        this.ledger.complete(request, cancelled);
-        return this.response(request, cancelled);
+        this.ledger.complete(safeRequest, cancelled);
+        return this.response(safeRequest, cancelled);
       }
       const validated = redactGuestExecutionResult(
-        validateGuestExecutionResult(result, request.outputCapBytes),
-        request.outputCapBytes
+        validateGuestExecutionResult(result, safeRequest.outputCapBytes),
+        safeRequest.outputCapBytes
       );
-      this.ledger.complete(request, validated);
-      return this.response(request, validated);
+      this.ledger.complete(safeRequest, validated);
+      return this.response(safeRequest, validated);
     } catch (error) {
       if (controller.signal.aborted || this.closed) {
         const cancelled = this.executionResult("cancelled", "CANCELLED", null, "Guest task was cancelled before result publication");
-        this.ledger.complete(request, cancelled);
-        return this.response(request, cancelled);
+        this.ledger.complete(safeRequest, cancelled);
+        return this.response(safeRequest, cancelled);
       }
       const result = error instanceof BrokerError
         ? error
         : new BrokerError("UNKNOWN_OUTCOME", "Guest task execution outcome could not be established", true);
       if (result.errorClass === "POLICY_DENIED" || result.errorClass === "CONFLICT" || result.errorClass === "TARGET_NOT_FOUND") {
-        this.ledger.fail(request, result);
+        this.ledger.fail(safeRequest, result);
         throw result;
       }
       const mapped = this.resultForError(result);
-      this.ledger.complete(request, mapped);
-      return this.response(request, mapped);
+      this.ledger.complete(safeRequest, mapped);
+      return this.response(safeRequest, mapped);
     } finally {
       this.active -= 1;
       this.activeControllers.delete(controller);
@@ -489,6 +497,36 @@ function validateProfileShape(profile: VirtualizationGuestTaskProfile): void {
   }
 }
 
+function snapshotGuestRequest(value: unknown): UnsignedVirtualizationGuestRequest {
+  if (!isPlainDataRecord(value) || !hasAllowedKeys(value, GUEST_REQUEST_KEYS) ||
+      !isPlainDataRecord(value.guestIdentity) || !hasAllowedKeys(value.guestIdentity, GUEST_IDENTITY_KEYS)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Guest task request digest binding is malformed");
+  }
+  const identity = value.guestIdentity;
+  if (typeof identity.imageSha256 !== "string" || !SHA256_PATTERN.test(identity.imageSha256) ||
+      typeof identity.runtimeVersion !== "string" || !GUEST_RUNTIME_VERSION_PATTERN.test(identity.runtimeVersion)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Guest task request digest binding is malformed");
+  }
+  return {
+    schemaVersion: value.schemaVersion as "0.1",
+    protocolVersion: value.protocolVersion as UnsignedVirtualizationGuestRequest["protocolVersion"],
+    contractVersion: value.contractVersion as UnsignedVirtualizationGuestRequest["contractVersion"],
+    kind: value.kind as "virtualization_guest_task",
+    requestId: value.requestId as string,
+    nonce: value.nonce as string,
+    timestampMs: value.timestampMs as number,
+    expiresAtMs: value.expiresAtMs as number,
+    guestIdentity: { imageSha256: identity.imageSha256, runtimeVersion: identity.runtimeVersion },
+    sandboxProfile: value.sandboxProfile as string,
+    profileDigest: value.profileDigest as string,
+    taskDigest: value.taskDigest as string,
+    processTreePolicy: value.processTreePolicy as VirtualizationGuestTaskProfile["processTreePolicy"],
+    timeoutMs: value.timeoutMs as number,
+    outputCapBytes: value.outputCapBytes as number,
+    operation: value.operation as "task_run"
+  };
+}
+
 async function assertGuestProfileTargets(profile: VirtualizationGuestTaskProfile): Promise<void> {
   await assertCanonicalExecutable(profile.executable);
   await assertCanonicalDirectory(profile.cwd);
@@ -524,11 +562,7 @@ async function assertCanonicalDirectory(path: string): Promise<string> {
 }
 
 function validateGuestRequestShape(request: UnsignedVirtualizationGuestRequest): void {
-  if (!isPlainDataRecord(request) || !hasAllowedKeys(request, [
-    "schemaVersion", "protocolVersion", "contractVersion", "kind", "requestId", "nonce", "timestampMs",
-    "expiresAtMs", "guestIdentity", "sandboxProfile", "profileDigest", "taskDigest", "processTreePolicy",
-    "timeoutMs", "outputCapBytes", "operation"
-  ]) ||
+  if (!isPlainDataRecord(request) || !hasAllowedKeys(request, GUEST_REQUEST_KEYS) ||
       !SHA256_PATTERN.test(request.profileDigest) || !SHA256_PATTERN.test(request.taskDigest) ||
       !PROFILE_PATTERN.test(request.sandboxProfile)) {
     throw new BrokerError("PRECONDITION_FAILED", "Guest task request digest binding is malformed");
