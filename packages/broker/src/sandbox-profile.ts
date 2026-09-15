@@ -10,6 +10,7 @@ const GLOBAL_SECRET_ZONES = [
   "/private/etc/pam.d", "/private/etc/security", "/private/etc/ssh", "/private/etc/krb5.keytab", "/private/etc/ssl/private",
   "/private/var/root", "/var/root"
 ] as const;
+const DOCKER_SOCKET_PATHS = ["/var/run/docker.sock", "/private/var/run/docker.sock"] as const;
 const PROJECT_SECRET_DIRECTORIES = [
   ".aws", ".codex", ".config", ".docker", ".gnupg", ".kube", ".openai", ".ssh",
   "Library/Keychains", "Library/Application Support/Google/Chrome", "Library/Safari", "Library/Mail", "Library/Messages"
@@ -99,6 +100,10 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile, options: 
   for (const zone of secretZones(roots)) {
     lines.push(`(deny file-read* (subpath ${quote(zone)}))`);
     lines.push(`(deny file-write* (subpath ${quote(zone)}))`);
+  }
+  for (const socketPath of DOCKER_SOCKET_PATHS) {
+    lines.push(`(deny file-read* (literal ${quote(socketPath)}))`);
+    lines.push(`(deny file-write* (literal ${quote(socketPath)}))`);
   }
   for (const base of secretRegexBases(roots)) {
     const names = [...PROJECT_SECRET_DIRECTORIES, ...PROJECT_SECRET_FILES].map(escapeRegex).join("|");

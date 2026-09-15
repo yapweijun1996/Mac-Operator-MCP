@@ -76,6 +76,8 @@ test("sandbox profile renderer emits a deterministic deny-default no-network pol
     assert.match(rendered, new RegExp(`\\(allow file-write\\* \\(subpath "${escapeRegExp(root)}"\\)\\)`));
     assert.equal(rendered.includes("network-outbound"), false);
     assert.match(rendered, /\(deny file-read\* \(regex #/u);
+    assert.match(rendered, /\(deny file-read\* \(literal "\/var\/run\/docker\.sock"\)\)/u);
+    assert.match(rendered, /\(deny file-write\* \(literal "\/private\/var\/run\/docker\.sock"\)\)/u);
     assert.deepEqual(buildSandboxExecArguments(profile).slice(0, 2), ["-p", rendered]);
     assert.deepEqual(buildSandboxExecArguments(profile).slice(-1), ["sandboxed"]);
     const groupProfile = renderTaskSandboxProfile({ ...profile, processTreePolicy: "owned_group" });
