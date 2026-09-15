@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-group census addendum: source revision `ea7b133` supplements native
+descendant traversal with a bounded census of the detached root process group.
+The Broker merges both snapshots by PID and start time, rejects conflicting or
+truncated observations, and requires the new export at its capability gates;
+an incomplete addon therefore remains unavailable. Focused process/peer tests
+pass 47/47, and the serial physical regression passes 638/638 with no skips or
+failures. This closes the reparented-child observation gap only; post-window
+`setsid`, kernel termination, credential isolation, and production enablement
+remain open. Evidence:
+`evidence/2026-09-15-process-group-census.md`.
+
 Native artifact signing-readiness addendum: source revision `54d4590` performs
 a read-only probe of all three Broker native extensions. Strict `codesign`
 verification passes for each, while the host reports `0 valid identities` and

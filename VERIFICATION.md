@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process-group census verification at source revision `ea7b133` supplements
+native descendant traversal with a bounded detached-group member census.
+Snapshots are merged by PID/start time and malformed, conflicting, or
+truncated observations fail closed; runtime and recovery gates require the
+new native export. Focused process/peer tests pass 47/47, and the serial
+physical regression passes 638/638 with 0 skips and 0 failures. This closes
+only the reparented-child observation gap; post-window `setsid`, kernel
+termination, credential isolation, and production task enablement remain
+release gates. Evidence:
+`evidence/2026-09-15-process-group-census.md`.
+
 Native artifact signing-readiness verification at source revision `54d4590`
 covers all three Broker native extensions. Strict `/usr/bin/codesign`
 verification passes for each, but `security find-identity -v -p codesigning`
