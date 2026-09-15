@@ -1760,3 +1760,12 @@ session, or capability-family limits. Focused persistence validation passes
 skipped, 0 failed). Kernel/process quotas, disk exhaustion, production
 service evidence, and capability gates remain open. Evidence:
 `evidence/2026-09-15-admission-limit-boundary.md`.
+
+Active approval revalidation addendum: commit `b4cac00` rechecks consumed
+mutation approvals during pre-dispatch, active control callbacks, and final
+readback. Revocation or expiry cancels active work and prevents success
+publication, leaving a started Job `unknown`. Focused Broker verification
+passes 1/1; the non-overlapping package regression remains 539 total (533
+passed, 6 skipped, 0 failed). Human approval UI/channel, protected Keychain,
+unattended ownership, production evidence, and capability gates remain open.
+Evidence: `evidence/2026-09-15-active-approval-revalidation.md`.

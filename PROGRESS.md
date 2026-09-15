@@ -2983,3 +2983,12 @@ the non-overlapping package regression remains 539 total (533 passed, 6
 skipped, 0 failed). Kernel/process quotas, disk exhaustion, and production
 service evidence remain open. Evidence:
 `evidence/2026-09-15-admission-limit-boundary.md`.
+
+Active mutation approval revalidation now runs during Broker pre-dispatch,
+control callbacks, and final readback (source revision `b4cac00`). A revoked
+or expired consumed approval cancels active work and prevents success
+publication; started Jobs remain `unknown`. Focused Broker verification passes
+1/1 and the non-overlapping package regression remains 539 total (533 passed,
+6 skipped, 0 failed). Human approval UI/channel, protected Keychain,
+unattended ownership, and production evidence remain open. Evidence:
+`evidence/2026-09-15-active-approval-revalidation.md`.

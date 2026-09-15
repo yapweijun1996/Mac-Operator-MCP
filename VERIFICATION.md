@@ -2652,3 +2652,12 @@ passes 539 total (533 passed, 6 skipped, 0 failed). This remains local
 configuration-shape evidence and does not close kernel/process quotas, disk
 exhaustion, or production service evidence. Evidence:
 `evidence/2026-09-15-admission-limit-boundary.md`.
+
+Active approval verification at source revision `b4cac00` confirms Broker
+revalidates consumed mutation approvals during pre-dispatch, active control,
+and final readback. Revocation cancels the request, keeps a started Job
+`unknown`, and prevents a success response. The focused Broker test passes
+1/1; the non-overlapping package regression passes 539 total (533 passed, 6
+skipped, 0 failed). Human approval UI/channel, protected Keychain,
+unattended ownership, and production service evidence remain open. Evidence:
+`evidence/2026-09-15-active-approval-revalidation.md`.
