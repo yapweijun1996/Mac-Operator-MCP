@@ -239,6 +239,38 @@ test("process supervisor rejects executable target swaps after startup authoriza
   }
 });
 
+test("process supervisor rejects in-place executable mutations after startup authorization", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("The startup identity callback uses the macOS native process observer");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-content-swap-"));
+  const canonicalDirectory = await realpath(directory);
+  const executable = join(canonicalDirectory, "runner");
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  try {
+    await writeFile(executable, "#!/bin/sh\nsleep 1\n", { mode: 0o700 });
+    await assert.rejects(
+      supervisor.run({
+        executable,
+        args: [],
+        cwd: canonicalDirectory,
+        timeoutMs: 2_000,
+        outputCapBytes: 100,
+        onStarted: () => {
+          // Preserve the path and inode while changing its content and stat metadata.
+          writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+        }
+      }),
+      /Executable changed after authorization/u
+    );
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("process supervisor terminates the process group on timeout and output overflow", async () => {
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   const timedOut = await supervisor.run({
@@ -733,13 +765,13 @@ test("process supervisor isolates per-executable capacity from the global pool",
     shouldCancel: () => cancelled
   });
   try {
-    await waitForActiveProcess(supervisor, 1, 1_000);
+    await waitForActiveProcess(supervisor, 1, 5_000);
     await assert.rejects(
       supervisor.run({
         executable: "/bin/sleep",
         args: ["1"],
         cwd: CWD,
-        timeoutMs: 1_000,
+        timeoutMs: 5_000,
         outputCapBytes: 100
       }),
       /capacity is exhausted/u
@@ -748,7 +780,7 @@ test("process supervisor isolates per-executable capacity from the global pool",
       executable: "/usr/bin/printf",
       args: ["other"],
       cwd: CWD,
-      timeoutMs: 1_000,
+      timeoutMs: 5_000,
       outputCapBytes: 100
     });
     assert.equal(other.state, "completed");

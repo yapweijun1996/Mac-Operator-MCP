@@ -35,6 +35,10 @@ export interface ProcessPathIdentity {
   device: number;
   inode: number;
   mode: number;
+  /** Metadata that changes on ordinary in-place content mutation. */
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
 }
 
 export type ProcessPathKind = "executable" | "directory";
@@ -906,7 +910,8 @@ export async function assertProcessPathIdentityStable(
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
   }
-  if (current.device !== expected.device || current.inode !== expected.inode || current.mode !== expected.mode) {
+  if (current.device !== expected.device || current.inode !== expected.inode || current.mode !== expected.mode ||
+      (kind === "executable" && (current.size !== expected.size || current.mtimeMs !== expected.mtimeMs || current.ctimeMs !== expected.ctimeMs))) {
     throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
   }
 }
@@ -916,13 +921,27 @@ async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
   if (stat.isSymbolicLink()) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
   if (!stat.isFile() || (stat.mode & 0o111) === 0) throw new BrokerError("POLICY_DENIED", "Executable must be a regular executable file");
   if ((await realpath(path)) !== path) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
-  return { device: stat.dev, inode: stat.ino, mode: stat.mode & 0o7777 };
+  return {
+    device: stat.dev,
+    inode: stat.ino,
+    mode: stat.mode & 0o7777,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs
+  };
 }
 
 async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
   const stat = await lstat(path);
   if (!stat.isDirectory() || (await realpath(path)) !== path) throw new BrokerError("POLICY_DENIED", "Process cwd must be a canonical directory");
-  return { device: stat.dev, inode: stat.ino, mode: stat.mode & 0o7777 };
+  return {
+    device: stat.dev,
+    inode: stat.ino,
+    mode: stat.mode & 0o7777,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs
+  };
 }
 
 async function assertProcessPathStable(path: string, expected: ProcessPathIdentity, label: "Executable" | "Process cwd"): Promise<void> {
