@@ -25,8 +25,9 @@ bounded Broker-owned protected-root set into the sandbox renderer. Deny rules
 follow task allow rules and are validated as canonical absolute paths; the
 physical-Darwin smoke allows the synthetic root but rejects its ledger file.
 The complete serial physical-Darwin suite passes 606/606 with 0 skipped tests.
-This advances persistence-surface policy but does not wire a production runner
-or prove remount, descriptor, credential, or Docker isolation. Evidence:
+This advances persistence-surface policy and is now reachable through the
+explicit startup seam, but the packaged runner remains disabled and remount,
+descriptor, credential, and Docker isolation are not proven. Evidence:
 `evidence/2026-09-15-sandbox-protected-roots.md`.
 
 Executable-content identity addendum: source revision `a0e62e2` makes the

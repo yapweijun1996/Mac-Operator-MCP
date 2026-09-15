@@ -26,9 +26,9 @@ read/write deny rules after task allows. The real-Darwin smoke verifies a
 synthetic persistence root is denied despite being listed as an allowed task
 root; sandbox-profile passes 15/15 and the complete serial physical-Darwin
 suite passes 606/606 with 0 skipped tests. Build, lint, contract, native
-canonical, and diff checks pass. This is not production persistence or
-credential isolation evidence until startup wiring, real Broker paths, and
-remount/descriptor claims are verified. Evidence:
+canonical, and diff checks pass. Startup wiring now exists as an explicit host
+seam, but the packaged default remains disabled until real Broker paths and
+remount/descriptor, persistence, and credential claims are verified. Evidence:
 `evidence/2026-09-15-sandbox-protected-roots.md`.
 
 Executable-content identity addendum: source revision `a0e62e2` binds the

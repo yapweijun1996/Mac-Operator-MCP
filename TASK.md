@@ -29,8 +29,9 @@ task allow rules, so a persistence-shaped root remains inaccessible even when
 it overlaps an allowed task root. A real-Darwin regression verifies denial of
 `broker-persistence/ledger.sqlite` while ordinary task writes still succeed;
 the complete serial physical-Darwin suite passes 606/606 with 0 skipped tests.
-This is a host wiring seam only; production startup wiring, mount-namespace
-and remount resistance, and full credential/Docker isolation remain open.
+This is now available through an explicit host startup seam, while the
+packaged default remains fail-closed; mount-namespace and remount resistance,
+and full credential/Docker isolation remain open.
 Evidence: `evidence/2026-09-15-sandbox-protected-roots.md`.
 
 Executable-content identity addendum: source revision `a0e62e2` extends the
