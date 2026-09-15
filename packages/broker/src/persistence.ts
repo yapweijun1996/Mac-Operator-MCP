@@ -181,6 +181,8 @@ export type PrivilegedHelperPayload =
 
 export interface BrokerJob {
   jobId: string;
+  /** Internal authority correlation; never serialized in tool results. */
+  ownerEdgeId: string | null;
   ownerPrincipalId: string;
   ownerSessionId: string;
   tool: string;
@@ -3364,6 +3366,7 @@ function mapJob(row: JobRow): BrokerJob {
   }
   return {
     jobId: row.job_id,
+    ownerEdgeId: row.owner_edge_id,
     ownerPrincipalId: row.owner_principal_id,
     ownerSessionId: row.owner_session_id,
     tool: row.tool,

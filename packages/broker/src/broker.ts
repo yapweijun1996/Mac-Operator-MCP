@@ -483,7 +483,9 @@ export class Broker {
       const tool = policy.tools.get("mac_task_run");
       if (policy.killSwitches.global || policy.killSwitches.process || tool?.implemented !== true || tool.enabled !== true ||
           job.policyVersion !== policy.version || this.options.store.isRevoked("principal", job.ownerPrincipalId) ||
-          this.options.store.isRevoked("session", job.ownerSessionId) || this.taskRunner.mechanism !== "virtualization" ||
+          this.options.store.isRevoked("session", job.ownerSessionId) ||
+          (job.ownerEdgeId !== null && this.options.store.isRevoked("edge", job.ownerEdgeId)) ||
+          this.taskRunner.mechanism !== "virtualization" ||
           typeof this.taskRunner.recoverUnknownTask !== "function") {
         unavailable += 1;
         this.options.store.appendAudit({
@@ -512,7 +514,8 @@ export class Broker {
         }
         if (currentPolicy.killSwitches.global || currentPolicy.killSwitches.process || currentTool?.implemented !== true ||
             currentTool.enabled !== true || job.policyVersion !== currentPolicy.version ||
-            this.options.store.isRevoked("principal", job.ownerPrincipalId) || this.options.store.isRevoked("session", job.ownerSessionId)) {
+            this.options.store.isRevoked("principal", job.ownerPrincipalId) || this.options.store.isRevoked("session", job.ownerSessionId) ||
+            (job.ownerEdgeId !== null && this.options.store.isRevoked("edge", job.ownerEdgeId))) {
           throw new BrokerError("REVOKED", "Guest status lookup authority is revoked");
         }
       };
