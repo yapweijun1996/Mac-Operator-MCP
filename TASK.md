@@ -4,12 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-042 Docker object-identity addendum at source revision `423985d`: the
+MOP-042 Docker object-identity addendum at source revision `dd9943a`: the
 Docker inspect adapter now binds returned metadata to the requested target
 before success. Exact IDs and one-way short hexadecimal ID prefixes are
 accepted; mutable names require exact normalized name readback, and
 ID-looking names cannot fall back to name matching. Different IDs fail as
-`CONFLICT`; focused identity/parser tests pass 11/11 and the physical Docker
+`CONFLICT`; focused identity/parser tests pass 12/12 and the physical Docker
 Desktop status/inspect readback passes 1/1. Same-name replacement races,
 kernel object handles, native daemon/socket isolation, code-signature
 provenance, mutation, and production evidence remain open. Evidence:

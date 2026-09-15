@@ -1,6 +1,6 @@
 # Docker inspect object identity evidence
 
-- Source revision: `423985d`
+- Source revision: `dd9943a`
 - Capture date: 2026-09-16 (Asia/Kuala_Lumpur)
 - Host: Apple silicon Mac mini, macOS 26.2, Darwin 25.2.0, arm64
 - Contract version: `0.1`
@@ -23,7 +23,7 @@ npx tsc -b --pretty false
 pass
 
 node --test packages/broker/dist/docker-inspector.test.js
-12 tests, 11 passed, 0 failed, 1 explicit opt-in skip
+13 tests, 12 passed, 0 failed, 1 explicit opt-in skip
 
 MOPS_REAL_DOCKER=1 node --test --test-name-pattern='real Docker Desktop' \
   packages/broker/dist/docker-inspector.test.js

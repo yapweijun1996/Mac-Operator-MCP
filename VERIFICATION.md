@@ -3,13 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Docker inspect object-identity verification at source revision `423985d`:
+Docker inspect object-identity verification at source revision `dd9943a`:
 the fixed adapter now requires exact ID equality or a one-way bounded
 hexadecimal prefix match for ID targets, and exact normalized `Name` readback
 for non-ID names. ID-looking names are treated as IDs, so a different object
 cannot be accepted merely because its name matches; the adapter returns a
 stable `CONFLICT` before response serialization. Focused Docker identity and
-parser tests pass 11/11, the physical Docker Desktop status/inspect readback
+parser tests pass 12/12, the physical Docker Desktop status/inspect readback
 passes 1/1, and typecheck passes. This is an observation/result-binding fence,
 not a kernel-held Docker handle or same-name replacement guarantee. Native
 macOS daemon isolation, host socket denial, code-signature provenance,
