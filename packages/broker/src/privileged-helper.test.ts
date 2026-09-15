@@ -21,6 +21,7 @@ import {
   signPrivilegedHelperCommand,
   signPrivilegedHelperStatusRequest,
   validateUnsignedPrivilegedHelperStatusRequest,
+  validatePrivilegedHelperStatusReadback,
   validatePrivilegedHelperExecutionResult,
   type PrivilegedHelperResponse,
   type PrivilegedHelperStatusReadback,
@@ -194,6 +195,24 @@ test("privileged helper status request boundary rejects accessors and inherited 
   assert.throws(
     () => validateUnsignedPrivilegedHelperStatusRequest(inherited as never),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+});
+
+test("privileged helper status readback rejects accessors before key enumeration", () => {
+  const status = statusReadback("/tmp/helper.sock", "/tmp/broker.sock");
+  const accessor = { ...status } as Record<string, unknown>;
+  Object.defineProperty(accessor, "runtimeState", { enumerable: true, get: () => "running" });
+  assert.throws(
+    () => validatePrivilegedHelperStatusReadback(accessor as never),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+
+  const inherited = Object.create({ component: status.component }) as Record<string, unknown>;
+  Object.assign(inherited, status);
+  delete inherited.component;
+  assert.throws(
+    () => validatePrivilegedHelperStatusReadback(inherited as never),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
   );
 });
 

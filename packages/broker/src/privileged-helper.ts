@@ -734,10 +734,12 @@ export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedP
 }
 
 export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperStatusReadback): PrivilegedHelperStatusReadback {
-  const keys = status !== null && typeof status === "object" && !Array.isArray(status) ? Object.keys(status) : [];
   const allowed = ["component", "state", "runtimeState", "nativeTransportRequired", "adapterAvailable", "helperSocketPath", "brokerSocketPath", "brokerPeerUid", "brokerPeerGid", "sourceRevision", "contractVersion", "policyVersion", "enabledCapabilities"];
-  if (!isPlainDataRecord(status) || keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
-      status === null || typeof status !== "object" || Array.isArray(status) ||
+  if (!isPlainDataRecord(status)) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper status readback is malformed");
+  }
+  const keys = Object.keys(status);
+  if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
       status.component !== "mac-operator-privileged-helper" || status.state !== "running" ||
       status.runtimeState !== "running" || status.nativeTransportRequired !== true ||
       status.adapterAvailable !== false || !canonicalStatusPath(status.helperSocketPath) ||
