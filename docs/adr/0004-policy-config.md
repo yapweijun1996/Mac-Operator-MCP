@@ -108,3 +108,9 @@ config loader, persisted Job provenance, and Edge revocation path reuse the
 same bounded Edge identity predicate. This is a local fail-closed consistency
 guard; it does not change the Proposed status or close production key
 distribution and installation evidence.
+
+Commit `6fdc725` aligns the bounded composite Edge-key identity length across
+Job persistence and operator revocation. The maximum valid 128-character Edge
+and key components now remain revocable as a 257-character subject instead of
+being rejected by a stale 256-character guard. This is a compatibility and
+fail-closed consistency fix; ADR-0004 remains Proposed.

@@ -2762,3 +2762,12 @@ skipped, 0 failed). This is local constructor/loader consistency evidence only; 
 key distribution, signing provenance, and installed-service evidence remain
 open. Evidence:
 `evidence/2026-09-15-edge-keyring-identity-boundary.md`.
+
+Edge-key identity length verification at source revision `6fdc725` confirms
+the full bounded composite identity is accepted consistently: maximum 128
+character Edge and key components produce a 257-character revocation subject,
+which passes keyring, Authority Control parser, Job provenance, and persistence
+subject validation. The non-overlapping package regression passes 549 total
+(543 passed, 6 skipped, 0 failed). This does not close production key
+distribution, signing provenance, or installed-service evidence. Evidence:
+`evidence/2026-09-15-edge-key-identity-length.md`.

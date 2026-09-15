@@ -3089,3 +3089,13 @@ regression now passes 547 total (541 passed, 6 skipped, 0 failed). This closes a
 versus loader validation drift but does not close production key distribution,
 Developer ID provenance, or installed-service evidence. Evidence:
 `evidence/2026-09-15-edge-keyring-identity-boundary.md`.
+
+Maximum Edge/key identity length is now consistent across admission, persisted
+Job provenance, and operator revocation (source revision `6fdc725`). A 128
+character Edge plus 128 character key yields the supported 257-character
+composite identity; keyring and Authority Control boundary tests accept it,
+while malformed identities remain rejected. The non-overlapping package
+regression passes 549 total (543 passed, 6 skipped, 0 failed). This remains
+local bounded-identity evidence; production key distribution and installation
+evidence remain open. Evidence:
+`evidence/2026-09-15-edge-key-identity-length.md`.
