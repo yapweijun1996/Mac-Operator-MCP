@@ -416,7 +416,7 @@ export class BrokerStore {
     }
     if (schemaVersion > BROKER_SCHEMA_VERSION) {
       this.database.close();
-      throw new Error("Broker persistence schema version is newer than this runtime");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence schema version is newer than this runtime");
     }
     try {
       this.database.exec(`
@@ -3288,7 +3288,7 @@ export class BrokerStore {
   private readSchemaVersion(): number {
     const row = this.database.prepare("PRAGMA user_version").get() as { user_version?: unknown } | undefined;
     if (!Number.isSafeInteger(row?.user_version) || (row?.user_version as number) < 0) {
-      throw new Error("Broker persistence schema version is malformed");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence schema version is malformed");
     }
     return row?.user_version as number;
   }
@@ -3315,22 +3315,22 @@ export class BrokerStore {
         if (!Number.isSafeInteger(row.version) || (row.version as number) < 1 || (row.version as number) > BROKER_SCHEMA_VERSION ||
             typeof row.name !== "string" || row.name.length < 1 || row.name.length > 128 ||
             !Number.isSafeInteger(row.applied_at_ms) || (row.applied_at_ms as number) < 0) {
-          throw new Error("Broker schema migration registry is malformed");
+          throw new BrokerError("AUDIT_UNAVAILABLE", "Broker schema migration registry is malformed");
         }
         const version = row.version as number;
         if (version > previousVersion || recorded.has(version)) {
-          throw new Error("Broker schema migration registry is inconsistent");
+          throw new BrokerError("AUDIT_UNAVAILABLE", "Broker schema migration registry is inconsistent");
         }
         recorded.set(version, row.name as string);
       }
       const maxRecorded = Math.max(0, ...recorded.keys());
       for (let version = 1; version <= maxRecorded; version += 1) {
-        if (!recorded.has(version)) throw new Error("Broker schema migration registry is incomplete");
+        if (!recorded.has(version)) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker schema migration registry is incomplete");
       }
       for (const migration of migrations) {
         const existingName = recorded.get(migration.version);
         if (existingName !== undefined && existingName !== migration.name) {
-          throw new Error("Broker schema migration identity changed");
+          throw new BrokerError("AUDIT_UNAVAILABLE", "Broker schema migration identity changed");
         }
         // Migration bodies are intentionally idempotent and are re-run for
         // every known version. This turns the registry into a shape check even
@@ -3345,14 +3345,14 @@ export class BrokerStore {
       this.database.exec(`PRAGMA user_version = ${BROKER_SCHEMA_VERSION}`);
       const finalVersion = this.readSchemaVersion();
       if (finalVersion !== BROKER_SCHEMA_VERSION) {
-        throw new Error("Broker persistence schema marker readback is inconsistent");
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence schema marker readback is inconsistent");
       }
       const finalRows = this.database.prepare(
         "SELECT version, name FROM schema_migrations ORDER BY version"
       ).all() as Array<{ version?: unknown; name?: unknown }>;
       if (finalRows.length !== migrations.length || finalRows.some((row, index) =>
         row.version !== migrations[index]?.version || row.name !== migrations[index]?.name)) {
-        throw new Error("Broker schema migration registry readback is inconsistent");
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Broker schema migration registry readback is inconsistent");
       }
     });
   }
@@ -3361,10 +3361,10 @@ export class BrokerStore {
     const columns = this.database.prepare("PRAGMA table_info(schema_migrations)").all() as Array<{ name?: unknown }>;
     const names = new Set(columns.map((column) => column.name));
     if (!names.has("version") || !names.has("name") || !names.has("applied_at_ms")) {
-      throw new Error("Broker schema migration registry is unavailable");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker schema migration registry is unavailable");
     }
     if (!Number.isSafeInteger(previousVersion) || previousVersion < 0 || previousVersion > BROKER_SCHEMA_VERSION) {
-      throw new Error("Broker persistence schema version is malformed");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker persistence schema version is malformed");
     }
   }
 
@@ -3431,12 +3431,12 @@ export class BrokerStore {
     ).get() as { sql?: unknown } | undefined;
     if (typeof table?.sql !== "string" || !table.sql.includes("singleton") || !table.sql.includes("generation") ||
         !table.sql.includes("token") || !table.sql.includes("acquired_at_ms") || !table.sql.includes("STRICT")) {
-      throw new Error("Broker runtime fence schema is unavailable");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker runtime fence schema is unavailable");
     }
     const columns = this.database.prepare("PRAGMA table_info(broker_runtime_fence)").all() as Array<{ name?: unknown }>;
     const names = new Set(columns.map((column) => column.name));
     if (names.size !== 4 || !names.has("singleton") || !names.has("generation") || !names.has("token") || !names.has("acquired_at_ms")) {
-      throw new Error("Broker runtime fence schema is malformed");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker runtime fence schema is malformed");
     }
   }
 
@@ -3446,12 +3446,12 @@ export class BrokerStore {
     ).get() as { sql?: unknown } | undefined;
     if (typeof table?.sql !== "string" || !table.sql.includes("nonce") || !table.sql.includes("request_id") ||
         !table.sql.includes("accepted_at_ms") || !table.sql.includes("expires_at_ms") || !table.sql.includes("STRICT")) {
-      throw new Error("Virtualization guest replay schema is unavailable");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest replay schema is unavailable");
     }
     const columns = this.database.prepare("PRAGMA table_info(virtualization_guest_nonces)").all() as Array<{ name?: unknown }>;
     const names = new Set(columns.map((column) => column.name));
     if (names.size !== 4 || !names.has("nonce") || !names.has("request_id") || !names.has("accepted_at_ms") || !names.has("expires_at_ms")) {
-      throw new Error("Virtualization guest replay schema is malformed");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest replay schema is malformed");
     }
   }
 
@@ -3459,7 +3459,7 @@ export class BrokerStore {
     const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name?: unknown }>;
     const names = new Set(columns.map((column) => column.name));
     if (!names.has("guest_metadata_json")) {
-      throw new Error("Virtualization guest task metadata schema is unavailable");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest task metadata schema is unavailable");
     }
   }
 
@@ -3470,12 +3470,12 @@ export class BrokerStore {
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
       ).get(name) as { sql?: unknown } | undefined;
       if (typeof table?.sql !== "string" || !table.sql.includes("STRICT")) {
-        throw new Error("Virtualization guest attestation key configuration schema is unavailable");
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest attestation key configuration schema is unavailable");
       }
       const columns = this.database.prepare(`PRAGMA table_info(${name})`).all() as Array<{ name?: unknown }>;
       const names = new Set(columns.map((column) => column.name));
       if (names.size !== requiredColumns.length || requiredColumns.some((column) => !names.has(column))) {
-        throw new Error("Virtualization guest attestation key configuration schema is malformed");
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest attestation key configuration schema is malformed");
       }
     };
     createTable(
@@ -3526,7 +3526,7 @@ export class BrokerStore {
     }
     const migratedColumns = this.database.prepare("PRAGMA table_info(requests)").all() as Array<{ name?: unknown }>;
     if (!migratedColumns.some((column) => column.name === "capability_families")) {
-      throw new Error("Broker request capability-family schema is unavailable");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker request capability-family schema is unavailable");
     }
   }
 
@@ -3541,7 +3541,7 @@ export class BrokerStore {
     const migratedColumns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name?: unknown; type?: unknown; notnull?: unknown }>;
     const ownerEdgeColumn = migratedColumns.find((column) => column.name === "owner_edge_id");
     if (ownerEdgeColumn?.type !== "TEXT" || ownerEdgeColumn.notnull !== 0) {
-      throw new Error("Broker Job Edge provenance schema is unavailable");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker Job Edge provenance schema is unavailable");
     }
   }
 
@@ -3556,12 +3556,12 @@ export class BrokerStore {
     const migratedColumns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name?: unknown; type?: unknown; notnull?: unknown }>;
     const ownerEdgeKeyColumn = migratedColumns.find((column) => column.name === "owner_edge_key_id");
     if (ownerEdgeKeyColumn?.type !== "TEXT" || ownerEdgeKeyColumn.notnull !== 0) {
-      throw new Error("Broker Job Edge-key provenance schema is unavailable");
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker Job Edge-key provenance schema is unavailable");
     }
   }
 
   private acquireRuntimeFence(nowMs: number): void {
-    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Broker runtime fence timestamp is malformed");
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker runtime fence timestamp is malformed");
     this.database.exec("BEGIN IMMEDIATE");
     let committed = false;
     try {
@@ -3571,7 +3571,7 @@ export class BrokerStore {
       const previousGeneration = current?.generation ?? 0;
       if (!Number.isSafeInteger(previousGeneration) || (previousGeneration as number) < 0 ||
           (previousGeneration as number) >= Number.MAX_SAFE_INTEGER) {
-        throw new Error("Broker runtime fence generation is malformed");
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Broker runtime fence generation is malformed");
       }
       const generation = (previousGeneration as number) + 1;
       this.database.prepare(`
