@@ -96,6 +96,11 @@ export interface ProcessExecutionRequest {
   timeoutMs: number;
   outputCapBytes: number;
   /**
+   * Host-owned fixed adapters may opt into a configured user-owned executable
+   * path. This is never derived from MCP arguments or task profiles.
+   */
+  allowUserOwnedExecutable?: boolean;
+  /**
    * Require a bounded final native process-tree observation window before a
    * successful exit may be published. Governed task runners set this only
    * when their sandbox proof forbids process creation; ordinary fixed adapters
@@ -196,6 +201,8 @@ export interface ProcessSupervisorOptions {
   allowedEnvironmentKeys?: readonly string[];
   /** Require executable files to be owned by root for fixed host adapters. */
   requireRootOwnedExecutable?: boolean;
+  /** Fixed canonical executable paths that may use the explicit user-owned exception. */
+  trustedUserOwnedExecutablePaths?: readonly string[];
   /**
    * Require a host-proven kernel descriptor-exec boundary before admission.
    * This is Broker-owned configuration; request arguments cannot enable or
@@ -239,6 +246,7 @@ export class ProcessSupervisor {
   private readonly terminationGraceMs: number;
   private readonly allowedEnvironmentKeys: ReadonlySet<string>;
   private readonly requireRootOwnedExecutable: boolean;
+  private readonly trustedUserOwnedExecutablePaths: ReadonlySet<string>;
   private readonly requireDescriptorExecution: boolean;
   private readonly descriptorSpawnAdapter: DescriptorProcessSpawnAdapter | undefined;
   private closing = false;
@@ -251,6 +259,7 @@ export class ProcessSupervisor {
     this.terminationGraceMs = options.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS;
     this.allowedEnvironmentKeys = new Set(options.allowedEnvironmentKeys ?? []);
     this.requireRootOwnedExecutable = options.requireRootOwnedExecutable ?? false;
+    this.trustedUserOwnedExecutablePaths = new Set(options.trustedUserOwnedExecutablePaths ?? []);
     this.requireDescriptorExecution = options.requireDescriptorExecution ?? false;
     this.descriptorSpawnAdapter = options.descriptorSpawnAdapter;
     if (!Number.isSafeInteger(this.maxConcurrent) || this.maxConcurrent < 1 || this.maxConcurrent > 64 ||
@@ -258,6 +267,7 @@ export class ProcessSupervisor {
         !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 5 || this.pollIntervalMs > 1_000 ||
         !Number.isSafeInteger(this.terminationGraceMs) || this.terminationGraceMs < 25 || this.terminationGraceMs > 10_000 ||
         typeof this.requireRootOwnedExecutable !== "boolean" ||
+        [...this.trustedUserOwnedExecutablePaths].some((path) => !isCanonicalAbsolutePath(path)) ||
         typeof this.requireDescriptorExecution !== "boolean" ||
         (this.descriptorSpawnAdapter !== undefined &&
           (this.requireDescriptorExecution !== true ||
@@ -273,7 +283,12 @@ export class ProcessSupervisor {
     // checks. Otherwise a caller could mutate a target, argument, or
     // environment while validation is in flight and change what gets spawned.
     const safeRequest = snapshotProcessRequest(request);
-    const validatedPaths = await validateRequest(safeRequest, this.allowedEnvironmentKeys, this.requireRootOwnedExecutable);
+    const validatedPaths = await validateRequest(
+      safeRequest,
+      this.allowedEnvironmentKeys,
+      this.requireRootOwnedExecutable,
+      this.trustedUserOwnedExecutablePaths
+    );
     if (this.requireDescriptorExecution) {
       requireProcessDescriptorExecution();
       if (this.descriptorSpawnAdapter === undefined) {
@@ -1035,10 +1050,11 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number):
 async function validateRequest(
   request: ProcessExecutionRequest,
   allowedEnvironmentKeys: ReadonlySet<string>,
-  requireRootOwnedExecutable: boolean
+  requireRootOwnedExecutable: boolean,
+  trustedUserOwnedExecutablePaths: ReadonlySet<string>
 ): Promise<ValidatedProcessPaths> {
   if (!isPlainDataRecord(request) ||
-      !hasAllowedKeys(request, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
+      !hasAllowedKeys(request, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
       !isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
       !isDenseStringArray(request.args, MAX_ARGUMENTS) ||
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
@@ -1053,6 +1069,9 @@ async function validateRequest(
   }
   if (request.requireCleanExitProof !== undefined && typeof request.requireCleanExitProof !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process exit-proof policy is malformed");
+  }
+  if (request.allowUserOwnedExecutable !== undefined && typeof request.allowUserOwnedExecutable !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "Process executable ownership policy is malformed");
   }
   if ((request.shouldCancel !== undefined && typeof request.shouldCancel !== "function") ||
       (request.onStarted !== undefined && typeof request.onStarted !== "function") ||
@@ -1094,7 +1113,11 @@ async function validateRequest(
     throw new BrokerError("TARGET_NOT_FOUND", "Broker-resolved executable was not found");
   }
   if (requireRootOwnedExecutable && executable.ownerUid !== 0) {
-    throw new BrokerError("POLICY_DENIED", "Executable is not root-owned");
+    const currentUid = process.getuid?.();
+    const trustedUserOwned = request.allowUserOwnedExecutable === true &&
+      trustedUserOwnedExecutablePaths.has(request.executable) &&
+      currentUid !== undefined && executable.ownerUid === currentUid;
+    if (!trustedUserOwned) throw new BrokerError("POLICY_DENIED", "Executable is not root-owned");
   }
   let cwd: ProcessPathIdentity;
   try {
@@ -1113,7 +1136,7 @@ function isCanonicalAbsolutePath(value: string): boolean {
 
 function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (!isPlainDataRecord(value) ||
-      !hasAllowedKeys(value, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
+      !hasAllowedKeys(value, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
   }
   if (!isDenseStringArray(value.args, MAX_ARGUMENTS)) {
@@ -1132,6 +1155,9 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (value.requireCleanExitProof !== undefined && typeof value.requireCleanExitProof !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process exit-proof policy is malformed");
   }
+  if (value.allowUserOwnedExecutable !== undefined && typeof value.allowUserOwnedExecutable !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "Process executable ownership policy is malformed");
+  }
   if ((value.shouldCancel !== undefined && typeof value.shouldCancel !== "function") ||
       (value.onStarted !== undefined && typeof value.onStarted !== "function") ||
       (value.onOwnershipChanged !== undefined && typeof value.onOwnershipChanged !== "function")) {
@@ -1144,6 +1170,7 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
     timeoutMs: value.timeoutMs as number,
     outputCapBytes: value.outputCapBytes as number
   };
+  if (value.allowUserOwnedExecutable !== undefined) snapshot.allowUserOwnedExecutable = value.allowUserOwnedExecutable as boolean;
   if (environment !== undefined) snapshot.environment = Object.fromEntries(Object.entries(environment)) as Record<string, string>;
   if (value.stdin !== undefined) snapshot.stdin = value.stdin as string;
   if (value.requireCleanExitProof !== undefined) snapshot.requireCleanExitProof = value.requireCleanExitProof as boolean;

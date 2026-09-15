@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
+import { ProcessSupervisor } from "./process-supervisor.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
 import {
+  DOCKER_EXECUTABLE_CANDIDATES,
   DockerInspectorImpl,
   parseDockerContainerRecord,
   parseDockerImageRecord,
@@ -121,6 +123,34 @@ test("Docker status does not convert active cancellation into success", async ()
     inspector.status(false, false, { timeoutMs: 10_000, shouldCancel: () => true }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
   );
+});
+
+test("real Docker Desktop readback uses the trusted executable exception", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_DOCKER !== "1"
+}, async () => {
+  const supervisor = new ProcessSupervisor({
+    maxConcurrent: 2,
+    requireRootOwnedExecutable: true,
+    trustedUserOwnedExecutablePaths: DOCKER_EXECUTABLE_CANDIDATES,
+    allowedEnvironmentKeys: ["DOCKER_CONFIG", "DOCKER_HOST", "HOME"]
+  });
+  try {
+    const inspector = new DockerInspectorImpl({ supervisor });
+    const status = await inspector.status(false, false, { timeoutMs: 15_000, shouldCancel: () => false });
+    assert.equal(status.daemon.available, true);
+    assert.equal(status.daemon.context, "local");
+    assert.ok(status.containers.length > 0);
+    assert.deepEqual(status.warnings, []);
+    assert.equal(status.truncated, false);
+    const first = status.containers[0];
+    assert.ok(first);
+    const inspection = await inspector.inspect("container", first.id, { timeoutMs: 15_000, shouldCancel: () => false });
+    assert.equal(inspection.id, first.id);
+    assert.equal(inspection.objectType, "container");
+    assert.equal(inspection.truncated, false);
+  } finally {
+    await supervisor.close();
+  }
 });
 
 test("Docker target validation rejects traversal-like and unsupported identifiers", () => {

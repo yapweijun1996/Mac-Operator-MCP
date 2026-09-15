@@ -4,7 +4,7 @@ import { ProcessSupervisor, type ProcessExecutionResult } from "./process-superv
 import { isPlainDataRecord } from "./plain-record.js";
 import { redactBoundedText, redactLogText } from "./secret-policy.js";
 
-const DOCKER_EXECUTABLE_CANDIDATES = [
+export const DOCKER_EXECUTABLE_CANDIDATES = [
   "/Applications/Docker.app/Contents/Resources/bin/docker",
   "/opt/homebrew/bin/docker",
   "/usr/local/bin/docker",
@@ -220,6 +220,7 @@ export class DockerInspectorImpl implements DockerInspector {
       environment: SAFE_ENVIRONMENT,
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
       outputCapBytes,
+      allowUserOwnedExecutable: true,
       shouldCancel: control.shouldCancel
     });
   }

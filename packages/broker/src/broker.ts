@@ -46,7 +46,7 @@ import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } fro
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
-import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
+import { DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import { FailClosedTaskRunner, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
@@ -187,7 +187,8 @@ export class Broker {
       allowedEnvironmentKeys: [
         "DOCKER_CONFIG", "DOCKER_HOST", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_SYSTEM", "GIT_NO_REPLACE_OBJECTS", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "HOME"
-      ]
+      ],
+      trustedUserOwnedExecutablePaths: DOCKER_EXECUTABLE_CANDIDATES
     });
     this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector(this.processSupervisor);
     this.logInspector = options.logInspector ?? new MacLogInspector(this.processSupervisor);

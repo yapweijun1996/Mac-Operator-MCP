@@ -427,6 +427,43 @@ test("process supervisor can require root-owned executables for fixed adapters",
   }
 });
 
+test("process supervisor allows only a configured user-owned executable exception", async () => {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid === 0) return;
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-trusted-user-executable-"));
+  const executable = join(await realpath(directory), "runner");
+  const supervisor = new ProcessSupervisor({
+    requireRootOwnedExecutable: true,
+    trustedUserOwnedExecutablePaths: [executable]
+  });
+  try {
+    await writeFile(executable, "#!/bin/sh\nprintf trusted-user\n", { mode: 0o700 });
+    await assert.rejects(
+      supervisor.run({
+        executable,
+        args: [],
+        cwd: CWD,
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      }),
+      /not root-owned/u
+    );
+    const trusted = await supervisor.run({
+      executable,
+      args: [],
+      cwd: CWD,
+      timeoutMs: 1_000,
+      outputCapBytes: 100,
+      allowUserOwnedExecutable: true
+    });
+    assert.equal(trusted.state, "completed");
+    assert.equal(trusted.stdout, "trusted-user");
+  } finally {
+    await supervisor.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("process supervisor rejects executable target swaps after startup authorization", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("The startup identity callback uses the macOS native process observer");
