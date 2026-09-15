@@ -165,10 +165,14 @@ export async function loadAuthenticationKey(path: string): Promise<Buffer> {
       throw new Error("Authentication key target changed while opening");
     }
     const content = await handle.readFile();
-    if (content.byteLength === 32) return Buffer.from(content);
-    const text = content.toString("ascii").trim();
-    if (!HEX_KEY_PATTERN.test(text)) throw new Error("Authentication key must be 32 raw bytes or 64 hexadecimal characters");
-    return Buffer.from(text, "hex");
+    try {
+      if (content.byteLength === 32) return Buffer.from(content);
+      const text = content.toString("ascii").trim();
+      if (!HEX_KEY_PATTERN.test(text)) throw new Error("Authentication key must be 32 raw bytes or 64 hexadecimal characters");
+      return Buffer.from(text, "hex");
+    } finally {
+      content.fill(0);
+    }
   } finally {
     await handle.close();
   }

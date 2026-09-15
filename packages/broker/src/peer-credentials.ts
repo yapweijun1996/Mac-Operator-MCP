@@ -208,9 +208,14 @@ export function readKeychainGenericPassword(service: string, account: string, tr
   validateKeychainTrustedExecutablePath(trustedExecutablePath);
   const value = loadNativePeerAdapter().readKeychainGenericPassword(service, account, trustedExecutablePath);
   if (!Buffer.isBuffer(value) || value.byteLength !== 32) {
+    if (Buffer.isBuffer(value)) value.fill(0);
     throw new Error("Keychain generic password has an invalid length");
   }
-  return Buffer.from(value);
+  try {
+    return Buffer.from(value);
+  } finally {
+    value.fill(0);
+  }
 }
 
 /**
@@ -229,7 +234,12 @@ export function writeKeychainGenericPassword(
     throw new Error("Keychain generic password must contain exactly 32 bytes");
   }
   validateKeychainTrustedExecutablePath(trustedExecutablePath);
-  loadNativePeerAdapter().writeKeychainGenericPassword(service, account, Buffer.from(key), trustedExecutablePath);
+  const nativeKey = Buffer.from(key);
+  try {
+    loadNativePeerAdapter().writeKeychainGenericPassword(service, account, nativeKey, trustedExecutablePath);
+  } finally {
+    nativeKey.fill(0);
+  }
 }
 
 /**
@@ -264,7 +274,12 @@ export function deleteKeychainGenericPassword(
     throw new Error("Keychain generic password must contain exactly 32 bytes");
   }
   validateKeychainTrustedExecutablePath(trustedExecutablePath);
-  loadNativePeerAdapter().deleteKeychainGenericPassword(service, account, Buffer.from(key), trustedExecutablePath);
+  const nativeKey = Buffer.from(key);
+  try {
+    loadNativePeerAdapter().deleteKeychainGenericPassword(service, account, nativeKey, trustedExecutablePath);
+  } finally {
+    nativeKey.fill(0);
+  }
 }
 
 export function parseKeychainGenericPasswordMetadata(value: unknown): KeychainGenericPasswordMetadata {
