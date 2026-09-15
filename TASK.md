@@ -15,12 +15,13 @@ an approved read of the protected Broker database is denied with
 evidence-gated. Evidence:
 `evidence/2026-09-15-task-profile-startup-wiring.md`.
 
-Task-profile regex-safety addendum: source revision `c637088` bounds
+Task-profile regex-safety addendum: source revision `c42c7a8` bounds
 host-owned argument patterns to a short anchored fragment without grouping,
-alternation, or backreferences before compiling JavaScript `RegExp`; nested
-patterns and oversized inputs fail closed, closing a profile-configuration
-denial-of-service surface. Task-profile tests pass 4/4. This does not close
-descriptor/fexec, remount, production sandbox, or task enablement evidence.
+alternation, or backreferences before compiling JavaScript `RegExp`; nested,
+unbounded-range, and oversized inputs fail closed, closing a profile-
+configuration denial-of-service surface. Task-profile tests pass 4/4. This
+does not close descriptor/fexec, remount, production sandbox, or task
+enablement evidence.
 Evidence: `evidence/2026-09-15-task-profile-regex-safety.md`.
 
 Sandbox startup-wiring addendum: source revision `2e605ea` adds an explicit

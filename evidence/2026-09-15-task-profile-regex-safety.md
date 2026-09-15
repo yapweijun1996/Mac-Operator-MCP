@@ -1,7 +1,7 @@
 # Task-profile argument-pattern safety evidence
 
 Date: 2026-09-15
-Source revision: `c637088` (`fix: bound task profile argument patterns`)
+Source revision: `c42c7a8` (`test: reject unbounded task pattern ranges`)
 
 ## Boundary
 
@@ -12,10 +12,11 @@ could create a regular-expression denial-of-service during task admission.
 
 `TaskProfileRegistry` now rejects patterns longer than 256 characters and
 accepts only an anchored, structurally restricted fragment: literals, escaped
-characters, character classes, and simple quantifiers whose bounds cannot
-exceed the per-argument 1 KiB limit. Grouping, alternation, and numeric
-backreferences fail closed before the pattern is compiled. The profile's
-existing argument-count and total-byte budgets remain enforced separately.
+characters, character classes, and simple quantifiers whose explicit bounds
+cannot exceed the per-argument 1 KiB limit. Unbounded range quantifiers,
+grouping, alternation, and numeric backreferences fail closed before the
+pattern is compiled. The profile's existing argument-count and total-byte
+budgets remain enforced separately.
 
 ## Verification
 
