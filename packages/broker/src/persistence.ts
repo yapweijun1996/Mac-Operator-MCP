@@ -3891,7 +3891,7 @@ function validTerminalOutcome(
 
 function queuedJobAffectedBySwitch(name: SwitchName, tool: string): boolean {
   if (name === "global") return true;
-  if (name === "mutations") return MUTATION_JOB_TOOLS.has(tool);
+  if (name === "mutations") return !READ_ONLY_JOB_TOOLS.has(tool);
   if (name === "process" || name === "network") return tool === "mac_task_run";
   if (name === "gui") return tool === "mac_app_open" || tool === "mac_app_focus" || tool.startsWith("mac_ui_");
   if (name === "destructive") return tool === "mac_apply_patch";
@@ -3899,19 +3899,38 @@ function queuedJobAffectedBySwitch(name: SwitchName, tool: string): boolean {
   return false;
 }
 
-const MUTATION_JOB_TOOLS = new Set([
-  "mac_app_open",
-  "mac_app_focus",
-  "mac_ui_action",
-  "mac_git_stage",
-  "mac_git_commit",
-  "mac_write_file_atomic",
-  "mac_apply_patch",
-  "mac_task_run",
-  "mac_job_cancel",
-  "mac_priv_service_control",
-  "mac_priv_package_install",
-  "mac_priv_power"
+const READ_ONLY_JOB_TOOLS = new Set([
+  "mac_health",
+  "mac_capabilities",
+  "mac_app_list",
+  "mac_ui_observe",
+  "mac_system_summary",
+  "mac_network_status",
+  "mac_service_status",
+  "mac_log_tail",
+  "mac_process_list",
+  "mac_process_inspect",
+  "mac_policy_explain",
+  "mac_stat_path",
+  "mac_read_file",
+  "mac_hash_file",
+  "mac_list_directory",
+  "mac_directory_tree",
+  "mac_find_files",
+  "mac_recent_files",
+  "mac_search_text",
+  "mac_project_discover",
+  "mac_project_summary",
+  "mac_git_status",
+  "mac_git_branch_list",
+  "mac_git_log",
+  "mac_git_diff",
+  "mac_package_inspect",
+  "mac_docker_status",
+  "mac_docker_inspect",
+  "mac_docker_logs",
+  "mac_storage_analysis",
+  "mac_job_status"
 ]);
 
 function queuedJobAffectedByRevocation(kind: RevocationKind, subjectId: string, row: JobRow): boolean {
