@@ -1133,8 +1133,14 @@ export class Broker {
         request.principal.edgeId,
         request.authenticationKeyId
       );
-      if (key && verifyRequestAuthentication(request, key)) {
-        return signBrokerResponse(request, response, key);
+      if (key) {
+        try {
+          if (verifyRequestAuthentication(request, key)) {
+            return signBrokerResponse(request, response, key);
+          }
+        } finally {
+          key.fill(0);
+        }
       }
     } catch {
       // Invalid requests receive only an untrusted bounded error response.
@@ -1171,7 +1177,11 @@ export class Broker {
       throw new BrokerError("AUTH_EXPIRED", "Signed policy does not currently authorize the Edge key");
     }
     const key = this.options.edgeAuthenticationKeys.keyFor(request, nowMs);
-    if (!verifyRequestAuthentication(request, key)) throw new BrokerError("AUTH_INVALID", "Request authentication failed");
+    try {
+      if (!verifyRequestAuthentication(request, key)) throw new BrokerError("AUTH_INVALID", "Request authentication failed");
+    } finally {
+      key.fill(0);
+    }
     if (request.policyAudience !== policy.audience || request.principal.audience !== policy.audience) {
       throw new BrokerError("AUTH_INVALID", "Request audience is invalid");
     }
