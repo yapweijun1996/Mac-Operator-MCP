@@ -64,6 +64,13 @@ test("contract registry rejects oversized files and invalid schema versions", as
   });
 });
 
+test("contract registry rejects unknown top-level fields", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, { ...validContract, unexpected: true });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /unknown field/u);
+  });
+});
+
 test("contract registry rejects writable contract directories and files", async () => {
   await withTempDirectory(async (directory) => {
     await chmod(directory, 0o770);

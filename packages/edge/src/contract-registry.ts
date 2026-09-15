@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { decodeUtf8Strict, parseJsonStrict } from "@mac-operator/contracts";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const MAX_CONTRACT_FILES = 64;
 const MAX_CONTRACT_FILE_BYTES = 1_048_576;
@@ -10,6 +11,13 @@ const MAX_TOOL_NAME_LENGTH = 128;
 const MAX_SCHEMA_VERSION_LENGTH = 32;
 const MAX_PURPOSE_LENGTH = 2_048;
 const MAX_POLICY_FIELD_LENGTH = 128;
+const CONTRACT_KEYS = new Set([
+  "$schema", "schema_version", "tool_name", "capability_level", "safety_class", "required_scopes",
+  "normalized_target_type", "timeout_ms", "output_cap_bytes", "network_policy", "filesystem_policy",
+  "secret_policy", "approval_policy", "idempotent", "postcondition_verification", "audit_class",
+  "tool_delivery_wave", "implementation_status", "purpose", "input_summary", "output_summary",
+  "input_schema", "output_schema", "source"
+]);
 
 export interface EdgeToolContract {
   schemaVersion: string;
@@ -68,10 +76,13 @@ export class ToolContractRegistry {
 }
 
 function parseContract(value: unknown, file: string): EdgeToolContract {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new Error(`${file}: tool contract must be an object`);
   }
-  const record = value as Record<string, unknown>;
+  const record = value;
+  if (Object.keys(record).some((key) => !CONTRACT_KEYS.has(key))) {
+    throw new Error(`${file}: tool contract contains an unknown field`);
+  }
   const toolName = stringField(record, "tool_name", file);
   if (toolName.length > MAX_TOOL_NAME_LENGTH || !/^mac_[a-z0-9_]+$/u.test(toolName)) {
     throw new Error(`${file}: tool_name is invalid`);
