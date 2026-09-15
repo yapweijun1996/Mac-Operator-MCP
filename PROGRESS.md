@@ -2904,3 +2904,10 @@ The post-hardening non-overlapping package regression passes 536 total tests
 (530 passed, 6 skipped, 0 failed). Release-style typecheck, style, contract,
 canonical-JSON, and diff checks also pass; the two pre-existing long-lived
 Broker/persistence test processes remain intentionally excluded and untouched.
+
+Audit evidence hardening (source revision `fbb197b`) now projects and redacts
+only plain records and dense arrays; non-data values become a fixed marker
+before canonical hashing or persistence. Focused audit evidence tests pass
+2/2. SQLite corruption/disk exhaustion, external anchoring, production
+Keychain, installed recovery, and release acceptance remain open. Evidence:
+`evidence/2026-09-15-audit-evidence-boundary.md`.

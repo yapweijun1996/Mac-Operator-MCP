@@ -2563,3 +2563,10 @@ Post-hardening release verification reran the non-overlapping package suite:
 contract validation, native canonical-JSON vectors, and `git diff --check`
 passed. The two pre-existing long-lived Broker/persistence test processes
 were excluded and left untouched.
+
+Audit evidence verification at source revision `fbb197b` confirms recursive
+redaction traverses only plain records and dense arrays. The focused audit
+evidence tests pass 2/2, including accessor/inherited/symbolic fixtures. This
+does not close SQLite corruption/disk exhaustion, external anchoring,
+production Keychain, installed recovery, or release acceptance. Evidence:
+`evidence/2026-09-15-audit-evidence-boundary.md`.
