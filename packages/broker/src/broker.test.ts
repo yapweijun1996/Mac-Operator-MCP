@@ -4273,6 +4273,21 @@ test("audit evidence redacts secret-bearing fields recursively", () => {
   );
 });
 
+test("audit evidence rejects accessor, inherited, and symbolic records", () => {
+  const accessor: Record<string, unknown> = {};
+  Object.defineProperty(accessor, "token", { enumerable: true, get: () => "secret-value" });
+  assert.equal(redactEvidence(accessor), "[REDACTED: NON_DATA]");
+  const inherited = Object.create({ token: "secret-value" }) as Record<string, unknown>;
+  assert.equal(redactEvidence(inherited), "[REDACTED: NON_DATA]");
+  const symbolic: Record<string, unknown> = { safe: "ok" };
+  Object.defineProperty(symbolic, Symbol("hidden"), { value: "secret-value", enumerable: true });
+  assert.equal(redactEvidence(symbolic), "[REDACTED: NON_DATA]");
+  const accessorArray: unknown[] = [];
+  Object.defineProperty(accessorArray, "0", { enumerable: true, get: () => "secret-value" });
+  accessorArray.length = 1;
+  assert.equal(redactEvidence(accessorArray), "[REDACTED: NON_DATA]");
+});
+
 function testKeyring(key: Buffer): EdgeKeyring {
   return new EdgeKeyring([{
     edgeId: "edge-1", keyId: "edge-key-1", key,

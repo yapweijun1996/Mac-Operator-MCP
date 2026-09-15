@@ -3812,9 +3812,7 @@ function validApprovalTarget(kind: string, reference: string): boolean {
 }
 
 function asEvidenceRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  return isPlainDataRecord(value) ? value : {};
 }
 
 function validAuditTimestamp(value: number): boolean {
@@ -3898,12 +3896,32 @@ function malformedApproval(): BrokerError {
 const SECRET_KEY_PATTERN = /(?:authorization|cookie|credential|password|private[_-]?key|secret|token)/iu;
 
 export function redactEvidence(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactEvidence);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+  if (Array.isArray(value)) {
+    if (!isPlainDataArray(value)) return "[REDACTED: NON_DATA]";
+    return value.map((item) => redactEvidence(item));
+  }
+  if (isPlainDataRecord(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
       key,
       SECRET_KEY_PATTERN.test(key) ? "[REDACTED]" : redactEvidence(item)
     ]));
   }
+  if (value !== null && typeof value === "object") return "[REDACTED: NON_DATA]";
   return value;
+}
+
+function isPlainDataArray(value: readonly unknown[]): boolean {
+  try {
+    if (Object.getOwnPropertySymbols(value).length > 0 || Object.keys(value).length !== value.length) return false;
+    const names = Object.getOwnPropertyNames(value);
+    if (names.length !== value.length + 1 || !names.includes("length")) return false;
+    for (const name of names) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      if (descriptor === undefined || !("value" in descriptor)) return false;
+      if (name !== "length" && (!/^(?:0|[1-9][0-9]*)$/u.test(name) || Number(name) >= value.length)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
