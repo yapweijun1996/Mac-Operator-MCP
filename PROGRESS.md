@@ -26,6 +26,13 @@ undisturbed. This is a host regression checkpoint, not production signing,
 persistent installation, isolation, VM, remote issuer, or independent-review
 acceptance. Evidence: `evidence/2026-09-15-real-full-regression-rerun.md`.
 
+Test-timeout boundary addendum: source revision `94bd182` makes the root
+`npm test` command enforce a fixed 120-second per-test-case timeout. Lint,
+typecheck, and the 11-test contracts smoke pass; the existing Broker/
+persistence process remains undisturbed. This bounds verification hangs only
+and does not change production task budgets or close release gates. Evidence:
+`evidence/2026-09-15-test-timeout-boundary.md`.
+
 Physical Darwin sandbox addendum: with `MOPS_REAL_SANDBOX=1` correctly
 exported to the test processes, the same non-overlapping built set passes 595
 total (593 pass, 2 explicit skips, 0 fail) on Darwin arm64/macOS 26.2. The

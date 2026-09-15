@@ -25,6 +25,13 @@ installation, Developer ID provenance, real isolation, VM isolation, remote
 issuer/deployment, and independent P0/P1 review remain open. Evidence:
 `evidence/2026-09-15-real-full-regression-rerun.md`.
 
+Test-timeout boundary addendum: source revision `94bd182` adds a fixed
+120-second timeout to each root `npm test` case so verification cannot hang
+indefinitely. Lint, typecheck, and the 11-test contracts smoke pass; this
+does not alter Broker task budgets or satisfy production crash/isolation,
+installed-service, remote, or independent-review gates. Evidence:
+`evidence/2026-09-15-test-timeout-boundary.md`.
+
 Physical Darwin sandbox addendum: correctly exporting `MOPS_REAL_SANDBOX=1`
 to the test processes yields 595 total (593 pass, 2 skipped, 0 fail) on
 Darwin arm64/macOS 26.2. Real sandbox, protected-surface, fork/`setsid`,

@@ -10,7 +10,7 @@
     "build": "npm run build:native --workspace @mac-operator/broker && npm run build:native:virtualization-guest --workspace @mac-operator/broker && npm run build:native:virtualization-guest-lifecycle --workspace @mac-operator/broker && tsc -b",
     "clean": "tsc -b --clean",
     "lint": "node scripts/check-style.mjs",
-    "test": "npm run build && npm run build:native:fault-test --workspace @mac-operator/broker && node --test packages/*/dist/**/*.test.js",
+    "test": "npm run build && npm run build:native:fault-test --workspace @mac-operator/broker && node --test --test-timeout=120000 packages/*/dist/**/*.test.js",
     "typecheck": "tsc -b --pretty false",
     "verify:contracts": "npm run build && node packages/contracts/dist/verify-contracts.js",
     "verify:canonical:native": "sh scripts/verify-canonical-json-native.sh"

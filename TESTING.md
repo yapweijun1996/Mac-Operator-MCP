@@ -29,6 +29,12 @@ npm run verify:contracts
 npm audit --audit-level=high
 ```
 
+The repository test command applies a 120-second timeout to each test case.
+This is a verification safety bound: a leaked listener, unresolved promise,
+or child-process handle must produce a bounded failure instead of keeping the
+release gate alive indefinitely. Individual production task budgets remain
+owned by their Broker contracts and are not changed by this test timeout.
+
 `npm run lint` is a dependency-free tracked-file check for text encoding,
 line endings, trailing whitespace, final newlines, and regular-file identity;
 it does not execute repository content or inspect ignored build artifacts.
