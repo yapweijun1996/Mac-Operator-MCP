@@ -42,14 +42,14 @@ async function expectCorruptApproval(
     } finally {
       database.close();
     }
-    const reopened = new BrokerStore(databasePath);
+    let reopened: BrokerStore | undefined;
     try {
       assert.throws(
-        () => reopened.approvalRecord(approvalId),
+        () => { reopened = new BrokerStore(databasePath); },
         (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
       );
     } finally {
-      reopened.close();
+      reopened?.close();
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -685,6 +685,7 @@ export class BrokerStore {
       this.verifyReplayLedgerIntegrity();
       this.verifyConfigurationLedgerIntegrity();
       this.verifyRequestLedgerIntegrity();
+      this.verifyAuthorityLedgerIntegrity();
       this.verifyJobLedgerIntegrity();
       this.verifyAuditIntegrity();
       this.verifyExternalAuditAnchor();
@@ -813,6 +814,33 @@ export class BrokerStore {
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Request ledger integrity could not be verified");
+    }
+  }
+
+  /**
+   * Approvals, revocations, and kill-switches are durable authority inputs.
+   * Validate every row before startup can evaluate policy or recover work;
+   * malformed authority state must never be deferred to a later lookup.
+   */
+  private verifyAuthorityLedgerIntegrity(): void {
+    try {
+      const approvalRows = this.database.prepare(
+        "SELECT * FROM approvals ORDER BY issued_at_ms, approval_id"
+      ).all() as unknown as ApprovalRow[];
+      for (const row of approvalRows) mapApproval(row);
+
+      const revocationRows = this.database.prepare(
+        "SELECT kind, subject_id, revoked_at_ms, reason FROM revocations ORDER BY kind, subject_id"
+      ).all() as unknown as RevocationRow[];
+      for (const row of revocationRows) validateStoredRevocation(row);
+
+      const switchRows = this.database.prepare(
+        "SELECT name, disabled, changed_at_ms, reason FROM switches ORDER BY name"
+      ).all() as unknown as SwitchRow[];
+      for (const row of switchRows) validateStoredSwitch(row);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Authority ledger integrity could not be verified");
     }
   }
 

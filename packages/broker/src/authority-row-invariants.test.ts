@@ -7,7 +7,7 @@ import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 
-test("stored revocation rows fail closed before authority lookup", async () => {
+test("stored revocation rows fail closed during startup", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-revocation-row-"));
   const databasePath = join(directory, "broker.sqlite");
   const store = new BrokerStore(databasePath);
@@ -21,21 +21,21 @@ test("stored revocation rows fail closed before authority lookup", async () => {
     } finally {
       database.close();
     }
-    const reopened = new BrokerStore(databasePath);
+    let reopened: BrokerStore | undefined;
     try {
       assert.throws(
-        () => reopened.isRevoked("session", "session-corrupt"),
+        () => { reopened = new BrokerStore(databasePath); },
         (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
       );
     } finally {
-      reopened.close();
+      reopened?.close();
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("stored kill-switch rows fail closed before switch evaluation", async () => {
+test("stored kill-switch rows fail closed during startup", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-switch-row-"));
   const databasePath = join(directory, "broker.sqlite");
   const store = new BrokerStore(databasePath);
@@ -48,14 +48,14 @@ test("stored kill-switch rows fail closed before switch evaluation", async () =>
     } finally {
       database.close();
     }
-    const reopened = new BrokerStore(databasePath);
+    let reopened: BrokerStore | undefined;
     try {
       assert.throws(
-        () => reopened.isSwitchDisabled("process"),
+        () => { reopened = new BrokerStore(databasePath); },
         (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
       );
     } finally {
-      reopened.close();
+      reopened?.close();
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
