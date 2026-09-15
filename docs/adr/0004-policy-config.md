@@ -48,3 +48,11 @@ prevents inherited values from being interpreted as kill switches, key-window
 limits, principal grants, or tool contracts. The change covers in-memory
 policy-shape integrity only and does not change the signed policy schema or
 close production signing, Keychain, migration, or installation evidence.
+
+Revision `6fb5372` hardens the native filesystem policy boundary used by F0-F5:
+metadata/list/read/hash and atomic write/unlink operations now derive bounded
+relative targets and open through a pinned authorized-root descriptor. Final
+symlink policy is preserved by canonicalizing only the target parent, while
+traversal and empty components fail closed. This reduces root rename/target
+replacement exposure but does not prove physical remount resistance or close
+the remaining production resource and cross-volume evidence gates.

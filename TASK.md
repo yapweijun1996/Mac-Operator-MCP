@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem root-descriptor addendum: source revision `6fb5372` changes native
+metadata/list/read/hash and atomic write/unlink paths to derive traversal-free
+relative targets and open them through the already-pinned root descriptor.
+Canonical parent aliases are preserved for final-symlink policy, while
+`.`/`..`/empty components and lexical escapes fail closed. Filesystem focused
+tests pass 32/32; the non-overlapping package regression passes 509 total
+(503 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks pass.
+This closes the absolute-open root rename window but does not close physical
+remount, broader volume, or production resource-exhaustion evidence.
+Evidence: `evidence/2026-09-15-filesystem-root-descriptor-binding.md`.
+
 System-published guest-image addendum: source revisions `e00554c`, `f74e485`,
 and `a08d2a5` add an
 explicit image publication mode. Enabled native Virtualization.framework
