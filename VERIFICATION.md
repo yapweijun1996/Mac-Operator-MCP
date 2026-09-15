@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Request-link integrity addendum: commit `24c0641` validates Request-to-Job
+linkage inside the Broker transaction and cross-checks every persisted
+Approval/Job reference at startup. Missing references and owner/session/tool/
+target/policy/Edge substitutions fail closed with stable errors. Focused link
+tests pass 3/3; the non-overlapping package regression passes 590 total (584
+passed, 6 explicitly skipped, 0 failed). The envelope digest and
+argument-level Approval/Job digests remain independent by contract. This is
+local cross-ledger evidence only; crash recovery, credential rotation,
+remount durability, installed recovery, and independent security review remain
+unverified. Evidence:
+`evidence/2026-09-15-request-link-integrity.md`.
+
 Authority-ledger startup-integrity addendum: commit `ba34100` scans every
 persisted Approval, Revocation, and Kill-switch row before policy evaluation,
 request admission, or recovery. Malformed approval lifecycle fields,

@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Request-link integrity addendum: commit `24c0641` binds Request-to-Job linkage
+to an existing Job whose owner, session, tool, target, policy, and Edge
+provenance match; missing or substituted Jobs fail with stable errors. Broker
+startup now cross-checks persisted Request Approval/Job references before
+recovery. Focused link tests pass 3/3; the non-overlapping package regression
+passes 590 total (584 pass, 6 skipped, 0 fail). Build, lint, and diff checks
+pass. Physical crash/old-worker ownership, credential rotation, remount
+durability, installed recovery, and independent review remain open.
+Evidence: `evidence/2026-09-15-request-link-integrity.md`.
+
 Authority-ledger startup-integrity addendum: commit `ba34100` makes BrokerStore
 scan every persisted Approval, Revocation, and Kill-switch row before policy
 evaluation and recovery. Approval lifecycle pairing, bounded authority
