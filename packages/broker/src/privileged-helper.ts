@@ -208,6 +208,76 @@ const PRIVILEGED_TOOL_BINDINGS = {
   mac_priv_power: { operation: "power", targetKind: "host" }
 } as const satisfies Readonly<Record<string, { operation: PrivilegedHelperOperation; targetKind: string }>>;
 
+/**
+ * Broker-owned authority callback for the helper IPC server. The helper must
+ * call this before dispatch, while polling cancellation, and before response
+ * publication. It reconstructs the original request and Job through the
+ * approval binding because the signed helper command intentionally omits
+ * principal, session, and raw request identifiers.
+ */
+export function assertPrivilegedHelperCommandAuthority(
+  store: BrokerStore,
+  command: UnsignedPrivilegedHelperCommand,
+  nowMs = Date.now()
+): void {
+  if (!store) throw new BrokerError("AUDIT_UNAVAILABLE", "Privileged helper authority store is unavailable");
+  validateUnsignedPrivilegedHelperCommand(command);
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority clock is invalid");
+  }
+  if (store.isSwitchDisabled("global") || store.isSwitchDisabled("mutations") || store.isSwitchDisabled("privileged")) {
+    throw new BrokerError("REVOKED", "Privileged helper dispatch is disabled by a Broker kill switch");
+  }
+
+  const approval = store.approvalRecord(command.approvalId);
+  if (!approval || approval.revokedAtMs !== null || approval.expiresAtMs <= nowMs || approval.issuedAtMs > nowMs ||
+      approval.approvalClass !== "explicit_privileged_policy" || approval.unattended || approval.usedCount !== 1 ||
+      approval.lastRequestId === null) {
+    throw new BrokerError("POLICY_DENIED", "Privileged helper approval is not active");
+  }
+  const request = store.requestRecord(approval.lastRequestId);
+  const job = request?.jobId === null || request?.jobId === undefined
+    ? undefined
+    : store.ownedJob(request.jobId, request.principalId);
+  const binding = request === undefined ? undefined : PRIVILEGED_TOOL_BINDINGS[request.tool as keyof typeof PRIVILEGED_TOOL_BINDINGS];
+  if (!request || !job || !binding || request.approvalId !== approval.approvalId || request.state !== "RUNNING" ||
+      request.mutation !== true || request.policyVersion !== command.policyVersion ||
+      job.state !== "running" || job.cancelRequested || job.ownerSessionId !== request.sessionId ||
+      job.ownerEdgeId !== request.edgeId || job.tool !== request.tool || job.policyVersion !== request.policyVersion ||
+      job.targetRef !== command.targetRef || job.payloadDigest !== command.payloadDigest ||
+      binding.operation !== command.operation || binding.targetKind !== approval.targetKind ||
+      approval.tool !== request.tool || approval.requestingPrincipalId !== request.principalId ||
+      approval.targetRef !== job.targetRef || approval.payloadDigest !== job.payloadDigest ||
+      approval.policyVersion !== request.policyVersion || approval.lastRequestId !== request.requestId) {
+    if (job?.cancelRequested) throw new BrokerError("CANCELLED", "Privileged helper Job cancellation was requested");
+    throw new BrokerError("CONFLICT", "Privileged helper command is not bound to an active Broker Job", true);
+  }
+  if (store.isRevoked("edge", request.edgeId) ||
+      (job.ownerEdgeKeyId !== null && store.isRevoked("edge_key", job.ownerEdgeKeyId)) ||
+      store.isRevoked("principal", request.principalId) || store.isRevoked("session", request.sessionId)) {
+    throw new BrokerError("REVOKED", "Privileged helper dispatch identity has been revoked");
+  }
+
+  const identityDigest = sha256(canonicalJson({
+    requestId: request.requestId,
+    jobId: job.jobId,
+    operation: command.operation,
+    targetRef: job.targetRef,
+    policyVersion: request.policyVersion
+  }));
+  const intentDigest = sha256(canonicalJson({
+    requestId: request.requestId,
+    jobId: job.jobId,
+    targetRef: job.targetRef,
+    approvalId: approval.approvalId
+  }));
+  if (command.commandId !== `priv-command:${identityDigest.slice(0, 48)}` ||
+      command.requestId !== `request:${identityDigest.slice(0, 48)}` ||
+      command.intentId !== `intent:${intentDigest.slice(0, 48)}`) {
+    throw new BrokerError("CONFLICT", "Privileged helper command identity proof is mismatched", true);
+  }
+}
+
 export interface PrivilegedHelperCommandIssueInput {
   requestId: string;
   principalId: string;

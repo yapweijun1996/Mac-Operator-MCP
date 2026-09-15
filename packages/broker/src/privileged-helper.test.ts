@@ -8,6 +8,7 @@ import test from "node:test";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
 import { BrokerStore, validatePrivilegedHelperPayload } from "./persistence.js";
 import {
+  assertPrivilegedHelperCommandAuthority,
   AllowlistedPrivilegedHelper,
   BrokerPrivilegedHelperCommandFactory,
   BrokerStorePrivilegedHelperReplayGuard,
@@ -738,6 +739,46 @@ test("Broker helper command factory fails closed on operation mismatch, queued w
   }
 });
 
+test("Broker-backed helper authority rechecks active switches, revocation, and Job cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-authority-gate-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  try {
+    const identity = admitRunningPrivilegedJob(store, {
+      requestId: "request-authority-gate",
+      jobId: "job:authority-gate",
+      tool: "mac_priv_service_control",
+      targetRef: "service:system/com.example.authority",
+      privilegedPayload: { operation: "service_control", service_id: "system/com.example.authority", action: "start" },
+      payloadDigest: sha256(canonicalJson({ operation: "service_control", service_id: "system/com.example.authority", action: "start" }))
+    });
+    const factory = new BrokerPrivilegedHelperCommandFactory({
+      store,
+      authenticationKey: key,
+      authorizeCommand: (command) => assertPrivilegedHelperCommandAuthority(store, command, NOW + 4),
+      now: () => NOW + 4
+    });
+    const command = factory.issue(identity);
+    assert.doesNotThrow(() => assertPrivilegedHelperCommandAuthority(store, command, NOW + 4));
+
+    store.setSwitch("privileged", true, "TEST_KILL_SWITCH", NOW + 5);
+    assert.throws(
+      () => assertPrivilegedHelperCommandAuthority(store, command, NOW + 5),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REVOKED"
+    );
+    store.setSwitch("privileged", false, "TEST_REENABLE", NOW + 6);
+
+    store.revoke("session", "session-1", "TEST_REVOKED", NOW + 7);
+    assert.throws(
+      () => assertPrivilegedHelperCommandAuthority(store, command, NOW + 7),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REVOKED"
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 type PrivilegedJobSetup = {
   requestId: string;
   jobId: string;
@@ -820,6 +861,8 @@ function admitApprovedPrivilegedJob(store: BrokerStore, setup: PrivilegedJobSetu
   });
   const created = store.createJob({
     jobId: setup.jobId,
+    edgeId: "edge-1",
+    edgeKeyId: "edge-1:edge-key-1",
     ownerPrincipalId: "principal-1",
     ownerSessionId: "session-1",
     tool: setup.tool,
