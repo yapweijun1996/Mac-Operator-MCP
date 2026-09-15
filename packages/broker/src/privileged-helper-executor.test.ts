@@ -301,7 +301,7 @@ test("a pre-dispatch cancellation is terminalized without issuing a helper comma
     });
     await assert.rejects(
       () => executor.execute(executionInput(setup.job, setup.lease)),
-      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
     );
     assert.equal(factoryCalls, 0);
     const job = store.ownedJob(setup.job.jobId, "principal-1");

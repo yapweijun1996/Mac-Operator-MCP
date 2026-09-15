@@ -126,7 +126,9 @@ export class PrivilegedHelperJobExecutor {
       // Broker starts a Job but before this executor obtains its first lease.
       // Close that pre-dispatch window instead of leaving a cancelled Job
       // stranded in `running` until restart reconciliation.
-      this.finishCancelledBeforeDispatch(input);
+      if (this.finishCancelledBeforeDispatch(input)) {
+        throw new BrokerError("CANCELLED", "Privileged helper Job was cancelled before command dispatch");
+      }
       throw error;
     }
     let lease = this.options.store.renewJobLease(
@@ -236,18 +238,20 @@ export class PrivilegedHelperJobExecutor {
     }
   }
 
-  private finishCancelledBeforeDispatch(input: PrivilegedHelperJobExecutionInput): void {
+  private finishCancelledBeforeDispatch(input: PrivilegedHelperJobExecutionInput): boolean {
     const current = this.options.store.ownedJob(input.job.jobId, input.principalId);
-    if (!current || current.state !== "running" || !current.cancelRequested) return;
+    if (!current || current.state !== "running" || !current.cancelRequested) return false;
     try {
       this.options.store.finishJob(current.jobId, input.principalId, current.revision, {
         state: "cancelled",
         resultClass: "denied",
         finishedAtMs: this.now()
       }, input.lease, this.now());
+      return true;
     } catch {
       // If the lease was concurrently lost, startup/owner reconciliation must
       // retain the conservative unresolved state rather than guessing.
+      return false;
     }
   }
 
