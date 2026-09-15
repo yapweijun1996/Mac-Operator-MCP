@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+MOP-007/MOP-085 traceability addendum: source revision `64ee61c` adds
+`npm run verify:matrix` to the local commands and macOS CI workflow. It
+machine-checks matrix row shape, unique verification IDs, allowed statuses and
+gates, known Threat/Task references, local evidence paths, and complete
+coverage of the threat-model verification targets. The local check passes for
+28 targets, 24 threats, and 30 task references, with docs/lint/typecheck/diff
+checks also passing. This closes the matrix-reference integrity boundary only;
+remote CI, focused runtime evidence, and OPEN/BLOCKED release gates remain.
+Evidence: `evidence/2026-09-16-verification-matrix.md`.
+
 MOP-017 process-group census addendum: source revision `ea7b133` adds a
 bounded native `listProcessGroupMembers` observer for the detached root group
 and merges it with descendant traversal using PID/start-time identity checks.

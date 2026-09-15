@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Verification-matrix enforcement at source revision `64ee61c` adds a CI-backed
+`npm run verify:matrix` check. It validates the seven-column matrix shape,
+unique targets, known statuses/gates, threat/task references, repository-local
+evidence paths, and coverage of every threat-model verification target. The
+local check passes for 28 targets, 24 threats, and 30 task references; docs,
+lint, typecheck, and diff checks also pass. This is traceability integrity
+evidence only and does not change OPEN/BLOCKED runtime gates or provide a
+remote CI result. Evidence:
+`evidence/2026-09-16-verification-matrix.md`.
+
 Process-group census verification at source revision `ea7b133` supplements
 native descendant traversal with a bounded detached-group member census.
 Snapshots are merged by PID/start time and malformed, conflicting, or

@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Verification-matrix enforcement addendum: source revision `64ee61c` adds
+`npm run verify:matrix` and runs it in the macOS CI workflow. The check parses
+the seven-column Requirement-to-release matrix, rejects duplicate or malformed
+targets/statuses/gates, validates every threat/task reference against the
+authoritative ledgers, and requires every threat-model verification target to
+be represented. Local matrix, docs, lint, typecheck, and diff checks pass for
+28 targets, 24 threats, and 30 task references. This improves traceability
+integrity only; OPEN/BLOCKED runtime gates and first remote CI evidence remain.
+Evidence: `evidence/2026-09-16-verification-matrix.md`.
+
 Process-group census addendum: source revision `ea7b133` supplements native
 descendant traversal with a bounded census of the detached root process group.
 The Broker merges both snapshots by PID and start time, rejects conflicting or
