@@ -2896,6 +2896,24 @@ napi_value GetProcessIdentity(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value GetProcessLaunchCapability(napi_env env, napi_callback_info info) {
+  size_t argc = 0;
+  if (napi_get_cb_info(env, info, &argc, nullptr, nullptr, nullptr) != napi_ok || argc != 0) {
+    napi_throw_type_error(env, nullptr, "getProcessLaunchCapability takes no arguments");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "schemaVersion", "0.1");
+  SetString(env, result, "mechanism", "darwin-descriptor-exec-v1");
+  SetBoolean(env, result, "available", false);
+  SetString(env, result, "executableCoverage", "unproven");
+  SetString(env, result, "immutableSelection", "unproven");
+  SetString(env, result, "closeOnExec", "unproven");
+  SetString(env, result, "evidenceRef", "mac-operator-native-descriptor-exec-unavailable-v1");
+  return result;
+}
+
 napi_value ListProcesses(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value args[2];
@@ -3038,6 +3056,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "isProcessIdentityAlive", function);
   napi_create_function(env, "getProcessIdentity", NAPI_AUTO_LENGTH, GetProcessIdentity, nullptr, &function);
   napi_set_named_property(env, exports, "getProcessIdentity", function);
+  napi_create_function(env, "getProcessLaunchCapability", NAPI_AUTO_LENGTH, GetProcessLaunchCapability, nullptr, &function);
+  napi_set_named_property(env, exports, "getProcessLaunchCapability", function);
   napi_create_function(env, "readKeychainGenericPassword", NAPI_AUTO_LENGTH, ReadKeychainGenericPassword, nullptr, &function);
   napi_set_named_property(env, exports, "readKeychainGenericPassword", function);
   napi_create_function(env, "inspectKeychainGenericPassword", NAPI_AUTO_LENGTH, InspectKeychainGenericPassword, nullptr, &function);

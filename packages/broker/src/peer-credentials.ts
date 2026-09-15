@@ -55,6 +55,7 @@ interface NativePeerCredentials {
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
+  getProcessLaunchCapability(): unknown;
 }
 
 interface SocketWithHandle extends Socket {
@@ -69,7 +70,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot", "recoverUnlinkFileWithinRoot",
   "listProcesses", "inspectProcess", "listDescendantProcesses", "listProcessGroupMembers", "isProcessIdentityAlive", "getProcessIdentity",
   "readKeychainGenericPassword", "writeKeychainGenericPassword",
-  "inspectKeychainGenericPassword", "deleteKeychainGenericPassword"
+  "inspectKeychainGenericPassword", "deleteKeychainGenericPassword", "getProcessLaunchCapability"
 ] as const;
 const MIN_SUPPORTED_NAPI_VERSION = 8;
 const NODE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/u;

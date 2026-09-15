@@ -43,12 +43,13 @@ export function inspectProcessDescriptorExecutionCapability(): ProcessDescriptor
   } catch {
     return unavailableCapability();
   }
-  if (typeof native.getProcessLaunchCapability !== "function" ||
-      typeof native.spawnProcessFromDescriptor !== "function") {
+  if (typeof native.getProcessLaunchCapability !== "function") {
     return unavailableCapability();
   }
   try {
-    return parseProcessDescriptorExecutionCapability(native.getProcessLaunchCapability());
+    const capability = parseProcessDescriptorExecutionCapability(native.getProcessLaunchCapability());
+    if (capability.available && typeof native.spawnProcessFromDescriptor !== "function") return unavailableCapability();
+    return capability;
   } catch {
     return unavailableCapability();
   }
