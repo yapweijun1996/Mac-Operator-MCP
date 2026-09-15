@@ -2966,3 +2966,11 @@ Focused hostile-array tests pass 2/2; the non-overlapping package regression
 passes 539 total (533 passed, 6 skipped, 0 failed). ADR-0004, production
 signer/Keychain, installed reload, and capability enablement remain open.
 Evidence: `evidence/2026-09-15-policy-array-boundary.md`.
+
+Broker capability-family limit configuration now requires a plain data record
+before default-limit merging (source revision `0a97e3f`). Inherited and
+accessor-shaped overrides fail closed without reading a limit. Focused Broker
+constructor tests pass 2/2; the non-overlapping package regression passes 539
+total (533 passed, 6 skipped, 0 failed). Process-wide/adapter quotas, kernel
+and disk limits, production packaging, and capability enablement remain open.
+Evidence: `evidence/2026-09-15-broker-family-limit-boundary.md`.

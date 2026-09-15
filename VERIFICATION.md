@@ -2634,3 +2634,12 @@ package regression passes 539 total (533 passed, 6 skipped, 0 failed). This
 does not close ADR-0004, production signer/Keychain, installed reload, or
 capability enablement. Evidence:
 `evidence/2026-09-15-policy-array-boundary.md`.
+
+Broker family-limit verification at source revision `0a97e3f` confirms the
+constructor rejects inherited and accessor-shaped `maxActiveRequestsByFamily`
+overrides before merging or reading values. Focused constructor tests pass
+2/2; the non-overlapping package regression passes 539 total (533 passed, 6
+skipped, 0 failed). This is configuration-shape evidence only and does not
+close process-wide/adapter quotas, kernel or disk limits, production
+packaging, or capability enablement. Evidence:
+`evidence/2026-09-15-broker-family-limit-boundary.md`.
