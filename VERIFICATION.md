@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged helper runtime disposal verification: source revision
+`2ce0945` makes the runtime dispose its separately authenticated authority
+poller on startup failure, failed server cleanup, and close-before-start paths.
+Disposal is idempotent, and a runtime whose poller has been disposed cannot be
+restarted with wiped authority material. Focused runtime tests pass 6/6, and
+the latest physical non-overlapping regression passes 616/616 with zero skips
+and zero failures. The existing Broker/Persistence process was not restarted.
+Evidence: `evidence/2026-09-15-privileged-helper-runtime-disposal.md`.
+
 Root-helper authority-poller construction verification: source revision
 `a79d813` removes injectable authority-poller selection from the no-
 `BrokerStore` root-helper factory. When an adapter is enabled, startup must

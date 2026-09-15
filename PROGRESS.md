@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged helper runtime disposal addendum: source revision `2ce0945` makes
+authority poller cleanup idempotent across startup failure, failed listener
+cleanup, close-before-start, and ordinary close. A runtime cannot restart
+after its poller has been disposed, preventing reuse after authentication key
+material has been wiped. Focused runtime tests pass 6/6 and the latest
+physical non-overlapping suite passes 616/616 with zero skips and zero
+failures; the existing Broker/Persistence process was left undisturbed.
+Evidence: `evidence/2026-09-15-privileged-helper-runtime-disposal.md`.
+
 Root-helper authority-poller construction addendum: source revision `a79d813`
 removes injectable poller selection from the no-`BrokerStore` root-helper
 factory. Enabled adapters now require a fixed authority socket and native

@@ -249,6 +249,13 @@ authenticated poller itself from the fixed authority socket and native Broker
 peer policy; missing authority configuration fails closed. The general runtime
 factory retains injection only for Broker-side compatibility and test seams.
 
+Revision `2ce0945` makes helper runtime authority-poller cleanup idempotent
+across listener startup failure, failed listener cleanup, close-before-start,
+and ordinary close. Once the separately authenticated poller is disposed, the
+runtime refuses restart so wiped key material cannot be reused. This preserves
+fail-closed lifecycle semantics without changing the helper's disabled default
+or enabling any privileged operation.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
