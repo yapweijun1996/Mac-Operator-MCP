@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Credential-loader buffer verification at source revision `43fec85` clears raw
+file-read buffers after copying/parsing and wipes native Keychain read/write/
+delete argument buffers on success and failure. Build, lint, typecheck, and
+diff checks pass; the focused credentials/keyring suite reports 28 total (27
+passed, 1 explicit physical-Keychain skip, 0 failed). Production cross-process
+Keychain memory evidence remains open. Evidence:
+`evidence/2026-09-15-credential-loader-buffers.md`.
+
 Provisioned-key lifetime verification at source revision `5f4bc61` clears the
 random file-provisioning key on every return path and removes failed creations
 only after a device/inode/owner/mode/size/time identity-fenced quarantine.

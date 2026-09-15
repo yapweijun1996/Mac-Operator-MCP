@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Credential-loader buffer addendum: commit `43fec85` clears raw file-read key
+buffers and native Keychain read/write/delete defensive copies on all paths.
+Focused credentials/keyring tests report 28 total (27 passed, 1 explicit
+physical-Keychain skip, 0 failed); production cross-process Keychain memory
+evidence remains open. Evidence:
+`evidence/2026-09-15-credential-loader-buffers.md`.
+
 Provisioned-key lifetime addendum: commit `5f4bc61` wipes random file-key
 buffers after digest use and cleans failed provisioning through exact-identity
 quarantine removal instead of direct unlink. Focused credentials/keyring tests

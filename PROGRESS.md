@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Credential-loader buffer addendum: source revision `43fec85` wipes raw
+file-read buffers after defensive key copies and clears native Keychain read,
+write, and delete argument buffers on all paths. Build, lint, typecheck, diff
+checks, and the focused 28-test credentials/keyring suite pass (27 pass, 1
+explicit physical-Keychain skip); production cross-process Keychain memory
+evidence remains open. Evidence:
+`evidence/2026-09-15-credential-loader-buffers.md`.
+
 Provisioned-key lifetime addendum: source revision `5f4bc61` clears the random
 file-provisioning key after digest use and replaces failure-path direct unlink
 with identity-fenced quarantine cleanup. Build, lint, typecheck, diff checks,
