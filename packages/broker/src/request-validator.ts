@@ -50,7 +50,7 @@ export function parseBrokerRequest(value: unknown): BrokerRequest {
   if (!Number.isSafeInteger(principal.issuedAtMs) || !Number.isSafeInteger(principal.expiresAtMs)) {
     throw new BrokerError("AUTH_INVALID", "Principal times must be integers");
   }
-  if (!Array.isArray(principal.scopes) || principal.scopes.some((scope) => typeof scope !== "string" || !KNOWN_SCOPES.has(scope as Scope))) {
+  if (!isKnownScopeList(principal.scopes)) {
     throw new BrokerError("AUTH_INVALID", "Principal scopes contain an unknown value");
   }
   return value as unknown as BrokerRequest;
@@ -101,4 +101,9 @@ function isPlainDataArray(value: readonly unknown[]): boolean {
   } catch {
     return false;
   }
+}
+
+function isKnownScopeList(value: unknown): value is readonly Scope[] {
+  if (!Array.isArray(value) || value.length > SCOPES.length || new Set(value).size !== value.length) return false;
+  return value.every((scope) => typeof scope === "string" && KNOWN_SCOPES.has(scope as Scope));
 }

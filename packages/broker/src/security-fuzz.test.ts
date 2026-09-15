@@ -179,6 +179,18 @@ test("request parsing rejects inherited envelope, argument, and principal fields
     () => parseBrokerRequest(accessorRequest),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
   );
+
+  const duplicateScopes = { ...base, principal: { ...base.principal, scopes: ["mac.control.read", "mac.control.read"] } };
+  assert.throws(
+    () => parseBrokerRequest(duplicateScopes),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
+  const oversizedScopes = { ...base, principal: { ...base.principal, scopes: Array.from({ length: 29 }, () => "mac.control.read") } };
+  assert.throws(
+    () => parseBrokerRequest(oversizedScopes),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
 });
 
 test("guest request mutations fail closed before any guest exchange", () => {

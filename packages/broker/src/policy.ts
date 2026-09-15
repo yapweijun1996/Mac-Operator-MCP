@@ -208,6 +208,7 @@ function isDenseArray(value: unknown, maxLength: number): value is readonly unkn
 
 function isKnownScopeList(value: unknown): value is readonly Scope[] {
   return isDenseArray(value, SCOPES.length) &&
+    new Set(value).size === value.length &&
     value.every((scope) => typeof scope === "string" && SCOPES.includes(scope as Scope));
 }
 
@@ -293,6 +294,9 @@ export function authorizeTool(
   principalScopes: readonly Scope[]
 ): ToolPolicy {
   validateBrokerPolicy(policy);
+  if (!isKnownScopeList(principalScopes)) {
+    throw new BrokerError("AUTH_INVALID", "Principal scopes are malformed");
+  }
   if (store.isSwitchDisabled("global") || policy.killSwitches.global) throw new BrokerError("REVOKED", "Broker admission is disabled");
   const tool = policy.tools.get(toolName);
   if (!tool || !tool.implemented) throw new BrokerError("UNSUPPORTED_CAPABILITY", "Tool is not implemented");

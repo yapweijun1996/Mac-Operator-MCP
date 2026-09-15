@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Scope } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
-import { authorizePrincipalProjection, authorizeTarget, cloneBrokerPolicy, validateBrokerPolicy } from "./policy.js";
+import { authorizePrincipalProjection, authorizeTarget, authorizeTool, cloneBrokerPolicy, validateBrokerPolicy } from "./policy.js";
+import type { BrokerStore } from "./persistence.js";
 import { PolicyManager } from "./policy-loader.js";
 
 test("runtime Broker policy accepts the default tool contract shape", () => {
@@ -118,6 +119,23 @@ test("policy authorization rejects non-data projected scopes and targets", () =>
     () => authorizeTarget(policy, "principal-1", ["mac.control.read"], accessorTarget as never),
     (error: unknown) => error instanceof Error && error.message === "Target authority is malformed"
   );
+});
+
+test("tool authorization rejects malformed caller scope lists before policy checks", () => {
+  const policy = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const store = { isSwitchDisabled: () => false } as unknown as BrokerStore;
+  const malformed = [
+    ["mac.control.read", "mac.control.read"],
+    ["mac.not-a-scope"],
+    Object.assign(new Array(1), { 1: "mac.control.read" })
+  ] as readonly (readonly string[])[];
+
+  for (const scopes of malformed) {
+    assert.throws(
+      () => authorizeTool(store, policy, "mac_health", "0.1", scopes as never),
+      (error: unknown) => error instanceof Error && error.message === "Principal scopes are malformed"
+    );
+  }
 });
 
 test("policy authority snapshots isolate mutable caller references", () => {
