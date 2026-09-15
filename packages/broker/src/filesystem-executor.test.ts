@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { FilesystemInspector } from "./filesystem-inspector.js";
-import { WorkerFilesystemExecutor } from "./filesystem-executor.js";
+import { validateFilesystemWorkerResult, WorkerFilesystemExecutor } from "./filesystem-executor.js";
 
 test("filesystem worker searches multiple roots and recovers bounded capacity", async () => {
   const left = await mkdtemp(join(tmpdir(), "mac-operator-fs-worker-left-"));
@@ -45,6 +45,46 @@ test("filesystem worker searches multiple roots and recovers bounded capacity", 
     await rm(left, { recursive: true, force: true });
     await rm(right, { recursive: true, force: true });
   }
+});
+
+test("filesystem worker result validation rejects unstable authority fields", () => {
+  const metadata = {
+    rootId: "root",
+    path: "/tmp",
+    type: "directory" as const,
+    sizeBytes: 0,
+    modifiedAt: null,
+    mode: "0755",
+    isSymlink: false,
+    device: "1",
+    inode: "2"
+  };
+  const result = { operation: "stat" as const, metadata };
+  assert.deepEqual(validateFilesystemWorkerResult(result), result);
+  assert.throws(
+    () => validateFilesystemWorkerResult({ ...result, extra: "authority" } as never),
+    /malformed result/u
+  );
+  const accessorMetadata = { ...metadata } as Record<string, unknown>;
+  Object.defineProperty(accessorMetadata, "path", { enumerable: true, get: () => "/tmp" });
+  assert.throws(
+    () => validateFilesystemWorkerResult({ operation: "stat", metadata: accessorMetadata } as never),
+    /malformed result/u
+  );
+  const sparseRead = {
+    operation: "read",
+    path: "/tmp/file",
+    encoding: "metadata",
+    sizeBytes: 0,
+    sha256: "a".repeat(64),
+    truncated: false,
+    rootId: "root",
+    device: "1",
+    inode: "2",
+    bytesReturned: 0,
+    extra: true
+  };
+  assert.throws(() => validateFilesystemWorkerResult(sparseRead as never), /malformed result/u);
 });
 
 function root(rootId: string, path: string) {

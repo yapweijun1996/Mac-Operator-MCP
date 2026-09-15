@@ -5,6 +5,7 @@ import { BrokerError } from "@mac-operator/contracts";
 import type { FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { FilesystemPatchResult } from "./filesystem-patch.js";
 import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { BoundedWorkerExecutor } from "./worker-executor.js";
 
 export interface FilesystemExecutionControl {
@@ -267,11 +268,13 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
   }
 }
 
-function validateFilesystemWorkerResult(value: FilesystemWorkerResult): FilesystemWorkerResult {
-  if (value === null || typeof value !== "object") throw malformed();
+export function validateFilesystemWorkerResult(value: FilesystemWorkerResult): FilesystemWorkerResult {
+  if (!isPlainDataShape(value) || typeof value.operation !== "string") throw malformed();
   if (value.operation === "stat") {
+    if (!hasExactFields(value, ["operation", "metadata"])) throw malformed();
     const metadata = value.metadata;
-    if (metadata === null || typeof metadata !== "object" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(metadata.rootId) ||
+    if (!isPlainDataShape(metadata) || !hasExactFields(metadata, ["rootId", "path", "type", "sizeBytes", "modifiedAt", "mode", "isSymlink", "device", "inode"]) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(metadata.rootId) ||
         !isAbsolute(metadata.path) || metadata.path.length > 4096 ||
         !["file", "directory", "symlink", "other"].includes(metadata.type) ||
         !Number.isSafeInteger(metadata.sizeBytes) || metadata.sizeBytes < 0 || metadata.sizeBytes > 1_000_000_000_000 ||
@@ -283,6 +286,7 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "write") {
+    if (!hasExactFields(value, ["operation", "path", "bytesWritten", "sha256", "created", "expectedSha256", "expectedMatched", "rootId", "device", "inode"])) throw malformed();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
         !isAbsolute(value.path) || value.path.length > 4096 ||
         !Number.isSafeInteger(value.bytesWritten) || value.bytesWritten < 0 || value.bytesWritten > 1_048_576 ||
@@ -294,18 +298,19 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "patch") {
+    if (!hasExactFields(value, ["operation", "projectRoot", "result", "changedPaths", "precondition", "files"])) throw malformed();
     if (typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || value.projectRoot.length > 4096 || value.projectRoot.includes("\0") ||
-        (value.result !== "applied" && value.result !== "no_change") || !Array.isArray(value.changedPaths) || value.changedPaths.length > 64 ||
+        (value.result !== "applied" && value.result !== "no_change") || !isDenseArray(value.changedPaths, 64) ||
         value.changedPaths.some((path) => !isSafePatchRelativePath(path)) ||
-        value.precondition === null || typeof value.precondition !== "object" || Array.isArray(value.precondition) ||
+        !isPlainDataShape(value.precondition) || !hasExactFields(value.precondition, ["checked", "expectedSha256", "actualSha256", "matched"]) ||
         typeof value.precondition.checked !== "boolean" || typeof value.precondition.matched !== "boolean" ||
         typeof value.precondition.actualSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.precondition.actualSha256) ||
         (value.precondition.expectedSha256 !== null && (typeof value.precondition.expectedSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.precondition.expectedSha256))) ||
-        !Array.isArray(value.files) || value.files.length > 64) {
+        !isDenseArray(value.files, 64)) {
       throw malformed();
     }
     for (const file of value.files) {
-      if (file === null || typeof file !== "object" || typeof file.path !== "string" || !isAbsolute(file.path) || file.path.length > 4096 || file.path.includes("\0") ||
+      if (!isPlainDataShape(file) || !hasExactFields(file, ["path", "sha256", "sizeBytes"]) || typeof file.path !== "string" || !isAbsolute(file.path) || file.path.length > 4096 || file.path.includes("\0") ||
           !/^[a-f0-9]{64}$/u.test(file.sha256) || !Number.isSafeInteger(file.sizeBytes) || file.sizeBytes < 0 || file.sizeBytes > 1_048_576) {
         throw malformed();
       }
@@ -313,6 +318,7 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "hash") {
+    if (!hasExactFields(value, ["operation", "path", "algorithm", "digest", "sizeBytes", "rootId", "device", "inode"])) throw malformed();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
         !isAbsolute(value.path) || value.path.length > 4096 ||
         (value.algorithm !== "sha256" && value.algorithm !== "sha512") ||
@@ -324,14 +330,15 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "list") {
+    if (!hasExactFields(value, ["operation", "path", "entries", "nextCursor", "rootId"])) throw malformed();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
         !isAbsolute(value.path) || value.path.length > 4096 ||
-        !Array.isArray(value.entries) || value.entries.length > 501 ||
+        !isDenseArray(value.entries, 501) ||
         (value.nextCursor !== null && (typeof value.nextCursor !== "string" || value.nextCursor.length === 0 || value.nextCursor.length > 1024))) {
       throw malformed();
     }
     for (const entry of value.entries) {
-      if (entry === null || typeof entry !== "object" ||
+      if (!isPlainDataShape(entry) || !hasExactFields(entry, ["name", "type", "sizeBytes", "modifiedAt", "hidden"]) ||
           typeof entry.name !== "string" || entry.name.length === 0 || entry.name.length > 1024 ||
           entry.name.includes("\0") || entry.name.includes("/") ||
           !["file", "directory", "symlink", "other"].includes(entry.type) ||
@@ -344,13 +351,14 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "tree") {
+    if (!hasExactFields(value, ["operation", "root", "entries", "truncated", "rootId"])) throw malformed();
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
         !isAbsolute(value.root) || value.root.length > 4096 ||
-        !Array.isArray(value.entries) || value.entries.length > 5000 || typeof value.truncated !== "boolean") {
+        !isDenseArray(value.entries, 5000) || typeof value.truncated !== "boolean") {
       throw malformed();
     }
     for (const entry of value.entries) {
-      if (entry === null || typeof entry !== "object" ||
+      if (!isPlainDataShape(entry) || !hasExactFields(entry, ["path", "type", "depth", "sizeBytes"]) ||
           typeof entry.path !== "string" || !isAbsolute(entry.path) || entry.path.length > 4096 ||
           !["file", "directory", "symlink", "other"].includes(entry.type) ||
           !Number.isSafeInteger(entry.depth) || entry.depth < 0 || entry.depth > 8 ||
@@ -361,16 +369,16 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "find") {
-    if (!Array.isArray(value.roots) || value.roots.length < 1 || value.roots.length > 32 ||
+    if (!hasExactFields(value, ["operation", "roots", "query", "matches", "truncated"]) || !isDenseArray(value.roots, 32) || value.roots.length < 1 ||
         typeof value.query !== "string" || value.query.length < 1 || value.query.length > 256 || value.query.includes("\0") ||
-        !Array.isArray(value.matches) || value.matches.length > 1000 || typeof value.truncated !== "boolean") {
+        !isDenseArray(value.matches, 1000) || typeof value.truncated !== "boolean") {
       throw malformed();
     }
     for (const root of value.roots) {
       if (typeof root !== "string" || !isAbsolute(root) || root.length > 4096 || root.includes("\0")) throw malformed();
     }
     for (const match of value.matches) {
-      if (match === null || typeof match !== "object" ||
+      if (!isPlainDataShape(match) || !hasExactFields(match, ["path", "type", "sizeBytes", "modifiedAt"]) ||
           typeof match.path !== "string" || !isAbsolute(match.path) || match.path.length > 4096 || match.path.includes("\0") ||
           !["file", "directory", "symlink", "other"].includes(match.type) ||
           !Number.isSafeInteger(match.sizeBytes) || match.sizeBytes < 0 || match.sizeBytes > 1_000_000_000_000 ||
@@ -381,9 +389,9 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "recent") {
-    if (!Array.isArray(value.files) || value.files.length > 1000 || typeof value.truncated !== "boolean") throw malformed();
+    if (!hasExactFields(value, ["operation", "files", "truncated"]) || !isDenseArray(value.files, 1000) || typeof value.truncated !== "boolean") throw malformed();
     for (const file of value.files) {
-      if (file === null || typeof file !== "object" ||
+      if (!isPlainDataShape(file) || !hasExactFields(file, ["path", "type", "sizeBytes", "modifiedAt"]) ||
           typeof file.path !== "string" || !isAbsolute(file.path) || file.path.length > 4096 || file.path.includes("\0") ||
           !["file", "directory", "symlink", "other"].includes(file.type) ||
           !Number.isSafeInteger(file.sizeBytes) || file.sizeBytes < 0 || file.sizeBytes > 1_000_000_000_000 ||
@@ -394,12 +402,13 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "search_text") {
+    if (!hasExactFields(value, ["operation", "query", "matches", "truncated"])) throw malformed();
     if (typeof value.query !== "string" || value.query.length < 1 || value.query.length > 512 || value.query.includes("\0") ||
-        !Array.isArray(value.matches) || value.matches.length > 1000 || typeof value.truncated !== "boolean") {
+        !isDenseArray(value.matches, 1000) || typeof value.truncated !== "boolean") {
       throw malformed();
     }
     for (const match of value.matches) {
-      if (match === null || typeof match !== "object" ||
+      if (!isPlainDataShape(match) || !hasExactFields(match, ["path", "line", "startColumn", "endColumn", "snippet"]) ||
           typeof match.path !== "string" || !isAbsolute(match.path) || match.path.length > 4096 || match.path.includes("\0") ||
           !Number.isSafeInteger(match.line) || match.line < 1 || match.line > 1_000_000_000 ||
           !Number.isSafeInteger(match.startColumn) || match.startColumn < 1 || match.startColumn > 1_000_000_000 ||
@@ -411,12 +420,12 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "project_discover") {
-    if (!Array.isArray(value.projects) || value.projects.length > 500 || typeof value.truncated !== "boolean") throw malformed();
+    if (!hasExactFields(value, ["operation", "projects", "truncated"]) || !isDenseArray(value.projects, 500) || typeof value.truncated !== "boolean") throw malformed();
     for (const project of value.projects) {
-      if (project === null || typeof project !== "object" ||
+      if (!isPlainDataShape(project) || !hasExactFields(project, ["root", "type", "indicators"]) ||
           typeof project.root !== "string" || !isAbsolute(project.root) || project.root.length > 4096 || project.root.includes("\0") ||
           typeof project.type !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/u.test(project.type) ||
-          !Array.isArray(project.indicators) || project.indicators.length > 32) {
+          !isDenseArray(project.indicators, 32)) {
         throw malformed();
       }
       for (const indicator of project.indicators) {
@@ -428,14 +437,15 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "project_summary") {
+    if (!hasExactFields(value, ["operation", "projectRoot", "vcs", "manifests", "languages", "treeEntries", "warnings", "truncated"])) throw malformed();
     if (typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || value.projectRoot.length > 4096 || value.projectRoot.includes("\0") ||
-        value.vcs === null || typeof value.vcs !== "object" || !["git", "none", "other"].includes(value.vcs.system) ||
+        !isPlainDataShape(value.vcs) || !hasExactFields(value.vcs, ["system"], ["branch", "dirty"]) || !["git", "none", "other"].includes(value.vcs.system) ||
         (value.vcs.branch !== undefined && (typeof value.vcs.branch !== "string" || value.vcs.branch.length > 256 || value.vcs.branch.includes("\0"))) ||
         (value.vcs.dirty !== undefined && typeof value.vcs.dirty !== "boolean") ||
-        !Array.isArray(value.manifests) || value.manifests.length > 64 ||
-        !Array.isArray(value.languages) || value.languages.length > 64 ||
-        !Array.isArray(value.treeEntries) || value.treeEntries.length > 1000 ||
-        !Array.isArray(value.warnings) || value.warnings.length > 32 || typeof value.truncated !== "boolean") {
+        !isDenseArray(value.manifests, 64) ||
+        !isDenseArray(value.languages, 64) ||
+        !isDenseArray(value.treeEntries, 1000) ||
+        !isDenseArray(value.warnings, 32) || typeof value.truncated !== "boolean") {
       throw malformed();
     }
     for (const manifest of value.manifests) {
@@ -445,7 +455,7 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
       if (typeof language !== "string" || language.length < 1 || language.length > 64 || language.includes("\0")) throw malformed();
     }
     for (const entry of value.treeEntries) {
-      if (entry === null || typeof entry !== "object" || typeof entry.path !== "string" || !isAbsolute(entry.path) || entry.path.length > 4096 || entry.path.includes("\0") ||
+      if (!isPlainDataShape(entry) || !hasExactFields(entry, ["path", "type", "depth"]) || typeof entry.path !== "string" || !isAbsolute(entry.path) || entry.path.length > 4096 || entry.path.includes("\0") ||
           !["file", "directory", "symlink", "other"].includes(entry.type) || !Number.isSafeInteger(entry.depth) || entry.depth < 0 || entry.depth > 4) throw malformed();
     }
     for (const warning of value.warnings) {
@@ -454,14 +464,13 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     return value;
   }
   if (value.operation === "storage_analysis") {
-    if (!Array.isArray(value.volumes) || value.volumes.length > 64 ||
-        !Array.isArray(value.consumers) || value.consumers.length > 100 ||
-        !Array.isArray(value.analyzedRoots) || value.analyzedRoots.length > 32 ||
-        !Array.isArray(value.warnings) || value.warnings.length > 32 || typeof value.truncated !== "boolean") {
+    if (!hasExactFields(value, ["operation", "volumes", "consumers", "analyzedRoots", "warnings", "truncated"]) || !isDenseArray(value.volumes, 64) ||
+        !isDenseArray(value.consumers, 100) || !isDenseArray(value.analyzedRoots, 32) ||
+        !isDenseArray(value.warnings, 32) || typeof value.truncated !== "boolean") {
       throw malformed();
     }
     for (const volume of value.volumes) {
-      if (volume === null || typeof volume !== "object" ||
+      if (!isPlainDataShape(volume) || !hasExactFields(volume, ["id", "name", "mountPath", "totalBytes", "availableBytes", "usedBytes"]) ||
           typeof volume.id !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/u.test(volume.id) ||
           typeof volume.name !== "string" || volume.name.length < 1 || volume.name.length > 256 || volume.name.includes("\0") ||
           typeof volume.mountPath !== "string" || !isAbsolute(volume.mountPath) || volume.mountPath.length > 4096 ||
@@ -470,7 +479,7 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
           !Number.isSafeInteger(volume.usedBytes) || volume.usedBytes < 0 || volume.usedBytes > volume.totalBytes) throw malformed();
     }
     for (const consumer of value.consumers) {
-      if (consumer === null || typeof consumer !== "object" ||
+      if (!isPlainDataShape(consumer) || !hasExactFields(consumer, ["path", "sizeBytes", "type"]) ||
           typeof consumer.path !== "string" || !isAbsolute(consumer.path) || consumer.path.length > 4096 || consumer.path.includes("\0") ||
           !Number.isSafeInteger(consumer.sizeBytes) || consumer.sizeBytes < 0 || consumer.sizeBytes > 100_000_000_000_000 ||
           !["file", "directory", "other"].includes(consumer.type)) throw malformed();
@@ -483,6 +492,7 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
     }
     return value;
   }
+  if (value.operation !== "read" || !hasExactFields(value, ["operation", "path", "encoding", "sizeBytes", "sha256", "truncated", "rootId", "device", "inode", "bytesReturned"], ["content"])) throw malformed();
   if (value.operation !== "read" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.rootId) ||
       !isAbsolute(value.path) || value.path.length > 4096 ||
       !["utf8", "base64", "metadata"].includes(value.encoding) ||
@@ -499,6 +509,26 @@ function validateFilesystemWorkerResult(value: FilesystemWorkerResult): Filesyst
 
 function malformed(): BrokerError {
   return new BrokerError("EXECUTION_FAILED", "Filesystem worker returned a malformed result");
+}
+
+function isPlainDataShape(value: unknown): boolean {
+  return isPlainDataRecord(value);
+}
+
+function hasExactFields(value: object, required: readonly string[], optional: readonly string[] = []): boolean {
+  const allowed = new Set([...required, ...optional]);
+  const keys = Object.keys(value);
+  return required.every((key) => Object.hasOwn(value, key)) && keys.length >= required.length && keys.every((key) => allowed.has(key));
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
+      Object.keys(value).length !== value.length || Object.getOwnPropertyNames(value).length !== value.length + 1) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) return false;
+  }
+  return true;
 }
 
 function isSafePatchRelativePath(value: unknown): value is string {
