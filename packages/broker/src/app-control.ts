@@ -1,5 +1,6 @@
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { redactLogText } from "./secret-policy.js";
 import type { AppExecutionControl, AppInventoryInspector, SafeAppInventory } from "./app-inspector.js";
 import { opaqueWindowId, validateSensitiveUiTarget } from "./ui-inspector.js";
@@ -181,9 +182,10 @@ export function parseAppFocusResult(result: ProcessExecutionResult, appId: strin
   }
   let parsed: unknown;
   try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata");
+  if (!isPlainDataRecord(parsed)) throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata");
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
+    if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata");
     switch (record.error) {
       case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
       case "app_not_running": throw new BrokerError("TARGET_NOT_FOUND", "The requested app is not running");
@@ -191,6 +193,9 @@ export function parseAppFocusResult(result: ProcessExecutionResult, appId: strin
       case "invalid_app_identity": throw new BrokerError("PRECONDITION_FAILED", "app_id must be a stable bundle identity");
       default: throw new BrokerError("EXECUTION_FAILED", "App focus failed");
     }
+  }
+  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "focused"])) {
+    throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata");
   }
   if (record.status !== "ok" || record.app_id !== appId ||
       !Number.isSafeInteger(record.window_index) || (record.window_index as number) < 0 || (record.window_index as number) >= 2_000 ||
@@ -221,3 +226,8 @@ function assertOpenResult(result: ProcessExecutionResult): void {
 export const appOpenExecutableForTesting = OPEN_EXECUTABLE;
 export const appFocusExecutableForTesting = "/usr/bin/osascript";
 export const appFocusScriptForTesting = APP_FOCUS_SCRIPT;
+
+function hasExactFields(value: Record<string, unknown>, required: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === required.length && required.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}

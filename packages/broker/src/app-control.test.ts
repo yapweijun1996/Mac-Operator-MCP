@@ -174,6 +174,13 @@ test("app focus rejects unverified, sensitive, and permission-denied outcomes", 
     window_title: "Password", focused: true
   })), "bundle:com.example.Editor"), /Sensitive application/u);
   assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({ status: "error", error: "accessibility_permission" })), "bundle:com.example.Editor"), /permission is not granted/u);
+  assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
+    status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
+    window_title: "Main", focused: true, extra: "authority"
+  })), "bundle:com.example.Editor"), /malformed metadata/u);
+  assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
+    status: "error", error: "window_not_found", extra: true
+  })), "bundle:com.example.Editor"), /malformed metadata/u);
 });
 
 function successWithOutput(stdout: string): ProcessExecutionResult {
