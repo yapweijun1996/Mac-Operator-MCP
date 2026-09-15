@@ -37,6 +37,15 @@ Policy activation identity is persisted with audit intent and completion in the 
 
 The candidate passes schema, tamper, weak-permission, symlink, per-key public-key digest, downgrade, unimplemented-enable, deny-over-allow, static kill-switch, transactional activation, restart-match, explicit rollback, stale-request-policy, protected multi-key loading, signer validity-window, unknown-key, durable activation/restore/reload, audited revocation, verified-history rollback, replay-bound HMAC operator-channel, peer-denial, and revocation migration tests. This ADR remains `Proposed`: installed startup wiring, native caller/process identity packaging, crash injection, general migration, Keychain distribution, and production cross-runtime adapter evidence are still required before acceptance.
 
+Revision `3c76604` aligns the policy-document schema with the complete Broker
+target vocabulary, including `docker_runtime` and `docker_object`, and adds
+kind-specific reference constraints for every target class. Policy verification
+now materializes and validates the Broker policy before returning a verified
+bundle, so malformed signed target rules fail before activation. This closes
+schema/runtime target alignment only; parameterized grant serialization, live
+resource identity readback, installed distribution, and production evidence
+remain acceptance requirements.
+
 Revision `ea50824` adds a shared post-read descriptor check for the policy
 file, Edge/approval/authority/helper key metadata, signer public keys, and
 guest-attestation public keys. The reader compares device, inode, owner, mode,
