@@ -1,4 +1,5 @@
 import { BrokerError, canonicalJson } from "@mac-operator/contracts";
+import { isPlainDataRecord } from "./plain-record.js";
 import {
   executePrivilegedHelperCommand,
   validatePrivilegedHelperExecutionResult,
@@ -292,10 +293,22 @@ export class PrivilegedHelperJobExecutor {
 }
 
 function validateInput(input: PrivilegedHelperJobExecutionInput): void {
-  if (!input || typeof input !== "object" || !input.job || !input.lease || typeof input.assertAuthority !== "function" ||
+  const job = input?.job;
+  const lease = input?.lease;
+  if (!input || typeof input !== "object" || !isPlainDataRecord(job) || !isPlainDataRecord(lease) ||
+      typeof input.assertAuthority !== "function" ||
       !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(input.requestId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.principalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.sessionId) ||
+      (input.operation !== "service_control" && input.operation !== "package_install" && input.operation !== "power") ||
+      !/^job:[A-Za-z0-9._-]{1,240}$/u.test(job.jobId) ||
+      typeof job.targetRef !== "string" || job.targetRef.length < 1 || job.targetRef.length > 4_096 || job.targetRef.includes("\0") ||
+      !/^[a-f0-9]{64}$/u.test(job.payloadDigest) ||
+      !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(job.policyVersion) ||
+      !Number.isSafeInteger(job.revision) || job.revision < 0 ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(lease.ownerId) ||
+      !/^lease:[A-Za-z0-9._:-]{16,128}$/u.test(lease.token) ||
+      !Number.isSafeInteger(lease.expiresAtMs) || lease.expiresAtMs < 0 ||
       !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > MAX_TIMEOUT_MS) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper Job execution input is malformed");
   }

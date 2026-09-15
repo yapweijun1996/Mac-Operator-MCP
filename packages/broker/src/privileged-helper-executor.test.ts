@@ -38,6 +38,37 @@ test("privileged helper Job executor is disabled by default without changing the
   }
 });
 
+test("privileged helper Job executor rejects malformed operation and lease input before dispatch", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-input-boundary-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const setup = admitRunningJob(store, "job:helper-executor-input-boundary", "request:helper-executor-input-boundary");
+    let factoryCalls = 0;
+    let clientCalls = 0;
+    const executor = new PrivilegedHelperJobExecutor({
+      store,
+      enabled: true,
+      now: () => NOW + 10,
+      commandFactory: { issue: () => { factoryCalls += 1; return signedCommand(setup.job.targetRef, setup.job.payloadDigest); } },
+      commandClient: async () => { clientCalls += 1; throw new Error("helper IPC must not be reached"); }
+    });
+    await assert.rejects(
+      () => executor.execute({ ...executionInput(setup.job, setup.lease), operation: "raw_shell" } as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    await assert.rejects(
+      () => executor.execute({ ...executionInput(setup.job, setup.lease), lease: { ...setup.lease, token: "spoofed" } } as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    assert.equal(factoryCalls, 0);
+    assert.equal(clientCalls, 0);
+    assert.equal(store.ownedJob(setup.job.jobId, "principal-1")?.state, "running");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("enabled privileged helper Job executor commits only a verified completed response", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-success-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
