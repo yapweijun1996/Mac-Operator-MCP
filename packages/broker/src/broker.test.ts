@@ -724,6 +724,60 @@ test("mac_process_inspect returns bounded detail for an authorized pid", async (
   }
 });
 
+test("mac_process_inspect rejects a worker result for a different pid", async () => {
+  const key = randomBytes(32);
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-inspect-target-swap-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const requestedPid = process.pid;
+  const returnedPid = requestedPid === 1 ? 2 : 1;
+  const processExecutor: ProcessExecutor = {
+    async list() { throw new Error("process list was not expected"); },
+    async inspect() {
+      return {
+        pid: returnedPid,
+        name: "unexpected-process",
+        executable: "/usr/bin/true",
+        state: "running" as const,
+        cpuPercent: 0,
+        memoryBytes: 0,
+        parentPid: null,
+        childPids: [],
+        owner: "uid:501"
+      };
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.process.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    processExecutor,
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({
+      requestId: "process-inspect-target-swap-request",
+      nonce: "process-inspect-target-swap-nonce",
+      tool: "mac_process_inspect",
+      arguments: { pid: requestedPid }
+    }, ["mac.process.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.result_class, "CONFLICT");
+      assert.equal(result.error.retryable, false);
+    }
+    assert.equal(store.requestRecord(request.requestId)?.state, "FAILED");
+    assert.deepEqual(
+      store.auditRows().filter((row) => row.request_id === request.requestId).map((row) => [row.event_type, row.result_class]),
+      [["decision", "AUTHORIZED"], ["completion", "CONFLICT"]]
+    );
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_network_status returns local interface metadata without active probing", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-network-status-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));

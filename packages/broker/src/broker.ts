@@ -1985,6 +1985,13 @@ export class Broker {
           pid as number,
           this.executionControl(request, execution.target, toolPolicy.timeoutMs)
         );
+        if (process.pid !== pid) {
+          // The requested PID is the target identity. A worker or native
+          // adapter returning a different process must never be serialized as
+          // a successful read, even though the policy target is the bounded
+          // process domain (`process:all`).
+          throw new BrokerError("CONFLICT", "Process identity changed during inspection");
+        }
         return {
           data: {
             process: {
