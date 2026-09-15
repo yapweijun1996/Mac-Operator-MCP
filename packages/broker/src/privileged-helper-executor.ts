@@ -12,6 +12,7 @@ import {
 import type { BrokerJob, BrokerStore, JobLease } from "./persistence.js";
 
 const DEFAULT_LEASE_DURATION_MS = 30_000;
+const MAX_LEASE_DURATION_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
 
 /** The only authority that may issue a command for a helper Job. */
@@ -97,7 +98,7 @@ export class PrivilegedHelperJobExecutor {
     this.enabled = options.enabled ?? false;
     this.now = options.now ?? Date.now;
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS;
-    if (!Number.isSafeInteger(this.leaseDurationMs) || this.leaseDurationMs < 1_000 || this.leaseDurationMs > MAX_TIMEOUT_MS) {
+    if (!Number.isSafeInteger(this.leaseDurationMs) || this.leaseDurationMs < 1_000 || this.leaseDurationMs > MAX_LEASE_DURATION_MS) {
       throw new Error("Privileged helper Job lease duration is invalid");
     }
     this.commandFactory = options.commandFactory;
@@ -117,20 +118,32 @@ export class PrivilegedHelperJobExecutor {
       throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper Job executor is disabled");
     }
     validateInput(input);
-    if (input.timeoutMs > this.leaseDurationMs) {
-      throw new BrokerError("PRECONDITION_FAILED", "Privileged helper timeout exceeds the active Job lease");
-    }
     const current = this.requireRunningJob(input);
-    const lease = this.options.store.renewJobLease(
+    let lease = this.options.store.renewJobLease(
       current.jobId,
       input.principalId,
       input.lease,
       this.now(),
       this.leaseDurationMs
     );
+    let leaseRenewalFailure: unknown;
+    const renewalInterval = setInterval(() => {
+      try {
+        lease = this.options.store.renewJobLease(
+          current.jobId,
+          input.principalId,
+          lease,
+          this.now(),
+          this.leaseDurationMs
+        );
+      } catch (error) {
+        leaseRenewalFailure ??= error;
+      }
+    }, Math.min(5_000, Math.max(1_000, Math.floor(this.leaseDurationMs / 3))));
     let command: SignedPrivilegedHelperCommand;
     try {
       input.assertAuthority();
+      if (leaseRenewalFailure !== undefined) throw leaseRenewalFailure;
       command = this.commandFactory!.issue({
         requestId: input.requestId,
         principalId: input.principalId,
@@ -148,6 +161,7 @@ export class PrivilegedHelperJobExecutor {
       // the lease is still available so the Job cannot remain indefinitely
       // running after a Broker-side authority rejection.
       this.finishBeforeDispatch(current, input, error);
+      clearInterval(renewalInterval);
       throw error;
     }
 
@@ -158,6 +172,7 @@ export class PrivilegedHelperJobExecutor {
         current.targetRef
       );
       input.assertAuthority();
+      if (leaseRenewalFailure !== undefined) throw leaseRenewalFailure;
       const latest = this.requireRunningJob(input);
       const terminal = classifyResponse(response, input.operation, latest.targetRef);
       const finished = this.options.store.finishJob(
@@ -173,9 +188,11 @@ export class PrivilegedHelperJobExecutor {
         lease,
         this.now()
       );
+      clearInterval(renewalInterval);
       return { job: finished, response, commandId: command.commandId };
     } catch (error) {
       const unknown = this.finishUnknown(input, command, lease);
+      clearInterval(renewalInterval);
       if (unknown !== undefined) {
         throw new BrokerError("UNKNOWN_OUTCOME", "Privileged helper outcome is unresolved; inspect its Broker Job", true);
       }

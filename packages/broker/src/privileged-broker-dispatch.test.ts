@@ -71,6 +71,53 @@ function enabledPolicy(): BrokerPolicy {
   };
 }
 
+function enabledPolicyFor(toolName: string, scope: Scope, targetKind: "package" | "host", targetReference: string): BrokerPolicy {
+  const base = createDefaultPolicy("edge-1", false, [scope]);
+  const tool = base.tools.get(toolName);
+  assert.ok(tool);
+  return {
+    ...base,
+    targetRules: [
+      ...base.targetRules,
+      { ruleId: `privileged-${toolName}-allow`, effect: "allow", principalId: "principal-1", scope, target: { kind: targetKind, reference: targetReference } }
+    ],
+    tools: new Map(base.tools).set(toolName, { ...tool, implemented: true, enabled: true })
+  };
+}
+
+function requestFor(
+  key: Buffer,
+  tool: string,
+  argumentsValue: Readonly<Record<string, unknown>>,
+  scope: Scope,
+  requestId: string,
+  sessionId: string,
+  nonce: string
+): ReturnType<typeof signRequest> {
+  return signRequest({
+    protocolVersion: "0.1",
+    requestId,
+    contractVersion: "0.1",
+    tool,
+    arguments: argumentsValue,
+    principal: {
+      principalId: "principal-1",
+      sessionId,
+      issuer: "test-issuer",
+      audience: "mac-operator-broker",
+      scopes: [scope],
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 60_000,
+      edgeId: "edge-1"
+    },
+    timestampMs: NOW,
+    nonce,
+    policyAudience: "mac-operator-broker",
+    policyVersion: "policy-0.1",
+    authenticationKeyId: "edge-key-1"
+  }, key);
+}
+
 test("Broker dispatches an approved privileged Job through the helper boundary", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-privileged-dispatch-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -192,5 +239,99 @@ test("Broker refuses privileged admission when the helper boundary is disabled",
     await broker.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Broker maps package-install and power helper readbacks to their tool contracts", async () => {
+  const cases = [
+    {
+      tool: "mac_priv_package_install",
+      scope: "mac.priv.package" as const,
+      args: { package_id: "example", version: "1.2.3", source_profile: "approved" },
+      payload: { operation: "package_install" as const, package_id: "example", version: "1.2.3", source_profile: "approved" },
+      targetKind: "package" as const,
+      targetReference: "example",
+      targetRef: "package:example",
+      evidence: { installed_version: "1.2.3", artifact_id: "artifact:example", already_installed: false, matched_version: true, state: "installed" },
+      expected: { package_id: "example", requested_version: "1.2.3", installed_version: "1.2.3", artifact_id: "artifact:example", precondition: { already_installed: false, matched_version: true }, state: "installed" }
+    },
+    {
+      tool: "mac_priv_power",
+      scope: "mac.priv.power" as const,
+      args: { action: "reboot", reason: "operator" },
+      payload: { operation: "power" as const, action: "reboot", reason: "operator" },
+      targetKind: "host" as const,
+      targetReference: "local",
+      targetRef: "host:local",
+      evidence: { state: "scheduled", scheduled_for: null, handoff_id: "handoff:reboot", connection_loss_expected: true },
+      expected: { action: "reboot", state: "scheduled", scheduled_for: null, handoff_id: "handoff:reboot", connection_loss_expected: true }
+    }
+  ] as const;
+  for (const [index, testCase] of cases.entries()) {
+    const directory = await mkdtemp(join(tmpdir(), `mac-operator-privileged-${index}-`));
+    const store = new BrokerStore(join(directory, "broker.sqlite"));
+    const edgeKey = randomBytes(32);
+    const helperKey = randomBytes(32);
+    const input = requestFor(edgeKey, testCase.tool, testCase.args, testCase.scope, `request-privileged-${index}`, `session-privileged-${index}`, `nonce-privileged-${index}-unique`);
+    store.issueApproval({
+      approvalId: `approval:privileged-${index}`,
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: input.tool,
+      contractVersion: input.contractVersion,
+      targetKind: testCase.targetKind,
+      targetRef: testCase.targetRef,
+      payloadDigest: sha256(canonicalJson(testCase.payload)),
+      policyVersion: input.policyVersion,
+      approvalClass: "explicit_privileged_policy",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 60_000
+    });
+    const commandFactory = new BrokerPrivilegedHelperCommandFactory({ store, authenticationKey: helperKey, authorizeCommand: () => undefined, now: () => NOW });
+    const executor = new PrivilegedHelperJobExecutor({
+      store,
+      enabled: true,
+      commandFactory,
+      commandClient: async (command) => ({
+        ok: true as const,
+        commandId: command.commandId,
+        requestId: command.requestId,
+        result: {
+          operation: testCase.payload.operation,
+          targetRef: command.targetRef,
+          state: "completed" as const,
+          resultClass: "SUCCEEDED" as const,
+          evidence: testCase.evidence,
+          warnings: [],
+          truncated: false,
+          verification: { status: "verified" as const, strategy: "allowlisted_postcondition" as const }
+        },
+        responseProof: ""
+      }),
+      now: () => NOW,
+      leaseDurationMs: 120_000
+    });
+    const broker = new Broker({
+      store,
+      policy: enabledPolicyFor(testCase.tool, testCase.scope, testCase.targetKind, testCase.targetReference),
+      edgeAuthenticationKeys: keyring(edgeKey),
+      privilegedHelperExecutor: executor,
+      now: () => NOW
+    });
+    try {
+      const result = await broker.handle(input);
+      assert.equal(result.ok, true, JSON.stringify(result));
+      if (result.ok) {
+        const jobId = store.requestRecord(input.requestId)?.jobId;
+        assert.ok(jobId);
+        assert.deepEqual(result.data, { ...testCase.expected, job_id: jobId });
+      }
+    } finally {
+      commandFactory.dispose();
+      await broker.close();
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
