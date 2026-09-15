@@ -9,6 +9,7 @@ import { BrokerStore, type SwitchName, type RevocationKind } from "./persistence
 import {
   AuthorityControlIpcClient,
   AuthorityControlIpcServer,
+  authenticateAuthorityControlCommand,
   authenticateAuthorityControlResponse,
   signAuthorityControlCommand,
   type AuthorityControlIpcResponse,
@@ -58,6 +59,22 @@ async function sendCommand(socketPath: string, payload: unknown, suffix = ""): P
     socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
   });
 }
+
+test("authority control parser rejects accessor command fields", () => {
+  const key = randomBytes(32);
+  const signed = signAuthorityControlCommand(command("set_switch", 0, {
+    switchName: "process",
+    disabled: true,
+    expectedDisabled: false
+  }), key) as unknown as Record<string, unknown>;
+  Object.defineProperty(signed, "switchName", { enumerable: true, get: () => "process" });
+  assert.throws(
+    () => authenticateAuthorityControlCommand(signed, key, NOW),
+    (error: unknown) => error instanceof Error && "errorClass" in error &&
+      (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
+  );
+  key.fill(0);
+});
 
 test("authority control IPC authenticates, persists replay, and applies bounded operator actions", async () => {
   const directory = await mkdtemp(join(tmpdir(), "ac-"));

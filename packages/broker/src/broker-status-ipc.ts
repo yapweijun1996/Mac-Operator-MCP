@@ -7,6 +7,7 @@ import type { BrokerServiceReadback } from "./service-entrypoint.js";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore } from "./persistence.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const STATUS_REQUEST_DOMAIN = "mac-operator-broker-status-request-v0.1\0";
 const STATUS_RESPONSE_DOMAIN = "mac-operator-broker-status-response-v0.1\0";
@@ -336,7 +337,7 @@ export function authenticateBrokerStatusResponse(
   authenticationKey: Buffer
 ): BrokerStatusResponse {
   validateUnsignedBrokerStatusRequest(request);
-  if (authenticationKey.byteLength < 32 || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (authenticationKey.byteLength < 32 || !isPlainDataRecord(raw)) {
     throw new BrokerError("AUTH_INVALID", "Broker status response is invalid");
   }
   const response = raw as Record<string, unknown>;
@@ -383,7 +384,7 @@ export async function validateBrokerStatusSocketTarget(socketPath: string): Prom
 }
 
 function parseSignedBrokerStatusRequest(raw: unknown): { unsigned: UnsignedBrokerStatusRequest; authenticationProof: string } {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new BrokerError("PRECONDITION_FAILED", "Broker status request is malformed");
+  if (!isPlainDataRecord(raw)) throw new BrokerError("PRECONDITION_FAILED", "Broker status request is malformed");
   const value = raw as Record<string, unknown>;
   const allowed = ["protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "authenticationProof"];
   if (!sameKeys(value, allowed) || typeof value.authenticationProof !== "string" || !/^[a-f0-9]{64}$/u.test(value.authenticationProof)) {
@@ -401,7 +402,7 @@ function parseSignedBrokerStatusRequest(raw: unknown): { unsigned: UnsignedBroke
  * REPLAY_DENIED. This candidate is never admitted or used for status access.
  */
 function unsignedBrokerStatusCandidate(raw: unknown): UnsignedBrokerStatusRequest | undefined {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  if (!isPlainDataRecord(raw)) return undefined;
   const record = raw as Record<string, unknown>;
   const allowed = [
     "protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "authenticationProof"

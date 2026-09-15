@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { BrokerStore } from "./persistence.js";
 import {
+  authenticateBrokerStatusRequest,
   authenticateBrokerStatusResponse,
   BrokerStatusIpcServer,
   readBrokerStatus,
@@ -16,6 +17,27 @@ import {
 } from "./broker-status-ipc.js";
 
 const NOW = 1_700_000_000_000;
+
+test("Broker status parser rejects accessor request fields", () => {
+  const key = randomBytes(32);
+  const request: UnsignedBrokerStatusRequest = {
+    protocolVersion: "0.1",
+    contractVersion: "0.1",
+    requestId: `request:broker-status-${"e".repeat(16)}`,
+    nonce: `broker-status-nonce-${"f".repeat(16)}`,
+    timestampMs: NOW,
+    expiresAtMs: NOW + 30_000,
+    kind: "broker_status"
+  };
+  const signed = signBrokerStatusRequest(request, key) as unknown as Record<string, unknown>;
+  Object.defineProperty(signed, "kind", { enumerable: true, get: () => "broker_status" });
+  assert.throws(
+    () => authenticateBrokerStatusRequest(signed, key, NOW),
+    (error: unknown) => error instanceof Error && "errorClass" in error &&
+      (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
+  );
+  key.fill(0);
+});
 
 test("Broker status IPC authenticates readback and rejects durable replay", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-broker-status-"));

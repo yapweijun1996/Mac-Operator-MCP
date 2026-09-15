@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, parseJsonUtf8Strict, PROTOCOL_VERSION, sha256 } from "@mac-operator/contracts";
 import type { BrokerStore } from "./persistence.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import type { VirtualizationGuestIdentity } from "./task-runner.js";
 
 const REQUEST_DOMAIN = "mac-operator-virtualization-guest-request-v0.1\0";
@@ -966,5 +967,5 @@ function assertAllowedKeys(value: unknown, allowed: readonly string[], label: st
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return isPlainDataRecord(value);
 }

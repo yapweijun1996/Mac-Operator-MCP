@@ -130,6 +130,18 @@ test("request tampering and wrong key are rejected before admission", () => {
   assert.throws(() => verifyVirtualizationGuestRequest(signedRequest, Buffer.alloc(32, 0x43), { replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }), now }), (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID");
 });
 
+test("guest transport parser rejects accessor envelope fields", () => {
+  const signedRequest = request() as unknown as Record<string, unknown>;
+  Object.defineProperty(signedRequest, "taskDigest", { enumerable: true, get: () => "c".repeat(64) });
+  assert.throws(
+    () => verifyVirtualizationGuestRequest(signedRequest, key, {
+      replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+      now
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+});
+
 test("request nonce and request ID replay are denied", () => {
   const signedRequest = request();
   const guard = new InMemoryVirtualizationGuestReplayGuard({ now: () => now });

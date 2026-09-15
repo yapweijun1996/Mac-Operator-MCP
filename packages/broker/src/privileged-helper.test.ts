@@ -156,6 +156,18 @@ test("privileged helper command is signed, bounded, and excludes raw execution a
   assert.equal(sanitized.verification.summary, "[REDACTED]");
 });
 
+test("privileged helper parser rejects accessor command fields", () => {
+  const key = randomBytes(32);
+  const signed = signPrivilegedHelperCommand(command(0), key) as unknown as Record<string, unknown>;
+  Object.defineProperty(signed, "operation", { enumerable: true, get: () => "service_control" });
+  assert.throws(
+    () => authenticatePrivilegedHelperCommand(signed, key, NOW),
+    (error: unknown) => error instanceof Error && "errorClass" in error &&
+      (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
+  );
+  key.fill(0);
+});
+
 test("privileged helper IPC authenticates the peer and command, rejects replay, and dispatches only allowlisted operations", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-"));
   const socketPath = join(directory, "helper.sock");

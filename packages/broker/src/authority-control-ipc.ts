@@ -6,6 +6,7 @@ import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonStrict, parseJso
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const AUTHORITY_CONTROL_DOMAIN = "mac-operator-authority-control-v0.1\0";
 const AUTHORITY_CONTROL_RESPONSE_DOMAIN = "mac-operator-authority-control-response-v0.1\0";
@@ -277,7 +278,7 @@ export class AuthorityControlIpcServer {
  * REPLAY_DENIED. This candidate is never admitted or executed on its own.
  */
 function unsignedAuthorityControlCandidate(raw: unknown): UnsignedAuthorityControlCommand | undefined {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  if (!isPlainDataRecord(raw)) return undefined;
   const record = raw as Record<string, unknown>;
   const allowed = new Set([
     "protocolVersion", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "operation",
@@ -320,7 +321,7 @@ export function authenticateAuthorityControlResponse(
   command: UnsignedAuthorityControlCommand,
   authenticationKey: Buffer
 ): AuthorityControlIpcResponse {
-  if (authenticationKey.byteLength < 32 || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (authenticationKey.byteLength < 32 || !isPlainDataRecord(raw)) {
     throw new BrokerError("AUTH_INVALID", "Authority control response is invalid");
   }
   const record = raw as Record<string, unknown>;
@@ -554,7 +555,7 @@ function parseSignedAuthorityControlCommand(value: unknown): {
   unsigned: UnsignedAuthorityControlCommand;
   authenticationProof: string;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new BrokerError("PRECONDITION_FAILED", "Authority control command envelope is malformed");
   }
   const record = value as Record<string, unknown>;

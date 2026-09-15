@@ -7,6 +7,7 @@ import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-i
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ApprovalRecord, type BrokerJob, type BrokerStore, type PrivilegedHelperPayload, type RequestRecord } from "./persistence.js";
 import { redactLogText } from "./secret-policy.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 export type { PrivilegedHelperPayload } from "./persistence.js";
 
@@ -756,7 +757,7 @@ export function authenticatePrivilegedHelperStatusResponse(
   authenticationKey: Buffer
 ): PrivilegedHelperStatusResponse {
   validateUnsignedPrivilegedHelperStatusRequest(request);
-  if (authenticationKey.byteLength < 32 || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (authenticationKey.byteLength < 32 || !isPlainDataRecord(raw)) {
     throw new BrokerError("AUTH_INVALID", "Privileged helper status response is invalid");
   }
   const response = raw as Record<string, unknown>;
@@ -1048,7 +1049,7 @@ export function authenticatePrivilegedHelperResponse(
   authenticationKey: Buffer
 ): PrivilegedHelperResponse {
   validateUnsignedPrivilegedHelperCommand(command);
-  if (authenticationKey.byteLength < 32 || raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+  if (authenticationKey.byteLength < 32 || !isPlainDataRecord(raw)) {
     throw new BrokerError("AUTH_INVALID", "Privileged helper response is invalid");
   }
   const response = raw as Record<string, unknown>;
@@ -1076,7 +1077,7 @@ export function authenticatePrivilegedHelperResponse(
 }
 
 function parseSignedCommand(value: unknown): { unsigned: UnsignedPrivilegedHelperCommand; authenticationProof: string } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper envelope is malformed");
+  if (!isPlainDataRecord(value)) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper envelope is malformed");
   const record = value as Record<string, unknown>;
   const allowed = new Set([
     "protocolVersion", "contractVersion", "commandId", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs",
@@ -1246,7 +1247,7 @@ function isHelperErrorClass(value: string): value is ErrorClass {
 }
 
 function parseSignedStatusRequest(value: unknown): { unsigned: UnsignedPrivilegedHelperStatusRequest; authenticationProof: string } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status envelope is malformed");
   }
   const record = value as Record<string, unknown>;
