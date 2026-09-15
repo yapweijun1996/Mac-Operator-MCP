@@ -806,7 +806,7 @@ export class BrokerStore {
         "nonces", "approval_nonces", "policy_signer_nonces", "authority_control_nonces",
         "privileged_helper_nonces", "broker_status_nonces", "virtualization_guest_nonces"
       ];
-      for (const table of replayTables) assertReplayLedgerCapacity(this.database, table);
+      for (const table of replayTables) assertReplayLedgerIntegrityCapacity(this.database, table);
       const requestRows = this.database.prepare(
         "SELECT edge_id, nonce, request_id, accepted_at_ms, expires_at_ms FROM nonces"
       ).all() as unknown[];
@@ -3920,6 +3920,14 @@ function assertReplayLedgerCapacity(database: DatabaseSync, table: ReplayLedgerT
   const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count?: unknown } | undefined;
   if (!Number.isSafeInteger(row?.count) || (row?.count as number) < 0 || (row?.count as number) >= MAX_REPLAY_LEDGER_ROWS) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Replay ledger is at capacity");
+  }
+}
+
+/** A full but bounded ledger can restart and reclaim expired rows on demand. */
+function assertReplayLedgerIntegrityCapacity(database: DatabaseSync, table: ReplayLedgerTable): void {
+  const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count?: unknown } | undefined;
+  if (!Number.isSafeInteger(row?.count) || (row?.count as number) < 0 || (row?.count as number) > MAX_REPLAY_LEDGER_ROWS) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Replay ledger exceeds its configured capacity");
   }
 }
 
