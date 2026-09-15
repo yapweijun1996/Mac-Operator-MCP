@@ -220,6 +220,15 @@ server, signed attestation producer, and independent isolation proof are still
 required before this ADR can be accepted or `mac_task_run` enabled. Evidence:
 [`evidence/2026-09-15-virtualization-guest-native-lifecycle.md`](../../evidence/2026-09-15-virtualization-guest-native-lifecycle.md).
 
+Commit `ea85237` closes a timeout-overlap gap in the Broker-owned lifecycle:
+when a native start, stop, or status promise outlives its caller-visible
+deadline or cancellation, the unresolved operation remains fenced and later
+transitions fail closed with retryable `UNKNOWN_OUTCOME` until it settles.
+This preserves serialized VM mutation even when an adapter does not honor
+`AbortSignal`; it does not turn the timeout into proof of a stopped VM. The
+focused lifecycle tests and current physical-Darwin regression are recorded in
+[`evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md`](../../evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md).
+
 ## Virtio-socket connector
 
 Commit `b8551d6` adds a bounded native `exchangeGuestFrame` operation over
