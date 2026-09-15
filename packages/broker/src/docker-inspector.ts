@@ -193,10 +193,23 @@ export class DockerInspectorImpl implements DockerInspector {
 
   async inspect(objectType: DockerObjectType, id: string, control: DockerExecutionControl): Promise<SafeDockerInspection> {
     validateDockerObjectRequest(objectType, id);
-    const result = await this.run(["inspect", "--type", objectType, id], control, MAX_OUTPUT_BYTES);
-    throwForDockerProcess(result, "Docker inspection");
-    if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "Docker inspection failed");
-    return parseInspection(objectType, id, result.stdout, result.truncated);
+    const deadlineMs = Date.now() + Math.min(control.timeoutMs, MAX_TIMEOUT_MS);
+    const first = await this.inspectOnce(objectType, id, control, deadlineMs);
+    if (DOCKER_HEX_ID_PATTERN.test(id)) return first;
+
+    // Names are mutable aliases. Re-observe the canonical ID so a replacement
+    // between name resolution and result publication cannot be returned as the
+    // originally selected object. This remains a bounded observation fence,
+    // not a kernel-held Docker object handle.
+    const second = await this.inspectOnce(objectType, first.id, control, deadlineMs);
+    if (normalizeDockerName(first.name) !== normalizeDockerName(second.name)) {
+      throw new BrokerError("CONFLICT", "Docker object identity changed during inspection");
+    }
+    return {
+      ...second,
+      warnings: uniqueWarnings([...first.warnings, ...second.warnings]),
+      truncated: first.truncated || second.truncated
+    };
   }
 
   async logs(containerId: string, tail: number, sinceSeconds: number, control: DockerExecutionControl): Promise<SafeDockerLogs> {
@@ -223,6 +236,22 @@ export class DockerInspectorImpl implements DockerInspector {
       allowUserOwnedExecutable: true,
       shouldCancel: control.shouldCancel
     });
+  }
+
+  private async inspectOnce(
+    objectType: DockerObjectType,
+    id: string,
+    control: DockerExecutionControl,
+    deadlineMs: number
+  ): Promise<SafeDockerInspection> {
+    const remainingMs = Math.max(1, Math.min(deadlineMs - Date.now(), MAX_TIMEOUT_MS));
+    const result = await this.run(["inspect", "--type", objectType, id], {
+      timeoutMs: remainingMs,
+      shouldCancel: control.shouldCancel
+    }, MAX_OUTPUT_BYTES);
+    throwForDockerProcess(result, "Docker inspection");
+    if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "Docker inspection failed");
+    return parseInspection(objectType, id, result.stdout, result.truncated);
   }
 }
 

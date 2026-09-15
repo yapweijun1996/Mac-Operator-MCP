@@ -123,6 +123,35 @@ test("Docker inspect accepts bounded ID prefixes and exact name readback", () =>
   assert.equal(dockerObjectIdentityMatches("image", "sha256:" + fullId, "sha256:" + fullId, ""), true);
 });
 
+test("Docker inspect rechecks mutable name targets by canonical ID", async () => {
+  const fullId = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  const supervisor = new FakeSupervisor([
+    result(JSON.stringify([{ Id: fullId, Name: "/web" }])),
+    result(JSON.stringify([{ Id: fullId, Name: "/web" }]))
+  ]);
+  const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+  const inspection = await inspector.inspect("container", "web", { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(inspection.id, fullId);
+  assert.deepEqual(supervisor.calls.map((call) => call.args), [
+    ["inspect", "--type", "container", "web"],
+    ["inspect", "--type", "container", fullId]
+  ]);
+});
+
+test("Docker inspect rejects a name target replaced between identity observations", async () => {
+  const firstId = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  const replacementId = "fedcba0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  const supervisor = new FakeSupervisor([
+    result(JSON.stringify([{ Id: firstId, Name: "/web" }])),
+    result(JSON.stringify([{ Id: replacementId, Name: "/web" }]))
+  ]);
+  const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+  await assert.rejects(
+    inspector.inspect("container", "web", { timeoutMs: 10_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+  );
+});
+
 test("Docker logs redact secrets and preserve bounded timestamped lines", async () => {
   const supervisor = new FakeSupervisor([result(
     "2026-09-13T01:02:03.000000000Z token=super-secret-value\nplain line\n",
