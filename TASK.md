@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Failure-audit target addendum: commit `3ed2e02` records the normalized target
+for post-authorization failure completion rows and keeps pre-authorization
+denials bounded as `unresolved`. Focused source assertions and an independent
+built harness pass; the long-running Broker/persistence suites were left
+undisturbed. Evidence: `evidence/2026-09-15-failure-audit-target.md`.
+
 Schema-startup error and coverage addendum: source revision `183ecd4` gives
 malformed persistence migrations a stable `AUDIT_UNAVAILABLE` class and tests
 unknown-column rejection across all 29 Broker persistence tables (2/2 schema

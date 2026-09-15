@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Failure-audit target addendum: source revision `3ed2e02` carries the
+Broker-normalized target into post-authorization failure audit rows while
+preserving `unresolved` for earlier parse/auth/authorization failures. The
+existing post-authorization test now asserts `host:broker` readback, and a
+built-distribution harness reproduces the same bounded target pair. Build,
+lint, contract verification, and diff checks pass; the already-running full
+Broker/persistence suites were not restarted. Evidence:
+`evidence/2026-09-15-failure-audit-target.md`.
+
 Schema-startup error and coverage addendum: source revision `183ecd4` maps
 malformed persistence versions, migration registries, runtime fences, replay
 schemas, and metadata migrations to stable `AUDIT_UNAVAILABLE` failures. The

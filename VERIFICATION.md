@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Failure-audit target verification at source revision `3ed2e02` confirms that
+post-authorization failures retain the Broker-normalized `host:broker` target
+in both decision and completion audit rows, while earlier failures remain
+`unresolved`. The existing focused assertion and a built-distribution harness
+pass; full Broker/persistence suites were not restarted because an existing
+long-running process was active. Evidence:
+`evidence/2026-09-15-failure-audit-target.md`.
+
 Schema-startup verification at source revision `183ecd4` confirms malformed
 persistence versions, migration registries, runtime fences, replay schemas,
 and metadata migrations fail with stable `AUDIT_UNAVAILABLE` errors. Unknown
