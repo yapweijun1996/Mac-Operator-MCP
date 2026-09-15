@@ -2,7 +2,7 @@
 
 Date: 2026-09-15
 
-Source revision: `94bd182`
+Source revision: `7d99b98`
 
 ## Change
 
@@ -14,7 +14,7 @@ defined by the versioned tool contracts and are unaffected.
 
 ## Verification
 
-- `npm run lint`: passed for 610 tracked files.
+- `npm run lint`: passed for 611 tracked files.
 - `npm run typecheck`: passed.
 - `node --test --test-timeout=120000 packages/contracts/dist/*.test.js`:
   11 passed, 0 failed, 0 skipped.

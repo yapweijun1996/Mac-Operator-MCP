@@ -25,7 +25,7 @@ installation, Developer ID provenance, real isolation, VM isolation, remote
 issuer/deployment, and independent P0/P1 review remain open. Evidence:
 `evidence/2026-09-15-real-full-regression-rerun.md`.
 
-Test-timeout boundary addendum: source revision `94bd182` adds a fixed
+Test-timeout boundary addendum: source revision `7d99b98` adds a fixed
 120-second timeout to each root `npm test` case so verification cannot hang
 indefinitely. Lint, typecheck, and the 11-test contracts smoke pass; this
 does not alter Broker task budgets or satisfy production crash/isolation,

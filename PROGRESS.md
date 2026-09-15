@@ -26,7 +26,7 @@ undisturbed. This is a host regression checkpoint, not production signing,
 persistent installation, isolation, VM, remote issuer, or independent-review
 acceptance. Evidence: `evidence/2026-09-15-real-full-regression-rerun.md`.
 
-Test-timeout boundary addendum: source revision `94bd182` makes the root
+Test-timeout boundary addendum: source revision `7d99b98` makes the root
 `npm test` command enforce a fixed 120-second per-test-case timeout. Lint,
 typecheck, and the 11-test contracts smoke pass; the existing Broker/
 persistence process remains undisturbed. This bounds verification hangs only
