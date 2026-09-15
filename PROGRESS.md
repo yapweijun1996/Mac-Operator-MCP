@@ -2866,3 +2866,12 @@ installed production packaging, Developer ID signing, upgrade/rollback, and
 helper installation remain open. Evidence:
 `evidence/2026-09-14-live-broker-startup.md` and
 `evidence/2026-09-14-native-https-edge.md`.
+
+Docker result-boundary hardening (source revision `50fd2fb`) now requires
+plain known-field container/image records and unambiguous object identities;
+inspection nested data is bounded and Docker logs cap both line count and line
+bytes before redaction. Focused Docker tests pass 9/9. The non-overlapping
+package regression passes 533 total (527 pass, 6 skipped, 0 fail). Daemon
+compatibility, storage readback, isolation, raw-socket negatives, packaging,
+and capability enablement remain open. Evidence:
+`evidence/2026-09-15-docker-result-boundary.md`.
