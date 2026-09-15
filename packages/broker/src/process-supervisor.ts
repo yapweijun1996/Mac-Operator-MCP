@@ -207,14 +207,18 @@ export class ProcessSupervisor {
   }
 
   async run(request: ProcessExecutionRequest): Promise<ProcessExecutionResult> {
-    const validatedPaths = await validateRequest(request, this.allowedEnvironmentKeys);
+    // Snapshot the caller-owned request before any asynchronous identity
+    // checks. Otherwise a caller could mutate a target, argument, or
+    // environment while validation is in flight and change what gets spawned.
+    const safeRequest = snapshotProcessRequest(request);
+    const validatedPaths = await validateRequest(safeRequest, this.allowedEnvironmentKeys);
     if (this.closing) {
       throw new BrokerError("CANCELLED", "Process authority is closed");
     }
-    if (this.cancelled(request.shouldCancel)) {
+    if (this.cancelled(safeRequest.shouldCancel)) {
       throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
     }
-    const executableKey = request.executable;
+    const executableKey = safeRequest.executable;
     const activeForExecutable = this.activeProcessesByExecutable.get(executableKey) ?? 0;
     const pendingForExecutable = this.pendingStartsByExecutable.get(executableKey) ?? 0;
     if (this.activeProcesses + this.pendingStarts.size >= this.maxConcurrent ||
@@ -222,7 +226,7 @@ export class ProcessSupervisor {
       throw new BrokerError("CONFLICT", "Process capacity is exhausted", true);
     }
 
-    const environment = Object.fromEntries(Object.entries(request.environment ?? {}));
+    const environment = Object.fromEntries(Object.entries(safeRequest.environment ?? {}));
     const startedAtMs = Date.now();
     let resolvePendingStart!: () => void;
     const pendingStart = new Promise<void>((resolve) => { resolvePendingStart = resolve; });
@@ -241,8 +245,8 @@ export class ProcessSupervisor {
     let child: ChildProcess;
     try {
       try {
-        child = spawn(request.executable, [...request.args], {
-          cwd: request.cwd,
+        child = spawn(safeRequest.executable, [...safeRequest.args], {
+          cwd: safeRequest.cwd,
           env: environment,
           shell: false,
           detached: true,
@@ -251,7 +255,7 @@ export class ProcessSupervisor {
       } catch {
         throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
       }
-      const capture = attachChildProcessCapture(child, request.outputCapBytes);
+      const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes);
       const childPid = child.pid;
       if (typeof childPid !== "number" || !Number.isSafeInteger(childPid) || childPid <= 0) {
         child.kill("SIGKILL");
@@ -260,8 +264,8 @@ export class ProcessSupervisor {
       const processId = childPid;
       const processTree = createProcessTreeTracker(processId);
       try {
-        await assertProcessPathStable(request.executable, validatedPaths.executable, "Executable");
-        await assertProcessPathStable(request.cwd, validatedPaths.cwd, "Process cwd");
+        await assertProcessPathStable(safeRequest.executable, validatedPaths.executable, "Executable");
+        await assertProcessPathStable(safeRequest.cwd, validatedPaths.cwd, "Process cwd");
       } catch (error) {
         const drained = await this.abortUnownedProcess(child, processId, processTree);
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process path target-swap cleanup could not be verified", true);
@@ -273,10 +277,10 @@ export class ProcessSupervisor {
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
         throw new BrokerError("POLICY_DENIED", "Process tree observer is unavailable");
       }
-      if (request.onStarted !== undefined || request.requireCleanExitProof === true) {
+      if (safeRequest.onStarted !== undefined || safeRequest.requireCleanExitProof === true) {
         const startTimeMicros = processTree === undefined
           ? undefined
-          : await waitForRootProcessIdentity(processTree, child, request.requireCleanExitProof === true ? 500 : 100);
+          : await waitForRootProcessIdentity(processTree, child, safeRequest.requireCleanExitProof === true ? 500 : 100);
         if (processTree === undefined || startTimeMicros === undefined || processTree.rootProcessGroupId !== processId) {
           const drained = await this.abortUnownedProcess(child, processId, processTree);
           if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
@@ -287,14 +291,14 @@ export class ProcessSupervisor {
           if (processTree.observationFailed) {
             throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
           }
-          if (request.onStarted !== undefined) {
-            await request.onStarted({
+          if (safeRequest.onStarted !== undefined) {
+            await safeRequest.onStarted({
               identity: { pid: processId, processGroupId: processId, startTimeMicros },
               descendants: processTree.snapshotDescendants()
             });
           }
-          await assertProcessPathStable(request.executable, validatedPaths.executable, "Executable");
-          await assertProcessPathStable(request.cwd, validatedPaths.cwd, "Process cwd");
+          await assertProcessPathStable(safeRequest.executable, validatedPaths.executable, "Executable");
+          await assertProcessPathStable(safeRequest.cwd, validatedPaths.cwd, "Process cwd");
         } catch (error) {
           const drained = await this.abortUnownedProcess(child, processId, processTree);
           if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
@@ -302,7 +306,7 @@ export class ProcessSupervisor {
           throw new BrokerError("AUDIT_UNAVAILABLE", "Process identity could not be persisted");
         }
       }
-      if (this.closing || this.cancelled(request.shouldCancel)) {
+      if (this.closing || this.cancelled(safeRequest.shouldCancel)) {
         const drained = await this.abortUnownedProcess(child, processId, processTree);
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
         throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
@@ -325,7 +329,7 @@ export class ProcessSupervisor {
       releasePendingStart();
       return this.observe(
         child,
-        request,
+        safeRequest,
         processId,
         startedAtMs,
         processTree,
@@ -970,6 +974,48 @@ async function validateRequest(request: ProcessExecutionRequest, allowedEnvironm
 function isCanonicalAbsolutePath(value: string): boolean {
   return typeof value === "string" && value.length >= 1 && value.length <= 4_096 &&
     isAbsolute(value) && resolve(value) === value && !value.includes("\0") && !value.includes("\n");
+}
+
+function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
+  if (!isPlainDataRecord(value) ||
+      !hasAllowedKeys(value, ["executable", "args", "cwd", "environment", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
+  }
+  if (!isDenseStringArray(value.args, MAX_ARGUMENTS)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
+  }
+  const environment = value.environment;
+  if (environment !== undefined && !isPlainDataRecord(environment)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process environment is malformed");
+  }
+  if (environment !== undefined && Object.keys(environment).length > MAX_ENVIRONMENT_KEYS) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process environment exceeds the supported size");
+  }
+  if (value.requireCleanExitProof !== undefined && typeof value.requireCleanExitProof !== "boolean") {
+    throw new BrokerError("PRECONDITION_FAILED", "Process exit-proof policy is malformed");
+  }
+  if ((value.shouldCancel !== undefined && typeof value.shouldCancel !== "function") ||
+      (value.onStarted !== undefined && typeof value.onStarted !== "function") ||
+      (value.onOwnershipChanged !== undefined && typeof value.onOwnershipChanged !== "function")) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process control callbacks are malformed");
+  }
+  const snapshot: ProcessExecutionRequest = {
+    executable: value.executable as string,
+    args: [...value.args],
+    cwd: value.cwd as string,
+    timeoutMs: value.timeoutMs as number,
+    outputCapBytes: value.outputCapBytes as number
+  };
+  if (environment !== undefined) snapshot.environment = Object.fromEntries(Object.entries(environment)) as Record<string, string>;
+  if (value.requireCleanExitProof !== undefined) snapshot.requireCleanExitProof = value.requireCleanExitProof as boolean;
+  if (value.shouldCancel !== undefined) snapshot.shouldCancel = value.shouldCancel as () => boolean;
+  if (value.onStarted !== undefined) {
+    snapshot.onStarted = value.onStarted as (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
+  }
+  if (value.onOwnershipChanged !== undefined) {
+    snapshot.onOwnershipChanged = value.onOwnershipChanged as (snapshot: ProcessOwnershipSnapshot) => void;
+  }
+  return snapshot;
 }
 
 function hasAllowedKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {

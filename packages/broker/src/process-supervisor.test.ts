@@ -42,6 +42,27 @@ test("process supervisor rejects non-data request shapes before spawning", async
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor snapshots caller request before asynchronous target checks", async () => {
+  const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: ["SAFE_PROFILE"] });
+  const request = {
+    executable: "/usr/bin/printf",
+    args: ["before"],
+    cwd: CWD,
+    environment: { SAFE_PROFILE: "before" },
+    timeoutMs: 1_000,
+    outputCapBytes: 100
+  };
+  const execution = supervisor.run(request);
+  request.executable = "/usr/bin/false";
+  request.args[0] = "mutated";
+  request.cwd = "/";
+  request.environment = { SAFE_PROFILE: "mutated" };
+  const result = await execution;
+  assert.equal(result.state, "completed");
+  assert.equal(result.stdout, "before");
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor rejects descendant PID identity replacement", () => {
   const tracked = [{ pid: 42, startTimeMicros: 100 }];
   assert.equal(detectProcessIdentityReplacement(tracked, [{ pid: 42, startTimeMicros: 100 }]), false);
