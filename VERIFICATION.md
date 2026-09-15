@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Policy prototype authority-boundary addendum: commit `b164da0` makes
+`validateBrokerPolicy()` reject prototype-bearing records at every strict
+field boundary, including kill switches, key windows, principal grants, and
+tool policies. Policy tests pass 4/4; the security-fuzz policy corpus passes
+7/7; the non-overlapping package regression passes 497 total (491 pass,
+6 skipped, 0 fail); build, typecheck, lint, and diff checks pass. This covers
+in-memory policy shape integrity only and does not close production signing,
+Keychain distribution, VM isolation, privileged helper, or capability gates.
+Evidence: `evidence/2026-09-15-policy-prototype-authority-boundary.md`.
+
 Guest executor close-recovery addendum: commit `3245482` fences new guest
 work, aborts active adapters, always waits for active executions, and clears a
 rejected cleanup Promise for explicit retry while preserving the fence. Guest

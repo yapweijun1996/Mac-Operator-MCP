@@ -41,3 +41,10 @@ Revision `a26a188` provides an independent bounded native Swift readback of
 the canonical JSON vector set, including Unicode ordering and SHA-256 bytes.
 It strengthens cross-runtime evidence for the serialization profile but does
 not replace a production adapter or close the remaining acceptance items.
+
+Revision `b164da0` hardens the runtime authority boundary by rejecting
+prototype-bearing policy records at strict field-validation points. This
+prevents inherited values from being interpreted as kill switches, key-window
+limits, principal grants, or tool contracts. The change covers in-memory
+policy-shape integrity only and does not change the signed policy schema or
+close production signing, Keychain, migration, or installation evidence.

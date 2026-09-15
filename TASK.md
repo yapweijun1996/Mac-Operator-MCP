@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Policy prototype authority-boundary addendum: source revision `b164da0`
+restricts runtime policy records to ordinary or null-prototype objects, so
+inherited fields cannot become Broker authority. Policy tests pass 4/4, the
+security-fuzz policy corpus passes 7/7, and the non-overlapping package
+regression passes 497 total (491 pass, 6 skipped, 0 fail); build, typecheck,
+lint, and diff checks pass. This is a local validation boundary only and does
+not establish production signing, Keychain, VM, helper, or enablement gates.
+Evidence: `evidence/2026-09-15-policy-prototype-authority-boundary.md`.
+
 Guest executor close-recovery addendum: source revision `3245482` always drains
 active guest work after cancellation, preserves the first adapter cleanup
 failure, and permits explicit cleanup retry without reopening execution. The

@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Policy prototype authority-boundary addendum: source revision `b164da0` makes
+runtime policy validation reject prototype-bearing authority records instead
+of accepting inherited kill-switch, key-window, principal, or tool fields.
+Policy tests pass 4/4; the security-fuzz policy corpus passes 7/7; the
+non-overlapping package regression passes 497 total (491 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This closes policy
+object-shape integrity only; production signing, Keychain distribution, VM
+isolation, helper installation, and capability enablement remain open.
+Evidence: `evidence/2026-09-15-policy-prototype-authority-boundary.md`.
+
 Guest executor close-recovery addendum: source revision `3245482` makes
 `VirtualizationGuestProfileExecutor.close()` abort and fully drain active work
 even when adapter cleanup fails. The rejected close Promise is cleared for an
