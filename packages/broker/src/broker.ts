@@ -675,6 +675,7 @@ export class Broker {
     let request: BrokerRequest | undefined;
     let admitted = false;
     let authorized = false;
+    let plannedAuditTarget: string | undefined;
     let sessionReserved = false;
     try {
       if (this.closing) throw new BrokerError("CANCELLED", "Broker is shutting down");
@@ -743,6 +744,9 @@ export class Broker {
       for (const additionalTarget of execution.additionalTargets ?? []) {
         authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, additionalTarget);
       }
+      // Preserve the Broker-normalized target for any later failure. Raw tool
+      // arguments are never copied into audit records.
+      plannedAuditTarget = execution.auditTarget ?? `${target.kind}:${target.reference}`;
       if (request.tool === "mac_write_file_atomic") {
         const existingWriteJob = this.options.store.ownedJobByIdempotencyKey(
           execution.write!.idempotencyKey,
@@ -1066,7 +1070,7 @@ export class Broker {
         ? error
         : new BrokerError("EXECUTION_FAILED", "Broker request failed");
       if (request && admitted) {
-        this.auditFailure(request, brokerError, this.now(), authorized);
+        this.auditFailure(request, brokerError, this.now(), authorized, plannedAuditTarget);
       }
       return this.failure(request, brokerError, startedAt);
     } finally {
@@ -3833,7 +3837,8 @@ export class Broker {
     request: BrokerRequest,
     error: BrokerError,
     timestampMs: number,
-    authorized: boolean
+    authorized: boolean,
+    targetRef?: string
   ): void {
     try {
       this.options.store.failRequest({
@@ -3843,7 +3848,7 @@ export class Broker {
         eventType: authorized ? "completion" : "decision",
         decision: authorized ? "allow" : "deny",
         resultClass: error.errorClass,
-        targetRef: "unresolved",
+        targetRef: targetRef ?? "unresolved",
         policyVersion: request.policyVersion,
         evidence: {},
         timestampMs

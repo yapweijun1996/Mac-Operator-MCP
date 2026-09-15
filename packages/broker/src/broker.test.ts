@@ -1125,6 +1125,7 @@ test("a post-authorization failure is audited as a failed completion", async () 
       ["decision", "allow", "AUTHORIZED"],
       ["completion", "allow", "PRECONDITION_FAILED"]
     ]);
+    assert.deepEqual(rows.map((row) => row.target_ref), ["host:broker", "host:broker"]);
   } finally { await context.close(); }
 });
 
