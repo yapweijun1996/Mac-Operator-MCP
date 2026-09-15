@@ -50,6 +50,22 @@ passes 528 total (522 pass, 6 skipped, 0 fail). Native provenance, process
 ownership, kernel limits, and production task enablement evidence remain open.
 Evidence: `evidence/2026-09-15-process-worker-executor-boundary.md`.
 
+Filesystem native-result addendum: commit `645f57b` applies exact plain-data
+and dense-array validation to native filesystem stat/read/hash/list/write/
+unlink/storage records, with fresh buffer and entry projection. Focused
+filesystem tests pass 37/37; the non-overlapping package regression passes
+530 total (524 pass, 6 skipped, 0 fail). Physical remount, kernel I/O,
+native provenance, and production resource evidence remain open.
+Evidence: `evidence/2026-09-15-filesystem-native-result-boundary.md`.
+
+Audit-anchor readback addendum: commit `e54a862` validates the audit sidecar
+and native lock-recovery readback as exact plain records before MAC/tail or
+unlink decisions. Focused audit-anchor tests pass 8/8; the non-overlapping
+package regression passes 530 total (524 pass, 6 skipped, 0 fail). SQLite
+corruption, key provenance, disk exhaustion, and service recovery evidence
+remain open.
+Evidence: `evidence/2026-09-15-audit-anchor-result-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` applies plain-data
 and exact-field validation to native process inventory/detail results and
 worker envelopes. Owner identities and child PID arrays receive bounded,

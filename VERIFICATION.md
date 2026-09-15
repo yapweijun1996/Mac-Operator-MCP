@@ -58,6 +58,24 @@ only; native provenance, process ownership, kernel limits, and production
 task enablement remain unverified.
 Evidence: `evidence/2026-09-15-process-worker-executor-boundary.md`.
 
+Filesystem native-result addendum: commit `645f57b` rejects unknown,
+inherited, symbolic, accessor, and sparse fields in native stat/read/hash/
+list/write/unlink/storage results before filesystem policy or postcondition
+logic. Directory entries and returned buffers are copied into fresh records.
+Focused filesystem tests pass 37/37; the non-overlapping package regression
+passes 530 total (524 pass, 6 skipped, 0 fail). This proves local native
+filesystem result integrity only; physical remount, kernel I/O, provenance,
+and production resource limits remain unverified.
+Evidence: `evidence/2026-09-15-filesystem-native-result-boundary.md`.
+
+Audit-anchor readback addendum: commit `e54a862` requires exact plain-data
+sidecar and native lock-recovery records before MAC/tail verification or
+identity-bound unlink. Focused audit-anchor tests pass 8/8; the
+non-overlapping package regression passes 530 total (524 pass, 6 skipped,
+0 fail). SQLite corruption, key provenance, disk exhaustion, and installed
+service recovery remain unverified.
+Evidence: `evidence/2026-09-15-audit-anchor-result-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` requires native
 process inventory/detail results to be plain records with exact fields and
 bounded uid/child identities. The generic worker envelope accepts only its

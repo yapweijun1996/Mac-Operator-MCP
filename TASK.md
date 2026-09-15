@@ -64,6 +64,24 @@ ownership, kernel limits, and production task enablement evidence remain
 open.
 Evidence: `evidence/2026-09-15-process-worker-executor-boundary.md`.
 
+Filesystem native-result addendum: source revision `645f57b` makes native
+filesystem stat/read/hash/list/write/unlink/storage records exact plain data;
+directory entries and buffers are copied, and sparse/accessor/unknown fields
+fail closed before path or postcondition checks. Focused filesystem tests
+pass 37/37; the non-overlapping package regression passes 530 total (524
+pass, 6 skipped, 0 fail). Physical remount, kernel I/O, native provenance,
+and production resource evidence remain open.
+Evidence: `evidence/2026-09-15-filesystem-native-result-boundary.md`.
+
+Audit-anchor readback addendum: source revision `e54a862` requires the
+Broker-owned audit sidecar and native lock-recovery result to be plain records
+with exact fields before MAC, tail, or unlink readback checks. Unknown or
+accessor authority fields fail closed. Focused audit-anchor tests pass 8/8;
+the non-overlapping package regression passes 530 total (524 pass, 6 skipped,
+0 fail). SQLite corruption, key provenance, disk exhaustion, and installed
+service recovery evidence remain open.
+Evidence: `evidence/2026-09-15-audit-anchor-result-boundary.md`.
+
 Process-worker result boundary addendum: source revision `a01b62e` hardens
 native process metadata and worker-result parsers. Inventory/detail records
 now require plain data and exact fields; owners are bounded uid identities,
