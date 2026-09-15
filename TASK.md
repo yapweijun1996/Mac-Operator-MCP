@@ -53,6 +53,17 @@ crash ownership, disk exhaustion, service recovery, and final release gates
 remain open.
 Evidence: `evidence/2026-09-15-persisted-job-readbacks.md`.
 
+Process worker executor addendum: source revision `8a9a89c` makes the
+WorkerProcessExecutor reuse the strict native process inventory/detail
+parsers, including exact fields, plain records, dense bounded collections,
+and fresh projection. A sparse inventory or extra/accessor field now fails
+closed before the process result reaches Broker handlers. Focused process
+executor/inspector tests pass 6/6; the non-overlapping package regression
+passes 528 total (522 pass, 6 skipped, 0 fail). Native provenance, process
+ownership, kernel limits, and production task enablement evidence remain
+open.
+Evidence: `evidence/2026-09-15-process-worker-executor-boundary.md`.
+
 Process-worker result boundary addendum: source revision `a01b62e` hardens
 native process metadata and worker-result parsers. Inventory/detail records
 now require plain data and exact fields; owners are bounded uid identities,

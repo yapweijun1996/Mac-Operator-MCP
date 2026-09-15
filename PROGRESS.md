@@ -42,6 +42,14 @@ corruption, crash ownership, disk exhaustion, service recovery, and release
 evidence remain open.
 Evidence: `evidence/2026-09-15-persisted-job-readbacks.md`.
 
+Process worker executor addendum: commit `8a9a89c` unifies WorkerProcessExecutor
+validation with the strict native process parsers and rejects sparse
+inventory arrays or unknown/accessor result fields. Focused process
+executor/inspector tests pass 6/6; the non-overlapping package regression
+passes 528 total (522 pass, 6 skipped, 0 fail). Native provenance, process
+ownership, kernel limits, and production task enablement evidence remain open.
+Evidence: `evidence/2026-09-15-process-worker-executor-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` applies plain-data
 and exact-field validation to native process inventory/detail results and
 worker envelopes. Owner identities and child PID arrays receive bounded,

@@ -48,6 +48,16 @@ crash ownership, disk exhaustion, service recovery, and final release gates
 remain unverified.
 Evidence: `evidence/2026-09-15-persisted-job-readbacks.md`.
 
+Process worker executor addendum: commit `8a9a89c` routes worker inventory and
+detail results through the strict native process parsers before Broker use.
+Exact fields, plain-data records, dense bounded arrays, and fresh projection
+are now shared across both boundaries. Focused process executor/inspector
+tests pass 6/6; the non-overlapping package regression passes 528 total
+(522 pass, 6 skipped, 0 fail). This proves local process-result integrity
+only; native provenance, process ownership, kernel limits, and production
+task enablement remain unverified.
+Evidence: `evidence/2026-09-15-process-worker-executor-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` requires native
 process inventory/detail results to be plain records with exact fields and
 bounded uid/child identities. The generic worker envelope accepts only its
