@@ -889,6 +889,33 @@ test("BrokerStore enforces independent capability-family capacity across handles
   }
 });
 
+test("BrokerStore rejects inherited or accessor admission limits before reading them", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-admission-limit-shape-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const inherited = Object.create({ maxActiveRequestsGlobal: 1 }) as Record<string, unknown>;
+    assert.throws(
+      () => store.admitRequest(requestInput("request-limit-inherited", "nonce-limit-inherited", false), inherited),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+
+    const accessor = {} as Record<string, unknown>;
+    Object.defineProperty(accessor, "maxActiveRequestsByFamily", {
+      enumerable: true,
+      get: () => ({ read: 1 })
+    });
+    assert.throws(
+      () => store.admitRequest(requestInput("request-limit-accessor", "nonce-limit-accessor", false), accessor),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    assert.equal(store.requestRecord("request-limit-inherited"), undefined);
+    assert.equal(store.requestRecord("request-limit-accessor"), undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore fails closed when a persisted capability-family marker is malformed", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-family-corruption-"));
   const databasePath = join(directory, "broker.sqlite");

@@ -3638,23 +3638,24 @@ function validateRequestAdmission(input: AdmitRequestInput): void {
 
 function validateRequestAdmissionLimits(limits: RequestAdmissionLimits | undefined): void {
   if (limits === undefined) return;
-  if (limits === null || typeof limits !== "object" || Array.isArray(limits) ||
+  if (!isPlainDataRecord(limits) ||
       Object.keys(limits).some((key) => key !== "maxActiveRequestsGlobal" && key !== "maxActiveRequestsPerSession" && key !== "maxActiveRequestsByFamily")) {
     throw malformedRequest();
   }
-  for (const value of [limits.maxActiveRequestsGlobal, limits.maxActiveRequestsPerSession]) {
+  const validatedLimits = limits as RequestAdmissionLimits;
+  for (const value of [validatedLimits.maxActiveRequestsGlobal, validatedLimits.maxActiveRequestsPerSession]) {
     if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > MAX_ACTIVE_REQUESTS_GLOBAL)) {
       throw malformedRequest();
     }
   }
-  if (limits.maxActiveRequestsPerSession !== undefined && limits.maxActiveRequestsPerSession > MAX_ACTIVE_REQUESTS_PER_SESSION) {
+  if (validatedLimits.maxActiveRequestsPerSession !== undefined && validatedLimits.maxActiveRequestsPerSession > MAX_ACTIVE_REQUESTS_PER_SESSION) {
     throw malformedRequest();
   }
-  if (limits.maxActiveRequestsByFamily !== undefined) {
-    if (limits.maxActiveRequestsByFamily === null || typeof limits.maxActiveRequestsByFamily !== "object" || Array.isArray(limits.maxActiveRequestsByFamily)) {
+  if (validatedLimits.maxActiveRequestsByFamily !== undefined) {
+    if (!isPlainDataRecord(validatedLimits.maxActiveRequestsByFamily)) {
       throw malformedRequest();
     }
-    for (const [family, value] of Object.entries(limits.maxActiveRequestsByFamily)) {
+    for (const [family, value] of Object.entries(validatedLimits.maxActiveRequestsByFamily)) {
       if (!(CAPABILITY_FAMILIES as readonly string[]).includes(family) ||
           !Number.isSafeInteger(value) || value < 1 || value > MAX_ACTIVE_REQUESTS_GLOBAL) {
         throw malformedRequest();
