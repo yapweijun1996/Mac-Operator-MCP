@@ -4,8 +4,8 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Descriptor-required process admission addendum: source revisions `a05cce8` and
-`c23cfb7`
+Descriptor-required process admission addendum: source revisions `a05cce8`,
+`c23cfb7`, and `495cd6e`
 connects the host-owned descriptor-execution capability gate to
 `ProcessSupervisor`. A Broker-owned supervisor configured for descriptor
 execution now checks the native capability after request validation and before
@@ -13,7 +13,8 @@ any child spawn; unavailable or malformed host support returns stable
 `POLICY_DENIED`, with no pathname fallback. The experimental
 `SandboxExecTaskRunner` uses this requirement for its default supervisor, so
 host sandbox evidence cannot accidentally enable task execution without an
-atomic executable-selection boundary. Focused process-supervisor,
+atomic executable-selection boundary; the capability proof must cover all
+child executables, not only a wrapper launcher. Focused process-supervisor,
 descriptor-capability, sandbox, and task-runner tests pass 38/38 and 15/20
 (5 explicit real-sandbox skips); build, typecheck, lint, docs, and matrix checks
 pass. This closes admission wiring only; native descriptor execution,

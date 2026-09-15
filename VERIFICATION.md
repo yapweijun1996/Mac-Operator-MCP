@@ -4,11 +4,13 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Descriptor-required process admission verification at source revisions
-`a05cce8` and `c23cfb7`: `ProcessSupervisor` now checks the host-owned descriptor-execution
-capability after request validation and before any child spawn when its
+`a05cce8`, `c23cfb7`, and `495cd6e`: `ProcessSupervisor` now checks the
+host-owned descriptor-execution capability after request validation and before
+any child spawn when its
 Broker-owned option requires that boundary. Missing or malformed native
 support returns stable `POLICY_DENIED`; pathname execution is not used as a
-fallback. The default `SandboxExecTaskRunner` supervisor enables this gate so
+fallback. The capability proof must cover `all-child-executables`, not only a
+wrapper launcher. The default `SandboxExecTaskRunner` supervisor enables this gate so
 the experimental sandbox cannot be mistaken for atomic executable selection.
 Focused process-supervisor tests pass 38/38; descriptor-capability,
 sandbox, and task-runner tests pass 15/20 with five explicit real-sandbox

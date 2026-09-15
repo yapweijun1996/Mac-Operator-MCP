@@ -1,7 +1,7 @@
 # Descriptor-required process admission boundary
 
 Date: 2026-09-16
-Source revisions: `a05cce8`, `c23cfb7`
+Source revisions: `a05cce8`, `c23cfb7`, `495cd6e`
 Host: Darwin 25.2.0, arm64, Node v25.5.0
 
 ## Boundary
@@ -13,6 +13,11 @@ capability before registering capacity or calling Node `spawn`. Missing or
 malformed native support produces the stable `POLICY_DENIED` error
 `Kernel descriptor executable launch is unavailable`. The option is not part
 of the MCP request and cannot be changed by tool arguments.
+
+The capability contract also records `executableCoverage`. Admission requires
+the host proof to cover `all-child-executables`; a launcher-only proof is
+insufficient for task execution because `sandbox-exec` may otherwise resolve a
+profile target by pathname after the wrapper starts.
 
 The default `SandboxExecTaskRunner` supervisor enables this option. Injected
 supervisors remain available to unit tests as explicit test doubles; they do

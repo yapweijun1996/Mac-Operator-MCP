@@ -4,12 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-045 descriptor-admission addendum: source revisions `a05cce8` and
-`c23cfb7` wire the
+MOP-045 descriptor-admission addendum: source revisions `a05cce8`, `c23cfb7`,
+and `495cd6e` wire the
 host-owned descriptor-execution capability requirement into the real
 `ProcessSupervisor` admission path. Descriptor-required supervisors reject
 unavailable or malformed native support after validation and before `spawn`,
 using stable `POLICY_DENIED` and never substituting pathname execution. The
+capability contract requires proof coverage for all child executables, so a
+launcher-only native proof cannot enable a sandbox task whose profile target
+would still be selected by pathname. The
 default `SandboxExecTaskRunner` supervisor is descriptor-required, keeping the
 deprecated host sandbox from becoming a production task boundary by accident.
 Focused process-supervisor tests pass 38/38; descriptor-capability,
