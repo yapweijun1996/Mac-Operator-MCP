@@ -810,7 +810,41 @@ export class BrokerStore {
       const rows = this.database.prepare(
         "SELECT * FROM requests ORDER BY received_at_ms, request_id"
       ).all() as unknown as RequestRow[];
-      for (const row of rows) mapRequest(row);
+      for (const row of rows) {
+        const request = mapRequest(row);
+        if (request.approvalId !== null) {
+          const approvalRow = this.database.prepare("SELECT * FROM approvals WHERE approval_id = ?")
+            .get(request.approvalId) as ApprovalRow | undefined;
+          if (approvalRow === undefined) {
+            throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Approval linkage is missing");
+          }
+          const approval = mapApproval(approvalRow);
+          if (approval.requestingPrincipalId !== request.principalId ||
+              approval.tool !== request.tool ||
+              approval.policyVersion !== request.policyVersion ||
+              approval.targetRef !== request.targetRef ||
+              approval.usedCount !== 1 ||
+              approval.lastRequestId !== request.requestId) {
+            throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Approval linkage is inconsistent");
+          }
+        }
+        if (request.jobId !== null) {
+          const jobRow = this.database.prepare("SELECT * FROM jobs WHERE job_id = ?")
+            .get(request.jobId) as JobRow | undefined;
+          if (jobRow === undefined) {
+            throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Job linkage is missing");
+          }
+          const job = mapJob(jobRow);
+          if (job.ownerPrincipalId !== request.principalId ||
+              job.ownerSessionId !== request.sessionId ||
+              job.tool !== request.tool ||
+              job.targetRef !== request.targetRef ||
+              job.policyVersion !== request.policyVersion ||
+              (job.ownerEdgeId !== null && job.ownerEdgeId !== request.edgeId)) {
+            throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Job linkage is inconsistent");
+          }
+        }
+      }
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Request ledger integrity could not be verified");
@@ -1836,6 +1870,19 @@ export class BrokerStore {
       const current = this.requireRequest(requestId);
       if (current.state !== "INTENT_RECORDED" || (current.jobId !== null && current.jobId !== jobId) || nowMs < current.updatedAtMs) {
         throw new BrokerError("CONFLICT", "Request job linkage changed concurrently");
+      }
+      const jobRow = this.database.prepare("SELECT * FROM jobs WHERE job_id = ?").get(jobId) as JobRow | undefined;
+      if (jobRow === undefined) {
+        throw new BrokerError("TARGET_NOT_FOUND", "Job record was not found");
+      }
+      const job = mapJob(jobRow);
+      if (job.ownerPrincipalId !== current.principalId ||
+          job.ownerSessionId !== current.sessionId ||
+          job.tool !== current.tool ||
+          job.targetRef !== current.targetRef ||
+          job.policyVersion !== current.policyVersion ||
+          (job.ownerEdgeId !== null && job.ownerEdgeId !== current.edgeId)) {
+        throw new BrokerError("CONFLICT", "Request and Job identities do not match");
       }
       this.database.prepare(`
         UPDATE requests SET job_id = ?, updated_at_ms = ?, revision = revision + 1
