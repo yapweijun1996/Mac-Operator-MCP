@@ -113,6 +113,92 @@ test("task runner result validation rejects malformed or oversized verification 
   );
 });
 
+test("task runner validators reject inherited, accessor, symbolic, and unknown fields", () => {
+  const result = {
+    state: "completed",
+    resultClass: "SUCCEEDED",
+    exitCode: 0,
+    stdout: "ok\n",
+    stderr: "",
+    truncated: false,
+    durationMs: 12,
+    verification: { status: "verified", summary: "checked" }
+  } as const;
+  const inheritedResult = Object.create(result) as unknown;
+  assert.throws(
+    () => validateTaskExecutionResult(inheritedResult),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+  const accessorResult = { ...result } as Record<string, unknown>;
+  Object.defineProperty(accessorResult, "stdout", { enumerable: true, get: () => "injected" });
+  assert.throws(
+    () => validateTaskExecutionResult(accessorResult),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+  const symbolicResult = { ...result } as Record<string, unknown>;
+  Object.defineProperty(symbolicResult, Symbol("hidden"), { value: "injected" });
+  assert.throws(
+    () => validateTaskExecutionResult(symbolicResult),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+  assert.throws(
+    () => validateTaskExecutionResult({ ...result, extra: true }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+  assert.throws(
+    () => validateTaskExecutionResult({ ...result, stdout: "x".repeat(2 * 1024 * 1024 + 1) }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+  assert.deepEqual(
+    validateTaskExecutionResult({ ...result, verification: { status: "verified" } }),
+    { ...result, verification: { status: "verified" } }
+  );
+  const accessorVerification = { ...result, verification: { ...result.verification } } as Record<string, unknown>;
+  Object.defineProperty(accessorVerification.verification as Record<string, unknown>, "status", {
+    enumerable: true,
+    get: () => "verified"
+  });
+  assert.throws(
+    () => validateTaskExecutionResult(accessorVerification),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+
+  const proof = {
+    schemaVersion: "0.1",
+    sandboxMechanism: "sandbox-exec",
+    sandboxProfile: "deny-default-v0.1",
+    filesystem: "enforced",
+    network: "enforced",
+    credentials: "isolated",
+    persistence: "isolated",
+    credentialIsolation: "sandbox-exec-empty-env-deny-secret-zones-v1",
+    processTree: "owned",
+    processTreePolicy: "single_process",
+    evidenceRef: "evidence://task-runner"
+  } as const;
+  const inheritedProof = Object.create(proof) as unknown;
+  assert.throws(
+    () => validateTaskIsolationProof(inheritedProof),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  const accessorProof = { ...proof } as Record<string, unknown>;
+  Object.defineProperty(accessorProof, "evidenceRef", { enumerable: true, get: () => "evidence://injected" });
+  assert.throws(
+    () => validateTaskIsolationProof(accessorProof),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  const symbolicProof = { ...proof } as Record<string, unknown>;
+  Object.defineProperty(symbolicProof, Symbol("hidden"), { value: "injected" });
+  assert.throws(
+    () => validateTaskIsolationProof(symbolicProof),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.throws(
+    () => validateTaskIsolationProof({ ...proof, extra: true }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+});
+
 test("task runner isolation proof requires every boundary and the selected sandbox profile", () => {
   const proof = {
     schemaVersion: "0.1",

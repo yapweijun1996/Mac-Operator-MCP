@@ -9,6 +9,7 @@ import {
   type ProcessPathIdentity
 } from "./process-supervisor.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { buildSandboxExecArguments, normalizeTaskSandboxProfileOptions, type TaskSandboxProfileOptions } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 import {
@@ -37,6 +38,9 @@ import type {
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
 const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
+const MAX_TASK_RESULT_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_TASK_RESULT_DURATION_MS = 1_200_000;
+const MAX_TASK_RESULT_SUMMARY_BYTES = 512;
 
 export type {
   SignedVirtualizationGuestAttestation,
@@ -660,7 +664,7 @@ async function assertTaskFilesystemRootIdentitiesStable(
 }
 
 export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
@@ -741,22 +745,63 @@ export function requireTaskIsolationProof(
   return validated;
 }
 
-export function validateTaskExecutionResult(value: TaskExecutionResult): TaskExecutionResult {
-  if (value === null || typeof value !== "object" || Array.isArray(value) ||
-      !["completed", "failed", "cancelled", "timed_out", "unknown"].includes(value.state) ||
-      !["SUCCEEDED", "EXECUTION_FAILED", "CANCELLED", "TIMEOUT", "OUTPUT_LIMIT", "UNKNOWN_OUTCOME"].includes(value.resultClass) ||
-      (value.exitCode !== null && (!Number.isInteger(value.exitCode) || value.exitCode < -2_147_483_648 || value.exitCode > 2_147_483_647)) ||
-      typeof value.stdout !== "string" || typeof value.stderr !== "string" ||
-      typeof value.truncated !== "boolean" || !Number.isSafeInteger(value.durationMs) || value.durationMs < 0 ||
-      value.verification === null || typeof value.verification !== "object" ||
-      !["verified", "failed", "unknown", "not_run"].includes(value.verification.status)) {
+export function validateTaskExecutionResult(value: unknown): TaskExecutionResult {
+  if (!isPlainDataRecord(value) ||
+      !hasExactKeys(value, ["state", "resultClass", "exitCode", "stdout", "stderr", "truncated", "durationMs", "verification"])) {
     throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed result");
   }
-  if (value.verification.summary !== undefined &&
-      (typeof value.verification.summary !== "string" || value.verification.summary.length > 512 || value.verification.summary.includes("\0"))) {
+  const state = value.state;
+  const resultClass = value.resultClass;
+  const exitCode = value.exitCode;
+  const stdout = value.stdout;
+  const stderr = value.stderr;
+  const truncated = value.truncated;
+  const durationMs = value.durationMs;
+  const verification = value.verification;
+  if (typeof state !== "string" || !(["completed", "failed", "cancelled", "timed_out", "unknown"] as readonly string[]).includes(state) ||
+      typeof resultClass !== "string" || !(["SUCCEEDED", "EXECUTION_FAILED", "CANCELLED", "TIMEOUT", "OUTPUT_LIMIT", "UNKNOWN_OUTCOME"] as readonly string[]).includes(resultClass) ||
+      (exitCode !== null && (typeof exitCode !== "number" || !Number.isInteger(exitCode) || exitCode < -2_147_483_648 || exitCode > 2_147_483_647)) ||
+      typeof stdout !== "string" || typeof stderr !== "string" ||
+      Buffer.byteLength(stdout, "utf8") + Buffer.byteLength(stderr, "utf8") > MAX_TASK_RESULT_OUTPUT_BYTES ||
+      typeof truncated !== "boolean" || typeof durationMs !== "number" || !Number.isSafeInteger(durationMs) || durationMs < 0 || durationMs > MAX_TASK_RESULT_DURATION_MS ||
+      !isPlainDataRecord(verification) || !hasRequiredKeys(verification, ["status"], ["status", "summary"]) ||
+      typeof verification.status !== "string" || !(["verified", "failed", "unknown", "not_run"] as readonly string[]).includes(verification.status)) {
+    throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed result");
+  }
+  const summary = verification.summary;
+  if (summary !== undefined &&
+      (typeof summary !== "string" || Buffer.byteLength(summary, "utf8") > MAX_TASK_RESULT_SUMMARY_BYTES || summary.includes("\0"))) {
     throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed verification summary");
   }
-  return value;
+  return {
+    state: state as TaskExecutionResult["state"],
+    resultClass: resultClass as TaskExecutionResult["resultClass"],
+    exitCode: exitCode as number | null,
+    stdout,
+    stderr,
+    truncated,
+    durationMs,
+    verification: {
+      status: verification.status as TaskVerificationStatus,
+      ...(summary === undefined ? {} : { summary })
+    }
+  };
+}
+
+function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const keys = Object.keys(value).sort();
+  const expected = [...allowed].sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+}
+
+function hasRequiredKeys(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  allowed: readonly string[]
+): boolean {
+  const keys = Object.keys(value);
+  const allowedSet = new Set(allowed);
+  return required.every((key) => keys.includes(key)) && keys.every((key) => allowedSet.has(key));
 }
 
 function mapProcessResult(result: ProcessExecutionResult): TaskExecutionResult {
