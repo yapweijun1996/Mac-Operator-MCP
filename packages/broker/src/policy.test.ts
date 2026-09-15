@@ -138,6 +138,24 @@ test("tool authorization rejects malformed caller scope lists before policy chec
   }
 });
 
+test("target authorization rejects disabled grants and scopes outside the grant", () => {
+  const base = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const target = { kind: "host" as const, reference: "broker" };
+  const disabledGrant = new Map(base.principalGrants);
+  const grant = disabledGrant.get("principal-1");
+  assert.ok(grant);
+  disabledGrant.set("principal-1", { ...grant, enabled: false });
+  assert.throws(
+    () => authorizeTarget({ ...base, principalGrants: disabledGrant }, "principal-1", ["mac.control.read"], target),
+    (error: unknown) => error instanceof Error && error.message === "Principal authority is not enabled"
+  );
+
+  assert.throws(
+    () => authorizeTarget(base, "principal-1", ["mac.files.read"], target),
+    (error: unknown) => error instanceof Error && error.message === "Principal scope is not granted"
+  );
+});
+
 test("policy authority snapshots isolate mutable caller references", () => {
   const base = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
   const snapshot = cloneBrokerPolicy(base);

@@ -325,6 +325,13 @@ export function authorizeTarget(
       !isPolicyTarget(target, new Set(policy.filesystemRoots.map((root) => root.rootId)))) {
     throw new BrokerError("POLICY_DENIED", "Target authority is malformed");
   }
+  const grant = policy.principalGrants.get(principalId);
+  if (!grant || !grant.enabled) {
+    throw new BrokerError("POLICY_DENIED", "Principal authority is not enabled");
+  }
+  if (scopes.some((scope) => !grant.scopes.includes(scope))) {
+    throw new BrokerError("SCOPE_DENIED", "Principal scope is not granted");
+  }
   const matchingRules = policy.targetRules.filter((rule) =>
     rule.principalId === principalId &&
     scopes.includes(rule.scope) &&
