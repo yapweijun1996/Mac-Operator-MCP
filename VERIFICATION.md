@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Physical secret-boundary regression verification: source revision `356ebd4`
+passes 598/598 non-overlapping built tests with zero skips and zero failures
+under all three physical gates. Real sandbox, temporary Keychain ACL, and
+Edge/Broker LaunchAgent bootstrap/bootout checks ran; this does not close
+production signing, VM isolation, remote issuer, helper installation, or
+`mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-real-secret-boundary-regression.md`.
+
 Latest secret-boundary regression verification: source revision `f921714`
 passes 598 non-overlapping built tests (592 passed, 6 explicit opt-in skips,
 0 failed) after shared local-process and virtualization guest secret checks.

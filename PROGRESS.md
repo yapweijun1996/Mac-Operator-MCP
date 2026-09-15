@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Physical secret-boundary regression addendum: source revision `356ebd4`
+passes the non-overlapping built suite 598/598 with zero skips and zero
+failures under `MOPS_REAL_SANDBOX=1`, `MOPS_REAL_KEYCHAIN=1`, and
+`MOPS_REAL_INSTALL=1`. Real sandbox, Keychain ACL, and temporary
+Edge/Broker LaunchAgent gates ran successfully; process ownership tests now
+use bounded snapshot handshakes and explicit shutdown-cancellation assertions.
+The existing Broker/Persistence process was left undisturbed. Evidence:
+`evidence/2026-09-15-real-secret-boundary-regression.md`.
+
 Latest secret-boundary regression addendum: after source revision `f921714`,
 the non-overlapping built suite passes 598 total (592 passed, 6 explicit
 opt-in skips, 0 failed) after the shared process, TaskProfile, and guest

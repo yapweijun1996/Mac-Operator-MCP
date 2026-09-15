@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Physical secret-boundary regression addendum: source revision `356ebd4`
+passes 598/598 non-overlapping built tests with zero skips and zero failures
+under all three physical gates. Real sandbox, temporary Keychain ACL, and
+Edge/Broker LaunchAgent bootstrap/bootout checks ran; process ownership tests
+now await bounded startup snapshots and verify shutdown cancellation. The old
+Broker/Persistence process was left undisturbed. Production signing, VM,
+remote issuer, helper installation, and task enablement remain open. Evidence:
+`evidence/2026-09-15-real-secret-boundary-regression.md`.
+
 Latest secret-boundary regression addendum: source revision `f921714` passes
 598 non-overlapping built tests (592 pass, 6 explicit opt-in skips, 0 fail)
 after shared local-process and virtualization guest secret checks. The old
