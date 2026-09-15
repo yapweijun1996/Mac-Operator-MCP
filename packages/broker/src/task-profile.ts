@@ -68,6 +68,14 @@ export interface TaskRunRequest {
   asynchronous?: boolean;
 }
 
+export function validateTaskProfileRegistry(value: unknown): asserts value is TaskProfileRegistry {
+  if (value === null || typeof value !== "object" || Array.isArray(value) ||
+      typeof (value as { resolve?: unknown }).resolve !== "function" ||
+      typeof (value as { names?: unknown }).names !== "function") {
+    throw new Error("Task profile registry is malformed");
+  }
+}
+
 export function validateTaskRunArguments(argumentsValue: Readonly<Record<string, unknown>>): TaskRunRequest {
   const keys = Object.keys(argumentsValue);
   if (keys.some((key) => !["profile", "cwd", "args", "async"].includes(key)) ||

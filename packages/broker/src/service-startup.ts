@@ -25,7 +25,7 @@ import {
 } from "./virtualization-guest-startup.js";
 import { BrokerStoreVirtualizationGuestReplayGuard } from "./virtualization-guest-transport.js";
 import { SandboxExecTaskRunner, type SandboxExecTaskRunnerOptions } from "./task-runner.js";
-import type { TaskProfileRegistry } from "./task-profile.js";
+import { validateTaskProfileRegistry, type TaskProfileRegistry } from "./task-profile.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -217,11 +217,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
       options.sandboxTaskRunner === undefined && options.virtualizationGuest === undefined) {
     throw new Error("Broker startup cannot configure task profiles without an isolated task runner");
   }
-  if (options.taskProfileRegistry !== undefined &&
-      (typeof options.taskProfileRegistry.resolve !== "function" ||
-       typeof options.taskProfileRegistry.names !== "function")) {
-    throw new Error("Broker startup task profile registry is malformed");
-  }
+  if (options.taskProfileRegistry !== undefined) validateTaskProfileRegistry(options.taskProfileRegistry);
   await assertStartupDirectories(config);
   const now = options.now ?? Date.now;
   const instanceLockPath = brokerServiceInstanceLockPath(config.runtimeRoot);

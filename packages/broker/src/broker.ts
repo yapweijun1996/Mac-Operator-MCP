@@ -47,7 +47,7 @@ import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspec
 import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
-import { TaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
+import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
 import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, type UiActionName, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
@@ -198,6 +198,7 @@ export class Broker {
     this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(this.processSupervisor);
     this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
+    validateTaskProfileRegistry(this.taskProfileRegistry);
     this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
     this.privilegedHelperExecutor = options.privilegedHelperExecutor ?? new PrivilegedHelperJobExecutor({ store: options.store });
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;

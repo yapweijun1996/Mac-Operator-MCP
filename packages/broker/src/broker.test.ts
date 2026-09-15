@@ -1875,6 +1875,26 @@ test("mac_task_run fails closed before consuming approval when runner mechanism 
   }
 });
 
+test("Broker rejects a malformed task profile registry at construction", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-registry-invalid-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    assert.throws(
+      () => new Broker({
+        store,
+        policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+        edgeAuthenticationKeys: testKeyring(randomBytes(32)),
+        taskProfileRegistry: {} as TaskProfileRegistry,
+        now: () => NOW
+      }),
+      /Task profile registry is malformed/u
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_task_run binds approval, profile resolution, and verified Job completion", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-run-"));
   const root = await realpath(directory);

@@ -83,7 +83,7 @@ test("Broker startup rejects a malformed task profile registry", async () => {
       sandboxTaskRunner: {},
       taskProfileRegistry: {} as TaskProfileRegistry
     }),
-    /task profile registry is malformed/u
+    /Task profile registry is malformed/u
   );
 });
 
