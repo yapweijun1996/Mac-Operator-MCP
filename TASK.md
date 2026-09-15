@@ -1547,6 +1547,12 @@ this does not claim persistent installation or signing provenance.
   absent, and identity-mismatch outcomes remain terminal. Physical-host probe
   and regression coverage verify unknown-then-drained recovery. Evidence:
   `evidence/2026-09-15-process-recovery-retry.md`.
+- MOP-071 write-recovery clarification: source revision `2fadf8a` retries a
+  prior `TEMPORARY_CLEANUP_SKIPPED` observation using only the persisted root,
+  target, and exact temporary name. Root, symlink, and device/inode checks gate
+  unlinking; no write is replayed or promoted. Physical-host probe and
+  regression coverage verify skip-then-safe-removal recovery. Evidence:
+  `evidence/2026-09-15-write-recovery-retry.md`.
 - `MOP-088` — `DONE` — Resolved the two repo representation conflicts, recorded decision/rationale/migration/evidence, and prepared `KB_SYNC.md` for owner-reviewed upstream writeback. This documentation-only task does not mutate KB-MCP.
 
 Authority-control note: generic runtime switches and revocations now append redacted hash-linked `intent`/`completion` audit pairs in the same persistence transaction as the authority change and queued-job cancellation. A separate owner-only, native-peer/HMAC/replay-bound Authority Control IPC now admits only switch and revocation commands and carries its request ID into those audit pairs. Its operator key is selected by a protected, digest-bound, monotonic activation manager with a dedicated revocation kind and exact restart restore, and the uninstall coordinator constructs its client from that manager. This does not close active process-tree termination, installed startup, or operator recovery evidence.

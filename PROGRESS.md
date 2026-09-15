@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+UNKNOWN write recovery addendum: source revision `2fadf8a` retries a prior
+`TEMPORARY_CLEANUP_SKIPPED` observation using only the persisted root, target,
+and exact temporary name. Filesystem root, symlink, and device/inode checks
+still gate unlinking; no write is replayed or promoted. A physical-host probe
+and regression coverage verify skip-then-safe-removal behavior.
+Evidence: `evidence/2026-09-15-write-recovery-retry.md`.
+
 UNKNOWN process recovery addendum: source revision `436917d` treats
 `PROCESS_RECOVERY_UNKNOWN` as retryable observer uncertainty. Later startup
 reconciliation retries the exact persisted PID/start-time/process-group

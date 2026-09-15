@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+UNKNOWN write recovery verification: source revision `2fadf8a` retries only a
+prior `TEMPORARY_CLEANUP_SKIPPED` result and reuses the persisted exact target
+and temporary name. Existing root, symlink, and device/inode checks remain in
+force; no write is replayed or promoted. A physical-host probe and regression
+coverage verify skip-then-safe-removal behavior; build, lint, and typecheck
+pass. Evidence: `evidence/2026-09-15-write-recovery-retry.md`.
+
 UNKNOWN process recovery verification: source revision `436917d` retries a
 restart-reconciled task only when the prior result was
 `PROCESS_RECOVERY_UNKNOWN`; the same persisted process identity is used and no
