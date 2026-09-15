@@ -2607,3 +2607,12 @@ pass 2/2; the non-overlapping package regression passes 538 total (532 passed,
 close production deployment, Keychain, remote transport, privileged
 operations, or capability enablement. Evidence:
 `evidence/2026-09-15-status-array-boundary.md`.
+
+Startup-config verification at source revision `345b329` confirms the Broker
+startup validator rejects accessor and inherited configuration objects before
+key enumeration, path normalization, or authority checks. The focused test
+passes 1/1; the non-overlapping package regression passes 538 total (532
+passed, 6 skipped, 0 failed). This remains representation evidence only and
+does not close Developer ID, installed lifecycle, Keychain, remote deployment,
+helper, or release gates. Evidence:
+`evidence/2026-09-15-startup-config-boundary.md`.

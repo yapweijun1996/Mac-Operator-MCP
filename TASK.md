@@ -1719,3 +1719,12 @@ status readback tests pass 2/2; the non-overlapping package regression passes
 production deployment, Keychain, remote transport, privileged operations, and
 capability enablement remain open. Evidence:
 `evidence/2026-09-15-status-array-boundary.md`.
+
+Startup-config boundary addendum: commit `345b329` applies the shared
+plain-data check before Broker startup configuration key enumeration, path
+normalization, or authority checks. Accessor and inherited fixtures are
+rejected; the focused startup-config test passes 1/1 and the non-overlapping
+package regression passes 538 total (532 passed, 6 skipped). Developer ID,
+installed lifecycle, Keychain, remote deployment, helper, and release gates
+remain open. Evidence:
+`evidence/2026-09-15-startup-config-boundary.md`.

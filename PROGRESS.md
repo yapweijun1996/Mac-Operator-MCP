@@ -2943,3 +2943,11 @@ tests pass 2/2; the non-overlapping package regression passes 538 total (532
 passed, 6 skipped, 0 failed). Production deployment, Keychain, remote
 transport, privileged operations, and capability enablement remain open.
 Evidence: `evidence/2026-09-15-status-array-boundary.md`.
+
+Broker startup configuration now enforces the shared plain-data boundary before
+key enumeration, path normalization, or authority checks (source revision
+`345b329`). Focused accessor/inherited fixtures pass 1/1; the non-overlapping
+package regression passes 538 total (532 passed, 6 skipped, 0 failed).
+Developer ID, installed lifecycle, Keychain, remote deployment, helper, and
+release gates remain open. Evidence:
+`evidence/2026-09-15-startup-config-boundary.md`.
