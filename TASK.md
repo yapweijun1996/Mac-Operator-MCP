@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-runner result-boundary addendum: source revision `0c486c9` applies the
+plain-data boundary to host isolation proofs and runner results. Both records
+reject inherited/accessor/symbolic fields and unknown keys; result verification
+records allow only their declared optional summary, while UTF-8 output and
+duration remain bounded before Broker persistence or audit. The focused
+task-runner/guest-attestation suite passes 19/19; the non-overlapping package
+regression passes 512 total (506 pass, 6 skipped, 0 fail). Build, typecheck,
+lint, and diff checks pass. This closes local result-shape integrity only;
+production sandbox, credential isolation, VM, and `mac_task_run` gates remain
+open.
+Evidence: `evidence/2026-09-15-task-runner-result-boundary.md`.
+
 Filesystem mutation rename-race addendum: source revision `e83bf1e` adds a
 physical-host atomic-write race harness alongside the read harness. It
 repeatedly renames an authorized child directory, replaces it with an outside

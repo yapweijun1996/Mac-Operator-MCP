@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-runner result-boundary addendum: commit `0c486c9` applies the shared
+plain-data check and exact field set to host isolation proofs and runner
+results. Accessors, inherited/symbolic fields, unknown keys, oversized UTF-8
+output, and overlong durations fail closed before Broker persistence/audit;
+guest verification summaries remain explicitly optional. The focused
+task-runner/guest-attestation suite passes 19/19; the non-overlapping package
+regression passes 512 total (506 pass, 6 skipped, 0 fail); build, typecheck,
+lint, and diff checks pass. This closes local parser/result integrity only;
+production sandbox, credential, VM, and `mac_task_run` evidence remain open.
+Evidence: `evidence/2026-09-15-task-runner-result-boundary.md`.
+
 Filesystem mutation rename-race addendum: commit `e83bf1e` adds a
 physical-host atomic-write race harness alongside the read harness. It
 repeatedly renames an authorized child directory, replaces it with an outside
