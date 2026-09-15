@@ -144,25 +144,20 @@ export class TaskProfileRegistry {
   }
 
   async resolve(request: TaskRunRequest): Promise<ResolvedTaskProfile> {
-    if (!isPlainDataRecord(request) ||
-        !hasAllowedKeys(request, ["profile", "cwd", "args", "asynchronous"]) ||
-        typeof request.profile !== "string" || !PROFILE_ID_PATTERN.test(request.profile) ||
-        (request.args !== undefined && !isStringArray(request.args, MAX_PROFILE_ARGUMENTS))) {
-      throw new BrokerError("PRECONDITION_FAILED", "Task profile request is malformed");
-    }
-    const profile = this.profiles.get(request.profile);
+    const safeRequest = snapshotTaskRunRequest(request);
+    const profile = this.profiles.get(safeRequest.profile);
     if (!profile) throw new BrokerError("TARGET_NOT_FOUND", "Named task profile was not found");
     if (!profile.enabled) throw new BrokerError("POLICY_DENIED", "Named task profile is disabled");
-    if (!isCanonicalAbsolutePath(request.cwd)) {
+    if (!isCanonicalAbsolutePath(safeRequest.cwd)) {
       throw new BrokerError("PRECONDITION_FAILED", "Task cwd must be a canonical absolute path");
     }
-    const cwd = await validateCanonicalDirectory(request.cwd);
+    const cwd = await validateCanonicalDirectory(safeRequest.cwd);
     const allowedRoot = await this.findAllowedCwdRoot(profile.allowedCwdRoots, cwd);
     if (!allowedRoot) throw new BrokerError("POLICY_DENIED", "Task cwd is outside the profile roots");
 
     const executable = await validateCanonicalExecutable(profile.executable);
     for (const root of profile.filesystemRoots) await validateCanonicalDirectory(root);
-    const requestedArgs = request.args ?? [];
+    const requestedArgs = safeRequest.args ?? [];
     const argumentPattern = this.argumentPatterns.get(profile.profile)!;
     validateArguments(requestedArgs, profile.maxArguments ?? 0, argumentPattern);
     const args = [...(profile.fixedArgs ?? []), ...requestedArgs];
@@ -364,6 +359,19 @@ function cloneProfile(profile: TaskProfile): TaskProfile {
     filesystemRoots: [...profile.filesystemRoots],
     ...(profile.networkAllowlist ? { networkAllowlist: [...profile.networkAllowlist] } : {})
   };
+}
+
+function snapshotTaskRunRequest(value: unknown): TaskRunRequest {
+  if (!isPlainDataRecord(value) || !hasAllowedKeys(value, ["profile", "cwd", "args", "asynchronous"]) ||
+      typeof value.profile !== "string" || !PROFILE_ID_PATTERN.test(value.profile) ||
+      typeof value.cwd !== "string" || (value.args !== undefined && !isStringArray(value.args, MAX_PROFILE_ARGUMENTS)) ||
+      (value.asynchronous !== undefined && typeof value.asynchronous !== "boolean")) {
+    throw new BrokerError("PRECONDITION_FAILED", "Task profile request is malformed");
+  }
+  const snapshot: TaskRunRequest = { profile: value.profile, cwd: value.cwd };
+  if (value.args !== undefined) snapshot.args = [...value.args];
+  if (value.asynchronous !== undefined) snapshot.asynchronous = value.asynchronous;
+  return snapshot;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

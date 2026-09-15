@@ -177,3 +177,16 @@ test("task profile boundaries reject inherited, accessor, symbolic, and sparse a
     );
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("task profile resolution snapshots caller arguments before asynchronous target checks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-task-profile-snapshot-"));
+  try {
+    const canonicalRoot = await realpath(root);
+    const registry = new TaskProfileRegistry([profile(canonicalRoot)]);
+    const request = { profile: "tests.echo", cwd: canonicalRoot, args: ["hello"] };
+    const resolution = registry.resolve(request);
+    request.args[0] = "hello;whoami";
+    const resolved = await resolution;
+    assert.deepEqual(resolved.process.args, ["hello"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
