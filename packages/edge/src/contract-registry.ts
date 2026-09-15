@@ -192,7 +192,7 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
   validateFunctionalSchema(record.output_schema, "output_schema", file);
   validateInputSchemaAuthorityFields(record.input_schema, file);
   validateSource(record.source, file);
-  return {
+  return freezeContract({
     schemaVersion,
     toolName,
     requiredScopes: [...scopes as string[]],
@@ -202,7 +202,28 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
     idempotent: booleanField(record, "idempotent", file),
     safetyClass,
     networkPolicy
+  });
+}
+
+/**
+ * Contract schemas are validated once and then shared with MCP SDK callers.
+ * Freeze the complete data graph so a later consumer cannot mutate a checked
+ * schema or scope snapshot after admission.
+ */
+function freezeContract(contract: EdgeToolContract): EdgeToolContract {
+  const seen = new Set<object>();
+  const freeze = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) freeze(item);
+    } else {
+      for (const child of Object.values(value)) freeze(child);
+    }
+    Object.freeze(value);
   };
+  freeze(contract);
+  return contract;
 }
 
 function enumField(record: Record<string, unknown>, key: string, allowed: ReadonlySet<string>, file: string): string {

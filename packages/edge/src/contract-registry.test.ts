@@ -71,6 +71,26 @@ test("contract registry loads bounded regular files and exposes the parsed contr
   });
 });
 
+test("contract registry freezes the validated schema and scope snapshot", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, validContract);
+    const registry = await ToolContractRegistry.load(directory);
+    const contract = registry.get("mac_test");
+    assert.ok(contract);
+    assert.equal(Object.isFrozen(contract), true);
+    assert.equal(Object.isFrozen(contract.requiredScopes), true);
+    assert.equal(Object.isFrozen(contract.inputSchema), true);
+    const properties = contract.inputSchema.properties as Record<string, unknown>;
+    assert.equal(Object.isFrozen(properties), true);
+    assert.throws(() => {
+      properties.injected = { type: "string" };
+    }, TypeError);
+    assert.throws(() => {
+      (contract.requiredScopes as string[]).push("mac.files.read");
+    }, TypeError);
+  });
+});
+
 test("contract registry rejects a symlinked contract file", async () => {
   await withTempDirectory(async (directory) => {
     await writeFile(join(directory, "source.json"), JSON.stringify(validContract), "utf8");
