@@ -122,6 +122,10 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     return this.executor.close();
   }
 
+  activeCount(): number {
+    return this.executor.activeCount();
+  }
+
   stat(plan: FilesystemPathPlan, followSymlink: boolean, control: FilesystemExecutionControl): Promise<FilesystemWorkerResult> {
     return this.executor.run({ operation: "stat", plan, followSymlink }, control.timeoutMs, control.shouldCancel)
       .then(validateFilesystemWorkerResult);

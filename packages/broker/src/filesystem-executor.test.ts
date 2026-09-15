@@ -34,6 +34,11 @@ test("filesystem worker searches multiple roots and recovers bounded capacity", 
     assert.deepEqual([...result.roots].sort(), [await realpath(left), await realpath(right)].sort());
     assert.deepEqual(result.matches.map((match) => match.path).sort(), [await realpath(leftFile), await realpath(rightFile)].sort());
 
+    const releaseDeadline = Date.now() + 2_000;
+    while (executor.activeCount() !== 0 && Date.now() < releaseDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(executor.activeCount(), 0);
     const recovered = await executor.find(plans, "needle", 10, control);
     assert.equal(recovered.operation, "find");
   } finally {
