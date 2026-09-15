@@ -4,9 +4,9 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Local-gate checkpoint addendum: source revision `e31fe76` passes 5/5 native
+Local-gate checkpoint addendum: source revision `7becf03` passes 5/5 native
 canonical-JSON vectors, `npm audit --audit-level=high` reports zero
-vulnerabilities, lint passes for 599 tracked files, and `git diff --check`
+vulnerabilities, lint passes for 600 tracked files, and `git diff --check`
 passes. The non-overlapping package regression remains 591 total (585 pass,
 6 skipped, 0 fail); the already-running Broker/persistence suites were not
 restarted. The working tree is clean and no remote push was performed.

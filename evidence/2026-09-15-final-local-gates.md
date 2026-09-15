@@ -3,13 +3,13 @@
 Status: PARTIAL release evidence; full production gates remain open
 
 Date: 2026-09-15
-Source revision: `e31fe76`
+Source revision: `7becf03`
 
 ## Verification
 
 - Native canonical JSON vectors: 5/5 passed (`jcs-utf8-v1`).
 - `npm audit --audit-level=high`: 0 vulnerabilities.
-- `npm run lint`: passed for 599 tracked files.
+- `npm run lint`: passed for 600 tracked files.
 - `git diff --check`: passed.
 - Non-overlapping package regression: 591 total, 585 passed, 6 skipped, 0 failed.
 - Working tree: clean; no remote push performed.

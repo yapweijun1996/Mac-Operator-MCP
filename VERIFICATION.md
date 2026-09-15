@@ -3,9 +3,9 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Local-gate checkpoint at source revision `e31fe76`: native canonical-JSON
+Local-gate checkpoint at source revision `7becf03`: native canonical-JSON
 vectors pass 5/5, dependency audit reports zero high-severity vulnerabilities,
-lint passes for 599 tracked files, and `git diff --check` passes. The
+lint passes for 600 tracked files, and `git diff --check` passes. The
 non-overlapping package regression passes 591 total (585 passed, 6 explicitly
 skipped, 0 failed); the existing Broker/persistence test processes were not
 restarted, so their fresh completion is not claimed. Working tree is clean and
