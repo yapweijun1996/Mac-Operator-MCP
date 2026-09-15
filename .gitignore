@@ -13,6 +13,7 @@ coverage/
 
 # Local runtime state
 *.sqlite
+*.sqlite.enc*
 *.sqlite-shm
 *.sqlite-wal
 *.anchor
