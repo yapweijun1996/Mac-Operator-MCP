@@ -2799,3 +2799,11 @@ the non-overlapping package regression passes 558 total (552 passed, 6
 skipped, 0 failed). Production identity, disk-exhaustion behavior, and ADR
 acceptance remain open. Evidence:
 `evidence/2026-09-15-request-state-invariants.md`.
+
+Audit-row verification confirms malformed persisted sequence, identity/text,
+event, timestamp, hash, and evidence JSON fields fail closed as
+`AUDIT_UNAVAILABLE` before audit readback. Focused audit-row corruption tests
+pass 1/1; the non-overlapping package regression passes 559 total (553
+passed, 6 skipped, 0 failed). External rollback-resistant anchoring,
+production identity, and final ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-audit-row-invariants.md`.

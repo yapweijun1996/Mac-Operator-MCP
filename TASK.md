@@ -1861,3 +1861,11 @@ timestamps must be monotonic; malformed rows fail closed as
 non-overlapping package regression passes 558 total (552 passed, 6 skipped, 0
 failed). Disk exhaustion, production identity, and final ADR acceptance remain
 open. Evidence: `evidence/2026-09-15-request-state-invariants.md`.
+
+Audit-event readback invariants are now enforced at the persistence boundary
+(source revision `ed22f71`). Audit sequence ordering, bounded identity/text
+fields, event/decision enums, timestamp, hash shape, and strict evidence JSON
+are validated before audit verification or caller readback. Focused audit-row
+corruption tests pass 1/1 and the non-overlapping package regression passes 559
+total (553 passed, 6 skipped, 0 failed). Evidence:
+`evidence/2026-09-15-audit-row-invariants.md`.
