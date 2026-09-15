@@ -287,7 +287,8 @@ bool SameFilesystem(int descriptor, const struct statfs& expected) {
   if (fstatfs(descriptor, &actual) != 0) return false;
   return actual.f_fsid.val[0] == expected.f_fsid.val[0] &&
       actual.f_fsid.val[1] == expected.f_fsid.val[1] &&
-      actual.f_type == expected.f_type;
+      actual.f_type == expected.f_type &&
+      actual.f_flags == expected.f_flags;
 }
 
 void SetString(napi_env env, napi_value object, const char* name, const char* value) {
@@ -1273,9 +1274,10 @@ napi_value StatStorageVolumeWithinRoot(napi_env env, napi_callback_info info) {
   const unsigned long long used_bytes = total_bytes >= free_bytes ? total_bytes - free_bytes : 0;
 
   char id[256];
-  snprintf(id, sizeof(id), "dev:%llu:fsid:%d:%d",
+  snprintf(id, sizeof(id), "dev:%llu:fsid:%d:%d:flags:%llu",
       static_cast<unsigned long long>(root_stat.st_dev),
-      root_filesystem.f_fsid.val[0], root_filesystem.f_fsid.val[1]);
+      root_filesystem.f_fsid.val[0], root_filesystem.f_fsid.val[1],
+      static_cast<unsigned long long>(root_filesystem.f_flags));
   const char* filesystem_name = root_filesystem.f_fstypename[0] == '\0' ? "unknown" : root_filesystem.f_fstypename;
   const char* mount_path = root_filesystem.f_mntonname[0] == '\0' ? resolved_root : root_filesystem.f_mntonname;
 

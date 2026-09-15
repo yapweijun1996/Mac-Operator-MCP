@@ -26,6 +26,8 @@ test("native filesystem boundary opens targets relative to a pinned root descrip
   assert.match(source, /recoverUnlinkFileWithinRoot/u);
   assert.match(source, /\.mac-operator-unlink-%llu-%016llx-%s/u);
   assert.match(source, /after_unlink_quarantine_rename/u);
+  assert.match(source, /actual\.f_flags == expected\.f_flags/u);
+  assert.match(source, /fsid:%d:%d:flags:%llu/u);
 });
 
 const nativeFaultChildSource = `
