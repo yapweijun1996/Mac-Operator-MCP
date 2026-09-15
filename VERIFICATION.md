@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest-executor admission-concurrency addendum: source revision `eb9aa47`
+reserves guest capacity before asynchronous manifest resolution and checks
+active plus pending admissions against `maxConcurrent`. Focused guest executor
+tests pass 8/8; the combined guest/transport/lifecycle/startup/native suite
+passes 53/53 with 0 skipped tests. Build, typecheck, lint, and diff checks
+pass. VM boot, guest isolation, and production `mac_task_run` enablement are
+not claimed. Evidence:
+`evidence/2026-09-15-virtualization-guest-concurrency.md`.
+
 Guest-bootstrap timeout-cancellation addendum: source revision `9148013`
 aborts the per-connection guest controller before stream close on deadline or
 transport failure, propagating a stable cancellation signal into the guest

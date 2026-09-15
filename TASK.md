@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-executor admission-concurrency addendum: source revision `eb9aa47`
+reserves a slot before asynchronous manifest readback and enforces
+`active + inFlight <= maxConcurrent`, preventing concurrent admissions from
+oversubscribing guest process capacity. Guest executor tests pass 8/8; the
+combined guest/transport/lifecycle/startup/native focused suite passes 53/53
+with 0 skipped tests. Build, typecheck, lint, and diff checks pass. VM boot,
+guest isolation, and production `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-guest-concurrency.md`.
+
 Guest-bootstrap timeout-cancellation addendum: source revision `9148013`
 propagates connection deadline and transport failure into the per-connection
 guest executor before stream close, so timed-out work cannot continue after

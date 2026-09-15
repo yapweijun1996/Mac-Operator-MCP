@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-executor admission-concurrency addendum: source revision `eb9aa47`
+counts pending manifest admission as in-flight work, reserving the bounded
+slot synchronously before filesystem identity readback. A `maxConcurrent: 1`
+regression rejects the competing request and permits the first to complete;
+guest executor tests pass 8/8 and the combined guest/transport/lifecycle/
+startup/native focused suite passes 53/53 with 0 skipped tests. Build,
+typecheck, lint, and diff checks pass. VM boot, guest isolation, and
+production `mac_task_run` enablement remain disabled. Evidence:
+`evidence/2026-09-15-virtualization-guest-concurrency.md`.
+
 Guest-bootstrap timeout-cancellation addendum: source revision `9148013`
 changes each connection handler to retain its abort controller and abort
 guest work before closing the stream on deadline, transport, or normal
