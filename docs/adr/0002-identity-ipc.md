@@ -136,6 +136,14 @@ mtime, and ctime must remain stable after reading; changed bytes are wiped and
 rejected before Edge key activation. This closes only the local read window and
 does not establish installed cross-process key distribution.
 
+Revision `a01f540` extends the post-read descriptor check to Edge TLS
+certificate/private-key, startup configuration, and tool-contract readers,
+using the same device/inode/owner/group/mode/size/mtime/ctime identity. The
+authentication-key reader wipes temporary source bytes after derivation, and
+Broker readers wipe bytes when post-read stat fails. This remains local
+descriptor-readback evidence; installed key distribution, packaging, and
+cross-process acceptance remain open.
+
 Revision `a26a188` adds a bounded, read-only Swift standard-library probe for
 the `jcs-utf8-v1` canonical JSON vectors. It independently reproduces
 ECMAScript escaping, UTF-16 property ordering, UTF-8 digest bytes, and the

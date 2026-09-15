@@ -45,6 +45,13 @@ before parsing or activation. This closes an in-place read-window race only;
 it does not change the signed-policy model or close production distribution and
 installation gates.
 
+Revision `a01f540` applies the same complete descriptor metadata check to the
+Edge startup configuration and tool-contract readers. Changed or oversized
+bytes are wiped before parsing, so policy-adjacent startup and contract data
+cannot be accepted from an in-place target mutation. This is local readback
+evidence only and does not close signed distribution, installation, or
+capability enablement.
+
 Revision `a26a188` provides an independent bounded native Swift readback of
 the canonical JSON vector set, including Unicode ordering and SHA-256 bytes.
 It strengthens cross-runtime evidence for the serialization profile but does

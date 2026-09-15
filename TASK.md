@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-080/081/084/085/086 Edge protected descriptor readback addendum at source
+revision `a01f540`: Edge authentication-key, TLS, startup-config, and
+tool-contract readers compare complete descriptor metadata after reading and
+wipe changed or oversized bytes; authentication-key source bytes are wiped
+after derivation, and Broker readers wipe bytes when post-read stat fails.
+Focused Edge/Broker tests pass 32/32; the serial physical regression passes
+657/662 with 0 failures and 5 explicit descriptor-capability skips. Atomic
+executable selection, remount, production isolation, signing, and enablement
+gates remain open. Evidence:
+`evidence/2026-09-16-edge-protected-descriptor-readback.md`.
+
 MOP-080/081/084/085/086 protected descriptor readback addendum at source
 revision `ea50824`: all protected policy and key metadata readers perform a
 post-read descriptor identity/metadata check and wipe changed or oversized

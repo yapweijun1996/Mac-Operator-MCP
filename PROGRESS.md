@@ -4,6 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge protected descriptor readback addendum at source revision `a01f540`:
+Edge authentication-key, TLS, startup-config, and tool-contract readers now
+compare device, inode, owner, group, mode, size, mtime, and ctime after
+reading through an opened descriptor, wiping changed or oversized bytes before
+rejection. Authentication-key temporary source bytes are wiped after key
+derivation, and Broker readers now wipe bytes if post-read stat fails. Focused
+Edge/Broker tests pass 32/32; the serial physical regression passes 657/662
+with 0 failures and 5 explicit descriptor-capability skips. This closes the
+Edge protected read-window race only; atomic executable selection, remount
+resistance, production isolation, installed signing, and capability
+enablement remain open. Evidence:
+`evidence/2026-09-16-edge-protected-descriptor-readback.md`.
+
 Protected descriptor readback addendum at source revision `ea50824`: policy,
 Edge-key, approval-key, policy-signer, authority-control, privileged-helper,
 and guest-attestation readers now compare descriptor identity and metadata

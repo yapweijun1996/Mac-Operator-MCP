@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge protected descriptor readback verification at source revision `a01f540`:
+Edge authentication-key, TLS, startup-config, and tool-contract readers now
+perform a complete post-read descriptor metadata check and wipe changed or
+oversized bytes; authentication-key temporary source bytes are wiped after
+derivation, and Broker readers wipe bytes when post-read stat fails. Focused
+Edge/Broker tests pass 32/32. The serial physical regression passes 657/662
+with 0 failures and 5 explicit descriptor-capability skips. The three
+pre-existing long-running suites were excluded and left untouched. This
+closes the Edge protected read-window race only; atomic executable selection,
+remount resistance, production isolation, installed signing, and capability
+enablement remain open. Evidence:
+`evidence/2026-09-16-edge-protected-descriptor-readback.md`.
+
 Protected descriptor readback verification at source revision `ea50824`:
 protected policy and key metadata readers now perform a post-read descriptor
 identity check covering device, inode, owner, mode, size, mtime, and ctime;
