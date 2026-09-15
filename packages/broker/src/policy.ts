@@ -3,6 +3,7 @@ import { BrokerError, CAPABILITY_FAMILIES, CONTRACT_VERSION, PLANNED_TOOL_NAMES,
 import type { BrokerStore, SwitchName } from "./persistence.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import { isSignedPolicyTargetReference } from "./target-authority.js";
 
 export interface ToolPolicy {
   tool: string;
@@ -66,15 +67,6 @@ const TARGET_KINDS = new Set<NormalizedTarget["kind"]>([
   "service", "log_source", "docker_runtime", "docker_object", "package", "power"
 ]);
 const POLICY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const TARGET_REFERENCE_SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const TARGET_REFERENCE_APP_PATTERN = /^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
-const TARGET_REFERENCE_APP_WINDOW_PATTERN = /^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
-const TARGET_REFERENCE_UI_ELEMENT_PATTERN = /^element:[a-f0-9]{48}$/u;
-const TARGET_REFERENCE_SERVICE_PATTERN = /^system\/[A-Za-z0-9._:@+-]{1,240}$/u;
-const TARGET_REFERENCE_LOG_SOURCE_PATTERN = /^system$|^process\/[A-Za-z0-9._+-]{1,120}$/u;
-const TARGET_REFERENCE_DOCKER_OBJECT_PATTERN = /^[A-Za-z0-9._:\/-]{1,256}$/u;
-const TARGET_REFERENCE_PACKAGE_PATTERN = /^[A-Za-z0-9._:@/+-]{1,255}$/u;
-const TARGET_REFERENCE_PROCESS_PATTERN = /^all$|^pid:[1-9][0-9]{0,7}$/u;
 
 /**
  * Validate the runtime policy shape at the authority boundary. Signed policy
@@ -251,26 +243,7 @@ function isPolicyTarget(value: unknown, filesystemRootIds: ReadonlySet<string>):
 }
 
 function isPolicyRuleTargetReference(target: NormalizedTarget): boolean {
-  const { kind, reference } = target;
-  if (reference.length < 1 || reference.length > 4_096 || reference.includes("\0") || /[\r\n]/u.test(reference)) return false;
-  switch (kind) {
-    case "host": return reference === "broker" || reference === "local";
-    case "path": return TARGET_REFERENCE_SAFE_ID_PATTERN.test(reference);
-    case "project": return isCanonicalAbsolutePath(reference);
-    case "process": return TARGET_REFERENCE_PROCESS_PATTERN.test(reference);
-    case "job": return reference === "owned";
-    case "task_profile": return TARGET_REFERENCE_SAFE_ID_PATTERN.test(reference);
-    case "app_set": return reference === "all";
-    case "app": return TARGET_REFERENCE_APP_PATTERN.test(reference);
-    case "app_window": return TARGET_REFERENCE_APP_WINDOW_PATTERN.test(reference);
-    case "ui_element": return TARGET_REFERENCE_UI_ELEMENT_PATTERN.test(reference);
-    case "service": return TARGET_REFERENCE_SERVICE_PATTERN.test(reference) && !reference.includes("..") && !reference.includes("//");
-    case "log_source": return TARGET_REFERENCE_LOG_SOURCE_PATTERN.test(reference) && !reference.includes("..");
-    case "docker_runtime": return reference === "local";
-    case "docker_object": return TARGET_REFERENCE_DOCKER_OBJECT_PATTERN.test(reference) && !reference.includes("..");
-    case "package": return TARGET_REFERENCE_PACKAGE_PATTERN.test(reference);
-    case "power": return reference === "local";
-  }
+  return isSignedPolicyTargetReference(target);
 }
 
 export function authorizePrincipalProjection(
