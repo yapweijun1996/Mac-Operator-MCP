@@ -162,6 +162,7 @@ export class PrivilegedHelperAuthorityIpcServer {
         !Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes < 256 || this.maxResponseBytes > MAX_RESPONSE_BYTES * 2 ||
         !Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_REQUEST_AGE_MS ||
         !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > 60_000) {
+      this.authenticationKey.fill(0);
       throw new Error("Privileged helper authority IPC limits are invalid");
     }
   }
@@ -316,8 +317,14 @@ export class PrivilegedHelperAuthorityClient implements PrivilegedHelperAuthorit
     if (!options.peerCredentialVerifier && !options.peerPolicy) {
       throw new Error("Privileged helper authority client requires a Broker peer verifier or native peer policy");
     }
-    this.authenticationKey = Buffer.from(options.authenticationKey);
-    this.peerCredentialVerifier = options.peerCredentialVerifier ?? new MacOsPeerCredentialVerifier(options.peerPolicy!);
+    const keyCopy = Buffer.from(options.authenticationKey);
+    try {
+      this.peerCredentialVerifier = options.peerCredentialVerifier ?? new MacOsPeerCredentialVerifier(options.peerPolicy!);
+      this.authenticationKey = keyCopy;
+    } catch (error) {
+      keyCopy.fill(0);
+      throw error;
+    }
     this.now = options.now ?? Date.now;
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_REQUEST_AGE_MS;
