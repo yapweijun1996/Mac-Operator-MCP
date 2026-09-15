@@ -263,7 +263,7 @@ export async function loadPrivilegedHelperKeyConfig(
   path: string,
   store: BrokerStore
 ): Promise<LoadedPrivilegedHelperKeyConfig> {
-  return loadPrivilegedHelperKeyConfigInternal(path, (keyId) => store.isRevoked("helper_key", keyId));
+  return loadPrivilegedHelperKeyConfigInternal(path, (keyId) => store.isRevoked("helper_key", keyId), process.execPath);
 }
 
 /**
@@ -273,22 +273,27 @@ export async function loadPrivilegedHelperKeyConfig(
  * SQLite access.
  */
 export async function loadPrivilegedHelperKeyConfigWithoutBroker(
-  path: string
+  path: string,
+  trustedExecutablePath?: string
 ): Promise<LoadedPrivilegedHelperKeyConfig> {
-  return loadPrivilegedHelperKeyConfigInternal(path);
+  return loadPrivilegedHelperKeyConfigInternal(path, undefined, trustedExecutablePath);
 }
 
 async function loadPrivilegedHelperKeyConfigInternal(
   path: string,
-  isRevoked?: (keyId: string) => boolean
+  isRevoked?: (keyId: string) => boolean,
+  trustedExecutablePath?: string
 ): Promise<LoadedPrivilegedHelperKeyConfig> {
   const document = parseConfig(await readProtectedConfig(path));
   const entry = document.keys[0];
   if (isRevoked?.(entry.keyId)) {
     throw new Error(`Privileged helper key is revoked: ${entry.keyId}`);
   }
+  if (entry.keySource === "keychain" && trustedExecutablePath === undefined) {
+    throw new Error("Privileged helper Keychain source requires an explicit trusted executable path");
+  }
   const key = entry.keySource === "keychain"
-    ? await loadKeychainAuthenticationKey(entry.service!, entry.account!)
+    ? await loadKeychainAuthenticationKey(entry.service!, entry.account!, trustedExecutablePath!)
     : await loadAuthenticationKey(entry.path!);
   try {
     if (sha256(key) !== entry.keyDigest) throw new Error("Privileged helper key digest precondition failed");

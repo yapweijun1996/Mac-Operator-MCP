@@ -69,6 +69,8 @@ export interface PrivilegedHelperRuntimeOptions {
  */
 export interface PrivilegedHelperRuntimeKeyMaterialOptions {
   helperKeyConfigPath: string;
+  /** Canonical helper executable used for Keychain ACL binding when configured. */
+  keychainTrustedExecutablePath?: string;
   socketPath: string;
   /** The helper must never reuse the unprivileged Broker socket. */
   brokerSocketPath: string;
@@ -323,7 +325,10 @@ export async function createPrivilegedHelperRuntimeFromKeyMaterial(
   let authorityPoller: PrivilegedHelperAuthorityPoller | undefined;
   let server: PrivilegedHelperIpcServer | undefined;
   try {
-    loaded = await loadPrivilegedHelperKeyConfigWithoutBroker(options.helperKeyConfigPath);
+    loaded = await loadPrivilegedHelperKeyConfigWithoutBroker(
+      options.helperKeyConfigPath,
+      options.keychainTrustedExecutablePath
+    );
     const now = options.serverOptions?.now ?? Date.now;
     const notBeforeMs = loaded.key.notBeforeMs;
     const expiresAtMs = loaded.key.expiresAtMs;

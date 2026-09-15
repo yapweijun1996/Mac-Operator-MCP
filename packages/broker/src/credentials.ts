@@ -25,8 +25,12 @@ const BACKUP_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
  * selected by file paths or MCP arguments; startup/configuration code must
  * choose it deliberately and keep the returned bytes in memory only.
  */
-export async function loadKeychainAuthenticationKey(service: string, account: string): Promise<Buffer> {
-  return readKeychainGenericPassword(service, account, process.execPath);
+export async function loadKeychainAuthenticationKey(
+  service: string,
+  account: string,
+  trustedExecutablePath = process.execPath
+): Promise<Buffer> {
+  return readKeychainGenericPassword(service, account, trustedExecutablePath);
 }
 
 /**

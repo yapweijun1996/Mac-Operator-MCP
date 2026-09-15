@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   PrivilegedHelperKeyManager,
   loadPrivilegedHelperKeyConfig,
+  loadPrivilegedHelperKeyConfigWithoutBroker,
   writePrivilegedHelperKeyConfig,
   type PrivilegedHelperKeyConfig
 } from "./privileged-helper-keyring.js";
@@ -124,6 +125,32 @@ test("privileged helper key config rejects symlink, unsafe mode, and revocation"
     await assert.rejects(loadPrivilegedHelperKeyConfig(configPath, store), /not be accessible/u);
   } finally {
     store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("root-helper Keychain key config requires an explicit executable ACL binding", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-helper-keyring-keychain-acl-"));
+  const configPath = join(directory, "helper-keys.json");
+  try {
+    await writePrivilegedHelperKeyConfig(configPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        keyId: "helper-key-keychain",
+        keySource: "keychain",
+        service: "com.mac-operator.helper",
+        account: "helper-key",
+        keyDigest: "0".repeat(64),
+        notBeforeMs: NOW - 1_000,
+        expiresAtMs: NOW + 60_000
+      }]
+    });
+    await assert.rejects(
+      loadPrivilegedHelperKeyConfigWithoutBroker(configPath),
+      /explicit trusted executable path/u
+    );
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
