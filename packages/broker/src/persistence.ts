@@ -107,6 +107,10 @@ const MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS = 4096;
  */
 export interface WriteJobMetadata {
   rootId: string;
+  /** Canonical policy-root identity captured when the write was authorized. */
+  rootPath?: string;
+  rootDevice?: string;
+  rootInode?: string;
   path: string;
   bytes: number;
   desiredSha256: string;
@@ -4490,15 +4494,22 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
   const legacyKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId";
   const currentKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId,temporaryName";
   const recoveryKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId,temporaryDevice,temporaryInode,temporaryName,temporaryRecoveryRecordedAtMs";
-  if (keys.length !== 6 && keys.length !== 7 && keys.length !== 10) {
+  const rootedKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootDevice,rootId,rootInode,rootPath";
+  const rootedCurrentKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootDevice,rootId,rootInode,rootPath,temporaryName";
+  const rootedRecoveryKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootDevice,rootId,rootInode,rootPath,temporaryDevice,temporaryInode,temporaryName,temporaryRecoveryRecordedAtMs";
+  if (![6, 7, 9, 10, 13].includes(keys.length)) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   }
-  if (keys.join(",") !== (keys.length === 6 ? legacyKeys : keys.length === 7 ? currentKeys : recoveryKeys)) {
+  const expectedKeys = keys.length === 6 ? legacyKeys : keys.length === 7 ? currentKeys : keys.length === 9 ? rootedKeys : keys.length === 10 && keys.includes("rootDevice") ? rootedCurrentKeys : keys.length === 10 ? recoveryKeys : rootedRecoveryKeys;
+  if (keys.join(",") !== expectedKeys) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   }
   const metadata = parsed as Partial<WriteJobMetadata>;
   if (
     typeof metadata.rootId !== "string" ||
+    (metadata.rootPath !== undefined && (typeof metadata.rootPath !== "string" || !isAbsolute(metadata.rootPath))) ||
+    (metadata.rootDevice !== undefined && (typeof metadata.rootDevice !== "string" || !/^\d+$/u.test(metadata.rootDevice))) ||
+    (metadata.rootInode !== undefined && (typeof metadata.rootInode !== "string" || !/^\d+$/u.test(metadata.rootInode))) ||
     typeof metadata.path !== "string" ||
     !isAbsolute(metadata.path) ||
     typeof metadata.bytes !== "number" ||
@@ -4511,6 +4522,11 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
     (metadata.temporaryRecoveryRecordedAtMs !== undefined && (!Number.isSafeInteger(metadata.temporaryRecoveryRecordedAtMs) || metadata.temporaryRecoveryRecordedAtMs < 0))
   ) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   if (metadata.expectedSha256 === undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  const rootIdentityFields = [metadata.rootPath, metadata.rootDevice, metadata.rootInode];
+  if (rootIdentityFields.some((field) => field !== undefined) &&
+      (metadata.rootPath === undefined || metadata.rootDevice === undefined || metadata.rootInode === undefined)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  }
   const recoveryFields = [metadata.temporaryDevice, metadata.temporaryInode, metadata.temporaryRecoveryRecordedAtMs];
   if (recoveryFields.some((field) => field !== undefined) &&
       (metadata.temporaryName === undefined || metadata.temporaryDevice === undefined || metadata.temporaryInode === undefined || metadata.temporaryRecoveryRecordedAtMs === undefined)) {
@@ -4518,6 +4534,9 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
   }
   const normalized: WriteJobMetadata = {
     rootId: metadata.rootId,
+    ...(metadata.rootPath !== undefined ? { rootPath: metadata.rootPath } : {}),
+    ...(metadata.rootDevice !== undefined ? { rootDevice: metadata.rootDevice } : {}),
+    ...(metadata.rootInode !== undefined ? { rootInode: metadata.rootInode } : {}),
     path: metadata.path,
     bytes: metadata.bytes,
     desiredSha256: metadata.desiredSha256,
@@ -4534,6 +4553,9 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
 
 function validateWriteJobMetadata(metadata: WriteJobMetadata): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(metadata.rootId) ||
+      (metadata.rootPath !== undefined && (!isAbsolute(metadata.rootPath) || resolve(metadata.rootPath) !== metadata.rootPath || metadata.rootPath.length > 4096 || metadata.rootPath.includes("\0"))) ||
+      (metadata.rootDevice !== undefined && !/^\d{1,32}$/u.test(metadata.rootDevice)) ||
+      (metadata.rootInode !== undefined && !/^\d{1,32}$/u.test(metadata.rootInode)) ||
       !isAbsolute(metadata.path) || resolve(metadata.path) !== metadata.path || metadata.path.length > 4096 || metadata.path.includes("\0") ||
       !Number.isSafeInteger(metadata.bytes) || metadata.bytes < 0 || metadata.bytes > 1_048_576 ||
       !/^[a-f0-9]{64}$/u.test(metadata.desiredSha256) ||
@@ -4548,6 +4570,9 @@ function validateWriteJobMetadata(metadata: WriteJobMetadata): void {
   const recoveryFields = [metadata.temporaryDevice, metadata.temporaryInode, metadata.temporaryRecoveryRecordedAtMs];
   if (recoveryFields.some((field) => field !== undefined) &&
       (metadata.temporaryName === undefined || metadata.temporaryDevice === undefined || metadata.temporaryInode === undefined || metadata.temporaryRecoveryRecordedAtMs === undefined)) throw malformedJob();
+  const rootIdentityFields = [metadata.rootPath, metadata.rootDevice, metadata.rootInode];
+  if (rootIdentityFields.some((field) => field !== undefined) &&
+      (metadata.rootPath === undefined || metadata.rootDevice === undefined || metadata.rootInode === undefined)) throw malformedJob();
 }
 
 function validateRequestAdmission(input: AdmitRequestInput): void {

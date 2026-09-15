@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
@@ -3725,6 +3725,8 @@ test("unknown write status probes the postcondition but never infers Broker succ
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-recovery-status-"));
   const path = join(directory, "recovered.txt");
   const content = Buffer.from("safe");
+  const rootIdentity = await lstat(directory);
+  const canonicalRoot = await realpath(directory);
   await writeFile(path, content, { mode: 0o600 });
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
@@ -3749,6 +3751,9 @@ test("unknown write status probes the postcondition but never infers Broker succ
     createdAtMs: NOW - 2_000,
     writeMetadata: {
       rootId: "test-root",
+      rootPath: canonicalRoot,
+      rootDevice: String(rootIdentity.dev),
+      rootInode: String(rootIdentity.ino),
       path,
       bytes: content.length,
       desiredSha256: sha256(content),
@@ -4199,6 +4204,8 @@ test("restart write recovery cleans only the recorded temporary artifact", async
   const target = join(directory, "target.txt");
   const temporaryName = ".mac-operator-write-restart-cleanup";
   const temporaryPath = join(directory, temporaryName);
+  const rootIdentity = await lstat(directory);
+  const canonicalRoot = await realpath(directory);
   await writeFile(temporaryPath, "orphan", { mode: 0o600 });
   let store = new BrokerStore(databasePath);
   store.createJob({
@@ -4213,6 +4220,9 @@ test("restart write recovery cleans only the recorded temporary artifact", async
     createdAtMs: 1,
     writeMetadata: {
       rootId: "test-root",
+      rootPath: canonicalRoot,
+      rootDevice: String(rootIdentity.dev),
+      rootInode: String(rootIdentity.ino),
       path: target,
       bytes: 6,
       desiredSha256: sha256(Buffer.from("orphan")),
@@ -4253,6 +4263,8 @@ test("restart write recovery retries a previously skipped temporary cleanup", as
   const temporaryName = ".mac-operator-write-recovery-retry";
   const temporaryPath = join(directory, temporaryName);
   const outside = join(directory, "outside.txt");
+  const rootIdentity = await lstat(directory);
+  const canonicalRoot = await realpath(directory);
   const store = new BrokerStore(databasePath);
   const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
   let restartedStore: BrokerStore | undefined;
@@ -4272,6 +4284,9 @@ test("restart write recovery retries a previously skipped temporary cleanup", as
       createdAtMs: NOW,
       writeMetadata: {
         rootId: "test-root",
+        rootPath: canonicalRoot,
+        rootDevice: String(rootIdentity.dev),
+        rootInode: String(rootIdentity.ino),
         path: target,
         bytes: 6,
         desiredSha256: sha256(Buffer.from("orphan")),

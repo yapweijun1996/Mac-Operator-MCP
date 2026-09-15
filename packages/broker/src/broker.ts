@@ -268,6 +268,12 @@ export class Broker {
         skipped += 1;
         continue;
       }
+      if (metadata.rootPath === undefined || metadata.rootDevice === undefined || metadata.rootInode === undefined) {
+        // Legacy write rows do not contain the policy-root identity required
+        // to prove that restart cleanup still addresses the original root.
+        skipped += 1;
+        continue;
+      }
       const temporaryName = metadata.temporaryName;
       const targetRef = `path:${metadata.path}`;
       const priorCompletion = this.options.store.auditEventResult(auditRequestId, "completion");
@@ -332,10 +338,20 @@ export class Broker {
       try {
         plan = inspector.planPath(activeMetadata.path, "write");
         if (plan.rootId !== activeMetadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary root identity no longer matches");
+        if (plan.rootIdentity.rootPath !== activeMetadata.rootPath ||
+            plan.rootIdentity.device !== activeMetadata.rootDevice ||
+            plan.rootIdentity.inode !== activeMetadata.rootInode) {
+          throw new BrokerError("POLICY_DENIED", "Write temporary policy root identity no longer matches");
+        }
         const hasRecordedIdentity = activeMetadata.temporaryDevice !== undefined && activeMetadata.temporaryInode !== undefined;
         if (hasRecordedIdentity) {
           const temporaryPlan = inspector.planPath(join(dirname(activeMetadata.path), temporaryName), "write");
           if (temporaryPlan.rootId !== activeMetadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary recovery root identity no longer matches");
+          if (temporaryPlan.rootIdentity.rootPath !== activeMetadata.rootPath ||
+              temporaryPlan.rootIdentity.device !== activeMetadata.rootDevice ||
+              temporaryPlan.rootIdentity.inode !== activeMetadata.rootInode) {
+            throw new BrokerError("POLICY_DENIED", "Write temporary policy root identity no longer matches");
+          }
           const recovery = inspector.recoverUnlinkOrphan(temporaryPlan, {
             present: true,
             device: activeMetadata.temporaryDevice!,
@@ -371,6 +387,11 @@ export class Broker {
           try {
             const temporaryPlan = inspector.planPath(join(dirname(activeMetadata.path), temporaryName), "write");
             if (temporaryPlan.rootId !== activeMetadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary recovery root identity no longer matches");
+            if (temporaryPlan.rootIdentity.rootPath !== activeMetadata.rootPath ||
+                temporaryPlan.rootIdentity.device !== activeMetadata.rootDevice ||
+                temporaryPlan.rootIdentity.inode !== activeMetadata.rootInode) {
+              throw new BrokerError("POLICY_DENIED", "Write temporary policy root identity no longer matches");
+            }
             const recovery = inspector.recoverUnlinkOrphan(temporaryPlan, {
               present: true,
               device: activeMetadata.temporaryDevice,
@@ -3129,7 +3150,10 @@ export class Broker {
     try {
       const inspector = new FilesystemInspector(policy.filesystemRoots);
       const plan = inspector.planPath(metadata.path, "write");
-      if (plan.rootId !== metadata.rootId) return unavailableWriteRecovery(this.now());
+      if (plan.rootId !== metadata.rootId || metadata.rootPath === undefined || metadata.rootDevice === undefined || metadata.rootInode === undefined ||
+          plan.rootIdentity.rootPath !== metadata.rootPath || plan.rootIdentity.device !== metadata.rootDevice || plan.rootIdentity.inode !== metadata.rootInode) {
+        return unavailableWriteRecovery(this.now());
+      }
       const postcondition = inspector.verifyWritePostcondition(plan, metadata.desiredSha256, metadata.bytes);
       return writeRecoveryStatus(postcondition, this.now());
     } catch {
@@ -4538,6 +4562,9 @@ function privilegedToolResultData(
 function writeJobMetadata(plan: FilesystemPathPlan, write: NonNullable<ExecutionPlan["write"]>): WriteJobMetadata {
   return {
     rootId: plan.rootId,
+    rootPath: plan.rootIdentity.rootPath,
+    rootDevice: plan.rootIdentity.device,
+    rootInode: plan.rootIdentity.inode,
     path: plan.requestedPath,
     bytes: write.content.length,
     desiredSha256: sha256(write.content),

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { lstat, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -29,6 +29,8 @@ function policyFor(root: string) {
 async function reopenUnknownJob(directory: string, jobId: string, temporaryName: string, target: string, metadataExtras: Record<string, unknown> = {}) {
   const databasePath = join(directory, "broker.sqlite");
   const createdAtMs = Date.now() - 2_000;
+  const rootIdentity = await lstat(directory);
+  const canonicalRoot = await realpath(directory);
   const store = new BrokerStore(databasePath);
   store.createJob({
     jobId,
@@ -42,6 +44,9 @@ async function reopenUnknownJob(directory: string, jobId: string, temporaryName:
     createdAtMs,
     writeMetadata: {
       rootId: "test-root",
+      rootPath: canonicalRoot,
+      rootDevice: String(rootIdentity.dev),
+      rootInode: String(rootIdentity.ino),
       path: target,
       bytes: 6,
       desiredSha256: sha256(Buffer.from("orphan")),
