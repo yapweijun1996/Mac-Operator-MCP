@@ -3,13 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Write-cleanup Job-recovery verification at source revision `def8e82` persists
+Write-cleanup Job-recovery verification at source revision `bfc9a28` persists
 the exact temporary device/inode before the unlink boundary and reconnects
 restart reconciliation to identity/age-gated native quarantine recovery. The
-focused integration suite passes 2/2; combined with the filesystem boundary
-suite, 38/38 pass. Recent, ambiguous, replacement, and unproven artifacts are
-preserved and completion audit classes are explicit. Production crash/remount
-injection and installed-service readback remain open. Evidence:
+focused integration suite passes 3/3; combined with the filesystem boundary
+suite, 39/39 pass. A fault-test child receives SIGKILL immediately after the
+native quarantine rename, then the same inode is aged into a valid stale
+artifact and recovered from the persisted Job identity. Recent, ambiguous,
+replacement, and unproven artifacts are preserved and completion audit
+classes are explicit. Production remount injection and installed-service
+readback remain open. Evidence:
 `evidence/2026-09-15-write-recovery-journal.md`.
 
 Service-lock and audit-anchor orphan-recovery verification covers timestamped

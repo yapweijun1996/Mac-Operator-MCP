@@ -4,14 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Write-cleanup Job-recovery addendum: source revision `def8e82` persists the
+Write-cleanup Job-recovery addendum: source revision `bfc9a28` persists the
 temporary device/inode before unlink and reconnects restart reconciliation to
 the explicit native quarantine recovery boundary. Recovery derives the exact
 temporary basename from the Job record, removes only a unique stale
 identity-bound quarantine, and preserves recent, ambiguous, replacement, or
 unproven artifacts. Completion audit classes distinguish removed, recovered,
 absent, and skipped outcomes. Build, lint, and the focused filesystem plus
-Job-recovery suites pass 38/38. Production crash/remount injection and
+Job-recovery suites pass 39/39, including a child-process SIGKILL immediately
+after native quarantine rename. Production remount injection and
 installed-service evidence remain open. Evidence:
 `evidence/2026-09-15-write-recovery-journal.md`.
 

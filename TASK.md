@@ -4,12 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Write-cleanup Job-recovery addendum: commit `def8e82` records the exact
+Write-cleanup Job-recovery addendum: commit `bfc9a28` records the exact
 temporary device/inode before unlink and reconnects restart reconciliation to
 the explicit native quarantine recovery boundary. Only unique stale
 identity-bound artifacts are removed; recent, ambiguous, replacement, and
 unproven artifacts remain untouched. Focused Job-recovery and filesystem
-tests pass 38/38. Production crash/remount injection and installed-service
+tests pass 39/39, including a child-process SIGKILL after native quarantine
+rename. Production remount injection and installed-service
 readback remain open. Evidence:
 `evidence/2026-09-15-write-recovery-journal.md`.
 

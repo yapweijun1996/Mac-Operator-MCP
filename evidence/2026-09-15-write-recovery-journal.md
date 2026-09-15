@@ -1,6 +1,6 @@
 # Write Cleanup Job-Recovery Evidence
 
-- Source revision: `def8e82`
+- Source revision: `bfc9a28`
 - Date: 2026-09-15
 - Scope: Durable Job metadata and Broker restart reconciliation for atomic-write temporary artifacts
 
@@ -26,13 +26,17 @@ temporary path. Completion evidence records `TEMPORARY_REMOVED`,
 ## Verification
 
 - `npm run build`: passed, including the Darwin native adapter.
-- `npm run lint`: passed across 664 tracked files.
-- `node --test packages/broker/dist/write-recovery-journal.test.js`: passed 2/2.
-- `node --test packages/broker/dist/filesystem-inspector.test.js packages/broker/dist/write-recovery-journal.test.js`: passed 38/38.
-- The two physical Darwin integration tests cover journaling before unlink and
-  stale quarantine recovery after a simulated Broker restart.
+- `npm run build:native:fault-test`: passed for the opt-in crash fixture.
+- `npm run lint`: passed across 665 tracked files.
+- `node --test packages/broker/dist/write-recovery-journal.test.js`: passed 3/3.
+- `node --test packages/broker/dist/filesystem-inspector.test.js packages/broker/dist/write-recovery-journal.test.js`: passed 39/39.
+- The three physical Darwin integration tests cover journaling before unlink,
+  stale quarantine recovery after a simulated Broker restart, and a child
+  process `SIGKILL` immediately after the native quarantine rename. The crash
+  fixture ages the same inode by renaming its private quarantine to a valid
+  stale timestamp before the bounded 60-second recovery gate is evaluated.
 - Existing long-running Broker, persistence, and privileged-helper suites
   were not interrupted or rerun.
 
-Production crash/remount injection, installed-service lifecycle evidence, and
+Production remount injection, installed-service lifecycle evidence, and
 cross-process audit-anchor readback remain release gates.
