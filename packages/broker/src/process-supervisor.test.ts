@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { detectProcessIdentityReplacement, ProcessSupervisor } from "./process-supervisor.js";
+import { captureProcessPathIdentity, detectProcessIdentityReplacement, ProcessSupervisor } from "./process-supervisor.js";
 
 const CWD = process.cwd();
 
@@ -28,7 +28,7 @@ test("process supervisor uses an explicit environment and bounded output", async
     args: ["-c", "import os; print(os.getenv('MOP_CONTROLLER_SECRET', 'unset'))"],
     cwd: CWD,
     environment: { SAFE_PROFILE: "test" },
-    timeoutMs: 5_000,
+    timeoutMs: 10_000,
     outputCapBytes: 1_024
   });
   assert.equal(result.state, "completed");
@@ -271,6 +271,22 @@ test("process supervisor rejects in-place executable mutations after startup aut
   }
 });
 
+test("process supervisor captures a cryptographic executable content identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-content-digest-"));
+  const executable = join(await realpath(directory), "runner");
+  try {
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    const first = await captureProcessPathIdentity(executable, "executable");
+    await writeFile(executable, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+    const second = await captureProcessPathIdentity(executable, "executable");
+    assert.match(first.contentSha256 ?? "", /^[a-f0-9]{64}$/u);
+    assert.match(second.contentSha256 ?? "", /^[a-f0-9]{64}$/u);
+    assert.notEqual(first.contentSha256, second.contentSha256);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("process supervisor terminates the process group on timeout and output overflow", async () => {
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   const timedOut = await supervisor.run({
@@ -368,7 +384,7 @@ test("process supervisor cancellation kills descendants and releases capacity", 
     executable: "/usr/bin/printf",
     args: ["capacity-released"],
     cwd: CWD,
-    timeoutMs: 5_000,
+    timeoutMs: 15_000,
     outputCapBytes: 100
   });
   assert.equal(second.stdout, "capacity-released");

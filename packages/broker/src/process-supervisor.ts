@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
@@ -10,6 +12,8 @@ const MAX_ARGUMENT_BYTES = 64 * 1024;
 const MAX_ENVIRONMENT_KEYS = 64;
 const MAX_ENVIRONMENT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_EXECUTABLE_DIGEST_BYTES = 64 * 1024 * 1024;
+const EXECUTABLE_DIGEST_READ_CHUNK_BYTES = 1024 * 1024;
 const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_TERMINATION_GRACE_MS = 250;
@@ -39,6 +43,8 @@ export interface ProcessPathIdentity {
   size: number;
   mtimeMs: number;
   ctimeMs: number;
+  /** SHA-256 content identity for regular executable files. */
+  contentSha256?: string;
 }
 
 export type ProcessPathKind = "executable" | "directory";
@@ -914,6 +920,9 @@ export async function assertProcessPathIdentityStable(
       (kind === "executable" && (current.size !== expected.size || current.mtimeMs !== expected.mtimeMs || current.ctimeMs !== expected.ctimeMs))) {
     throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
   }
+  if (kind === "executable" && current.contentSha256 !== expected.contentSha256) {
+    throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
+  }
 }
 
 async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
@@ -921,7 +930,7 @@ async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
   if (stat.isSymbolicLink()) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
   if (!stat.isFile() || (stat.mode & 0o111) === 0) throw new BrokerError("POLICY_DENIED", "Executable must be a regular executable file");
   if ((await realpath(path)) !== path) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
-  return {
+  const identity: ProcessPathIdentity = {
     device: stat.dev,
     inode: stat.ino,
     mode: stat.mode & 0o7777,
@@ -929,6 +938,24 @@ async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
     mtimeMs: stat.mtimeMs,
     ctimeMs: stat.ctimeMs
   };
+  if (stat.size > MAX_EXECUTABLE_DIGEST_BYTES) {
+    throw new BrokerError("OUTPUT_LIMIT", "Executable exceeds the supported content-identity size");
+  }
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = await handle.stat();
+    if (!sameProcessPathMetadata(opened, identity)) {
+      throw new BrokerError("POLICY_DENIED", "Executable changed while opening");
+    }
+    const contentSha256 = await digestOpenedExecutable(handle, stat.size);
+    const after = await handle.stat();
+    if (!sameProcessPathMetadata(after, identity)) {
+      throw new BrokerError("POLICY_DENIED", "Executable changed while reading");
+    }
+    return { ...identity, contentSha256 };
+  } finally {
+    await handle.close();
+  }
 }
 
 async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
@@ -942,6 +969,30 @@ async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
     mtimeMs: stat.mtimeMs,
     ctimeMs: stat.ctimeMs
   };
+}
+
+function sameProcessPathMetadata(
+  stat: { dev: number; ino: number; mode: number; size: number; mtimeMs: number; ctimeMs: number },
+  identity: ProcessPathIdentity
+): boolean {
+  return stat.dev === identity.device && stat.ino === identity.inode &&
+    (stat.mode & 0o7777) === identity.mode && stat.size === identity.size &&
+    stat.mtimeMs === identity.mtimeMs && stat.ctimeMs === identity.ctimeMs;
+}
+
+async function digestOpenedExecutable(handle: Awaited<ReturnType<typeof open>>, expectedSize: number): Promise<string> {
+  const digest = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(EXECUTABLE_DIGEST_READ_CHUNK_BYTES);
+  let remaining = expectedSize;
+  while (remaining > 0) {
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.byteLength, remaining), null);
+    if (bytesRead < 1) throw new BrokerError("POLICY_DENIED", "Executable changed while reading");
+    digest.update(buffer.subarray(0, bytesRead));
+    remaining -= bytesRead;
+  }
+  const { bytesRead } = await handle.read(buffer, 0, 1, null);
+  if (bytesRead !== 0) throw new BrokerError("POLICY_DENIED", "Executable changed while reading");
+  return digest.digest("hex");
 }
 
 async function assertProcessPathStable(path: string, expected: ProcessPathIdentity, label: "Executable" | "Process cwd"): Promise<void> {

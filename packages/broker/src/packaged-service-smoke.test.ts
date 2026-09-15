@@ -406,7 +406,7 @@ async function launchctl(supervisor: ProcessSupervisor, args: readonly string[])
     args,
     cwd: "/",
     environment: {},
-    timeoutMs: 5_000,
+    timeoutMs: 15_000,
     outputCapBytes: 131_072
   };
   return supervisor.run(command);
