@@ -178,6 +178,28 @@ test("contract registry rejects a foreign-owned contract directory", async () =>
   });
 });
 
+test("contract registry rejects a directory owner change during loading", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, validContract);
+    const originalGetuid = process.getuid;
+    if (originalGetuid === undefined) return;
+    const ownerUid = originalGetuid();
+    let calls = 0;
+    process.getuid = () => {
+      calls += 1;
+      return calls <= 2 ? ownerUid : ownerUid + 1;
+    };
+    try {
+      await assert.rejects(
+        () => ToolContractRegistry.load(directory),
+        /directory changed while loading/u
+      );
+    } finally {
+      process.getuid = originalGetuid;
+    }
+  });
+});
+
 async function writeContract(directory: string, contract: object): Promise<void> {
   await writeFile(join(directory, "mac_test.json"), JSON.stringify(contract), "utf8");
 }

@@ -100,7 +100,9 @@ export class ToolContractRegistry {
       contracts.set(contract.toolName, contract);
     }
     const finalDirectoryStat = await lstat(directory);
+    const finalCurrentUid = process.getuid?.();
     if (!finalDirectoryStat.isDirectory() || finalDirectoryStat.isSymbolicLink() ||
+        finalCurrentUid === undefined || finalDirectoryStat.uid !== finalCurrentUid ||
         finalDirectoryStat.dev !== directoryStat.dev || finalDirectoryStat.ino !== directoryStat.ino ||
         (finalDirectoryStat.mode & 0o022) !== 0) {
       throw new Error("Tool contract directory changed while loading");
