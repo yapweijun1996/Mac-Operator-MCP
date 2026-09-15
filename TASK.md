@@ -1702,3 +1702,11 @@ representation evidence only and does not close helper provenance, root-domain
 installation, production Keychain, real privileged adapters, crash recovery,
 or enablement. Evidence:
 `evidence/2026-09-15-helper-status-boundary.md`.
+
+Broker status request boundary addendum: commit `240ee88` applies the shared
+plain-data check before unsigned request key enumeration and field access.
+Accessor and inherited request fields fail closed; the focused parser test
+passes 1/1 and the non-overlapping package regression passes 538 total (532
+passed, 6 skipped). This representation evidence does not close production
+deployment, Keychain, remote transport, privileged operations, or capability
+enablement. Evidence: `evidence/2026-09-15-broker-status-boundary.md`.

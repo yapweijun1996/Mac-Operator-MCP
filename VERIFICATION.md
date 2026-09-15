@@ -2589,3 +2589,12 @@ remains representation evidence only and does not close helper provenance,
 production Keychain, root-domain installation, real privileged execution,
 crash recovery, or capability enablement. Evidence:
 `evidence/2026-09-15-helper-status-boundary.md`.
+
+Broker status request verification at source revision `240ee88` confirms the
+unsigned validator rejects accessor and inherited fields before key enumeration
+or authority-sensitive reads. The focused parser test passes 1/1; the
+non-overlapping package regression passes 538 total (532 passed, 6 skipped,
+0 failed). This remains representation evidence only and does not close
+production deployment, Keychain, remote transport, privileged operations, or
+capability enablement. Evidence:
+`evidence/2026-09-15-broker-status-boundary.md`.

@@ -2928,3 +2928,11 @@ regression passes 538 total (532 passed, 6 skipped, 0 failed). Helper
 provenance, production Keychain, root-domain installation, real privileged
 execution, crash recovery, and enablement remain open. Evidence:
 `evidence/2026-09-15-helper-status-boundary.md`.
+
+Broker status request validation now checks plain-data shape before key
+enumeration or field access (source revision `240ee88`). The focused parser
+test passes 1/1 with accessor/inherited fixtures, and the non-overlapping
+package regression passes 538 total (532 passed, 6 skipped, 0 failed).
+Production deployment, Keychain, remote transport, privileged operations, and
+capability enablement remain open. Evidence:
+`evidence/2026-09-15-broker-status-boundary.md`.
