@@ -10,8 +10,9 @@ const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
  * `ProcessSupervisor` currently uses the compensating pathname identity
  * checks. This capability is deliberately separate so a future native
  * launcher cannot be treated as available merely because a pathname was
- * validated. The native adapter must provide both the launcher and an
- * attestation of its close-on-exec and immutable-selection properties.
+ * validated. The native adapter must consume a Broker-opened executable
+ * descriptor (never reopen a pathname) and provide an attestation of its
+ * close-on-exec and immutable-selection properties.
  */
 export interface ProcessDescriptorExecutionCapability {
   schemaVersion: "0.1";

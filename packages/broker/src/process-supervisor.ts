@@ -117,7 +117,12 @@ export interface ProcessExecutionRequest {
  * ownership observation around the returned ChildProcess.
  */
 export interface DescriptorProcessSpawnRequest {
-  readonly executable: string;
+  /**
+   * Broker-opened executable descriptor; adapters must not reopen a pathname.
+   * It is borrowed only during spawn, so adapters must consume or duplicate it
+   * before returning.
+   */
+  readonly executableFd: number;
   readonly args: readonly string[];
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
@@ -308,29 +313,43 @@ export class ProcessSupervisor {
     };
     let child: ChildProcess;
     try {
+      let executableDescriptor: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        child = this.descriptorSpawnAdapter === undefined
-          ? spawn(safeRequest.executable, [...safeRequest.args], {
-            cwd: safeRequest.cwd,
-            env: environment,
-            shell: false,
-            detached: true,
-            stdio: [safeRequest.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
-          })
-          : this.descriptorSpawnAdapter.spawn({
-            executable: safeRequest.executable,
+        if (this.descriptorSpawnAdapter === undefined) {
+          child = spawn(safeRequest.executable, [...safeRequest.args], {
+              cwd: safeRequest.cwd,
+              env: environment,
+              shell: false,
+              detached: true,
+              stdio: [safeRequest.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
+            });
+        } else {
+          executableDescriptor = await open(
+            safeRequest.executable,
+            constants.O_RDONLY | constants.O_NOFOLLOW
+          );
+          const descriptorIdentity = await executableDescriptor.stat();
+          if (!sameProcessPathMetadata(descriptorIdentity, validatedPaths.executable)) {
+            throw new BrokerError("POLICY_DENIED", "Executable changed while opening descriptor");
+          }
+          child = this.descriptorSpawnAdapter.spawn({
+            executableFd: executableDescriptor.fd,
             args: safeRequest.args,
             cwd: safeRequest.cwd,
             environment,
             ...(safeRequest.stdin === undefined ? {} : { stdin: safeRequest.stdin })
           });
+        }
         if (!isChildProcessLike(child)) {
           throw new BrokerError("EXECUTION_FAILED", "Descriptor launcher returned an invalid child process");
         }
-      } catch {
+      } catch (error) {
         // Do not expose native adapter errors or allow an invalid adapter
         // result to reach the ownership/cleanup path as an unchecked object.
+        if (error instanceof BrokerError && error.errorClass === "POLICY_DENIED") throw error;
         throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
+      } finally {
+        if (executableDescriptor !== undefined) await executableDescriptor.close().catch(() => undefined);
       }
       const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes);
       if (safeRequest.stdin !== undefined && child.stdin !== null) {
