@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Local-gate checkpoint at source revision `e31fe76`: native canonical-JSON
+vectors pass 5/5, dependency audit reports zero high-severity vulnerabilities,
+lint passes for 599 tracked files, and `git diff --check` passes. The
+non-overlapping package regression passes 591 total (585 passed, 6 explicitly
+skipped, 0 failed); the existing Broker/persistence test processes were not
+restarted, so their fresh completion is not claimed. Working tree is clean and
+no remote push was performed. Evidence:
+`evidence/2026-09-15-final-local-gates.md`.
+
 Persisted Job-output integrity addendum: commit `1cfc62c` revalidates bounded,
 secret-free stdout/stderr plus exit-code, cancellation-reason, and metadata
 types before startup recovery or status publication. Job-row/state tests pass
