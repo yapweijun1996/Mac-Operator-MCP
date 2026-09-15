@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-091/092 Privileged Helper adapter command-boundary addendum at source
+revision `60fe9ec`: `AllowlistedPrivilegedHelper` validates command shape,
+target, operation, and payload binding before selecting or invoking a handler.
+Focused Helper/Job tests pass 27/27; the serial physical regression passes
+665/670 with 0 failures and 5 explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-privileged-helper-adapter-command-boundary.md`.
+
 MOP-091/092 Privileged Helper Job input-boundary addendum at source revision
 `340eb2c`: the helper Job executor validates the operation allowlist and
 Broker Job/Lease identities before any store lookup, renewal, or command

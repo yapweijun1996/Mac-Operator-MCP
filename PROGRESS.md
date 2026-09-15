@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged Helper adapter command-boundary addendum at source revision
+`60fe9ec`: `AllowlistedPrivilegedHelper` now validates the complete unsigned
+or signed command shape, target, operation, and payload digest before invoking
+any operation handler. Focused Helper/Job tests pass 27/27; the serial
+physical regression passes 665/670 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-privileged-helper-adapter-command-boundary.md`.
+
 Privileged Helper Job input-boundary addendum at source revision `340eb2c`:
 `PrivilegedHelperJobExecutor` now rejects unknown operations and malformed
 Job/Lease identities before store lookup, lease renewal, or command signing.

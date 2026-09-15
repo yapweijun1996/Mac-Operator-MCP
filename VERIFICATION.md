@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged Helper adapter command-boundary verification at source revision
+`60fe9ec`: `AllowlistedPrivilegedHelper` validates the strict command envelope
+before selecting or invoking an operation handler. Negative coverage proves a
+command with an unsupported field is rejected without handler execution.
+Focused Helper/Job tests pass 27/27; the serial physical regression passes
+665/670 with 0 failures and 5 explicit descriptor-capability skips. The three
+pre-existing long-running suites were excluded and left untouched. This
+closes the direct adapter command-shape boundary only; authenticated helper
+transport, root deployment, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-privileged-helper-adapter-command-boundary.md`.
+
 Privileged Helper Job input-boundary verification at source revision
 `340eb2c`: `PrivilegedHelperJobExecutor` rejects unknown operations and
 malformed Job/Lease identities before BrokerStore access, lease renewal, or
