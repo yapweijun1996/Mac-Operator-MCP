@@ -8,8 +8,9 @@ Capability lifecycle-state addendum: source revision `e22f025` carries
 `planned`, `implemented`, and `enabled` for every `mac_capabilities` item,
 requires those fields in the versioned output schema, and makes the Edge reject
 an enabled item with an inconsistent lifecycle state. Broker capability and
-kill-switch tests plus Edge MCP/HTTPS tests pass; 44 contracts validate, and
-build, typecheck, lint, and diff checks pass. This changes representation and
+kill-switch tests plus Edge MCP/HTTPS tests pass; the non-overlapping package
+regression passes 493 total (487 pass, 6 skipped, 0 fail); 44 contracts
+validate, and build, typecheck, lint, and diff checks pass. This changes representation and
 fail-closed admission only; it does not enable disabled capabilities or close
 production host/VM/credential/privileged evidence gates. Evidence:
 `evidence/2026-09-15-capability-lifecycle-states.md`.

@@ -7,8 +7,9 @@ Capability lifecycle-state addendum: source revision `e22f025` adds required
 `planned`, `implemented`, and `enabled` fields to each `mac_capabilities` item.
 The Broker emits the full state and the Edge rejects an enabled item with an
 inconsistent state before tool registration. Focused Broker/Edge tests pass;
-44 contracts validate; build, typecheck, lint, and diff checks pass. This does
-not enable disabled capabilities or prove production host, VM, credential, or
+the non-overlapping package regression passes 493 total (487 pass, 6 skipped,
+0 fail); 44 contracts validate; build, typecheck, lint, and diff checks pass.
+This does not enable disabled capabilities or prove production host, VM, credential, or
 privileged-helper evidence. Evidence:
 `evidence/2026-09-15-capability-lifecycle-states.md`.
 

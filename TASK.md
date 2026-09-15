@@ -8,8 +8,9 @@ Capability lifecycle-state addendum: source revision `e22f025` exposes the
 Broker-owned `planned`, `implemented`, and `enabled` fields in every
 `mac_capabilities` item, requires them in the versioned contract, and makes
 the Edge reject an enabled item unless all three authority states are true.
-Focused Broker/Edge tests, contract validation, build, typecheck, lint, and
-diff checks pass. This does not change enablement and leaves production host,
+Focused Broker/Edge tests and the non-overlapping package regression pass 493
+total (487 pass, 6 skipped, 0 fail); contract validation, build, typecheck,
+lint, and diff checks pass. This does not change enablement and leaves production host,
 VM, credential-isolation, and privileged-helper evidence gates open. Evidence:
 `evidence/2026-09-15-capability-lifecycle-states.md`.
 

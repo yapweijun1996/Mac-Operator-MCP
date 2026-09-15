@@ -16,6 +16,7 @@ advertised tool set through an inconsistent state.
 
 - Broker capability discovery and kill-switch tests — pass.
 - Edge MCP server and HTTPS Edge tests — 8/8 pass.
+- Non-overlapping package regression (excluding the two pre-existing long-running broker test processes) — 493 total, 487 pass, 6 skipped, 0 fail.
 - `npm run verify:contracts` — 44 contracts and the ledger schema validated.
 - `npm run build` — pass.
 - `npm run typecheck` — pass.
