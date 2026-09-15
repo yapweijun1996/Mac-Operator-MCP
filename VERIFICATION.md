@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Filesystem unlink target-swap verification at source revision `a6971fc` uses
+exclusive same-directory quarantine rename plus post-rename device/inode/type/
+link-count validation; mismatches restore by non-overwriting `linkat`. Build,
+lint, typecheck, diff checks, 40 filesystem inspector/patch tests, and a
+physical temp-root removal probe pass. Orphan-quarantine crash recovery and
+production packaging remain open. Evidence:
+`evidence/2026-09-15-filesystem-unlink-quarantine.md`.
+
 Credential-retirement verification at source revision `737ab3a` fences
 revoked file-backed key retirement with digest and owner/mode/device/inode/
 size/mtime checks before and after quarantine rename, non-overwriting recovery,

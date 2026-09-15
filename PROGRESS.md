@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem unlink target-swap addendum: source revision `a6971fc` changes
+descriptor-relative deletion to quarantine the pathname with an exclusive
+same-directory rename, recheck device/inode/type/link-count identity, and
+delete only the verified quarantine inode. Identity mismatch restores through
+non-overwriting `linkat`; failed restoration leaves an explicit recovery
+artifact. Build, lint, typecheck, 40 filesystem tests, and a physical temp-root
+probe pass. Orphan-quarantine crash recovery and production packaging remain
+open. Evidence:
+`evidence/2026-09-15-filesystem-unlink-quarantine.md`.
+
 Credential retirement identity-fence addendum: source revision `737ab3a`
 checks the exact owner/mode/device/inode/size/mtime before and after moving a
 revoked file-backed authentication or approval key to quarantine. Failed

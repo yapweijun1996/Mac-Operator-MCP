@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem unlink target-swap addendum: commit `a6971fc` atomically quarantines
+the selected pathname before verifying and deleting its exact inode, and uses
+non-overwriting restoration on mismatch. Focused filesystem tests and the
+physical temp-root probe pass. Orphan-quarantine recovery and production
+packaging remain open. Evidence:
+`evidence/2026-09-15-filesystem-unlink-quarantine.md`.
+
 Credential-retirement fence addendum: commit `737ab3a` validates the exact
 revoked key identity before and after quarantine rename, restores only with a
 non-overwriting hard link when retirement fails, and clears loaded key bytes on
