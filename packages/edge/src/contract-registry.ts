@@ -73,7 +73,10 @@ export class ToolContractRegistry {
       throw new Error("Tool contract directory is invalid");
     }
     const directoryStat = await lstat(directory);
-    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) throw new Error("Tool contract path must be a directory (regular non-symlink)");
+    const currentUid = process.getuid?.();
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || currentUid === undefined || directoryStat.uid !== currentUid) {
+      throw new Error("Tool contract path must be a directory (regular non-symlink) owned by the Edge user");
+    }
     if ((directoryStat.mode & 0o022) !== 0) throw new Error("Tool contract directory must not be writable by group or other users");
     const files = (await readdir(directory, { withFileTypes: true }))
       .filter((entry) => /^mac_[a-z0-9_]+\.json$/u.test(entry.name))
@@ -230,7 +233,10 @@ async function readContractFile(path: string): Promise<string> {
   const noFollow = constants.O_NOFOLLOW;
   if (typeof noFollow !== "number") throw new Error("Contract loading requires O_NOFOLLOW support");
   const pathStat = await lstat(path);
-  if (!pathStat.isFile() || pathStat.isSymbolicLink()) throw new Error("Tool contract must be a regular non-symlink file");
+  const currentUid = process.getuid?.();
+  if (!pathStat.isFile() || pathStat.isSymbolicLink() || currentUid === undefined || pathStat.uid !== currentUid) {
+    throw new Error("Tool contract must be a regular non-symlink file owned by the Edge user");
+  }
   if ((pathStat.mode & 0o022) !== 0) throw new Error("Tool contract must not be writable by group or other users");
   const handle = await open(path, constants.O_RDONLY | noFollow);
   try {
