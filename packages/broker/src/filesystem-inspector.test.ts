@@ -995,6 +995,68 @@ test("descriptor content read resists a directory rename and replacement race", 
   }
 });
 
+test("descriptor-backed atomic write resists a directory rename and replacement race", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-fs-write-directory-rename-"));
+  const directory = join(parent, "allowed");
+  const nested = join(directory, "nested");
+  const moved = join(directory, "nested.moved");
+  const target = join(nested, "value.txt");
+  const outsideDirectory = join(parent, "outside");
+  const outside = join(outsideDirectory, "value.txt");
+  await mkdir(nested, { recursive: true });
+  await mkdir(outsideDirectory);
+  await writeFile(outside, "outside");
+  const canonicalDirectory = await realpath(directory);
+  const worker = new Worker(`
+    const { parentPort, workerData } = require("node:worker_threads");
+    const fs = require("node:fs");
+    let running = true;
+    parentPort.on("message", message => { if (message === "stop") running = false; });
+    parentPort.postMessage("ready");
+    function cycle() {
+      if (!running) return;
+      try { fs.rmSync(workerData.moved, { recursive: true, force: true }); } catch {}
+      try { fs.renameSync(workerData.nested, workerData.moved); } catch {}
+      try { fs.symlinkSync(workerData.outsideDirectory, workerData.nested); } catch {}
+      try { fs.unlinkSync(workerData.nested); } catch {}
+      try { fs.renameSync(workerData.moved, workerData.nested); } catch {}
+      setImmediate(cycle);
+    }
+    cycle();
+  `, { eval: true, workerData: { nested, moved, outsideDirectory } });
+  await new Promise<void>((resolve, reject) => {
+    worker.once("message", () => resolve());
+    worker.once("error", reject);
+  });
+  const inspector = new FilesystemInspector([writeRoot(directory)]);
+  const plan = inspector.planPath(target, "write");
+  let accepted = 0;
+  try {
+    for (let index = 0; index < 500; index += 1) {
+      try {
+        const result = inspector.writePlanned(
+          plan,
+          Buffer.from("safe", "utf8"),
+          undefined,
+          false,
+          `.mac-operator-write-directory-rename-${index}`
+        );
+        assert.equal(result.sha256, createHash("sha256").update("safe").digest("hex"));
+        assert.equal(result.path.startsWith(`${canonicalDirectory}/`), true);
+        accepted += 1;
+      } catch (error) {
+        if (!/authorized root or changed|regular file or absent/u.test(String(error))) throw error;
+      }
+    }
+    assert.ok(accepted > 0);
+  } finally {
+    worker.postMessage("stop");
+    await worker.terminate();
+    assert.equal(await readFile(outside, "utf8"), "outside");
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
 function root(path: string) {
   return { rootId: "test-root", path, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
 }
