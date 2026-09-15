@@ -28,6 +28,14 @@ const SECRET_CONTENT_PATTERNS = [
   /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/iu
 ];
 
+/**
+ * Command-line option names are observable through process listings. A task
+ * cannot safely pass credentials in argv even when the value itself does not
+ * match one of the known token formats, so sensitive option names are denied
+ * before a child process is created.
+ */
+const SECRET_ARGUMENT_NAME_PATTERN = /(?:^|[-_])(?:api[_-]?key|auth(?:entication)?|client[_-]?secret|credential|password|passwd|passphrase|private[_-]?key|secret|token|bearer|cookie)(?:[-_]|$)/iu;
+
 const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/gu,
   /\bAKIA[0-9A-Z]{16}\b/gu,
@@ -55,6 +63,30 @@ export function assertContentDoesNotContainSecrets(content: Buffer): void {
   const text = content.toString("utf8");
   if (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(text))) {
     throw new BrokerError("POLICY_DENIED", "Filesystem content matched a protected secret signature");
+  }
+}
+
+/**
+ * Reject secret-bearing command-line options before they become visible to
+ * other users through the host process table. This is intentionally a
+ * conservative option-name gate; profile-owned argument patterns remain the
+ * authority for all non-sensitive task arguments.
+ */
+export function assertArgumentsDoNotContainSecrets(argumentsValue: readonly string[]): void {
+  if (!Array.isArray(argumentsValue)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process arguments are malformed");
+  }
+  for (const argument of argumentsValue) {
+    if (typeof argument !== "string") {
+      throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret signature");
+    }
+    const option = argument.replace(/^(?:--?|\/)/u, "").split("=", 1)[0] ?? "";
+    if (SECRET_ARGUMENT_NAME_PATTERN.test(option)) {
+      throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret option");
+    }
+    if (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(argument))) {
+      throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret signature");
+    }
   }
 }
 

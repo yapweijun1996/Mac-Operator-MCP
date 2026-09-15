@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import type { ProcessExecutionRequest } from "./process-supervisor.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
+import { assertArgumentsDoNotContainSecrets } from "./secret-policy.js";
 
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MAX_PROFILE_ARGUMENTS = 64;
@@ -159,6 +160,7 @@ export class TaskProfileRegistry {
     validateArguments(requestedArgs, profile.maxArguments ?? 0, argumentPattern);
     const args = [...(profile.fixedArgs ?? []), ...requestedArgs];
     validateTotalArguments(args);
+    assertArgumentsDoNotContainSecrets(args);
 
     const environment = { ...(profile.environment ?? {}) };
     return {
@@ -207,6 +209,7 @@ function validateProfileDocument(profile: TaskProfile): void {
     throw new Error("Task profile document is malformed");
   }
   validateArguments(profile.fixedArgs ?? [], MAX_PROFILE_ARGUMENTS, /[\s\S]*/u, true);
+  assertArgumentsDoNotContainSecrets(profile.fixedArgs ?? []);
   if (profile.maxArguments !== undefined &&
       (!Number.isSafeInteger(profile.maxArguments) || profile.maxArguments < 0 || profile.maxArguments > MAX_PROFILE_ARGUMENTS)) {
     throw new Error("Task profile argument limit is invalid");

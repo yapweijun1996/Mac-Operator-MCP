@@ -193,6 +193,16 @@ test("process supervisor rejects secret-shaped or non-allowlisted environment ke
     }),
     /environment exceeds the supported size/u
   );
+  await assert.rejects(
+    supervisor.run({
+      executable: "/usr/bin/printf",
+      args: ["--token", "value"],
+      cwd: CWD,
+      timeoutMs: 1_000,
+      outputCapBytes: 100
+    }),
+    /protected secret option/u
+  );
 });
 
 test("process supervisor rejects symlink executables and non-canonical cwd", async () => {

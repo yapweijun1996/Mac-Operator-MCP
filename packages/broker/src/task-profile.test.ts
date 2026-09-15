@@ -109,6 +109,7 @@ test("named task resolution rejects cwd traversal, symlink roots, and symlink ex
 test("task profile documents reject secret environments, unanchored arguments, and unsafe network declarations", async () => {
   const root = await mkdtemp(join(tmpdir(), "mac-operator-task-profile-config-"));
   try {
+    const canonicalRoot = await realpath(root);
     assert.throws(() => new TaskProfileRegistry([profile(root, { environment: { API_TOKEN: "secret" } })]), /unsafe entry/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { environment: { PATH: "/tmp/untrusted" } })]), /unsafe entry/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { environment: { NODE_OPTIONS: "--require=/tmp/untrusted.js" } })]), /unsafe entry/u);
@@ -125,5 +126,18 @@ test("task profile documents reject secret environments, unanchored arguments, a
     assert.throws(() => new TaskProfileRegistry([profile(root, { networkPolicy: "allowlist", networkAllowlist: [] })]), /must declare destinations/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { processTreePolicy: "unbounded" as never })]), /malformed/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { credentialPolicy: "broker-managed" as never })]), /malformed/u);
+    const secretArgumentRegistry = new TaskProfileRegistry([
+      profile(canonicalRoot, { allowedArgumentPattern: "^[a-zA-Z0-9._=-]{1,64}$" })
+    ]);
+    await assert.rejects(
+      secretArgumentRegistry.resolve({ profile: "tests.echo", cwd: canonicalRoot, args: ["--token", "value"] }),
+      /protected secret option/u
+    );
+    assert.throws(
+      () => new TaskProfileRegistry([
+        profile(root, { fixedArgs: ["--api-key=opaque-value"], allowedArgumentPattern: "^[a-zA-Z0-9._=-]{1,64}$" })
+      ]),
+      /protected secret option/u
+    );
   } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -6,6 +6,7 @@ import { isAbsolute, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
+import { assertArgumentsDoNotContainSecrets } from "./secret-policy.js";
 
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
@@ -922,6 +923,7 @@ async function validateRequest(request: ProcessExecutionRequest, allowedEnvironm
     return total + Buffer.byteLength(argument, "utf8");
   }, 0);
   if (argumentBytes > MAX_ARGUMENT_BYTES) throw new BrokerError("PRECONDITION_FAILED", "Process arguments exceed the supported size");
+  assertArgumentsDoNotContainSecrets(request.args);
   const environmentEntries = Object.entries(request.environment ?? {});
   if (environmentEntries.length > MAX_ENVIRONMENT_KEYS) {
     throw new BrokerError("PRECONDITION_FAILED", "Process environment exceeds the supported size");

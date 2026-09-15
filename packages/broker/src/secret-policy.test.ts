@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertContentDoesNotContainSecrets, assertContentPathAllowed, redactBoundedText, redactLogText } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertContentPathAllowed, redactBoundedText, redactLogText } from "./secret-policy.js";
 
 test("fixed secret-zone policy denies credential and private-data paths", () => {
   const denied = [
@@ -37,6 +37,19 @@ test("content policy denies representative private keys and access tokens", () =
     assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(value)), /protected secret signature/u);
   }
   assert.doesNotThrow(() => assertContentDoesNotContainSecrets(Buffer.from("ordinary documentation")));
+});
+
+test("argument policy denies credential options and token-shaped values", () => {
+  const denied = [
+    ["--token", "value"],
+    ["--api-key=opaque-value"],
+    ["--private_key", "/tmp/key"],
+    ["Authorization: Bearer abcdefghijklmnop-secret"]
+  ];
+  for (const argumentsValue of denied) {
+    assert.throws(() => assertArgumentsDoNotContainSecrets(argumentsValue), /protected secret/u, argumentsValue.join(" "));
+  }
+  assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--format", "json", "ordinary-file"]));
 });
 
 test("log redaction removes secret-shaped values and bounds messages", () => {
