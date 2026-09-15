@@ -117,6 +117,11 @@ export interface WriteJobMetadata {
    * ledger rows may omit it and therefore cannot participate in cleanup.
    */
   temporaryName?: string;
+  /** Device/inode captured immediately before cleanup unlinks the temporary. */
+  temporaryDevice?: string;
+  temporaryInode?: string;
+  /** Broker time at which the unlink identity was durably recorded. */
+  temporaryRecoveryRecordedAtMs?: number;
 }
 
 /** Non-secret OS identity needed to recover an interrupted task process. */
@@ -1902,6 +1907,52 @@ export class BrokerStore {
       LIMIT ?
     `).all(limit) as unknown as JobRow[];
     return rows.map(mapJob);
+  }
+
+  /**
+   * Persist the exact temporary-file identity before a restart cleanup unlink.
+   * This is the recovery authority for a crash after native quarantine rename;
+   * a later scan may only use this recorded device/inode pair.
+   */
+  recordWriteUnlinkRecovery(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    identity: { device: string; inode: string },
+    recordedAtMs: number
+  ): BrokerJob {
+    if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(jobId) ||
+        !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(principalId) ||
+        !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
+        !/^\d{1,32}$/u.test(identity.device) || !/^\d{1,32}$/u.test(identity.inode) ||
+        !Number.isSafeInteger(recordedAtMs) || recordedAtMs < 0) {
+      throw malformedJob();
+    }
+    return this.runTransaction(() => {
+      const current = this.requireOwnedJob(jobId, principalId);
+      if (current.revision !== expectedRevision || current.state !== "unknown" ||
+          current.cancelRequested !== true || current.writeMetadata?.temporaryName === undefined ||
+          current.writeMetadata.temporaryRecoveryRecordedAtMs !== undefined) {
+        if (current.writeMetadata?.temporaryDevice === identity.device && current.writeMetadata.temporaryInode === identity.inode) return current;
+        throw new BrokerError("CONFLICT", "Write unlink recovery authority changed concurrently");
+      }
+      if (current.finishedAtMs !== null && recordedAtMs < current.finishedAtMs) {
+        throw new BrokerError("PRECONDITION_FAILED", "Write unlink recovery timestamp is before Job restart");
+      }
+      const metadata: WriteJobMetadata = {
+        ...current.writeMetadata,
+        temporaryDevice: identity.device,
+        temporaryInode: identity.inode,
+        temporaryRecoveryRecordedAtMs: recordedAtMs
+      };
+      validateWriteJobMetadata(metadata);
+      const updated = this.database.prepare(`
+        UPDATE jobs SET write_metadata_json = ?, revision = revision + 1
+        WHERE job_id = ? AND owner_principal_id = ? AND state = 'unknown' AND cancel_requested = 1 AND revision = ?
+      `).run(serializeWriteJobMetadata(metadata), jobId, principalId, expectedRevision);
+      if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Write unlink recovery authority changed concurrently");
+      return this.requireOwnedJob(jobId, principalId);
+    });
   }
 
   /** Return restart-reconciled task Jobs that retain a verified process identity. */
@@ -4438,10 +4489,11 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
   const keys = Object.keys(parsed).sort();
   const legacyKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId";
   const currentKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId,temporaryName";
-  if (keys.length !== 6 && keys.length !== 7) {
+  const recoveryKeys = "bytes,createOnly,desiredSha256,expectedSha256,path,rootId,temporaryDevice,temporaryInode,temporaryName,temporaryRecoveryRecordedAtMs";
+  if (keys.length !== 6 && keys.length !== 7 && keys.length !== 10) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   }
-  if (keys.join(",") !== (keys.length === 6 ? legacyKeys : currentKeys)) {
+  if (keys.join(",") !== (keys.length === 6 ? legacyKeys : keys.length === 7 ? currentKeys : recoveryKeys)) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   }
   const metadata = parsed as Partial<WriteJobMetadata>;
@@ -4453,9 +4505,17 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
     typeof metadata.desiredSha256 !== "string" ||
     (typeof metadata.expectedSha256 !== "string" && metadata.expectedSha256 !== null) ||
     typeof metadata.createOnly !== "boolean" ||
-    (metadata.temporaryName !== undefined && typeof metadata.temporaryName !== "string")
+    (metadata.temporaryName !== undefined && typeof metadata.temporaryName !== "string") ||
+    (metadata.temporaryDevice !== undefined && (typeof metadata.temporaryDevice !== "string" || !/^\d+$/u.test(metadata.temporaryDevice))) ||
+    (metadata.temporaryInode !== undefined && (typeof metadata.temporaryInode !== "string" || !/^\d+$/u.test(metadata.temporaryInode))) ||
+    (metadata.temporaryRecoveryRecordedAtMs !== undefined && (!Number.isSafeInteger(metadata.temporaryRecoveryRecordedAtMs) || metadata.temporaryRecoveryRecordedAtMs < 0))
   ) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
   if (metadata.expectedSha256 === undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  const recoveryFields = [metadata.temporaryDevice, metadata.temporaryInode, metadata.temporaryRecoveryRecordedAtMs];
+  if (recoveryFields.some((field) => field !== undefined) &&
+      (metadata.temporaryName === undefined || metadata.temporaryDevice === undefined || metadata.temporaryInode === undefined || metadata.temporaryRecoveryRecordedAtMs === undefined)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker write-job metadata is malformed");
+  }
   const normalized: WriteJobMetadata = {
     rootId: metadata.rootId,
     path: metadata.path,
@@ -4463,7 +4523,10 @@ function parseWriteJobMetadata(value: string): WriteJobMetadata {
     desiredSha256: metadata.desiredSha256,
     expectedSha256: metadata.expectedSha256,
     createOnly: metadata.createOnly,
-    ...(metadata.temporaryName !== undefined ? { temporaryName: metadata.temporaryName } : {})
+    ...(metadata.temporaryName !== undefined ? { temporaryName: metadata.temporaryName } : {}),
+    ...(metadata.temporaryDevice !== undefined ? { temporaryDevice: metadata.temporaryDevice } : {}),
+    ...(metadata.temporaryInode !== undefined ? { temporaryInode: metadata.temporaryInode } : {}),
+    ...(metadata.temporaryRecoveryRecordedAtMs !== undefined ? { temporaryRecoveryRecordedAtMs: metadata.temporaryRecoveryRecordedAtMs } : {})
   };
   validateWriteJobMetadata(normalized);
   return normalized;
@@ -4476,9 +4539,15 @@ function validateWriteJobMetadata(metadata: WriteJobMetadata): void {
       !/^[a-f0-9]{64}$/u.test(metadata.desiredSha256) ||
       (metadata.expectedSha256 !== null && !/^[a-f0-9]{64}$/u.test(metadata.expectedSha256)) ||
       typeof metadata.createOnly !== "boolean" ||
-      (metadata.temporaryName !== undefined && !/^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u.test(metadata.temporaryName))) {
+      (metadata.temporaryName !== undefined && !/^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u.test(metadata.temporaryName)) ||
+      (metadata.temporaryDevice !== undefined && !/^\d{1,32}$/u.test(metadata.temporaryDevice)) ||
+      (metadata.temporaryInode !== undefined && !/^\d{1,32}$/u.test(metadata.temporaryInode)) ||
+      (metadata.temporaryRecoveryRecordedAtMs !== undefined && (!Number.isSafeInteger(metadata.temporaryRecoveryRecordedAtMs) || metadata.temporaryRecoveryRecordedAtMs < 0))) {
     throw malformedJob();
   }
+  const recoveryFields = [metadata.temporaryDevice, metadata.temporaryInode, metadata.temporaryRecoveryRecordedAtMs];
+  if (recoveryFields.some((field) => field !== undefined) &&
+      (metadata.temporaryName === undefined || metadata.temporaryDevice === undefined || metadata.temporaryInode === undefined || metadata.temporaryRecoveryRecordedAtMs === undefined)) throw malformedJob();
 }
 
 function validateRequestAdmission(input: AdmitRequestInput): void {

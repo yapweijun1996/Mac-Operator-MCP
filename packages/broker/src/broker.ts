@@ -15,7 +15,7 @@ import {
   type CapabilityFamily
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
 import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
@@ -34,7 +34,7 @@ import {
 } from "./policy.js";
 import { PolicyManager } from "./policy-loader.js";
 import { parseBrokerRequest } from "./request-validator.js";
-import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition, type TemporaryWriteCleanupResult } from "./filesystem-inspector.js";
+import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition, type TemporaryWriteCleanupResult, type UnlinkRecoveryResult } from "./filesystem-inspector.js";
 import type { FilesystemPatchResult } from "./filesystem-patch.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { inspectSystem } from "./system-inspector.js";
@@ -267,10 +267,11 @@ export class Broker {
         skipped += 1;
         continue;
       }
+      const temporaryName = metadata.temporaryName;
       const targetRef = `path:${metadata.path}`;
       const priorCompletion = this.options.store.auditEventResult(auditRequestId, "completion");
       if (priorCompletion !== undefined) {
-        if (priorCompletion === "TEMPORARY_REMOVED" || priorCompletion === "TEMPORARY_ABSENT") absent += 1;
+        if (priorCompletion === "TEMPORARY_REMOVED" || priorCompletion === "TEMPORARY_ABSENT" || priorCompletion === "TEMPORARY_RECOVERED") absent += 1;
         else if (priorCompletion === "TEMPORARY_CLEANUP_SKIPPED") {
           // A failed inspection may be transient (for example, a temporary
           // root identity race). Retry the exact recorded artifact later;
@@ -295,12 +296,91 @@ export class Broker {
           timestampMs: this.now()
         });
       }
+      let activeJob = job;
+      let activeMetadata = metadata;
+      let plan: FilesystemPathPlan | undefined;
       let result: TemporaryWriteCleanupResult;
+      const recordRecoveryCompletion = (recovery: UnlinkRecoveryResult): boolean => {
+        if (recovery.status !== "recovered") return false;
+        removed += 1;
+        this.options.store.appendAudit({
+          requestId: auditRequestId,
+          principalId: job.ownerPrincipalId,
+          tool: "internal_write_temporary_cleanup",
+          eventType: "completion",
+          decision: "allow",
+          resultClass: "TEMPORARY_RECOVERED",
+          targetRef,
+          policyVersion: job.policyVersion,
+          evidence: {
+            jobId: activeJob.jobId,
+            jobRevision: activeJob.revision,
+            rootId: activeMetadata.rootId,
+            temporaryName,
+            temporaryDevice: activeMetadata.temporaryDevice,
+            temporaryInode: activeMetadata.temporaryInode,
+            temporaryRecoveryRecordedAtMs: activeMetadata.temporaryRecoveryRecordedAtMs,
+            path: recovery.path,
+            quarantinePath: recovery.quarantinePath,
+            recoveryStatus: recovery.status
+          },
+          timestampMs: this.now()
+        });
+        return true;
+      };
       try {
-        const plan = inspector.planPath(metadata.path, "write");
-        if (plan.rootId !== metadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary root identity no longer matches");
-        result = inspector.cleanupWriteTemporary(plan, metadata.temporaryName);
+        plan = inspector.planPath(activeMetadata.path, "write");
+        if (plan.rootId !== activeMetadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary root identity no longer matches");
+        const hasRecordedIdentity = activeMetadata.temporaryDevice !== undefined && activeMetadata.temporaryInode !== undefined;
+        if (hasRecordedIdentity) {
+          const temporaryPlan = inspector.planPath(join(dirname(activeMetadata.path), temporaryName), "write");
+          if (temporaryPlan.rootId !== activeMetadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary recovery root identity no longer matches");
+          const recovery = inspector.recoverUnlinkOrphan(temporaryPlan, {
+            present: true,
+            device: activeMetadata.temporaryDevice!,
+            inode: activeMetadata.temporaryInode!
+          });
+          if (recovery.status === "recovered") {
+            recordRecoveryCompletion(recovery);
+            continue;
+          }
+          if (recovery.status === "not_stale" || recovery.status === "ambiguous") {
+            throw new BrokerError("CONFLICT", "Filesystem temporary recovery artifact is recent or ambiguous");
+          }
+        }
+        result = inspector.cleanupWriteTemporary(plan, temporaryName, (artifact) => {
+          const hasRecordedIdentity = activeMetadata.temporaryDevice !== undefined && activeMetadata.temporaryInode !== undefined;
+          if (hasRecordedIdentity) {
+            if (activeMetadata.temporaryDevice !== artifact.device || activeMetadata.temporaryInode !== artifact.inode) {
+              throw new BrokerError("CONFLICT", "Filesystem temporary artifact identity no longer matches the recovery journal");
+            }
+            return;
+          }
+          activeJob = this.options.store.recordWriteUnlinkRecovery(
+            activeJob.jobId,
+            activeJob.ownerPrincipalId,
+            activeJob.revision,
+            { device: artifact.device, inode: artifact.inode },
+            this.now()
+          );
+          activeMetadata = activeJob.writeMetadata ?? activeMetadata;
+        });
       } catch (error) {
+        if (plan !== undefined && activeMetadata.temporaryDevice !== undefined && activeMetadata.temporaryInode !== undefined) {
+          try {
+            const temporaryPlan = inspector.planPath(join(dirname(activeMetadata.path), temporaryName), "write");
+            if (temporaryPlan.rootId !== activeMetadata.rootId) throw new BrokerError("POLICY_DENIED", "Write temporary recovery root identity no longer matches");
+            const recovery = inspector.recoverUnlinkOrphan(temporaryPlan, {
+              present: true,
+              device: activeMetadata.temporaryDevice,
+              inode: activeMetadata.temporaryInode
+            });
+            if (recordRecoveryCompletion(recovery)) continue;
+          } catch {
+            // Preserve the original cleanup failure below. A recovery scan
+            // that cannot prove a unique stale artifact must fail closed.
+          }
+        }
         skipped += 1;
         this.options.store.appendAudit({
           requestId: auditRequestId,
@@ -313,7 +393,7 @@ export class Broker {
           policyVersion: job.policyVersion,
           evidence: {
             jobId: job.jobId,
-            jobRevision: job.revision,
+            jobRevision: activeJob.revision,
             errorClass: error instanceof BrokerError ? error.errorClass : "EXECUTION_FAILED"
           },
           timestampMs: this.now()
@@ -332,10 +412,13 @@ export class Broker {
         targetRef,
         policyVersion: job.policyVersion,
         evidence: {
-          jobId: job.jobId,
-          jobRevision: job.revision,
-          rootId: metadata.rootId,
-          temporaryName: metadata.temporaryName,
+          jobId: activeJob.jobId,
+          jobRevision: activeJob.revision,
+          rootId: activeMetadata.rootId,
+          temporaryName,
+          ...(activeMetadata.temporaryDevice !== undefined ? { temporaryDevice: activeMetadata.temporaryDevice } : {}),
+          ...(activeMetadata.temporaryInode !== undefined ? { temporaryInode: activeMetadata.temporaryInode } : {}),
+          ...(activeMetadata.temporaryRecoveryRecordedAtMs !== undefined ? { temporaryRecoveryRecordedAtMs: activeMetadata.temporaryRecoveryRecordedAtMs } : {}),
           path: result.path,
           ...(result.device !== null ? { device: result.device, inode: result.inode } : {})
         },

@@ -1270,7 +1270,11 @@ export class FilesystemInspector {
    * arbitrary stat failures as absence. If the artifact exists, its current
    * descriptor identity must match the immediately-following unlink.
    */
-  cleanupWriteTemporary(plan: FilesystemPathPlan, temporaryName: string): TemporaryWriteCleanupResult {
+  cleanupWriteTemporary(
+    plan: FilesystemPathPlan,
+    temporaryName: string,
+    onIdentity?: (metadata: SafePathMetadata) => void
+  ): TemporaryWriteCleanupResult {
     if (!TEMPORARY_WRITE_NAME_PATTERN.test(temporaryName)) {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem temporary name is malformed");
     }
@@ -1298,6 +1302,7 @@ export class FilesystemInspector {
     if (metadata.type !== "file" || metadata.isSymlink) {
       throw new BrokerError("POLICY_DENIED", "Filesystem temporary artifact is not a regular non-symlink file");
     }
+    onIdentity?.(metadata);
     const removed = this.unlinkPlanned(temporaryPlan, {
       present: true,
       device: metadata.device,
