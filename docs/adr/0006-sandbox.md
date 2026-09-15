@@ -199,6 +199,14 @@ focused tests. This protects the verification boundary but does not provision
 or distribute guest private signing keys and does not change the disabled
 runtime/VM release gate.
 
+Revision `d276615` adds a plain-data representation check at the signed guest
+attestation verifier boundary. The envelope, claims, and nested guest
+identity reject inherited, accessor, hidden, and symbolic values before
+canonical digest or Ed25519 verification. This prevents JavaScript object
+semantics from changing provenance claims, but it is parser hardening only;
+it does not provide a native attestation producer, protect guest private-key
+distribution, boot a VM, prove isolation, or enable `mac_task_run`.
+
 Commit `7de8385` adds a separate protected `virtualization_guest.node` native
 artifact. Its startup-only N-API entry point revalidates a canonical
 owner-only image through a bounded descriptor, binds device/inode/size/SHA-256

@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest attestation data-shape addendum: source revision `d276615` requires the
+signed guest attestation envelope, payload, and nested identity to be plain
+data records before canonical digest and Ed25519 verification. Inherited,
+accessor, hidden, and symbolic fields fail closed as `POLICY_DENIED`. The
+focused attestation suite passes 6/6; the non-overlapping package regression
+passes 505 total (499 pass, 6 skipped, 0 fail); build, typecheck, lint, and
+diff checks pass. This protects local provenance parsing only and does not
+close native attestation production, private-key distribution, VM isolation,
+or task-runner enablement.
+Evidence: `evidence/2026-09-15-guest-attestation-data-shapes.md`.
+
 Operator IPC data-shape addendum: source revision `8ed6e298` applies the
 shared plain-data-record guard to policy-signer command and approval issuance
 parsers, including nested approval payloads. Inherited, accessor, symbolic,

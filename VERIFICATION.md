@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest attestation data-shape addendum: commit `d276615` applies the shared
+plain-data-record check to the signed attestation envelope, payload, and
+nested guest identity before digest/signature verification. Inherited,
+hidden, symbolic, and accessor-bearing values fail closed as
+`POLICY_DENIED`. The focused attestation suite passes 6/6; the
+non-overlapping package regression passes 505 total (499 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This proves local
+provenance parser integrity only and does not close VM, key-distribution,
+native-producer, or capability gates.
+Evidence: `evidence/2026-09-15-guest-attestation-data-shapes.md`.
+
 Operator IPC data-shape addendum: commit `8ed6e298` applies the shared
 plain-data-record check to policy-signer command and approval issuance
 parsers, including the nested approval payload. Inherited, hidden, symbolic,

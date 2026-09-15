@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest attestation data-shape addendum: source revision `d276615` makes the
+signed guest attestation envelope, payload, and nested identity accept only
+plain data records before canonicalization or signature verification.
+Inherited, accessor, hidden, and symbolic values fail closed. Focused
+attestation tests pass 6/6; the non-overlapping package regression passes 505
+total (499 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks
+pass. This closes local provenance representation integrity only; native
+attestation production, private-key distribution, VM isolation, and
+enablement evidence remain open.
+Evidence: `evidence/2026-09-15-guest-attestation-data-shapes.md`.
+
 Operator IPC data-shape addendum: source revision `8ed6e298` makes the
 policy-signer and approval issuance parsers accept only plain data records,
 including the nested signed approval payload. Inherited, accessor, hidden,
