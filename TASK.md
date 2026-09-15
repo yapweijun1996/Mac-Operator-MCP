@@ -4,17 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Executable-content identity addendum: source revision `a6dfe01` extends the
-Broker-owned executable identity snapshot from device/inode/mode to include
-size, mtime, and ctime metadata. ProcessSupervisor rechecks these fields after
-spawn and awaited startup ownership capture; SandboxExecTaskRunner repeats the
-check on final readback. Directory identities remain device/inode/mode-only so
-legitimate task writes do not look like cwd replacement. A physical-Darwin
-regression rewrites an executable in place at the same path/inode and proves
-fail-closed rejection;
-the complete physical-Darwin suite passes 605/605 with 0 skipped tests. This
-catches ordinary in-place mutations only; cryptographic content binding,
-descriptor/fexec atomicity, and remount resistance remain open. Evidence:
+Executable-content identity addendum: source revision `a0e62e2` extends the
+Broker-owned executable identity snapshot from device/inode/mode and ordinary
+metadata to a bounded SHA-256 content digest read through an `O_NOFOLLOW`
+descriptor. ProcessSupervisor rechecks the digest after spawn and awaited
+startup ownership capture; SandboxExecTaskRunner repeats the check on final
+readback. Directory identities remain device/inode/mode-only so legitimate
+task writes do not look like cwd replacement. Physical-Darwin regressions
+rewrite an executable in place at the same path/inode and verify digest
+readback; the complete serial physical-Darwin suite passes 606/606 with 0
+skipped tests. Descriptor/fexec atomicity, post-read mutation windows, and
+remount resistance remain open. Evidence:
 `evidence/2026-09-15-process-executable-content-identity.md`.
 
 Sandbox-root identity addendum: source revision `f562bc2` binds every

@@ -4,15 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Executable-content identity addendum: source revision `a6dfe01` makes the
-ProcessSupervisor executable snapshot include device/inode/mode plus size,
-mtime, and ctime metadata. Startup and final readbacks now reject an ordinary
-in-place executable rewrite even when the path and inode are unchanged; cwd
-directories intentionally retain identity-only checks because task writes
-change directory timestamps. The same-inode Darwin regression and complete
-physical-Darwin suite pass 605/605 with 0 skipped tests. This narrows the
-startup target-swap window but is not a cryptographic digest or kernel-held
-descriptor proof. Evidence:
+Executable-content identity addendum: source revision `a0e62e2` makes the
+ProcessSupervisor executable snapshot include device/inode/mode, ordinary
+metadata, and a bounded SHA-256 digest read through an `O_NOFOLLOW`
+descriptor. Startup and final readbacks now reject an executable rewrite even
+when the path and inode are unchanged; cwd directories intentionally retain
+identity-only checks because task writes change directory timestamps. The
+same-inode Darwin regression and complete serial physical-Darwin suite pass
+606/606 with 0 skipped tests. This narrows the startup target-swap window but
+is not a kernel-held descriptor/fexec proof. Evidence:
 `evidence/2026-09-15-process-executable-content-identity.md`.
 
 Sandbox-root identity addendum: source revision `f562bc2` extends the task

@@ -3,16 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Executable-content identity addendum: source revision `a6dfe01` binds the
-Broker executable target to device/inode/mode and ordinary file metadata
-(size, mtime, ctime) across validation, startup, ownership persistence, and
-final readback. A Darwin regression rewrites the authorized executable at the
-same path/inode and receives stable `POLICY_DENIED`; ProcessSupervisor passes
-28/28, sandbox-profile passes 15/15, and the complete physical-Darwin suite
-passes 605/605 with 0 skipped tests. Build, lint, contract, native canonical,
-and diff checks pass. This is metadata-based mutation detection only; digest,
-descriptor/fexec atomicity, remount resistance, and production task enablement
-remain open. Evidence:
+Executable-content identity addendum: source revision `a0e62e2` binds the
+Broker executable target to device/inode/mode, ordinary file metadata, and a
+bounded SHA-256 digest read through an `O_NOFOLLOW` descriptor across
+validation, startup, ownership persistence, and final readback. A Darwin
+regression rewrites the authorized executable at the same path/inode and
+receives stable `POLICY_DENIED`; ProcessSupervisor passes 29/29,
+sandbox-profile passes 15/15, and the complete serial physical-Darwin suite
+passes 606/606 with 0 skipped tests. Build, lint, contract, native canonical,
+and diff checks pass. Descriptor/fexec atomicity, remount resistance, and
+production task enablement remain open. Evidence:
 `evidence/2026-09-15-process-executable-content-identity.md`.
 
 Sandbox-root identity addendum: source revision `f562bc2` captures every
