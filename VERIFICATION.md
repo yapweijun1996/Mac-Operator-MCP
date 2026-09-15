@@ -3,7 +3,7 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Privileged cancellation and lease verification: source revision `70fd587`
+Privileged cancellation and lease verification: source revision `6fab84d`
 closes the pre-dispatch cancellation race, rechecks cancellation after helper
 command signing, preserves `UNKNOWN_OUTCOME` when cancellation occurs after
 helper dispatch, and proves bounded lease renewal for long helper calls. The

@@ -1,6 +1,6 @@
 # Privileged Job cancellation and lease regression
 
-- Source revision: `70fd587`
+- Source revision: `6fab84d`
 - Focused command: `npx tsc -b packages/broker/tsconfig.json --pretty false && node --test packages/broker/dist/privileged-helper-executor.test.js packages/broker/dist/privileged-broker-dispatch.test.js`
 - Focused result: 12 tests passed, 0 failed, 0 skipped.
 - Physical command: `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 MOPS_REAL_SANDBOX=1 node --test --test-timeout=120000 <all built tests except broker.test.js and persistence.test.js>`

@@ -4,7 +4,7 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Privileged cancellation/lease addendum: source revision `70fd587` closes the
+Privileged cancellation/lease addendum: source revision `6fab84d` closes the
 running-Job cancellation race before helper IPC, rechecks cancellation after
 command signing, retains `UNKNOWN_OUTCOME` after a command may have crossed
 the helper boundary, and renews long helper leases at a bounded interval. The
