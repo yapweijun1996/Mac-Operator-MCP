@@ -182,7 +182,51 @@ export async function loadVirtualizationGuestAttestationKeyConfig(
       expiresAtMs: entry.expiresAtMs
     });
   }
-  return { document, keys, payloadDigest: sha256(canonicalJson(document)) };
+  return freezeLoadedGuestAttestationKeyConfig({
+    document,
+    keys,
+    payloadDigest: sha256(canonicalJson(document))
+  });
+}
+
+/**
+ * Key configuration is authority, not caller-owned data. Copy the complete
+ * loaded graph and represent PEM bytes as an immutable string before exposing
+ * it through the manager or loader. This prevents mutation of a returned
+ * Buffer, entry, or document from changing the active verifier.
+ */
+function freezeLoadedGuestAttestationKeyConfig(
+  value: LoadedVirtualizationGuestAttestationKeyConfig
+): LoadedVirtualizationGuestAttestationKeyConfig {
+  const snapshot = {
+    document: {
+      schemaVersion: value.document.schemaVersion,
+      revision: value.document.revision,
+      keys: value.document.keys.map((entry) => ({ ...entry }))
+    },
+    keys: value.keys.map((key) => ({
+      keyId: key.keyId,
+      publicKeyPem: typeof key.publicKeyPem === "string"
+        ? key.publicKeyPem
+        : Buffer.from(key.publicKeyPem).toString("utf8"),
+      ...(key.notBeforeMs === undefined ? {} : { notBeforeMs: key.notBeforeMs }),
+      ...(key.expiresAtMs === undefined ? {} : { expiresAtMs: key.expiresAtMs })
+    })),
+    payloadDigest: value.payloadDigest
+  } satisfies LoadedVirtualizationGuestAttestationKeyConfig;
+  const seen = new Set<object>();
+  const freeze = (candidate: unknown): void => {
+    if (candidate === null || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) freeze(item);
+    } else {
+      for (const child of Object.values(candidate)) freeze(child);
+    }
+    Object.freeze(candidate);
+  };
+  freeze(snapshot);
+  return snapshot;
 }
 
 function isWithinRoot(root: string, target: string): boolean {

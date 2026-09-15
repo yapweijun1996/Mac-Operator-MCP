@@ -80,6 +80,21 @@ test("guest attestation key config is protected, digest-bound, and reloadable", 
     const loaded = await loadVirtualizationGuestAttestationKeyConfig(configPath);
     assert.equal(loaded.payloadDigest, digest);
     assert.equal(loaded.keys[0]?.keyId, "guest-key-1");
+    assert.equal(Object.isFrozen(loaded), true);
+    assert.equal(Object.isFrozen(loaded.document), true);
+    assert.equal(Object.isFrozen(loaded.document.keys), true);
+    assert.equal(Object.isFrozen(loaded.document.keys[0]), true);
+    assert.equal(Object.isFrozen(loaded.keys), true);
+    assert.equal(Object.isFrozen(loaded.keys[0]), true);
+    assert.equal(typeof loaded.keys[0]?.publicKeyPem, "string");
+    assert.throws(
+      () => { (loaded.document as { revision: number }).revision = 99; },
+      TypeError
+    );
+    assert.throws(
+      () => { (loaded.keys[0] as { keyId: string }).keyId = "guest-key-replacement"; },
+      TypeError
+    );
     await chmod(keyPath, 0o640);
     await assert.rejects(loadVirtualizationGuestAttestationKeyConfig(configPath), /not be accessible/u);
   } finally {
@@ -116,6 +131,14 @@ test("guest attestation key manager persists activation, revocation, restore, an
     await assert.rejects(manager.restore(), /does not match persisted activation/u);
     await manager.activate();
     assert.equal(store.activeGuestAttestationKeyConfigIdentity()?.revision, 1);
+    const active = manager.current();
+    assert.equal(Object.isFrozen(active), true);
+    assert.equal(Object.isFrozen(active.document.keys), true);
+    assert.equal(Object.isFrozen(active.keys[0]), true);
+    assert.throws(
+      () => { (active.keys[0] as { keyId: string }).keyId = "guest-key-replacement"; },
+      TypeError
+    );
     assert.equal(manager.createVerifier().verify(signed(attestation(), first.privateKey, "guest-key-1")).keyId, "guest-key-1");
 
     await writeVirtualizationGuestAttestationKeyConfig(configPath, secondDocument);
