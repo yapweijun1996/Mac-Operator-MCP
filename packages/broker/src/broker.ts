@@ -47,7 +47,7 @@ import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitS
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { DockerInspectorImpl, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
-import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
+import { FailClosedTaskRunner, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
@@ -3199,6 +3199,7 @@ export class Broker {
     let terminalPersisted = false;
     try {
       requireTaskIsolationProof(this.taskRunner.isolationProof, resolved, this.taskRunner.mechanism);
+      const descriptorDigest = taskDescriptorDigest(resolved);
       const persistTaskProcessSnapshot = (snapshot: ProcessOwnershipSnapshot, initial: boolean): void => {
         if (!execution.taskJob || !execution.jobLease) {
           throw new BrokerError("EXECUTION_FAILED", "Task process ownership cannot be linked to its Job");
@@ -3209,6 +3210,7 @@ export class Broker {
           processGroupId: snapshot.identity.processGroupId,
           startTimeMicros: snapshot.identity.startTimeMicros,
           recordedAtMs,
+          taskDescriptorDigest: descriptorDigest,
           ...(snapshot.ownershipProof === undefined ? {} : { ownershipProof: snapshot.ownershipProof }),
           descendants: snapshot.descendants.map((descendant) => ({
             pid: descendant.pid,

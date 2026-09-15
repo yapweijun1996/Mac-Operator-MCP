@@ -135,6 +135,8 @@ export interface ProcessJobMetadata {
   startTimeMicros: number;
   recordedAtMs: number;
   descendants: readonly ProcessDescendantMetadata[];
+  /** Digest of the exact Broker-resolved task descriptor used for dispatch. */
+  taskDescriptorDigest?: string;
   /** Host-owned proof that a dead root has no post-snapshot descendants. */
   ownershipProof?: "sandbox-exec-no-fork-v1";
 }
@@ -2091,6 +2093,7 @@ export class BrokerStore {
           metadata.pid !== current.processMetadata.pid ||
           metadata.processGroupId !== current.processMetadata.processGroupId ||
           metadata.startTimeMicros !== current.processMetadata.startTimeMicros ||
+          metadata.taskDescriptorDigest !== current.processMetadata.taskDescriptorDigest ||
           metadata.ownershipProof !== current.processMetadata.ownershipProof ||
           metadata.recordedAtMs < current.processMetadata.recordedAtMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Task process ownership metadata is outside the active Job window");
@@ -4392,6 +4395,9 @@ function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {
   if (metadata.ownershipProof !== undefined && metadata.ownershipProof !== "sandbox-exec-no-fork-v1") {
     throw malformedJob();
   }
+  if (metadata.taskDescriptorDigest !== undefined && !/^[a-f0-9]{64}$/u.test(metadata.taskDescriptorDigest)) {
+    throw malformedJob();
+  }
   if (metadata.ownershipProof === "sandbox-exec-no-fork-v1" && metadata.descendants.length > 0) {
     throw malformedJob();
   }
@@ -4465,7 +4471,10 @@ function parseProcessJobMetadata(value: string): ProcessJobMetadata {
   const legacyKeys = "pid,processGroupId,recordedAtMs,startTimeMicros";
   const currentKeys = "descendants,pid,processGroupId,recordedAtMs,startTimeMicros";
   const proofKeys = "descendants,ownershipProof,pid,processGroupId,recordedAtMs,startTimeMicros";
-  if (keys.join(",") !== legacyKeys && keys.join(",") !== currentKeys && keys.join(",") !== proofKeys) {
+  const descriptorKeys = "descendants,pid,processGroupId,recordedAtMs,startTimeMicros,taskDescriptorDigest";
+  const descriptorProofKeys = "descendants,ownershipProof,pid,processGroupId,recordedAtMs,startTimeMicros,taskDescriptorDigest";
+  if (keys.join(",") !== legacyKeys && keys.join(",") !== currentKeys && keys.join(",") !== proofKeys &&
+      keys.join(",") !== descriptorKeys && keys.join(",") !== descriptorProofKeys) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker process metadata is malformed");
   }
   const metadata = parsed as Partial<ProcessJobMetadata>;
@@ -4475,6 +4484,7 @@ function parseProcessJobMetadata(value: string): ProcessJobMetadata {
     startTimeMicros: metadata.startTimeMicros,
     recordedAtMs: metadata.recordedAtMs,
     descendants: metadata.descendants ?? [],
+    ...(metadata.taskDescriptorDigest === undefined ? {} : { taskDescriptorDigest: metadata.taskDescriptorDigest }),
     ...(metadata.ownershipProof === undefined ? {} : { ownershipProof: metadata.ownershipProof })
   } as ProcessJobMetadata;
   validateProcessJobMetadata(normalized);

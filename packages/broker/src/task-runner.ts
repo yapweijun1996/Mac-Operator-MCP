@@ -314,6 +314,11 @@ export function virtualizationTaskDigest(
   }, profileDigest);
 }
 
+/** Digest of the exact local task descriptor persisted with a running Job. */
+export function taskDescriptorDigest(profile: ResolvedTaskProfile): string {
+  return virtualizationTaskDigest(profile);
+}
+
 /**
  * Native Virtualization.framework adapter seam. The adapter owns VM creation,
  * guest boot, and guest-side evidence; the TypeScript Broker never accepts a
