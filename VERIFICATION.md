@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge contract owner readback verification at source revision `32c277e`: final
+contract-directory readback rechecks the current Edge UID after parsing, and
+direct negative coverage rejects a simulated owner change during loading.
+Focused contract/readback tests pass 16/16; the serial physical regression
+passes 659/664 with 0 failures and 5 explicit descriptor-capability skips.
+The three pre-existing long-running suites were excluded and left untouched.
+Evidence: `evidence/2026-09-16-edge-contract-owner-readback.md`.
+
 Edge contract foreign-owner regression verification at source revision
 `edd2cff`: direct negative coverage rejects a mismatched Edge UID before
 contract parsing, restoring the simulated identity in a `finally` block.

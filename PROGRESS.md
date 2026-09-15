@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge contract owner readback addendum at source revision `32c277e`: the final
+contract-directory readback now rechecks the current Edge UID after all files
+are parsed, and a simulated owner change during loading is rejected. Focused
+contract/readback tests pass 16/16; the serial physical regression passes
+659/664 with 0 failures and 5 explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-edge-contract-owner-readback.md`.
+
 Edge contract foreign-owner regression addendum at source revision `edd2cff`:
 the contract registry now has direct negative coverage for a mismatched Edge
 UID before parsing, with the simulated process identity restored in a
