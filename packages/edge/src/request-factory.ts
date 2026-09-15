@@ -48,14 +48,18 @@ export class EdgeRequestFactory {
       options.authenticationKeyPath,
       options.expectedAuthenticationKeyDigest
     );
-    return new EdgeRequestFactory({
-      authenticationKey,
-      authenticationKeyId: options.authenticationKeyId,
-      brokerAudience: options.brokerAudience,
-      policyVersion: options.policyVersion,
-      ...(options.now === undefined ? {} : { now: options.now }),
-      ...(options.randomId === undefined ? {} : { randomId: options.randomId })
-    });
+    try {
+      return new EdgeRequestFactory({
+        authenticationKey,
+        authenticationKeyId: options.authenticationKeyId,
+        brokerAudience: options.brokerAudience,
+        policyVersion: options.policyVersion,
+        ...(options.now === undefined ? {} : { now: options.now }),
+        ...(options.randomId === undefined ? {} : { randomId: options.randomId })
+      });
+    } finally {
+      authenticationKey.fill(0);
+    }
   }
 
   static async fromKeychainDelivery(
