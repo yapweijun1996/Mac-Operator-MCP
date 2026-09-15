@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge contract ownership verification at source revision `1500196`: the Edge
+contract directory and each contract file must be owned by the Edge UID before
+parsing or MCP advertisement, in addition to regular, non-symlink, and
+non-writable checks. Focused contract/readback tests pass 14/14; the serial
+physical regression passes 657/662 with 0 failures and 5 explicit
+descriptor-capability skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes owner-integrity admission only;
+installed provenance, signing, native descriptor execution, remote issuer
+deployment, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-edge-contract-owner.md`.
+
 Descriptor launcher executable-and-cwd boundary verification at source
 revision `d8f0202`: descriptor-required ProcessSupervisor execution opens and
 identity-checks both the validated executable and cwd, passing only borrowed

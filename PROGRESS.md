@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge contract ownership addendum at source revision `1500196`: the Edge
+contract directory and each contract file must be owned by the Edge UID in
+addition to being regular, non-symlink, and not group/other writable before
+parsing or MCP advertisement. Focused contract/readback tests pass 14/14; the
+serial physical regression passes 657/662 with 0 failures and 5 explicit
+descriptor-capability skips. This closes owner-integrity admission only;
+installed provenance, signing, native descriptor execution, remote issuer
+deployment, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-edge-contract-owner.md`.
+
 Descriptor launcher executable-and-cwd boundary addendum at source revision
 `d8f0202`: descriptor-required ProcessSupervisor execution now opens and
 identity-checks both the executable and working directory, passing only their

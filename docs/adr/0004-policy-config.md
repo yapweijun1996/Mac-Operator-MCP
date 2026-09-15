@@ -52,6 +52,12 @@ cannot be accepted from an in-place target mutation. This is local readback
 evidence only and does not close signed distribution, installation, or
 capability enablement.
 
+Revision `1500196` additionally requires the Edge contract directory and each
+contract file to be owned by the Edge UID before parsing or MCP advertisement.
+This prevents a foreign-owned preloaded contract set from entering the Edge
+authority boundary, while leaving installed package provenance, signing, and
+capability enablement as separate gates.
+
 Revision `a26a188` provides an independent bounded native Swift readback of
 the canonical JSON vector set, including Unicode ordering and SHA-256 bytes.
 It strengthens cross-runtime evidence for the serialization profile but does

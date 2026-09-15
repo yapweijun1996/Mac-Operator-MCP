@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-084/085 Edge contract ownership addendum at source revision `1500196`:
+the Edge contract directory and files are required to be owned by the Edge UID
+before parsing or MCP advertisement, alongside existing non-symlink and
+write-permission checks. Focused contract/readback tests pass 14/14; the serial
+physical regression passes 657/662 with 0 failures and 5 explicit
+descriptor-capability skips. Installed provenance, signing, native descriptor
+execution, remote issuer deployment, and capability enablement remain open.
+Evidence: `evidence/2026-09-16-edge-contract-owner.md`.
+
 MOP-045 descriptor launcher executable-and-cwd boundary addendum at source
 revision `d8f0202`: descriptor-required ProcessSupervisor execution opens and
 identity-checks both the Broker-validated executable and cwd, then passes only
