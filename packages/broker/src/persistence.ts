@@ -1301,7 +1301,14 @@ export class BrokerStore {
   }
 
   isRevoked(kind: RevocationKind, subjectId: string): boolean {
-    return this.database.prepare("SELECT 1 FROM revocations WHERE kind = ? AND subject_id = ?").get(kind, subjectId) !== undefined;
+    if (!REVOCATION_KINDS.includes(kind) || !/^[A-Za-z0-9._:@/-]{1,257}$/u.test(subjectId)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Revocation query is malformed");
+    }
+    const row = this.database.prepare("SELECT kind, subject_id, revoked_at_ms, reason FROM revocations WHERE kind = ? AND subject_id = ?")
+      .get(kind, subjectId) as RevocationRow | undefined;
+    if (row === undefined) return false;
+    validateStoredRevocation(row);
+    return true;
   }
 
   admitPolicySignerCommand(input: {
@@ -1552,7 +1559,10 @@ export class BrokerStore {
   }
 
   isSwitchDisabled(name: SwitchName): boolean {
-    const row = this.database.prepare("SELECT disabled FROM switches WHERE name = ?").get(name) as { disabled: number } | undefined;
+    if (!SWITCH_NAMES.includes(name)) throw new BrokerError("PRECONDITION_FAILED", "Kill-switch query is malformed");
+    const row = this.database.prepare("SELECT name, disabled, changed_at_ms, reason FROM switches WHERE name = ?")
+      .get(name) as SwitchRow | undefined;
+    if (row !== undefined) validateStoredSwitch(row);
     return row?.disabled === 1;
   }
 
@@ -3417,6 +3427,20 @@ interface ApprovalRow {
   revision: number;
 }
 
+interface RevocationRow {
+  kind: string;
+  subject_id: string;
+  revoked_at_ms: number;
+  reason: string;
+}
+
+interface SwitchRow {
+  name: string;
+  disabled: number;
+  changed_at_ms: number;
+  reason: string;
+}
+
 function mapRequest(row: RequestRow): RequestRecord {
   validateStoredRequestState(row);
   const capabilityFamilies = decodeCapabilityFamilies(row.capability_families);
@@ -3580,6 +3604,24 @@ function validateStoredApproval(row: ApprovalRow): void {
 
   const expectedRevision = row.used_count + (row.revoked_at_ms === null ? 0 : 1);
   if (row.revision !== expectedRevision) fail();
+}
+
+function validateStoredRevocation(row: RevocationRow): void {
+  if (!REVOCATION_KINDS.includes(row.kind as RevocationKind) ||
+      !/^[A-Za-z0-9._:@/-]{1,257}$/u.test(row.subject_id) ||
+      !Number.isSafeInteger(row.revoked_at_ms) || row.revoked_at_ms < 0 ||
+      typeof row.reason !== "string" || row.reason.length < 1 || row.reason.length > 200 || row.reason.includes("\0")) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored revocation state is malformed");
+  }
+}
+
+function validateStoredSwitch(row: SwitchRow): void {
+  if (!SWITCH_NAMES.includes(row.name as SwitchName) ||
+      (row.disabled !== 0 && row.disabled !== 1) ||
+      !Number.isSafeInteger(row.changed_at_ms) || row.changed_at_ms < 0 ||
+      typeof row.reason !== "string" || row.reason.length < 1 || row.reason.length > 200 || row.reason.includes("\0")) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored kill-switch state is malformed");
+  }
 }
 
 function mapJob(row: JobRow): BrokerJob {
