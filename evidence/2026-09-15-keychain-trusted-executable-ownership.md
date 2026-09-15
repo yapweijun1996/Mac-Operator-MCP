@@ -1,6 +1,6 @@
 # Keychain Trusted Executable Ownership Evidence
 
-- Source revision: `7f725bf`
+- Source revisions: `7f725bf`, `0c21edb`
 - Date: 2026-09-15
 - Scope: Broker and root-helper Keychain ACL executable binding
 
@@ -11,8 +11,10 @@ owner in both layers. The TypeScript boundary rejects missing POSIX identity,
 foreign ownership, writable modes, symlinks, and non-canonical paths before
 native access. The macOS native adapter repeats the owner check with `geteuid()`
 and retains the canonical-path double-read around
-`SecTrustedApplicationCreateFromPath`. This keeps a root helper from accepting
-a user-owned executable path and keeps the unprivileged Broker from binding a
+`SecTrustedApplicationCreateFromPath`. Its before/after identity fence also
+includes UID and mode, so permission or ownership changes during that native
+call are treated as a target change. This keeps a root helper from accepting a
+user-owned executable path and keeps the unprivileged Broker from binding a
 credential to an external owner.
 
 ## Verification

@@ -4,15 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Keychain trusted-executable ownership addendum: source revision `7f725bf`
+Keychain trusted-executable ownership addendum: source revisions `7f725bf`
+and `0c21edb`
 binds the ACL executable to the current process owner in both TypeScript and
 the macOS native adapter. Missing POSIX identity, foreign ownership, writable
 modes, symlinks, and non-canonical paths fail closed before secret access; the
 native layer repeats the owner check with `geteuid()` around its canonical
-path double-read. Focused peer/credentials/helper suites pass 30/30 with
-`MOPS_REAL_KEYCHAIN=1`; the latest physical non-overlapping suite passes
-618/618 with zero skips and zero failures. The existing Broker/Persistence
-process was left undisturbed. Evidence:
+path double-read and now includes UID/mode in its before/after identity fence.
+Focused peer/credentials/helper suites pass 30/30 with `MOPS_REAL_KEYCHAIN=1`;
+the latest physical non-overlapping suite passes 618/618 with zero skips and
+zero failures. The existing Broker/Persistence process was left undisturbed.
+Evidence:
 `evidence/2026-09-15-keychain-trusted-executable-ownership.md`.
 
 Root-helper Keychain ACL binding addendum: source revisions `4bc0308`,

@@ -276,6 +276,10 @@ ownership, missing POSIX identity, writable modes, symlinks, and non-canonical
 paths fail closed before Keychain access; the native check repeats ownership
 with `geteuid()` while retaining the canonical-path identity double-read.
 
+Revision `0c21edb` extends that native before/after identity fence to include
+UID and mode, so ownership or permission changes during
+`SecTrustedApplicationCreateFromPath` are treated as a target change.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
