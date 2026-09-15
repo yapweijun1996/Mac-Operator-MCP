@@ -6,12 +6,13 @@ Date: 2026-09-15
 
 ## Scope
 
-Broker startup now verifies the complete column set of core authority tables
-(`requests`, `approvals`, `jobs`, `audit_events`, `revocations`, and
-`switches`) after migrations. Unknown or missing columns fail closed as
-`AUDIT_UNAVAILABLE`, preventing a newer or tampered writer from adding state
-that the current runtime would silently ignore. Legacy migrations remain
-compatible because the check compares the post-migration column set.
+Broker startup now verifies the complete column set of every Broker persistence
+table after migrations, including nonce ledgers, runtime fence, active/history
+configuration, Request/Approval/Job ledgers, audit events, revocations, and
+kill-switches. Unknown or missing columns fail closed as `AUDIT_UNAVAILABLE`,
+preventing a newer or tampered writer from adding state that the current
+runtime would silently ignore. Legacy migrations remain compatible because the
+check compares the post-migration column set.
 
 ## Verification
 
@@ -19,7 +20,7 @@ compatible because the check compares the post-migration column set.
 - Request/link/Job focused slice: 12 passed, 0 failed.
 - Non-overlapping package regression: 592 total, 586 passed, 6 skipped, 0 failed.
 - `npm run build`: passed.
-- `npm run lint`: passed for 600 tracked files before this evidence file was added.
+- `npm run lint`: passed for 602 tracked files before this evidence file was added.
 - `git diff --check`: passed.
 
 The long-running `broker.test.js` and `persistence.test.js` suites were already
