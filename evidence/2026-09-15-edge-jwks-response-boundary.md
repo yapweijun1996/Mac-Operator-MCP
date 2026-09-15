@@ -15,7 +15,7 @@ boundary.
 
 ## Implementation
 
-The Edge now supplies `jose` with a Broker-owned fetch wrapper for every remote
+The Edge now supplies `jose` with an Edge-owned fetch wrapper for every remote
 JWKS source. It accepts only `application/json` or
 `application/jwk-set+json`, rejects invalid or oversized `Content-Length`, and
 streams the body into a bounded 256 KiB buffer before reconstructing the
