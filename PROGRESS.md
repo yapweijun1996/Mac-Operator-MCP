@@ -17,6 +17,14 @@ real sandbox, credential-canary, fork/`setsid`, TCP/UDP allowlist, and active
 cancellation checks ran; only real Keychain ACL and temporary install gates
 skipped. Evidence: `evidence/2026-09-15-real-sandbox-regression.md`.
 
+Physical Keychain/install addendum: with `MOPS_REAL_INSTALL=1`,
+`MOPS_REAL_KEYCHAIN=1`, and `MOPS_REAL_SANDBOX=1` exported to the test
+processes, the same non-overlapping built set passes 595/595 with 0 skips and
+0 failures. Temporary Keychain ACL retirement and per-user Edge/Broker
+LaunchAgent bootstrap/readback/bootout passed; post-test launchd readback
+confirmed both fixed labels absent. Evidence:
+`evidence/2026-09-15-real-install-keychain-regression.md`.
+
 Audit-evidence redaction addendum: source revision `42ca30c` expands both the
 recursive persistence redactor and the separately authenticated privileged
 helper response redactor to cover common API/access/refresh token,

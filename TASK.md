@@ -16,6 +16,13 @@ TCP/UDP allowlist, and active cancellation checks passed; real Keychain ACL
 and temporary install gates remain skipped. Evidence:
 `evidence/2026-09-15-real-sandbox-regression.md`.
 
+Physical Keychain/install addendum: exporting all physical gates yields
+595/595 with 0 skips and 0 failures. Temporary Keychain ACL retirement and
+per-user Edge/Broker LaunchAgent bootstrap, authenticated readback, bootout,
+and post-test label absence passed. Persistent production installation,
+Developer ID provenance, and helper deployment remain open. Evidence:
+`evidence/2026-09-15-real-install-keychain-regression.md`.
+
 Audit-evidence redaction addendum: the persistence and privileged-helper
 response boundaries now redact common credential and key field aliases and
 secret-shaped strings before canonicalization or response publication; focused

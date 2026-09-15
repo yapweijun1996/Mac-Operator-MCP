@@ -17,6 +17,13 @@ cancellation checks ran; real Keychain ACL and temporary install remain
 explicitly skipped. Evidence:
 `evidence/2026-09-15-real-sandbox-regression.md`.
 
+Physical Keychain/install verification: with all three physical gates
+exported, the non-overlapping built set passes 595/595 with 0 skips and 0
+failures. Real temporary Keychain ACL retirement and per-user Edge/Broker
+LaunchAgent bootstrap, authenticated readback, and bootout passed; a post-test
+`launchctl print` readback confirmed both fixed labels absent. Evidence:
+`evidence/2026-09-15-real-install-keychain-regression.md`.
+
 Audit-evidence redaction verification: the persistence and privileged-helper
 response boundaries cover common API/access/refresh token, client/HMAC/
 signing/SSH key, bearer/JWT, password/passphrase, cookie, credential, and
