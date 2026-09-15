@@ -26,7 +26,7 @@ test("default Broker policy represents every planned tool and keeps privileged t
     assert.equal(tool.targetType, targetType);
     assert.equal(tool.timeoutMs, timeoutMs);
     assert.equal(tool.outputCapBytes, outputCapBytes);
-    assert.equal(tool.implemented, false);
+    assert.equal(tool.implemented, true);
     assert.equal(tool.enabled, false);
   }
 });

@@ -356,11 +356,14 @@ export class BrokerPrivilegedHelperCommandFactory {
         request.mutation !== true || request.state !== "RUNNING" || request.jobId !== job.jobId ||
         request.targetRef === null || request.targetRef !== job.targetRef ||
         request.tool !== job.tool || request.policyVersion !== job.policyVersion ||
-        request.payloadDigest !== job.payloadDigest || job.ownerSessionId !== input.sessionId ||
+        job.ownerSessionId !== input.sessionId ||
         job.state !== "running" || job.tool !== `mac_priv_${operation === "service_control" ? "service_control" : operation === "package_install" ? "package_install" : "power"}` ||
         !validTarget(operation, job.targetRef)) {
       throw new BrokerError("CONFLICT", "Privileged helper request and running Job identity do not match");
     }
+    // Request.payloadDigest authenticates the complete Edge envelope. The Job
+    // and approval payloadDigest bind only the normalized privileged arguments;
+    // both domains are checked independently and must not be compared.
   }
 
   private requireApproval(

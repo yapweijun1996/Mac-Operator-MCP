@@ -1178,7 +1178,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
         name: "mac_task_run", planned: true, implemented: true, enabled: false, scopes: ["mac.task.run"], contract_version: "0.1", reason: "disabled_by_policy"
       });
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_priv_power"), {
-        name: "mac_priv_power", planned: true, implemented: false, enabled: false, scopes: ["mac.priv.power"], contract_version: "0.1", reason: "not_implemented"
+        name: "mac_priv_power", planned: true, implemented: true, enabled: false, scopes: ["mac.priv.power"], contract_version: "0.1", reason: "disabled_by_policy"
       });
     }
   } finally { await context.close(); }
@@ -1798,7 +1798,7 @@ test("mac_app_focus never publishes success after active session revocation", as
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 41);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 44);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

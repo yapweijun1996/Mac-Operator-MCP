@@ -107,6 +107,11 @@ export class PrivilegedHelperJobExecutor {
     }
   }
 
+  /** Whether this executor has an explicitly configured helper transport. */
+  get available(): boolean {
+    return this.enabled;
+  }
+
   async execute(input: PrivilegedHelperJobExecutionInput): Promise<PrivilegedHelperJobExecutionOutcome> {
     if (!this.enabled) {
       throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper Job executor is disabled");

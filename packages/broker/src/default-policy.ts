@@ -520,7 +520,7 @@ const tools: ToolPolicy[] = [
     approvalPolicy: "explicit_privileged_policy",
     outputCapBytes: 262_144,
     timeoutMs: 30_000,
-    implemented: false,
+    implemented: true,
     enabled: false
   },
   {
@@ -533,7 +533,7 @@ const tools: ToolPolicy[] = [
     approvalPolicy: "explicit_privileged_policy",
     outputCapBytes: 1_048_576,
     timeoutMs: 600_000,
-    implemented: false,
+    implemented: true,
     enabled: false
   },
   {
@@ -546,7 +546,7 @@ const tools: ToolPolicy[] = [
     approvalPolicy: "explicit_privileged_policy",
     outputCapBytes: 262_144,
     timeoutMs: 30_000,
-    implemented: false,
+    implemented: true,
     enabled: false
   },
   {

@@ -17,7 +17,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
-import type { BrokerJob, BrokerStore, GuestTaskJobMetadata, JobLease, WriteJobMetadata } from "./persistence.js";
+import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -53,6 +53,7 @@ import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryIns
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
 import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, type UiActionName, type UiInputKey, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
 import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
+import { validatePrivilegedHelperExecutionResult, type PrivilegedHelperExecutionResult, type PrivilegedHelperOperation, type PrivilegedHelperResponse } from "./privileged-helper.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -817,6 +818,9 @@ export class Broker {
           execution.taskJob = admitted.job;
           execution.taskJobNew = true;
         } else {
+          const mutationPayloadDigest = execution.privileged === undefined
+            ? sha256(canonicalJson(request.arguments))
+            : sha256(canonicalJson(execution.privileged.payload));
           this.options.store.recordRequestIntent({
             requestId: request.requestId,
             principalId: request.principal.principalId,
@@ -828,6 +832,7 @@ export class Broker {
             policyVersion: policy.version,
             evidence: {
               argumentDigest: sha256(canonicalJson(request.arguments)),
+              ...(execution.privileged === undefined ? {} : { privilegedPayloadDigest: mutationPayloadDigest }),
               ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {})
             },
             timestampMs: this.now()
@@ -835,10 +840,32 @@ export class Broker {
             contractVersion: request.contractVersion,
             targetKind: target.kind,
             targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
-            payloadDigest: sha256(canonicalJson(request.arguments)),
+            payloadDigest: mutationPayloadDigest,
             approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
             unattended: false
           });
+          if (request.tool === "mac_priv_service_control" || request.tool === "mac_priv_package_install" || request.tool === "mac_priv_power") {
+            if (!execution.privileged) throw new BrokerError("EXECUTION_FAILED", "Privileged helper payload is unavailable");
+            const payloadDigest = sha256(canonicalJson(execution.privileged.payload));
+            const jobInput = {
+              jobId: `job:priv-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${execution.target.kind}:${execution.target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest,
+              idempotencyKey: `privileged:${sha256(canonicalJson({ tool: request.tool, requestId: request.requestId })).slice(0, 48)}`,
+              createdAtMs: this.now(),
+              privilegedPayload: execution.privileged.payload
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.privilegedJob = created.job;
+            execution.privilegedJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
           if (request.tool === "mac_write_file_atomic") {
             const jobInput = {
               jobId: `job:write-${sha256(canonicalJson({ principalId: request.principal.principalId, idempotencyKey: execution.write!.idempotencyKey })).slice(0, 48)}`,
@@ -996,6 +1023,8 @@ export class Broker {
                     ? { kind: "ui_action" as const, job: execution.uiActionJob }
                     : execution.uiTypeJob && execution.uiTypeJobNew
                       ? { kind: "ui_type" as const, job: execution.uiTypeJob }
+                      : execution.privilegedJob && execution.privilegedJobNew
+                        ? { kind: "privileged" as const, job: execution.privilegedJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
         const leaseStartedAtMs = this.now();
@@ -1034,7 +1063,8 @@ export class Broker {
         else if (pendingJob.kind === "app_open") execution.appOpenJob = started;
         else if (pendingJob.kind === "app_focus") execution.appFocusJob = started;
         else if (pendingJob.kind === "ui_action") execution.uiActionJob = started;
-        else execution.uiTypeJob = started;
+        else if (pendingJob.kind === "ui_type") execution.uiTypeJob = started;
+        else execution.privilegedJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       this.ensureActiveAuthority(request, execution.target);
@@ -2285,6 +2315,11 @@ export class Broker {
       case "mac_task_run": {
         return this.dispatchTask(request, execution, toolPolicy.timeoutMs, toolPolicy.outputCapBytes);
       }
+      case "mac_priv_service_control":
+      case "mac_priv_package_install":
+      case "mac_priv_power": {
+        return this.dispatchPrivileged(request, execution, toolPolicy.timeoutMs);
+      }
       case "mac_job_status": {
         if (!execution.job) throw new BrokerError("EXECUTION_FAILED", "Job execution plan is unavailable");
         const tailBytes = (request.arguments.tail_bytes ?? 65_536) as number;
@@ -2345,6 +2380,49 @@ export class Broker {
       default:
         throw new BrokerError("UNSUPPORTED_CAPABILITY", "Tool handler is unavailable");
     }
+  }
+
+  private async dispatchPrivileged(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.privileged || !execution.privilegedJob) {
+      throw new BrokerError("EXECUTION_FAILED", "Privileged helper Job execution plan is unavailable");
+    }
+    const job = execution.privilegedJob;
+    if (job.state === "completed") {
+      return privilegedDispatchResult(job, parseStoredPrivilegedResponse(job.stdout), execution.privileged.payload, true);
+    }
+    if (job.state === "queued") {
+      throw new BrokerError("CONFLICT", "Privileged helper operation is already queued", true);
+    }
+    if (job.state === "running" && execution.privilegedJobNew !== true) {
+      throw new BrokerError("UNKNOWN_OUTCOME", "Privileged helper operation is unresolved; inspect its Broker job", true);
+    }
+    if (job.state === "unknown") {
+      throw new BrokerError("UNKNOWN_OUTCOME", "Privileged helper operation is unresolved; inspect its Broker job", true);
+    }
+    if (job.state === "cancelled") {
+      throw new BrokerError("CANCELLED", "Privileged helper operation was cancelled before execution");
+    }
+    if (job.state !== "running" || !execution.jobLease) {
+      throw new BrokerError("EXECUTION_FAILED", "Privileged helper Job is not executable");
+    }
+    const outcome = await this.executePrivilegedHelperJob({
+      request,
+      requestId: request.requestId,
+      principalId: request.principal.principalId,
+      sessionId: request.principal.sessionId,
+      job,
+      lease: execution.jobLease,
+      operation: execution.privileged.operation,
+      timeoutMs,
+      target: execution.target,
+      ...(execution.additionalTargets === undefined ? {} : { additionalTargets: execution.additionalTargets })
+    });
+    execution.privilegedJob = outcome.job;
+    return privilegedDispatchResult(outcome.job, outcome.response, execution.privileged.payload, false);
   }
 
   private async dispatchWrite(
@@ -3158,6 +3236,103 @@ export class Broker {
         }
       };
     }
+    if (request.tool === "mac_priv_service_control") {
+      assertExactArguments(request.arguments, ["service_id", "action", "expected_state"]);
+      const serviceId = request.arguments.service_id;
+      const action = request.arguments.action;
+      const expectedState = request.arguments.expected_state;
+      if (typeof serviceId !== "string" || typeof action !== "string" ||
+          (expectedState !== undefined && typeof expectedState !== "string")) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged service arguments have unsupported types");
+      }
+      validateServiceId(serviceId);
+      if (!["start", "stop", "restart", "enable", "disable"].includes(action)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged service action is invalid");
+      }
+      if (expectedState !== undefined && !["running", "stopped", "enabled", "disabled"].includes(expectedState)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged service expected_state is invalid");
+      }
+      const payload = {
+        operation: "service_control" as const,
+        service_id: serviceId,
+        action: action as "start" | "stop" | "restart" | "enable" | "disable",
+        ...(expectedState === undefined ? {} : { expected_state: expectedState as "running" | "stopped" | "enabled" | "disabled" })
+      } satisfies PrivilegedHelperPayload;
+      validatePrivilegedHelperPayload(payload);
+      if (!this.privilegedHelperExecutor.available) {
+        throw new BrokerError("POLICY_DENIED", "Privileged helper execution boundary is not enabled");
+      }
+      return {
+        target: { kind: "service", reference: serviceId },
+        auditTarget: `service:${serviceId}`,
+        privileged: { operation: payload.operation, payload }
+      };
+    }
+    if (request.tool === "mac_priv_package_install") {
+      assertExactArguments(request.arguments, ["package_id", "version", "source_profile"]);
+      const packageId = request.arguments.package_id;
+      const version = request.arguments.version;
+      const sourceProfile = request.arguments.source_profile;
+      if (typeof packageId !== "string" ||
+          (version !== undefined && typeof version !== "string") ||
+          (sourceProfile !== undefined && typeof sourceProfile !== "string")) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged package arguments have unsupported types");
+      }
+      if (!/^[A-Za-z0-9._:@/+\-]{1,255}$/u.test(packageId)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged package_id is invalid");
+      }
+      if (version !== undefined && !/^[A-Za-z0-9._:+\-]{1,128}$/u.test(version)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged package version is invalid");
+      }
+      if (sourceProfile !== undefined && !/^[A-Za-z0-9._:-]{1,128}$/u.test(sourceProfile)) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged package source_profile is invalid");
+      }
+      const payload = {
+        operation: "package_install" as const,
+        package_id: packageId,
+        ...(version === undefined ? {} : { version }),
+        ...(sourceProfile === undefined ? {} : { source_profile: sourceProfile })
+      } satisfies PrivilegedHelperPayload;
+      validatePrivilegedHelperPayload(payload);
+      if (!this.privilegedHelperExecutor.available) {
+        throw new BrokerError("POLICY_DENIED", "Privileged helper execution boundary is not enabled");
+      }
+      return {
+        target: { kind: "package", reference: packageId },
+        auditTarget: `package:${packageId}`,
+        privileged: { operation: payload.operation, payload }
+      };
+    }
+    if (request.tool === "mac_priv_power") {
+      assertExactArguments(request.arguments, ["action", "reason", "not_before"]);
+      const action = request.arguments.action;
+      const reason = request.arguments.reason;
+      const notBefore = request.arguments.not_before;
+      if (action !== "reboot" && action !== "shutdown") {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged power action is invalid");
+      }
+      if (reason !== undefined && (typeof reason !== "string" || reason.length > 200 || reason.includes("\0") || /[\r\n]/u.test(reason))) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged power reason is invalid");
+      }
+      if (notBefore !== undefined && (typeof notBefore !== "string" || notBefore.length > 64 || Number.isNaN(Date.parse(notBefore)))) {
+        throw new BrokerError("PRECONDITION_FAILED", "Privileged power not_before is invalid");
+      }
+      const payload = {
+        operation: "power" as const,
+        action,
+        ...(reason === undefined ? {} : { reason }),
+        ...(notBefore === undefined ? {} : { not_before: notBefore })
+      } satisfies PrivilegedHelperPayload;
+      validatePrivilegedHelperPayload(payload);
+      if (!this.privilegedHelperExecutor.available) {
+        throw new BrokerError("POLICY_DENIED", "Privileged helper execution boundary is not enabled");
+      }
+      return {
+        target: { kind: "host", reference: "local" },
+        auditTarget: "host:local",
+        privileged: { operation: payload.operation, payload }
+      };
+    }
     if (request.tool === "mac_app_open") {
       assertExactArguments(request.arguments, ["app_id", "document_path", "url"]);
       const appId = request.arguments.app_id;
@@ -3644,6 +3819,10 @@ export class Broker {
       }
       throw new BrokerError("POLICY_DENIED", "No package identity is authorized for this tool");
     }
+    if (tool.tool === "mac_priv_power") {
+      authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "host", reference: "local" });
+      return;
+    }
     if (tool.targetType === "log_source") {
       for (const rule of policy.targetRules.filter((candidate) =>
         candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
@@ -4017,6 +4196,10 @@ interface ExecutionPlan {
     cwd: string;
     args: readonly string[];
   };
+  privileged?: {
+    operation: PrivilegedHelperOperation;
+    payload: PrivilegedHelperPayload;
+  };
   job?: BrokerJob;
   write?: {
     content: Buffer;
@@ -4047,6 +4230,8 @@ interface ExecutionPlan {
   uiActionJobNew?: boolean;
   uiTypeJob?: BrokerJob;
   uiTypeJobNew?: boolean;
+  privilegedJob?: BrokerJob;
+  privilegedJobNew?: boolean;
   jobLease?: JobLease;
 }
 
@@ -4092,6 +4277,147 @@ interface WriteRecoveryStatus {
   postcondition: SafeWritePostcondition["status"];
   resolution: "remains_unknown";
   observed_at: string;
+}
+
+function parseStoredPrivilegedResponse(value: string): PrivilegedHelperResponse {
+  if (value.length < 1 || value.length > 262_144) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored privileged helper result is unavailable", true);
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseJsonStrict(value);
+  } catch {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored privileged helper result is malformed", true);
+  }
+  if (!isPlainDataRecord(parsed) || parsed.ok !== true || !isPlainDataRecord(parsed.result)) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored privileged helper result is malformed", true);
+  }
+  const result = validatePrivilegedHelperExecutionResult(parsed.result as unknown as PrivilegedHelperExecutionResult);
+  return { ok: true, commandId: "stored", requestId: "stored", result, responseProof: "" };
+}
+
+function privilegedDispatchResult(
+  job: BrokerJob,
+  response: PrivilegedHelperResponse,
+  payload: PrivilegedHelperPayload,
+  reused: boolean
+): DispatchResult {
+  if (!response.ok) {
+    throw new BrokerError(response.resultClass, "Privileged helper rejected the operation", response.error.retryable);
+  }
+  const result = validatePrivilegedHelperExecutionResult(response.result, {
+    operation: payload.operation,
+    targetRef: privilegedHelperPayloadTarget(payload)
+  });
+  if (result.resultClass !== "SUCCEEDED" || result.state !== "completed" || result.verification.status !== "verified") {
+    throw privilegedResultError(result);
+  }
+  const data = privilegedToolResultData(payload, result);
+  return {
+    data: { ...data, job_id: job.jobId },
+    verification: {
+      required: true,
+      status: "verified",
+      strategy: payload.operation === "service_control"
+        ? "service_state_readback"
+        : payload.operation === "package_install"
+          ? "installed_version_verification"
+          : "handoff_acceptance_and_scheduled_state",
+      evidence: {
+        ...(result.verification.summary === undefined ? {} : { summary: result.verification.summary }),
+        ...(result.verification.readbackHash === undefined ? {} : { readback_hash: result.verification.readbackHash }),
+        observed_at: new Date(Date.now()).toISOString()
+      }
+    },
+    warnings: [...result.warnings],
+    truncated: result.truncated,
+    auditTarget: privilegedHelperPayloadTarget(payload),
+    auditEvidence: {
+      jobId: job.jobId,
+      operation: payload.operation,
+      reused,
+      helperResultClass: result.resultClass,
+      helperState: result.state,
+      verification: result.verification.status
+    }
+  };
+}
+
+function privilegedResultError(result: PrivilegedHelperExecutionResult): BrokerError {
+  if (result.resultClass === "CANCELLED" || result.state === "cancelled") {
+    return new BrokerError("CANCELLED", "Privileged helper operation was cancelled");
+  }
+  if (result.resultClass === "TIMEOUT") return new BrokerError("TIMEOUT", "Privileged helper operation timed out");
+  if (result.resultClass === "VERIFICATION_FAILED" || result.verification.status === "failed") {
+    return new BrokerError("VERIFICATION_FAILED", "Privileged helper postcondition verification failed");
+  }
+  if (result.resultClass === "UNKNOWN_OUTCOME" || result.state === "unknown" || result.state === "accepted") {
+    return new BrokerError("UNKNOWN_OUTCOME", "Privileged helper operation outcome is unresolved", true);
+  }
+  return new BrokerError("EXECUTION_FAILED", "Privileged helper operation failed");
+}
+
+function privilegedToolResultData(
+  payload: PrivilegedHelperPayload,
+  result: PrivilegedHelperExecutionResult
+): Record<string, unknown> {
+  const evidence = result.evidence;
+  const boundedString = (name: string): string => {
+    const value = evidence[name];
+    if (typeof value !== "string" || value.length < 1 || value.length > 512) {
+      throw new BrokerError("VERIFICATION_FAILED", `Privileged helper evidence is missing ${name}`);
+    }
+    return value;
+  };
+  if (payload.operation === "service_control") {
+    return {
+      service_id: payload.service_id,
+      action: payload.action,
+      pre_state: boundedString("pre_state"),
+      post_state: boundedString("post_state"),
+      verification_status: "verified"
+    };
+  }
+  if (payload.operation === "package_install") {
+    const installedVersion = boundedString("installed_version");
+    const artifactId = boundedString("artifact_id");
+    const alreadyInstalled = evidence.already_installed;
+    const matchedVersion = evidence.matched_version;
+    if (typeof alreadyInstalled !== "boolean" || typeof matchedVersion !== "boolean") {
+      throw new BrokerError("VERIFICATION_FAILED", "Privileged helper package precondition evidence is malformed");
+    }
+    const state = evidence.state;
+    if (state !== "installed" && state !== "already_installed") {
+      throw new BrokerError("VERIFICATION_FAILED", "Privileged helper package state is malformed");
+    }
+    return {
+      package_id: payload.package_id,
+      requested_version: payload.version ?? null,
+      installed_version: installedVersion,
+      artifact_id: artifactId,
+      precondition: { already_installed: alreadyInstalled, matched_version: matchedVersion },
+      state
+    };
+  }
+  const state = evidence.state;
+  if (state !== "accepted" && state !== "scheduled" && state !== "executed") {
+    throw new BrokerError("VERIFICATION_FAILED", "Privileged helper power state is malformed");
+  }
+  const scheduledFor = evidence.scheduled_for;
+  if (scheduledFor !== null && typeof scheduledFor !== "string") {
+    throw new BrokerError("VERIFICATION_FAILED", "Privileged helper power schedule is malformed");
+  }
+  const handoffId = boundedString("handoff_id");
+  if (evidence.connection_loss_expected !== true) {
+    throw new BrokerError("VERIFICATION_FAILED", "Privileged helper power handoff evidence is malformed");
+  }
+  return {
+    action: payload.action,
+    state,
+    scheduled_for: scheduledFor ?? null,
+    handoff_id: handoffId,
+    connection_loss_expected: true
+  };
 }
 
 function writeJobMetadata(plan: FilesystemPathPlan, write: NonNullable<ExecutionPlan["write"]>): WriteJobMetadata {
