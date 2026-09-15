@@ -326,7 +326,7 @@ export function validateBrokerStatusReadback(status: BrokerServiceReadback): Bro
       status.nativeTransportRequired !== true || !/^[0-9a-f]{7,64}$/u.test(status.sourceRevision) ||
       !/^v?\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(status.contractVersion) ||
       !/^(?:policy-[1-9][0-9]*|\d+\.\d+(?:\.\d+)?(?:[-+].*)?)$/u.test(status.policyVersion) ||
-      !Array.isArray(status.enabledCapabilities) || status.enabledCapabilities.length > 128 ||
+      !isDenseArray(status.enabledCapabilities, 128) ||
       status.enabledCapabilities.some((capability) => typeof capability !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(capability))) {
     throw new BrokerError("EXECUTION_FAILED", "Broker status readback is malformed");
   }
@@ -462,6 +462,17 @@ function canonicalStatusPath(path: string): boolean {
 
 function isAsciiWhitespace(byte: number): boolean {
   return byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20;
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== value.length + 1 || Object.keys(value).length !== value.length) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) return false;
+  }
+  return true;
 }
 
 function writeStatusResponse(socket: Socket, response: BrokerStatusResponse): void {

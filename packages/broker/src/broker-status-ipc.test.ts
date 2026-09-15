@@ -12,6 +12,7 @@ import {
   BrokerStatusIpcServer,
   readBrokerStatus,
   signBrokerStatusRequest,
+  validateBrokerStatusReadback,
   validateUnsignedBrokerStatusRequest,
   type BrokerStatusResponse,
   type UnsignedBrokerStatusRequest
@@ -122,6 +123,13 @@ test("Broker status IPC authenticates readback and rejects durable replay", asyn
       assert.throws(
         () => authenticateBrokerStatusResponse({ ...first, responseProof: "0".repeat(64) }, request, authenticationKey),
         (error: unknown) => error instanceof Error && "errorClass" in error && (error as { errorClass: string }).errorClass === "AUTH_INVALID"
+      );
+      const malformedStatus = { ...status, enabledCapabilities: [] as string[] };
+      Object.defineProperty(malformedStatus.enabledCapabilities, "metadata", { enumerable: true, get: () => "injected" });
+      assert.throws(
+        () => validateBrokerStatusReadback(malformedStatus),
+        (error: unknown) => error instanceof Error && "errorClass" in error &&
+          (error as { errorClass: string }).errorClass === "EXECUTION_FAILED"
       );
     }
     const replay = await sendStatus(socketPath, signBrokerStatusRequest(request, authenticationKey));

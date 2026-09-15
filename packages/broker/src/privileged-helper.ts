@@ -749,7 +749,7 @@ export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperS
       !/^[a-f0-9]{40}$/u.test(status.sourceRevision) ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/u.test(status.contractVersion) ||
       !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(status.policyVersion) ||
-      !Array.isArray(status.enabledCapabilities) || status.enabledCapabilities.length !== 0) {
+      !isDenseArray(status.enabledCapabilities, 0) || status.enabledCapabilities.length !== 0) {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper status readback is malformed");
   }
   return status;
@@ -1140,6 +1140,17 @@ function responseProof(command: UnsignedPrivilegedHelperCommand | undefined, bod
 
 function isStatusRequestEnvelope(value: unknown): boolean {
   return isPlainDataRecord(value) && value.kind === "status";
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== value.length + 1 || Object.keys(value).length !== value.length) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) return false;
+  }
+  return true;
 }
 
 function statusRequestProof(request: UnsignedPrivilegedHelperStatusRequest, key: Buffer): string {

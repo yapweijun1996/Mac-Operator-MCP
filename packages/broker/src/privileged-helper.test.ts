@@ -207,6 +207,13 @@ test("privileged helper status readback rejects accessors before key enumeration
     (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
   );
 
+  const extraArrayProperty = { ...status, enabledCapabilities: [] as readonly [] };
+  Object.defineProperty(extraArrayProperty.enabledCapabilities, "metadata", { enumerable: true, get: () => "injected" });
+  assert.throws(
+    () => validatePrivilegedHelperStatusReadback(extraArrayProperty),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+
   const inherited = Object.create({ component: status.component }) as Record<string, unknown>;
   Object.assign(inherited, status);
   delete inherited.component;
