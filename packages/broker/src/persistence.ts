@@ -684,6 +684,7 @@ export class BrokerStore {
       this.migrateSchema(schemaVersion);
       this.verifyReplayLedgerIntegrity();
       this.verifyConfigurationLedgerIntegrity();
+      this.verifyRequestLedgerIntegrity();
       this.verifyJobLedgerIntegrity();
       this.verifyAuditIntegrity();
       this.verifyExternalAuditAnchor();
@@ -794,6 +795,24 @@ export class BrokerStore {
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Configuration ledger integrity could not be verified");
+    }
+  }
+
+  /**
+   * Requests are durable authority and recovery inputs. Validate every
+   * persisted row before startup reconciliation can inspect or mutate it;
+   * otherwise a forged identity or state could remain dormant until a later
+   * status or mutation request.
+   */
+  private verifyRequestLedgerIntegrity(): void {
+    try {
+      const rows = this.database.prepare(
+        "SELECT * FROM requests ORDER BY received_at_ms, request_id"
+      ).all() as unknown as RequestRow[];
+      for (const row of rows) mapRequest(row);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Request ledger integrity could not be verified");
     }
   }
 
@@ -3770,7 +3789,14 @@ function validateStoredRequestState(row: RequestRow): void {
     value === null || (value.length >= 1 && value.length <= maxLength && !value.includes("\0"));
   const activeResultClasses = new Set(["AUTHORIZED", "INTENT_RECORDED", "RUNNING", "SUCCEEDED"]);
 
-  if (row.mutation !== 0 && row.mutation !== 1 ||
+  if (typeof row.request_id !== "string" || !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(row.request_id) ||
+      typeof row.edge_id !== "string" || !isValidEdgeId(row.edge_id) ||
+      typeof row.principal_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.principal_id) ||
+      typeof row.session_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.session_id) ||
+      typeof row.tool !== "string" || !/^mac_[a-z0-9_]{1,123}$/u.test(row.tool) ||
+      typeof row.policy_version !== "string" || !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(row.policy_version) ||
+      typeof row.payload_digest !== "string" || !/^[a-f0-9]{64}$/u.test(row.payload_digest) ||
+      row.mutation !== 0 && row.mutation !== 1 ||
       !timestamp(row.received_at_ms) || !timestamp(row.updated_at_ms) ||
       row.updated_at_ms < row.received_at_ms ||
       !Number.isSafeInteger(row.revision) || row.revision < 0 ||

@@ -23,7 +23,7 @@ function requestInput(requestId: string) {
   } as const;
 }
 
-test("stored Request state/result mismatches fail closed on readback", async () => {
+test("stored Request state/result mismatches fail closed during startup", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-corruption-"));
   const databasePath = join(directory, "broker.sqlite");
   const store = new BrokerStore(databasePath);
@@ -37,21 +37,21 @@ test("stored Request state/result mismatches fail closed on readback", async () 
     } finally {
       database.close();
     }
-    const reopened = new BrokerStore(databasePath);
+    let reopened: BrokerStore | undefined;
     try {
       assert.throws(
-        () => reopened.requestRecord("request:corrupt-state"),
+        () => { reopened = new BrokerStore(databasePath); },
         (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
       );
     } finally {
-      reopened.close();
+      reopened?.close();
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("stored Request timestamp ordering is enforced before Broker decisions", async () => {
+test("stored Request timestamp ordering is enforced during startup", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-timestamps-"));
   const databasePath = join(directory, "broker.sqlite");
   const store = new BrokerStore(databasePath);
@@ -65,21 +65,21 @@ test("stored Request timestamp ordering is enforced before Broker decisions", as
     } finally {
       database.close();
     }
-    const reopened = new BrokerStore(databasePath);
+    let reopened: BrokerStore | undefined;
     try {
       assert.throws(
-        () => reopened.requestRecord("request:corrupt-time"),
+        () => { reopened = new BrokerStore(databasePath); },
         (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
       );
     } finally {
-      reopened.close();
+      reopened?.close();
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("stored Request target and result text remain bounded", async () => {
+test("stored Request target and result text remain bounded during startup", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-text-"));
   const databasePath = join(directory, "broker.sqlite");
   const store = new BrokerStore(databasePath);
@@ -93,14 +93,42 @@ test("stored Request target and result text remain bounded", async () => {
     } finally {
       database.close();
     }
-    const reopened = new BrokerStore(databasePath);
+    let reopened: BrokerStore | undefined;
     try {
       assert.throws(
-        () => reopened.requestRecord("request:corrupt-text"),
+        () => { reopened = new BrokerStore(databasePath); },
         (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
       );
     } finally {
-      reopened.close();
+      reopened?.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stored Request identity fields fail closed before reconciliation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-identity-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.admitRequest(requestInput("request:corrupt-identity"));
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE requests SET principal_id = ?, payload_digest = ? WHERE request_id = ?")
+        .run("bad principal", "not-a-digest", "request:corrupt-identity");
+    } finally {
+      database.close();
+    }
+    let reopened: BrokerStore | undefined;
+    try {
+      assert.throws(
+        () => { reopened = new BrokerStore(databasePath); },
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+      );
+    } finally {
+      reopened?.close();
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
