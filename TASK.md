@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-bootstrap timeout-cancellation addendum: source revision `9148013`
+propagates connection deadline and transport failure into the per-connection
+guest executor before stream close, so timed-out work cannot continue after
+rejection. Bootstrap tests pass 6/6; the combined guest/transport/lifecycle/
+startup/native focused suite passes 52/52 with 0 skipped tests. Build,
+typecheck, lint, and diff checks pass. VM boot, guest isolation, and
+production `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-virtualization-guest-bootstrap-timeout.md`.
+
 Task-profile startup-wiring addendum: the explicit host startup seam now
 requires a validated `TaskProfileRegistry` whenever an isolated task runner
 is configured, injects it into the Broker, and rejects malformed or runnerless

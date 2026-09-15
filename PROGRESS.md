@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-bootstrap timeout-cancellation addendum: source revision `9148013`
+changes each connection handler to retain its abort controller and abort
+guest work before closing the stream on deadline, transport, or normal
+teardown. A focused deadline regression observes callback cancellation and
+prevents a completed response. Bootstrap tests pass 6/6 and the combined
+guest/transport/lifecycle/startup/native focused suite passes 52/52 with 0
+skipped tests; build, typecheck, lint, and diff checks pass. This remains a
+guest protocol boundary only—VM boot, guest isolation, and production
+`mac_task_run` enablement are still disabled. Evidence:
+`evidence/2026-09-15-virtualization-guest-bootstrap-timeout.md`.
+
 Task-profile startup-wiring addendum: the explicit host startup seam now
 requires a validated `TaskProfileRegistry` whenever sandbox or virtualization
 task execution is configured, injects that registry into the Broker, and

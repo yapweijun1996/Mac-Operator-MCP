@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest-bootstrap timeout-cancellation addendum: source revision `9148013`
+aborts the per-connection guest controller before stream close on deadline or
+transport failure, propagating a stable cancellation signal into the guest
+executor. Bootstrap tests pass 6/6; the combined guest/transport/lifecycle/
+startup/native focused suite passes 52/52 with 0 skipped tests. Build,
+typecheck, lint, and diff checks pass. No VM boot, guest isolation, or
+production `mac_task_run` enablement is claimed. Evidence:
+`evidence/2026-09-15-virtualization-guest-bootstrap-timeout.md`.
+
 Task-profile startup-wiring addendum: startup now accepts a host-owned
 `TaskProfileRegistry` only alongside an explicit sandbox or virtualization
 runner, validates its callable surface, and injects it into the Broker. A
