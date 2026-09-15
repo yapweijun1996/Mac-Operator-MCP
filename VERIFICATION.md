@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge remote-JWKS response addendum: source revision `3cca22c` bounds remote
+JWKS bodies to 256 KiB with a streaming reader and accepts only
+`application/json` or `application/jwk-set+json` before handing the response to
+`jose`. JWT tests pass 5/5, all Edge tests pass 38/38, and the non-overlapping
+physical-Darwin regression passes 487/487 with 0 skipped tests. Build,
+typecheck, lint, contract, canonical-JSON, audit, and diff checks pass. This
+does not claim external issuer, rotation/revocation propagation, or remote
+deployment evidence. Evidence:
+`evidence/2026-09-15-edge-jwks-response-boundary.md`.
+
 Virtualization lifecycle timeout-fence addendum: source revision `ea85237`
 fences a native lifecycle operation after caller-visible timeout or
 cancellation until the underlying promise settles. A delayed-start regression

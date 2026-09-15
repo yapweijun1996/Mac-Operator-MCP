@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge remote-JWKS response addendum: source revision `3cca22c` installs a
+bounded streaming fetch wrapper before `jose` JSON parsing. Only JSON JWKS MIME
+types are accepted and responses over 256 KiB or with invalid length metadata
+fail closed. JWT tests pass 5/5, all Edge tests pass 38/38, and the
+non-overlapping physical-Darwin regression passes 487/487 with 0 skipped
+tests. Build, typecheck, lint, contract, canonical-JSON, audit, and diff
+checks pass. External OAuth issuer and remote deployment evidence remain
+unproven. Evidence: `evidence/2026-09-15-edge-jwks-response-boundary.md`.
+
 Virtualization lifecycle timeout-fence addendum: source revision `ea85237`
 keeps a timed-out or cancelled native lifecycle promise fenced until it
 settles, so a later status or transition cannot overlap an unknown VM
