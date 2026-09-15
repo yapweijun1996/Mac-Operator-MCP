@@ -2,7 +2,7 @@
 
 - Date: 2026-09-16
 - Host: local development macOS host
-- Source revision: `e1d6ff2`
+- Source revision: `aec1bc8`
 - Contract/protocol versions: 0.1
 - Evidence class: local persistence denial-of-service boundary
 
@@ -37,8 +37,9 @@ git diff --check
 Result: the focused test passed 1/1. It fills the request ledger to 4,096
 entries, proves the next admission is denied with `AUDIT_UNAVAILABLE`, proves
 no request row was created for the rejected admission, and proves an expired
-batch is reclaimed before a later admission. Typecheck, style, and diff checks
-also passed.
+batch is reclaimed before a later admission. Startup rejects only a ledger
+above the configured limit, so a full but bounded ledger can restart and
+reclaim expired rows. Typecheck, style, and diff checks also passed.
 
 This is local persistence evidence. It does not prove remote replay retention,
 database disk exhaustion behavior, cross-runtime compatibility, or installed

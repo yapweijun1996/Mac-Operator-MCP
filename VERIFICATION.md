@@ -3,12 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Replay-ledger capacity verification at source revision `e1d6ff2`: all seven
+Replay-ledger capacity verification at source revision `aec1bc8`: all seven
 Broker replay ledgers enforce a 4,096-row transactional admission boundary,
 perform expiry cleanup before the check, and reject an over-capacity ledger
 with `AUDIT_UNAVAILABLE` without inserting a partial request. Focused capacity
 coverage passes 1/1; typecheck, style, and diff checks pass. Startup integrity
-also rejects a persisted ledger at or above the same boundary. This closes
+rejects a persisted ledger above the same boundary while allowing a full but
+bounded ledger to restart and reclaim expired rows. This closes
 unbounded local replay-ledger growth only; remote retention, disk exhaustion,
 cross-runtime, and installed-service recovery evidence remain open. Evidence:
 `evidence/2026-09-16-replay-ledger-capacity.md`.
