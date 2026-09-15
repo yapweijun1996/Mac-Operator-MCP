@@ -4,7 +4,7 @@ import { BrokerError } from "@mac-operator/contracts";
 import type { ProcessExecutionRequest } from "./process-supervisor.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { assertArgumentsDoNotContainSecrets } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, containsKnownSecretSignature } from "./secret-policy.js";
 
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MAX_PROFILE_ARGUMENTS = 64;
@@ -238,7 +238,8 @@ function validateProfileDocument(profile: TaskProfile): void {
   let environmentBytes = 0;
   for (const [key, value] of environmentEntries) {
     if (!isSafeProcessEnvironmentKey(key) || typeof value !== "string" ||
-        value.includes("\0") || value.includes("\n") || value.length > 4_096) {
+        value.includes("\0") || value.includes("\n") || value.length > 4_096 ||
+        containsKnownSecretSignature(value)) {
       throw new Error("Task profile environment contains an unsafe entry");
     }
     environmentBytes += Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8") + 2;

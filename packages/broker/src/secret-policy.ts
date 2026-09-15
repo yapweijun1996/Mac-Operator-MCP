@@ -103,10 +103,15 @@ export function assertEnvironmentValuesDoNotContainSecrets(environment: Readonly
     throw new BrokerError("PRECONDITION_FAILED", "Process environment is malformed");
   }
   for (const value of Object.values(environment)) {
-    if (typeof value !== "string" || SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(value))) {
+    if (typeof value !== "string" || containsKnownSecretSignature(value)) {
       throw new BrokerError("POLICY_DENIED", "Process environment value matched a protected secret signature");
     }
   }
+}
+
+/** Return whether a bounded value matches one of the known credential signatures. */
+export function containsKnownSecretSignature(value: string): boolean {
+  return typeof value === "string" && SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(value));
 }
 
 export function redactLogText(value: string): { text: string; redacted: boolean } {
