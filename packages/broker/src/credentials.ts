@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
-import { lstat, open, rename, unlink } from "node:fs/promises";
+import { link, lstat, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { sha256 } from "@mac-operator/contracts";
 import { keyIdentity } from "./edge-keyring.js";
@@ -244,16 +244,50 @@ async function retireRevokedSecretKey(
   if (!/^[a-f0-9]{64}$/u.test(expectedDigest)) throw new Error("Expected authentication key digest is malformed");
   const originalStat = await lstat(path);
   const key = await loadAuthenticationKey(path);
-  if (sha256(key) !== expectedDigest) throw new Error(`${label} digest precondition failed`);
+  let quarantinePath: string | undefined;
+  try {
+    if (sha256(key) !== expectedDigest) throw new Error(`${label} digest precondition failed`);
 
-  const quarantinePath = `${path}.retired-${randomUUID()}`;
-  await rename(path, quarantinePath);
-  const quarantinedStat = await lstat(quarantinePath);
-  if (quarantinedStat.dev !== originalStat.dev || quarantinedStat.ino !== originalStat.ino) {
-    throw new Error("Authentication key target changed during retirement");
+    const beforeRename = await lstat(path);
+    if (!sameProtectedFileIdentity(originalStat, beforeRename)) {
+      throw new Error("Authentication key target changed before retirement");
+    }
+    quarantinePath = `${path}.retired-${randomUUID()}`;
+    await rename(path, quarantinePath);
+    const quarantinedStat = await lstat(quarantinePath);
+    if (!sameProtectedFileIdentity(originalStat, quarantinedStat)) {
+      throw new Error("Authentication key target changed during retirement");
+    }
+    await unlink(quarantinePath);
+    await syncProtectedDirectory(dirname(path));
+  } catch (error) {
+    // If a failure happens after moving the exact original file, restore it
+    // with a non-overwriting hard link. An attacker-created replacement at
+    // the original pathname is never replaced, and the quarantine is left for
+    // explicit operator recovery when restoration cannot be proven safe.
+    if (quarantinePath !== undefined) {
+      const quarantined = await lstat(quarantinePath).catch(() => undefined);
+      if (quarantined !== undefined && sameProtectedFileIdentity(originalStat, quarantined)) {
+        try {
+          await link(quarantinePath, path);
+          await unlink(quarantinePath);
+        } catch {
+          // Preserve the exact quarantine artifact for explicit recovery.
+        }
+      }
+    }
+    throw error;
+  } finally {
+    key.fill(0);
   }
-  await unlink(quarantinePath);
-  await syncProtectedDirectory(dirname(path));
+}
+
+function sameProtectedFileIdentity(
+  left: Awaited<ReturnType<typeof lstat>>,
+  right: Awaited<ReturnType<typeof lstat>>
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.uid === right.uid && left.mode === right.mode &&
+    left.size === right.size && left.mtimeMs === right.mtimeMs;
 }
 
 export async function assertProtectedSecretDirectory(path: string): Promise<void> {
