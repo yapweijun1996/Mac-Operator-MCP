@@ -14,7 +14,7 @@ import {
   EdgeKeyring,
   MacOsPeerCredentialVerifier
 } from "@mac-operator/broker";
-import { BrokerIpcClient } from "./ipc-client.js";
+import { BrokerIpcClient, isAuthenticatedResponse } from "./ipc-client.js";
 import { EdgeRequestFactory } from "./request-factory.js";
 
 test("Edge authenticates a complete Broker IPC round trip", async () => {
@@ -146,6 +146,30 @@ test("Edge IPC client rejects an unsafe socket directory before connecting", asy
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Edge IPC response boundary rejects accessor and unknown result fields", () => {
+  const valid = {
+    protocolVersion: "0.1",
+    requestPayloadDigest: "a".repeat(64),
+    authenticationKeyId: "edge-key-1",
+    responseDigest: "b".repeat(64),
+    authenticationProof: "c".repeat(64),
+    response: {
+      ok: false,
+      request_id: "request-1",
+      tool: "mac_health",
+      result_class: "EXECUTION_FAILED",
+      error: { message: "failed", retryable: true },
+      duration_ms: 1
+    }
+  };
+  assert.equal(isAuthenticatedResponse(valid), true);
+  assert.equal(isAuthenticatedResponse({ ...valid, extra: "authority" }), false);
+  assert.equal(isAuthenticatedResponse({ ...valid, response: { ...valid.response, extra: "authority" } }), false);
+  const accessor: Record<string, unknown> = {};
+  Object.defineProperty(accessor, "protocolVersion", { enumerable: true, get: () => "0.1" });
+  assert.equal(isAuthenticatedResponse(accessor), false);
 });
 
 function currentProcessVerifier(): MacOsPeerCredentialVerifier {
