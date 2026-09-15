@@ -9,8 +9,9 @@ requires a validated `TaskProfileRegistry` whenever sandbox or virtualization
 task execution is configured, injects that registry into the Broker, and
 rejects a registry without an isolated runner or a malformed registry. This
 keeps the packaged empty-registry/fail-closed default unchanged. Service-startup
-tests pass 7/7. Named profiles still require independent host evidence before
-`mac_task_run` can be enabled. Evidence:
+tests pass 7/7, and a gated physical-Darwin smoke executes one fixed profile
+through startup, native UDS, approval, sandbox, and Job readback. Production
+profile enablement still requires independent host evidence. Evidence:
 `evidence/2026-09-15-task-profile-startup-wiring.md`.
 
 Sandbox startup-wiring addendum: source revision `2e605ea` connects the

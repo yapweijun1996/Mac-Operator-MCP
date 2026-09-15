@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { chmod, mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { canonicalJson, sha256 } from "@mac-operator/contracts";
+import { canonicalJson, parseJsonUtf8Strict, sha256, signRequest, verifyBrokerResponse, type AuthenticatedBrokerResponse, type Scope } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeAuthenticationKeyManager, writeEdgeAuthenticationKeyConfig, type EdgeAuthenticationKeyConfig } from "./edge-keyring-config.js";
 import {
@@ -27,7 +28,8 @@ import {
 import { readBrokerStatus } from "./broker-status-ipc.js";
 import { VirtualizationGuestAttestationKeyManager, writeVirtualizationGuestAttestationKeyConfig, type VirtualizationGuestAttestationKeyConfig } from "./virtualization-guest-attestation-keyring.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
-import { TaskProfileRegistry } from "./task-profile.js";
+import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
+import type { TaskIsolationProof } from "./task-runner.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -127,6 +129,7 @@ test("Broker service startup restores signed authority before native runtime sta
   const databasePath = config.brokerDatabasePath;
   let activationStore: BrokerStore | undefined;
   let assembly: Awaited<ReturnType<typeof createBrokerServiceFromStartupConfig>> | undefined;
+  let taskAssembly: Awaited<ReturnType<typeof createBrokerServiceFromStartupConfig>> | undefined;
   let auditKeyDigest: string | undefined;
   try {
     await provisionAuthenticationKey(keyPath);
@@ -150,7 +153,7 @@ test("Broker service startup restores signed authority before native runtime sta
     await writeEdgeAuthenticationKeyConfig(edgeConfigPath, edgeConfig);
     const keyPair = generateKeyPairSync("ed25519");
     await writeFile(policyKeyPath, keyPair.publicKey.export({ type: "spki", format: "pem" }), { mode: 0o600 });
-    const document = policyDocument(now);
+    const document = policyDocument(now, { taskEnabled: process.env.MOPS_REAL_SANDBOX === "1" });
     const bundle = signedBundle(document, keyPair.privateKey);
     await writeFile(policyBundlePath, `${JSON.stringify(bundle)}\n`, { mode: 0o600 });
     const guestKeys = generateKeyPairSync("ed25519");
@@ -223,8 +226,88 @@ test("Broker service startup restores signed authority before native runtime sta
     } finally {
       statusAuthenticationKey.fill(0);
     }
+
+    if (process.env.MOPS_REAL_SANDBOX === "1") {
+      await assembly.close();
+      assembly = undefined;
+
+    const taskRootPath = join(root, "task-root");
+    await mkdir(taskRootPath, { mode: 0o700 });
+    const taskRoot = await realpath(taskRootPath);
+    taskAssembly = await createBrokerServiceFromStartupConfig({
+      config,
+      now: () => now,
+      commandExecutor: new FakeLaunchdExecutor(`gui/${config.expectedEdgeUid}/com.mac-operator.edge`),
+      sandboxTaskRunner: {
+        enabled: true,
+        hostEvidenceAccepted: true,
+        allowedEnvironmentKeys: [],
+        isolationProof: startupSandboxProof()
+      },
+      taskProfileRegistry: new TaskProfileRegistry([startupTaskProfile(taskRoot)])
+    });
+    assert.equal(taskAssembly.sandboxTaskRunner?.available, true);
+    await taskAssembly.service.start();
+
+    const argumentsValue = { profile: "tests.startup", cwd: taskRoot, args: [], async: false };
+    taskAssembly.store.issueApproval({
+      approvalId: "approval:startup-task",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.startup",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: now - 1_000,
+      expiresAtMs: now + 60_000
+    });
+    const requestKey = await loadAuthenticationKey(keyPath);
+    const request = signRequest({
+      protocolVersion: "0.1",
+      requestId: "startup-task-request",
+      contractVersion: "0.1",
+      tool: "mac_task_run",
+      arguments: argumentsValue,
+      principal: {
+        principalId: "principal-1",
+        sessionId: "startup-task-session",
+        issuer: "test-issuer",
+        audience: "mac-operator-broker",
+        scopes: ["mac.control.read", "mac.task.run"],
+        issuedAtMs: now - 1_000,
+        expiresAtMs: now + 60_000,
+        edgeId: "edge-1"
+      },
+      timestampMs: now,
+      nonce: "startup-task-nonce",
+      policyAudience: "mac-operator-broker",
+      policyVersion: "policy-1",
+      authenticationKeyId: "edge-key-1"
+    }, requestKey);
+    try {
+      const envelope = await sendNativeBrokerRequest(config.brokerSocketPath, request);
+      assert.equal(verifyBrokerResponse(request, envelope, requestKey), true);
+      assert.equal(envelope.response.ok, true, JSON.stringify(envelope.response));
+      if (envelope.response.ok) {
+        const data = envelope.response.data as { profile: string; stdout: string };
+        assert.equal(data.profile, "tests.startup");
+        assert.equal(data.stdout, "startup-sandbox\n");
+        assert.equal(envelope.response.verification.status, "verified");
+      }
+      const jobId = taskAssembly.store.requestRecord("startup-task-request")?.jobId;
+      assert.ok(jobId);
+      assert.equal(taskAssembly.store.ownedJob(jobId, "principal-1")?.state, "completed");
+    } finally {
+      requestKey.fill(0);
+    }
+    }
   } finally {
     if (assembly) await assembly.close();
+    if (taskAssembly) await taskAssembly.close();
     activationStore?.close();
     if (auditKeyDigest !== undefined) {
       await retireKeychainAuthenticationKey(
@@ -267,22 +350,67 @@ function baseConfig(packageRoot: string, dataRoot: string, runtimeRoot: string):
   };
 }
 
-function policyDocument(now: number): PolicyDocument {
+function policyDocument(now: number, options: { taskEnabled?: boolean } = {}): PolicyDocument {
+  const taskEnabled = options.taskEnabled === true;
+  const scopes: Scope[] = taskEnabled ? ["mac.control.read", "mac.task.run"] : ["mac.control.read"];
   return {
     schema_version: "0.1",
     revision: 1,
     audience: "mac-operator-broker",
     issued_at_ms: now,
     trusted_edge_keys: [{ edge_id: "edge-1", key_id: "edge-key-1", not_before_ms: now - 1_000, expires_at_ms: now + 60_000 }],
-    principal_grants: [{ principal_id: "principal-1", issuer: "test-issuer", scopes: ["mac.control.read"], enabled: true }],
-    target_rules: [{ rule_id: "allow-host", effect: "allow", principal_id: "principal-1", scope: "mac.control.read", target: { kind: "host", reference: "broker" } }],
+    principal_grants: [{ principal_id: "principal-1", issuer: "test-issuer", scopes, enabled: true }],
+    target_rules: [
+      { rule_id: "allow-host", effect: "allow", principal_id: "principal-1", scope: "mac.control.read", target: { kind: "host", reference: "broker" } },
+      ...(taskEnabled ? [{ rule_id: "allow-startup-task", effect: "allow" as const, principal_id: "principal-1", scope: "mac.task.run" as const, target: { kind: "task_profile" as const, reference: "tests.startup" } }] : [])
+    ],
     filesystem_roots: [],
     tool_enablement: [
       { tool: "mac_health", enabled: true },
       { tool: "mac_capabilities", enabled: true },
-      { tool: "mac_policy_explain", enabled: true }
+      { tool: "mac_policy_explain", enabled: true },
+      ...(taskEnabled ? [{ tool: "mac_task_run", enabled: true }] : [])
     ],
     kill_switches: { global: false, mutations: false, process: false, network: false, gui: false, destructive: false, privileged: false }
+  };
+}
+
+function startupTaskProfile(root: string): TaskProfile {
+  return {
+    schemaVersion: "0.1",
+    profile: "tests.startup",
+    executable: "/usr/bin/printf",
+    fixedArgs: ["startup-sandbox\\n"],
+    allowedCwdRoots: [root],
+    allowedArgumentPattern: "^$",
+    maxArguments: 0,
+    environment: {},
+    filesystemRoots: [root],
+    networkPolicy: "none",
+    networkAllowlist: [],
+    credentialPolicy: "none",
+    processTreePolicy: "single_process",
+    sandboxProfile: "deny-default-v0.1",
+    timeoutMs: 5_000,
+    outputCapBytes: 1_024,
+    verificationStrategy: "exit_status_and_declared_task_verification",
+    enabled: true
+  };
+}
+
+function startupSandboxProof(): TaskIsolationProof {
+  return {
+    schemaVersion: "0.1",
+    sandboxMechanism: "sandbox-exec",
+    sandboxProfile: "deny-default-v0.1",
+    filesystem: "enforced",
+    network: "enforced",
+    credentials: "isolated",
+    persistence: "isolated",
+    credentialIsolation: "sandbox-exec-empty-env-deny-secret-zones-v1",
+    processTree: "owned",
+    processTreePolicy: "single_process",
+    evidenceRef: "evidence://service-startup-task-profile"
   };
 }
 
@@ -316,4 +444,53 @@ class FakeLaunchdExecutor {
       terminationObserved: true
     };
   }
+}
+
+async function sendNativeBrokerRequest(
+  socketPath: string,
+  request: unknown
+): Promise<AuthenticatedBrokerResponse> {
+  const body = `${JSON.stringify(request)}\n`;
+  return await new Promise<AuthenticatedBrokerResponse>((resolveResponse, reject) => {
+    const socket = createConnection(socketPath);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+    const finish = (error?: Error, value?: AuthenticatedBrokerResponse): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) reject(error);
+      else if (value !== undefined) resolveResponse(value);
+      else reject(new Error("Native Broker response was empty"));
+    };
+    socket.setTimeout(15_000, () => finish(new Error("Native Broker request timed out")));
+    socket.once("connect", () => socket.write(body));
+    socket.on("data", (chunk: Buffer) => {
+      total += chunk.byteLength;
+      if (total > 4 * 1024 * 1024) finish(new Error("Native Broker response exceeded the test cap"));
+      else chunks.push(chunk);
+    });
+    socket.once("error", (error) => finish(error));
+    socket.once("end", () => {
+      try {
+        const parsed = parseJsonUtf8Strict(Buffer.concat(chunks));
+        if (!isAuthenticatedBrokerResponse(parsed)) throw new Error("Native Broker response envelope is malformed");
+        finish(undefined, parsed);
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error("Native Broker response is invalid"));
+      }
+    });
+  });
+}
+
+function isAuthenticatedBrokerResponse(value: unknown): value is AuthenticatedBrokerResponse {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.protocolVersion === "0.1" &&
+    typeof record.requestPayloadDigest === "string" &&
+    typeof record.authenticationKeyId === "string" &&
+    typeof record.responseDigest === "string" &&
+    typeof record.authenticationProof === "string" &&
+    record.response !== null && typeof record.response === "object" && !Array.isArray(record.response);
 }
