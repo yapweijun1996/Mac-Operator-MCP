@@ -1769,3 +1769,10 @@ passes 1/1; the non-overlapping package regression remains 539 total (533
 passed, 6 skipped, 0 failed). Human approval UI/channel, protected Keychain,
 unattended ownership, production evidence, and capability gates remain open.
 Evidence: `evidence/2026-09-15-active-approval-revalidation.md`.
+
+Edge configuration-shape addendum: commit `04fcffc` requires plain startup
+records and dense bounded Host/Origin arrays before URL/path validation or
+listener setup. Focused Edge tests pass 2/2; the non-overlapping package
+regression passes 540 total (534 passed, 6 skipped, 0 failed). TLS/key
+lifecycle, remote deployment, launchd installation, and capability gates
+remain open. Evidence: `evidence/2026-09-15-edge-config-shape-boundary.md`.

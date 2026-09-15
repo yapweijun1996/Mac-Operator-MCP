@@ -2992,3 +2992,12 @@ publication; started Jobs remain `unknown`. Focused Broker verification passes
 6 skipped, 0 failed). Human approval UI/channel, protected Keychain,
 unattended ownership, and production evidence remain open. Evidence:
 `evidence/2026-09-15-active-approval-revalidation.md`.
+
+Edge startup and HTTPS allowlist configuration now require plain records and
+dense bounded data-only host/origin arrays (source revision `04fcffc`).
+Inherited, accessor, symbolic, and sparse authority data fail closed before
+URL/path validation or listener setup. Focused Edge tests pass 2/2; the
+non-overlapping package regression passes 540 total (534 passed, 6 skipped, 0
+failed). TLS/key lifecycle, remote deployment, launchd installation, and
+capability enablement remain open. Evidence:
+`evidence/2026-09-15-edge-config-shape-boundary.md`.

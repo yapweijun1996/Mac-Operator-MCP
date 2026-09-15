@@ -2661,3 +2661,12 @@ and final readback. Revocation cancels the request, keeps a started Job
 skipped, 0 failed). Human approval UI/channel, protected Keychain,
 unattended ownership, and production service evidence remain open. Evidence:
 `evidence/2026-09-15-active-approval-revalidation.md`.
+
+Edge configuration verification at source revision `04fcffc` confirms startup
+documents are plain data records and Host/Origin lists are dense bounded
+arrays before URL/path validation or listener setup. Inherited, accessor,
+symbolic, and sparse fixtures are rejected. Focused Edge tests pass 2/2; the
+non-overlapping package regression passes 540 total (534 passed, 6 skipped,
+0 failed). This does not close TLS/key lifecycle, remote deployment, launchd
+installation, or capability enablement. Evidence:
+`evidence/2026-09-15-edge-config-shape-boundary.md`.
