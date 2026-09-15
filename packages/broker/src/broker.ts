@@ -148,10 +148,6 @@ export class Broker {
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
     this.maxActiveRequestsPerSession = options.maxActiveRequestsPerSession ?? DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION;
     this.maxActiveRequestsGlobal = options.maxActiveRequestsGlobal ?? DEFAULT_MAX_ACTIVE_REQUESTS_GLOBAL;
-    this.maxActiveRequestsByFamily = {
-      ...DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY,
-      ...(options.maxActiveRequestsByFamily ?? {})
-    };
     this.now = options.now ?? Date.now;
     if (!Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_REQUEST_AGE_MS ||
         !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > MAX_CLOCK_SKEW_MS ||
@@ -161,10 +157,13 @@ export class Broker {
         this.maxActiveRequestsGlobal > MAX_ACTIVE_REQUESTS_GLOBAL) {
       throw new Error("Broker request or session limits are invalid");
     }
-    if (options.maxActiveRequestsByFamily !== undefined &&
-        (options.maxActiveRequestsByFamily === null || typeof options.maxActiveRequestsByFamily !== "object" || Array.isArray(options.maxActiveRequestsByFamily))) {
+    if (options.maxActiveRequestsByFamily !== undefined && !isPlainDataRecord(options.maxActiveRequestsByFamily)) {
       throw new Error("Broker request or session limits are invalid");
     }
+    this.maxActiveRequestsByFamily = {
+      ...DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY,
+      ...(options.maxActiveRequestsByFamily ?? {})
+    };
     for (const [family, limit] of Object.entries(this.maxActiveRequestsByFamily)) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_ACTIVE_REQUESTS_GLOBAL ||
           !(CAPABILITY_FAMILIES as readonly string[]).includes(family)) {
@@ -173,7 +172,9 @@ export class Broker {
     }
     if (options.maxActiveRequestsByFamily !== undefined) {
       for (const family of Object.keys(options.maxActiveRequestsByFamily)) {
-        if (!(family in DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY)) throw new Error("Broker request or session limits are invalid");
+        if (!Object.prototype.hasOwnProperty.call(DEFAULT_MAX_ACTIVE_REQUESTS_BY_FAMILY, family)) {
+          throw new Error("Broker request or session limits are invalid");
+        }
       }
     }
     this.filesystemExecutor = options.filesystemExecutor ?? new WorkerFilesystemExecutor();

@@ -565,6 +565,34 @@ test("Broker rejects unsafe request and session limits at construction", async (
   }
 });
 
+test("Broker rejects inherited or accessor capability-family limits before merge", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-limit-shape-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const base = {
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: testKeyring(randomBytes(32)),
+    now: () => NOW
+  };
+  try {
+    const inherited = Object.create({ process: 1 }) as Record<string, number>;
+    assert.throws(
+      () => new Broker({ ...base, maxActiveRequestsByFamily: inherited }),
+      /Broker request or session limits are invalid/u
+    );
+
+    const accessor = {} as Record<string, number>;
+    Object.defineProperty(accessor, "process", { enumerable: true, get: () => 1 });
+    assert.throws(
+      () => new Broker({ ...base, maxActiveRequestsByFamily: accessor }),
+      /Broker request or session limits are invalid/u
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_process_inspect returns bounded detail for an authorized pid", async () => {
   const key = randomBytes(32);
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-inspect-"));
