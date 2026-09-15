@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Signed request data-shape addendum: commit `14d3cc0` validates every request
+value before authentication, requiring data-only ordinary/null-prototype
+records and dense bounded arrays. Inherited, hidden, accessor, sparse,
+cyclic, symbolic, and unsupported values fail closed as `AUTH_INVALID`.
+Security-fuzz tests pass 8/8; the non-overlapping package regression passes
+498 total (492 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff
+checks pass. This covers direct in-process request integrity only and does not
+close production transport, VM, credential, helper, or capability gates.
+Evidence: `evidence/2026-09-15-request-data-shape.md`.
+
 Request object authority-boundary addendum: commit `8a8f335` makes
 `parseBrokerRequest()` reject prototype-bearing envelope, argument, and
 principal records before the signed request can reach authentication,

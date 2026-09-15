@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Signed request data-shape addendum: source revision `14d3cc0` applies a shared
+plain-data-record check and bounded recursive validation to the complete Broker
+request value. Inherited, hidden, accessor, sparse-array, cyclic, symbolic, and
+unsupported nested values now fail closed before authentication. Security-fuzz
+tests pass 8/8; the non-overlapping package regression passes 498 total
+(492 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks pass.
+This closes local request representation integrity only; production transport,
+VM, credential, helper, and enablement evidence remain open.
+Evidence: `evidence/2026-09-15-request-data-shape.md`.
+
 Request object authority-boundary addendum: source revision `8a8f335` makes
 request parsing reject prototype-bearing envelope, arguments, and principal
 objects before authentication or execution. The security-fuzz suite passes

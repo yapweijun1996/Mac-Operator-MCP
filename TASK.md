@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Signed request data-shape addendum: source revision `14d3cc0` validates the
+complete request as a bounded JSON-shaped tree of ordinary or null-prototype
+data records and dense arrays. Hidden/accessor/inherited fields, cycles, and
+unsupported nested values cannot escape the canonical signed payload boundary.
+Security-fuzz tests pass 8/8; the non-overlapping package regression passes
+498 total (492 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff
+checks pass. This remains local parser hardening and does not close production
+transport, VM, credential, helper, or enablement gates.
+Evidence: `evidence/2026-09-15-request-data-shape.md`.
+
 Request object authority-boundary addendum: source revision `8a8f335` limits
 the Broker request envelope, arguments, and principal to ordinary or
 null-prototype records, preventing inherited fields from escaping the signed

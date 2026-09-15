@@ -134,6 +134,13 @@ values were absent from the canonical signed payload. The regression covers
 direct in-process callers; JSON transport, native peer identity, and
 production cross-process packaging remain separate acceptance evidence.
 
+Revision `14d3cc0` extends that boundary recursively: every request value must
+be a bounded JSON-shaped tree of data-only ordinary/null-prototype records and
+dense arrays. Hidden properties, accessors, symbols, cycles, and unsupported
+values are rejected before authentication, preventing representation gaps
+between object reads and canonical signed bytes. This remains local parser
+evidence and does not close production packaging or cross-process acceptance.
+
 ## Acceptance evidence
 
 Forged peer, copied envelope, changed payload, expired timestamp, repeated nonce, revoked session, concurrent session, restart replay, version mismatch, and replaced-Edge tests must fail safely.
