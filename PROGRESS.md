@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Persistence backup publication addendum: source revision `8e57790` replaces
+backup/restore `rename` publication with same-directory hard-link publication
+that cannot overwrite an existing destination. The source temporary identity
+is checked before and after linking, and file identity checks include device,
+inode, owner, mode, size, and modification time. The new no-replace restore
+regression and a physical-host probe preserve an existing destination and
+return `CONFLICT`; build, lint, typecheck, and diff checks pass. Evidence:
+`evidence/2026-09-15-persistence-backup-publication.md`.
+
 Documentation navigation addendum: `npm run verify:docs` now rejects README
 local-link escapes/unavailable targets and requires the eight named operator
 runbooks. The physical host check passed for 29 README local links and all 8

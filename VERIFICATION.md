@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Persistence backup publication verification: source revision `8e57790` uses
+same-directory hard-link publication for encrypted backup creation and fresh
+restore, so an existing destination cannot be replaced after an existence
+check. Source identity is revalidated at publication and identity comparisons
+include device, inode, owner, mode, size, and modification time. The added
+restore no-replace regression plus a physical-host probe preserve an existing
+destination and return `CONFLICT`; build, lint, typecheck, and diff checks
+pass. Evidence:
+`evidence/2026-09-15-persistence-backup-publication.md`.
+
 Documentation navigation verification: the new dependency-free
 `npm run verify:docs` check rejects README local-link escapes or unavailable
 targets and requires eight named testing/configuration/deployment/operations/

@@ -1532,6 +1532,14 @@ this does not claim persistent installation or signing provenance.
   8 runbooks; draft content still depends on production signing, installed
   launchd ownership, remote deployment, and operator approval evidence.
   Evidence: `evidence/2026-09-15-documentation-link-check.md`.
+- MOP-083 persistence publication clarification: source revision `8e57790`
+  replaces backup/restore `rename` publication with same-directory hard-link
+  publication that fails closed with `CONFLICT` if a destination already
+  exists. Source temporary identity is revalidated at publication, and file
+  identity checks include device, inode, owner, mode, size, and modification
+  time. The no-replace restore regression and a physical-host probe preserve
+  an existing destination; build, lint, typecheck, and diff checks pass.
+  Evidence: `evidence/2026-09-15-persistence-backup-publication.md`.
 - `MOP-088` — `DONE` — Resolved the two repo representation conflicts, recorded decision/rationale/migration/evidence, and prepared `KB_SYNC.md` for owner-reviewed upstream writeback. This documentation-only task does not mutate KB-MCP.
 
 Authority-control note: generic runtime switches and revocations now append redacted hash-linked `intent`/`completion` audit pairs in the same persistence transaction as the authority change and queued-job cancellation. A separate owner-only, native-peer/HMAC/replay-bound Authority Control IPC now admits only switch and revocation commands and carries its request ID into those audit pairs. Its operator key is selected by a protected, digest-bound, monotonic activation manager with a dedicated revocation kind and exact restart restore, and the uninstall coordinator constructs its client from that manager. This does not close active process-tree termination, installed startup, or operator recovery evidence.
