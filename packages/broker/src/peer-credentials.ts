@@ -49,6 +49,7 @@ interface NativePeerCredentials {
   inspectKeychainGenericPassword(service: string, account: string, trustedExecutablePath: string): unknown;
   deleteKeychainGenericPassword(service: string, account: string, key: Buffer, trustedExecutablePath: string): unknown;
   unlinkFileWithinRoot(rootPath: string, targetPath: string, expectedPresent: boolean, expectedDevice: string, expectedInode: string): unknown;
+  recoverUnlinkFileWithinRoot(rootPath: string, targetPath: string, expectedDevice: string, expectedInode: string, minAgeMs: number): unknown;
   createUnixListener(path: string, backlog: number): number;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
@@ -63,7 +64,7 @@ const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
 const REQUIRED_NATIVE_EXPORTS = [
   "sha256Utf8", "getPeerCredentials", "createUnixListener", "acceptUnixClient", "closeUnixDescriptor",
   "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
-  "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot",
+  "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot", "recoverUnlinkFileWithinRoot",
   "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity",
   "readKeychainGenericPassword", "writeKeychainGenericPassword",
   "inspectKeychainGenericPassword", "deleteKeychainGenericPassword"

@@ -4,6 +4,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <arpa/inet.h>
+#include <chrono>
 #include <ifaddrs.h>
 #include <libproc.h>
 #include <algorithm>
@@ -119,6 +120,48 @@ std::string Sha256Hex(const std::vector<unsigned char>& content) {
     result.push_back(hex[byte & 0x0f]);
   }
   return result;
+}
+
+std::string Sha256HexText(const char* value) {
+  const size_t length = strlen(value);
+  const auto* bytes = reinterpret_cast<const unsigned char*>(value);
+  return Sha256Hex(std::vector<unsigned char>(bytes, bytes + length));
+}
+
+unsigned long long WallClockMilliseconds() {
+  const auto now = std::chrono::system_clock::now().time_since_epoch();
+  const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+  return milliseconds < 0 ? 0 : static_cast<unsigned long long>(milliseconds);
+}
+
+bool IsLowerHex(const char* value, size_t length) {
+  for (size_t index = 0; index < length; ++index) {
+    const char character = value[index];
+    if (!((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f'))) return false;
+  }
+  return true;
+}
+
+bool ParseUnlinkQuarantineName(const char* name, const std::string& basename_hash, unsigned long long* timestamp_ms) {
+  static constexpr const char* PREFIX = ".mac-operator-unlink-";
+  const size_t prefix_length = strlen(PREFIX);
+  if (strncmp(name, PREFIX, prefix_length) != 0) return false;
+  const char* timestamp_start = name + prefix_length;
+  const char* timestamp_end = strchr(timestamp_start, '-');
+  if (timestamp_end == nullptr || timestamp_end == timestamp_start ||
+      static_cast<size_t>(timestamp_end - timestamp_start) > 20) return false;
+  for (const char* cursor = timestamp_start; cursor < timestamp_end; ++cursor) {
+    if (*cursor < '0' || *cursor > '9') return false;
+  }
+  std::string timestamp_text(timestamp_start, timestamp_end - timestamp_start);
+  if (!ParseUnsigned(timestamp_text.c_str(), timestamp_ms)) return false;
+
+  const char* random_start = timestamp_end + 1;
+  const char* random_end = strchr(random_start, '-');
+  if (random_end == nullptr || random_end - random_start != 16 || !IsLowerHex(random_start, 16)) return false;
+  const char* hash = random_end + 1;
+  if (strlen(hash) != 64 || !IsLowerHex(hash, 64)) return false;
+  return basename_hash == hash;
 }
 
 napi_value Sha256Utf8(napi_env env, napi_callback_info info) {
@@ -2183,12 +2226,15 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
-  char quarantine_name[128];
+  const std::string basename_hash = Sha256HexText(base_name);
+  const unsigned long long quarantine_created_at_ms = WallClockMilliseconds();
+  char quarantine_name[160];
   bool quarantine_created = false;
   for (int attempt = 0; attempt < 8; ++attempt) {
     const unsigned long long random_value =
         (static_cast<unsigned long long>(arc4random()) << 32) | arc4random();
-    if (snprintf(quarantine_name, sizeof(quarantine_name), ".mac-operator-unlink-%016llx", random_value) >=
+    if (snprintf(quarantine_name, sizeof(quarantine_name), ".mac-operator-unlink-%llu-%016llx-%s",
+        quarantine_created_at_ms, random_value, basename_hash.c_str()) >=
         static_cast<int>(sizeof(quarantine_name))) {
       continue;
     }
@@ -2260,6 +2306,232 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
   close(parent_descriptor);
   close(root_descriptor);
   return result;
+}
+
+napi_value RecoverUnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
+  size_t argc = 5;
+  napi_value args[5];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 5) {
+    napi_throw_type_error(env, nullptr, "recoverUnlinkFileWithinRoot requires root, target, expectedDevice, expectedInode, and minAgeMs");
+    return nullptr;
+  }
+
+  char configured_root[PATH_MAX];
+  char requested_target[PATH_MAX];
+  char expected_device[64];
+  char expected_inode[64];
+  int64_t min_age_ms = 0;
+  if (!ReadString(env, args[0], configured_root, sizeof(configured_root)) ||
+      !ReadString(env, args[1], requested_target, sizeof(requested_target)) ||
+      !ReadComponent(env, args[2], expected_device, sizeof(expected_device)) ||
+      !ReadComponent(env, args[3], expected_inode, sizeof(expected_inode)) ||
+      napi_get_value_int64(env, args[4], &min_age_ms) != napi_ok || min_age_ms < 1000 || min_age_ms > 604'800'000LL) {
+    napi_throw_type_error(env, nullptr, "Filesystem unlink recovery arguments are malformed");
+    return nullptr;
+  }
+  unsigned long long expected_device_number = 0;
+  unsigned long long expected_inode_number = 0;
+  if (!ParseUnsigned(expected_device, &expected_device_number) || !ParseUnsigned(expected_inode, &expected_inode_number)) {
+    napi_throw_type_error(env, nullptr, "Filesystem unlink recovery identity precondition is malformed");
+    return nullptr;
+  }
+
+  int root_descriptor = open(configured_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (root_descriptor < 0) {
+    ThrowSystemError(env, "Filesystem root could not be opened safely");
+    return nullptr;
+  }
+  struct stat root_stat;
+  struct statfs root_filesystem;
+  char resolved_root[PATH_MAX];
+  if (fstat(root_descriptor, &root_stat) != 0 || fstatfs(root_descriptor, &root_filesystem) != 0 ||
+      (root_filesystem.f_flags & MNT_LOCAL) == 0 || !DescriptorPath(root_descriptor, resolved_root)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem root identity could not be verified");
+    return nullptr;
+  }
+
+  char parent_path[PATH_MAX];
+  const char* slash = strrchr(requested_target, '/');
+  if (slash == nullptr || slash[1] == '\0') {
+    close(root_descriptor);
+    napi_throw_type_error(env, nullptr, "Filesystem unlink recovery target must name a child file");
+    return nullptr;
+  }
+  const size_t parent_length = static_cast<size_t>(slash - requested_target);
+  if (parent_length == 0) {
+    parent_path[0] = '/';
+    parent_path[1] = '\0';
+  } else if (parent_length >= sizeof(parent_path)) {
+    close(root_descriptor);
+    napi_throw_type_error(env, nullptr, "Filesystem unlink recovery parent path is too long");
+    return nullptr;
+  } else {
+    memcpy(parent_path, requested_target, parent_length);
+    parent_path[parent_length] = '\0';
+  }
+  const char* base_name = slash + 1;
+  char canonical_parent_path[PATH_MAX];
+  char relative_parent[PATH_MAX];
+  char resolved_parent[PATH_MAX];
+  if (realpath(parent_path, canonical_parent_path) == nullptr ||
+      !RelativePathWithinRoot(resolved_root, canonical_parent_path, relative_parent)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery parent escaped the authorized root");
+    return nullptr;
+  }
+  int parent_descriptor = openat(root_descriptor, relative_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (parent_descriptor < 0) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery parent could not be opened safely");
+    return nullptr;
+  }
+  struct stat parent_stat;
+  char parent_descriptor_path[PATH_MAX];
+  if (fstat(parent_descriptor, &parent_stat) != 0 || !DescriptorPath(parent_descriptor, parent_descriptor_path) ||
+      !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev ||
+      !SameFilesystem(parent_descriptor, root_filesystem)) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery parent identity is not authorized");
+    return nullptr;
+  }
+  if (strlcpy(resolved_parent, parent_descriptor_path, sizeof(resolved_parent)) >= sizeof(resolved_parent)) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery parent identity is too long");
+    return nullptr;
+  }
+  char resolved_target[PATH_MAX];
+  if (snprintf(resolved_target, sizeof(resolved_target), "%s/%s", resolved_parent, base_name) >= static_cast<int>(sizeof(resolved_target))) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery result path is too long");
+    return nullptr;
+  }
+
+  const std::string basename_hash = Sha256HexText(base_name);
+  int scan_descriptor = dup(parent_descriptor);
+  if (scan_descriptor < 0) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery parent could not be duplicated");
+    return nullptr;
+  }
+  DIR* directory = fdopendir(scan_descriptor);
+  if (directory == nullptr) {
+    close(scan_descriptor);
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery parent could not be enumerated");
+    return nullptr;
+  }
+  int stale_matches = 0;
+  int recent_matches = 0;
+  std::string stale_name;
+  std::string recent_name;
+  struct stat stale_stat{};
+  const unsigned long long now_ms = WallClockMilliseconds();
+  errno = 0;
+  while (struct dirent* entry = readdir(directory)) {
+    const char* name = entry->d_name;
+    unsigned long long created_at_ms = 0;
+    if (!ParseUnlinkQuarantineName(name, basename_hash, &created_at_ms)) continue;
+    struct stat artifact_stat;
+    if (fstatat(parent_descriptor, name, &artifact_stat, AT_SYMLINK_NOFOLLOW) != 0) {
+      if (errno == ENOENT) continue;
+      closedir(directory);
+      close(parent_descriptor);
+      close(root_descriptor);
+      ThrowSystemError(env, "Filesystem unlink recovery artifact could not be inspected");
+      return nullptr;
+    }
+    if (!S_ISREG(artifact_stat.st_mode) || artifact_stat.st_nlink != 1 || artifact_stat.st_dev != root_stat.st_dev ||
+        static_cast<unsigned long long>(artifact_stat.st_dev) != expected_device_number ||
+        static_cast<unsigned long long>(artifact_stat.st_ino) != expected_inode_number) continue;
+    const bool stale = now_ms >= created_at_ms && now_ms - created_at_ms >= static_cast<unsigned long long>(min_age_ms);
+    if (stale) {
+      stale_matches += 1;
+      stale_name = name;
+      stale_stat = artifact_stat;
+    } else {
+      recent_matches += 1;
+      recent_name = name;
+    }
+  }
+  const int enumeration_error = errno;
+  closedir(directory);
+  if (enumeration_error != 0) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery enumeration failed");
+    return nullptr;
+  }
+
+  const auto make_result = [&](const char* status, const char* quarantine_path, const char* device, const char* inode) {
+    napi_value result;
+    napi_create_object(env, &result);
+    SetString(env, result, "rootPath", resolved_root);
+    SetString(env, result, "path", resolved_target);
+    SetString(env, result, "status", status);
+    if (quarantine_path == nullptr) {
+      napi_value null_value;
+      napi_get_null(env, &null_value);
+      napi_set_named_property(env, result, "quarantinePath", null_value);
+    } else {
+      SetString(env, result, "quarantinePath", quarantine_path);
+    }
+    SetString(env, result, "device", device);
+    SetString(env, result, "inode", inode);
+    return result;
+  };
+  char expected_device_text[64];
+  char expected_inode_text[64];
+  strlcpy(expected_device_text, expected_device, sizeof(expected_device_text));
+  strlcpy(expected_inode_text, expected_inode, sizeof(expected_inode_text));
+  if (stale_matches > 1 || recent_matches > 1 || (stale_matches > 0 && recent_matches > 0)) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    return make_result("ambiguous", nullptr, expected_device_text, expected_inode_text);
+  }
+  if (stale_matches == 0) {
+    const char* recent_path = nullptr;
+    char recent_path_buffer[PATH_MAX];
+    if (recent_matches == 1 && snprintf(recent_path_buffer, sizeof(recent_path_buffer), "%s/%s", resolved_parent, recent_name.c_str()) < static_cast<int>(sizeof(recent_path_buffer))) {
+      recent_path = recent_path_buffer;
+    }
+    close(parent_descriptor);
+    close(root_descriptor);
+    return make_result(recent_matches == 1 ? "not_stale" : "absent", recent_path, expected_device_text, expected_inode_text);
+  }
+
+  if (unlinkat(parent_descriptor, stale_name.c_str(), 0) != 0 || fsync(parent_descriptor) != 0) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery could not be durably committed");
+    return nullptr;
+  }
+  struct stat after_stat;
+  if (fstatat(parent_descriptor, stale_name.c_str(), &after_stat, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery postcondition failed");
+    return nullptr;
+  }
+  char quarantine_path[PATH_MAX];
+  if (snprintf(quarantine_path, sizeof(quarantine_path), "%s/%s", resolved_parent, stale_name.c_str()) >= static_cast<int>(sizeof(quarantine_path))) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery artifact path is too long");
+    return nullptr;
+  }
+  char device[32];
+  char inode[32];
+  snprintf(device, sizeof(device), "%llu", static_cast<unsigned long long>(stale_stat.st_dev));
+  snprintf(inode, sizeof(inode), "%llu", static_cast<unsigned long long>(stale_stat.st_ino));
+  close(parent_descriptor);
+  close(root_descriptor);
+  return make_result("recovered", quarantine_path, device, inode);
 }
 
 struct ProcessRecord {
@@ -2648,6 +2920,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
 #endif
   napi_create_function(env, "unlinkFileWithinRoot", NAPI_AUTO_LENGTH, UnlinkFileWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "unlinkFileWithinRoot", function);
+  napi_create_function(env, "recoverUnlinkFileWithinRoot", NAPI_AUTO_LENGTH, RecoverUnlinkFileWithinRoot, nullptr, &function);
+  napi_set_named_property(env, exports, "recoverUnlinkFileWithinRoot", function);
   napi_create_function(env, "listProcesses", NAPI_AUTO_LENGTH, ListProcesses, nullptr, &function);
   napi_set_named_property(env, exports, "listProcesses", function);
   napi_create_function(env, "inspectProcess", NAPI_AUTO_LENGTH, InspectProcess, nullptr, &function);

@@ -23,6 +23,8 @@ test("native filesystem boundary opens targets relative to a pinned root descrip
   assert.doesNotMatch(source, /int target_descriptor = open\(requested_target/u);
   assert.match(source, /renameatx_np\(parent_descriptor, base_name, parent_descriptor, quarantine_name, RENAME_EXCL\)/u);
   assert.match(source, /linkat\(parent_descriptor, quarantine_name, parent_descriptor, base_name, 0\)/u);
+  assert.match(source, /recoverUnlinkFileWithinRoot/u);
+  assert.match(source, /\.mac-operator-unlink-%llu-%016llx-%s/u);
 });
 
 const nativeFaultChildSource = `
@@ -228,6 +230,55 @@ test("write temporary cleanup removes only an exact regular artifact and fails c
     );
     assert.equal(await readFile(outside, "utf8"), "outside");
     assert.equal(await readlink(temporaryPath), outside);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native unlink recovery removes only stale identity-bound quarantine artifacts", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-unlink-recovery-"));
+  const target = join(directory, "target.txt");
+  const basenameHash = createHash("sha256").update("target.txt", "utf8").digest("hex");
+  const staleName = `.mac-operator-unlink-${Date.now() - 120_000}-${"a".repeat(16)}-${basenameHash}`;
+  const stalePath = join(directory, staleName);
+  try {
+    const canonicalDirectory = await realpath(directory);
+    await writeFile(stalePath, "orphan", { mode: 0o600 });
+    const staleIdentity = await lstat(stalePath);
+    const inspector = new FilesystemInspector([writeRoot(directory)]);
+    const plan = inspector.planPath(target, "write");
+    const recovered = inspector.recoverUnlinkOrphan(plan, {
+      present: true,
+      device: String(staleIdentity.dev),
+      inode: String(staleIdentity.ino)
+    }, 60_000);
+    assert.equal(recovered.status, "recovered");
+    assert.equal(recovered.path, join(canonicalDirectory, "target.txt"));
+    assert.equal(recovered.device, String(staleIdentity.dev));
+    assert.equal(recovered.inode, String(staleIdentity.ino));
+    await assert.rejects(readFile(stalePath), /ENOENT/u);
+
+    const recentName = `.mac-operator-unlink-${Date.now()}-${"b".repeat(16)}-${basenameHash}`;
+    const recentPath = join(directory, recentName);
+    await writeFile(recentPath, "recent", { mode: 0o600 });
+    const recentIdentity = await lstat(recentPath);
+    const recent = inspector.recoverUnlinkOrphan(plan, {
+      present: true,
+      device: String(recentIdentity.dev),
+      inode: String(recentIdentity.ino)
+    }, 60_000);
+    assert.equal(recent.status, "not_stale");
+    assert.equal(recent.quarantinePath, join(canonicalDirectory, recentName));
+    assert.equal(await readFile(recentPath, "utf8"), "recent");
+
+    const wrongPlan = inspector.planPath(join(directory, "other.txt"), "write");
+    const wrongTarget = inspector.recoverUnlinkOrphan(wrongPlan, {
+      present: true,
+      device: String(recentIdentity.dev),
+      inode: String(recentIdentity.ino)
+    }, 60_000);
+    assert.equal(wrongTarget.status, "absent");
+    assert.equal(await readFile(recentPath, "utf8"), "recent");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

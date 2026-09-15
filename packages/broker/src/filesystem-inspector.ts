@@ -195,6 +195,15 @@ export interface TemporaryWriteCleanupResult {
   inode: string | null;
 }
 
+export interface UnlinkRecoveryResult {
+  status: "recovered" | "absent" | "not_stale" | "ambiguous";
+  rootPath: string;
+  path: string;
+  quarantinePath: string | null;
+  device: string;
+  inode: string;
+}
+
 interface NativePathMetadata {
   rootPath: string;
   path: string;
@@ -252,6 +261,13 @@ export interface FilesystemNativeAdapter {
     expectedDevice: string,
     expectedInode: string
   ): unknown;
+  recoverUnlinkFileWithinRoot(
+    rootPath: string,
+    targetPath: string,
+    expectedDevice: string,
+    expectedInode: string,
+    minAgeMs: number
+  ): unknown;
 }
 
 const ROOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -268,6 +284,8 @@ const MAX_STORAGE_DEPTH = 8;
 const MAX_STORAGE_ENTRIES = 50_000;
 const MAX_STORAGE_DIRECTORIES = 10_000;
 const TEMPORARY_WRITE_NAME_PATTERN = /^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u;
+const MIN_UNLINK_RECOVERY_AGE_MS = 1_000;
+const MAX_UNLINK_RECOVERY_AGE_MS = 604_800_000;
 const PROJECT_SUMMARY_MANIFESTS = new Set([
   "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "tsconfig.json",
   "pyproject.toml", "setup.py", "requirements.txt", "Pipfile", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
@@ -1196,6 +1214,57 @@ export class FilesystemInspector {
   }
 
   /**
+   * Explicitly complete one stale native unlink quarantine. Recovery is never
+   * automatic: the caller must provide the original target identity and a
+   * bounded minimum quarantine age. Ambiguous or recent artifacts remain
+   * untouched for operator review.
+   */
+  recoverUnlinkOrphan(
+    plan: FilesystemPathPlan,
+    expectedIdentity: FilesystemIdentityPrecondition,
+    minAgeMs = 60_000
+  ): UnlinkRecoveryResult {
+    assertContentPathAllowed(plan.requestedPath);
+    if (!expectedIdentity.present || !/^\d+$/u.test(expectedIdentity.device) || !/^\d+$/u.test(expectedIdentity.inode)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem unlink recovery requires a present identity precondition");
+    }
+    if (!Number.isSafeInteger(minAgeMs) || minAgeMs < MIN_UNLINK_RECOVERY_AGE_MS || minAgeMs > MAX_UNLINK_RECOVERY_AGE_MS) {
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem unlink recovery age is malformed");
+    }
+    this.assertPlanVolumeStable(plan);
+    let nativeRecovery: unknown;
+    try {
+      nativeRecovery = this.native.recoverUnlinkFileWithinRoot(
+        plan.root.path,
+        plan.requestedPath,
+        expectedIdentity.device,
+        expectedIdentity.inode,
+        minAgeMs
+      );
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem unlink recovery target escaped its authorized root or changed during recovery");
+    }
+    this.assertPlanVolumeStable(plan);
+    const recovery = parseNativeUnlinkRecovery(nativeRecovery);
+    const resolvedRelative = relative(recovery.rootPath, recovery.path);
+    if (resolvedRelative.startsWith(`..${sep}`) || resolvedRelative === ".." || isAbsolute(resolvedRelative) ||
+        plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, resolvedRelative))) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem unlink recovery result escaped its authorized root or deny zone");
+    }
+    if (recovery.status === "recovered" && (recovery.device !== expectedIdentity.device || recovery.inode !== expectedIdentity.inode)) {
+      throw new BrokerError("VERIFICATION_FAILED", "Filesystem unlink recovery identity did not match the request");
+    }
+    if (recovery.quarantinePath !== null) {
+      const quarantineRelative = relative(dirname(recovery.path), recovery.quarantinePath);
+      if (quarantineRelative.startsWith(`..${sep}`) || quarantineRelative === ".." || isAbsolute(quarantineRelative) ||
+          quarantineRelative.includes(sep)) {
+        throw new BrokerError("POLICY_DENIED", "Filesystem unlink recovery artifact escaped its target directory");
+      }
+    }
+    return recovery;
+  }
+
+  /**
    * Remove one Broker-recorded write temporary, never a directory prefix.
    * The first no-op unlink distinguishes a missing artifact without treating
    * arbitrary stat failures as absence. If the artifact exists, its current
@@ -1399,6 +1468,29 @@ function parseNativeUnlink(value: unknown): {
     rootPath: record.rootPath,
     path: record.path,
     removed: record.removed,
+    device: record.device,
+    inode: record.inode
+  };
+}
+
+function parseNativeUnlinkRecovery(value: unknown): UnlinkRecoveryResult {
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, ["rootPath", "path", "status", "quarantinePath", "device", "inode"])) {
+    throw new Error("Malformed native unlink recovery");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
+      typeof record.path !== "string" || !isAbsolute(record.path) ||
+      (record.status !== "recovered" && record.status !== "absent" && record.status !== "not_stale" && record.status !== "ambiguous") ||
+      (record.quarantinePath !== null && (typeof record.quarantinePath !== "string" || !isAbsolute(record.quarantinePath))) ||
+      typeof record.device !== "string" || !/^\d+$/u.test(record.device) ||
+      typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)) {
+    throw new Error("Malformed native unlink recovery");
+  }
+  return {
+    status: record.status as UnlinkRecoveryResult["status"],
+    rootPath: record.rootPath,
+    path: record.path,
+    quarantinePath: record.quarantinePath as string | null,
     device: record.device,
     inode: record.inode
   };
