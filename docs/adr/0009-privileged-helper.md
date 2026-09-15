@@ -270,6 +270,12 @@ before loading helper key bytes. Revision `711f3e4` normalizes missing or
 non-canonical trusted executable paths to stable fail-closed errors. These
 checks do not expose Keychain contents and do not enable the helper.
 
+Revision `7f725bf` binds the trusted Keychain executable to the current
+process owner in both the TypeScript and macOS native boundaries. Foreign
+ownership, missing POSIX identity, writable modes, symlinks, and non-canonical
+paths fail closed before Keychain access; the native check repeats ownership
+with `geteuid()` while retaining the canonical-path identity double-read.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

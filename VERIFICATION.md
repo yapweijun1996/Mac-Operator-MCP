@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Keychain trusted-executable ownership verification: source revision `7f725bf`
+binds the ACL executable to the current process owner in both the TypeScript
+boundary and macOS native adapter. Missing POSIX identity, foreign ownership,
+writable modes, symlinks, and non-canonical paths fail closed before secret
+access; the native layer repeats the owner check with `geteuid()` around its
+canonical-path double-read. Focused peer/credentials/helper suites pass 30/30
+with `MOPS_REAL_KEYCHAIN=1`, and the latest physical non-overlapping
+regression passes 618/618 with zero skips and zero failures. The existing
+Broker/Persistence process was not restarted. Evidence:
+`evidence/2026-09-15-keychain-trusted-executable-ownership.md`.
+
 Root-helper Keychain ACL binding verification: source revisions `4bc0308`,
 `666a978`, and `711f3e4` keep the BrokerStore-backed factory bound to the
 Broker executable while the no-`BrokerStore` root-helper loader requires an
