@@ -527,6 +527,12 @@ export class VirtualizationGuestTransportClient {
     if (!options.replayGuard || !options.channel || typeof options.channel.exchange !== "function") {
       throw new Error("Virtualization guest transport requires a replay guard and channel");
     }
+    const maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
+    const cancellationPollMs = options.cancellationPollMs ?? 25;
+    if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 256 || maxResponseBytes > MAX_RESPONSE_BYTES ||
+        !Number.isSafeInteger(cancellationPollMs) || cancellationPollMs < 10 || cancellationPollMs > 1_000) {
+      throw new Error("Virtualization guest transport limits are invalid");
+    }
     this.authenticationKey = Buffer.from(options.authenticationKey);
     this.replayGuard = options.replayGuard;
     this.channel = options.channel;
@@ -534,13 +540,9 @@ export class VirtualizationGuestTransportClient {
     this.expectedGuestIdentity = options.expectedGuestIdentity;
     this.expectedSandboxProfile = options.expectedSandboxProfile;
     this.expectedProfileDigest = options.expectedProfileDigest;
-    this.maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES;
-    this.cancellationPollMs = options.cancellationPollMs ?? 25;
+    this.maxResponseBytes = maxResponseBytes;
+    this.cancellationPollMs = cancellationPollMs;
     this.authorizeStatusLookup = options.authorizeStatusLookup;
-    if (!Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes < 256 || this.maxResponseBytes > MAX_RESPONSE_BYTES ||
-        !Number.isSafeInteger(this.cancellationPollMs) || this.cancellationPollMs < 10 || this.cancellationPollMs > 1_000) {
-      throw new Error("Virtualization guest transport limits are invalid");
-    }
   }
 
   close(): void {

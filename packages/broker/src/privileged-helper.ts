@@ -324,14 +324,15 @@ export class BrokerPrivilegedHelperCommandFactory {
     if (!options.store) throw new Error("Privileged helper command factory requires a BrokerStore");
     if (options.authenticationKey.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
     if (typeof options.authorizeCommand !== "function") throw new Error("Privileged helper authority check is required");
+    const maxLifetimeMs = options.maxLifetimeMs ?? 30_000;
+    if (!Number.isSafeInteger(maxLifetimeMs) || maxLifetimeMs < 1 || maxLifetimeMs > MAX_COMMAND_AGE_MS) {
+      throw new Error("Privileged helper command lifetime is invalid");
+    }
     const { authenticationKey, ...safeOptions } = options;
     this.options = safeOptions;
     this.authenticationKey = Buffer.from(authenticationKey);
     this.now = options.now ?? Date.now;
-    this.maxLifetimeMs = options.maxLifetimeMs ?? 30_000;
-    if (!Number.isSafeInteger(this.maxLifetimeMs) || this.maxLifetimeMs < 1 || this.maxLifetimeMs > MAX_COMMAND_AGE_MS) {
-      throw new Error("Privileged helper command lifetime is invalid");
-    }
+    this.maxLifetimeMs = maxLifetimeMs;
   }
 
   issue(input: PrivilegedHelperCommandIssueInput): SignedPrivilegedHelperCommand {
@@ -551,20 +552,24 @@ export class PrivilegedHelperIpcServer {
       throw new Error("Privileged helper IPC requires a peer verifier or native peer policy");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
-    this.authenticationKey = Buffer.from(options.authenticationKey);
     if (!options.replayGuard) throw new Error("Privileged helper replay guard is required");
     if (typeof options.authorizeCommand !== "function") throw new Error("Privileged helper authority check is required");
-    this.maxRequestBytes = options.maxRequestBytes ?? MAX_COMMAND_BYTES;
-    this.maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_COMMAND_AGE_MS;
-    this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
-    this.now = options.now ?? Date.now;
-    this.authorityPollIntervalMs = options.authorityPollIntervalMs ?? DEFAULT_AUTHORITY_POLL_INTERVAL_MS;
-    if (!Number.isSafeInteger(this.maxRequestBytes) || this.maxRequestBytes < 256 || this.maxRequestBytes > MAX_COMMAND_BYTES * 4 ||
-        !Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_COMMAND_AGE_MS ||
-        !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > 60_000 ||
-        !Number.isSafeInteger(this.authorityPollIntervalMs) || this.authorityPollIntervalMs < 1 || this.authorityPollIntervalMs > MAX_AUTHORITY_POLL_INTERVAL_MS) {
+    const maxRequestBytes = options.maxRequestBytes ?? MAX_COMMAND_BYTES;
+    const maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_COMMAND_AGE_MS;
+    const allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
+    const authorityPollIntervalMs = options.authorityPollIntervalMs ?? DEFAULT_AUTHORITY_POLL_INTERVAL_MS;
+    if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes < 256 || maxRequestBytes > MAX_COMMAND_BYTES * 4 ||
+        !Number.isSafeInteger(maxRequestAgeMs) || maxRequestAgeMs < 1 || maxRequestAgeMs > MAX_COMMAND_AGE_MS ||
+        !Number.isSafeInteger(allowedClockSkewMs) || allowedClockSkewMs < 0 || allowedClockSkewMs > 60_000 ||
+        !Number.isSafeInteger(authorityPollIntervalMs) || authorityPollIntervalMs < 1 || authorityPollIntervalMs > MAX_AUTHORITY_POLL_INTERVAL_MS) {
       throw new Error("Privileged helper IPC limits are invalid");
     }
+    this.authenticationKey = Buffer.from(options.authenticationKey);
+    this.maxRequestBytes = maxRequestBytes;
+    this.maxRequestAgeMs = maxRequestAgeMs;
+    this.allowedClockSkewMs = allowedClockSkewMs;
+    this.now = options.now ?? Date.now;
+    this.authorityPollIntervalMs = authorityPollIntervalMs;
   }
 
   async listen(): Promise<void> {

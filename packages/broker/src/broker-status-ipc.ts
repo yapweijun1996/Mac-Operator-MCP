@@ -101,16 +101,19 @@ export class BrokerStatusIpcServer {
     if (typeof options.readStatus !== "function" || typeof options.authorizeStatus !== "function") {
       throw new Error("Broker status IPC requires Broker-owned read and authority callbacks");
     }
-    this.authenticationKey = Buffer.from(options.authenticationKey);
-    this.maxRequestBytes = options.maxRequestBytes ?? MAX_REQUEST_BYTES;
-    this.maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_REQUEST_AGE_MS;
-    this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
-    this.now = options.now ?? Date.now;
-    if (!Number.isSafeInteger(this.maxRequestBytes) || this.maxRequestBytes < 256 || this.maxRequestBytes > MAX_REQUEST_BYTES * 4 ||
-        !Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_REQUEST_AGE_MS ||
-        !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > 60_000) {
+    const maxRequestBytes = options.maxRequestBytes ?? MAX_REQUEST_BYTES;
+    const maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_REQUEST_AGE_MS;
+    const allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
+    if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes < 256 || maxRequestBytes > MAX_REQUEST_BYTES * 4 ||
+        !Number.isSafeInteger(maxRequestAgeMs) || maxRequestAgeMs < 1 || maxRequestAgeMs > MAX_REQUEST_AGE_MS ||
+        !Number.isSafeInteger(allowedClockSkewMs) || allowedClockSkewMs < 0 || allowedClockSkewMs > 60_000) {
       throw new Error("Broker status IPC limits are invalid");
     }
+    this.authenticationKey = Buffer.from(options.authenticationKey);
+    this.maxRequestBytes = maxRequestBytes;
+    this.maxRequestAgeMs = maxRequestAgeMs;
+    this.allowedClockSkewMs = allowedClockSkewMs;
+    this.now = options.now ?? Date.now;
   }
 
   async listen(): Promise<void> {

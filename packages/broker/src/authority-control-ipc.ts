@@ -88,16 +88,19 @@ export class AuthorityControlIpcServer {
       throw new Error("Authority control IPC requires a peer verifier or native peer policy");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Authority control IPC key must contain at least 32 bytes");
-    this.authenticationKey = Buffer.from(options.authenticationKey);
-    this.maxRequestBytes = options.maxRequestBytes ?? 64 * 1024;
-    this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
-    this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
-    this.now = options.now ?? Date.now;
-    if (!Number.isSafeInteger(this.maxRequestBytes) || this.maxRequestBytes < 256 || this.maxRequestBytes > 1_048_576 ||
-        !Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > 600_000 ||
-        !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > 60_000) {
+    const maxRequestBytes = options.maxRequestBytes ?? 64 * 1024;
+    const maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
+    const allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
+    if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes < 256 || maxRequestBytes > 1_048_576 ||
+        !Number.isSafeInteger(maxRequestAgeMs) || maxRequestAgeMs < 1 || maxRequestAgeMs > 600_000 ||
+        !Number.isSafeInteger(allowedClockSkewMs) || allowedClockSkewMs < 0 || allowedClockSkewMs > 60_000) {
       throw new Error("Authority control IPC limits are invalid");
     }
+    this.authenticationKey = Buffer.from(options.authenticationKey);
+    this.maxRequestBytes = maxRequestBytes;
+    this.maxRequestAgeMs = maxRequestAgeMs;
+    this.allowedClockSkewMs = allowedClockSkewMs;
+    this.now = options.now ?? Date.now;
   }
 
   async listen(): Promise<void> {
@@ -361,16 +364,22 @@ export class AuthorityControlIpcClient {
       throw new Error("Authority control IPC socket path must be canonical");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Authority control IPC key must contain at least 32 bytes");
-    this.authenticationKey = Buffer.from(options.authenticationKey);
-    this.timeoutMs = options.timeoutMs ?? 15_000;
-    this.maxResponseBytes = options.maxResponseBytes ?? 64 * 1024;
-    this.maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
-    this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
-    this.now = options.now ?? Date.now;
-    if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 600_000 ||
-        !Number.isSafeInteger(this.maxResponseBytes) || this.maxResponseBytes < 256 || this.maxResponseBytes > 1_048_576) {
+    const timeoutMs = options.timeoutMs ?? 15_000;
+    const maxResponseBytes = options.maxResponseBytes ?? 64 * 1024;
+    const maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
+    const allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000 ||
+        !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 256 || maxResponseBytes > 1_048_576 ||
+        !Number.isSafeInteger(maxRequestAgeMs) || maxRequestAgeMs < 1 || maxRequestAgeMs > 600_000 ||
+        !Number.isSafeInteger(allowedClockSkewMs) || allowedClockSkewMs < 0 || allowedClockSkewMs > 60_000) {
       throw new Error("Authority control IPC client limits are invalid");
     }
+    this.authenticationKey = Buffer.from(options.authenticationKey);
+    this.timeoutMs = timeoutMs;
+    this.maxResponseBytes = maxResponseBytes;
+    this.maxRequestAgeMs = maxRequestAgeMs;
+    this.allowedClockSkewMs = allowedClockSkewMs;
+    this.now = options.now ?? Date.now;
   }
 
   /** Wipe the client-owned HMAC key after the host operation completes. */
