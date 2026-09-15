@@ -9,6 +9,7 @@ import {
   sameVirtualizationGuestIdentity,
   type VirtualizationGuestIdentity
 } from "./virtualization-guest-attestation.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import type {
   VirtualizationGuestVmAdapter,
   VirtualizationGuestVmStartResult,
@@ -423,24 +424,24 @@ function validateConnectionSourceOptions(options: NativeVirtualizationGuestConne
   }
 }
 
-function parseTransitionResult(
+export function parseTransitionResult(
   value: unknown,
   expectedState: "running",
   expectedGuestIdentity: VirtualizationGuestIdentity
 ): VirtualizationGuestVmStartResult;
-function parseTransitionResult(
+export function parseTransitionResult(
   value: unknown,
   expectedState: "stopped",
   expectedGuestIdentity: VirtualizationGuestIdentity,
   expectedBootId: string
 ): VirtualizationGuestVmStopResult;
-function parseTransitionResult(
+export function parseTransitionResult(
   value: unknown,
   expectedState: "running" | "stopped",
   expectedGuestIdentity: VirtualizationGuestIdentity,
   expectedBootId?: string
 ): VirtualizationGuestVmStartResult | VirtualizationGuestVmStopResult {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value) || !hasExactFields(value, ["bootId", "guestIdentity", "state"])) {
     throw new BrokerError("EXECUTION_FAILED", "Virtualization guest VM adapter returned a malformed result");
   }
   const record = value as Record<string, unknown>;
@@ -460,8 +461,8 @@ function parseTransitionResult(
   } as VirtualizationGuestVmStartResult | VirtualizationGuestVmStopResult;
 }
 
-function parseStatusResult(value: unknown, expectedGuestIdentity: VirtualizationGuestIdentity): VirtualizationGuestVmStatusResult {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+export function parseStatusResult(value: unknown, expectedGuestIdentity: VirtualizationGuestIdentity): VirtualizationGuestVmStatusResult {
+  if (!isPlainDataRecord(value) || !hasExactFields(value, ["bootId", "guestIdentity", "state"])) {
     throw new BrokerError("EXECUTION_FAILED", "Virtualization guest VM status result is malformed");
   }
   const record = value as Record<string, unknown>;
@@ -478,6 +479,11 @@ function parseStatusResult(value: unknown, expectedGuestIdentity: Virtualization
     guestIdentity: { ...expectedGuestIdentity },
     bootId: record.state === "running" ? record.bootId as string : null
   };
+}
+
+function hasExactFields(value: Record<string, unknown>, required: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === required.length && required.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
 async function raceAbort<T>(operation: Promise<T>, signal: AbortSignal, message: string): Promise<T> {

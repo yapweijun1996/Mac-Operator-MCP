@@ -12,6 +12,8 @@ import {
   loadNativeVirtualizationGuestVmBinding,
   NativeVirtualizationGuestChannel,
   createNativeVirtualizationGuestConnectionSource,
+  parseStatusResult,
+  parseTransitionResult,
   type NativeVirtualizationGuestVmBinding,
   validateNativeVirtualizationGuestVmAdapterPath
 } from "./virtualization-guest-vm-native.js";
@@ -127,6 +129,23 @@ test("native Virtualization guest lifecycle rejects broker-owned images before n
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("native Virtualization guest VM results reject unstable authority fields", () => {
+  const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "macos-26.2-vz-1" };
+  const running = { bootId: "boot-12345678", guestIdentity, state: "running" as const };
+  assert.deepEqual(parseTransitionResult(running, "running", guestIdentity), running);
+  assert.throws(
+    () => parseTransitionResult({ ...running, extra: true }, "running", guestIdentity),
+    /malformed result|identity is invalid/u
+  );
+  const accessor = { ...running } as Record<string, unknown>;
+  Object.defineProperty(accessor, "state", { enumerable: true, get: () => "running" });
+  assert.throws(() => parseTransitionResult(accessor, "running", guestIdentity), /malformed result|identity is invalid/u);
+
+  const stopped = { bootId: null, guestIdentity, state: "stopped" as const };
+  assert.deepEqual(parseStatusResult(stopped, guestIdentity), stopped);
+  assert.throws(() => parseStatusResult({ ...stopped, extra: true }, guestIdentity), /result is malformed/u);
 });
 
 test("native virtio guest channel enforces bounded frames and forwards only handle-bound calls", async () => {
