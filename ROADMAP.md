@@ -75,7 +75,10 @@ durable, only three operation names are representable, and a Broker-owned
 factory signs commands only for matching explicit-approval, intent-linked
 running Jobs after active authority checks. Focused helper/runtime/package,
 install-plan, and Broker-dispatch tests pass on the physical macOS host. The
-default policy and executor remain disabled. Finalize Developer ID provenance,
+default policy and executor remain disabled. The helper runtime now requires a
+separately authenticated Broker authority poller whenever an adapter is
+enabled; polls occur before dispatch, during execution, and before success,
+with post-dispatch authority loss mapped to `UNKNOWN_OUTCOME`. Finalize Developer ID provenance,
 protected production Keychain material, root-domain lifecycle readback,
 operation-specific rollback and recovery, compatibility, real adapters, and
 independent review before enabling any privileged adapter.

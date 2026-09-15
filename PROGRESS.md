@@ -4,6 +4,21 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged helper authority-polling IPC addendum: source revision `2660bdf`
+adds an independent helper-to-Broker Unix socket. Both peers are explicitly
+authenticated, request/response HMAC domains are direction-separated, replay
+IDs/nonces use durable admission, and the Broker endpoint invokes the final
+Request/Approval/Job authority gate. The helper client fences socket identity,
+bounds transport, verifies response proofs, and clears key material. Active
+operations poll before dispatch, during execution, and before publishing
+success; a post-dispatch authority change becomes retryable
+`UNKNOWN_OUTCOME`. Runtime startup rejects enabled adapters without the
+poller. Focused helper/authority tests pass 18/18, runtime/keyring tests pass
+6/6, and the latest physical non-overlapping suite passes 611/611 with zero
+skips and zero failures. The default helper/policy remain disabled and the
+existing Broker/Persistence process was left undisturbed. Evidence:
+`evidence/2026-09-15-privileged-authority-polling-ipc.md`.
+
 Broker-backed privileged authority addendum: source revision `91806ae` adds
 `assertPrivilegedHelperCommandAuthority`, a reusable final Broker gate for
 helper IPC. It reconstructs Request/Approval/Job identity from durable state,

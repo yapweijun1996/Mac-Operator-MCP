@@ -208,6 +208,18 @@ an explicit implementation boundary; the default helper and policy remain
 disabled until production helper provenance, signing, installation, and
 adapter evidence are accepted.
 
+Revision `2660bdf` adds the independent helper-to-Broker authority-polling
+socket. Both peers require explicit OS-peer authentication, request and
+response proofs use direction-separated HMAC domains, and request IDs/nonces
+are durably admitted without treating a repeated authority poll as a repeated
+helper execution. The Broker endpoint invokes the final persisted authority
+gate; the helper client fences socket identity, bounds transport, and clears
+its key. Active operations poll before dispatch, during execution, and before
+success publication, mapping post-dispatch authority loss to retryable
+`UNKNOWN_OUTCOME`. Runtime startup rejects an enabled adapter without this
+poller. This remains disabled-by-default implementation evidence, not root
+helper release or privilege enablement.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

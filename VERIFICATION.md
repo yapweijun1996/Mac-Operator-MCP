@@ -3,6 +3,22 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged helper authority-polling IPC verification: source revision
+`2660bdf` adds a separately authenticated helper-to-Broker authority channel.
+The Broker endpoint uses native/explicit peer authentication, a
+direction-specific HMAC envelope, durable replay admission, nested command
+authentication, and the Broker-backed Request/Approval/Job authority gate.
+The helper client authenticates the Broker peer, fences socket identity,
+verifies bounded response proofs, and clears key material. Active helper work
+polls before dispatch, during execution, and before success publication;
+authority loss after execution begins is reported as retryable
+`UNKNOWN_OUTCOME`. Enabled adapters are rejected at runtime construction when
+no authority poller is supplied. Focused helper/authority tests pass 18/18,
+runtime/keyring tests pass 6/6, and the latest physical non-overlapping
+regression passes 611/611 with zero skips and zero failures. The existing
+Broker/Persistence process was not restarted. Evidence:
+`evidence/2026-09-15-privileged-authority-polling-ipc.md`.
+
 Broker-backed privileged authority verification: source revision `91806ae`
 adds a reusable final authority callback for helper IPC. It reconstructs
 Request/Approval/Job identity from durable state and rejects disabled
