@@ -320,7 +320,7 @@ export class FilesystemInspector {
    */
   constructor(roots: readonly FilesystemRootPolicy[], nativeAdapter?: FilesystemNativeAdapter) {
     const rootIds = new Set<string>();
-    this.roots = roots.map((root) => {
+    this.roots = freezeFilesystemSnapshot(roots.map((root) => {
       if (!ROOT_ID_PATTERN.test(root.rootId) || rootIds.has(root.rootId)) {
         throw new Error("Filesystem root ID is malformed or duplicated");
       }
@@ -330,7 +330,7 @@ export class FilesystemInspector {
       }
       const denyRelativePaths = root.denyRelativePaths.map((path) => normalizeRelative(path));
       return { ...root, denyRelativePaths };
-    });
+    }));
     try {
       this.native = nativeAdapter ?? loadNativePeerAdapter() as unknown as FilesystemNativeAdapter;
     } catch {
@@ -370,7 +370,7 @@ export class FilesystemInspector {
         !/^\d+$/u.test(rootMetadata.device) || !/^\d+$/u.test(rootMetadata.inode)) {
       throw new BrokerError("POLICY_DENIED", "Filesystem root identity could not be established");
     }
-    return {
+    return freezeFilesystemSnapshot({
       rootId: root.rootId,
       requestedPath: lexicalPath,
       root,
@@ -380,7 +380,7 @@ export class FilesystemInspector {
         device: rootMetadata.device,
         inode: rootMetadata.inode
       }
-    };
+    });
   }
 
   readPlanned(plan: FilesystemPathPlan, offset: number, maxBytes: number): SafeFileRead {
@@ -1548,6 +1548,27 @@ function normalizeRelative(path: string): string {
     throw new Error("Denied filesystem path must be a normalized relative path");
   }
   return path;
+}
+
+/**
+ * Authorization roots and plans cross asynchronous worker boundaries. Keep
+ * the complete snapshot immutable so a caller cannot swap a target, policy,
+ * or captured volume identity after authorization but before execution.
+ */
+function freezeFilesystemSnapshot<T>(value: T): T {
+  const seen = new Set<object>();
+  const freeze = (candidate: unknown): void => {
+    if (candidate === null || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) freeze(item);
+    } else {
+      for (const child of Object.values(candidate)) freeze(child);
+    }
+    Object.freeze(candidate);
+  };
+  freeze(value);
+  return value;
 }
 
 export function normalizeProjectTypes(types: readonly string[]): string[] {

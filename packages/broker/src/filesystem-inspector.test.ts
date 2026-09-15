@@ -927,6 +927,32 @@ test("filesystem plans fail closed when the authorized volume identity changes",
   }
 });
 
+test("filesystem authorization plans freeze target, policy, and volume snapshots", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-plan-freeze-"));
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    const plan = inspector.planPath(directory, "metadata");
+    assert.equal(Object.isFrozen(plan), true);
+    assert.equal(Object.isFrozen(plan.root), true);
+    assert.equal(Object.isFrozen(plan.root.denyRelativePaths), true);
+    assert.equal(Object.isFrozen(plan.rootIdentity), true);
+    assert.throws(
+      () => { (plan as unknown as { requestedPath: string }).requestedPath = "/tmp/escape"; },
+      TypeError
+    );
+    assert.throws(
+      () => { (plan.root as unknown as { path: string }).path = "/tmp/escape"; },
+      TypeError
+    );
+    assert.throws(
+      () => { (plan.rootIdentity as unknown as { inode: string }).inode = "0"; },
+      TypeError
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("filesystem plans fail closed when the authorized root directory is replaced", async () => {
   const parent = await mkdtemp(join(tmpdir(), "mac-operator-fs-root-identity-"));
   const directory = join(parent, "allowed");
