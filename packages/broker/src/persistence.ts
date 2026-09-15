@@ -2683,7 +2683,16 @@ export class BrokerStore {
   }
 
   auditRows(): Array<Record<string, unknown>> {
-    return this.database.prepare("SELECT * FROM audit_events ORDER BY sequence").all() as Array<Record<string, unknown>>;
+    const rows = this.database.prepare("SELECT * FROM audit_events ORDER BY sequence").all() as unknown as AuditRow[];
+    let previousSequence = 0;
+    for (const row of rows) {
+      validateStoredAuditRow(row);
+      if (row.sequence <= previousSequence) {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Audit sequence ordering is malformed");
+      }
+      previousSequence = row.sequence;
+    }
+    return rows as unknown as Array<Record<string, unknown>>;
   }
 
   auditEventExists(requestId: string, eventType: AuditEvent["eventType"]): boolean {
@@ -3317,6 +3326,47 @@ interface RequestRow {
   received_at_ms: number;
   updated_at_ms: number;
   revision: number;
+}
+
+interface AuditRow {
+  sequence: number;
+  request_id: string;
+  principal_id: string;
+  tool: string;
+  event_type: string;
+  decision: string;
+  result_class: string;
+  target_ref: string;
+  policy_version: string;
+  evidence_json: string;
+  timestamp_ms: number;
+  previous_hash: string;
+  event_hash: string;
+}
+
+function validateStoredAuditRow(row: AuditRow): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored audit record is malformed");
+  };
+  const bounded = (value: unknown, maxLength: number): value is string =>
+    typeof value === "string" && value.length >= 1 && value.length <= maxLength && !value.includes("\0");
+  if (!Number.isSafeInteger(row.sequence) || row.sequence < 1 ||
+      !bounded(row.request_id, 256) || !bounded(row.principal_id, 128) ||
+      !bounded(row.tool, 160) || !/^(?:mac_[a-z0-9_]{1,123}|internal_[A-Za-z0-9._:-]{1,140})$/u.test(row.tool) ||
+      !["decision", "intent", "completion"].includes(row.event_type) ||
+      !["allow", "deny"].includes(row.decision) ||
+      !bounded(row.result_class, 128) || !bounded(row.target_ref, 4096) ||
+      !bounded(row.policy_version, 160) || !bounded(row.evidence_json, 1_048_576) ||
+      !Number.isSafeInteger(row.timestamp_ms) || row.timestamp_ms < 0 ||
+      !/^[a-f0-9]{64}$/u.test(row.previous_hash) ||
+      !/^[a-f0-9]{64}$/u.test(row.event_hash)) {
+    fail();
+  }
+  try {
+    parseJsonStrict(row.evidence_json);
+  } catch {
+    fail();
+  }
 }
 
 interface ApprovalRow {
