@@ -32,6 +32,13 @@ does not alter Broker task budgets or satisfy production crash/isolation,
 installed-service, remote, or independent-review gates. Evidence:
 `evidence/2026-09-15-test-timeout-boundary.md`.
 
+Release-gate rerun addendum: source revision `7e0cc43` passes 44-contract
+verification, 5/5 native canonical vectors, `npm audit --audit-level=high`
+with zero vulnerabilities, lint across 611 tracked files, typecheck, and
+diff checks. The old Broker/persistence process was left undisturbed; full
+suite and production/release gates remain open. Evidence:
+`evidence/2026-09-15-release-gate-rerun.md`.
+
 Physical Darwin sandbox addendum: correctly exporting `MOPS_REAL_SANDBOX=1`
 to the test processes yields 595 total (593 pass, 2 skipped, 0 fail) on
 Darwin arm64/macOS 26.2. Real sandbox, protected-surface, fork/`setsid`,

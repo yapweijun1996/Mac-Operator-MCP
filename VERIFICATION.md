@@ -1811,6 +1811,13 @@ does not change production task budgets or close physical crash, installed,
 isolation, remote, or independent-review gates. Evidence:
 `evidence/2026-09-15-test-timeout-boundary.md`.
 
+Latest release-gate rerun: source revision `7e0cc43` passes 44-contract
+verification, 5/5 native canonical vectors, high-level dependency audit with
+zero vulnerabilities, lint for 611 tracked files, typecheck, and diff
+checks. The old Broker/Persistence process was left undisturbed, so its full
+result and the remaining physical production/release gates are not claimed.
+Evidence: `evidence/2026-09-15-release-gate-rerun.md`.
+
 Latest Broker restart-recovery addendum: source commit `a20fed7` persists
 bounded non-secret task-process PID/process-group/start-time identities for the
 root and observed descendants before task execution proceeds. A new

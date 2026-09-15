@@ -33,6 +33,13 @@ persistence process remains undisturbed. This bounds verification hangs only
 and does not change production task budgets or close release gates. Evidence:
 `evidence/2026-09-15-test-timeout-boundary.md`.
 
+Release-gate rerun addendum: source revision `7e0cc43` passes contract
+verification (44 unique contracts), native canonical JSON (5/5), high-level
+dependency audit (0 vulnerabilities), lint (611 tracked files), typecheck,
+and diff checks. The old Broker/persistence process remains undisturbed, so
+their complete result and the physical production/release gates are not
+claimed. Evidence: `evidence/2026-09-15-release-gate-rerun.md`.
+
 Physical Darwin sandbox addendum: with `MOPS_REAL_SANDBOX=1` correctly
 exported to the test processes, the same non-overlapping built set passes 595
 total (593 pass, 2 explicit skips, 0 fail) on Darwin arm64/macOS 26.2. The
