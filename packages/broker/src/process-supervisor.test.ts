@@ -13,6 +13,12 @@ test("process supervisor rejects invalid per-executable capacity", () => {
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 0 }), /limits are outside/u);
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 65 }), /limits are outside/u);
   assert.throws(() => new ProcessSupervisor({ requireDescriptorExecution: "yes" as never }), /limits are outside/u);
+  assert.throws(() => new ProcessSupervisor({
+    descriptorSpawnAdapter: {
+      mechanism: "darwin-descriptor-exec-v1",
+      spawn: (() => { throw new Error("unused"); }) as never
+    }
+  }), /limits are outside/u);
 });
 
 test("process supervisor denies descriptor-required admission before spawning", async () => {
@@ -33,6 +39,31 @@ test("process supervisor denies descriptor-required admission before spawning", 
   );
   assert.equal(started, false);
   assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor never falls back to pathname spawn after descriptor capability admission", async () => {
+  let spawnCalls = 0;
+  const supervisor = new ProcessSupervisor({
+    requireDescriptorExecution: true,
+    descriptorSpawnAdapter: {
+      mechanism: "darwin-descriptor-exec-v1",
+      spawn: () => {
+        spawnCalls += 1;
+        throw new Error("descriptor launcher should not be reached on an unavailable host");
+      }
+    }
+  });
+  await assert.rejects(
+    supervisor.run({
+      executable: "/usr/bin/true",
+      args: [],
+      cwd: CWD,
+      timeoutMs: 1_000,
+      outputCapBytes: 100
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.equal(spawnCalls, 0);
 });
 
 test("process supervisor rejects non-data request shapes before spawning", async () => {

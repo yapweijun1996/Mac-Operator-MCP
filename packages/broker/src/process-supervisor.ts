@@ -109,6 +109,31 @@ export interface ProcessExecutionRequest {
   onOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
 }
 
+/**
+ * Broker-owned input for a future native descriptor-backed launcher.
+ *
+ * This intentionally excludes lifecycle callbacks and policy fields. The
+ * supervisor remains responsible for validation, limits, cancellation, and
+ * ownership observation around the returned ChildProcess.
+ */
+export interface DescriptorProcessSpawnRequest {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly stdin?: string;
+}
+
+/**
+ * Native descriptor launcher seam. No implementation is enabled on the
+ * current host; descriptor-required execution fails closed when this seam is
+ * absent. A pathname spawn must never be used as its fallback.
+ */
+export interface DescriptorProcessSpawnAdapter {
+  readonly mechanism: "darwin-descriptor-exec-v1";
+  spawn(request: DescriptorProcessSpawnRequest): ChildProcess;
+}
+
 export interface ProcessOwnershipIdentity {
   pid: number;
   processGroupId: number;
@@ -171,6 +196,11 @@ export interface ProcessSupervisorOptions {
    * disable it. When unavailable, no child process is started.
    */
   requireDescriptorExecution?: boolean;
+  /**
+   * Broker-owned native launcher used only when descriptor execution is
+   * required. MCP/tool arguments cannot provide this adapter.
+   */
+  descriptorSpawnAdapter?: DescriptorProcessSpawnAdapter;
 }
 
 export type ProcessExecutionState = "completed" | "failed" | "cancelled" | "timed_out" | "unknown";
@@ -204,6 +234,7 @@ export class ProcessSupervisor {
   private readonly allowedEnvironmentKeys: ReadonlySet<string>;
   private readonly requireRootOwnedExecutable: boolean;
   private readonly requireDescriptorExecution: boolean;
+  private readonly descriptorSpawnAdapter: DescriptorProcessSpawnAdapter | undefined;
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
@@ -215,12 +246,17 @@ export class ProcessSupervisor {
     this.allowedEnvironmentKeys = new Set(options.allowedEnvironmentKeys ?? []);
     this.requireRootOwnedExecutable = options.requireRootOwnedExecutable ?? false;
     this.requireDescriptorExecution = options.requireDescriptorExecution ?? false;
+    this.descriptorSpawnAdapter = options.descriptorSpawnAdapter;
     if (!Number.isSafeInteger(this.maxConcurrent) || this.maxConcurrent < 1 || this.maxConcurrent > 64 ||
         !Number.isSafeInteger(this.maxConcurrentPerExecutable) || this.maxConcurrentPerExecutable < 1 || this.maxConcurrentPerExecutable > 64 ||
         !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 5 || this.pollIntervalMs > 1_000 ||
         !Number.isSafeInteger(this.terminationGraceMs) || this.terminationGraceMs < 25 || this.terminationGraceMs > 10_000 ||
         typeof this.requireRootOwnedExecutable !== "boolean" ||
-        typeof this.requireDescriptorExecution !== "boolean") {
+        typeof this.requireDescriptorExecution !== "boolean" ||
+        (this.descriptorSpawnAdapter !== undefined &&
+          (this.requireDescriptorExecution !== true ||
+           this.descriptorSpawnAdapter.mechanism !== "darwin-descriptor-exec-v1" ||
+           typeof this.descriptorSpawnAdapter.spawn !== "function"))) {
       throw new Error("Process supervisor limits are outside the supported range");
     }
     for (const key of this.allowedEnvironmentKeys) validateEnvironmentKey(key);
@@ -232,7 +268,14 @@ export class ProcessSupervisor {
     // environment while validation is in flight and change what gets spawned.
     const safeRequest = snapshotProcessRequest(request);
     const validatedPaths = await validateRequest(safeRequest, this.allowedEnvironmentKeys, this.requireRootOwnedExecutable);
-    if (this.requireDescriptorExecution) requireProcessDescriptorExecution();
+    if (this.requireDescriptorExecution) {
+      requireProcessDescriptorExecution();
+      if (this.descriptorSpawnAdapter === undefined) {
+        // Do not silently fall back to pathname execution if a host later
+        // reports capability metadata before the actual launcher is wired.
+        throw new BrokerError("POLICY_DENIED", "Descriptor executable launcher is not wired");
+      }
+    }
     if (this.closing) {
       throw new BrokerError("CANCELLED", "Process authority is closed");
     }
@@ -266,13 +309,21 @@ export class ProcessSupervisor {
     let child: ChildProcess;
     try {
       try {
-        child = spawn(safeRequest.executable, [...safeRequest.args], {
-          cwd: safeRequest.cwd,
-          env: environment,
-          shell: false,
-          detached: true,
-          stdio: [safeRequest.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
-        });
+        child = this.descriptorSpawnAdapter === undefined
+          ? spawn(safeRequest.executable, [...safeRequest.args], {
+            cwd: safeRequest.cwd,
+            env: environment,
+            shell: false,
+            detached: true,
+            stdio: [safeRequest.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
+          })
+          : this.descriptorSpawnAdapter.spawn({
+            executable: safeRequest.executable,
+            args: safeRequest.args,
+            cwd: safeRequest.cwd,
+            environment,
+            ...(safeRequest.stdin === undefined ? {} : { stdin: safeRequest.stdin })
+          });
       } catch {
         throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
       }
