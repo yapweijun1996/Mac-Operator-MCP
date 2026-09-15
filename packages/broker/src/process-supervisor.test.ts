@@ -14,6 +14,34 @@ test("process supervisor rejects invalid per-executable capacity", () => {
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 65 }), /limits are outside/u);
 });
 
+test("process supervisor rejects non-data request shapes before spawning", async () => {
+  const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: ["SAFE_PROFILE"] });
+  const base = {
+    executable: "/usr/bin/printf",
+    args: ["ok"],
+    cwd: CWD,
+    environment: { SAFE_PROFILE: "test" },
+    timeoutMs: 1_000,
+    outputCapBytes: 100
+  };
+  await assert.rejects(supervisor.run(Object.create(base)), /limits or paths are invalid/u);
+  const accessor = { ...base } as Record<string, unknown>;
+  Object.defineProperty(accessor, "executable", { enumerable: true, get: () => "/usr/bin/printf" });
+  await assert.rejects(supervisor.run(accessor as never), /limits or paths are invalid/u);
+  const symbolic = { ...base } as Record<string, unknown>;
+  Object.defineProperty(symbolic, Symbol("hidden"), { value: "authority" });
+  await assert.rejects(supervisor.run(symbolic as never), /limits or paths are invalid/u);
+  await assert.rejects(supervisor.run({ ...base, extra: true } as never), /limits or paths are invalid/u);
+  const sparseArgs = new Array<string>(1);
+  await assert.rejects(supervisor.run({ ...base, args: sparseArgs } as never), /limits or paths are invalid/u);
+  await assert.rejects(
+    supervisor.run({ ...base, environment: Object.create({ SAFE_PROFILE: "inherited" }) } as never),
+    /environment is malformed/u
+  );
+  await assert.rejects(supervisor.run({ ...base, shouldCancel: true } as never), /callbacks are malformed/u);
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor rejects descendant PID identity replacement", () => {
   const tracked = [{ pid: 42, startTimeMicros: 100 }];
   assert.equal(detectProcessIdentityReplacement(tracked, [{ pid: 42, startTimeMicros: 100 }]), false);

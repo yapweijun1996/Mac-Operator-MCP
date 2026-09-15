@@ -6,6 +6,7 @@ import { isAbsolute, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { assertArgumentsDoNotContainSecrets } from "./secret-policy.js";
 
 const MAX_ARGUMENTS = 128;
@@ -904,14 +905,24 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number):
 }
 
 async function validateRequest(request: ProcessExecutionRequest, allowedEnvironmentKeys: ReadonlySet<string>): Promise<ValidatedProcessPaths> {
-  if (!isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
-      !Array.isArray(request.args) || request.args.length > MAX_ARGUMENTS ||
+  if (!isPlainDataRecord(request) ||
+      !hasAllowedKeys(request, ["executable", "args", "cwd", "environment", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
+      !isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
+      !isDenseStringArray(request.args, MAX_ARGUMENTS) ||
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
       !Number.isSafeInteger(request.outputCapBytes) || request.outputCapBytes < 1 || request.outputCapBytes > MAX_OUTPUT_BYTES) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
   }
+  if (request.environment !== undefined && !isPlainDataRecord(request.environment)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process environment is malformed");
+  }
   if (request.requireCleanExitProof !== undefined && typeof request.requireCleanExitProof !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process exit-proof policy is malformed");
+  }
+  if ((request.shouldCancel !== undefined && typeof request.shouldCancel !== "function") ||
+      (request.onStarted !== undefined && typeof request.onStarted !== "function") ||
+      (request.onOwnershipChanged !== undefined && typeof request.onOwnershipChanged !== "function")) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process control callbacks are malformed");
   }
   if (request.requireCleanExitProof === true && process.platform !== "darwin") {
     throw new BrokerError("POLICY_DENIED", "Clean process-tree exit proof is unavailable");
@@ -959,6 +970,23 @@ async function validateRequest(request: ProcessExecutionRequest, allowedEnvironm
 function isCanonicalAbsolutePath(value: string): boolean {
   return typeof value === "string" && value.length >= 1 && value.length <= 4_096 &&
     isAbsolute(value) && resolve(value) === value && !value.includes("\0") && !value.includes("\n");
+}
+
+function hasAllowedKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedSet = new Set(allowed);
+  return Object.keys(value).every((key) => allowedSet.has(key));
+}
+
+function isDenseStringArray(value: unknown, maxLength: number): value is readonly string[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
+      Object.keys(value).length !== value.length || Object.getOwnPropertyNames(value).length !== value.length + 1) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "string") return false;
+  }
+  return true;
 }
 
 export async function captureProcessPathIdentity(path: string, kind: ProcessPathKind): Promise<ProcessPathIdentity> {
