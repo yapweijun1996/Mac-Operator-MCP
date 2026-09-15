@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker shutdown recovery addendum: source revision `505d28a` leaves the Broker
+permanently fenced against new work while allowing an explicit retry after a
+resource close failure. The Broker close regression passes, the
+non-overlapping package regression passes 495 total (489 pass, 6 skipped, 0
+fail), and build, typecheck, lint, and diff checks pass. This does not prove
+installed launchd recovery or any VM, credential, helper, or production
+capability gate. Evidence: `evidence/2026-09-15-broker-close-recovery.md`.
+
 Virtualization guest attestation key-validity addendum: source revision
 `5aa7d2e` binds `issuedAtMs` and `expiresAtMs` to the configured signing-key
 validity window. The focused attestation suite passes 5/5 and the

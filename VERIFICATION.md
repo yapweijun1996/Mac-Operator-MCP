@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Broker shutdown recovery addendum: commit `505d28a` keeps `closing` asserted
+after shutdown starts, rejects new work with `CANCELLED`, and clears only the
+rejected aggregate close Promise so an explicit host retry can finish resource
+cleanup. Broker close tests pass; the non-overlapping package regression passes
+495 total (489 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks
+pass. This closes local Broker cleanup retry semantics only and does not prove
+installed service recovery, VM/guest isolation, credential isolation, helper
+operation, or capability enablement. Evidence:
+`evidence/2026-09-15-broker-close-recovery.md`.
+
 Virtualization guest attestation key-validity addendum: commit `5aa7d2e`
 requires a signed assertion's full issued/expiry interval to be contained by
 the trusted Ed25519 key validity window. The focused attestation suite passes

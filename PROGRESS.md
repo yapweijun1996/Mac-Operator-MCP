@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker shutdown recovery addendum: source revision `505d28a` keeps the Broker
+shutdown fence active while clearing a rejected aggregate close Promise for an
+explicit retry. New requests remain denied with `CANCELLED`; only a fully
+successful resource cleanup becomes idempotently complete. Broker close tests,
+the non-overlapping package regression (495 total, 489 pass, 6 skipped, 0
+fail), build, typecheck, lint, and diff checks pass. This closes local cleanup
+retry semantics only; installed service recovery, VM/guest isolation,
+credential isolation, helper operation, and production enablement remain open.
+Evidence: `evidence/2026-09-15-broker-close-recovery.md`.
+
 Virtualization guest attestation key-validity addendum: source revision
 `5aa7d2e` requires each signed guest attestation lifetime to fit completely
 inside the trusted Ed25519 key's validity window, in addition to current-time,
