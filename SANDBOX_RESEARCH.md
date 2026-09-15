@@ -142,3 +142,11 @@ cancellation checks. The candidate remains deprecated `sandbox-exec` and
 production task enablement remains gated by credential-content, remount,
 crash/restart, Docker/persistence, process-tree, packaging, and independent
 review evidence. Evidence: `evidence/2026-09-15-real-sandbox-16-tests.md`.
+
+The same physical host readback was rerun at source revision `633f538` after
+the persistence/audit hardening commits. `MOPS_REAL_SANDBOX=1 node --test
+packages/broker/dist/sandbox-profile.test.js` again passed 16/16 with no
+skips. This confirms the current checkout still enforces the tested temporary
+root, protected-surface, environment, TCP/UDP, fork/setsid, and cancellation
+boundaries; it does not change the production gate or prove credential-content,
+remount, crash/restart, Docker/persistence, or packaging isolation.

@@ -1869,3 +1869,10 @@ are validated before audit verification or caller readback. Focused audit-row
 corruption tests pass 1/1 and the non-overlapping package regression passes 559
 total (553 passed, 6 skipped, 0 failed). Evidence:
 `evidence/2026-09-15-audit-row-invariants.md`.
+
+MOP-086 current-host readback was rerun at source revision `633f538`: the
+physical Mac mini sandbox profile suite passes 16/16 with no skips. This is
+fresh host evidence only; deprecated `sandbox-exec`, credential-content,
+remount, crash/restart, Docker/persistence, process-tree, packaging, and
+independent review gates remain open. Evidence:
+`evidence/2026-09-15-real-sandbox-16-tests.md`.

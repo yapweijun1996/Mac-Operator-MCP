@@ -1,7 +1,7 @@
 # Real macOS sandbox readback evidence
 
 Date: 2026-09-15
-Source revision: `a8b4660`
+Source revision: `633f538`
 Host: physical Mac mini, arm64, macOS 26.2 (Build 25C56), Darwin 25.2.0
 Runtime: Node.js v25.5.0
 
