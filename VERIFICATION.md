@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Root-helper Keychain ACL binding verification: source revision `4bc0308`
+keeps the BrokerStore-backed factory bound to the Broker executable while the
+no-`BrokerStore` root-helper loader requires an explicit canonical helper
+executable path for a Keychain-backed helper key. Missing binding is rejected
+before Keychain access or key loading. Focused helper keyring/runtime tests
+pass 10/10, and the latest physical non-overlapping regression passes 617/617
+with zero skips and zero failures. The existing Broker/Persistence process
+was not restarted. Evidence:
+`evidence/2026-09-15-root-helper-keychain-acl-binding.md`.
+
 Privileged helper runtime disposal verification: source revision `2ce0945`,
 with failed-cleanup coverage in test revision `ccb248b`, makes the runtime
 dispose its separately authenticated authority poller on startup failure,

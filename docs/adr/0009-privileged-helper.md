@@ -257,6 +257,13 @@ restart so wiped key material cannot be reused. This preserves fail-closed
 lifecycle semantics without changing the helper's disabled default or
 enabling any privileged operation.
 
+Revision `4bc0308` makes the no-`BrokerStore` root-helper key loader require an
+explicit canonical helper executable path when the configured helper key uses
+Keychain. The BrokerStore-backed compatibility loader continues to bind
+Keychain access to the Broker executable. Root-helper Keychain access therefore
+cannot silently fall back to the generic Node executable identity; omission is
+rejected before Keychain access or key loading.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

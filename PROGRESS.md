@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Root-helper Keychain ACL binding addendum: source revision `4bc0308` keeps
+the BrokerStore-backed key loader bound to the Broker executable and makes the
+no-`BrokerStore` root-helper loader require an explicit canonical helper
+executable path for Keychain-backed keys. Missing binding fails before
+Keychain access or key loading. Focused helper keyring/runtime tests pass
+10/10 and the latest physical non-overlapping suite passes 617/617 with zero
+skips and zero failures; the existing Broker/Persistence process was left
+undisturbed. Evidence:
+`evidence/2026-09-15-root-helper-keychain-acl-binding.md`.
+
 Privileged helper runtime disposal addendum: source revision `2ce0945`, with
 failed-cleanup coverage in test revision `ccb248b`, makes authority poller
 cleanup idempotent across startup failure, failed listener cleanup,
