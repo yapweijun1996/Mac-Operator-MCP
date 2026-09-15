@@ -6,12 +6,22 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 import { FilesystemInspector } from "./filesystem-inspector.js";
 
 const require = createRequire(import.meta.url);
+
+test("native filesystem boundary opens targets relative to a pinned root descriptor", async () => {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const source = await readFile(join(repositoryRoot, "packages/broker/native/peer_credentials.cc"), "utf8");
+  assert.match(source, /RelativePathWithinRoot\(resolved_root, canonical_target, relative_target\)/gu);
+  assert.match(source, /openat\(root_descriptor, relative_target/u);
+  assert.match(source, /openat\(root_descriptor, relative_parent/u);
+  assert.doesNotMatch(source, /int target_descriptor = open\(requested_target/u);
+});
 
 const nativeFaultChildSource = `
   const configuration = JSON.parse(process.env.MOP_NATIVE_FAULT_CASE || "{}");

@@ -173,6 +173,72 @@ bool IsWithinRoot(const char* root, const char* target) {
   return strncmp(root, target, root_length) == 0 && target[root_length] == '/';
 }
 
+// Converts a canonical absolute target into a relative descriptor path. This
+// rejects traversal and empty components before any openat/fstatat call; the
+// descriptor then pins the authorized root inode across parent renames.
+bool RelativePathWithinRoot(const char* root, const char* target, char* output) {
+  if (root == nullptr || target == nullptr || output == nullptr ||
+      !IsWithinRoot(root, target)) return false;
+  const size_t root_length = strlen(root);
+  const char* cursor = target + (root_length == 1 && root[0] == '/' ? 1 : root_length);
+  if (*cursor == '/') ++cursor;
+  size_t written = 0;
+  while (*cursor != '\0') {
+    const char* start = cursor;
+    while (*cursor != '\0' && *cursor != '/') ++cursor;
+    const size_t length = static_cast<size_t>(cursor - start);
+    if (length == 0 || (length == 1 && start[0] == '.') ||
+        (length == 2 && start[0] == '.' && start[1] == '.')) return false;
+    if (written != 0) {
+      if (written + 1 >= PATH_MAX) return false;
+      output[written++] = '/';
+    }
+    if (written + length >= PATH_MAX) return false;
+    memcpy(output + written, start, length);
+    written += length;
+    if (*cursor == '/') ++cursor;
+    if (*cursor == '/') return false;
+  }
+  if (written == 0) {
+    output[0] = '.';
+    output[1] = '\0';
+  } else {
+    output[written] = '\0';
+  }
+  return true;
+}
+
+// Canonicalize only the parent of a target. Unlike realpath(target), this
+// preserves a final symlink for no-follow metadata operations and also works
+// for create-only writes whose final entry does not exist yet.
+bool CanonicalizeTargetParent(const char* target, char* output) {
+  if (target == nullptr || output == nullptr || target[0] != '/') return false;
+  const size_t target_length = strlen(target);
+  if (target_length == 1 && target[0] == '/') {
+    output[0] = '/';
+    output[1] = '\0';
+    return true;
+  }
+  const char* separator = strrchr(target, '/');
+  if (separator == nullptr || separator[1] == '\0') return false;
+  char parent[PATH_MAX];
+  const size_t parent_length = static_cast<size_t>(separator - target);
+  if (parent_length == 0) {
+    parent[0] = '/';
+    parent[1] = '\0';
+  } else {
+    if (parent_length >= sizeof(parent)) return false;
+    memcpy(parent, target, parent_length);
+    parent[parent_length] = '\0';
+  }
+  char canonical_parent[PATH_MAX];
+  if (realpath(parent, canonical_parent) == nullptr) return false;
+  const char* base_name = separator + 1;
+  const int written = snprintf(output, PATH_MAX, "%s%s%s", canonical_parent,
+      strcmp(canonical_parent, "/") == 0 ? "" : "/", base_name);
+  return written >= 0 && written < PATH_MAX;
+}
+
 bool SameFilesystem(int descriptor, const struct statfs& expected) {
   struct statfs actual;
   if (fstatfs(descriptor, &actual) != 0) return false;
@@ -1054,18 +1120,27 @@ napi_value StatPathWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
+  char canonical_target[PATH_MAX];
+  char relative_target[PATH_MAX];
+  if (!CanonicalizeTargetParent(requested_target, canonical_target) ||
+      !RelativePathWithinRoot(resolved_root, canonical_target, relative_target)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem target is not a canonical child of the authorized root");
+    return nullptr;
+  }
+
   // Metadata inspection must not block indefinitely on a FIFO with no writer.
   int target_flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK;
   if (!follow_symlink) {
     struct stat link_stat;
-    if (lstat(requested_target, &link_stat) != 0) {
+    if (fstatat(root_descriptor, relative_target, &link_stat, AT_SYMLINK_NOFOLLOW) != 0) {
       close(root_descriptor);
       ThrowSystemError(env, "Filesystem target could not be inspected");
       return nullptr;
     }
     target_flags |= S_ISLNK(link_stat.st_mode) ? O_SYMLINK : O_NOFOLLOW;
   }
-  int target_descriptor = open(requested_target, target_flags);
+  int target_descriptor = openat(root_descriptor, relative_target, target_flags);
   if (target_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem target could not be opened safely");
@@ -1241,7 +1316,15 @@ napi_value ListDirectoryWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
-  int target_descriptor = open(requested_target, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  char canonical_target[PATH_MAX];
+  char relative_target[PATH_MAX];
+  if (!CanonicalizeTargetParent(requested_target, canonical_target) ||
+      !RelativePathWithinRoot(resolved_root, canonical_target, relative_target)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem directory is not a canonical child of the authorized root");
+    return nullptr;
+  }
+  int target_descriptor = openat(root_descriptor, relative_target, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (target_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem directory could not be opened safely");
@@ -1450,7 +1533,15 @@ napi_value ReadFileWithinRoot(napi_env env, napi_callback_info info) {
   }
 
   // Avoid a blocking open when an untrusted target is a FIFO.
-  int target_descriptor = open(requested_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+  char canonical_target[PATH_MAX];
+  char relative_target[PATH_MAX];
+  if (!CanonicalizeTargetParent(requested_target, canonical_target) ||
+      !RelativePathWithinRoot(resolved_root, canonical_target, relative_target)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem file is not a canonical child of the authorized root");
+    return nullptr;
+  }
+  int target_descriptor = openat(root_descriptor, relative_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
   if (target_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem file could not be opened safely");
@@ -1565,7 +1656,15 @@ napi_value HashFileWithinRoot(napi_env env, napi_callback_info info) {
   }
 
   // Avoid a blocking open when an untrusted target is a FIFO.
-  int target_descriptor = open(requested_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+  char canonical_target[PATH_MAX];
+  char relative_target[PATH_MAX];
+  if (!CanonicalizeTargetParent(requested_target, canonical_target) ||
+      !RelativePathWithinRoot(resolved_root, canonical_target, relative_target)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem file is not a canonical child of the authorized root");
+    return nullptr;
+  }
+  int target_descriptor = openat(root_descriptor, relative_target, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
   if (target_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem file could not be opened safely");
@@ -1739,14 +1838,16 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     parent_path[parent_length] = '\0';
   }
   const char* base_name = slash + 1;
+  char canonical_parent_path[PATH_MAX];
+  char relative_parent[PATH_MAX];
   char resolved_parent[PATH_MAX];
-  if (realpath(parent_path, resolved_parent) == nullptr ||
-      !IsWithinRoot(resolved_root, resolved_parent)) {
+  if (realpath(parent_path, canonical_parent_path) == nullptr ||
+      !RelativePathWithinRoot(resolved_root, canonical_parent_path, relative_parent)) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem write parent escaped the authorized root");
     return nullptr;
   }
-  int parent_descriptor = open(resolved_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  int parent_descriptor = openat(root_descriptor, relative_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (parent_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem write parent could not be opened safely");
@@ -1760,6 +1861,12 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem write parent identity is not authorized");
+    return nullptr;
+  }
+  if (strlcpy(resolved_parent, parent_descriptor_path, sizeof(resolved_parent)) >= sizeof(resolved_parent)) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem write parent identity is too long");
     return nullptr;
   }
 
@@ -2007,13 +2114,16 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
     parent_path[parent_length] = '\0';
   }
   const char* base_name = slash + 1;
+  char canonical_parent_path[PATH_MAX];
+  char relative_parent[PATH_MAX];
   char resolved_parent[PATH_MAX];
-  if (realpath(parent_path, resolved_parent) == nullptr || !IsWithinRoot(resolved_root, resolved_parent)) {
+  if (realpath(parent_path, canonical_parent_path) == nullptr ||
+      !RelativePathWithinRoot(resolved_root, canonical_parent_path, relative_parent)) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink parent escaped the authorized root");
     return nullptr;
   }
-  int parent_descriptor = open(resolved_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  int parent_descriptor = openat(root_descriptor, relative_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (parent_descriptor < 0) {
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink parent could not be opened safely");
@@ -2027,6 +2137,12 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink parent identity is not authorized");
+    return nullptr;
+  }
+  if (strlcpy(resolved_parent, parent_descriptor_path, sizeof(resolved_parent)) >= sizeof(resolved_parent)) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink parent identity is too long");
     return nullptr;
   }
 
