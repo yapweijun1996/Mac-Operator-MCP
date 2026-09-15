@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge runtime functional-schema verification at source revision `e1c10a2`: the
+contract loader recursively rejects forbidden authority-shaped input fields
+and bounds schema depth, node, array, and property structure before MCP SDK
+registration. Focused contract/readback tests pass 18/18; the serial physical
+regression passes 661/666 with 0 failures and 5 explicit descriptor-capability
+skips. The three pre-existing long-running suites were excluded and left
+untouched. Evidence: `evidence/2026-09-16-edge-runtime-schema-boundary.md`.
+
 Edge contract canonical-path verification at source revision `a688bfb`:
 `ToolContractRegistry.load()` rejects relative paths and parent-directory
 symlinks before parsing and rechecks canonicality at final readback. Focused

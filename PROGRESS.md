@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge runtime functional-schema addendum at source revision `e1c10a2`: the
+contract loader now recursively rejects forbidden authority-shaped input
+fields and bounds schema depth, nodes, arrays, and properties before MCP SDK
+registration. Focused contract/readback tests pass 18/18; the serial physical
+regression passes 661/666 with 0 failures and 5 explicit descriptor-capability
+skips. Evidence: `evidence/2026-09-16-edge-runtime-schema-boundary.md`.
+
 Edge contract canonical-path addendum at source revision `a688bfb`:
 `ToolContractRegistry.load()` now requires a canonical absolute directory,
 rejects parent-directory symlinks before parsing, and rechecks canonicality at

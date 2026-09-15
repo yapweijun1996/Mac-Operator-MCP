@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-084/085 Edge runtime functional-schema addendum at source revision
+`e1c10a2`: recursively reject forbidden authority-shaped input fields and
+enforce bounded schema structure before MCP registration. Focused
+contract/readback tests pass 18/18; the serial physical regression passes
+661/666 with 0 failures and 5 explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-edge-runtime-schema-boundary.md`.
+
 MOP-084/085 Edge contract canonical-path addendum at source revision
 `a688bfb`: the exported loader rejects relative paths and parent-directory
 symlinks, then rechecks canonicality at final readback. Focused
