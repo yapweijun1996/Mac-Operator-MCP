@@ -30,7 +30,7 @@ const SAFE_ENVIRONMENT = {
 } as const;
 const CONTAINER_RECORD_FIELDS = new Set([
   "ID", "Id", "Names", "State", "Image", "Command", "CreatedAt", "CreatedSince", "RunningFor",
-  "Ports", "Status", "Labels", "LocalVolumes", "Mounts", "Networks", "Size"
+  "Ports", "Status", "Labels", "LocalVolumes", "Mounts", "Networks", "Platform", "Size"
 ]);
 const IMAGE_RECORD_FIELDS = new Set([
   "ID", "Id", "Repository", "Name", "Tag", "Digest", "CreatedAt", "CreatedSince", "Size",

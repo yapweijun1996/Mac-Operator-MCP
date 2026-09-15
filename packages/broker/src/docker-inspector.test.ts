@@ -140,6 +140,11 @@ test("Docker line result parsers require plain known-field records and reject al
     name: "web",
     state: "running"
   });
+  assert.deepEqual(parseDockerContainerRecord({ ID: "abc123", Names: "web", State: "running", Platform: "linux/arm64" }), {
+    id: "abc123",
+    name: "web",
+    state: "running"
+  });
   assert.equal(parseDockerImageRecord({ ID: "sha256:abc", Repository: "example/app", Tag: "latest", unexpected: true }), undefined);
   assert.deepEqual(parseDockerImageRecord({ ID: "sha256:abc", Repository: "example/app", Tag: "latest" }), {
     id: "sha256:abc",
