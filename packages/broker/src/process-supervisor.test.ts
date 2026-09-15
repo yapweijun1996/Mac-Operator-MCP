@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
+import { renameSync, writeFileSync } from "node:fs";
+import { mkdtemp, open, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -201,6 +202,39 @@ test("process supervisor rejects symlink executables and non-canonical cwd", asy
       /invalid/u
     );
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("process supervisor rejects executable target swaps after startup authorization", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("The startup identity callback uses the macOS native process observer");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-swap-"));
+  const canonicalDirectory = await realpath(directory);
+  const executable = join(canonicalDirectory, "runner");
+  const movedExecutable = join(canonicalDirectory, "runner-authorized");
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  try {
+    await writeFile(executable, "#!/bin/sh\nsleep 1\n", { mode: 0o700 });
+    await assert.rejects(
+      supervisor.run({
+        executable,
+        args: [],
+        cwd: canonicalDirectory,
+        timeoutMs: 2_000,
+        outputCapBytes: 100,
+        onStarted: () => {
+          renameSync(executable, movedExecutable);
+          writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+        }
+      }),
+      /Executable changed after authorization/u
+    );
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

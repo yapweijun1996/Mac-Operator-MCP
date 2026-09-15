@@ -31,6 +31,17 @@ interface ActiveProcessRun {
   drained: Promise<void>;
 }
 
+interface ProcessPathIdentity {
+  device: number;
+  inode: number;
+  mode: number;
+}
+
+interface ValidatedProcessPaths {
+  executable: ProcessPathIdentity;
+  cwd: ProcessPathIdentity;
+}
+
 export interface ProcessExecutionRequest {
   /** Broker-resolved executable; shell strings and relative paths are rejected. */
   executable: string;
@@ -159,7 +170,7 @@ export class ProcessSupervisor {
   }
 
   async run(request: ProcessExecutionRequest): Promise<ProcessExecutionResult> {
-    await validateRequest(request, this.allowedEnvironmentKeys);
+    const validatedPaths = await validateRequest(request, this.allowedEnvironmentKeys);
     if (this.closing) {
       throw new BrokerError("CANCELLED", "Process authority is closed");
     }
@@ -210,6 +221,15 @@ export class ProcessSupervisor {
       }
       const processId = childPid;
       const processTree = createProcessTreeTracker(processId);
+      try {
+        await assertProcessPathStable(request.executable, validatedPaths.executable, "Executable");
+        await assertProcessPathStable(request.cwd, validatedPaths.cwd, "Process cwd");
+      } catch (error) {
+        const drained = await this.abortUnownedProcess(child, processId, processTree);
+        if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process path target-swap cleanup could not be verified", true);
+        if (error instanceof BrokerError) throw error;
+        throw new BrokerError("POLICY_DENIED", "Process path changed after authorization");
+      }
       if (process.platform === "darwin" && processTree === undefined) {
         const drained = await this.abortUnownedProcess(child, processId, processTree);
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
@@ -235,6 +255,8 @@ export class ProcessSupervisor {
               descendants: processTree.snapshotDescendants()
             });
           }
+          await assertProcessPathStable(request.executable, validatedPaths.executable, "Executable");
+          await assertProcessPathStable(request.cwd, validatedPaths.cwd, "Process cwd");
         } catch (error) {
           const drained = await this.abortUnownedProcess(child, processId, processTree);
           if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
@@ -808,7 +830,7 @@ export class ProcessSupervisor {
   }
 }
 
-async function validateRequest(request: ProcessExecutionRequest, allowedEnvironmentKeys: ReadonlySet<string>): Promise<void> {
+async function validateRequest(request: ProcessExecutionRequest, allowedEnvironmentKeys: ReadonlySet<string>): Promise<ValidatedProcessPaths> {
   if (!isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
       !Array.isArray(request.args) || request.args.length > MAX_ARGUMENTS ||
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
@@ -843,18 +865,21 @@ async function validateRequest(request: ProcessExecutionRequest, allowedEnvironm
       throw new BrokerError("PRECONDITION_FAILED", "Process environment exceeds the supported size");
     }
   }
+  let executable: ProcessPathIdentity;
   try {
-    await validateExecutable(request.executable);
+    executable = await validateExecutable(request.executable);
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("TARGET_NOT_FOUND", "Broker-resolved executable was not found");
   }
+  let cwd: ProcessPathIdentity;
   try {
-    await validateDirectory(request.cwd);
+    cwd = await validateDirectory(request.cwd);
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("TARGET_NOT_FOUND", "Broker-resolved process cwd was not found");
   }
+  return { executable, cwd };
 }
 
 function isCanonicalAbsolutePath(value: string): boolean {
@@ -862,16 +887,31 @@ function isCanonicalAbsolutePath(value: string): boolean {
     isAbsolute(value) && resolve(value) === value && !value.includes("\0") && !value.includes("\n");
 }
 
-async function validateExecutable(path: string): Promise<void> {
+async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
   const stat = await lstat(path);
   if (stat.isSymbolicLink()) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
   if (!stat.isFile() || (stat.mode & 0o111) === 0) throw new BrokerError("POLICY_DENIED", "Executable must be a regular executable file");
   if ((await realpath(path)) !== path) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
+  return { device: stat.dev, inode: stat.ino, mode: stat.mode & 0o7777 };
 }
 
-async function validateDirectory(path: string): Promise<void> {
+async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
   const stat = await lstat(path);
   if (!stat.isDirectory() || (await realpath(path)) !== path) throw new BrokerError("POLICY_DENIED", "Process cwd must be a canonical directory");
+  return { device: stat.dev, inode: stat.ino, mode: stat.mode & 0o7777 };
+}
+
+async function assertProcessPathStable(path: string, expected: ProcessPathIdentity, label: "Executable" | "Process cwd"): Promise<void> {
+  let current: ProcessPathIdentity;
+  try {
+    current = label === "Executable" ? await validateExecutable(path) : await validateDirectory(path);
+  } catch (error) {
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
+  }
+  if (current.device !== expected.device || current.inode !== expected.inode || current.mode !== expected.mode) {
+    throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
+  }
 }
 
 function validateEnvironmentKey(key: string): void {
