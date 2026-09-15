@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-084/085 Edge contract canonical-path addendum at source revision
+`a688bfb`: the exported loader rejects relative paths and parent-directory
+symlinks, then rechecks canonicality at final readback. Focused
+contract/readback tests pass 17/17; the serial physical regression passes
+660/665 with 0 failures and 5 explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-edge-contract-canonical-path.md`.
+
 MOP-084/085 Edge contract owner readback addendum at source revision
 `32c277e`: final directory readback rechecks the Edge UID after parsing, with
 direct negative coverage for a simulated owner change during loading. Focused

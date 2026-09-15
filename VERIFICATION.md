@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge contract canonical-path verification at source revision `a688bfb`:
+`ToolContractRegistry.load()` rejects relative paths and parent-directory
+symlinks before parsing and rechecks canonicality at final readback. Focused
+contract/readback tests pass 17/17; the serial physical regression passes
+660/665 with 0 failures and 5 explicit descriptor-capability skips. The three
+pre-existing long-running suites were excluded and left untouched. Evidence:
+`evidence/2026-09-16-edge-contract-canonical-path.md`.
+
 Edge contract owner readback verification at source revision `32c277e`: final
 contract-directory readback rechecks the current Edge UID after parsing, and
 direct negative coverage rejects a simulated owner change during loading.

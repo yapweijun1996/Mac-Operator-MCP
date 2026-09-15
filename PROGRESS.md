@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge contract canonical-path addendum at source revision `a688bfb`:
+`ToolContractRegistry.load()` now requires a canonical absolute directory,
+rejects parent-directory symlinks before parsing, and rechecks canonicality at
+final readback. Focused contract/readback tests pass 17/17; the serial
+physical regression passes 660/665 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-edge-contract-canonical-path.md`.
+
 Edge contract owner readback addendum at source revision `32c277e`: the final
 contract-directory readback now rechecks the current Edge UID after all files
 are parsed, and a simulated owner change during loading is rejected. Focused
