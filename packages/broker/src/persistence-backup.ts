@@ -8,6 +8,7 @@ import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonStrict, parseJso
 const BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite\.enc$/u;
 const LEGACY_PLAINTEXT_BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite$/u;
 const BACKUP_TEMP_NAME_PATTERN = /^\.broker-backup-(\d{1,16})-[a-f0-9]{24}\.(?:sqlite|sqlite\.enc)\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?$/u;
+const BACKUP_QUARANTINE_NAME_PATTERN = /^(?:broker-backup-\d{1,16}-[a-f0-9]{24}\.sqlite\.enc|\.broker-backup-\d{1,16}-[a-f0-9]{24}\.(?:sqlite|sqlite\.enc)\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?)\.unlink-[a-f0-9]{24}$/u;
 const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 const MAX_BACKUP_FILES = 256;
 const MAX_BACKUP_TEMP_FILES = 256;
@@ -255,7 +256,12 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
   if (temporaryEntries.length > MAX_BACKUP_TEMP_FILES) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory exceeds the bounded temporary-file budget");
   }
-  const removed: string[] = await cleanupStaleBackupTemps(protectedDirectory, temporaryEntries);
+  const quarantineEntries = entries.filter((entry) => BACKUP_QUARANTINE_NAME_PATTERN.test(entry.name));
+  if (quarantineEntries.length > MAX_BACKUP_TEMP_FILES) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory exceeds the bounded quarantine-file budget");
+  }
+  const removed: string[] = await cleanupStaleBackupQuarantines(protectedDirectory, quarantineEntries);
+  removed.push(...await cleanupStaleBackupTemps(protectedDirectory, temporaryEntries));
   const candidates = entries.filter((entry) => BACKUP_NAME_PATTERN.test(entry.name));
   if (candidates.length > MAX_BACKUP_FILES) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory exceeds the bounded file budget");
@@ -284,6 +290,31 @@ export async function pruneBrokerBackups(directory: string, retainCount = DEFAUL
   }
   if (removed.length > 0) await syncDirectory(protectedDirectory);
   return { directory: protectedDirectory, retained, removed };
+}
+
+/**
+ * Completes deletion for old backup quarantine artifacts left by a crashed
+ * cleanup. Only names emitted by `removeExactProtectedFile` are considered;
+ * recent artifacts remain untouched because another cleanup may still own
+ * them. Identity-fenced removal prevents a replacement from being deleted.
+ */
+async function cleanupStaleBackupQuarantines(
+  directory: string,
+  entries: readonly Dirent[]
+): Promise<string[]> {
+  const removed: string[] = [];
+  const nowMs = Date.now();
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    const stat = await lstat(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || !isOwnedByCurrentUser(stat.uid)) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory contains an unsafe quarantine entry");
+    }
+    if (nowMs - stat.mtimeMs < BACKUP_TEMP_STALE_MS) continue;
+    await removeExactProtectedFile(path, stat);
+    removed.push(path);
+  }
+  return removed;
 }
 
 async function cleanupStaleBackupTemps(
