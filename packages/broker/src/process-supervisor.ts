@@ -1086,7 +1086,8 @@ export async function assertProcessPathIdentityStable(
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
   }
-  if (current.device !== expected.device || current.inode !== expected.inode || current.mode !== expected.mode ||
+  if (current.device !== expected.device || current.inode !== expected.inode ||
+      current.ownerUid !== expected.ownerUid || current.ownerGid !== expected.ownerGid || current.mode !== expected.mode ||
       (kind === "executable" && (current.size !== expected.size || current.mtimeMs !== expected.mtimeMs || current.ctimeMs !== expected.ctimeMs))) {
     throw new BrokerError("POLICY_DENIED", `${label} changed after authorization`);
   }

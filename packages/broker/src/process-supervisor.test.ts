@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { captureProcessPathIdentity, detectProcessIdentityReplacement, ProcessSupervisor } from "./process-supervisor.js";
+import { assertProcessPathIdentityStable, captureProcessPathIdentity, detectProcessIdentityReplacement, ProcessSupervisor } from "./process-supervisor.js";
 
 const CWD = process.cwd();
 
@@ -451,6 +451,22 @@ test("process supervisor captures a cryptographic executable content identity", 
     assert.match(first.contentSha256 ?? "", /^[a-f0-9]{64}$/u);
     assert.match(second.contentSha256 ?? "", /^[a-f0-9]{64}$/u);
     assert.notEqual(first.contentSha256, second.contentSha256);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("process supervisor rejects executable owner identity drift after authorization", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-owner-drift-"));
+  const executable = join(await realpath(directory), "runner");
+  try {
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    const identity = await captureProcessPathIdentity(executable, "executable");
+    const changedOwnerUid = identity.ownerUid === 0 ? 1 : 0;
+    await assert.rejects(
+      assertProcessPathIdentityStable(executable, { ...identity, ownerUid: changedOwnerUid }, "executable"),
+      /Executable changed after authorization/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
