@@ -4,6 +4,12 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker lifecycle serialization addendum: source revision `6297c58` serializes
+Broker service `start()` and `stop()` transitions around the native runtime;
+the focused service-entrypoint suite passes 3/3, with typecheck, lint, and
+diff checks passing. Evidence:
+`evidence/2026-09-15-broker-lifecycle-serialization.md`.
+
 Edge lifecycle serialization addendum: source revision `04132fe` serializes
 Edge `start()` and `stop()` transitions through one lifecycle queue, so a
 stop requested during listener startup cannot be followed by a stale

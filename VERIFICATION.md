@@ -3,6 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Broker lifecycle verification: source revision `6297c58` serializes Broker
+service startup and shutdown around the native runtime and passes the focused
+service-entrypoint suite 3/3. This closes the local lifecycle race boundary
+only; installed identity, remote deployment, and release gates remain open.
+Evidence: `evidence/2026-09-15-broker-lifecycle-serialization.md`.
+
 Edge lifecycle verification: source revision `04132fe` serializes Edge
 startup and shutdown transitions and passes the focused service-startup suite
 5/5. This closes the local lifecycle race boundary only; installed launchd
