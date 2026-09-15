@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Task-profile startup-wiring addendum: startup now accepts a host-owned
+`TaskProfileRegistry` only alongside an explicit sandbox or virtualization
+runner, validates its callable surface, and injects it into the Broker. A
+runnerless or malformed registry fails closed before startup state is touched;
+the packaged default remains an empty registry with the fail-closed runner.
+Service-startup tests pass 7/7. Named profile execution, credential/process
+isolation, and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-task-profile-startup-wiring.md`.
+
 Sandbox startup-wiring addendum: source revision `2e605ea` gives service
 startup an explicit host-only sandbox runner seam, derives protected
 package/data/runtime roots, and rejects competing virtualization and sandbox

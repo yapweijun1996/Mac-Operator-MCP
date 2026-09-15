@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-profile startup-wiring addendum: the explicit host startup seam now
+requires a validated `TaskProfileRegistry` whenever an isolated task runner
+is configured, injects it into the Broker, and rejects malformed or runnerless
+registry configuration. The default packaged assembly keeps an empty registry
+and fail-closed task runner. Service-startup tests pass 7/7; profile execution
+and `mac_task_run` enablement remain evidence-gated. Evidence:
+`evidence/2026-09-15-task-profile-startup-wiring.md`.
+
 Sandbox startup-wiring addendum: source revision `2e605ea` adds an explicit
 host-only `sandboxTaskRunner` startup seam. It automatically protects the
 validated package, data, and runtime roots, rejects simultaneous sandbox and

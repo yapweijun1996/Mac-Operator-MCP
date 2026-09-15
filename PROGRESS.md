@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-profile startup-wiring addendum: the explicit host startup seam now
+requires a validated `TaskProfileRegistry` whenever sandbox or virtualization
+task execution is configured, injects that registry into the Broker, and
+rejects a registry without an isolated runner or a malformed registry. This
+keeps the packaged empty-registry/fail-closed default unchanged. Service-startup
+tests pass 7/7. Named profiles still require independent host evidence before
+`mac_task_run` can be enabled. Evidence:
+`evidence/2026-09-15-task-profile-startup-wiring.md`.
+
 Sandbox startup-wiring addendum: source revision `2e605ea` connects the
 explicit host sandbox runner seam to Broker service assembly and always merges
 validated package/data/runtime roots into its protected set. Competing

@@ -25,6 +25,7 @@ import {
 } from "./virtualization-guest-startup.js";
 import { BrokerStoreVirtualizationGuestReplayGuard } from "./virtualization-guest-transport.js";
 import { SandboxExecTaskRunner, type SandboxExecTaskRunnerOptions } from "./task-runner.js";
+import type { TaskProfileRegistry } from "./task-profile.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -205,10 +206,21 @@ export async function createBrokerServiceFromStartupConfig(options: {
   virtualizationGuest?: VirtualizationGuestRuntimeStartupOptions;
   /** Explicit host startup seam; production defaults remain fail-closed. */
   sandboxTaskRunner?: SandboxExecTaskRunnerOptions;
+  /** Explicit host-owned task profiles paired with an isolated runner. */
+  taskProfileRegistry?: TaskProfileRegistry;
 }): Promise<BrokerServiceAssembly> {
   const config = validateBrokerServiceStartupConfig(options.config);
   if (options.sandboxTaskRunner !== undefined && options.virtualizationGuest !== undefined) {
     throw new Error("Broker startup cannot configure sandbox and virtualization task runners together");
+  }
+  if (options.taskProfileRegistry !== undefined &&
+      options.sandboxTaskRunner === undefined && options.virtualizationGuest === undefined) {
+    throw new Error("Broker startup cannot configure task profiles without an isolated task runner");
+  }
+  if (options.taskProfileRegistry !== undefined &&
+      (typeof options.taskProfileRegistry.resolve !== "function" ||
+       typeof options.taskProfileRegistry.names !== "function")) {
+    throw new Error("Broker startup task profile registry is malformed");
   }
   await assertStartupDirectories(config);
   const now = options.now ?? Date.now;
@@ -334,6 +346,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
           policy: policyManager,
           edgeAuthenticationKeys,
           now,
+          ...(options.taskProfileRegistry === undefined ? {} : { taskProfileRegistry: options.taskProfileRegistry }),
           ...(virtualizationGuestRuntime === undefined
             ? (sandboxTaskRunner === undefined ? {} : { taskRunner: sandboxTaskRunner })
             : { taskRunner: virtualizationGuestRuntime.taskRunner })
@@ -453,6 +466,7 @@ export async function runBrokerServiceMain(options: {
   now?: () => number;
   signals?: import("./service-entrypoint.js").ServiceSignalSource;
   sandboxTaskRunner?: SandboxExecTaskRunnerOptions;
+  taskProfileRegistry?: TaskProfileRegistry;
 } = {}): Promise<void> {
   const configPath = options.configPath ?? defaultBrokerServiceConfigPath();
   const config = await loadBrokerServiceStartupConfig(configPath);
@@ -460,7 +474,8 @@ export async function runBrokerServiceMain(options: {
     config,
     ...(options.commandExecutor === undefined ? {} : { commandExecutor: options.commandExecutor }),
     ...(options.now === undefined ? {} : { now: options.now }),
-    ...(options.sandboxTaskRunner === undefined ? {} : { sandboxTaskRunner: options.sandboxTaskRunner })
+    ...(options.sandboxTaskRunner === undefined ? {} : { sandboxTaskRunner: options.sandboxTaskRunner }),
+    ...(options.taskProfileRegistry === undefined ? {} : { taskProfileRegistry: options.taskProfileRegistry })
   });
   try {
     await assembly.service.runUntilSignal(options.signals ?? process);

@@ -27,6 +27,7 @@ import {
 import { readBrokerStatus } from "./broker-status-ipc.js";
 import { VirtualizationGuestAttestationKeyManager, writeVirtualizationGuestAttestationKeyConfig, type VirtualizationGuestAttestationKeyConfig } from "./virtualization-guest-attestation-keyring.js";
 import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
+import { TaskProfileRegistry } from "./task-profile.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -60,6 +61,29 @@ test("Broker startup rejects competing task isolation runners", async () => {
       }
     }),
     /cannot configure sandbox and virtualization task runners together/u
+  );
+});
+
+test("Broker startup rejects task profiles without an isolated runner", async () => {
+  const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
+  await assert.rejects(
+    createBrokerServiceFromStartupConfig({
+      config,
+      taskProfileRegistry: new TaskProfileRegistry([])
+    }),
+    /cannot configure task profiles without an isolated task runner/u
+  );
+});
+
+test("Broker startup rejects a malformed task profile registry", async () => {
+  const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
+  await assert.rejects(
+    createBrokerServiceFromStartupConfig({
+      config,
+      sandboxTaskRunner: {},
+      taskProfileRegistry: {} as TaskProfileRegistry
+    }),
+    /task profile registry is malformed/u
   );
 });
 
