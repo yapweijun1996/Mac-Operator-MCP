@@ -12,6 +12,14 @@ boundary is unavailable. This does not claim helper signing, root-domain
 installation, real privileged adapters, or privileged enablement. Evidence:
 `evidence/2026-09-15-privileged-broker-dispatch.md`.
 
+Post-dispatch physical regression verification: source revision `d3c90c3`
+passes 601/601 non-overlapping built tests with zero skips and zero failures
+under all three physical gates. This is a regression checkpoint for existing
+host boundaries, not real privileged-action, Developer ID, root-domain, or
+production-enablement evidence; the long-running Broker/Persistence suites
+were not restarted. Evidence:
+`evidence/2026-09-15-real-privileged-dispatch-regression.md`.
+
 Physical secret-boundary regression verification: source revision `356ebd4`
 passes 598/598 non-overlapping built tests with zero skips and zero failures
 under all three physical gates. Real sandbox, temporary Keychain ACL, and

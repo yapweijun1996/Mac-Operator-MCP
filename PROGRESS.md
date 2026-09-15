@@ -17,6 +17,16 @@ Physical helper signing, root-domain installation, real adapters, and
 production enablement remain open. Evidence:
 `evidence/2026-09-15-privileged-broker-dispatch.md`.
 
+Post-dispatch physical regression addendum: source revision `d3c90c3` runs the
+non-overlapping built suite at 601/601 with zero skips and zero failures under
+`MOPS_REAL_INSTALL=1`, `MOPS_REAL_KEYCHAIN=1`, and `MOPS_REAL_SANDBOX=1`.
+This confirms the privileged dispatch wiring did not regress the existing
+physical sandbox, Keychain ACL, install, IPC, filesystem, Edge, guest, or
+adapter boundary tests. It is not evidence that a real privileged operation
+was executed. The long-running Broker/Persistence suites remained
+undisturbed. Evidence:
+`evidence/2026-09-15-real-privileged-dispatch-regression.md`.
+
 Physical secret-boundary regression addendum: source revision `356ebd4`
 passes the non-overlapping built suite 598/598 with zero skips and zero
 failures under `MOPS_REAL_SANDBOX=1`, `MOPS_REAL_KEYCHAIN=1`, and
