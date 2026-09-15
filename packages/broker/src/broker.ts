@@ -15,7 +15,7 @@ import {
   type CapabilityFamily
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
 import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
@@ -5330,19 +5330,64 @@ function jobStatusData(
   };
 }
 
-function normalizePolicyQueryTarget(value: unknown): NormalizedTarget {
+const POLICY_QUERY_TARGET_KINDS = new Set<TargetKind>([
+  "host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element",
+  "service", "log_source", "docker_runtime", "docker_object", "package", "power"
+]);
+const POLICY_QUERY_SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const POLICY_QUERY_APP_PATTERN = /^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
+const POLICY_QUERY_APP_WINDOW_PATTERN = /^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
+const POLICY_QUERY_UI_ELEMENT_PATTERN = /^element:[a-f0-9]{48}$/u;
+const POLICY_QUERY_SERVICE_PATTERN = /^system\/[A-Za-z0-9._:@+-]{1,240}$/u;
+const POLICY_QUERY_LOG_SOURCE_PATTERN = /^system$|^process\/[A-Za-z0-9._+-]{1,120}$/u;
+const POLICY_QUERY_DOCKER_OBJECT_PATTERN = /^[A-Za-z0-9._:\/-]{1,256}$/u;
+const POLICY_QUERY_PACKAGE_PATTERN = /^[A-Za-z0-9._:@/+-]{1,255}$/u;
+const POLICY_QUERY_JOB_PATTERN = /^job:[A-Za-z0-9._-]{1,240}$/u;
+const POLICY_QUERY_PROCESS_PATTERN = /^all$|^pid:[1-9][0-9]{0,7}$/u;
+
+/**
+ * Normalize the caller-provided policy-query target before any policy lookup.
+ * Each target kind has a canonical reference grammar so a compromised Edge
+ * cannot turn a generic string into an unintended app, UI, service, or runtime
+ * identity. Filesystem paths remain lexical here and are descriptor-checked by
+ * the filesystem planner before authorization is reported as allowed.
+ */
+export function normalizePolicyQueryTarget(value: unknown): NormalizedTarget {
   if (value === undefined) return { kind: "host", reference: "broker" };
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new BrokerError("PRECONDITION_FAILED", "target must be an object");
   }
   const target = value as Record<string, unknown>;
   assertExactArguments(target, ["kind", "reference"]);
-  const allowedKinds = new Set<TargetKind>(["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "log_source", "package", "power"]);
-  if (
-    typeof target.kind !== "string" || !allowedKinds.has(target.kind as TargetKind) ||
-    typeof target.reference !== "string" || !/^[A-Za-z0-9._:/-]{1,4096}$/u.test(target.reference)
-  ) {
-    throw new BrokerError("PRECONDITION_FAILED", "target kind and reference must be strings");
+  if (typeof target.kind !== "string" || !POLICY_QUERY_TARGET_KINDS.has(target.kind as TargetKind) ||
+      typeof target.reference !== "string" || !isPolicyQueryTargetReference(target.kind as TargetKind, target.reference)) {
+    throw new BrokerError("PRECONDITION_FAILED", "target kind and reference are malformed for policy lookup");
   }
   return { kind: target.kind as TargetKind, reference: target.reference };
+}
+
+function isPolicyQueryTargetReference(kind: TargetKind, reference: string): boolean {
+  if (reference.length < 1 || reference.length > 4_096 || reference.includes("\0") || /[\r\n]/u.test(reference)) return false;
+  switch (kind) {
+    case "host": return reference === "broker" || reference === "local";
+    case "path": return isCanonicalPolicyQueryPath(reference) || POLICY_QUERY_SAFE_ID_PATTERN.test(reference);
+    case "project": return isCanonicalPolicyQueryPath(reference);
+    case "process": return POLICY_QUERY_PROCESS_PATTERN.test(reference);
+    case "job": return POLICY_QUERY_JOB_PATTERN.test(reference);
+    case "task_profile": return POLICY_QUERY_SAFE_ID_PATTERN.test(reference);
+    case "app_set": return reference === "all";
+    case "app": return POLICY_QUERY_APP_PATTERN.test(reference);
+    case "app_window": return POLICY_QUERY_APP_WINDOW_PATTERN.test(reference);
+    case "ui_element": return POLICY_QUERY_UI_ELEMENT_PATTERN.test(reference);
+    case "service": return POLICY_QUERY_SERVICE_PATTERN.test(reference) && !reference.includes("..") && !reference.includes("//");
+    case "log_source": return POLICY_QUERY_LOG_SOURCE_PATTERN.test(reference) && !reference.includes("..");
+    case "docker_runtime": return reference === "local";
+    case "docker_object": return POLICY_QUERY_DOCKER_OBJECT_PATTERN.test(reference) && !reference.includes("..");
+    case "package": return POLICY_QUERY_PACKAGE_PATTERN.test(reference);
+    case "power": return reference === "local";
+  }
+}
+
+function isCanonicalPolicyQueryPath(reference: string): boolean {
+  return reference.startsWith("/") && resolve(reference) === reference;
 }
