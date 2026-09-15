@@ -13,6 +13,7 @@
     "test": "npm run build && npm run build:native:fault-test --workspace @mac-operator/broker && node --test --test-timeout=120000 packages/*/dist/**/*.test.js",
     "typecheck": "tsc -b --pretty false",
     "verify:docs": "node scripts/check-doc-links.mjs",
+    "verify:matrix": "node scripts/check-verification-matrix.mjs",
     "verify:contracts": "npm run build && node packages/contracts/dist/verify-contracts.js",
     "verify:canonical:native": "sh scripts/verify-canonical-json-native.sh"
   },
