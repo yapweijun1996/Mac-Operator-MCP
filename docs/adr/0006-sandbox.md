@@ -83,6 +83,13 @@ check only; it does not provide a native attestation producer, protected key
 distribution, VM boot/isolation evidence, or authorization for
 `mac_task_run`.
 
+Commit `3245482` hardens the guest profile executor shutdown boundary. It
+fences new guest work, aborts active adapters, drains all active executions
+even when adapter cleanup fails, and permits an explicit retry of the failed
+cleanup without reopening execution. This protects lifecycle recovery only; it
+does not constitute VM boot, guest isolation, or production task enablement
+evidence.
+
 ## Virtualization.framework candidate seam
 
 The current Darwin host exposes the `Virtualization.framework` headers and

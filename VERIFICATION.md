@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest executor close-recovery addendum: commit `3245482` fences new guest
+work, aborts active adapters, always waits for active executions, and clears a
+rejected cleanup Promise for explicit retry while preserving the fence. Guest
+executor tests pass 10/10; the non-overlapping package regression passes 496
+total (490 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks
+pass. This closes only guest executor shutdown recovery and does not provide VM
+boot/isolation, native attestation, credential isolation, or production task
+enablement. Evidence: `evidence/2026-09-15-guest-executor-close-recovery.md`.
+
 Broker shutdown recovery addendum: commit `505d28a` keeps `closing` asserted
 after shutdown starts, rejects new work with `CANCELLED`, and clears only the
 rejected aggregate close Promise so an explicit host retry can finish resource

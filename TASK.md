@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest executor close-recovery addendum: source revision `3245482` always drains
+active guest work after cancellation, preserves the first adapter cleanup
+failure, and permits explicit cleanup retry without reopening execution. The
+focused guest executor suite passes 10/10 and the non-overlapping package
+regression passes 496 total (490 pass, 6 skipped, 0 fail); build, typecheck,
+lint, and diff checks pass. VM boot/isolation, attestation production,
+credential isolation, and production task enablement remain open. Evidence:
+`evidence/2026-09-15-guest-executor-close-recovery.md`.
+
 Broker shutdown recovery addendum: source revision `505d28a` leaves the Broker
 permanently fenced against new work while allowing an explicit retry after a
 resource close failure. The Broker close regression passes, the

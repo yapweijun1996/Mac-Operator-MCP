@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest executor close-recovery addendum: source revision `3245482` makes
+`VirtualizationGuestProfileExecutor.close()` abort and fully drain active work
+even when adapter cleanup fails. The rejected close Promise is cleared for an
+explicit retry, while the executor remains permanently fenced against new
+tasks; successful close remains idempotent. Guest executor tests pass 10/10,
+the non-overlapping package regression passes 496 total (490 pass, 6 skipped,
+0 fail), and build, typecheck, lint, and diff checks pass. This is shutdown
+semantics only; VM boot/isolation, native attestation, credential isolation,
+and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-guest-executor-close-recovery.md`.
+
 Broker shutdown recovery addendum: source revision `505d28a` keeps the Broker
 shutdown fence active while clearing a rejected aggregate close Promise for an
 explicit retry. New requests remain denied with `CANCELLED`; only a fully
