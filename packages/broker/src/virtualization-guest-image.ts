@@ -135,14 +135,26 @@ function isProtectedImage(
 }
 
 async function assertProtectedDirectory(path: string, currentUid: number, publication: VirtualizationGuestImagePublication): Promise<void> {
+  if (publication === "system-published") {
+    // Check every canonical ancestor. Checking only the direct parent would
+    // still allow an attacker to rename that parent through a writable grandparent.
+    let cursor = path;
+    for (;;) {
+      const directory = await lstat(cursor).catch(() => undefined);
+      if (!directory || !directory.isDirectory() || directory.isSymbolicLink() ||
+          directory.uid !== 0 || (directory.mode & 0o022) !== 0) {
+        throw new BrokerError("POLICY_DENIED", "Virtualization guest image directory is not system-published");
+      }
+      const parent = dirname(cursor);
+      if (parent === cursor) break;
+      cursor = parent;
+    }
+    return;
+  }
   const directory = await lstat(path).catch(() => undefined);
-  const protectedDirectory = publication === "system-published"
-    ? directory?.uid === 0 && (directory.mode & 0o022) === 0
-    : directory?.uid === currentUid && (directory.mode & 0o077) === 0;
-  if (!directory || !directory.isDirectory() || directory.isSymbolicLink() || !protectedDirectory) {
-    throw new BrokerError("POLICY_DENIED", publication === "system-published"
-      ? "Virtualization guest image directory is not system-published"
-      : "Virtualization guest image directory is not protected");
+  if (!directory || !directory.isDirectory() || directory.isSymbolicLink() ||
+      directory.uid !== currentUid || (directory.mode & 0o077) !== 0) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest image directory is not protected");
   }
 }
 

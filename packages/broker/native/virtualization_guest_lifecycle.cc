@@ -241,15 +241,19 @@ bool IsSystemPublishedImage(const char* canonical_path, const struct stat& path_
   if (strlcpy(parent_path, canonical_path, sizeof(parent_path)) >= sizeof(parent_path)) return false;
   char* separator = strrchr(parent_path, '/');
   if (separator == nullptr) return false;
-  if (separator == parent_path) {
-    parent_path[1] = '\0';
-  } else {
-    *separator = '\0';
-  }
-  struct stat parent_stat{};
-  if (lstat(parent_path, &parent_stat) != 0 || !S_ISDIR(parent_stat.st_mode) ||
-      parent_stat.st_uid != 0 || (parent_stat.st_mode & 0022) != 0) {
-    return false;
+  if (separator == parent_path) parent_path[1] = '\0';
+  else *separator = '\0';
+  for (;;) {
+    struct stat parent_stat{};
+    if (lstat(parent_path, &parent_stat) != 0 || !S_ISDIR(parent_stat.st_mode) ||
+        parent_stat.st_uid != 0 || (parent_stat.st_mode & 0022) != 0) {
+      return false;
+    }
+    if (strcmp(parent_path, "/") == 0) break;
+    separator = strrchr(parent_path, '/');
+    if (separator == nullptr) return false;
+    if (separator == parent_path) parent_path[1] = '\0';
+    else *separator = '\0';
   }
   return true;
 }
