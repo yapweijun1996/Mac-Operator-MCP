@@ -1,7 +1,7 @@
 # Privileged helper authority-polling IPC evidence
 
 Date: 2026-09-15
-Source revision: `b9d038a` (authority polling implementation: `2660bdf`)
+Source revision: `2c3e01d` (authority polling implementation: `2660bdf`)
 Status: implemented boundary; disabled by default and not a privileged-release acceptance
 
 ## Scope
@@ -31,7 +31,8 @@ The native Broker startup assembly restores the active helper-key configuration,
 constructs the Broker-owned authority listener, appends it to the native
 runtime channel set, and closes it on startup rollback. The helper authority
 socket is required to be distinct from the MCP Broker socket and to carry an
-explicit native helper process identity.
+explicit native helper process identity; production startup requires the peer
+role to be root for the helper and non-root for the Broker.
 
 ## Verification
 

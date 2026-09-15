@@ -4,10 +4,12 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Privileged helper authority-polling IPC verification: source revision
-`b9d038a` (building on `d717525`, `2660bdf`, `becea16`, and `1eea5cb`) adds a separately
-authenticated helper-to-Broker authority channel, wires the Broker listener
-into native startup with rollback, wipes copied keys on setup failure, and
-strictly validates failure bodies.
+`2c3e01d` (building on `b9d038a`, `d717525`, `2660bdf`, `becea16`, and
+`1eea5cb`) adds a separately authenticated helper-to-Broker authority channel,
+wires the Broker listener into native startup with rollback, wipes copied keys
+on setup failure, and strictly validates failure bodies. It also rejects
+root-as-Broker and non-root-as-helper peer-role substitutions at production
+startup boundaries.
 The Broker endpoint uses native/explicit peer authentication, a
 direction-specific HMAC envelope, durable replay admission, nested command
 authentication, and the Broker-backed Request/Approval/Job authority gate.

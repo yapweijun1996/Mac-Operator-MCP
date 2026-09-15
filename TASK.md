@@ -1631,14 +1631,15 @@ non-cooperating-process lock evidence remain open.
   identity substitution. The combined helper/executor/dispatch suite passes
   26/26 and the latest physical non-overlapping regression passes 607/607.
   Evidence: `evidence/2026-09-15-privileged-authority-gate.md`.
-- MOP-060 authority-polling clarification: source revision `b9d038a` (building
-  on `d717525`, `2660bdf`, `becea16`, and `1eea5cb`) adds an
+- MOP-060 authority-polling clarification: source revision `2c3e01d` (building
+  on `b9d038a`, `d717525`, `2660bdf`, `becea16`, and `1eea5cb`) adds an
   independent helper-to-Broker Unix socket with mandatory peer authentication
   on both directions, direction-separated HMAC domains, durable replay
   admission, and the Broker-backed Request/Approval/Job authority callback.
   The helper polls before dispatch, during execution, and before success;
   post-dispatch authority loss is retryable `UNKNOWN_OUTCOME`. Runtime startup
-  rejects enabled adapters without this poller. Focused helper/authority tests
+  rejects enabled adapters without this poller and enforces root-helper/
+  non-root-Broker peer roles. Focused helper/authority tests
   pass 18/18, runtime/keyring tests pass 7/7, native startup assembly tests
   pass 8/8, and the latest physical non-overlapping regression passes 613/613.
   Evidence: `evidence/2026-09-15-privileged-authority-polling-ipc.md`.

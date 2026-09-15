@@ -4,11 +4,12 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Privileged helper authority-polling IPC addendum: source revision `b9d038a`
-(building on `d717525`, `2660bdf`, `becea16`, and `1eea5cb`) adds an independent
+Privileged helper authority-polling IPC addendum: source revision `2c3e01d`
+(building on `b9d038a`, `d717525`, `2660bdf`, `becea16`, and `1eea5cb`) adds an independent
 helper-to-Broker Unix socket, wires it into native Broker startup with
 rollback, wipes copied keys on setup failure, and strictly validates failure
-bodies. Both peers are explicitly
+bodies and enforces the root-helper/non-root-Broker peer roles at production
+startup. Both peers are explicitly
 authenticated, request/response HMAC domains are direction-separated, replay
 IDs/nonces use durable admission, and the Broker endpoint invokes the final
 Request/Approval/Job authority gate. The helper client fences socket identity,
