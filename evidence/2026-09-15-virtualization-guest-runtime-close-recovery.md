@@ -1,7 +1,7 @@
 # Virtualization guest runtime close-recovery evidence
 
-Date: 2026-09-15  
-Source commit: `d68176b`  
+Date: 2026-09-15
+Source commit: `d68176b`
 Host: physical Darwin arm64 development host
 
 ## Boundary

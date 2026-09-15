@@ -162,6 +162,10 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
       (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME"
     );
     assert.equal(runtime.readback().state, "stopped");
+    await assert.rejects(
+      runtime.start(),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
     await runtime.close();
   } finally {
     await runtime.close();

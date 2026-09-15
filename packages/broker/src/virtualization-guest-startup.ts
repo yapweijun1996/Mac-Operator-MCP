@@ -223,6 +223,7 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
   readonly runtimeChannel: RuntimeChannel;
   readonly connectionSource: VirtualizationGuestConnectionSource | undefined;
   private closed = false;
+  private closing = false;
   private closePromise: Promise<void> | undefined;
 
   constructor(options: {
@@ -244,6 +245,7 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
 
   async start(signal?: AbortSignal): Promise<void> {
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Virtualization guest runtime is closed");
+    if (this.closing) throw new BrokerError("POLICY_DENIED", "Virtualization guest runtime is closing");
     await this.lifecycle.start(signal);
   }
 
@@ -254,6 +256,7 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
 
   async stop(signal?: AbortSignal): Promise<void> {
     if (this.closed) return;
+    if (this.closing) throw new BrokerError("POLICY_DENIED", "Virtualization guest runtime is closing");
     await this.lifecycle.stop(signal);
   }
 
@@ -268,6 +271,7 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
 
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
+    this.closing = true;
     this.closePromise = (async () => {
       let firstError: unknown;
       try { await this.connectionSource?.close(); } catch (error) { firstError ??= error; }
@@ -281,6 +285,7 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
         throw firstError;
       }
       this.closed = true;
+      this.closing = false;
     })();
     return this.closePromise;
   }
