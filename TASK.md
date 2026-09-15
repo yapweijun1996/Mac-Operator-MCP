@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem mutation rename-race addendum: source revision `e83bf1e` adds a
+physical-host atomic-write race harness alongside the read harness. It
+repeatedly renames an authorized child directory, replaces it with an outside
+symlink, and restores it while bounded writes execute. Successful write
+readbacks remain under the canonical authorized root, and the outside file is
+unchanged. The focused filesystem suite passes 34/34; the non-overlapping
+package regression passes 511 total (505 pass, 6 skipped, 0 fail). Build,
+typecheck, lint, and diff checks pass. Physical remount, broader volume, and
+production resource-exhaustion evidence remain open.
+Evidence: `evidence/2026-09-15-filesystem-mutation-rename-race.md`.
+
 Filesystem directory-rename race addendum: source revision `7fe59fd` adds a
 physical-host runtime race test that repeatedly renames an authorized child
 directory, replaces it with an outside symlink, and restores it while a
