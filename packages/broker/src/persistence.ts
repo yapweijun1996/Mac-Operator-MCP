@@ -682,6 +682,7 @@ export class BrokerStore {
       );
       `);
       this.migrateSchema(schemaVersion);
+      this.verifyReplayLedgerIntegrity();
       this.verifyAuditIntegrity();
       this.verifyExternalAuditAnchor();
       if (this.runtimeFenceEnabled) this.acquireRuntimeFence(Date.now());
@@ -698,6 +699,55 @@ export class BrokerStore {
     this.runtimeFenceAcquired = false;
     this.database.close();
     this.auditAnchor?.close();
+  }
+
+  /**
+   * Replay ledgers are authority inputs: a forged nonce row must never become
+   * a valid admission record merely because SQLite accepted its scalar types.
+   */
+  private verifyReplayLedgerIntegrity(): void {
+    try {
+      const requestRows = this.database.prepare(
+        "SELECT edge_id, nonce, request_id, accepted_at_ms, expires_at_ms FROM nonces"
+      ).all() as unknown[];
+      for (const row of requestRows) validateStoredReplayRow("request", row);
+
+      const approvalRows = this.database.prepare(
+        "SELECT issuer_id, key_id, nonce, request_id, accepted_at_ms, expires_at_ms FROM approval_nonces"
+      ).all() as unknown[];
+      for (const row of approvalRows) validateStoredReplayRow("approval", row);
+
+      const policySignerRows = this.database.prepare(
+        "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM policy_signer_nonces"
+      ).all() as unknown[];
+      for (const row of policySignerRows) validateStoredReplayRow("policy_signer", row);
+
+      const authorityRows = this.database.prepare(
+        "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM authority_control_nonces"
+      ).all() as unknown[];
+      for (const row of authorityRows) validateStoredReplayRow("authority_control", row);
+
+      const helperRows = this.database.prepare(
+        "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM privileged_helper_nonces"
+      ).all() as unknown[];
+      for (const row of helperRows) validateStoredReplayRow("privileged_helper", row);
+
+      const statusRows = this.database.prepare(
+        "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM broker_status_nonces"
+      ).all() as unknown[];
+      for (const row of statusRows) validateStoredReplayRow("broker_status", row);
+
+      const guestRows = this.database.prepare(
+        "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM virtualization_guest_nonces"
+      ).all() as unknown[];
+      if (guestRows.length > MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS) {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest replay ledger is at capacity");
+      }
+      for (const row of guestRows) validateStoredReplayRow("virtualization_guest", row);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Replay ledger integrity could not be verified");
+    }
   }
 
   /** Creates a verified, owner-only encrypted backup without exposing the live database handle. */
@@ -3439,6 +3489,65 @@ interface SwitchRow {
   disabled: number;
   changed_at_ms: number;
   reason: string;
+}
+
+type ReplayLedgerKind =
+  | "request"
+  | "approval"
+  | "policy_signer"
+  | "authority_control"
+  | "privileged_helper"
+  | "broker_status"
+  | "virtualization_guest";
+
+/** Validate one persisted replay row before it can participate in admission. */
+function validateStoredReplayRow(kind: ReplayLedgerKind, value: unknown): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored replay ledger state is malformed");
+  };
+  if (!isPlainDataRecord(value)) fail();
+  const row = value as Record<string, unknown>;
+  const stringField = (name: string, pattern: RegExp): boolean =>
+    typeof row[name] === "string" && pattern.test(row[name] as string);
+  const timestamp = (name: string): boolean =>
+    typeof row[name] === "number" && Number.isSafeInteger(row[name]) && (row[name] as number) >= 0;
+  if (!timestamp("accepted_at_ms") || !timestamp("expires_at_ms") ||
+      (row.expires_at_ms as number) <= (row.accepted_at_ms as number)) {
+    fail();
+  }
+
+  switch (kind) {
+    case "request":
+      if (!stringField("edge_id", /^[A-Za-z0-9._:@/-]{1,128}$/u) ||
+          !stringField("nonce", /^[A-Za-z0-9._:@/-]{1,256}$/u) ||
+          !stringField("request_id", /^[A-Za-z0-9._:@/+-]{1,128}$/u)) fail();
+      return;
+    case "approval":
+      if (!stringField("issuer_id", /^[A-Za-z0-9._:@/-]{1,128}$/u) ||
+          !stringField("key_id", /^[A-Za-z0-9._:-]{1,128}$/u) ||
+          !stringField("nonce", /^approval-nonce:[A-Za-z0-9._:-]{1,240}$/u) ||
+          !stringField("request_id", /^approval-issue:[A-Za-z0-9._:-]{1,240}$/u)) fail();
+      return;
+    case "policy_signer":
+    case "authority_control":
+      if (!stringField("nonce", /^[A-Za-z0-9._:-]{16,128}$/u) ||
+          !stringField("request_id", /^[A-Za-z0-9._:-]{1,128}$/u)) fail();
+      return;
+    case "privileged_helper":
+      if (!stringField("nonce", /^[A-Za-z0-9._:@/-]{16,128}$/u) ||
+          !stringField("request_id", /^request:[A-Za-z0-9._:-]{1,240}$/u)) fail();
+      return;
+    case "broker_status":
+      if (!stringField("nonce", /^broker-status-nonce-[A-Za-z0-9._:-]{16,128}$/u) ||
+          !stringField("request_id", /^request:broker-status-[A-Za-z0-9._:-]{16,128}$/u)) fail();
+      return;
+    case "virtualization_guest":
+      if (!stringField("nonce", /^guest-nonce-[A-Za-z0-9._:-]{16,128}$/u) ||
+          !stringField("request_id", /^request:guest-[A-Za-z0-9._:-]{16,128}$/u)) fail();
+      return;
+    default:
+      fail();
+  }
 }
 
 function mapRequest(row: RequestRow): RequestRecord {
