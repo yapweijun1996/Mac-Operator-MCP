@@ -4,10 +4,11 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Process environment secret-value addendum: source revision `d821242` extends
-the disabled ProcessSupervisor boundary so explicitly allowlisted environment
-values are rejected when they match known token, credential, or authorization
-signatures. The focused process-supervisor suite passes 34/34, with typecheck,
+Process environment secret-value addendum: source revision `29bcec3` extends
+the shared policy across ProcessSupervisor, TaskProfile, and virtualization
+guest validation so explicitly allowlisted environment values are rejected
+when they match known token, credential, or authorization signatures. The
+focused process, task-profile, and guest suites pass 51/51, with typecheck,
 lint, and diff checks passing. This is defense-in-depth and does not close
 production sandbox credential isolation or `mac_task_run` enablement. Evidence:
 `evidence/2026-09-15-process-environment-secret-values.md`.
