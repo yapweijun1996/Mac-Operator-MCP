@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge JWKS redirect-boundary addendum: source revision `c97140a` rejects
+redirected remote responses and any non-empty final URL that differs from the
+startup-configured JWKS endpoint. JWT tests pass 7/7, all Edge tests pass
+40/40, and the non-overlapping physical-Darwin regression passes 490/490 with
+0 skipped tests. Build, typecheck, lint, and diff checks pass. This closes
+endpoint-identity handling only; external issuer and deployment evidence
+remain open. Evidence:
+`evidence/2026-09-15-edge-jwks-redirect-boundary.md`.
+
 Process-argument secret-boundary addendum: source revision `17d10e2` rejects
 credential-bearing option names and known token signatures in fixed profile
 arguments, combined task arguments, and the final `ProcessSupervisor` spawn

@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge JWKS redirect-boundary addendum: source revision `c97140a` rejects
+redirected responses and non-empty final URLs that differ from the configured
+JWKS endpoint before `jose` parsing. JWT tests pass 7/7, all Edge tests pass
+40/40, and the non-overlapping physical-Darwin regression passes 490/490 with
+0 skipped tests. Build, typecheck, lint, and diff checks pass. External issuer,
+DNS/TLS, rotation/revocation propagation, and remote deployment evidence
+remain open. Evidence:
+`evidence/2026-09-15-edge-jwks-redirect-boundary.md`.
+
 Process-argument secret-boundary addendum: source revision `17d10e2` denies
 credential-bearing argv option names and known token signatures at fixed
 profile load, task argument resolution, and the final child spawn boundary.
