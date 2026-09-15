@@ -19,6 +19,7 @@ import { BrokerStore } from "./persistence.js";
 import { PolicyBundleVerifier, PolicyManager, type PolicyDocument, type SignedPolicyBundle } from "./policy-loader.js";
 import {
   createBrokerServiceFromStartupConfig,
+  brokerSandboxProtectedFilesystemRoots,
   loadBrokerServiceStartupConfig,
   validateBrokerServiceStartupConfig,
   type BrokerServiceStartupConfig
@@ -39,6 +40,27 @@ test("Broker service startup config is strict, canonical, and root-bound", () =>
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, expectedEdgeUid: 0 }), /positive non-root/u);
   assert.equal(validateBrokerServiceStartupConfig({ ...config, guestAttestationKeyConfigPath: join(config.dataRoot, "guest-attestation-keys.json") }).guestAttestationKeyConfigPath, join(config.dataRoot, "guest-attestation-keys.json"));
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, guestAttestationKeyConfigPath: "/Users/operator/other/guest-keys.json" }), /configured roots/u);
+});
+
+test("Broker startup derives protected sandbox roots from its validated state roots", () => {
+  const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
+  assert.deepEqual(brokerSandboxProtectedFilesystemRoots(config), [config.packageRoot, config.dataRoot, config.runtimeRoot]);
+});
+
+test("Broker startup rejects competing task isolation runners", async () => {
+  const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
+  await assert.rejects(
+    createBrokerServiceFromStartupConfig({
+      config,
+      sandboxTaskRunner: {},
+      virtualizationGuest: {
+        image: { path: "/Users/operator/data/guest.img", expectedSha256: "a".repeat(64), runtimeVersion: "macos-test" },
+        enabled: false,
+        hostEvidenceAccepted: false
+      }
+    }),
+    /cannot configure sandbox and virtualization task runners together/u
+  );
 });
 
 test("Broker service startup config loader rejects weak and symlinked files", async () => {

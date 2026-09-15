@@ -24,6 +24,7 @@ import {
   type VirtualizationGuestRuntimeStartupOptions
 } from "./virtualization-guest-startup.js";
 import { BrokerStoreVirtualizationGuestReplayGuard } from "./virtualization-guest-transport.js";
+import { SandboxExecTaskRunner, type SandboxExecTaskRunnerOptions } from "./task-runner.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -75,12 +76,20 @@ export interface BrokerServiceAssembly {
   readonly guestAttestationKeyManager?: VirtualizationGuestAttestationKeyManager;
   /** Optional startup-owned VM/channel runtime; absent when virtualization is disabled. */
   readonly virtualizationGuestRuntime?: VirtualizationGuestRuntime;
+  /** Optional startup-owned experimental sandbox runner; absent by default. */
+  readonly sandboxTaskRunner?: SandboxExecTaskRunner;
   close(): Promise<void>;
 }
 
 export function brokerServiceInstanceLockPath(runtimeRoot: string): string {
   validateCanonicalPath(runtimeRoot, "runtime root");
   return join(runtimeRoot, "broker.instance.lock");
+}
+
+/** Canonical Broker-owned roots that an experimental host task must never read or write. */
+export function brokerSandboxProtectedFilesystemRoots(config: BrokerServiceStartupConfig): readonly string[] {
+  const validated = validateBrokerServiceStartupConfig(config);
+  return [validated.packageRoot, validated.dataRoot, validated.runtimeRoot];
 }
 
 /**
@@ -194,8 +203,13 @@ export async function createBrokerServiceFromStartupConfig(options: {
   now?: () => number;
   /** Explicit host startup seam; MCP request arguments never reach this object. */
   virtualizationGuest?: VirtualizationGuestRuntimeStartupOptions;
+  /** Explicit host startup seam; production defaults remain fail-closed. */
+  sandboxTaskRunner?: SandboxExecTaskRunnerOptions;
 }): Promise<BrokerServiceAssembly> {
   const config = validateBrokerServiceStartupConfig(options.config);
+  if (options.sandboxTaskRunner !== undefined && options.virtualizationGuest !== undefined) {
+    throw new Error("Broker startup cannot configure sandbox and virtualization task runners together");
+  }
   await assertStartupDirectories(config);
   const now = options.now ?? Date.now;
   const instanceLockPath = brokerServiceInstanceLockPath(config.runtimeRoot);
@@ -204,6 +218,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
   let edgeKeyring: EdgeKeyring | undefined;
   let guestAttestationKeyManager: VirtualizationGuestAttestationKeyManager | undefined;
   let virtualizationGuestRuntime: VirtualizationGuestRuntime | undefined;
+  let sandboxTaskRunner: SandboxExecTaskRunner | undefined;
   let broker: Broker | undefined;
   let service: BrokerServiceEntrypoint | undefined;
   let statusChannel: BrokerStatusIpcServer | undefined;
@@ -252,6 +267,16 @@ export async function createBrokerServiceFromStartupConfig(options: {
     }
     const policyManager = new PolicyManager(verifiedPolicy.policy, activeStore, now);
     policyManager.restore(verifiedPolicy);
+    if (options.sandboxTaskRunner !== undefined) {
+      const protectedFilesystemRoots = [...new Set([
+        ...brokerSandboxProtectedFilesystemRoots(config),
+        ...(options.sandboxTaskRunner.protectedFilesystemRoots ?? [])
+      ])].sort();
+      sandboxTaskRunner = new SandboxExecTaskRunner({
+        ...options.sandboxTaskRunner,
+        protectedFilesystemRoots
+      });
+    }
     if (options.virtualizationGuest !== undefined) {
       const guestOptions = options.virtualizationGuest;
       virtualizationGuestRuntime = await createVirtualizationGuestRuntime({
@@ -309,7 +334,9 @@ export async function createBrokerServiceFromStartupConfig(options: {
           policy: policyManager,
           edgeAuthenticationKeys,
           now,
-          ...(virtualizationGuestRuntime === undefined ? {} : { taskRunner: virtualizationGuestRuntime.taskRunner })
+          ...(virtualizationGuestRuntime === undefined
+            ? (sandboxTaskRunner === undefined ? {} : { taskRunner: sandboxTaskRunner })
+            : { taskRunner: virtualizationGuestRuntime.taskRunner })
         });
         return broker;
       }
@@ -364,6 +391,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
       edgeKeyring,
       ...(guestAttestationKeyManager === undefined ? {} : { guestAttestationKeyManager }),
       ...(virtualizationGuestRuntime === undefined ? {} : { virtualizationGuestRuntime }),
+      ...(sandboxTaskRunner === undefined ? {} : { sandboxTaskRunner }),
       async close() {
         let firstError: unknown;
         try {
@@ -405,6 +433,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
   } catch (error) {
     await statusChannel?.close().catch(() => undefined);
     await virtualizationGuestRuntime?.close().catch(() => undefined);
+    await sandboxTaskRunner?.close().catch(() => undefined);
     await broker?.close().catch(() => undefined);
     try { edgeKeyring?.dispose(); } catch { /* preserve the startup error */ }
     try { store?.close(); } catch { /* preserve the startup error */ }
@@ -423,13 +452,15 @@ export async function runBrokerServiceMain(options: {
   commandExecutor?: LaunchdIdentityCommandExecutor;
   now?: () => number;
   signals?: import("./service-entrypoint.js").ServiceSignalSource;
+  sandboxTaskRunner?: SandboxExecTaskRunnerOptions;
 } = {}): Promise<void> {
   const configPath = options.configPath ?? defaultBrokerServiceConfigPath();
   const config = await loadBrokerServiceStartupConfig(configPath);
   const assembly = await createBrokerServiceFromStartupConfig({
     config,
     ...(options.commandExecutor === undefined ? {} : { commandExecutor: options.commandExecutor }),
-    ...(options.now === undefined ? {} : { now: options.now })
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.sandboxTaskRunner === undefined ? {} : { sandboxTaskRunner: options.sandboxTaskRunner })
   });
   try {
     await assembly.service.runUntilSignal(options.signals ?? process);

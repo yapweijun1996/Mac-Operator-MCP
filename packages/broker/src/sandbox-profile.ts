@@ -23,6 +23,13 @@ export interface TaskSandboxProfileOptions {
   protectedFilesystemRoots?: readonly string[];
 }
 
+export function normalizeTaskSandboxProfileOptions(options: TaskSandboxProfileOptions = {}): TaskSandboxProfileOptions {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new BrokerError("POLICY_DENIED", "Sandbox profile options are malformed");
+  }
+  return { protectedFilesystemRoots: normalizeProtectedFilesystemRoots(options.protectedFilesystemRoots) };
+}
+
 /**
  * Render only the Broker-owned subset of Seatbelt policy. The profile is
  * intentionally deny-default and supports only loopback network destinations;
@@ -62,7 +69,7 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile, options: 
   if (!roots.some((root) => isContained(root, profile.cwd))) {
     throw new BrokerError("POLICY_DENIED", "Task cwd is not inside an allowed sandbox root");
   }
-  const protectedRoots = normalizeProtectedFilesystemRoots(options.protectedFilesystemRoots);
+  const protectedRoots = normalizeTaskSandboxProfileOptions(options).protectedFilesystemRoots ?? [];
 
   const lines = [
     "(version 1)",

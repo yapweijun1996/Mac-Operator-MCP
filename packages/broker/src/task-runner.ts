@@ -9,7 +9,7 @@ import {
   type ProcessPathIdentity
 } from "./process-supervisor.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
-import { buildSandboxExecArguments, type TaskSandboxProfileOptions } from "./sandbox-profile.js";
+import { buildSandboxExecArguments, normalizeTaskSandboxProfileOptions, type TaskSandboxProfileOptions } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 import {
   isVirtualizationGuestIdentity,
@@ -188,9 +188,9 @@ export class SandboxExecTaskRunner implements TaskRunner {
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
       allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? []
     });
-    this.sandboxProfileOptions = {
+    this.sandboxProfileOptions = normalizeTaskSandboxProfileOptions({
       ...(options.protectedFilesystemRoots === undefined ? {} : { protectedFilesystemRoots: [...options.protectedFilesystemRoots] })
-    };
+    });
     this.filesystemIdentityObserver = options.filesystemIdentityObserver ?? ((rootPath) => {
       const native = loadNativePeerAdapter() as unknown as NativeTaskFilesystemIdentityAdapter;
       return native.statStorageVolumeWithinRoot(rootPath);
