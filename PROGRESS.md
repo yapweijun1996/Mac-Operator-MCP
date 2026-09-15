@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Strict numeric-input addendum: source revision `350ebbc` rejects non-safe plain
+decimal integer tokens during inbound canonical JSON parsing, preventing a
+JavaScript/foreign-runtime integer interpretation split during authentication
+or audit-digest verification. The versioned ECMAScript `JSON.stringify`
+canonicalizer remains unchanged, so scientific-notation vectors such as
+`1e20` and `1e21` retain their locked wire representation and are still
+bounded by each consuming contract. The focused contracts/authentication
+suite passes 10/10, `verify:contracts` validates all 44 tool contracts and
+the ledger schema, and lint passes. Evidence:
+`evidence/2026-09-15-safe-integer-canonicalization.md`.
+
 Descriptor launch capability-gate addendum: source revision `07ba885` adds a
 versioned host-owned descriptor-execution capability record and a stable
 `POLICY_DENIED` requirement gate. Availability requires both a native
