@@ -3,17 +3,20 @@
 Status: PARTIAL release evidence; full production gates remain open
 
 Date: 2026-09-15
-Source revision: `183ecd4`
+Source revision: `43ec306`
 
 ## Verification
 
 - Native canonical JSON vectors: 5/5 passed (`jcs-utf8-v1`).
 - `npm run verify:contracts`: 44 unique tool contracts and the versioned
   ledger-record schema validated.
+- `npm run typecheck`: passed.
 - `npm audit --audit-level=high`: 0 vulnerabilities.
-- `npm run lint`: passed for 602 tracked files.
+- `npm run lint`: passed for 606 tracked files.
 - `git diff --check`: passed.
-- Non-overlapping package regression: 593 total, 587 passed, 6 skipped, 0 failed.
+- Non-overlapping package regression: 595 total, 589 passed, 6 skipped, 0 failed.
+- Audit evidence redaction covers credential aliases and secret-shaped strings
+  under ordinary fields; focused alias/content/helper tests passed.
 - Working tree: clean; no remote push performed.
 
 The existing `broker.test.js` and `persistence.test.js` processes remained
