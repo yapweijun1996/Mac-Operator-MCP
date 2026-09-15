@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { BrokerError } from "@mac-operator/contracts";
-import { validateNativeAdapterPath } from "./peer-credentials.js";
+import { assertNativeNodeRuntimeVersion, validateNativeAdapterPath } from "./peer-credentials.js";
 import { verifyVirtualizationGuestImage, type LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
 import {
   parseVirtualizationGuestIdentity,
@@ -31,6 +31,7 @@ const RUNTIME_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:+/-]{0,127}$/u;
 
 export interface NativeVirtualizationGuestVmBinding {
   nativeNapiVersion: number;
+  nativeNodeVersion: string;
   createGuestVm(
     imagePath: string,
     device: string,
@@ -106,6 +107,7 @@ export function loadNativeVirtualizationGuestVmBinding(): NativeVirtualizationGu
         native.nativeNapiVersion < MIN_SUPPORTED_NAPI_VERSION ||
         !Number.isSafeInteger(runtimeNapiVersion) || runtimeNapiVersion < MIN_SUPPORTED_NAPI_VERSION ||
         native.nativeNapiVersion > runtimeNapiVersion ||
+        typeof native.nativeNodeVersion !== "string" ||
         typeof native.createGuestVm !== "function" || typeof native.startGuestVm !== "function" ||
         typeof native.stopGuestVm !== "function" || typeof native.statusGuestVm !== "function" ||
         typeof native.closeGuestVm !== "function" || typeof native.exchangeGuestFrame !== "function" ||
@@ -114,6 +116,7 @@ export function loadNativeVirtualizationGuestVmBinding(): NativeVirtualizationGu
         typeof native.writeGuestConnectionChunk !== "function" || typeof native.closeGuestConnection !== "function") {
       throw new Error("Virtualization guest VM adapter exports are incompatible");
     }
+    assertNativeNodeRuntimeVersion(native.nativeNodeVersion);
     loadedArtifact = after;
     return native as NativeVirtualizationGuestVmBinding;
   } catch {

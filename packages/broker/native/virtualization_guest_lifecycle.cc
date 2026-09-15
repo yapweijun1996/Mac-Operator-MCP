@@ -1,4 +1,5 @@
 #include <node_api.h>
+#include <node_version.h>
 
 #import <Foundation/Foundation.h>
 #import <Virtualization/Virtualization.h>
@@ -1760,6 +1761,9 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value version;
   napi_create_uint32(env, NAPI_VERSION, &version);
   napi_set_named_property(env, exports, "nativeNapiVersion", version);
+  napi_value node_version;
+  napi_create_string_utf8(env, NODE_VERSION_STRING, NAPI_AUTO_LENGTH, &node_version);
+  napi_set_named_property(env, exports, "nativeNodeVersion", node_version);
   SetFunction(env, exports, "createGuestVm", CreateGuestVm);
   SetFunction(env, exports, "startGuestVm", StartGuestVm);
   SetFunction(env, exports, "stopGuestVm", StopGuestVm);

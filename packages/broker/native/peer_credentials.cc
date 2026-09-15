@@ -1,4 +1,5 @@
 #include <node_api.h>
+#include <node_version.h>
 
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -2896,6 +2897,9 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value napi_version;
   napi_create_uint32(env, NAPI_VERSION, &napi_version);
   napi_set_named_property(env, exports, "nativeNapiVersion", napi_version);
+  napi_value node_version;
+  napi_create_string_utf8(env, NODE_VERSION_STRING, NAPI_AUTO_LENGTH, &node_version);
+  napi_set_named_property(env, exports, "nativeNodeVersion", node_version);
   napi_create_function(env, "sha256Utf8", NAPI_AUTO_LENGTH, Sha256Utf8, nullptr, &function);
   napi_set_named_property(env, exports, "sha256Utf8", function);
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);

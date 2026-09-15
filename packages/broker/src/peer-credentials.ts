@@ -40,6 +40,7 @@ export interface PeerCredentialPolicy {
 
 interface NativePeerCredentials {
   nativeNapiVersion: number;
+  nativeNodeVersion: string;
   sha256Utf8(value: string): unknown;
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
@@ -70,6 +71,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "inspectKeychainGenericPassword", "deleteKeychainGenericPassword"
 ] as const;
 const MIN_SUPPORTED_NAPI_VERSION = 8;
+const NODE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/u;
 
 interface NativeAdapterArtifact {
   device: number;
@@ -79,6 +81,14 @@ interface NativeAdapterArtifact {
 }
 
 let loadedNativeArtifact: NativeAdapterArtifact | undefined;
+
+/** Require a native addon to have been compiled for this exact Node runtime. */
+export function assertNativeNodeRuntimeVersion(nativeNodeVersion: unknown): void {
+  if (typeof nativeNodeVersion !== "string" || !NODE_VERSION_PATTERN.test(nativeNodeVersion) ||
+      nativeNodeVersion !== process.versions.node) {
+    throw new Error("Native adapter Node runtime version is incompatible");
+  }
+}
 
 export class MacOsPeerCredentialVerifier implements PeerCredentialVerifier {
   private readonly native: NativePeerCredentials;
@@ -120,11 +130,13 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
     }
     const runtimeNapiVersion = Number.parseInt(process.versions.napi ?? "", 10);
     const nativeNapiVersion = native.nativeNapiVersion;
+    const nativeNodeVersion = native.nativeNodeVersion;
     if (!Number.isSafeInteger(runtimeNapiVersion) || runtimeNapiVersion < MIN_SUPPORTED_NAPI_VERSION ||
         typeof nativeNapiVersion !== "number" || !Number.isSafeInteger(nativeNapiVersion) || nativeNapiVersion < MIN_SUPPORTED_NAPI_VERSION ||
         nativeNapiVersion > runtimeNapiVersion) {
       throw new Error("Native peer adapter N-API version is incompatible");
     }
+    assertNativeNodeRuntimeVersion(nativeNodeVersion);
     loadedNativeArtifact = after;
     return native as NativePeerCredentials;
   } catch {

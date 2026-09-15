@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  assertNativeNodeRuntimeVersion,
   capturePeerProcessIdentity,
   loadNativePeerAdapter,
   MacOsPeerCredentialVerifier,
@@ -140,6 +141,19 @@ test("native adapter binds its compiled N-API version to the runtime", () => {
   const runtimeNapiVersion = Number.parseInt(process.versions.napi ?? "", 10);
   assert.ok(native.nativeNapiVersion >= 8);
   assert.ok(native.nativeNapiVersion <= runtimeNapiVersion);
+  assert.equal(native.nativeNodeVersion, process.versions.node);
+});
+
+test("native adapter runtime binding rejects malformed or mismatched versions", () => {
+  assert.doesNotThrow(() => assertNativeNodeRuntimeVersion(process.versions.node));
+  assert.throws(
+    () => assertNativeNodeRuntimeVersion("not-a-version"),
+    /runtime version is incompatible/u
+  );
+  assert.throws(
+    () => assertNativeNodeRuntimeVersion("24.0.0"),
+    /runtime version is incompatible/u
+  );
 });
 
 test("native adapter reproduces canonical JSON vector digests", async () => {
