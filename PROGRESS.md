@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Provisioned-key lifetime addendum: source revision `5f4bc61` clears the random
+file-provisioning key after digest use and replaces failure-path direct unlink
+with identity-fenced quarantine cleanup. Build, lint, typecheck, diff checks,
+and the focused 28-test credentials/keyring suite pass (27 pass, 1 explicit
+physical-Keychain skip); production Keychain distribution and recovery remain
+open. Evidence: `evidence/2026-09-15-provisioned-key-lifetime.md`.
+
 Audit-anchor lock quarantine addendum: source revision `61e6acb` replaces
 normal direct lock unlink with a private same-directory quarantine rename,
 device/inode/type recheck, and post-check deletion. Replacement locks fail

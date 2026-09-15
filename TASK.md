@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Provisioned-key lifetime addendum: commit `5f4bc61` wipes random file-key
+buffers after digest use and cleans failed provisioning through exact-identity
+quarantine removal instead of direct unlink. Focused credentials/keyring tests
+report 28 total (27 passed, 1 explicit physical-Keychain skip, 0 failed);
+production Keychain distribution and recovery remain open. Evidence:
+`evidence/2026-09-15-provisioned-key-lifetime.md`.
+
 Audit-anchor lock quarantine addendum: commit `61e6acb` atomically moves the
 normal exact lock identity to a private sibling quarantine, rechecks its
 device/inode/type, and only then removes it. Replacement locks fail closed;
