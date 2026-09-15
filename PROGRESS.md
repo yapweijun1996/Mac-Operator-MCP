@@ -4,7 +4,8 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Descriptor-required process admission addendum: source revision `a05cce8`
+Descriptor-required process admission addendum: source revisions `a05cce8` and
+`c23cfb7`
 connects the host-owned descriptor-execution capability gate to
 `ProcessSupervisor`. A Broker-owned supervisor configured for descriptor
 execution now checks the native capability after request validation and before
@@ -17,7 +18,10 @@ descriptor-capability, sandbox, and task-runner tests pass 38/38 and 15/20
 (5 explicit real-sandbox skips); build, typecheck, lint, docs, and matrix checks
 pass. This closes admission wiring only; native descriptor execution,
 immutable snapshots, remount resistance, and production task enablement remain
-open. Evidence: `evidence/2026-09-16-descriptor-admission-boundary.md`.
+open. The serial physical regression passes 640/645 with 0 failures and 5
+explicit skips for the unavailable descriptor-gated real sandbox probes; the
+three pre-existing long-running suites were excluded and left untouched.
+Evidence: `evidence/2026-09-16-descriptor-admission-boundary.md`.
 
 Write-recovery root-identity addendum: source revision `cd649e6` persists the
 canonical policy-root path/device/inode with each new write Job. Restart

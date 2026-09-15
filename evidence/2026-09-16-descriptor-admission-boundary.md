@@ -1,7 +1,7 @@
 # Descriptor-required process admission boundary
 
 Date: 2026-09-16
-Source revision: `a05cce8`
+Source revisions: `a05cce8`, `c23cfb7`
 Host: Darwin 25.2.0, arm64, Node v25.5.0
 
 ## Boundary
@@ -44,6 +44,22 @@ called when descriptor-required admission is denied. No child process is
 started and the supervisor active count remains zero. The physical native
 adapter still exports no descriptor launcher or capability attestation, so the
 gate is denied on this host.
+
+The serial physical-Darwin regression was rerun with
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1` and the three
+pre-existing long-running suites excluded without interruption:
+
+```text
+tests 645
+pass 640
+fail 0
+skipped 5
+```
+
+The five skips are the real sandbox probes whose default supervisor now
+requires the unavailable descriptor capability. The service-startup fixture
+records the same host limitation and still verifies signed-authority startup
+and status readback without attempting an unsafe task launch.
 
 ## Remaining gate
 

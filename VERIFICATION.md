@@ -3,8 +3,8 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Descriptor-required process admission verification at source revision
-`a05cce8`: `ProcessSupervisor` now checks the host-owned descriptor-execution
+Descriptor-required process admission verification at source revisions
+`a05cce8` and `c23cfb7`: `ProcessSupervisor` now checks the host-owned descriptor-execution
 capability after request validation and before any child spawn when its
 Broker-owned option requires that boundary. Missing or malformed native
 support returns stable `POLICY_DENIED`; pathname execution is not used as a
@@ -15,7 +15,10 @@ sandbox, and task-runner tests pass 15/20 with five explicit real-sandbox
 skips. Build, typecheck, lint, docs, and matrix checks pass. This verifies
 admission wiring only; `VT-FS-02`, native descriptor execution, immutable
 snapshot proof, remount resistance, and production task enablement remain
-open. Evidence: `evidence/2026-09-16-descriptor-admission-boundary.md`.
+open. The serial physical regression passes 640/645 with 0 failures and 5
+explicit descriptor-capability skips; the three pre-existing long-running
+suites were excluded and left untouched. Evidence:
+`evidence/2026-09-16-descriptor-admission-boundary.md`.
 
 Write-recovery root-identity verification at source revision `cd649e6` stores
 the canonical policy-root path/device/inode in new write Job metadata and
