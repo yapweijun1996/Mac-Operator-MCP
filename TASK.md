@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-042 executable-boundary addendum at source revision `ff4f4d6`: the shared
+ProcessSupervisor preserves root-owned execution by default and admits the
+Docker CLI only through a fixed Broker-listed canonical user-owned path with
+owner-only write permissions and an internal adapter flag. Focused tests pass
+49/49 with one explicit opt-in skip; the physical Docker Desktop readback
+passes 1/1. Code-signature provenance, native daemon isolation, OS-level
+socket denial, and production deployment remain open. Evidence:
+`evidence/2026-09-16-docker-cli-executable-boundary.md`.
+
 MOP-042 real Docker readback addendum at source revision `a0c753a`: Docker
 29.1.3 on the physical Mac mini's Docker Desktop `desktop-linux` context now
 passes the strict container-record parser, including its bounded `Platform`

@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Docker CLI executable-boundary addendum at source revision `ff4f4d6`: the
+shared `ProcessSupervisor` keeps root-owned execution as the default while a
+fixed Docker adapter may use only a Broker-listed canonical app-bundle path
+owned by the current user with owner-only write permissions. The explicit
+exception is not available through MCP arguments or task profiles. Focused
+ProcessSupervisor/Docker tests pass 49/49 with one explicit opt-in skip, and
+the physical Docker Desktop readback passes 1/1. Docker code-signature
+provenance, native macOS daemon isolation, OS-level socket denial, and
+production deployment remain open. Evidence:
+`evidence/2026-09-16-docker-cli-executable-boundary.md`.
+
 Real Docker readback addendum at source revision `a0c753a`: the strict local
 Docker adapter accepts Docker 29's bounded `Platform` metadata field and now
 returns 24 container records from the host's Docker Desktop daemon without
