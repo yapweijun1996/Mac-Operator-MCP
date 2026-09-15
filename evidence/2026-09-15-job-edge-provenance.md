@@ -1,7 +1,7 @@
 # Job Edge provenance evidence
 
 Date: 2026-09-15
-Source revisions: `e0b9db8`, `66688ec`
+Source revisions: `e0b9db8`, `66688ec`, `9a52c59`
 
 ## Decision
 
@@ -18,6 +18,8 @@ readback.
   `NULL` provenance.
 - Every Broker-owned mutation Job admission passes the authenticated request
   Edge. Atomic and ordinary idempotent reuse reject a different Edge identity.
+- Restarted guest-task recovery rechecks the persisted Job Edge before making a
+  status lookup, so a revoked Edge cannot close an unknown Job as success.
 - Edge revocation cancels matching queued Jobs, plus legacy/null or malformed
   provenance; non-matching, valid Edge Jobs remain queued.
 - The public `BrokerJob` result does not expose Edge identity; it remains
