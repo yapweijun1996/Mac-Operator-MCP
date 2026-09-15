@@ -576,6 +576,13 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
     outputCapBytes: 4_096,
     operation: "task_run"
   })));
+  assert.equal(Object.isFrozen(admitted), true);
+  const admittedIdentity = admitted?.guestIdentity as Record<string, unknown> | undefined;
+  assert.equal(Object.isFrozen(admittedIdentity), true);
+  assert.throws(
+    () => { (admitted as Record<string, unknown>).requestId = "request:replacement"; },
+    TypeError
+  );
   assert.equal("cwd" in (sent ?? {}), false);
   assert.equal("executable" in (sent ?? {}), false);
   assert.equal("args" in (sent ?? {}), false);

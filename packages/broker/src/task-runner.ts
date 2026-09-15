@@ -401,7 +401,7 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
       outputCapBytes: request.profile.process.outputCapBytes
     }, {
       shouldCancel: request.control.shouldCancel,
-      onRequestAdmitted: (admitted) => request.control.onGuestRequestAdmitted?.({
+      onRequestAdmitted: (admitted) => request.control.onGuestRequestAdmitted?.(freezeRuntimeSnapshot({
         requestId: admitted.requestId,
         nonce: admitted.nonce,
         requestDigest: virtualizationGuestRequestDigest(admitted),
@@ -410,7 +410,7 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
         taskDigest: admitted.taskDigest,
         timeoutMs: admitted.timeoutMs,
         outputCapBytes: admitted.outputCapBytes
-      })
+      }))
     });
     return mapVirtualizationGuestResponse(response, this.guestIdentity);
   }
