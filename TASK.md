@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox UDP addendum: source revision `02fec55` adds a physical-Darwin
+loopback UDP regression. A Broker-rendered `udp://localhost:port` allowlist
+delivers a datagram only to the listed port; an unlisted loopback port fails
+without delivery. The sandbox suite passes 16/16 and the complete serial
+physical-Darwin suite passes 607/607 with 0 skipped tests. External networking,
+DNS policy, and production task-runner enablement remain open. Evidence:
+`evidence/2026-09-15-sandbox-udp.md`.
+
 Sandbox protected-root addendum: source revision `5fb0f3a` adds a bounded,
 Broker-owned list of canonical protected filesystem roots to the Seatbelt
 renderer and `SandboxExecTaskRunner`. Read/write deny rules are emitted after

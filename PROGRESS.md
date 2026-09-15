@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox UDP addendum: source revision `02fec55` verifies the existing
+loopback-UDP allowlist on physical Darwin using a fixed Perl Socket task. The
+listed destination receives a datagram; an unlisted port fails and receives
+none. Sandbox tests pass 16/16 and the complete serial physical-Darwin suite
+passes 607/607 with 0 skipped tests. External networking and production task
+enablement remain disabled. Evidence:
+`evidence/2026-09-15-sandbox-udp.md`.
+
 Sandbox protected-root addendum: source revision `5fb0f3a` threads an explicit,
 bounded Broker-owned protected-root set into the sandbox renderer. Deny rules
 follow task allow rules and are validated as canonical absolute paths; the
