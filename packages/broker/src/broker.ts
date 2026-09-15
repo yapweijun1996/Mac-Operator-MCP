@@ -769,6 +769,7 @@ export class Broker {
           const admissionAt = this.now();
           const jobInput = {
             jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+            edgeId: request.principal.edgeId,
             ownerPrincipalId: request.principal.principalId,
             ownerSessionId: request.principal.sessionId,
             tool: request.tool,
@@ -829,6 +830,7 @@ export class Broker {
           if (request.tool === "mac_write_file_atomic") {
             const jobInput = {
               jobId: `job:write-${sha256(canonicalJson({ principalId: request.principal.principalId, idempotencyKey: execution.write!.idempotencyKey })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -848,6 +850,7 @@ export class Broker {
             if (!execution.patch || !execution.filesystem) throw new BrokerError("EXECUTION_FAILED", "Filesystem patch execution plan is unavailable");
             const jobInput = {
               jobId: `job:patch-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -865,6 +868,7 @@ export class Broker {
           if (request.tool === "mac_git_stage" || request.tool === "mac_git_commit") {
             const jobInput = {
               jobId: `job:git-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -883,6 +887,7 @@ export class Broker {
           if (request.tool === "mac_app_open") {
             const jobInput = {
               jobId: `job:app-open-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -900,6 +905,7 @@ export class Broker {
           if (request.tool === "mac_app_focus") {
             const jobInput = {
               jobId: `job:app-focus-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -917,6 +923,7 @@ export class Broker {
           if (request.tool === "mac_ui_action") {
             const jobInput = {
               jobId: `job:ui-action-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
