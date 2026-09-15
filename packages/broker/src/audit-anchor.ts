@@ -278,8 +278,7 @@ function withAnchorLock<T>(path: string, operation: () => T): T {
       try {
         const current = lstatSync(lockPath);
         if (current.dev === identity.dev && current.ino === identity.ino) {
-          unlinkSync(lockPath);
-          syncDirectory(dirname(path));
+          removeExactAnchorLock(lockPath, identity.dev, identity.ino);
         }
       } catch { /* Preserve the lock setup error and require recovery. */ }
     }
@@ -295,9 +294,34 @@ function withAnchorLock<T>(path: string, operation: () => T): T {
     if (current.dev !== lockIdentity.dev || current.ino !== lockIdentity.ino) {
       throw new Error("Audit anchor lock target changed during operation");
     }
-    unlinkSync(lockPath);
-    syncDirectory(dirname(path));
+    removeExactAnchorLock(lockPath, lockIdentity.dev, lockIdentity.ino);
   }
+}
+
+/**
+ * Removes an exact anchor lock without unlinking a replacement pathname.
+ * The private same-directory rename selects the checked inode atomically;
+ * post-rename identity verification fails closed and leaves mismatches for
+ * explicit operator recovery.
+ */
+function removeExactAnchorLock(path: string, device: number, inode: number): void {
+  const current = lstatSync(path);
+  if (!current.isFile() || current.isSymbolicLink() || current.dev !== device || current.ino !== inode) {
+    throw new Error("Audit anchor lock ownership changed before removal");
+  }
+  const quarantine = `${path}.removing-${randomBytes(12).toString("hex")}`;
+  try {
+    renameSync(path, quarantine);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const quarantined = lstatSync(quarantine);
+  if (!quarantined.isFile() || quarantined.isSymbolicLink() || quarantined.dev !== device || quarantined.ino !== inode) {
+    throw new Error("Audit anchor lock changed during removal");
+  }
+  unlinkSync(quarantine);
+  syncDirectory(dirname(path));
 }
 
 function syncDirectory(path: string): void {
