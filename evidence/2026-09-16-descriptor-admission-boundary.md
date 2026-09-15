@@ -32,8 +32,8 @@ pass 38
 fail 0
 
 node --test packages/broker/dist/process-launch-capability.test.js packages/broker/dist/sandbox-profile.test.js packages/broker/dist/task-runner.test.js
-tests 71
-pass 66
+tests 34
+pass 29
 fail 0
 skipped 5
 
@@ -55,8 +55,8 @@ The serial physical-Darwin regression was rerun with
 pre-existing long-running suites excluded without interruption:
 
 ```text
-tests 645
-pass 640
+tests 646
+pass 641
 fail 0
 skipped 5
 ```
@@ -76,5 +76,5 @@ close-on-exec and lifecycle proof is available.
 
 ## Rollback
 
-Revert commit `a05cce8`; no installed service or host configuration was
-changed.
+Revert commits `495cd6e`, `c23cfb7`, and `a05cce8`; no installed service or
+host configuration was changed.

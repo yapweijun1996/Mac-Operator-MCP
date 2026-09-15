@@ -14,14 +14,14 @@ any child spawn; unavailable or malformed host support returns stable
 `SandboxExecTaskRunner` uses this requirement for its default supervisor, so
 host sandbox evidence cannot accidentally enable task execution without an
 atomic executable-selection boundary; the capability proof must cover all
-child executables, not only a wrapper launcher. Focused process-supervisor,
-descriptor-capability, sandbox, and task-runner tests pass 38/38 and 15/20
-(5 explicit real-sandbox skips); build, typecheck, lint, docs, and matrix checks
-pass. This closes admission wiring only; native descriptor execution,
-immutable snapshots, remount resistance, and production task enablement remain
-open. The serial physical regression passes 640/645 with 0 failures and 5
-explicit skips for the unavailable descriptor-gated real sandbox probes; the
-three pre-existing long-running suites were excluded and left untouched.
+child executables, not only a wrapper launcher. Focused process-supervisor
+tests pass 38/38; descriptor-capability, sandbox, and task-runner tests pass
+29/34 (5 explicit real-sandbox skips); build, typecheck, and lint checks pass.
+This closes admission wiring only; native descriptor execution, immutable
+snapshots, remount resistance, and production task enablement remain open. The
+serial physical regression passes 641/646 with 0 failures and 5 explicit skips
+for the unavailable descriptor-gated real sandbox probes; the three
+pre-existing long-running suites were excluded and left untouched.
 Evidence: `evidence/2026-09-16-descriptor-admission-boundary.md`.
 
 Write-recovery root-identity addendum: source revision `cd649e6` persists the

@@ -16,11 +16,11 @@ would still be selected by pathname. The
 default `SandboxExecTaskRunner` supervisor is descriptor-required, keeping the
 deprecated host sandbox from becoming a production task boundary by accident.
 Focused process-supervisor tests pass 38/38; descriptor-capability,
-sandbox, and task-runner tests pass 15/20 with five explicit real-sandbox
-skips. Build, typecheck, lint, docs, and matrix checks pass. Native descriptor
-execution or an independently verified immutable snapshot, remount proof, and
-production task enablement remain open. The serial physical regression passes
-640/645 with 0 failures and 5 explicit descriptor-capability skips; the three
+sandbox, and task-runner tests pass 29/34 with five explicit real-sandbox
+skips. Build, typecheck, and lint checks pass. Native descriptor execution or
+an independently verified immutable snapshot, remount proof, and production
+task enablement remain open. The serial physical regression passes 641/646
+with 0 failures and 5 explicit descriptor-capability skips; the three
 pre-existing long-running suites were excluded and left untouched. Evidence:
 `evidence/2026-09-16-descriptor-admission-boundary.md`.
 
