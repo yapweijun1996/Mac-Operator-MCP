@@ -3227,3 +3227,14 @@ non-overlapping package regression passes 572 total (566 passed, 6 explicitly
 skipped, 0 failed). Broader canonicalization, retention, protected Keychain,
 installed recovery, external rollback detection, and ADR acceptance remain
 open. Evidence: `evidence/2026-09-15-replay-row-invariants.md`.
+
+Broker startup now validates every Policy/configuration history row and active
+singleton after migration, binds active identities to matching history, and
+repeats the checks in identity getters (source revision `7a34191`). Malformed
+revisions, digests, timestamps, Policy metadata, or active/history mismatches
+fail closed as `AUDIT_UNAVAILABLE`. Focused configuration plus Policy and
+policy-signer tests pass 26/26; the non-overlapping package regression passes
+579 total (573 passed, 6 explicitly skipped, 0 failed). Production Keychain
+distribution, installed recovery, external rollback detection, and ADR
+acceptance remain open. Evidence:
+`evidence/2026-09-15-configuration-row-invariants.md`.
