@@ -81,8 +81,8 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
       typeof policy.version !== "string" || policy.version.length < 1 || policy.version.length > 128 ||
       typeof policy.audience !== "string" || policy.audience.length < 1 || policy.audience.length > 256 ||
       !(policy.trustedEdgeIds instanceof Set) || !(policy.trustedEdgeKeys instanceof Map) ||
-      !(policy.principalGrants instanceof Map) || !Array.isArray(policy.targetRules) ||
-      !Array.isArray(policy.filesystemRoots) || !(policy.tools instanceof Map) ||
+      !(policy.principalGrants instanceof Map) || !isDenseArray(policy.targetRules, 4096) ||
+      !isDenseArray(policy.filesystemRoots, 128) || !(policy.tools instanceof Map) ||
       policy.killSwitches === null || typeof policy.killSwitches !== "object" ||
       !hasOnlyKeys(policy.killSwitches, SWITCH_NAMES) ||
       SWITCH_NAMES.some((name) => typeof policy.killSwitches[name] !== "boolean")) {
@@ -99,7 +99,7 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
   for (const [principalId, grant] of policy.principalGrants) {
     if (!isPolicyId(principalId) || grantIds.has(principalId) || grant === null || typeof grant !== "object" ||
         !hasOnlyKeys(grant, ["principalId", "issuer", "scopes", "enabled"]) || grant.principalId !== principalId ||
-        !isPolicyId(grant.issuer) || !Array.isArray(grant.scopes) || grant.scopes.length < 1 ||
+        !isPolicyId(grant.issuer) || !isDenseArray(grant.scopes, SCOPES.length) || grant.scopes.length < 1 ||
         new Set(grant.scopes).size !== grant.scopes.length || grant.scopes.some((scope: unknown) => typeof scope !== "string" || !SCOPES.includes(scope as Scope)) ||
         typeof grant.enabled !== "boolean") {
       throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed principal authority");
@@ -112,7 +112,7 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
         !isPolicyId(root.rootId) || rootIds.has(root.rootId) || !isCanonicalAbsolutePath(root.path) ||
         typeof root.metadata !== "boolean" || typeof root.contentRead !== "boolean" ||
         (root.write !== undefined && typeof root.write !== "boolean") ||
-        !Array.isArray(root.denyRelativePaths) || new Set(root.denyRelativePaths).size !== root.denyRelativePaths.length ||
+        !isDenseArray(root.denyRelativePaths, 4096) || new Set(root.denyRelativePaths).size !== root.denyRelativePaths.length ||
         root.denyRelativePaths.some((relativePath: unknown) => !isSafeRelativePath(relativePath))) {
       throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed filesystem authority");
     }
@@ -169,10 +169,10 @@ function validateToolPolicy(name: string, tool: ToolPolicy): void {
       tool === null || typeof tool !== "object" || tool.tool !== name ||
       !hasOnlyKeys(tool, ["tool", "contractVersion", "requiredScopes", "capabilityFamilies", "targetType", "mutation", "approvalPolicy", "outputCapBytes", "timeoutMs", "implemented", "enabled"]) ||
       tool.contractVersion !== CONTRACT_VERSION ||
-      !Array.isArray(tool.requiredScopes) || tool.requiredScopes.length < 1 ||
+      !isDenseArray(tool.requiredScopes, SCOPES.length) || tool.requiredScopes.length < 1 ||
       new Set(tool.requiredScopes).size !== tool.requiredScopes.length ||
       tool.requiredScopes.some((scope) => !SCOPES.includes(scope)) ||
-      !Array.isArray(tool.capabilityFamilies) || tool.capabilityFamilies.length < 1 ||
+      !isDenseArray(tool.capabilityFamilies, CAPABILITY_FAMILIES.length) || tool.capabilityFamilies.length < 1 ||
       new Set(tool.capabilityFamilies).size !== tool.capabilityFamilies.length ||
       tool.capabilityFamilies.some((family) => !CAPABILITY_FAMILIES.includes(family)) ||
       !TARGET_TYPES.has(tool.targetType) || typeof tool.mutation !== "boolean" ||
@@ -189,6 +189,21 @@ function hasOnlyKeys(value: unknown, keys: readonly string[]): boolean {
   if (!isPlainDataRecord(value)) return false;
   const allowed = new Set(keys);
   return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  try {
+    if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+    const names = Object.getOwnPropertyNames(value);
+    if (names.length !== value.length + 1 || Object.keys(value).length !== value.length) return false;
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (descriptor === undefined || !("value" in descriptor)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isPolicyId(value: unknown): value is string {

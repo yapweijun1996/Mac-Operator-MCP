@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Scope } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
 import { authorizeTarget, cloneBrokerPolicy, validateBrokerPolicy } from "./policy.js";
 import { PolicyManager } from "./policy-loader.js";
@@ -79,6 +80,26 @@ test("runtime Broker policy rejects inherited authority fields", () => {
   assert.throws(
     () => validateBrokerPolicy({ ...base, principalGrants: new Map([["principal-1", inheritedGrant]]) as never }),
     (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed principal authority"
+  );
+});
+
+test("runtime Broker policy rejects accessor and sparse authority arrays", () => {
+  const base = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const principal = base.principalGrants.get("principal-1");
+  assert.ok(principal);
+  const accessorScopes = [...principal.scopes] as Scope[];
+  Object.defineProperty(accessorScopes, "0", { enumerable: true, get: () => "mac.control.read" });
+  const accessorGrants = new Map(base.principalGrants);
+  accessorGrants.set("principal-1", { ...principal, scopes: accessorScopes });
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, principalGrants: accessorGrants }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed principal authority"
+  );
+
+  const sparseRules = new Array(base.targetRules.length) as typeof base.targetRules;
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, targetRules: sparseRules }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy is malformed"
   );
 });
 
