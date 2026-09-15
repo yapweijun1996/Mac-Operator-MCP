@@ -89,3 +89,11 @@ authorization now rejects disabled principal grants and scopes outside the
 enabled grant before matching allow/deny rules. This preserves default deny
 under direct helper calls and policy reloads, but does not close production
 policy distribution or ADR acceptance.
+
+Commit `e0b9db8` adds schema version `10` Job Edge provenance. Broker-created
+mutation Jobs persist the authenticated Edge that admitted them; idempotent
+reuse is bound to that identity, and Edge revocation isolates matching queued
+Jobs. Legacy/null provenance is intentionally cancelled conservatively, while
+malformed persisted provenance fails closed. This closes a local authority
+correlation gap but does not close production policy distribution or ADR
+acceptance.
