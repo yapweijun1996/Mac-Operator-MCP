@@ -324,7 +324,12 @@ export class ProcessSupervisor {
             environment,
             ...(safeRequest.stdin === undefined ? {} : { stdin: safeRequest.stdin })
           });
+        if (!isChildProcessLike(child)) {
+          throw new BrokerError("EXECUTION_FAILED", "Descriptor launcher returned an invalid child process");
+        }
       } catch {
+        // Do not expose native adapter errors or allow an invalid adapter
+        // result to reach the ownership/cleanup path as an unchecked object.
         throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
       }
       const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes);
@@ -935,6 +940,14 @@ export class ProcessSupervisor {
     try { return check(); }
     catch { return true; }
   }
+}
+
+function isChildProcessLike(value: unknown): value is ChildProcess {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Partial<ChildProcess>;
+  return typeof candidate.kill === "function" &&
+    typeof candidate.on === "function" &&
+    typeof candidate.once === "function";
 }
 
 function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number): ChildProcessCapture {
