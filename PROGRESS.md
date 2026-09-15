@@ -3121,3 +3121,11 @@ transition; recovery must retain `UNKNOWN`. Focused invariant and corruption
 tests pass; persistence regression remains green. Disk-exhaustion, production
 Keychain/code-signing identity, and ADR acceptance remain open. Evidence:
 `evidence/2026-09-15-job-state-invariants.md`.
+
+BrokerStore Request state invariants are now enforced at the persistence
+readback boundary (source revision `8ffbc78`). `RECEIVED`, authorization,
+intent, running, and terminal result classes are cross-checked with mutation
+approval and Job linkage; timestamp rollback and malformed identifiers fail
+closed as `AUDIT_UNAVAILABLE`. Focused request corruption tests pass 2/2; the
+non-overlapping package regression passes 557 total (551 passed, 6 skipped, 0
+failed). Evidence: `evidence/2026-09-15-request-state-invariants.md`.
