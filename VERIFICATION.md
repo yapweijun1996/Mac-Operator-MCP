@@ -3,14 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Docker inspect object-identity verification at source revision `9baf916`:
+Docker inspect object-identity verification at source revision `13537e6`:
 the fixed adapter and Broker response boundary require exact ID equality or a
 one-way bounded hexadecimal prefix match for ID targets, exact normalized
 `Name` readback for non-ID names, and matching object type. ID-looking names
 are treated as IDs, so a different object cannot be accepted merely because
-its name matches; missing identity is rejected before response serialization,
-and the Broker repeats the check for adapter-provided results. Focused Docker
-identity/parser tests pass 12/12, the Broker mismatch test passes 1/1; target
+its name matches; name targets are re-inspected by canonical ID and changes
+between observations fail closed. Missing identity is rejected before response
+serialization, and the Broker repeats the check for adapter-provided results.
+Focused Docker identity/parser tests pass 14/14, the Broker mismatch test passes 1/1; target
 validation also rejects CLI-option, absolute-path, and socket/HTTP URL syntax
 before invocation; Inspect/Logs JSON contracts encode the same negative
 pattern. The physical Docker Desktop status/inspect readback passes

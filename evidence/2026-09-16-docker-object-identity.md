@@ -1,6 +1,6 @@
 # Docker inspect object identity evidence
 
-- Source revision: `9baf916`
+- Source revision: `13537e6`
 - Capture date: 2026-09-16 (Asia/Kuala_Lumpur)
 - Host: Apple silicon Mac mini, macOS 26.2, Darwin 25.2.0, arm64
 - Contract version: `0.1`
@@ -13,12 +13,14 @@ requested ID must match the reported ID. A short hexadecimal Docker ID is
 accepted only when the reported ID is the longer canonical value with that
 prefix. A non-ID name is accepted only when the response reports the exact
 name after normalizing Docker's one leading `/`; a name that looks like a
-hexadecimal ID remains an ID target. Missing identity, a mismatched object
-type, or a different reported ID fails closed; the Broker repeats this check
-for adapter-provided results. An ambiguous `ID`/`Id` pair remains an execution
-failure. Object and log targets beginning with CLI option syntax, absolute
-paths, or socket/HTTP URL schemes are rejected before Docker is invoked. The
-Inspect and Logs JSON contracts carry the same negative target pattern.
+hexadecimal ID remains an ID target. Name targets are then re-inspected by
+their canonical ID, and any ID or name change between observations fails
+closed. Missing identity, a mismatched object type, or a different reported ID
+fails closed; the Broker repeats this check for adapter-provided results. An
+ambiguous `ID`/`Id` pair remains an execution failure. Object and log targets
+beginning with CLI option syntax, absolute paths, or socket/HTTP URL schemes
+are rejected before Docker is invoked. The Inspect and Logs JSON contracts
+carry the same negative target pattern.
 
 ## Verification
 
@@ -27,7 +29,7 @@ npx tsc -b --pretty false
 pass
 
 node --test packages/broker/dist/docker-inspector.test.js
-13 tests, 12 passed, 0 failed, 1 explicit opt-in skip
+15 tests, 14 passed, 0 failed, 1 explicit opt-in skip
 
 MOPS_REAL_DOCKER=1 node --test --test-name-pattern='real Docker Desktop' \
   packages/broker/dist/docker-inspector.test.js
@@ -54,7 +56,8 @@ The negative test sends a different full ID while retaining a matching
 container name for an ID-shaped request and receives `CONFLICT`. Unit
 coverage also checks one-way short-ID prefix handling, exact name readback,
 name mismatch, ID-looking names, digest normalization, rejection of a
-truncated reported ID, and Broker rejection of adapter result substitution.
+truncated reported ID, canonical-ID reinspection, replacement between name
+observations, and Broker rejection of adapter result substitution.
 The physical readback used Docker Desktop 29.1.3 in
 the `desktop-linux` context, observed the host's bounded container listing,
 and inspected one returned container by its canonical ID without warnings or
