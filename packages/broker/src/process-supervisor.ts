@@ -1083,6 +1083,7 @@ async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
   const stat = await lstat(path);
   if (stat.isSymbolicLink()) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
   if (!stat.isFile() || (stat.mode & 0o111) === 0) throw new BrokerError("POLICY_DENIED", "Executable must be a regular executable file");
+  if ((stat.mode & 0o022) !== 0) throw new BrokerError("POLICY_DENIED", "Executable permissions are not owner-only");
   if ((await realpath(path)) !== path) throw new BrokerError("POLICY_DENIED", "Executable symlinks are not allowed");
   const identity: ProcessPathIdentity = {
     device: stat.dev,

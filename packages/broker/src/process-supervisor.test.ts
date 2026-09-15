@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { renameSync, writeFileSync } from "node:fs";
-import { mkdtemp, open, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, open, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -314,6 +314,29 @@ test("process supervisor rejects symlink executables and non-canonical cwd", asy
       }),
       /invalid/u
     );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("process supervisor rejects group- or other-writable executables", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-permissions-"));
+  const executable = join(await realpath(directory), "runner");
+  try {
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await chmod(executable, 0o720);
+    const supervisor = new ProcessSupervisor();
+    await assert.rejects(
+      supervisor.run({
+        executable,
+        args: [],
+        cwd: CWD,
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      }),
+      /permissions are not owner-only/u
+    );
+    assert.equal(supervisor.activeCount(), 0);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
