@@ -178,18 +178,45 @@ export async function provisionAuthenticationKey(path: string): Promise<{ digest
   if (!isAbsolute(path)) throw new Error("Authentication key path must be absolute");
   await assertProtectedSecretDirectory(dirname(path));
   const key = randomBytes(32);
-  const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
   try {
-    await handle.writeFile(key);
-    await handle.sync();
-  } catch (error) {
+    const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+    let created: Awaited<ReturnType<typeof lstat>> | undefined;
+    try {
+      await handle.writeFile(key);
+      await handle.sync();
+      created = await handle.stat();
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      if (created !== undefined) await removeProvisionedKey(path, created).catch(() => undefined);
+      throw error;
+    }
     await handle.close();
-    await unlink(path).catch(() => undefined);
-    throw error;
+    try {
+      await syncProtectedDirectory(dirname(path));
+    } catch (error) {
+      await removeProvisionedKey(path, created).catch(() => undefined);
+      throw error;
+    }
+    return { digest: sha256(key) };
+  } finally {
+    key.fill(0);
   }
-  await handle.close();
+}
+
+/** Removes a just-created secret file without deleting a replacement target. */
+async function removeProvisionedKey(path: string, expected: Awaited<ReturnType<typeof lstat>>): Promise<void> {
+  const current = await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (current === undefined) return;
+  if (!sameProtectedFileIdentity(expected, current)) throw new Error("Authentication key target changed during provisioning cleanup");
+  const quarantine = `${path}.provisioning-remove-${randomUUID()}`;
+  await rename(path, quarantine);
+  const quarantined = await lstat(quarantine);
+  if (!sameProtectedFileIdentity(expected, quarantined)) throw new Error("Authentication key cleanup identity changed");
+  await unlink(quarantine);
   await syncProtectedDirectory(dirname(path));
-  return { digest: sha256(key) };
 }
 
 export async function retireRevokedAuthenticationKey(
