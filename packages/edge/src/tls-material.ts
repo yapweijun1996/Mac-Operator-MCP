@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { createPrivateKey, createPublicKey, timingSafeEqual, X509Certificate } from "node:crypto";
 import { lstat, open } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
@@ -27,13 +28,41 @@ export async function loadProtectedTlsMaterial(
 ): Promise<ProtectedTlsMaterial> {
   const certificate = await readProtectedTlsFile(paths.certificatePath, "TLS certificate");
   try {
+    const privateKey = await readProtectedTlsFile(paths.privateKeyPath, "TLS private key");
+    try {
+      assertTlsCertificateMatchesPrivateKey(certificate, privateKey);
+    } catch (error) {
+      privateKey.fill(0);
+      throw error;
+    }
     return {
       certificate,
-      privateKey: await readProtectedTlsFile(paths.privateKeyPath, "TLS private key")
+      privateKey
     };
   } catch (error) {
     certificate.fill(0);
     throw error;
+  }
+}
+
+/**
+ * Prove the pair is usable before the HTTPS listener is constructed. Node's
+ * TLS server otherwise may defer this failure until the first client
+ * handshake, which would publish a running Edge with invalid authority.
+ */
+export function assertTlsCertificateMatchesPrivateKey(certificateBytes: Buffer, privateKeyBytes: Buffer): void {
+  try {
+    const certificate = new X509Certificate(certificateBytes);
+    const privateKey = createPrivateKey(privateKeyBytes);
+    const certificatePublicKey = Buffer.from(certificate.publicKey.export({ format: "der", type: "spki" }));
+    const privatePublicKey = Buffer.from(createPublicKey(privateKey).export({ format: "der", type: "spki" }));
+    if (certificatePublicKey.byteLength !== privatePublicKey.byteLength ||
+        !timingSafeEqual(certificatePublicKey, privatePublicKey)) {
+      throw new Error("TLS certificate and private key do not match");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "TLS certificate and private key do not match") throw error;
+    throw new Error("TLS certificate and private key are invalid");
   }
 }
 
