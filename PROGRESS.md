@@ -4,11 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Virtualization guest runtime close-recovery addendum: source revision
-`d68176b` keeps `VirtualizationGuestRuntimeImpl` retryable when connection,
-task-runner, or lifecycle shutdown fails. A failed close no longer caches a
-rejected promise or permanently marks the runtime closed; only a fully
-successful shutdown does so. Virtualization startup tests pass 3/3, the
+Virtualization guest runtime close-recovery addendum: source revisions
+`d68176b` and `28007cf` keep `VirtualizationGuestRuntimeImpl` retryable when
+connection, task-runner, or lifecycle shutdown fails. A failed close no longer
+caches a rejected promise or permanently marks the runtime closed; while the
+explicit close retry is pending, new start/stop operations are fenced and only
+lifecycle status recovery remains available. Only a fully successful shutdown
+marks the runtime closed. Virtualization startup tests pass 3/3, the
 non-overlapping package regression passes 494 total (488 pass, 6 skipped, 0
 fail), and build, typecheck, lint, and diff checks pass. This is a lifecycle
 recovery boundary only; VM boot, guest isolation, production signing,

@@ -4,13 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Virtualization guest runtime close-recovery addendum: source revision
-`d68176b` leaves the runtime retryable after a failed shutdown and marks it
-closed only after every shutdown step succeeds. The focused startup suite
-passes 3/3 and the non-overlapping package regression passes 494 total (488
-pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks pass. This
-does not close the VM boot, guest isolation, credential/process isolation,
-signing, or production task-runner gates. Evidence:
+Virtualization guest runtime close-recovery addendum: source revisions
+`d68176b` and `28007cf` leave the runtime retryable after a failed shutdown and
+mark it closed only after every shutdown step succeeds. While an explicit
+close retry is pending, new start/stop operations are fenced and lifecycle
+status recovery remains available. The focused startup suite passes 3/3 and
+the non-overlapping package regression passes 494 total (488 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This does not close the
+VM boot, guest isolation, credential/process isolation, signing, or production
+task-runner gates. Evidence:
 `evidence/2026-09-15-virtualization-guest-runtime-close-recovery.md`.
 
 Darwin descriptor-exec boundary addendum: the physical host probe records no

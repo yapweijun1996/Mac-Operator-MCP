@@ -3,14 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Virtualization guest runtime close-recovery addendum: commit `d68176b` keeps
-`VirtualizationGuestRuntimeImpl` open and retryable after a failed close,
-clearing the rejected promise cache and requiring a later successful close
-before setting the terminal closed state. Virtualization startup tests pass
-3/3; the non-overlapping package regression passes 494 total (488 pass, 6
-skipped, 0 fail); build, typecheck, lint, and diff checks pass. This closes
-only the local shutdown-recovery boundary and does not provide VM boot,
-guest isolation, credential isolation, signing, or `mac_task_run` evidence.
+Virtualization guest runtime close-recovery addendum: commits `d68176b` and
+`28007cf` keep `VirtualizationGuestRuntimeImpl` open and retryable after a
+failed close, clearing the rejected promise cache, fencing new start/stop work
+while a close retry is pending, and requiring a later successful close before
+setting the terminal closed state. Virtualization startup tests pass 3/3; the
+non-overlapping package regression passes 494 total (488 pass, 6 skipped, 0
+fail); build, typecheck, lint, and diff checks pass. This closes only the
+local shutdown-recovery boundary and does not provide VM boot, guest isolation,
+credential isolation, signing, or `mac_task_run` evidence.
 Evidence: `evidence/2026-09-15-virtualization-guest-runtime-close-recovery.md`.
 
 Darwin descriptor-exec boundary addendum: on Darwin 25.2.0 arm64, the

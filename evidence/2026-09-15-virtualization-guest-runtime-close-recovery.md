@@ -1,7 +1,7 @@
 # Virtualization guest runtime close-recovery evidence
 
 Date: 2026-09-15
-Source commit: `d68176b`
+Source commits: `d68176b`, `28007cf`
 Host: physical Darwin arm64 development host
 
 ## Boundary
@@ -17,9 +17,11 @@ before recovery proceeds.
 The runtime still attempts connection, task-runner, and lifecycle shutdown in
 order and preserves the first failure for stable error mapping. When any
 shutdown step fails, it now clears the cached close promise and leaves the
-runtime open for an explicit retry. Only a fully successful close marks the
-runtime closed. This avoids caching a rejected promise and avoids claiming
-that an unconfirmed VM transition is complete.
+runtime retryable for an explicit close retry. While that retry is pending,
+new start/stop operations are fenced; only lifecycle status recovery remains
+available. Only a fully successful close marks the runtime closed. This avoids
+claiming that an unconfirmed VM transition is complete while preventing work
+from entering a partially closed executor.
 
 ## Verification
 
@@ -39,5 +41,5 @@ remain open.
 
 ## Rollback
 
-Revert commit `d68176b`. No wire contract, persisted state, or capability
+Revert commits `d68176b` and `28007cf`. No wire contract, persisted state, or capability
 advertisement changes are involved.

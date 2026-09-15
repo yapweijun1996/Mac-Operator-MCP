@@ -66,10 +66,12 @@ control rather than atomic executable selection. This ADR must not be accepted
 until a supported descriptor primitive or an immutable, code-signed executable
 snapshot is proven on the target host.
 
-Commit `d68176b` hardens the virtualization startup seam's shutdown recovery:
-`VirtualizationGuestRuntimeImpl` clears a rejected close promise and remains
-retryable when transport, task-runner, or lifecycle shutdown fails. The runtime
-is marked closed only after all shutdown steps succeed. This prevents an
+Commits `d68176b` and `28007cf` harden the virtualization startup seam's
+shutdown recovery: `VirtualizationGuestRuntimeImpl` clears a rejected close
+promise and remains retryable when transport, task-runner, or lifecycle
+shutdown fails. While an explicit close retry is pending, new start/stop work
+is fenced and lifecycle status recovery remains available. The runtime is
+marked closed only after all shutdown steps succeed. This prevents an
 unconfirmed VM transition from becoming a permanent local terminal state, but
 does not provide VM boot or guest isolation evidence and does not authorize
 `mac_task_run`.
