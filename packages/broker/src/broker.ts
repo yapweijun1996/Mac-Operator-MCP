@@ -773,6 +773,7 @@ export class Broker {
           const jobInput = {
             jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
             edgeId: request.principal.edgeId,
+            edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
             ownerPrincipalId: request.principal.principalId,
             ownerSessionId: request.principal.sessionId,
             tool: request.tool,
@@ -834,6 +835,7 @@ export class Broker {
             const jobInput = {
               jobId: `job:write-${sha256(canonicalJson({ principalId: request.principal.principalId, idempotencyKey: execution.write!.idempotencyKey })).slice(0, 48)}`,
               edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -854,6 +856,7 @@ export class Broker {
             const jobInput = {
               jobId: `job:patch-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
               edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -872,6 +875,7 @@ export class Broker {
             const jobInput = {
               jobId: `job:git-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
               edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -891,6 +895,7 @@ export class Broker {
             const jobInput = {
               jobId: `job:app-open-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
               edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -909,6 +914,7 @@ export class Broker {
             const jobInput = {
               jobId: `job:app-focus-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
               edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
@@ -927,6 +933,7 @@ export class Broker {
             const jobInput = {
               jobId: `job:ui-action-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
               edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,

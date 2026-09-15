@@ -96,7 +96,7 @@ const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 10;
+export const BROKER_SCHEMA_VERSION = 11;
 const MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS = 4096;
 
 /**
@@ -183,6 +183,8 @@ export interface BrokerJob {
   jobId: string;
   /** Internal authority correlation; never serialized in tool results. */
   ownerEdgeId: string | null;
+  /** Internal authentication-key correlation; never serialized in tool results. */
+  ownerEdgeKeyId: string | null;
   ownerPrincipalId: string;
   ownerSessionId: string;
   tool: string;
@@ -211,6 +213,8 @@ export interface CreateJobInput {
   jobId: string;
   /** Edge identity that admitted this Job; omitted only for legacy/local fixtures. */
   edgeId?: string;
+  /** Edge/key identity that authenticated this Job; requires edgeId. */
+  edgeKeyId?: string;
   ownerPrincipalId: string;
   ownerSessionId: string;
   tool: string;
@@ -593,6 +597,7 @@ export class BrokerStore {
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY,
         owner_edge_id TEXT,
+        owner_edge_key_id TEXT,
         owner_principal_id TEXT NOT NULL,
         owner_session_id TEXT NOT NULL,
         tool TEXT NOT NULL,
@@ -754,6 +759,8 @@ export class BrokerStore {
         input.decision.requestId !== input.request.requestId || input.intent.requestId !== input.request.requestId ||
         input.job.ownerPrincipalId !== input.request.principalId || input.job.ownerSessionId !== input.request.sessionId ||
         (input.job.edgeId !== undefined && input.job.edgeId !== input.request.edgeId) ||
+        (input.job.edgeKeyId !== undefined &&
+          (input.request.edgeId === undefined || !input.job.edgeKeyId.startsWith(`${input.request.edgeId}:`))) ||
         input.job.tool !== input.request.tool || input.job.policyVersion !== input.request.policyVersion ||
         input.intent.targetRef !== input.decision.targetRef || input.approval.targetRef !== input.decision.targetRef ||
         input.intent.timestampMs < input.decision.timestampMs || input.job.createdAtMs < input.intent.timestampMs ||
@@ -796,7 +803,8 @@ export class BrokerStore {
         if (existing) {
           if (existing.payload_digest !== input.job.payloadDigest || existing.tool !== input.job.tool ||
               existing.target_ref !== input.job.targetRef || existing.policy_version !== input.job.policyVersion ||
-              existing.owner_edge_id !== input.request.edgeId) {
+              existing.owner_edge_id !== input.request.edgeId ||
+              existing.owner_edge_key_id !== (input.job.edgeKeyId ?? null)) {
             throw new BrokerError("CONFLICT", "Idempotency key was already used for a different job payload");
           }
           const reused = mapJob(existing);
@@ -836,13 +844,13 @@ export class BrokerStore {
         });
         this.database.prepare(`
           INSERT INTO jobs(
-            job_id, owner_edge_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
+            job_id, owner_edge_id, owner_edge_key_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
             payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
             finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
             cancel_requested, cancel_reason, write_metadata_json, privileged_payload_json, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, ?, 0)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, ?, 0)
         `).run(
-          input.job.jobId, input.request.edgeId, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
+          input.job.jobId, input.request.edgeId, input.job.edgeKeyId ?? null, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
           input.job.createdAtMs, serializeWriteJobMetadata(input.job.writeMetadata), serializePrivilegedHelperPayload(input.job.privilegedPayload)
         );
@@ -1111,7 +1119,8 @@ export class BrokerStore {
             current.targetRef !== input.intent.targetRef || input.job.ownerPrincipalId !== current.principalId ||
             input.job.ownerSessionId !== current.sessionId || input.job.tool !== current.tool ||
             input.job.policyVersion !== current.policyVersion || input.job.targetRef !== input.intent.targetRef ||
-            (input.job.edgeId !== undefined && input.job.edgeId !== current.edgeId)) {
+            (input.job.edgeId !== undefined && input.job.edgeId !== current.edgeId) ||
+            (input.job.edgeKeyId !== undefined && !input.job.edgeKeyId.startsWith(`${current.edgeId}:`))) {
           throw new BrokerError("CONFLICT", "Request state or approved Job identity changed");
         }
         assertAuditMatchesRequest(input.intent, current);
@@ -1135,13 +1144,13 @@ export class BrokerStore {
         });
         this.database.prepare(`
           INSERT INTO jobs(
-            job_id, owner_edge_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
+            job_id, owner_edge_id, owner_edge_key_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
             payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
             finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
             cancel_requested, cancel_reason, privileged_payload_json, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
         `).run(
-          input.job.jobId, current.edgeId, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
+          input.job.jobId, current.edgeId, input.job.edgeKeyId ?? null, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
           input.job.createdAtMs, serializePrivilegedHelperPayload(input.job.privilegedPayload)
         );
@@ -1555,20 +1564,21 @@ export class BrokerStore {
       if (existing) {
         if (existing.payload_digest !== input.payloadDigest || existing.tool !== input.tool ||
             existing.target_ref !== input.targetRef || existing.policy_version !== input.policyVersion ||
-            existing.owner_edge_id !== (input.edgeId ?? null)) {
+            existing.owner_edge_id !== (input.edgeId ?? null) ||
+            existing.owner_edge_key_id !== (input.edgeKeyId ?? null)) {
           throw new BrokerError("CONFLICT", "Idempotency key was already used for a different authorized job");
         }
         return { job: mapJob(existing), reused: true };
       }
       this.database.prepare(`
         INSERT INTO jobs(
-          job_id, owner_edge_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
+          job_id, owner_edge_id, owner_edge_key_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
           payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
           finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
           cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, guest_metadata_json, privileged_payload_json, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', '', ?, 0)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', '', ?, 0)
       `).run(
-        input.jobId, input.edgeId ?? null, input.ownerPrincipalId, input.ownerSessionId, input.tool, input.targetRef,
+        input.jobId, input.edgeId ?? null, input.edgeKeyId ?? null, input.ownerPrincipalId, input.ownerSessionId, input.tool, input.targetRef,
         input.policyVersion, input.payloadDigest, input.idempotencyKey, input.createdAtMs,
         serializeWriteJobMetadata(input.writeMetadata), serializePrivilegedHelperPayload(input.privilegedPayload)
       );
@@ -2941,7 +2951,8 @@ export class BrokerStore {
         { version: 7, name: "virtualization-guest-task-metadata", apply: () => this.migrateVirtualizationGuestTaskMetadataSchema() },
         { version: 8, name: "virtualization-guest-attestation-key-config", apply: () => this.migrateVirtualizationGuestAttestationKeyConfigSchema() },
         { version: 9, name: "request-capability-family-capacity", apply: () => this.migrateRequestCapabilityFamilySchema() },
-        { version: 10, name: "job-edge-provenance", apply: () => this.migrateJobEdgeProvenanceSchema() }
+        { version: 10, name: "job-edge-provenance", apply: () => this.migrateJobEdgeProvenanceSchema() },
+        { version: 11, name: "job-edge-key-provenance", apply: () => this.migrateJobEdgeKeyProvenanceSchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -3179,6 +3190,21 @@ export class BrokerStore {
     }
   }
 
+  private migrateJobEdgeKeyProvenanceSchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("owner_edge_key_id")) {
+      // Legacy Jobs have no trustworthy Edge-key provenance. They remain null
+      // and are treated conservatively during upstream key revocation.
+      this.database.exec("ALTER TABLE jobs ADD COLUMN owner_edge_key_id TEXT");
+    }
+    const migratedColumns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name?: unknown; type?: unknown; notnull?: unknown }>;
+    const ownerEdgeKeyColumn = migratedColumns.find((column) => column.name === "owner_edge_key_id");
+    if (ownerEdgeKeyColumn?.type !== "TEXT" || ownerEdgeKeyColumn.notnull !== 0) {
+      throw new Error("Broker Job Edge-key provenance schema is unavailable");
+    }
+  }
+
   private acquireRuntimeFence(nowMs: number): void {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Broker runtime fence timestamp is malformed");
     this.database.exec("BEGIN IMMEDIATE");
@@ -3235,6 +3261,7 @@ function validateConfigActivationIdentity(identity: {
 interface JobRow {
   job_id: string;
   owner_edge_id: string | null;
+  owner_edge_key_id: string | null;
   owner_principal_id: string;
   owner_session_id: string;
   tool: string;
@@ -3364,9 +3391,15 @@ function mapJob(row: JobRow): BrokerJob {
       (typeof row.owner_edge_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_edge_id))) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job Edge provenance is malformed");
   }
+  if (row.owner_edge_key_id !== null &&
+      (typeof row.owner_edge_key_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(row.owner_edge_key_id) || row.owner_edge_id === null ||
+        !row.owner_edge_key_id.startsWith(`${row.owner_edge_id}:`))) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job Edge-key provenance is malformed");
+  }
   return {
     jobId: row.job_id,
     ownerEdgeId: row.owner_edge_id,
+    ownerEdgeKeyId: row.owner_edge_key_id,
     ownerPrincipalId: row.owner_principal_id,
     ownerSessionId: row.owner_session_id,
     tool: row.tool,
@@ -3395,6 +3428,9 @@ function mapJob(row: JobRow): BrokerJob {
 function validateJobCreation(input: CreateJobInput): void {
   if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(input.jobId) ||
       (input.edgeId !== undefined && !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.edgeId)) ||
+      (input.edgeKeyId !== undefined &&
+        (!/^[A-Za-z0-9._:@/-]{1,256}$/u.test(input.edgeKeyId) || input.edgeId === undefined ||
+          !input.edgeKeyId.startsWith(`${input.edgeId}:`))) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.ownerPrincipalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.ownerSessionId) ||
       !/^mac_[a-z0-9_]{1,123}$/u.test(input.tool) ||
@@ -3975,8 +4011,14 @@ function queuedJobAffectedByRevocation(kind: RevocationKind, subjectId: string, 
     if (typeof row.owner_edge_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_edge_id)) return true;
     return row.owner_edge_id === subjectId;
   }
-  // Edge keys and other upstream identities are not persisted on Jobs yet;
-  // revoking one therefore conservatively cancels every queued Job.
+  if (kind === "edge_key") {
+    if (row.owner_edge_key_id === null) return true;
+    if (typeof row.owner_edge_key_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(row.owner_edge_key_id) ||
+        row.owner_edge_id === null || !row.owner_edge_key_id.startsWith(`${row.owner_edge_id}:`)) return true;
+    return row.owner_edge_key_id === subjectId;
+  }
+  // Other upstream identities are not persisted on Jobs yet; revoking one
+  // therefore conservatively cancels every queued Job.
   return true;
 }
 

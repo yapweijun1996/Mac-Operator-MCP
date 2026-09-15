@@ -34,7 +34,8 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 7, name: "virtualization-guest-task-metadata" },
         { version: 8, name: "virtualization-guest-attestation-key-config" },
         { version: 9, name: "request-capability-family-capacity" },
-        { version: 10, name: "job-edge-provenance" }
+        { version: 10, name: "job-edge-provenance" },
+        { version: 11, name: "job-edge-key-provenance" }
       ]);
     } finally {
       database.close();
@@ -319,7 +320,7 @@ test("BrokerStore adds write metadata storage to an existing Job Ledger", async 
     try {
       const columns = migrated.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
       const names = new Set(columns.map((column) => column.name));
-      for (const name of ["owner_edge_id", "lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms", "process_metadata_json", "privileged_payload_json"]) {
+      for (const name of ["owner_edge_id", "owner_edge_key_id", "lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms", "process_metadata_json", "privileged_payload_json"]) {
         assert.equal(names.has(name), true, `expected migrated Job column ${name}`);
       }
     } finally {
@@ -1665,6 +1666,25 @@ test("Edge revocation cancels matching and unknown-provenance queued Jobs only",
     assert.equal(store.ownedJob("job:edge-one", "principal-1")?.state, "cancelled");
     assert.equal(store.ownedJob("job:edge-two", "principal-1")?.state, "queued");
     assert.equal(store.ownedJob("job:edge-legacy", "principal-1")?.state, "cancelled");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Edge-key revocation cancels matching and unknown-provenance queued Jobs only", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-edge-key-revocation-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    store.createJob({ ...jobInput("job:key-one", "idem-key-one"), edgeId: "edge-1", edgeKeyId: "edge-1:key-old" });
+    store.createJob({ ...jobInput("job:key-two", "idem-key-two"), edgeId: "edge-1", edgeKeyId: "edge-1:key-new" });
+    store.createJob(jobInput("job:key-legacy", "idem-key-legacy"));
+
+    store.revoke("edge_key", "edge-1:key-old", "EDGE_KEY_REVOKED", 2);
+
+    assert.equal(store.ownedJob("job:key-one", "principal-1")?.state, "cancelled");
+    assert.equal(store.ownedJob("job:key-two", "principal-1")?.state, "queued");
+    assert.equal(store.ownedJob("job:key-legacy", "principal-1")?.state, "cancelled");
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
