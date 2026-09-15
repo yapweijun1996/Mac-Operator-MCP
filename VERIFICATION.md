@@ -3,13 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Signed policy schema alignment verification at source revision `3c76604`:
+Signed policy schema alignment verification at source revision `3c76604`, with
+grammar centralization revalidated at `9a4554e`:
 the policy document schema now represents `docker_runtime` and
 `docker_object` targets and constrains all target kinds with their canonical
 reference forms. `PolicyBundleVerifier.verify()` materializes and validates the
 Broker policy before returning a verified bundle, preventing malformed signed
 target rules from reaching activation. The policy-loader suite passes 16/16;
-the combined policy/loader/target suites pass 30/30; typecheck, lint, docs,
+the combined policy/loader/target suites pass 30/30 after the shared
+target-authority refactor; typecheck, lint, docs,
 matrix, and diff checks pass. Parameterized grant matching, live resource
 readback, native transport, remote issuer, and release evidence remain open.
 Evidence: `evidence/2026-09-16-signed-policy-target-schema.md`.

@@ -4,13 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Signed policy schema alignment addendum at source revision `3c76604`: the
+Signed policy schema alignment addendum at source revision `3c76604`, with
+grammar centralization revalidated at `9a4554e`: the
 policy document schema now represents `docker_runtime` and `docker_object` and
 constrains every target kind with its canonical reference form. The signed
 policy verifier materializes and validates the Broker policy before returning a
 verified bundle, so malformed target rules fail before activation. The
 policy-loader suite passes 16/16 and the combined policy/loader/target suites
-pass 30/30. This closes schema/runtime alignment and early target-rule
+pass 30/30 after the shared target-authority refactor. This closes schema/runtime alignment and early target-rule
 validation only; parameterized grant matching, live resource readback, native
 transport, remote issuer, and release evidence remain open. Evidence:
 `evidence/2026-09-16-signed-policy-target-schema.md`.
