@@ -3078,3 +3078,14 @@ status lookup, including Edge-key revocation checks. Build, typecheck, lint, and
 revocation smoke pass; the non-overlapping package regression remains 546
 total (540 passed, 6 skipped, 0 failed). Evidence:
 `evidence/2026-09-15-job-edge-provenance.md`.
+
+Edge authentication identity validation is now owned by the keyring itself
+(source revision `a2580e0`). Direct `EdgeKeyring` construction rejects malformed
+or traversal-shaped Edge/key IDs before authority is loaded, and config,
+persisted Job provenance, and `Broker.revokeEdge` reuse the same bounded Edge
+identity predicate. Focused keyring/config tests pass 9/9; build, typecheck,
+lint, contract verification, and diff checks pass; the non-overlapping package
+regression now passes 547 total (541 passed, 6 skipped, 0 failed). This closes a constructor
+versus loader validation drift but does not close production key distribution,
+Developer ID provenance, or installed-service evidence. Evidence:
+`evidence/2026-09-15-edge-keyring-identity-boundary.md`.

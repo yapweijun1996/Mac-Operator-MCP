@@ -101,3 +101,10 @@ explicit at creation, readback, and revoke boundaries. These changes close a loc
 do not close production policy distribution or ADR acceptance. Commit `b31cf4c`
 also fences restarted guest status recovery on the persisted Edge-key
 revocation state.
+
+Commit `a2580e0` closes a related identity-validation drift: `EdgeKeyring.add`
+now rejects malformed Edge/key identifiers before loading authority, while the
+config loader, persisted Job provenance, and Edge revocation path reuse the
+same bounded Edge identity predicate. This is a local fail-closed consistency
+guard; it does not change the Proposed status or close production key
+distribution and installation evidence.

@@ -2750,3 +2750,15 @@ non-overlapping package regression remains 546 total (540 passed, 6 skipped,
 because the long-lived persistence test process was already active; physical
 Edge lifecycle and production service evidence remain open. Evidence:
 `evidence/2026-09-15-job-edge-provenance.md`.
+
+Edge-keyring identity-boundary verification at source revision `a2580e0`
+confirms direct keyring construction rejects malformed, traversal-shaped, and
+overlong Edge/key IDs before inserting authentication authority. The same
+bounded Edge identity predicate is reused by Edge config loading, persisted Job
+provenance readback/creation, and `Broker.revokeEdge`; focused keyring/config
+tests pass 9/9. Build, typecheck, lint, contract verification, and diff checks
+pass; the non-overlapping package regression passes 547 total (541 passed, 6
+skipped, 0 failed). This is local constructor/loader consistency evidence only; production
+key distribution, signing provenance, and installed-service evidence remain
+open. Evidence:
+`evidence/2026-09-15-edge-keyring-identity-boundary.md`.
