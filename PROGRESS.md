@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Contract-policy parity addendum: source revision `20b5d9b` corrects six
+default-policy budget/target values that had drifted from the materialized
+contracts and adds a fail-closed parity test for all 44 tool entries. The
+test compares required scopes, Broker target vocabulary (including explicit
+caller-facing aliases), timeout, output cap, approval policy, mutation safety,
+and the complete tool set. This prevents Edge contract metadata from silently
+describing a broader or different Broker authority. Focused parity test passes
+1/1; no runtime capability was enabled. Evidence:
+`evidence/2026-09-16-contract-policy-parity.md`.
+
 Contract-schema identity addendum: source revision `f7cd4fe` makes the
 top-level `$schema` identity mandatory in the machine-readable tool-contract
 schema, matching the Edge loader's fail-closed validation. The focused

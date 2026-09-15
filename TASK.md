@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-005 contract-policy parity addendum: source revision `20b5d9b` fixes six
+default Broker policy values that differed from the versioned contracts and
+adds a complete 44-tool parity regression. Required scopes, normalized target
+aliases, timeout, output cap, approval policy, mutation safety, and tool-set
+membership are checked; `mac_project_summary` records its explicit
+`project_root`-to-descriptor-backed-`path` normalization. Focused parity test
+passes 1/1 and no tool was enabled. Evidence:
+`evidence/2026-09-16-contract-policy-parity.md`.
+
 MOP-084 contract-schema identity addendum: source revision `f7cd4fe` requires
 the top-level `$schema` identity in the machine-readable tool-contract
 schema, matching the Edge loader. The focused contract-registry suite passes

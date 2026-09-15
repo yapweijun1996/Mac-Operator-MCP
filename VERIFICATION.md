@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Contract-policy parity verification at source revision `20b5d9b`: the default
+Broker policy now matches all 44 materialized contracts for required scopes,
+Broker-normalized target type, timeout, output cap, approval policy, mutation
+safety, and tool-set membership. Six pre-existing budget/target drifts were
+corrected, including an explicit descriptor-backed `project_root` to `path`
+normalization for `mac_project_summary`. The focused parity test passes 1/1;
+no runtime capability was enabled. Evidence:
+`evidence/2026-09-16-contract-policy-parity.md`.
+
 Contract-schema identity verification at source revision `f7cd4fe`: the
 machine-readable tool-contract schema now requires the top-level `$schema`
 identity already enforced by the Edge loader. The focused contract-registry
