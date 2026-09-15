@@ -13,10 +13,10 @@ and diff checks pass. Physical crash recovery, production signing/Keychain,
 installed lifecycle, isolation, disk exhaustion, and independent review remain
 open. Evidence: `evidence/2026-09-15-core-schema-layout.md`.
 
-Local-gate checkpoint addendum: source revision `7becf03` passes 5/5 native
+Local-gate checkpoint addendum: source revision `616bcdd` passes 5/5 native
 canonical-JSON vectors, `npm audit --audit-level=high` reports zero
-vulnerabilities, lint passes for 600 tracked files, and `git diff --check`
-passes. The non-overlapping package regression remains 591 total (585 pass,
+vulnerabilities, lint passes for 602 tracked files, and `git diff --check`
+passes. The non-overlapping package regression remains 592 total (586 pass,
 6 skipped, 0 fail); the already-running Broker/persistence suites were not
 restarted. The working tree is clean and no remote push was performed.
 Evidence: `evidence/2026-09-15-final-local-gates.md`.
