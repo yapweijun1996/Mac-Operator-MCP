@@ -25,6 +25,7 @@ diff checks pass. Revision `9a4554e` centralizes the query and signed-policy
 grammars in one Broker target-authority module; the same 30/30 regression was
 rerun after that refactor.
 
-This closes schema/runtime alignment and early target-rule validation only;
-parameterized grant serialization, live Docker/resource identity readback,
-native transport, remote issuer, and release evidence remain open.
+This closes schema/runtime alignment and early target-rule validation. Finite
+same-kind target-constraint serialization and matching are recorded separately
+at revision `1ea5ab4`; live Docker/resource identity readback, native
+transport, remote issuer, and release evidence remain open.

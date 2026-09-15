@@ -12,9 +12,20 @@ policy verifier materializes and validates the Broker policy before returning a
 verified bundle, so malformed target rules fail before activation. The
 policy-loader suite passes 16/16 and the combined policy/loader/target suites
 pass 30/30 after the shared target-authority refactor. This closes schema/runtime alignment and early target-rule
-validation only; parameterized grant matching, live resource readback, native
-transport, remote issuer, and release evidence remain open. Evidence:
+validation at that revision; finite-set parameterized matching is covered by
+the later `1ea5ab4` addendum below. Live resource readback, native transport,
+remote issuer, and release evidence remain open. Evidence:
 `evidence/2026-09-16-signed-policy-target-schema.md`.
+
+Parameterized target-constraint addendum at source revision `1ea5ab4`: signed
+target rules now support a bounded `target_constraint` finite set of canonical
+same-kind references. The anchor, uniqueness, lexical ordering, cross-kind
+grammar, policy-loader materialization, immutable clone, deny-over-allow, and
+default-deny matching checks pass in the focused 33/33 policy/loader/target
+regression. This closes finite-set serialization and local matching only;
+physical resource identity readback, native transport, remote issuer, and
+release evidence remain open. Evidence:
+`evidence/2026-09-16-parameterized-target-constraints.md`.
 
 Signed policy target validation addendum at source revision `7e92fe9`:
 `validateBrokerPolicy` now applies target-kind-specific, bounded reference

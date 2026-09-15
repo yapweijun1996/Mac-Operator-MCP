@@ -29,7 +29,7 @@ Schema-invalid, unknown field, conflicting rule, deny-inside-allow, downgrade, u
 
 The local Broker prototype uses a JSON Schema 2020-12 policy document inside an Ed25519-signed bundle. The offline/operator side owns the private signing key; the Broker receives only protected public-key files and key IDs. The signature covers deterministic canonical JSON and a recorded SHA-256 payload digest. Each versioned signer entry also binds a SHA-256 digest of its protected public-key file. The verifier accepts a bounded set of overlapping Ed25519 signer entries with validity windows and a Broker-owned revocation callback, so an old signer can be revoked without disabling its replacement. Reload, rollback, and revocation are available only through a separate owner-only UDS with a distinct HMAC key, OS peer verification, and durable replay admission; no MCP tool exposes them.
 
-The signed document owns exact principal grants, exact allow/deny target rules, trusted Edge IDs, tool enablement, and independent kill-switch states. It cannot change code-owned implementation state, contract scopes, budgets, schemas, or handlers. A policy cannot enable an unimplemented tool. Unknown fields, unknown scopes/tools, duplicate identities, target wildcards, digest mismatch, invalid signatures, future issue times, and non-increasing revisions fail closed.
+The signed document owns exact principal grants, exact or finite-set allow/deny target rules, trusted Edge IDs, tool enablement, and independent kill-switch states. It cannot change code-owned implementation state, contract scopes, budgets, schemas, or handlers. A policy cannot enable an unimplemented tool. Unknown fields, unknown scopes/tools, duplicate identities, target wildcards, digest mismatch, invalid signatures, future issue times, and non-increasing revisions fail closed.
 
 Policy files and pinned public-key files must be regular, non-symlink, current-user-owned files that are not group/world writable. The loader checks the opened device/inode against the authorized path object. A verified policy is built completely before `PolicyManager` replaces one in-memory reference. Each request holds one immutable policy snapshot and binds its signed envelope to that exact policy version.
 
@@ -45,6 +45,16 @@ bundle, so malformed signed target rules fail before activation. This closes
 schema/runtime target alignment only; parameterized grant serialization, live
 resource identity readback, installed distribution, and production evidence
 remain acceptance requirements.
+
+Revision `1ea5ab4` adds the first parameterized-target form: an optional signed
+`target_constraint` finite set of at most 64 same-kind canonical references.
+The anchor target must be a member, references must be unique and sorted, and
+runtime matching uses only normalized references with deny-over-allow and
+default deny. The JSON Schema, policy loader, immutable policy clone, and
+authorization path all validate the same shape. This closes finite-set
+serialization and local matching only; physical resource identity readback,
+remote issuer evidence, native transport, and ADR acceptance remain open.
+Evidence: `evidence/2026-09-16-parameterized-target-constraints.md`.
 
 Revision `ea50824` adds a shared post-read descriptor check for the policy
 file, Edge/approval/authority/helper key metadata, signer public keys, and
