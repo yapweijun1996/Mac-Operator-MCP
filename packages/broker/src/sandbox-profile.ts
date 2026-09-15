@@ -18,12 +18,17 @@ const PROJECT_SECRET_FILES = [
   ".env", ".env.local", ".env.production", ".env.development", ".env.test", ".git-credentials", ".npmrc"
 ] as const;
 
+export interface TaskSandboxProfileOptions {
+  /** Broker-owned roots that must remain inaccessible even when task roots overlap them. */
+  protectedFilesystemRoots?: readonly string[];
+}
+
 /**
  * Render only the Broker-owned subset of Seatbelt policy. The profile is
  * intentionally deny-default and supports only loopback network destinations;
  * callers must not pass arbitrary SBPL text.
  */
-export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
+export function renderTaskSandboxProfile(profile: ResolvedTaskProfile, options: TaskSandboxProfileOptions = {}): string {
   if (profile === null || typeof profile !== "object" || Array.isArray(profile) ||
       typeof profile.sandboxProfile !== "string" || profile.sandboxProfile.length < 1 ||
       !/^[A-Za-z0-9._:-]{1,128}$/u.test(profile.sandboxProfile) ||
@@ -57,6 +62,7 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
   if (!roots.some((root) => isContained(root, profile.cwd))) {
     throw new BrokerError("POLICY_DENIED", "Task cwd is not inside an allowed sandbox root");
   }
+  const protectedRoots = normalizeProtectedFilesystemRoots(options.protectedFilesystemRoots);
 
   const lines = [
     "(version 1)",
@@ -79,6 +85,10 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
     lines.push(`(allow file-read* (subpath ${quote(root)}))`);
     lines.push(`(allow file-write* (subpath ${quote(root)}))`);
   }
+  for (const root of protectedRoots) {
+    lines.push(`(deny file-read* (subpath ${quote(root)}))`);
+    lines.push(`(deny file-write* (subpath ${quote(root)}))`);
+  }
   for (const zone of secretZones(roots)) {
     lines.push(`(deny file-read* (subpath ${quote(zone)}))`);
     lines.push(`(deny file-write* (subpath ${quote(zone)}))`);
@@ -96,8 +106,8 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile): string {
   return rendered;
 }
 
-export function buildSandboxExecArguments(profile: ResolvedTaskProfile): readonly string[] {
-  const sandboxProfile = renderTaskSandboxProfile(profile);
+export function buildSandboxExecArguments(profile: ResolvedTaskProfile, options: TaskSandboxProfileOptions = {}): readonly string[] {
+  const sandboxProfile = renderTaskSandboxProfile(profile, options);
   return ["-p", sandboxProfile, profile.process.executable, ...profile.process.args];
 }
 
@@ -113,6 +123,14 @@ function isCanonicalAbsolutePath(value: unknown): value is string {
 
 function isSafeFilesystemRoot(value: unknown): value is string {
   return isCanonicalAbsolutePath(value) && !PROTECTED_ROOTS.has(value);
+}
+
+function normalizeProtectedFilesystemRoots(value: readonly string[] | undefined): readonly string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 32 || value.some((root) => !isCanonicalAbsolutePath(root))) {
+    throw new BrokerError("POLICY_DENIED", "Protected sandbox roots are malformed");
+  }
+  return [...new Set(value)].sort();
 }
 
 function secretZones(roots: readonly string[]): readonly string[] {

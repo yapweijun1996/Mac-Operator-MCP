@@ -67,6 +67,9 @@ test("sandbox profile renderer emits a deterministic deny-default no-network pol
     assert.deepEqual(buildSandboxExecArguments(profile).slice(-1), ["sandboxed"]);
     const groupProfile = renderTaskSandboxProfile({ ...profile, processTreePolicy: "owned_group" });
     assert.match(groupProfile, /\(allow process-fork\)/u);
+    const protectedProfile = renderTaskSandboxProfile(profile, { protectedFilesystemRoots: [root, "/private/var/run/mac-operator-broker"] });
+    assert.match(protectedProfile, new RegExp(`\\(deny file-read\\* \\(subpath "${escapeRegExp(root)}"\\)\\)`));
+    assert.match(protectedProfile, /\(deny file-write\* \(subpath "\/private\/var\/run\/mac-operator-broker"\)\)/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -99,6 +102,10 @@ test("sandbox profile renderer rejects broad roots, cwd escapes, and network all
     );
     assert.throws(
       () => renderTaskSandboxProfile(resolvedProfile(root, { credentialPolicy: "broker-managed" as never })),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    assert.throws(
+      () => renderTaskSandboxProfile(resolvedProfile(root), { protectedFilesystemRoots: ["/tmp/../private"] }),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
     );
   } finally {
@@ -172,6 +179,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
       enabled: true,
       hostEvidenceAccepted: true,
       isolationProof: proof(),
+      protectedFilesystemRoots: ["/private/var/run/mac-operator-broker"],
       supervisor
     });
     if (process.platform !== "darwin") {
@@ -199,6 +207,7 @@ test("SandboxExecTaskRunner passes only Broker-rendered arguments to the supervi
     assert.equal(observed?.args[0], "-p");
     assert.equal(observed?.args[2], "/usr/bin/printf");
     assert.equal(observed?.args.includes("/bin/sh"), false);
+    assert.match(String(observed?.args[1]), /deny file-read\* \(subpath "\/private\/var\/run\/mac-operator-broker"\)/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -450,6 +459,9 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-real-"));
   const root = await realpath(directory);
+  const protectedRoot = join(root, "broker-persistence");
+  await mkdir(protectedRoot, { mode: 0o700 });
+  await writeFile(join(protectedRoot, "ledger.sqlite"), "synthetic-persistence-secret", { mode: 0o600 });
   await writeFile(join(root, "fixture.txt"), "fixture", { mode: 0o600 });
   await mkdir(join(root, "nested"), { mode: 0o700 });
   await writeFile(join(root, "nested", ".env"), "synthetic-secret=redacted", { mode: 0o600 });
@@ -469,7 +481,8 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
   const runner = new SandboxExecTaskRunner({
     enabled: true,
     hostEvidenceAccepted: true,
-    isolationProof: proof()
+    isolationProof: proof(),
+    protectedFilesystemRoots: [protectedRoot]
   });
   const previousCanary = process.env.MOP_CONTROLLER_SECRET;
   const previousHome = process.env.HOME;
@@ -481,7 +494,7 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
   process.env.AWS_PROFILE = "synthetic-profile";
   try {
     const canary = await runner.run({
-      ...resolvedProfile(root),
+      ...resolvedProfile(root, { filesystemRoots: [root, protectedRoot] }),
       profile: "tests.canary",
       process: {
         ...resolvedProfile(root).process,
@@ -492,6 +505,7 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
           "printf ':'; if [ -r ./fixture.txt ]; then printf allowed; else printf denied; fi",
           "printf ':'; if [ -r ./nested/.env ]; then printf leaked; else printf denied; fi",
           "if [ -r ./passwd-link ]; then printf ':link-leaked'; else printf ':link-denied'; fi",
+          `printf ':'; if [ -r '${protectedRoot}/ledger.sqlite' ]; then printf persistence-leaked; else printf persistence-denied; fi`,
           ...protectedSurfaces.map(([label, path]) => `printf ':'; if [ -e '${path.replaceAll("'", "'\\''")}' ] && [ -r '${path.replaceAll("'", "'\\''")}' ]; then printf '${label}-leaked'; else printf '${label}-denied'; fi`),
           "printf ':'; if [ -e /var/run/docker.sock ] && [ -r /var/run/docker.sock ]; then printf docker-socket-leaked; else printf docker-socket-denied; fi",
           "printf created > ./created.txt"
@@ -499,7 +513,7 @@ test("real macOS sandbox runner blocks inherited environment, protected files, a
       }
     }, { timeoutMs: 2_000, shouldCancel: () => false });
     assert.equal(canary.resultClass, "SUCCEEDED");
-    assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied:ssh-denied:codex-config-denied:docker-config-denied:openai-config-denied:chrome-denied:safari-denied:mail-denied:messages-denied:keychain-denied:docker-socket-denied");
+    assert.equal(canary.stdout, "unset:unset:unset:unset:denied:allowed:denied:link-denied:persistence-denied:ssh-denied:codex-config-denied:docker-config-denied:openai-config-denied:chrome-denied:safari-denied:mail-denied:messages-denied:keychain-denied:docker-socket-denied");
     assert.equal(await readFile(join(root, "created.txt"), "utf8"), "created");
 
     const allowedServer = await startHttpServer("network-allowed");

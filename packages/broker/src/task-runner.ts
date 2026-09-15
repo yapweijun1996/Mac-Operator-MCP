@@ -9,7 +9,7 @@ import {
   type ProcessPathIdentity
 } from "./process-supervisor.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
-import { buildSandboxExecArguments } from "./sandbox-profile.js";
+import { buildSandboxExecArguments, type TaskSandboxProfileOptions } from "./sandbox-profile.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 import {
   isVirtualizationGuestIdentity,
@@ -150,6 +150,8 @@ export interface SandboxExecTaskRunnerOptions {
   hostEvidenceAccepted?: boolean;
   isolationProof?: TaskIsolationProof | null;
   allowedEnvironmentKeys?: readonly string[];
+  /** Canonical Broker-owned roots denied by the task profile, including persistence roots. */
+  protectedFilesystemRoots?: readonly string[];
   /** Test-only override; production reads volume identity from the protected native adapter. */
   filesystemIdentityObserver?: (rootPath: string) => unknown;
   supervisor?: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
@@ -176,6 +178,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
   readonly isolationProof: TaskIsolationProof | null;
   private readonly supervisor: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
   private readonly filesystemIdentityObserver: (rootPath: string) => unknown;
+  private readonly sandboxProfileOptions: TaskSandboxProfileOptions;
 
   constructor(options: SandboxExecTaskRunnerOptions = {}) {
     const proof = options.isolationProof === null || options.isolationProof === undefined
@@ -185,6 +188,9 @@ export class SandboxExecTaskRunner implements TaskRunner {
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
       allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? []
     });
+    this.sandboxProfileOptions = {
+      ...(options.protectedFilesystemRoots === undefined ? {} : { protectedFilesystemRoots: [...options.protectedFilesystemRoots] })
+    };
     this.filesystemIdentityObserver = options.filesystemIdentityObserver ?? ((rootPath) => {
       const native = loadNativePeerAdapter() as unknown as NativeTaskFilesystemIdentityAdapter;
       return native.statStorageVolumeWithinRoot(rootPath);
@@ -210,7 +216,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
     const taskCwdIdentity = await captureTaskProcessPathIdentity(profile.cwd, "directory");
     const taskFilesystemRootIdentities = await captureTaskFilesystemRootIdentities(profile.filesystemRoots);
     const filesystemIdentity = captureTaskFilesystemIdentity(profile, this.filesystemIdentityObserver);
-    const args = buildSandboxExecArguments(profile);
+    const args = buildSandboxExecArguments(profile, this.sandboxProfileOptions);
     const requiresOwnershipPersistence = control.onProcessStarted !== undefined || control.onProcessOwnershipChanged !== undefined;
     const ownershipProof = profile.processTreePolicy === "single_process"
       ? "sandbox-exec-no-fork-v1" as const
