@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+TLS material lifetime verification at source revision `96adc2d` returns the
+validated protected-file buffer directly and clears the certificate buffer on
+private-key load failure. Build, lint, typecheck, and diff checks pass; the
+focused Edge TLS/service-startup suite passes 8/8. Production TLS key
+packaging, listener shutdown readback, and full HTTPS Edge regression remain
+open. Evidence: `evidence/2026-09-15-tls-material-lifetime.md`.
+
 Edge key handoff verification at source revision `5695db0` clears the
 loader-owned protected-file key buffer after defensive constructor copy.
 Build, lint, typecheck, diff checks, and the focused Edge key/request-factory

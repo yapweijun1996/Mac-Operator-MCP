@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+TLS material lifetime addendum: source revision `96adc2d` returns the validated
+protected-file buffer without an unnecessary duplicate and wipes the loaded
+certificate if private-key loading fails. Build, lint, typecheck, diff checks,
+and the focused 8-test Edge TLS/service-startup suite pass; production TLS key
+packaging and full HTTPS Edge evidence remain open. Evidence:
+`evidence/2026-09-15-tls-material-lifetime.md`.
+
 Edge key handoff lifetime addendum: source revision `5695db0` clears the
 protected-file loader buffer after `EdgeRequestFactory` copies it, matching the
 Keychain delivery lifecycle. Build, lint, typecheck, diff checks, and the

@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+TLS material lifetime addendum: commit `96adc2d` returns the validated TLS
+file buffer without an unnecessary duplicate and wipes a partially loaded
+certificate when private-key loading fails. Focused Edge TLS/service-startup
+tests pass 8/8; production TLS packaging, shutdown readback, and full HTTPS
+Edge evidence remain open. Evidence:
+`evidence/2026-09-15-tls-material-lifetime.md`.
+
 Edge key handoff lifetime addendum: commit `5695db0` clears the protected-file
 loader buffer after request-factory copy. Focused Edge key/request-factory
 tests pass 5/5; full HTTPS Edge and production key-storage evidence remain
