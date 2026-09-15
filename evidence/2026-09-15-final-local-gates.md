@@ -3,7 +3,7 @@
 Status: PARTIAL release evidence; full production gates remain open
 
 Date: 2026-09-15
-Source revision: `616bcdd`
+Source revision: `a26e6d8`
 
 ## Verification
 

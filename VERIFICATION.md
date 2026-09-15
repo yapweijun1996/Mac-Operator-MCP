@@ -12,7 +12,7 @@ recovery, production signing/Keychain, installed lifecycle, isolation, disk
 exhaustion, and independent review remain unverified. Evidence:
 `evidence/2026-09-15-core-schema-layout.md`.
 
-Local-gate checkpoint at source revision `616bcdd`: native canonical-JSON
+Local-gate checkpoint at source revision `a26e6d8`: native canonical-JSON
 vectors pass 5/5, dependency audit reports zero high-severity vulnerabilities,
 lint passes for 602 tracked files, and `git diff --check` passes. The
 non-overlapping package regression passes 592 total (586 passed, 6 explicitly

@@ -15,7 +15,7 @@ production signing/Keychain, installed lifecycle, isolation, disk exhaustion,
 and independent review remain open. Evidence:
 `evidence/2026-09-15-core-schema-layout.md`.
 
-Local-gate checkpoint addendum: source revision `616bcdd` passes 5/5 native
+Local-gate checkpoint addendum: source revision `a26e6d8` passes 5/5 native
 canonical-JSON vectors, `npm audit --audit-level=high` reports zero
 vulnerabilities, lint passes for 602 tracked files, and `git diff --check`
 passes. The non-overlapping package regression remains 592 total (586 pass,
