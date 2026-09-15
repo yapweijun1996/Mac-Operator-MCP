@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Real Docker readback addendum at source revision `a0c753a`: the strict local
+Docker adapter accepts Docker 29's bounded `Platform` metadata field and now
+returns 24 container records from the host's Docker Desktop daemon without
+warnings or truncation. The focused Docker suite passes 9/9; real container
+inspect returns bounded sanitized metadata. This closes the installed local
+Docker Desktop compatibility slice only; the daemon is a Linux VM context,
+arbitrary socket access remains excluded, and container mutation, VM isolation,
+and production evidence remain open. Evidence:
+`evidence/2026-09-16-real-docker-readback.md`.
+
 Process inspection start-time addendum at source revision `f01ddb8`: the
 native adapter reads PID plus `startTimeMicros` before and after bounded
 inspection and rejects any identity change, while keeping start time out of

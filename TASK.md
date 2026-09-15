@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-042 real Docker readback addendum at source revision `a0c753a`: Docker
+29.1.3 on the physical Mac mini's Docker Desktop `desktop-linux` context now
+passes the strict container-record parser, including its bounded `Platform`
+field. Status returned 24 containers without warnings/truncation and bounded
+container inspect succeeded; the focused Docker suite passes 9/9. This is
+local Docker Desktop compatibility evidence only and does not enable mutation
+or arbitrary Docker socket access. Evidence:
+`evidence/2026-09-16-real-docker-readback.md`.
+
 MOP-031 native identity addendum at source revision `f01ddb8`: bounded process
 inspection now fences the native PID and `startTimeMicros` before and after
 metadata collection, rejecting PID reuse or target replacement. Focused
