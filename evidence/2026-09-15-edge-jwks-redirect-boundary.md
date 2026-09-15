@@ -1,7 +1,7 @@
 # Edge JWKS redirect boundary evidence
 
 Date: 2026-09-15
-Source commit: `c97140a`
+Source commits: `c97140a` (implementation), `d1b00d7` (final-URL branch coverage)
 Host: physical Darwin arm64 development host
 Scope: remote OAuth JWKS retrieval and endpoint identity
 
@@ -21,7 +21,8 @@ remain in force.
 
 ## Verification
 
-- JWT verifier tests pass 7/7, including redirected response rejection.
+- JWT verifier tests pass 7/7, including redirected and mismatched final-URL
+  response rejection.
 - All Edge tests pass 40/40 with 0 skipped tests.
 - The non-overlapping physical-Darwin regression passes 490/490 with 0
   skipped tests.
