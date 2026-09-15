@@ -3,6 +3,21 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest request-envelope validation verification at source revision `19099e4`:
+the executor snapshot and profile registry both call
+`validateUnsignedVirtualizationGuestRequest`, closing the direct-invocation
+path that could otherwise skip strict version, kind, identifier, guest
+identity, operation, and limit checks. Negative coverage proves malformed
+operation and schema-version inputs are rejected before adapter execution.
+Focused guest-executor tests pass 12/12; the related Guest suite passes 78/78;
+the serial physical regression passes 663/668 with 0 failures and 5 explicit
+descriptor-capability skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes request-envelope validation at the
+guest executor boundary only; authenticated transport admission, native VM
+isolation, immutable executable selection, and production enablement remain
+open. Evidence:
+`evidence/2026-09-16-guest-request-envelope-validation.md`.
+
 Resolved task-profile snapshot verification at source revision `45e1472`:
 `TaskProfileRegistry.resolve()` recursively freezes the exact Broker-owned
 profile snapshot handed to task adapters. Negative coverage proves that

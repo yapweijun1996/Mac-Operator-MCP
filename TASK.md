@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/012 Guest request-envelope validation addendum at source revision
+`19099e4`: the virtualization guest executor snapshot and profile registry
+both invoke the strict transport validator, so direct callers cannot bypass
+version, kind, identifier, guest-identity, operation, or limit checks.
+Focused guest-executor tests pass 12/12; the related Guest suite passes 78/78;
+the serial physical regression passes 663/668 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-request-envelope-validation.md`.
+
 MOP-043/045/086 resolved task-profile snapshot addendum at source revision
 `45e1472`: `TaskProfileRegistry.resolve()` recursively freezes the
 Broker-authorized profile handed to adapters, covering executable/cwd,

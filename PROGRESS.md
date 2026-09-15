@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Guest request-envelope validation addendum at source revision `19099e4`:
+`VirtualizationGuestProfileExecutor` snapshots now pass through the strict
+transport validator, and the profile registry repeats that validation for
+direct callers. Version, kind, identifiers, guest identity, operation, and
+resource bounds therefore remain Broker-owned on every executor entry path.
+Focused guest-executor tests pass 12/12; the related Guest suite passes 78/78;
+the serial physical regression passes 663/668 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-request-envelope-validation.md`.
+
 Resolved task-profile snapshot addendum at source revision `45e1472`:
 `TaskProfileRegistry.resolve()` now recursively freezes the Broker-authorized
 profile handed to task adapters, including executable/cwd, environment,
