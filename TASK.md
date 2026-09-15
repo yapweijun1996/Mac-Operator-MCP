@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge-factory disposal addendum: commit `e3ad73d` makes disposal terminal and
+idempotent; post-disposal request creation fails closed and response checking
+returns false after the key is wiped. Focused Edge auth/IPC/TLS/startup tests
+pass 18/18; production lifecycle and installed shutdown readback remain open.
+Evidence: `evidence/2026-09-15-edge-factory-disposal.md`.
+
 Credential-loader buffer addendum: commit `43fec85` clears raw file-read key
 buffers and native Keychain read/write/delete defensive copies on all paths.
 Focused credentials/keyring tests report 28 total (27 passed, 1 explicit

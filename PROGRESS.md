@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge-factory disposal addendum: source revision `e3ad73d` makes request-factory
+shutdown terminal and idempotent; post-disposal request creation fails closed
+and response verification returns false instead of using a wiped key. Build,
+lint, typecheck, diff checks, and the focused 18-test Edge auth/IPC/TLS/startup
+suite pass; production lifecycle and installed shutdown readback remain open.
+Evidence: `evidence/2026-09-15-edge-factory-disposal.md`.
+
 Credential-loader buffer addendum: source revision `43fec85` wipes raw
 file-read buffers after defensive key copies and clears native Keychain read,
 write, and delete argument buffers on all paths. Build, lint, typecheck, diff

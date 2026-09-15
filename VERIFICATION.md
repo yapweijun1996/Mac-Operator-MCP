@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge-factory disposal verification at source revision `e3ad73d` makes dispose
+idempotent and rejects request creation after key wipe; response verification
+fails closed with `false`. Build, lint, typecheck, and diff checks pass; the
+focused Edge authentication/IPC/TLS/startup suites pass 18/18. Production
+lifecycle and installed shutdown readback remain open. Evidence:
+`evidence/2026-09-15-edge-factory-disposal.md`.
+
 Credential-loader buffer verification at source revision `43fec85` clears raw
 file-read buffers after copying/parsing and wipes native Keychain read/write/
 delete argument buffers on success and failure. Build, lint, typecheck, and
