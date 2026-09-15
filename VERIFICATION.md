@@ -2533,3 +2533,11 @@ Focused Docker tests pass 9/9; the non-overlapping package regression passes
 evidence only; daemon compatibility, storage, isolation, raw-socket negatives,
 packaging, and capability enablement remain open. Evidence:
 `evidence/2026-09-15-docker-result-boundary.md`.
+
+Install-plan readback verification at source revision `61e7357` adds
+data-only guards for service, component, existing-service, and signature
+observations. The focused install-plan suite passes 22/22 with hostile
+inherited/accessor fixtures rejected. This remains local representation
+evidence and does not close Developer ID, persistent install, production
+upgrade/rollback, helper, or capability gates. Evidence:
+`evidence/2026-09-15-install-readback-boundary.md`.

@@ -2875,3 +2875,12 @@ package regression passes 533 total (527 pass, 6 skipped, 0 fail). Daemon
 compatibility, storage readback, isolation, raw-socket negatives, packaging,
 and capability enablement remain open. Evidence:
 `evidence/2026-09-15-docker-result-boundary.md`.
+
+Install-plan readback hardening (source revision `61e7357`) now routes
+service, component, existing-service, and signature observations through a
+plain-data record boundary. Inherited and accessor-shaped readbacks fail
+closed before identity or capability validation. Focused install-plan tests
+pass 22/22; Developer ID provenance, persistent installed lifecycle,
+production upgrade/rollback, helper execution, and final capability
+enablement remain open. Evidence:
+`evidence/2026-09-15-install-readback-boundary.md`.
