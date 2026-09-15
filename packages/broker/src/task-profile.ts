@@ -12,6 +12,7 @@ const MAX_ENVIRONMENT_KEYS = 32;
 const MAX_ENVIRONMENT_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_ARGUMENT_PATTERN_LENGTH = 256;
 const NETWORK_DESTINATION_PATTERN = /^(tcp|udp):\/\/(localhost|127\.0\.0\.1):(\d{1,5})$/u;
 
 export type TaskNetworkPolicy = "none" | "allowlist";
@@ -214,11 +215,7 @@ function validateProfileDocument(profile: TaskProfile): void {
     throw new Error("Task profile argument pattern is invalid");
   }
   if (profile.allowedArgumentPattern !== undefined) {
-    if (!profile.allowedArgumentPattern.startsWith("^") || !profile.allowedArgumentPattern.endsWith("$")) {
-      throw new Error("Task profile argument pattern must be anchored");
-    }
-    try { new RegExp(profile.allowedArgumentPattern, "u"); }
-    catch { throw new Error("Task profile argument pattern is invalid"); }
+    validateArgumentPattern(profile.allowedArgumentPattern);
   }
   const environment = profile.environment ?? {};
   const environmentEntries = Object.entries(environment);
@@ -242,6 +239,97 @@ function validateProfileDocument(profile: TaskProfile): void {
   if (networkAllowlist.some((destination) => parseTaskNetworkDestination(destination) === null)) {
     throw new Error("Task profile network allowlist is malformed");
   }
+}
+
+/**
+ * Restrict profile-owned argument matching to a bounded fragment with no
+ * grouping, alternation, or backreferences. Arbitrary regular expressions
+ * are a Broker denial-of-service surface because JavaScript RegExp has no
+ * execution timeout.
+ */
+function validateArgumentPattern(pattern: string): void {
+  if (pattern.length > MAX_ARGUMENT_PATTERN_LENGTH || pattern.includes("\0") || pattern.includes("\n")) {
+    throw new Error("Task profile argument pattern is invalid");
+  }
+  if (!pattern.startsWith("^") || !pattern.endsWith("$")) {
+    throw new Error("Task profile argument pattern must be anchored");
+  }
+  let index = 1;
+  let canQuantify = false;
+  let quantified = false;
+  while (index < pattern.length - 1) {
+    const character = pattern[index];
+    if (character === undefined) throw new Error("Task profile argument pattern is invalid");
+    if (character === "(" || character === ")" || character === "|") {
+      throw new Error("Task profile argument pattern uses an unsupported construct");
+    }
+    if (character === "\\") {
+      const escaped = pattern[index + 1];
+      if (escaped === undefined || /[0-9]/u.test(escaped)) {
+        throw new Error("Task profile argument pattern uses an unsupported construct");
+      }
+      index += 2;
+      canQuantify = true;
+      quantified = false;
+      continue;
+    }
+    if (character === "[") {
+      let closed = false;
+      let classIndex = index + 1;
+      for (; classIndex < pattern.length - 1; classIndex += 1) {
+        const classCharacter = pattern[classIndex];
+        if (classCharacter === undefined) break;
+        if (classCharacter === "\\") {
+          if (classIndex + 1 >= pattern.length - 1 || /[0-9]/u.test(pattern[classIndex + 1] ?? "")) {
+            throw new Error("Task profile argument pattern uses an unsupported construct");
+          }
+          classIndex += 1;
+          continue;
+        }
+        if (classCharacter === "[") {
+          throw new Error("Task profile argument pattern uses an unsupported construct");
+        }
+        if (classCharacter === "]") {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed || classIndex === index + 1) throw new Error("Task profile argument pattern is invalid");
+      index = classIndex + 1;
+      canQuantify = true;
+      quantified = false;
+      continue;
+    }
+    if (character === "*" || character === "+" || character === "?") {
+      if (!canQuantify || quantified) throw new Error("Task profile argument pattern is invalid");
+      index += 1;
+      canQuantify = false;
+      quantified = true;
+      continue;
+    }
+    if (character === "{") {
+      if (!canQuantify || quantified) throw new Error("Task profile argument pattern is invalid");
+      const quantifier = /^\{(\d{1,4})(?:,(\d{1,4})?)?\}/u.exec(pattern.slice(index));
+      if (!quantifier) throw new Error("Task profile argument pattern is invalid");
+      const minimum = Number(quantifier[1]);
+      const maximum = quantifier[2] === undefined || quantifier[2] === "" ? minimum : Number(quantifier[2]);
+      if (minimum > MAX_ARGUMENT_LENGTH || maximum > MAX_ARGUMENT_LENGTH || minimum > maximum) {
+        throw new Error("Task profile argument pattern is invalid");
+      }
+      index += quantifier[0].length;
+      canQuantify = false;
+      quantified = true;
+      continue;
+    }
+    if (character === "}" || character === "]" || character === "^") {
+      throw new Error("Task profile argument pattern is invalid");
+    }
+    index += 1;
+    canQuantify = true;
+    quantified = false;
+  }
+  try { new RegExp(pattern, "u"); }
+  catch { throw new Error("Task profile argument pattern is invalid"); }
 }
 
 function cloneProfile(profile: TaskProfile): TaskProfile {
