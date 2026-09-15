@@ -2,6 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessSupervisorOptions } from "./process-supervisor.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { parseTaskNetworkDestination } from "./task-profile.js";
 import { redactBoundedText } from "./secret-policy.js";
@@ -24,6 +25,8 @@ const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
 const MAX_ENVIRONMENT_KEYS = 64;
 const MAX_ENVIRONMENT_BYTES = 64 * 1024;
+const MAX_FILESYSTEM_ROOTS = 64;
+const MAX_NETWORK_DESTINATIONS = 64;
 const MAX_TIMEOUT_MS = 15 * 60_000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_CONCURRENT = 64;
@@ -459,20 +462,19 @@ export function virtualizationGuestTaskDigest(
 }
 
 function validateProfileShape(profile: VirtualizationGuestTaskProfile): void {
-  if (profile === null || typeof profile !== "object" || Array.isArray(profile) ||
-      Object.keys(profile).some((key) => !PROFILE_KEYS.has(key)) ||
+  if (!isPlainDataRecord(profile) || !hasAllowedKeys(profile, PROFILE_KEYS) ||
       profile.schemaVersion !== "0.1" || !PROFILE_PATTERN.test(profile.profile) ||
       !PROFILE_PATTERN.test(profile.sandboxProfile) || !isCanonicalAbsolutePath(profile.executable) ||
-      FORBIDDEN_EXECUTABLES.has(profile.executable) || !Array.isArray(profile.args) ||
-      !isCanonicalAbsolutePath(profile.cwd) || !Array.isArray(profile.filesystemRoots) || profile.filesystemRoots.length < 1 ||
+      FORBIDDEN_EXECUTABLES.has(profile.executable) || !isDenseStringArray(profile.args, MAX_ARGUMENTS) ||
+      !isCanonicalAbsolutePath(profile.cwd) || !isDenseStringArray(profile.filesystemRoots, MAX_FILESYSTEM_ROOTS) || profile.filesystemRoots.length < 1 ||
       profile.filesystemRoots.some((root) => !isCanonicalAbsolutePath(root) || FORBIDDEN_FILESYSTEM_ROOTS.has(root)) ||
       profile.credentialPolicy !== "none" || (profile.networkPolicy !== "none" && profile.networkPolicy !== "allowlist") ||
       profile.processTreePolicy !== "single_process" && profile.processTreePolicy !== "owned_group" ||
       !Number.isSafeInteger(profile.timeoutMs) || profile.timeoutMs < 1 || profile.timeoutMs > MAX_TIMEOUT_MS ||
       !Number.isSafeInteger(profile.outputCapBytes) || profile.outputCapBytes < 1 || profile.outputCapBytes > MAX_OUTPUT_BYTES ||
       profile.verificationStrategy !== "exit_status_and_declared_task_verification" || typeof profile.enabled !== "boolean" ||
-      (profile.environment !== undefined && (profile.environment === null || typeof profile.environment !== "object" || Array.isArray(profile.environment))) ||
-      (profile.networkAllowlist !== undefined && !Array.isArray(profile.networkAllowlist))) {
+      (profile.environment !== undefined && !isPlainDataRecord(profile.environment)) ||
+      (profile.networkAllowlist !== undefined && !isDenseStringArray(profile.networkAllowlist, MAX_NETWORK_DESTINATIONS))) {
     throw new Error("Guest task profile manifest is malformed");
   }
   validateArguments(profile.args);
@@ -522,11 +524,32 @@ async function assertCanonicalDirectory(path: string): Promise<string> {
 }
 
 function validateGuestRequestShape(request: UnsignedVirtualizationGuestRequest): void {
-  if (request === null || typeof request !== "object" || Array.isArray(request) ||
+  if (!isPlainDataRecord(request) || !hasAllowedKeys(request, [
+    "schemaVersion", "protocolVersion", "contractVersion", "kind", "requestId", "nonce", "timestampMs",
+    "expiresAtMs", "guestIdentity", "sandboxProfile", "profileDigest", "taskDigest", "processTreePolicy",
+    "timeoutMs", "outputCapBytes", "operation"
+  ]) ||
       !SHA256_PATTERN.test(request.profileDigest) || !SHA256_PATTERN.test(request.taskDigest) ||
       !PROFILE_PATTERN.test(request.sandboxProfile)) {
     throw new BrokerError("PRECONDITION_FAILED", "Guest task request digest binding is malformed");
   }
+}
+
+function hasAllowedKeys(value: Record<string, unknown>, allowed: ReadonlySet<string> | readonly string[]): boolean {
+  const allowedSet = allowed instanceof Set ? allowed : new Set(allowed);
+  return Object.keys(value).every((key) => allowedSet.has(key));
+}
+
+function isDenseStringArray(value: unknown, maxLength: number): value is readonly string[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
+      Object.keys(value).length !== value.length || Object.getOwnPropertyNames(value).length !== value.length + 1) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "string") return false;
+  }
+  return true;
 }
 
 function validateArguments(args: readonly string[]): void {

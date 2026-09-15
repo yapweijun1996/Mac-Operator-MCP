@@ -97,6 +97,20 @@ test("guest profile registry resolves only the digest-bound startup manifest", a
       registry.resolve({ ...fixture.request, timeoutMs: fixture.profile.timeoutMs + 1 }),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
     );
+    await assert.rejects(
+      registry.resolve(Object.create(fixture.request)),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    const accessorRequest = { ...fixture.request } as Record<string, unknown>;
+    Object.defineProperty(accessorRequest, "taskDigest", { enumerable: true, get: () => fixture.request.taskDigest });
+    await assert.rejects(
+      registry.resolve(accessorRequest as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    await assert.rejects(
+      registry.resolve({ ...fixture.request, extra: true } as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
     await rm(fixture.profile.executable);
     await symlink("/usr/bin/true", fixture.profile.executable);
     await assert.rejects(
@@ -131,6 +145,45 @@ test("guest profile registry rejects shell executables and unsafe environment ma
     assert.throws(() => new VirtualizationGuestTaskProfileRegistry([base]), /manifest is malformed/u);
     assert.throws(() => new VirtualizationGuestTaskProfileRegistry([{ ...base, executable: "/usr/bin/true", environment: { API_TOKEN: "secret" } }]), /unsafe entry/u);
     assert.throws(() => new VirtualizationGuestTaskProfileRegistry([{ ...base, executable: "/usr/bin/true", extra: true } as never]), /manifest is malformed/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("guest profile boundaries reject inherited, accessor, symbolic, and sparse data", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-guest-executor-shape-")));
+  try {
+    const base: VirtualizationGuestTaskProfile = {
+      schemaVersion: "0.1",
+      profile: "guest.shape",
+      sandboxProfile: "guest-deny-default-v0.1",
+      executable: "/usr/bin/true",
+      args: ["fixed"],
+      cwd: directory,
+      filesystemRoots: [directory],
+      networkPolicy: "none",
+      networkAllowlist: [],
+      credentialPolicy: "none",
+      processTreePolicy: "single_process",
+      timeoutMs: 1_000,
+      outputCapBytes: 1_024,
+      verificationStrategy: "exit_status_and_declared_task_verification",
+      enabled: true
+    };
+    assert.throws(() => new VirtualizationGuestTaskProfileRegistry([Object.create(base)]), /manifest is malformed/u);
+    const accessor = { ...base } as Record<string, unknown>;
+    Object.defineProperty(accessor, "profile", { enumerable: true, get: () => base.profile });
+    assert.throws(() => new VirtualizationGuestTaskProfileRegistry([accessor as never]), /manifest is malformed/u);
+    const symbolic = { ...base } as Record<string, unknown>;
+    Object.defineProperty(symbolic, Symbol("authority"), { value: true });
+    assert.throws(() => new VirtualizationGuestTaskProfileRegistry([symbolic as never]), /manifest is malformed/u);
+    const sparseArgs = new Array<string>(1);
+    assert.throws(() => new VirtualizationGuestTaskProfileRegistry([{ ...base, args: sparseArgs }]), /manifest is malformed/u);
+    const inheritedEnvironment = Object.create({ LANG: "C" });
+    assert.throws(
+      () => new VirtualizationGuestTaskProfileRegistry([{ ...base, environment: inheritedEnvironment }]),
+      /manifest is malformed/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
