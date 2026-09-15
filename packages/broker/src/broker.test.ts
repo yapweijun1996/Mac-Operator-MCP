@@ -1121,6 +1121,7 @@ test("Docker handlers remain fixed-scope and redact object/log secrets", async (
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-docker-broker-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
+  let inspectedId = "abc123";
   const dockerInspector: DockerInspector = {
     async status() {
       return {
@@ -1134,7 +1135,7 @@ test("Docker handlers remain fixed-scope and redact object/log secrets", async (
     async inspect() {
       return {
         objectType: "container",
-        id: "abc123",
+        id: inspectedId,
         name: "/web",
         state: "running",
         image: "example/app:latest",
@@ -1175,6 +1176,15 @@ test("Docker handlers remain fixed-scope and redact object/log secrets", async (
       arguments: { object_type: "container", id: "abc123" }
     }, ["mac.docker.read"]), key));
     assert.equal(inspect.ok, true, JSON.stringify(inspect));
+    inspectedId = "different";
+    const mismatchedInspect = await broker.handle(signRequest(unsigned({
+      requestId: "docker-inspect-mismatch-request",
+      nonce: "docker-inspect-mismatch-nonce",
+      tool: "mac_docker_inspect",
+      arguments: { object_type: "container", id: "abc123" }
+    }, ["mac.docker.read"]), key));
+    assert.equal(mismatchedInspect.ok, false, JSON.stringify(mismatchedInspect));
+    assert.equal(mismatchedInspect.result_class, "CONFLICT");
     const logs = await broker.handle(signRequest(unsigned({
       requestId: "docker-logs-request",
       nonce: "docker-logs-nonce",
