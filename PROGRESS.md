@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge key handoff lifetime addendum: source revision `5695db0` clears the
+protected-file loader buffer after `EdgeRequestFactory` copies it, matching the
+Keychain delivery lifecycle. Build, lint, typecheck, diff checks, and the
+focused 5-test Edge key/request-factory suite pass; full HTTPS Edge and
+production key-storage evidence remain open. Evidence:
+`evidence/2026-09-15-edge-key-handoff-lifetime.md`.
+
 Request-authentication key lifetime addendum: source revision `fec6e5b` clears
 per-request Edge HMAC copies after verification and response signing on both
 success and failure paths. Build, lint, typecheck, diff checks, and the focused

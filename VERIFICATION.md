@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge key handoff verification at source revision `5695db0` clears the
+loader-owned protected-file key buffer after defensive constructor copy.
+Build, lint, typecheck, diff checks, and the focused Edge key/request-factory
+suite pass 5/5. Full HTTPS Edge and production key-storage evidence remain
+open. Evidence:
+`evidence/2026-09-15-edge-key-handoff-lifetime.md`.
+
 Request-authentication key lifetime verification at source revision `fec6e5b`
 clears transient Edge HMAC copies after request verification and authenticated
 response signing, including failures. Build, lint, typecheck, diff checks, and

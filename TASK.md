@@ -4,6 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge key handoff lifetime addendum: commit `5695db0` clears the protected-file
+loader buffer after request-factory copy. Focused Edge key/request-factory
+tests pass 5/5; full HTTPS Edge and production key-storage evidence remain
+open. Evidence: `evidence/2026-09-15-edge-key-handoff-lifetime.md`.
+
 Request-authentication key lifetime addendum: commit `fec6e5b` clears transient
 Edge HMAC key copies in Broker authentication and response signing `finally`
 paths. Focused IPC tests pass 18/18. Production key storage and full Broker
