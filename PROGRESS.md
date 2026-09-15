@@ -3138,6 +3138,13 @@ corruption tests pass 1/1; the non-overlapping package regression passes 559
 total (553 passed, 6 skipped, 0 failed). Evidence:
 `evidence/2026-09-15-audit-row-invariants.md`.
 
+Audit events are now validated before persistence as well as on readback
+(source revision `3cc9c80`): malformed identity/text, event, decision,
+timestamp, or evidence budgets fail closed before an SQLite row is written.
+Focused audit write/read tests pass 2/2; the non-overlapping package
+regression passes 560 total (554 passed, 6 skipped, 0 failed). Evidence:
+`evidence/2026-09-15-audit-row-invariants.md`.
+
 The current physical-host `mac_app_list` readback passes 4/4 at source revision
 `c4bf986`, including the real running-app inventory case and fixed-command,
 bounded-result, redaction, and malformed-result checks. This remains read-only

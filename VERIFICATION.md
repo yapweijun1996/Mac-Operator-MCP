@@ -2808,6 +2808,12 @@ passed, 6 skipped, 0 failed). External rollback-resistant anchoring,
 production identity, and final ADR acceptance remain open. Evidence:
 `evidence/2026-09-15-audit-row-invariants.md`.
 
+Audit write-boundary verification confirms malformed events are rejected before
+SQLite insertion and leave no partial audit row. Combined audit write/read
+tests pass 2/2; the non-overlapping package regression passes 560 total (554
+passed, 6 skipped, 0 failed). Evidence:
+`evidence/2026-09-15-audit-row-invariants.md`.
+
 Accessibility permission-denial verification confirms the real Finder probe
 returns stable `POLICY_DENIED` and no UI nodes or labels when host permission
 is absent. Permission-granted real-app evidence and GUI mutation readback

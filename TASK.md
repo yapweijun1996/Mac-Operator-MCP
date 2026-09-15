@@ -1870,6 +1870,13 @@ corruption tests pass 1/1 and the non-overlapping package regression passes 559
 total (553 passed, 6 skipped, 0 failed). Evidence:
 `evidence/2026-09-15-audit-row-invariants.md`.
 
+Audit events are now validated before persistence as well as on readback
+(source revision `3cc9c80`): malformed identity/text, event, decision,
+timestamp, or evidence budgets fail closed before an SQLite row is written.
+Focused audit write/read tests pass 2/2; the non-overlapping package
+regression passes 560 total (554 passed, 6 skipped, 0 failed). Evidence:
+`evidence/2026-09-15-audit-row-invariants.md`.
+
 MOP-086 current-host readback was rerun at source revision `633f538`: the
 physical Mac mini sandbox profile suite passes 16/16 with no skips. This is
 fresh host evidence only; deprecated `sandbox-exec`, credential-content,
