@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC key-copy gate addendum: source revision `af68248` validates non-secret
+constructor limits and bindings before copying authentication keys for Policy
+Signer, Authority Control, Broker Status, Privileged Helper, and guest
+transport channels. Build, lint, typecheck, diff checks, and the focused
+41-test boundary suite pass; production cross-process delivery and signing
+identity remain open. Evidence: `evidence/2026-09-15-ipc-key-copy-gate.md`.
+
 Edge-factory disposal addendum: source revision `e3ad73d` makes request-factory
 shutdown terminal and idempotent; post-disposal request creation fails closed
 and response verification returns false instead of using a wiped key. Build,

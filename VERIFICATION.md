@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+IPC key-copy gate verification at source revision `af68248` moves all
+non-secret constructor validation ahead of authentication-key copying across
+the Policy Signer, Authority Control, Broker Status, Privileged Helper, and
+guest transport boundaries. Build, lint, typecheck, and diff checks pass; the
+focused boundary suites pass 41/41. Production cross-process delivery and
+signing identity remain open. Evidence:
+`evidence/2026-09-15-ipc-key-copy-gate.md`.
+
 Edge-factory disposal verification at source revision `e3ad73d` makes dispose
 idempotent and rejects request creation after key wipe; response verification
 fails closed with `false`. Build, lint, typecheck, and diff checks pass; the

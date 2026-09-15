@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC key-copy gate addendum: commit `af68248` validates all non-secret
+constructor limits/bindings before copying authentication keys in Policy
+Signer, Authority Control, Broker Status, Privileged Helper, and guest
+transport channels. Focused boundary tests pass 41/41; production delivery,
+signing identity, and installed evidence remain open. Evidence:
+`evidence/2026-09-15-ipc-key-copy-gate.md`.
+
 Edge-factory disposal addendum: commit `e3ad73d` makes disposal terminal and
 idempotent; post-disposal request creation fails closed and response checking
 returns false after the key is wiped. Focused Edge auth/IPC/TLS/startup tests
