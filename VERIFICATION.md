@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Service-lock and audit-anchor orphan-recovery verification covers timestamped
+UUID/basename-fingerprint quarantine names, stable owner-only parent
+identity, exact regular single-link device/inode, bounded age, unique
+selection, and durable absence readback. Service locks additionally require
+stale PID/start-time proof; audit locks require the host stop gate. Build,
+lint, diff checks, and the dedicated suites pass 6/6 and 10/10. Production
+crash/remount and persisted Job integration remain open. Evidence:
+`evidence/2026-09-15-service-lock-orphan-recovery.md` and
+`evidence/2026-09-15-audit-anchor-lock-orphan-recovery.md`.
+
 IPC socket orphan-recovery verification covers timestamped UUID/basename-
 fingerprint quarantine names and explicit stale recovery. The recovery path
 checks canonical owner-only parent identity before and after scanning, exact

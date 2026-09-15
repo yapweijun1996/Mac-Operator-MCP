@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Service-lock and audit-anchor orphan-recovery addendum: source revision
+`3ddc056` adds explicit stale recovery with timestamped
+basename-fingerprint quarantine names. Service owner identity must be stale;
+audit lock recovery requires the host stop gate. Stable protected parents,
+single-link exact identity, age bounds, ambiguity preservation, directory sync,
+and absence readback are enforced. Build, lint, diff checks, and the 6-test
+service-lock plus 10-test audit-anchor/read-only suites pass. Production
+crash/remount and persisted Job integration remain open. Evidence:
+`evidence/2026-09-15-service-lock-orphan-recovery.md` and
+`evidence/2026-09-15-audit-anchor-lock-orphan-recovery.md`.
+
 IPC socket orphan-recovery addendum: source revision `49b575a`
 adds explicit identity/age-gated recovery for crash leftovers, with strict
 basename fingerprints, owner-only parent checks, inactive-liveness checks,

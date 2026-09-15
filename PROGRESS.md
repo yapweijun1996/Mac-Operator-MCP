@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Service-lock and audit-anchor orphan-recovery addendum: source revision
+`3ddc056` adds timestamped UUID/basename-fingerprint quarantine
+names plus explicit recovery. Service locks require stale PID/start-time
+proof; audit locks require the host stop gate. Both paths require stable
+owner-only parents, exact regular single-link identity, bounded age, unique
+selection, and post-removal readback; active, unknown, recent, malformed, or
+ambiguous candidates remain untouched. Build, lint, diff checks, and the
+dedicated 6-test service-lock and 10-test audit-anchor/read-only suites pass.
+Production crash/remount and persisted Job integration remain open. Evidence:
+`evidence/2026-09-15-service-lock-orphan-recovery.md` and
+`evidence/2026-09-15-audit-anchor-lock-orphan-recovery.md`.
+
 IPC socket orphan-recovery addendum: source revision `49b575a` adds
 timestamped UUID/basename-fingerprint quarantine names and explicit recovery
 requiring canonical owner-only parent identity, matching socket device/inode,
