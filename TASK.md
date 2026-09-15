@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization guest attestation key-validity addendum: source revision
+`5aa7d2e` binds `issuedAtMs` and `expiresAtMs` to the configured signing-key
+validity window. The focused attestation suite passes 5/5 and the
+non-overlapping package regression passes 495 total (489 pass, 6 skipped, 0
+fail); build, typecheck, lint, and diff checks pass. This does not establish a
+native attestation producer, protected private-key distribution, VM boot or
+guest isolation, or production task-runner enablement. Evidence:
+`evidence/2026-09-15-virtualization-guest-attestation-key-validity.md`.
+
 Virtualization guest runtime close-recovery addendum: source revisions
 `d68176b` and `28007cf` leave the runtime retryable after a failed shutdown and
 mark it closed only after every shutdown step succeeds. While an explicit

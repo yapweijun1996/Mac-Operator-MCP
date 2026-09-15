@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Virtualization guest attestation key-validity addendum: commit `5aa7d2e`
+requires a signed assertion's full issued/expiry interval to be contained by
+the trusted Ed25519 key validity window. The focused attestation suite passes
+5/5; the non-overlapping package regression passes 495 total (489 pass, 6
+skipped, 0 fail); build, typecheck, lint, and diff checks pass. This closes
+only signed key-window binding; native attestation production, protected key
+distribution, VM boot/isolation, and production task enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-guest-attestation-key-validity.md`.
+
 Virtualization guest runtime close-recovery addendum: commits `d68176b` and
 `28007cf` keep `VirtualizationGuestRuntimeImpl` open and retryable after a
 failed close, clearing the rejected promise cache, fencing new start/stop work

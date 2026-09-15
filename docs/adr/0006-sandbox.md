@@ -76,6 +76,13 @@ unconfirmed VM transition from becoming a permanent local terminal state, but
 does not provide VM boot or guest isolation evidence and does not authorize
 `mac_task_run`.
 
+Commit `5aa7d2e` binds signed guest-attestation lifetime to the configured
+Ed25519 key validity window: the assertion cannot be issued before key
+activation or expire after key retirement. This is an additional provenance
+check only; it does not provide a native attestation producer, protected key
+distribution, VM boot/isolation evidence, or authorization for
+`mac_task_run`.
+
 ## Virtualization.framework candidate seam
 
 The current Darwin host exposes the `Virtualization.framework` headers and

@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Virtualization guest attestation key-validity addendum: source revision
+`5aa7d2e` requires each signed guest attestation lifetime to fit completely
+inside the trusted Ed25519 key's validity window, in addition to current-time,
+freshness, revocation, digest, and signature checks. Attestation tests pass
+5/5; the non-overlapping package regression passes 495 total (489 pass, 6
+skipped, 0 fail); build, typecheck, lint, and diff checks pass. This closes
+key-window binding only; native attestation production, protected key
+distribution, VM boot/isolation, and `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-guest-attestation-key-validity.md`.
+
 Virtualization guest runtime close-recovery addendum: source revisions
 `d68176b` and `28007cf` keep `VirtualizationGuestRuntimeImpl` retryable when
 connection, task-runner, or lifecycle shutdown fails. A failed close no longer
