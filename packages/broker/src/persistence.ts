@@ -3343,6 +3343,7 @@ interface ApprovalRow {
 }
 
 function mapRequest(row: RequestRow): RequestRecord {
+  validateStoredRequestState(row);
   const capabilityFamilies = decodeCapabilityFamilies(row.capability_families);
   if (capabilityFamilies === null) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Stored request capability families are malformed");
@@ -3366,6 +3367,59 @@ function mapRequest(row: RequestRow): RequestRecord {
     updatedAtMs: row.updated_at_ms,
     revision: row.revision
   };
+}
+
+/**
+ * Validate the durable Request state machine before exposing a row to Broker
+ * logic. SQLite protects enum values and scalar nullability, but it cannot
+ * prove that result classes, timestamps, mutation approvals, and Job links
+ * still describe one coherent request after a crash, migration, or tampering.
+ */
+function validateStoredRequestState(row: RequestRow): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request state invariants are malformed");
+  };
+  const timestamp = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
+  const identifier = (value: string | null, pattern: RegExp): boolean => value === null || pattern.test(value);
+  const activeResultClasses = new Set(["AUTHORIZED", "INTENT_RECORDED", "RUNNING", "SUCCEEDED"]);
+
+  if (row.mutation !== 0 && row.mutation !== 1 ||
+      !timestamp(row.received_at_ms) || !timestamp(row.updated_at_ms) ||
+      row.updated_at_ms < row.received_at_ms ||
+      !Number.isSafeInteger(row.revision) || row.revision < 0 ||
+      !identifier(row.approval_id, /^approval:[A-Za-z0-9._:-]{1,240}$/u) ||
+      !identifier(row.job_id, /^job:[A-Za-z0-9._-]{1,240}$/u)) {
+    fail();
+  }
+
+  if (row.state === "RECEIVED") {
+    if (row.result_class !== null || row.target_ref !== null || row.approval_id !== null || row.job_id !== null) fail();
+  } else if (row.state === "AUTHORIZED") {
+    if (row.result_class !== "AUTHORIZED" || row.target_ref === null || row.approval_id !== null || row.job_id !== null) fail();
+  } else if (row.state === "DENIED") {
+    if (row.result_class === null || activeResultClasses.has(row.result_class) || row.approval_id !== null || row.job_id !== null) fail();
+  } else if (row.state === "INTENT_RECORDED") {
+    if (row.result_class !== "INTENT_RECORDED" || row.mutation !== 1 || row.target_ref === null || row.approval_id === null) fail();
+  } else if (row.state === "RUNNING") {
+    if (row.result_class !== "RUNNING" || row.target_ref === null) fail();
+  } else if (row.state === "SUCCEEDED") {
+    if (row.result_class !== "SUCCEEDED" && row.result_class !== "IDEMPOTENT_REUSE") fail();
+  } else if (row.state === "FAILED") {
+    if (row.result_class === null || activeResultClasses.has(row.result_class)) fail();
+  } else if (row.state === "CANCELLED") {
+    if (row.result_class !== "CANCELLED") fail();
+  } else if (row.state === "TIMED_OUT") {
+    if (row.result_class !== "TIMEOUT") fail();
+  } else if (row.state === "VERIFICATION_FAILED") {
+    if (row.result_class !== "VERIFICATION_FAILED") fail();
+  } else if (row.state === "UNKNOWN") {
+    if (row.result_class !== "UNKNOWN_OUTCOME") fail();
+  } else {
+    fail();
+  }
+
+  if (row.approval_id !== null && row.mutation !== 1) fail();
+  if (row.job_id !== null && row.mutation !== 1) fail();
 }
 
 function mapApproval(row: ApprovalRow): ApprovalRecord {
