@@ -237,6 +237,43 @@ test("policy verifier accepts Docker runtime targets and rejects malformed resou
   assert.throws(() => instance.verify(signedBundle(invalid, keys.privateKey)), /malformed target authority/u);
 });
 
+test("policy verifier materializes finite same-kind target constraints", async () => {
+  const { instance, keys } = await verifier();
+  const valid = policyDocument();
+  valid.principal_grants[0]!.scopes.push("mac.service.read");
+  valid.target_rules.push({
+    rule_id: "allow-service-set",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.service.read",
+    target: { kind: "service", reference: "system/com.apple.logd" },
+    target_constraint: {
+      mode: "finite_set",
+      references: ["system/com.apple.WindowServer", "system/com.apple.logd"]
+    }
+  });
+  const verified = instance.verify(signedBundle(valid, keys.privateKey));
+  assert.deepEqual(verified.policy.targetRules.at(-1)?.targetConstraint, {
+    mode: "finite_set",
+    references: ["system/com.apple.WindowServer", "system/com.apple.logd"]
+  });
+
+  const unsorted = policyDocument();
+  unsorted.principal_grants[0]!.scopes.push("mac.service.read");
+  unsorted.target_rules.push({
+    rule_id: "unsorted-service-set",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.service.read",
+    target: { kind: "service", reference: "system/com.apple.logd" },
+    target_constraint: {
+      mode: "finite_set",
+      references: ["system/com.apple.logd", "system/com.apple.WindowServer"]
+    }
+  });
+  assert.throws(() => instance.verify(signedBundle(unsorted, keys.privateKey)), /malformed target authority/u);
+});
+
 test("policy verifier supports bounded signing-key rotation and revocation", async () => {
   const first = generateKeyPairSync("ed25519");
   const second = generateKeyPairSync("ed25519");

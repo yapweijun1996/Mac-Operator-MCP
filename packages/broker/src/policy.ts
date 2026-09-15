@@ -52,6 +52,13 @@ export interface TargetRule {
   principalId: string;
   scope: Scope;
   target: NormalizedTarget;
+  /** Optional finite, same-kind set for a parameterized signed rule. */
+  targetConstraint?: TargetConstraint;
+}
+
+export interface TargetConstraint {
+  mode: "finite_set";
+  references: readonly string[];
 }
 
 const TARGET_TYPES = new Set<ToolPolicy["targetType"]>([
@@ -67,6 +74,7 @@ const TARGET_KINDS = new Set<NormalizedTarget["kind"]>([
   "service", "log_source", "docker_runtime", "docker_object", "package", "power"
 ]);
 const POLICY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const MAX_TARGET_CONSTRAINT_REFERENCES = 64;
 
 /**
  * Validate the runtime policy shape at the authority boundary. Signed policy
@@ -121,12 +129,13 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
   }
   const ruleIds = new Set<string>();
   for (const rule of policy.targetRules) {
-    if (rule === null || typeof rule !== "object" || !hasOnlyKeys(rule, ["ruleId", "effect", "principalId", "scope", "target"]) ||
+    if (rule === null || typeof rule !== "object" || !hasOnlyKeys(rule, ["ruleId", "effect", "principalId", "scope", "target", "targetConstraint"]) ||
         !isPolicyId(rule.ruleId) || ruleIds.has(rule.ruleId) ||
         (rule.effect !== "allow" && rule.effect !== "deny") || !isPolicyId(rule.principalId) ||
         !policy.principalGrants.has(rule.principalId) || !SCOPES.includes(rule.scope) ||
         !policy.principalGrants.get(rule.principalId)!.scopes.includes(rule.scope) ||
-        !isPolicyTarget(rule.target, rootIds) || !isPolicyRuleTargetReference(rule.target)) {
+        !isPolicyTarget(rule.target, rootIds) || !isPolicyRuleTargetReference(rule.target) ||
+        !isTargetConstraint(rule.target, rule.targetConstraint)) {
       throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed target authority");
     }
     ruleIds.add(rule.ruleId);
@@ -151,7 +160,13 @@ export function cloneBrokerPolicy(policy: BrokerPolicy): BrokerPolicy {
       ...grant,
       scopes: [...grant.scopes]
     }])),
-    targetRules: policy.targetRules.map((rule) => ({ ...rule, target: { ...rule.target } })),
+    targetRules: policy.targetRules.map((rule) => ({
+      ...rule,
+      target: { ...rule.target },
+      ...(rule.targetConstraint === undefined ? {} : {
+        targetConstraint: { ...rule.targetConstraint, references: [...rule.targetConstraint.references] }
+      })
+    })),
     filesystemRoots: policy.filesystemRoots.map((root) => ({
       ...root,
       denyRelativePaths: [...root.denyRelativePaths]
@@ -246,6 +261,27 @@ function isPolicyRuleTargetReference(target: NormalizedTarget): boolean {
   return isSignedPolicyTargetReference(target);
 }
 
+function isTargetConstraint(target: NormalizedTarget, constraint: unknown): constraint is TargetConstraint | undefined {
+  if (constraint === undefined) return true;
+  if (constraint === null || typeof constraint !== "object" ||
+      !hasOnlyKeys(constraint, ["mode", "references"])) return false;
+  const candidate = constraint as TargetConstraint;
+  if (candidate.mode !== "finite_set" || !isDenseArray(candidate.references, MAX_TARGET_CONSTRAINT_REFERENCES) ||
+      candidate.references.length < 1 || new Set(candidate.references).size !== candidate.references.length ||
+      !isLexicallySorted(candidate.references) || !candidate.references.includes(target.reference)) {
+    return false;
+  }
+  return candidate.references.every((reference) =>
+    typeof reference === "string" && isSignedPolicyTargetReference({ kind: target.kind, reference }));
+}
+
+function isLexicallySorted(values: readonly string[]): boolean {
+  for (let index = 1; index < values.length; index += 1) {
+    if (values[index - 1]! >= values[index]!) return false;
+  }
+  return true;
+}
+
 export function authorizePrincipalProjection(
   policy: BrokerPolicy,
   principalId: string,
@@ -337,7 +373,9 @@ export function authorizeTarget(
     rule.principalId === principalId &&
     scopes.includes(rule.scope) &&
     rule.target.kind === target.kind &&
-    rule.target.reference === target.reference
+    (rule.targetConstraint?.mode === "finite_set"
+      ? rule.targetConstraint.references.includes(target.reference)
+      : rule.target.reference === target.reference)
   );
   if (matchingRules.some((rule) => rule.effect === "deny")) {
     throw new BrokerError("POLICY_DENIED", "Target is explicitly denied");

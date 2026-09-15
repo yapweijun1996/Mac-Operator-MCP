@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SCOPES, type Scope } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
-import { validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget } from "./policy.js";
+import { authorizeTarget, validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type TargetConstraint } from "./policy.js";
 
 const root = {
   rootId: "workspace",
@@ -13,7 +13,7 @@ const root = {
   denyRelativePaths: []
 } as const;
 
-function policyWithTarget(scope: Scope, target: NormalizedTarget): BrokerPolicy {
+function policyWithTarget(scope: Scope, target: NormalizedTarget, targetConstraint?: TargetConstraint): BrokerPolicy {
   const base = createDefaultPolicy(
     "edge-1",
     true,
@@ -34,7 +34,8 @@ function policyWithTarget(scope: Scope, target: NormalizedTarget): BrokerPolicy 
       effect: "allow",
       principalId: "principal-1",
       scope,
-      target
+      target,
+      ...(targetConstraint === undefined ? {} : { targetConstraint })
     }]
   };
 }
@@ -82,6 +83,47 @@ test("policy target authority rejects malformed or cross-kind resource reference
       () => validateBrokerPolicy(policyWithTarget(scope, target)),
       (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed target authority",
       `${target.kind}:${target.reference}`
+    );
+  }
+});
+
+test("finite target constraints authorize only their canonical same-kind references", () => {
+  const policy = policyWithTarget(
+    "mac.service.read",
+    { kind: "service", reference: "system/com.apple.logd" },
+    { mode: "finite_set", references: ["system/com.apple.launchd", "system/com.apple.logd"] }
+  );
+  assert.doesNotThrow(() => validateBrokerPolicy(policy));
+  assert.doesNotThrow(() => authorizeTarget(
+    policy,
+    "principal-1",
+    ["mac.service.read"],
+    { kind: "service", reference: "system/com.apple.launchd" }
+  ));
+  assert.throws(
+    () => authorizeTarget(policy, "principal-1", ["mac.service.read"], { kind: "service", reference: "system/com.apple.WindowServer" }),
+    (error: unknown) => error instanceof Error && error.message === "Target is not allowed for every required scope"
+  );
+});
+
+test("finite target constraints reject duplicate, unsorted, missing-anchor, wildcard, and cross-kind references", () => {
+  const cases: TargetConstraint[] = [
+    { mode: "finite_set", references: ["system/com.apple.logd", "system/com.apple.logd"] },
+    { mode: "finite_set", references: ["system/com.apple.logd", "system/com.apple.launchd"] },
+    { mode: "finite_set", references: ["system/com.apple.launchd"] },
+    { mode: "finite_set", references: ["system/com.apple.logd", "system/*"] },
+    { mode: "finite_set", references: ["system/com.apple.logd", "bundle:com.example.Editor"] }
+  ];
+  for (const targetConstraint of cases) {
+    const policy = policyWithTarget(
+      "mac.service.read",
+      { kind: "service", reference: "system/com.apple.logd" },
+      targetConstraint
+    );
+    assert.throws(
+      () => validateBrokerPolicy(policy),
+      (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed target authority",
+      JSON.stringify(targetConstraint)
     );
   }
 });

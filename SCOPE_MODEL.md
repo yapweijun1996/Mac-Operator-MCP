@@ -1,6 +1,6 @@
 # Scope Model
 
-Status: Exact-scope and exact-target core implemented; parameterized resources remain proposed
+Status: Exact-scope and finite target-set authority implemented; physical resource identity remains open
 Version: 0.1
 
 ## Purpose
@@ -32,9 +32,9 @@ A session binds principal ID, session ID, audience, issued-at, expiry, projected
 
 ## Parameterized authority
 
-Target constraints belong in signed grants or Broker policy, not in model-editable scope strings. A parameterized grant should bind a scope to typed constraints such as canonical root ID, app bundle ID, service ID, volume identity, task profile, or allowed host set. The serialization and matching algorithm remain open pending ADR approval.
+Target constraints belong in signed grants or Broker policy, not in model-editable scope strings. The signed policy document now supports an optional `target_constraint` with `mode: "finite_set"` and a bounded list of canonical references. The rule's `target.kind` supplies the type (for example, root ID, app bundle, service, task profile, or host), the anchor `target.reference` must be a member of the set, references must be unique and lexically sorted, and every member must pass the same kind-specific grammar. This is an explicit finite set, not a wildcard, prefix, or caller-supplied pattern.
 
-The current Broker implements exact `(principal, scope, target kind, target reference)` rules with deny-over-allow and default deny. Introspection handlers use the Broker-owned normalized target `host:broker`; model-editable arguments cannot replace their execution target. Filesystem path-root and volume identity checks, plus app/window identity checks for the implemented GUI boundaries, are enforced by Broker-owned planners and adapters. Policy-query input now has kind-specific canonical reference validation, but signed parameterized-grant serialization, broader resource matching, and physical target readback remain open and must not be inferred from syntax validation alone.
+The current Broker implements exact or finite-set `(principal, scope, target kind, target reference)` rules with deny-over-allow and default deny. Introspection handlers use the Broker-owned normalized target `host:broker`; model-editable arguments cannot replace their execution target. Filesystem path-root and volume identity checks, plus app/window identity checks for the implemented GUI boundaries, are enforced by Broker-owned planners and adapters. Policy-query input and signed policy references use the same kind-specific canonical grammar. Finite-set policy matching is now covered by schema, runtime, and authorization tests; physical target readback and broader resource identity proof remain open and must not be inferred from syntax or set membership alone.
 
 ## Revocation
 
@@ -43,7 +43,6 @@ The model must define precedence and propagation for principal, session, scope, 
 ## Open decisions
 
 - Principal issuer and stable subject source.
-- Parameterized-grant serialization and canonical target IDs.
 - Session concurrency and refresh behavior.
 - Revocation storage, propagation latency, and restart persistence.
 - Whether any wildcard form is ever necessary.

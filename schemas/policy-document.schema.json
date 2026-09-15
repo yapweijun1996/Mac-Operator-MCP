@@ -52,7 +52,8 @@
           "effect": { "enum": ["allow", "deny"] },
           "principal_id": { "$ref": "#/$defs/id" },
           "scope": { "$ref": "#/$defs/scope" },
-          "target": { "$ref": "#/$defs/target" }
+          "target": { "$ref": "#/$defs/target" },
+          "target_constraint": { "$ref": "#/$defs/target_constraint" }
         }
       }
     },
@@ -102,6 +103,17 @@
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
     "scope": { "type": "string", "pattern": "^mac\\.[a-z0-9_.-]+$", "maxLength": 128 },
+    "target_constraint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "references"],
+      "properties": {
+        "mode": { "const": "finite_set" },
+        "references": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        }
+      }
+    },
     "target": {
       "type": "object", "additionalProperties": false,
       "required": ["kind", "reference"],

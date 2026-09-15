@@ -13,7 +13,7 @@ import {
 } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
 import type { BrokerStore } from "./persistence.js";
-import { cloneBrokerPolicy, validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type PrincipalGrant, type TargetRule } from "./policy.js";
+import { cloneBrokerPolicy, validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type PrincipalGrant, type TargetConstraint, type TargetRule } from "./policy.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 import { readProtectedFileAfterIdentity } from "./protected-file.js";
 
@@ -38,6 +38,7 @@ export interface PolicyDocument {
     principal_id: string;
     scope: Scope;
     target: NormalizedTarget;
+    target_constraint?: TargetConstraint;
   }>;
   filesystem_roots: Array<{
     root_id: string;
@@ -317,7 +318,13 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
       effect: rule.effect,
       principalId: rule.principal_id,
       scope: rule.scope,
-      target: { ...rule.target }
+      target: { ...rule.target },
+      ...(rule.target_constraint === undefined ? {} : {
+        targetConstraint: {
+          mode: rule.target_constraint.mode,
+          references: [...rule.target_constraint.references]
+        }
+      })
     };
   });
 
