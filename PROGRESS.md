@@ -3144,3 +3144,9 @@ bounded-result, redaction, and malformed-result checks. This remains read-only
 host evidence; GUI mutation, Accessibility permission, packaging, and final
 readback gates remain open. Evidence:
 `evidence/2026-09-15-app-inventory-host-readback.md`.
+
+The current physical-host Accessibility probe for Finder fails closed with
+stable `POLICY_DENIED` when Accessibility permission is absent, without
+returning UI content. Permission-granted observation, focus races, GUI
+mutation, packaging, and final readback remain open. Evidence:
+`evidence/2026-09-15-ui-permission-denial-host-readback.md`.

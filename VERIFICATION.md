@@ -2807,3 +2807,9 @@ pass 1/1; the non-overlapping package regression passes 559 total (553
 passed, 6 skipped, 0 failed). External rollback-resistant anchoring,
 production identity, and final ADR acceptance remain open. Evidence:
 `evidence/2026-09-15-audit-row-invariants.md`.
+
+Accessibility permission-denial verification confirms the real Finder probe
+returns stable `POLICY_DENIED` and no UI nodes or labels when host permission
+is absent. Permission-granted real-app evidence and GUI mutation readback
+remain open. Evidence:
+`evidence/2026-09-15-ui-permission-denial-host-readback.md`.
