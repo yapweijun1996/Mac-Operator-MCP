@@ -88,6 +88,7 @@ export interface JobLease {
 
 const JOB_LEASE_OWNER_PATTERN = /^[A-Za-z0-9._:@/-]{1,128}$/u;
 const JOB_LEASE_TOKEN_PATTERN = /^lease:[A-Za-z0-9._:-]{16,128}$/u;
+const EDGE_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MAX_JOB_LEASE_MS = 120_000;
 const MAX_ACTIVE_REQUESTS_GLOBAL = 256;
 const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
@@ -759,8 +760,7 @@ export class BrokerStore {
         input.decision.requestId !== input.request.requestId || input.intent.requestId !== input.request.requestId ||
         input.job.ownerPrincipalId !== input.request.principalId || input.job.ownerSessionId !== input.request.sessionId ||
         (input.job.edgeId !== undefined && input.job.edgeId !== input.request.edgeId) ||
-        (input.job.edgeKeyId !== undefined &&
-          (input.request.edgeId === undefined || !input.job.edgeKeyId.startsWith(`${input.request.edgeId}:`))) ||
+        (input.job.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.job.edgeKeyId, input.request.edgeId)) ||
         input.job.tool !== input.request.tool || input.job.policyVersion !== input.request.policyVersion ||
         input.intent.targetRef !== input.decision.targetRef || input.approval.targetRef !== input.decision.targetRef ||
         input.intent.timestampMs < input.decision.timestampMs || input.job.createdAtMs < input.intent.timestampMs ||
@@ -1120,7 +1120,7 @@ export class BrokerStore {
             input.job.ownerSessionId !== current.sessionId || input.job.tool !== current.tool ||
             input.job.policyVersion !== current.policyVersion || input.job.targetRef !== input.intent.targetRef ||
             (input.job.edgeId !== undefined && input.job.edgeId !== current.edgeId) ||
-            (input.job.edgeKeyId !== undefined && !input.job.edgeKeyId.startsWith(`${current.edgeId}:`))) {
+            (input.job.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.job.edgeKeyId, current.edgeId))) {
           throw new BrokerError("CONFLICT", "Request state or approved Job identity changed");
         }
         assertAuditMatchesRequest(input.intent, current);
@@ -3392,8 +3392,7 @@ function mapJob(row: JobRow): BrokerJob {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job Edge provenance is malformed");
   }
   if (row.owner_edge_key_id !== null &&
-      (typeof row.owner_edge_key_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(row.owner_edge_key_id) || row.owner_edge_id === null ||
-        !row.owner_edge_key_id.startsWith(`${row.owner_edge_id}:`))) {
+      !validEdgeKeyIdentity(row.owner_edge_key_id, row.owner_edge_id)) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job Edge-key provenance is malformed");
   }
   return {
@@ -3428,9 +3427,7 @@ function mapJob(row: JobRow): BrokerJob {
 function validateJobCreation(input: CreateJobInput): void {
   if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(input.jobId) ||
       (input.edgeId !== undefined && !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.edgeId)) ||
-      (input.edgeKeyId !== undefined &&
-        (!/^[A-Za-z0-9._:@/-]{1,256}$/u.test(input.edgeKeyId) || input.edgeId === undefined ||
-          !input.edgeKeyId.startsWith(`${input.edgeId}:`))) ||
+      (input.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.edgeKeyId, input.edgeId)) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.ownerPrincipalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.ownerSessionId) ||
       !/^mac_[a-z0-9_]{1,123}$/u.test(input.tool) ||
@@ -3451,6 +3448,12 @@ function validateJobCreation(input: CreateJobInput): void {
   } else if (input.privilegedPayload !== undefined) {
     throw malformedJob();
   }
+}
+
+function validEdgeKeyIdentity(value: unknown, edgeId: string | null | undefined): value is string {
+  if (typeof value !== "string" || typeof edgeId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(edgeId) ||
+      !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(value) || !value.startsWith(`${edgeId}:`)) return false;
+  return EDGE_KEY_ID_PATTERN.test(value.slice(edgeId.length + 1));
 }
 
 function validateJobLease(lease: JobLease, nowMs: number, allowExpired: boolean): void {
@@ -4013,8 +4016,7 @@ function queuedJobAffectedByRevocation(kind: RevocationKind, subjectId: string, 
   }
   if (kind === "edge_key") {
     if (row.owner_edge_key_id === null) return true;
-    if (typeof row.owner_edge_key_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(row.owner_edge_key_id) ||
-        row.owner_edge_id === null || !row.owner_edge_key_id.startsWith(`${row.owner_edge_id}:`)) return true;
+    if (!validEdgeKeyIdentity(row.owner_edge_key_id, row.owner_edge_id)) return true;
     return row.owner_edge_key_id === subjectId;
   }
   // Other upstream identities are not persisted on Jobs yet; revoking one
