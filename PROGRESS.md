@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Guest admission evidence addendum at source revision `b726d69`:
+`VirtualizationGuestTransportExecutor` now recursively freezes the bounded
+guest-request admission snapshot before Job persistence callbacks receive it,
+protecting request/nonce/digest, Guest identity, task digests, and budgets.
+Focused Guest/Runner/Agent tests pass 17/17; the serial physical regression
+passes 666/671 with 0 failures and 5 explicit descriptor-capability skips.
+Evidence: `evidence/2026-09-16-guest-admission-evidence-snapshot.md`.
+
 Process ownership evidence addendum at source revision `17aa71e`:
 `ProcessSupervisor` now recursively freezes ownership snapshots before
 `onStarted` and `onOwnershipChanged` persistence callbacks, preventing PID,

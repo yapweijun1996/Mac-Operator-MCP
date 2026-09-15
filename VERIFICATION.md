@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest admission evidence verification at source revision `b726d69`:
+`VirtualizationGuestTransportExecutor` recursively freezes the bounded guest
+request admission snapshot before Broker Job persistence callbacks. Negative
+coverage proves request-ID and nested identity mutation attempts fail at
+runtime. Focused Guest/Runner/Agent tests pass 17/17; the serial physical
+regression passes 666/671 with 0 failures and 5 explicit descriptor-capability
+skips. The three pre-existing long-running suites were excluded and left
+untouched. This closes callback-side in-process admission-evidence mutation
+only; native guest isolation, signed attestation enablement, and production VM
+deployment remain open. Evidence:
+`evidence/2026-09-16-guest-admission-evidence-snapshot.md`.
+
 Process ownership evidence verification at source revision `17aa71e`:
 `ProcessSupervisor` recursively freezes ownership snapshots before invoking
 persistence callbacks. Negative coverage proves callback-side PID mutation is
