@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC socket quarantine addendum: source revision `6e246bf` atomically moves
+stale and owned Unix sockets to private same-directory quarantine names,
+rechecks device/inode identity, and only then unlinks the quarantine. Identity
+mismatch fails closed without deleting a replacement socket. Build, lint,
+typecheck, diff checks, and the focused 10-test Broker IPC suite pass; orphan
+quarantine recovery and installed-service evidence remain open. Evidence:
+`evidence/2026-09-15-ipc-socket-quarantine.md`.
+
 TLS material lifetime addendum: source revision `96adc2d` returns the validated
 protected-file buffer without an unnecessary duplicate and wipes the loaded
 certificate if private-key loading fails. Build, lint, typecheck, diff checks,

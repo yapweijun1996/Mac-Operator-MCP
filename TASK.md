@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC socket quarantine addendum: commit `6e246bf` moves stale and owned Unix
+sockets to private same-directory quarantine names before identity recheck and
+unlink, so a replacement pathname is not deleted after the initial check.
+Focused Broker IPC tests pass 10/10; orphan quarantine recovery and installed
+service readback remain open. Evidence:
+`evidence/2026-09-15-ipc-socket-quarantine.md`.
+
 TLS material lifetime addendum: commit `96adc2d` returns the validated TLS
 file buffer without an unnecessary duplicate and wipes a partially loaded
 certificate when private-key loading fails. Focused Edge TLS/service-startup
