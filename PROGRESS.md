@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Policy-query target normalization addendum at source revision `81bf9fa`:
+`mac_policy_explain` now applies target-kind-specific reference grammars before
+policy lookup, including canonical app/window/UI identities, absolute
+filesystem/project paths, bounded service/log/Docker/Job/package/profile
+references, and `docker_runtime:local`. Traversal, cross-kind, malformed
+resource, control-character, and unknown-kind inputs fail closed with stable
+`PRECONDITION_FAILED`; omitted input defaults only to `host:broker`. Focused
+tests pass 3/3. This closes the in-process policy-query reference grammar only;
+signed-policy, native transport, remote issuer, live resource readback, and
+release-gate evidence remain independent. Evidence:
+`evidence/2026-09-16-policy-query-target-normalization.md`.
+
 Broker request-snapshot and IPC handoff addendum at source revision
 `0795958`: `parseBrokerRequest` now copies and recursively freezes the full
 validated envelope, and `Broker.handleForIpc` carries that snapshot through

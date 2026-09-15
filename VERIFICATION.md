@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Policy-query target normalization verification at source revision `81bf9fa`:
+`mac_policy_explain` now applies target-kind-specific reference grammars before
+policy lookup, including canonical bundle/app-window/UI identities, absolute
+filesystem/project paths, bounded service/log/Docker/Job/package/profile
+references, and the previously omitted `docker_runtime:local` target. Traversal,
+cross-kind, malformed resource, control-character, and unknown-kind inputs fail
+with stable `PRECONDITION_FAILED`; omitted input defaults only to
+`host:broker`. Focused target-normalizer tests pass 3/3; typecheck, lint, and
+diff checks pass. Filesystem paths remain lexical until descriptor-backed root
+planning, and signed policy, native transport, remote issuer, resource
+readback, and release evidence remain open. Evidence:
+`evidence/2026-09-16-policy-query-target-normalization.md`.
+
 Replay-ledger capacity verification at source revision `aec1bc8`: all seven
 Broker replay ledgers enforce a 4,096-row transactional admission boundary,
 perform expiry cleanup before the check, and reject an over-capacity ledger
