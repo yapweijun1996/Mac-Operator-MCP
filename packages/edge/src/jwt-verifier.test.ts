@@ -120,6 +120,34 @@ test("JWT verifier refreshes remote JWKS when a rotated key id appears", async (
   assert.equal(fetchCount, 2);
 });
 
+test("JWT verifier bounds remote JWKS response bytes and content type", async () => {
+  const { publicKey, privateKey } = await generateKeyPair("RS256");
+  const token = await createToken(privateKey);
+  const oversized = createJwtAccessTokenVerifier({
+    issuer,
+    issuerId: "issuer-prod",
+    resourceServerUrl,
+    jwksUri: new URL("https://issuer.example.test/.well-known/jwks.json"),
+    jwksFetch: async () => new Response("{" + "x".repeat(256 * 1024) + "}", {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    })
+  });
+  await assertInvalid(oversized, token);
+
+  const wrongType = createJwtAccessTokenVerifier({
+    issuer,
+    issuerId: "issuer-prod",
+    resourceServerUrl,
+    jwksUri: new URL("https://issuer.example.test/.well-known/jwks.json"),
+    jwksFetch: async () => new Response(JSON.stringify(await createJwks(publicKey)), {
+      status: 200,
+      headers: { "content-type": "text/plain" }
+    })
+  });
+  await assertInvalid(wrongType, token);
+});
+
 async function createJwks(publicKey: CryptoKey, keyId = "key-1"): Promise<JSONWebKeySet> {
   const jwk = await exportJWK(publicKey);
   return {

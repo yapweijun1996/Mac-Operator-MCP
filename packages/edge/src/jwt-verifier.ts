@@ -25,6 +25,7 @@ const DEFAULT_CLOCK_TOLERANCE_SECONDS = 5;
 const DEFAULT_JWKS_TIMEOUT_MS = 3_000;
 const DEFAULT_JWKS_CACHE_MAX_AGE_MS = 10 * 60 * 1_000;
 const DEFAULT_JWKS_COOLDOWN_MS = 30 * 1_000;
+const MAX_JWKS_RESPONSE_BYTES = 256 * 1024;
 const KNOWN_SCOPES = new Set<string>(SCOPES);
 
 export interface JwtRevocationContext {
@@ -185,11 +186,67 @@ function createKeySet(options: ValidatedOptions): RemoteJWKSet | ReturnType<type
       cacheMaxAge: DEFAULT_JWKS_CACHE_MAX_AGE_MS,
       cooldownDuration: options.jwksCooldownMs
     };
-    if (options.jwksFetch !== undefined) remoteOptions[customFetch] = options.jwksFetch;
+    const fetcher = options.jwksFetch ?? (globalThis.fetch as FetchImplementation | undefined);
+    if (typeof fetcher !== "function") throw new Error("JWT remote JWKS fetch is unavailable");
+    remoteOptions[customFetch] = createBoundedJwksFetch(fetcher);
     return createRemoteJWKSet(options.jwksUri, remoteOptions);
   } catch {
     throw new Error("JWT remote JWKS configuration is malformed");
   }
+}
+
+/**
+ * Keep remote key material bounded before jose parses it. The JWKS endpoint is
+ * startup-owned configuration, but its response is still an untrusted network
+ * input and must not become an unbounded JSON allocation.
+ */
+function createBoundedJwksFetch(fetcher: FetchImplementation): FetchImplementation {
+  return async (url, init) => {
+    const response = await fetcher(url, init);
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== "application/json" && contentType !== "application/jwk-set+json") {
+      throw new Error("JWT remote JWKS response content type is not JSON");
+    }
+    const contentLength = response.headers.get("content-length");
+    if (contentLength !== null && (!/^\\d+$/u.test(contentLength) || Number(contentLength) > MAX_JWKS_RESPONSE_BYTES)) {
+      throw new Error("JWT remote JWKS response exceeds the byte limit");
+    }
+    if (response.body === null) {
+      const text = await response.text();
+      if (Buffer.byteLength(text, "utf8") > MAX_JWKS_RESPONSE_BYTES) {
+        throw new Error("JWT remote JWKS response exceeds the byte limit");
+      }
+      return new Response(text, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers
+      });
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        const chunk = Buffer.from(next.value);
+        totalBytes += chunk.byteLength;
+        if (totalBytes > MAX_JWKS_RESPONSE_BYTES) {
+          await reader.cancel();
+          throw new Error("JWT remote JWKS response exceeds the byte limit");
+        }
+        chunks.push(chunk);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return new Response(Buffer.concat(chunks), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
+  };
 }
 
 function readScopes(claims: JWTPayload): string[] {
