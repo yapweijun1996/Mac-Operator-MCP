@@ -1,7 +1,7 @@
 # System-published guest image evidence
 
 Date: 2026-09-15
-Source commits: `e00554c`, `f74e485`
+Source commits: `e00554c`, `f74e485`, `a08d2a5`
 Host: physical Darwin arm64 development host
 
 ## Boundary
@@ -17,7 +17,8 @@ The default `broker-owned` mode remains available for protocol and test
 fixtures. The native Virtualization.framework adapter requires
 `system-published`: the image and its canonical parent directory must be
 root-owned, regular/non-symlink paths with no group/other write bits, and the
-image must be readable. Every canonical ancestor is checked; checking only the
+image must be readable, and the native path refuses to run as root. Every
+canonical ancestor is checked; checking only the
 direct parent would still allow a writable grandparent to rename the tree. The
 same root-owned publication check is enforced in the native C++ `ValidateImage`
 boundary after canonicalization and before attachment. Later lifecycle
@@ -42,7 +43,7 @@ filesystem isolation, remount behavior, or `mac_task_run` enablement.
 
 ## Rollback
 
-Revert commits `f74e485` and `e00554c`. No persisted schema or MCP wire
+Revert commits `a08d2a5`, `f74e485`, and `e00554c`. No persisted schema or MCP wire
 contract changes are introduced; startup configurations using the default
 publication mode remain protocol/test-only and are rejected by the enabled
 native adapter.

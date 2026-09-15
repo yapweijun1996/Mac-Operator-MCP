@@ -4,11 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-System-published guest-image addendum: source revisions `e00554c` and
-`f74e485` add an
+System-published guest-image addendum: source revisions `e00554c`, `f74e485`,
+and `a08d2a5` add an
 explicit image publication mode. Enabled native Virtualization.framework
 creation now requires a root-owned, non-symlink image and canonical ancestor
-chain with no group/other write bits; broker-owned fixtures remain available for
+chain with no group/other write bits; the native path also rejects a root
+Broker. Broker-owned fixtures remain available for
 protocol/test seams but are rejected before native loading. The native C++
 preflight repeats this publication check because attachment uses a pathname
 after descriptor hashing. Focused image/native suites pass 12/12; the

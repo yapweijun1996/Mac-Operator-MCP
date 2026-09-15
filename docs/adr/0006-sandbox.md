@@ -278,10 +278,12 @@ This preserves serialized VM mutation even when an adapter does not honor
 focused lifecycle tests and current physical-Darwin regression are recorded in
 [`evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md`](../../evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md).
 
-Commits `e00554c` and `f74e485` make the image publication boundary explicit.
+Commits `e00554c`, `f74e485`, and `a08d2a5` make the image publication boundary
+explicit.
 The enabled native adapter accepts only a `system-published` image whose
 canonical file and every ancestor are root-owned, non-symlink paths with no
-group/other write bits; the native `ValidateImage` path repeats this check
+group/other write bits; both startup and native paths reject a root Broker, and
+the native `ValidateImage` path repeats this check
 immediately before pathname attachment. Broker-owned images remain valid for
 protocol/test fixtures but fail closed before native loading. This blocks
 unprivileged same-user replacement across the framework pathname window,
