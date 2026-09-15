@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge TLS material pairing verification at source revision `3dacdbe`: protected
+certificate/private-key loading now derives both public SPKI values and rejects
+invalid or mismatched pairs before the HTTPS listener is constructed. The
+private-key buffer is cleared on pairing failure. The focused TLS suite passes
+4/4 with a real OpenSSL-generated pair and a mismatch negative case; HTTPS
+Edge, cross-process Edge/Broker, and service-startup suites pass 10/10.
+This closes startup pairing only, not certificate-chain, hostname, issuer, or
+launchd deployment evidence. Evidence:
+`evidence/2026-09-16-edge-tls-pairing.md`.
+
 Descriptor-launch capability probe at source revision `81a67b1`: the native
 peer addon now returns a versioned, host-owned capability record instead of
 leaving launcher presence implicit. The physical Mac mini reports
