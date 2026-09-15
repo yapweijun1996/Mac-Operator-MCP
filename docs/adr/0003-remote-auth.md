@@ -28,6 +28,13 @@ The current Edge candidate uses the official MCP TypeScript SDK v2 and serves on
 
 No external/deployed OAuth issuer, authorization-code/token issuance flow, certificate-chain deployment, tunnel, public listener, or revocation propagation evidence exists. The rotated-key test uses an in-process JWKS fetch harness; it is not live issuer rotation evidence. The local self-signed certificate and official-client probe are prototype evidence only. This ADR remains Proposed and the Edge must not be deployed publicly from this prototype evidence.
 
+Revision `c82d04a` reruns the layered local path on a physical Darwin 25.2.0
+arm64 host: the bounded L0/L1 probe, same-process HTTPS Edge, and separately
+spawned Edge/native-Broker path pass 3/3 with replay and bearer-token audit
+isolation checks. This strengthens local host evidence only; it does not change
+the Proposed status or establish an external issuer, certificate provenance,
+launchd installation, public exposure, or remote deployment.
+
 Commit `3cca22c` adds an Edge-owned remote-JWKS response boundary before
 `jose` parsing: the fetch body is streamed into a 256 KiB cap, invalid length
 metadata is rejected, and only JSON JWKS MIME types are accepted. This reduces

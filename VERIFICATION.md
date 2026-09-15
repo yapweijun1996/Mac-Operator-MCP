@@ -28,6 +28,15 @@ resource identity readback, native transport, remote issuer, and release
 evidence remain open. Evidence:
 `evidence/2026-09-16-parameterized-target-constraints.md`.
 
+Real macOS layered Edge/L0-L1 readback at source revision `c82d04a`:
+Darwin 25.2.0 arm64 with Node.js 25.5.0 passed the metadata-only bounded host
+probe, same-process signed HTTPS-to-Broker path, and separately spawned Edge
+process with native UID/GID/PID-start-time peer binding (3/3). Replay and
+bearer-token audit isolation checks also passed. This remains prototype host
+evidence; installed launchd identity, external issuer/certificate provenance,
+remote deployment, and release gates remain open. Evidence:
+`evidence/2026-09-16-real-edge-https-l0-l1.md`.
+
 Signed policy target validation verification at source revision `7e92fe9`:
 `validateBrokerPolicy` now applies target-kind-specific reference grammars to
 every active target rule after generic shape validation. Host/runtime identities,
