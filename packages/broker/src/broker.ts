@@ -16,6 +16,7 @@ import {
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { isPlainDataRecord } from "./plain-record.js";
 import type { BrokerJob, BrokerStore, GuestTaskJobMetadata, JobLease, WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, keyIdentity } from "./edge-keyring.js";
 import {
@@ -4078,7 +4079,7 @@ function appOpenDispatchResult(job: BrokerJob, data: AppOpenResultData, reused: 
 function parseStoredAppOpenResult(value: string): AppOpenResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["app_id", "state", "process_id", "target", "verified", "job_id"])) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed");
   }
   const record = parsed as Record<string, unknown>;
@@ -4086,7 +4087,7 @@ function parseStoredAppOpenResult(value: string): AppOpenResultData {
   if (typeof record.app_id !== "string" || !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(record.app_id) ||
       (record.state !== "launched" && record.state !== "already_running") || record.process_id !== null || record.verified !== true ||
       typeof record.job_id !== "string" || !/^job:app-open-[a-f0-9]{48}$/u.test(record.job_id) ||
-      target === null || typeof target !== "object" || Array.isArray(target)) {
+      !isPlainDataRecord(target) || !hasExactStoredFields(target, ["kind", "reference"])) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored app launch result is malformed");
   }
   const targetRecord = target as Record<string, unknown>;
@@ -4106,7 +4107,7 @@ function parseStoredAppOpenResult(value: string): AppOpenResultData {
 function parseStoredAppFocusResult(value: string): AppFocusResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed");
+  if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["app_id", "window_id", "focused", "reobserved_at", "verified", "job_id"], ["window_title"])) throw new BrokerError("UNKNOWN_OUTCOME", "Stored app focus result is malformed");
   const record = parsed as Record<string, unknown>;
   if (typeof record.app_id !== "string" || !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(record.app_id) ||
       typeof record.window_id !== "string" || !/^window:[a-f0-9]{48}$/u.test(record.window_id) ||
@@ -4129,13 +4130,13 @@ function parseStoredAppFocusResult(value: string): AppFocusResultData {
 function parseStoredUiActionResult(value: string): UiActionResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
+  if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["element_ref", "action", "accepted", "job_id", "reobserved"])) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
   const record = parsed as Record<string, unknown>;
   const reobserved = record.reobserved;
   if (typeof record.element_ref !== "string" || !/^element:[a-f0-9]{48}$/u.test(record.element_ref) ||
       typeof record.action !== "string" || !["press", "select", "increment", "decrement", "show_menu", "focus"].includes(record.action) ||
       record.accepted !== true || typeof record.job_id !== "string" || !/^job:ui-action-[a-f0-9]{48}$/u.test(record.job_id) ||
-      reobserved === null || typeof reobserved !== "object" || Array.isArray(reobserved)) {
+      !isPlainDataRecord(reobserved) || !hasExactStoredFields(reobserved, ["role", "enabled", "focused", "secure"], ["state"])) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
   }
   const state = reobserved as Record<string, unknown>;
@@ -4162,7 +4163,7 @@ function parseStoredUiActionResult(value: string): UiActionResultData {
 function parseStoredWriteResult(value: string): WriteResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem write result is malformed"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["path", "bytes_written", "sha256", "created", "precondition"])) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem write result is malformed");
   }
   const record = parsed as Record<string, unknown>;
@@ -4170,7 +4171,7 @@ function parseStoredWriteResult(value: string): WriteResultData {
   if (typeof record.path !== "string" || !isAbsolute(record.path) || record.path.length > 4096 ||
       !Number.isSafeInteger(record.bytes_written) || (record.bytes_written as number) < 0 || (record.bytes_written as number) > 1_048_576 ||
       typeof record.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(record.sha256) || typeof record.created !== "boolean" ||
-      precondition === null || typeof precondition !== "object" || Array.isArray(precondition)) {
+      !isPlainDataRecord(precondition) || !hasExactStoredFields(precondition, ["expected_sha256", "matched", "create_only"])) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem write result is malformed");
   }
   const condition = precondition as Record<string, unknown>;
@@ -4209,7 +4210,7 @@ function patchResultData(result: FilesystemPatchResult): PatchResultData {
 function parseStoredPatchResult(value: string): PatchResultData {
   let parsed: unknown;
   try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["project_root", "result", "changed_paths", "precondition", "files"])) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch result is malformed");
   }
   const record = parsed as Record<string, unknown>;
@@ -4219,7 +4220,7 @@ function parseStoredPatchResult(value: string): PatchResultData {
   if (typeof record.project_root !== "string" || !isAbsolute(record.project_root) || record.project_root.length > 4096 || record.project_root.includes("\0") ||
       (record.result !== "applied" && record.result !== "no_change") || !Array.isArray(changedPaths) || changedPaths.length > 64 ||
       changedPaths.some((path) => !isSafePatchRelativePath(path)) ||
-      precondition === null || typeof precondition !== "object" || Array.isArray(precondition) ||
+      !isPlainDataRecord(precondition) || !hasExactStoredFields(precondition, ["checked", "expected_sha256", "actual_sha256", "matched"]) ||
       typeof (precondition as Record<string, unknown>).checked !== "boolean" || typeof (precondition as Record<string, unknown>).matched !== "boolean" ||
       typeof (precondition as Record<string, unknown>).actual_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test((precondition as Record<string, unknown>).actual_sha256 as string) ||
       ((precondition as Record<string, unknown>).expected_sha256 !== null && (typeof (precondition as Record<string, unknown>).expected_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test((precondition as Record<string, unknown>).expected_sha256 as string))) ||
@@ -4228,7 +4229,7 @@ function parseStoredPatchResult(value: string): PatchResultData {
   }
   const condition = precondition as Record<string, unknown>;
   const parsedFiles = files.map((file) => {
-    if (file === null || typeof file !== "object" || Array.isArray(file)) throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch file is malformed");
+    if (!isPlainDataRecord(file) || !hasExactStoredFields(file, ["path", "sha256", "size_bytes"])) throw new BrokerError("UNKNOWN_OUTCOME", "Stored filesystem patch file is malformed");
     const item = file as Record<string, unknown>;
     if (typeof item.path !== "string" || !isAbsolute(item.path) || item.path.length > 4096 || item.path.includes("\0") ||
         typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(item.sha256) || !Number.isSafeInteger(item.size_bytes) || (item.size_bytes as number) < 0 || (item.size_bytes as number) > 1_048_576) {
@@ -4248,6 +4249,16 @@ function parseStoredPatchResult(value: string): PatchResultData {
     },
     files: parsedFiles
   };
+}
+
+function hasExactStoredFields(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[] = []
+): boolean {
+  const allowed = new Set([...required, ...optional]);
+  const keys = Object.keys(value);
+  return required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) && keys.every((key) => allowed.has(key));
 }
 
 function patchDispatchResult(job: BrokerJob, result: FilesystemPatchResult | PatchResultData, reused: boolean): DispatchResult {
