@@ -6,11 +6,48 @@ import test from "node:test";
 import { ToolContractRegistry } from "./contract-registry.js";
 
 const validContract = {
+  $schema: "./tool-contract.schema.json",
   schema_version: "0.1",
   tool_name: "mac_test",
+  capability_level: "L0",
   purpose: "bounded test contract",
-  input_schema: { type: "object" },
-  output_schema: { type: "object" },
+  required_scopes: ["mac.control.read"],
+  normalized_target_type: "broker",
+  timeout_ms: 3_000,
+  output_cap_bytes: 65_536,
+  filesystem_policy: "none",
+  secret_policy: "redact",
+  approval_policy: "trusted_read",
+  postcondition_verification: {
+    required: false,
+    strategy: "component_health_result_validation",
+    failure_class: "VERIFICATION_FAILED"
+  },
+  audit_class: "observe",
+  tool_delivery_wave: "wave_1",
+  implementation_status: "planned",
+  input_summary: null,
+  output_summary: null,
+  input_schema: {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    title: "mac_test input",
+    type: "object",
+    properties: {},
+    additionalProperties: false
+  },
+  output_schema: {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    title: "mac_test output",
+    type: "object",
+    properties: {},
+    additionalProperties: false
+  },
+  source: {
+    kbid: "mac-operator-mcp",
+    kb_id: "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    kb_item_id: "00000000-0000-4000-8000-000000000001",
+    source_text: "bounded test contract"
+  },
   idempotent: true,
   safety_class: "read_only",
   network_policy: "none"
@@ -24,8 +61,8 @@ test("contract registry loads bounded regular files and exposes the parsed contr
       schemaVersion: "0.1",
       toolName: "mac_test",
       purpose: "bounded test contract",
-      inputSchema: { type: "object" },
-      outputSchema: { type: "object" },
+      inputSchema: validContract.input_schema,
+      outputSchema: validContract.output_schema,
       idempotent: true,
       safetyClass: "read_only",
       networkPolicy: "none"
@@ -68,6 +105,29 @@ test("contract registry rejects unknown top-level fields", async () => {
   await withTempDirectory(async (directory) => {
     await writeContract(directory, { ...validContract, unexpected: true });
     await assert.rejects(() => ToolContractRegistry.load(directory), /unknown field/u);
+  });
+});
+
+test("contract registry rejects incomplete authority metadata", async () => {
+  await withTempDirectory(async (directory) => {
+    const { required_scopes: _requiredScopes, ...incomplete } = validContract;
+    await writeContract(directory, incomplete);
+    await assert.rejects(() => ToolContractRegistry.load(directory), /missing a required field/u);
+  });
+});
+
+test("contract registry rejects unknown scopes and malformed postconditions", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, { ...validContract, required_scopes: ["mac.not_a_scope"] });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /required_scopes is invalid/u);
+  });
+
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, {
+      ...validContract,
+      postcondition_verification: { required: true, strategy: "unknown", failure_class: "VERIFICATION_FAILED" }
+    });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /postcondition_verification is invalid/u);
   });
 });
 
