@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Request object authority-boundary addendum: source revision `8a8f335` makes
+request parsing reject prototype-bearing envelope, arguments, and principal
+objects before authentication or execution. The security-fuzz suite passes
+8/8; the non-overlapping package regression passes 498 total (492 pass,
+6 skipped, 0 fail); build, typecheck, lint, and diff checks pass. This closes
+local request object-shape integrity only; transport, policy signing, VM,
+credential, helper, and production enablement evidence remain open.
+Evidence: `evidence/2026-09-15-request-object-authority-boundary.md`.
+
 Policy prototype authority-boundary addendum: source revision `b164da0` makes
 runtime policy validation reject prototype-bearing authority records instead
 of accepting inherited kill-switch, key-window, principal, or tool fields.

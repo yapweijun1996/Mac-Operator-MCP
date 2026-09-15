@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Request object authority-boundary addendum: commit `8a8f335` makes
+`parseBrokerRequest()` reject prototype-bearing envelope, argument, and
+principal records before the signed request can reach authentication,
+authorization, audit admission, or execution. Security-fuzz tests pass 8/8;
+the non-overlapping package regression passes 498 total (492 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This covers direct
+in-process request shape integrity only and does not close transport, policy,
+VM, credential, helper, or capability gates.
+Evidence: `evidence/2026-09-15-request-object-authority-boundary.md`.
+
 Policy prototype authority-boundary addendum: commit `b164da0` makes
 `validateBrokerPolicy()` reject prototype-bearing records at every strict
 field boundary, including kill switches, key windows, principal grants, and

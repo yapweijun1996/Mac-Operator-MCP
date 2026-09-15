@@ -127,6 +127,13 @@ the release gate remain open.
 
 This is not an accepted production identity design. Native-module packaging/code identity, stable descriptor access, Edge PID lifecycle, key generation/distribution/secure deletion, signer/operator procedures, broader cross-process/session quotas beyond durable request admission, broader numeric canonical JSON compatibility across runtimes, and general database migration/corruption policy remain open. The Broker now enforces both a bounded in-process active-request cap per principal/session and durable global/principal-session admission caps in the BrokerStore transaction; cross-handle sharing is covered by tests, while process/adapter-specific quotas remain separate. The strict parser boundary rejects duplicate keys and unpaired surrogates before trust-boundary `JSON.parse` calls. The legacy revocation constraint migration is implemented and tested. Production enablement stays closed.
 
+Revision `8a8f335` extends the local parser boundary so request envelopes,
+arguments, and principals must be ordinary or null-prototype records. This
+prevents inherited values from being read by Broker execution logic when those
+values were absent from the canonical signed payload. The regression covers
+direct in-process callers; JSON transport, native peer identity, and
+production cross-process packaging remain separate acceptance evidence.
+
 ## Acceptance evidence
 
 Forged peer, copied envelope, changed payload, expired timestamp, repeated nonce, revoked session, concurrent session, restart replay, version mismatch, and replaced-Edge tests must fail safely.
