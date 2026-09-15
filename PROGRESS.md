@@ -5,13 +5,14 @@ Version: 0.1
 Last verified: 2026-09-15
 
 Job-ledger startup-integrity addendum: the BrokerStore now validates every
-persisted Job row before restart reconciliation. Lease owner/token formats,
-heartbeat/expiry ordering, and the bounded lease window fail closed, while
-mixed local-process and virtualization guest ownership metadata is rejected.
-Focused Job-state/startup tests pass 5/5; the non-overlapping package
-regression passes 585 total (579 pass, 6 skipped, 0 fail). Build, lint, and
-diff checks pass. Physical crash/old-worker process ownership, credential
-rotation, remount durability, and production task enablement remain open.
+persisted Job row before restart reconciliation. Job identity fields, lease
+owner/token formats, heartbeat/expiry ordering, and the bounded lease window
+fail closed, while mixed local-process and virtualization guest ownership
+metadata is rejected. Focused Job-state/startup tests pass 6/6; the
+non-overlapping package regression passes 586 total (580 pass, 6 skipped, 0
+fail). Build, lint, and diff checks pass. Physical crash/old-worker process
+ownership, credential rotation, remount durability, and production task
+enablement remain open.
 Evidence: `evidence/2026-09-15-job-ledger-startup-integrity.md`.
 
 Filesystem-worker result boundary addendum: commits `5657267` and `86a6792`
