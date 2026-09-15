@@ -208,8 +208,9 @@ an explicit implementation boundary; the default helper and policy remain
 disabled until production helper provenance, signing, installation, and
 adapter evidence are accepted.
 
-Revision `2660bdf` adds the independent helper-to-Broker authority-polling
-socket. Both peers require explicit OS-peer authentication, request and
+Revision `2660bdf`, hardened in `becea16`, adds the independent helper-to-
+Broker authority-polling socket and wipes copied keys on setup failure. Both
+peers require explicit OS-peer authentication, request and
 response proofs use direction-separated HMAC domains, and request IDs/nonces
 are durably admitted without treating a repeated authority poll as a repeated
 helper execution. The Broker endpoint invokes the final persisted authority

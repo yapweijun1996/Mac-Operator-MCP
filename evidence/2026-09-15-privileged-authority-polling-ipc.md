@@ -1,7 +1,7 @@
 # Privileged helper authority-polling IPC evidence
 
 Date: 2026-09-15
-Source revision: `2660bdf`
+Source revision: `becea16` (authority polling implementation: `2660bdf`)
 Status: implemented boundary; disabled by default and not a privileged-release acceptance
 
 ## Scope

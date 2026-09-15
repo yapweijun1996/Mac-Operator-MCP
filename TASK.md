@@ -1631,7 +1631,8 @@ non-cooperating-process lock evidence remain open.
   identity substitution. The combined helper/executor/dispatch suite passes
   26/26 and the latest physical non-overlapping regression passes 607/607.
   Evidence: `evidence/2026-09-15-privileged-authority-gate.md`.
-- MOP-060 authority-polling clarification: source revision `2660bdf` adds an
+- MOP-060 authority-polling clarification: source revision `becea16` (building
+  on `2660bdf`) adds an
   independent helper-to-Broker Unix socket with mandatory peer authentication
   on both directions, direction-separated HMAC domains, durable replay
   admission, and the Broker-backed Request/Approval/Job authority callback.
