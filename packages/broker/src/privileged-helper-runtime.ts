@@ -81,7 +81,7 @@ export interface PrivilegedHelperRuntimeKeyMaterialOptions {
   adapter: PrivilegedHelperAdapter;
   /** Local command gate. Broker authority remains mandatory through polling. */
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
-  authorityPoller?: PrivilegedHelperAuthorityPoller;
+  /** No poller injection is accepted; enabled adapters are wired to this socket. */
   authorityPollIntervalMs?: number;
   readStatus?: () => PrivilegedHelperStatusReadback;
   authorizeStatus?: () => void;
@@ -305,7 +305,7 @@ export async function createPrivilegedHelperRuntimeFromKeyMaterial(
   validateSocketBoundary(options);
   validateHelperPeerPolicy(options.peerPolicy);
   let loaded: Awaited<ReturnType<typeof loadPrivilegedHelperKeyConfigWithoutBroker>> | undefined;
-  let authorityPoller = options.authorityPoller;
+  let authorityPoller: PrivilegedHelperAuthorityPoller | undefined;
   let server: PrivilegedHelperIpcServer | undefined;
   try {
     loaded = await loadPrivilegedHelperKeyConfigWithoutBroker(options.helperKeyConfigPath);
@@ -320,7 +320,7 @@ export async function createPrivilegedHelperRuntimeFromKeyMaterial(
       options.keyAuthorityCheck?.();
     };
     assertConfiguredKeyUsable();
-    if (options.adapter.available && authorityPoller === undefined) {
+    if (options.adapter.available) {
       if (options.authoritySocketPath === undefined) {
         throw new PrivilegedHelperStartupError(
           "HELPER_AUTHORITY_UNAVAILABLE",
