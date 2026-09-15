@@ -9,6 +9,7 @@ import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackEx
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { readBrokerStatus, type BrokerStatusClientOptions } from "./broker-status-ipc.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const SERVICE_TIMEOUT_MS = 5_000;
@@ -1437,7 +1438,7 @@ function expectedPlistReadbackPath(plan: MacOsServiceInstallPlanBase): string {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return isPlainDataRecord(value);
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {

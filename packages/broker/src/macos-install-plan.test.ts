@@ -464,6 +464,21 @@ test("malformed nested readback is rejected with a stable plan error", () => {
   assert.throws(() => validateMacOsInstallReadback(plan, { launchd: null } as never), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_READBACK");
 });
 
+test("install readback rejects inherited and accessor-shaped observations", () => {
+  const plan = buildMacOsInstallPlan(base);
+  const accessorReadback: Record<string, unknown> = {};
+  Object.defineProperty(accessorReadback, "launchd", { enumerable: true, get: () => readbackSources(plan).launchd });
+  assert.throws(
+    () => validateMacOsInstallReadback(plan, accessorReadback as never),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_READBACK"
+  );
+  const inheritedReadback = Object.create({ launchd: readbackSources(plan).launchd }) as Record<string, unknown>;
+  assert.throws(
+    () => validateMacOsInstallReadback(plan, inheritedReadback as never),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_READBACK"
+  );
+});
+
 test("signature verification plan accepts a real temporary ad-hoc signed artifact", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("The production packaging target is macOS");
