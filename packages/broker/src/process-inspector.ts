@@ -1,4 +1,4 @@
-import { loadNativePeerAdapter } from "./peer-credentials.js";
+import { loadNativePeerAdapter, parsePeerProcessIdentity } from "./peer-credentials.js";
 import { isPlainDataRecord } from "./plain-record.js";
 
 const PROCESS_INFO_KEYS = new Set(["pid", "name", "executable", "cpuPercent", "memoryBytes", "owner"]);
@@ -34,6 +34,7 @@ export interface SafeProcessDetail {
 interface NativeProcessAdapter {
   listProcesses(limit: number, sort: "cpu" | "memory" | "pid" | "name"): unknown;
   inspectProcess(pid: number): unknown;
+  getProcessIdentity(pid: number): unknown;
 }
 
 export function inspectProcesses(limit: number, sort: "cpu" | "memory" | "pid" | "name"): SafeProcessInventory {
@@ -46,7 +47,22 @@ export function inspectProcesses(limit: number, sort: "cpu" | "memory" | "pid" |
 export function inspectProcess(pid: number): SafeProcessDetail {
   if (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999) throw new Error("Process pid is outside the supported range");
   const native = loadNativePeerAdapter() as unknown as NativeProcessAdapter;
-  return parseProcessDetail(native.inspectProcess(pid));
+  const before = parsePeerProcessIdentity(native.getProcessIdentity(pid));
+  const detail = parseProcessDetail(native.inspectProcess(pid));
+  const after = parsePeerProcessIdentity(native.getProcessIdentity(pid));
+  assertStableProcessIdentity(pid, before, after);
+  return detail;
+}
+
+/** Reject a PID reuse or target swap observed across one native inspection. */
+export function assertStableProcessIdentity(
+  requestedPid: number,
+  before: { pid: number; startTimeMicros: number },
+  after: { pid: number; startTimeMicros: number }
+): void {
+  if (before.pid !== requestedPid || after.pid !== requestedPid || before.startTimeMicros !== after.startTimeMicros) {
+    throw new Error("Process identity changed during inspection");
+  }
 }
 
 export function parseProcessInventory(value: unknown): SafeProcessInventory {

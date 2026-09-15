@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectProcess, inspectProcesses, parseProcessDetail, parseProcessInventory } from "./process-inspector.js";
+import { assertStableProcessIdentity, inspectProcess, inspectProcesses, parseProcessDetail, parseProcessInventory } from "./process-inspector.js";
 
 test("process inspector returns bounded redacted native metadata", () => {
   const inventory = inspectProcesses(20, "pid");
@@ -40,6 +40,22 @@ test("process inspector returns bounded detail without argv or environment", () 
 test("process inspector rejects malformed pid", () => {
   assert.throws(() => inspectProcess(0), /outside the supported range/u);
   assert.throws(() => inspectProcess(100_000_000), /outside the supported range/u);
+});
+
+test("process inspector rejects PID reuse across native identity readbacks", () => {
+  assert.doesNotThrow(() => assertStableProcessIdentity(
+    42,
+    { pid: 42, startTimeMicros: 100 },
+    { pid: 42, startTimeMicros: 100 }
+  ));
+  assert.throws(
+    () => assertStableProcessIdentity(42, { pid: 42, startTimeMicros: 100 }, { pid: 42, startTimeMicros: 101 }),
+    /identity changed during inspection/u
+  );
+  assert.throws(
+    () => assertStableProcessIdentity(42, { pid: 41, startTimeMicros: 100 }, { pid: 42, startTimeMicros: 100 }),
+    /identity changed during inspection/u
+  );
 });
 
 test("process inspector result parsers reject non-data and unstable child identities", () => {
