@@ -205,6 +205,8 @@ test("approval issuer key manager persists monotonic activation and exact restar
     assert.equal(activationAudits.length, 4);
     assert.equal(activationAudits.filter((row) => row.event_type === "intent").length, 2);
     assert.equal(activationAudits.filter((row) => row.event_type === "completion").length, 2);
+    manager.dispose();
+    assert.equal(activated.keys[0]?.key.equals(Buffer.alloc(32)), true);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

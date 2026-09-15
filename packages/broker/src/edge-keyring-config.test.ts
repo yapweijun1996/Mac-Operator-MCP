@@ -183,6 +183,8 @@ test("Edge key config manager persists monotonic activation and exact restart re
     assert.equal(audits.length, 4);
     assert.equal(audits.filter((row) => row.event_type === "intent").length, 2);
     assert.equal(audits.filter((row) => row.event_type === "completion").length, 2);
+    manager.dispose();
+    assert.equal(activated.keys[0]?.key.equals(Buffer.alloc(32)), true);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

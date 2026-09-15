@@ -54,39 +54,63 @@ export class ApprovalIssuerKeyManager {
 
   async activate(expectedPreviousRevision?: number): Promise<LoadedApprovalIssuerKeyConfig> {
     const loaded = await loadApprovalIssuerKeyConfig(this.configPath, this.store);
-    const persisted = this.store.activeApprovalKeyConfigIdentity();
-    const persistedRevision = persisted?.revision ?? 0;
-    const expected = expectedPreviousRevision ?? persistedRevision;
-    if (expected !== persistedRevision) {
-      throw new BrokerError("CONFLICT", "Persisted approval key configuration revision changed concurrently");
-    }
-    if (persisted && persisted.revision === loaded.document.revision && persisted.payloadDigest === loaded.payloadDigest) {
+    try {
+      const persisted = this.store.activeApprovalKeyConfigIdentity();
+      const persistedRevision = persisted?.revision ?? 0;
+      const expected = expectedPreviousRevision ?? persistedRevision;
+      if (expected !== persistedRevision) {
+        throw new BrokerError("CONFLICT", "Persisted approval key configuration revision changed concurrently");
+      }
+      if (persisted && persisted.revision === loaded.document.revision && persisted.payloadDigest === loaded.payloadDigest) {
+        this.disposeLoadedSnapshot();
+        this.activeSnapshot = loaded;
+        return loaded;
+      }
+      const identity: ApprovalKeyConfigActivationIdentity = {
+        revision: loaded.document.revision,
+        payloadDigest: loaded.payloadDigest,
+        activatedAtMs: this.now()
+      };
+      this.store.activateApprovalKeyConfig(identity, expected);
+      this.disposeLoadedSnapshot();
       this.activeSnapshot = loaded;
       return loaded;
+    } catch (error) {
+      disposeLoadedApprovalIssuerKeyConfig(loaded);
+      throw error;
     }
-    const identity: ApprovalKeyConfigActivationIdentity = {
-      revision: loaded.document.revision,
-      payloadDigest: loaded.payloadDigest,
-      activatedAtMs: this.now()
-    };
-    this.store.activateApprovalKeyConfig(identity, expected);
-    this.activeSnapshot = loaded;
-    return loaded;
   }
 
   async restore(): Promise<LoadedApprovalIssuerKeyConfig> {
     const loaded = await loadApprovalIssuerKeyConfig(this.configPath, this.store);
-    const persisted = this.store.activeApprovalKeyConfigIdentity();
-    if (!persisted || persisted.revision !== loaded.document.revision || persisted.payloadDigest !== loaded.payloadDigest) {
-      throw new BrokerError("PRECONDITION_FAILED", "Issuer key configuration does not match persisted activation");
+    try {
+      const persisted = this.store.activeApprovalKeyConfigIdentity();
+      if (!persisted || persisted.revision !== loaded.document.revision || persisted.payloadDigest !== loaded.payloadDigest) {
+        throw new BrokerError("PRECONDITION_FAILED", "Issuer key configuration does not match persisted activation");
+      }
+      this.disposeLoadedSnapshot();
+      this.activeSnapshot = loaded;
+      return loaded;
+    } catch (error) {
+      disposeLoadedApprovalIssuerKeyConfig(loaded);
+      throw error;
     }
-    this.activeSnapshot = loaded;
-    return loaded;
+  }
+
+  /** Wipes the manager-owned raw issuer-key snapshot. */
+  dispose(): void {
+    this.disposeLoadedSnapshot();
   }
 
   current(): LoadedApprovalIssuerKeyConfig {
     if (!this.activeSnapshot) throw new BrokerError("PRECONDITION_FAILED", "Issuer key configuration is not activated");
     return this.activeSnapshot;
+  }
+
+  private disposeLoadedSnapshot(): void {
+    if (!this.activeSnapshot) return;
+    for (const key of this.activeSnapshot.keys) key.key.fill(0);
+    this.activeSnapshot = undefined;
   }
 }
 
@@ -98,33 +122,42 @@ export async function loadApprovalIssuerKeyConfig(
   const document = parseConfig(await readProtectedConfig(path));
   const identities = new Set<string>();
   const keys: ApprovalIssuerKey[] = [];
-  for (const entry of document.keys) {
-    const identity = approvalKeyIdentity(entry.issuerId, entry.keyId);
-    if (identities.has(identity)) throw new Error(`Duplicate approval issuer key: ${identity}`);
-    identities.add(identity);
-    if (store.isRevoked("approval_key", identity)) {
-      throw new Error(`Approval issuer key is revoked: ${identity}`);
+  try {
+    for (const entry of document.keys) {
+      const identity = approvalKeyIdentity(entry.issuerId, entry.keyId);
+      if (identities.has(identity)) throw new Error(`Duplicate approval issuer key: ${identity}`);
+      identities.add(identity);
+      if (store.isRevoked("approval_key", identity)) {
+        throw new Error(`Approval issuer key is revoked: ${identity}`);
+      }
+      const loaded = entry.keySource === "keychain"
+        ? { key: await loadKeychainAuthenticationKey(entry.service!, entry.account!) }
+        : await loadApprovalIssuerKey(
+          entry.path!,
+          entry.issuerId,
+          entry.keyId,
+          entry.notBeforeMs,
+          entry.expiresAtMs,
+          entry.allowUnattended
+        );
+      keys.push({
+        issuerId: entry.issuerId,
+        keyId: entry.keyId,
+        key: loaded.key,
+        notBeforeMs: entry.notBeforeMs,
+        expiresAtMs: entry.expiresAtMs,
+        allowUnattended: entry.allowUnattended
+      });
     }
-    const loaded = entry.keySource === "keychain"
-      ? { key: await loadKeychainAuthenticationKey(entry.service!, entry.account!) }
-      : await loadApprovalIssuerKey(
-        entry.path!,
-        entry.issuerId,
-        entry.keyId,
-        entry.notBeforeMs,
-        entry.expiresAtMs,
-        entry.allowUnattended
-      );
-    keys.push({
-      issuerId: entry.issuerId,
-      keyId: entry.keyId,
-      key: loaded.key,
-      notBeforeMs: entry.notBeforeMs,
-      expiresAtMs: entry.expiresAtMs,
-      allowUnattended: entry.allowUnattended
-    });
+    return { document, keys, payloadDigest: sha256(canonicalJson(document)) };
+  } catch (error) {
+    for (const key of keys) key.key.fill(0);
+    throw error;
   }
-  return { document, keys, payloadDigest: sha256(canonicalJson(document)) };
+}
+
+function disposeLoadedApprovalIssuerKeyConfig(loaded: LoadedApprovalIssuerKeyConfig): void {
+  for (const key of loaded.keys) key.key.fill(0);
 }
 
 /** Atomically writes issuer metadata; secret bytes remain in separate key files. */

@@ -58,39 +58,63 @@ export class EdgeAuthenticationKeyManager {
 
   async activate(expectedPreviousRevision?: number): Promise<LoadedEdgeAuthenticationKeyConfig> {
     const loaded = await loadEdgeAuthenticationKeyConfig(this.configPath, this.store);
-    const persisted = this.store.activeEdgeKeyConfigIdentity();
-    const persistedRevision = persisted?.revision ?? 0;
-    const expected = expectedPreviousRevision ?? persistedRevision;
-    if (expected !== persistedRevision) {
-      throw new BrokerError("CONFLICT", "Persisted Edge key configuration revision changed concurrently");
-    }
-    if (persisted && persisted.revision === loaded.document.revision && persisted.payloadDigest === loaded.payloadDigest) {
+    try {
+      const persisted = this.store.activeEdgeKeyConfigIdentity();
+      const persistedRevision = persisted?.revision ?? 0;
+      const expected = expectedPreviousRevision ?? persistedRevision;
+      if (expected !== persistedRevision) {
+        throw new BrokerError("CONFLICT", "Persisted Edge key configuration revision changed concurrently");
+      }
+      if (persisted && persisted.revision === loaded.document.revision && persisted.payloadDigest === loaded.payloadDigest) {
+        this.disposeLoadedSnapshot();
+        this.activeSnapshot = loaded;
+        return loaded;
+      }
+      const identity: EdgeKeyConfigActivationIdentity = {
+        revision: loaded.document.revision,
+        payloadDigest: loaded.payloadDigest,
+        activatedAtMs: this.now()
+      };
+      this.store.activateEdgeKeyConfig(identity, expected);
+      this.disposeLoadedSnapshot();
       this.activeSnapshot = loaded;
       return loaded;
+    } catch (error) {
+      disposeLoadedEdgeAuthenticationKeyConfig(loaded);
+      throw error;
     }
-    const identity: EdgeKeyConfigActivationIdentity = {
-      revision: loaded.document.revision,
-      payloadDigest: loaded.payloadDigest,
-      activatedAtMs: this.now()
-    };
-    this.store.activateEdgeKeyConfig(identity, expected);
-    this.activeSnapshot = loaded;
-    return loaded;
   }
 
   async restore(): Promise<LoadedEdgeAuthenticationKeyConfig> {
     const loaded = await loadEdgeAuthenticationKeyConfig(this.configPath, this.store);
-    const persisted = this.store.activeEdgeKeyConfigIdentity();
-    if (!persisted || persisted.revision !== loaded.document.revision || persisted.payloadDigest !== loaded.payloadDigest) {
-      throw new BrokerError("PRECONDITION_FAILED", "Edge key configuration does not match persisted activation");
+    try {
+      const persisted = this.store.activeEdgeKeyConfigIdentity();
+      if (!persisted || persisted.revision !== loaded.document.revision || persisted.payloadDigest !== loaded.payloadDigest) {
+        throw new BrokerError("PRECONDITION_FAILED", "Edge key configuration does not match persisted activation");
+      }
+      this.disposeLoadedSnapshot();
+      this.activeSnapshot = loaded;
+      return loaded;
+    } catch (error) {
+      disposeLoadedEdgeAuthenticationKeyConfig(loaded);
+      throw error;
     }
-    this.activeSnapshot = loaded;
-    return loaded;
+  }
+
+  /** Wipes the manager-owned raw key snapshot; the Broker-owned keyring remains active. */
+  dispose(): void {
+    this.disposeLoadedSnapshot();
   }
 
   current(): LoadedEdgeAuthenticationKeyConfig {
     if (!this.activeSnapshot) throw new BrokerError("PRECONDITION_FAILED", "Edge key configuration is not activated");
     return this.activeSnapshot;
+  }
+
+  private disposeLoadedSnapshot(): void {
+    if (!this.activeSnapshot) return;
+    for (const key of this.activeSnapshot.keys) key.key.fill(0);
+    this.activeSnapshot = undefined;
   }
 }
 
@@ -105,27 +129,38 @@ export async function loadEdgeAuthenticationKeyConfig(
 ): Promise<LoadedEdgeAuthenticationKeyConfig> {
   const document = parseConfig(await readProtectedConfig(path));
   const keys: EdgeAuthenticationKey[] = [];
-  for (const entry of document.keys) {
-    const identity = `${entry.edgeId}:${entry.keyId}`;
-    if (store.isRevoked("edge_key", identity)) {
-      throw new Error(`Edge authentication key is revoked: ${identity}`);
+  try {
+    for (const entry of document.keys) {
+      const identity = `${entry.edgeId}:${entry.keyId}`;
+      if (store.isRevoked("edge_key", identity)) {
+        throw new Error(`Edge authentication key is revoked: ${identity}`);
+      }
+      const key = entry.keySource === "keychain"
+        ? await loadKeychainAuthenticationKey(entry.service!, entry.account!)
+        : await loadAuthenticationKey(entry.path!);
+      if (sha256(key) !== entry.keyDigest) {
+        key.fill(0);
+        throw new Error(`Edge authentication key digest precondition failed: ${identity}`);
+      }
+      keys.push({
+        edgeId: entry.edgeId,
+        keyId: entry.keyId,
+        key,
+        notBeforeMs: entry.notBeforeMs,
+        expiresAtMs: entry.expiresAtMs
+      });
     }
-    const key = entry.keySource === "keychain"
-      ? await loadKeychainAuthenticationKey(entry.service!, entry.account!)
-      : await loadAuthenticationKey(entry.path!);
-    if (sha256(key) !== entry.keyDigest) {
-      throw new Error(`Edge authentication key digest precondition failed: ${identity}`);
-    }
-    keys.push({
-      edgeId: entry.edgeId,
-      keyId: entry.keyId,
-      key,
-      notBeforeMs: entry.notBeforeMs,
-      expiresAtMs: entry.expiresAtMs
-    });
+    const keyring = new EdgeKeyring(keys);
+    return { document, keys, keyring, payloadDigest: sha256(canonicalJson(document)) };
+  } catch (error) {
+    for (const key of keys) key.key.fill(0);
+    throw error;
   }
-  const keyring = new EdgeKeyring(keys);
-  return { document, keys, keyring, payloadDigest: sha256(canonicalJson(document)) };
+}
+
+function disposeLoadedEdgeAuthenticationKeyConfig(loaded: LoadedEdgeAuthenticationKeyConfig): void {
+  for (const key of loaded.keys) key.key.fill(0);
+  loaded.keyring.dispose();
 }
 
 /** Atomically writes non-secret Edge key metadata; secret bytes stay in files or Keychain. */
