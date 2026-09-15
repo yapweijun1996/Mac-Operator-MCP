@@ -1166,7 +1166,10 @@ export class Broker {
         else execution.privilegedJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
-      this.ensureActiveAuthority(request, execution.target);
+      // Re-check every normalized target immediately before publishing a
+      // success. Multi-root inspections keep additional targets in the
+      // execution plan; a policy change on any one of them must fail closed.
+      this.ensureActiveAuthority(request, execution.target, execution.additionalTargets ?? []);
       const result: BrokerResult = {
         ok: true,
         request_id: request.requestId,
