@@ -2598,3 +2598,12 @@ non-overlapping package regression passes 538 total (532 passed, 6 skipped,
 production deployment, Keychain, remote transport, privileged operations, or
 capability enablement. Evidence:
 `evidence/2026-09-15-broker-status-boundary.md`.
+
+Status-array verification at source revision `987cadc` confirms Broker and
+privileged-helper readbacks reject extra enumerable/accessor, symbolic, and
+sparse capability-list shapes before publication. Focused status readback tests
+pass 2/2; the non-overlapping package regression passes 538 total (532 passed,
+6 skipped, 0 failed). This remains representation evidence only and does not
+close production deployment, Keychain, remote transport, privileged
+operations, or capability enablement. Evidence:
+`evidence/2026-09-15-status-array-boundary.md`.

@@ -1710,3 +1710,12 @@ passes 1/1 and the non-overlapping package regression passes 538 total (532
 passed, 6 skipped). This representation evidence does not close production
 deployment, Keychain, remote transport, privileged operations, or capability
 enablement. Evidence: `evidence/2026-09-15-broker-status-boundary.md`.
+
+Status-array boundary addendum: commit `987cadc` requires dense bounded
+capability arrays in Broker and privileged-helper status readbacks, rejecting
+extra enumerable/accessor properties and sparse or symbolic shapes. Focused
+status readback tests pass 2/2; the non-overlapping package regression passes
+538 total (532 passed, 6 skipped). This remains representation evidence only;
+production deployment, Keychain, remote transport, privileged operations, and
+capability enablement remain open. Evidence:
+`evidence/2026-09-15-status-array-boundary.md`.

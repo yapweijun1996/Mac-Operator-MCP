@@ -2936,3 +2936,10 @@ package regression passes 538 total (532 passed, 6 skipped, 0 failed).
 Production deployment, Keychain, remote transport, privileged operations, and
 capability enablement remain open. Evidence:
 `evidence/2026-09-15-broker-status-boundary.md`.
+
+Status readback capability arrays are now dense and bounded on both Broker and
+privileged-helper paths (source revision `987cadc`). Focused hostile-array
+tests pass 2/2; the non-overlapping package regression passes 538 total (532
+passed, 6 skipped, 0 failed). Production deployment, Keychain, remote
+transport, privileged operations, and capability enablement remain open.
+Evidence: `evidence/2026-09-15-status-array-boundary.md`.
