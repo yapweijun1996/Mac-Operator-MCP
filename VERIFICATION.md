@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Audit-anchor lock quarantine verification at source revision `61e6acb` uses a
+private same-directory rename and post-rename device/inode/type readback for
+normal lock cleanup; replacement identities fail closed. The stopped-service
+native recovery boundary remains independently gated. Build, lint, typecheck,
+and diff checks pass; the focused audit-anchor/read-only suite passes 9/9.
+Orphan quarantine recovery and installed-service readback remain open.
+Evidence: `evidence/2026-09-15-audit-anchor-lock-quarantine.md`.
+
 Service-instance-lock verification at source revision `d3ca767` removes exact
 lock identities through a private same-directory quarantine rename, validates
 device/inode/type after the move, and only then unlinks the quarantine.

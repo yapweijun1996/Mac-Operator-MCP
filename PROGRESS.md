@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Audit-anchor lock quarantine addendum: source revision `61e6acb` replaces
+normal direct lock unlink with a private same-directory quarantine rename,
+device/inode/type recheck, and post-check deletion. Replacement locks fail
+closed; stopped-service native recovery remains separately gated. Build, lint,
+typecheck, diff checks, and the focused 9-test audit-anchor/read-only suite
+pass; orphan quarantine recovery and installed-service evidence remain open.
+Evidence: `evidence/2026-09-15-audit-anchor-lock-quarantine.md`.
+
 Service-lock quarantine addendum: source revision `d3ca767` replaces direct
 owner-lock unlink with an identity-fenced same-directory quarantine rename and
 post-rename recheck before deletion. Replacement lock identities fail closed

@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Audit-anchor lock quarantine addendum: commit `61e6acb` atomically moves the
+normal exact lock identity to a private sibling quarantine, rechecks its
+device/inode/type, and only then removes it. Replacement locks fail closed;
+focused audit-anchor/read-only tests pass 9/9. Orphan quarantine recovery and
+installed service readback remain open. Evidence:
+`evidence/2026-09-15-audit-anchor-lock-quarantine.md`.
+
 Service-lock quarantine addendum: commit `d3ca767` atomically moves exact
 owner-lock identities to private same-directory quarantine names, rechecks
 device/inode/type, and only then removes them. Replacement locks fail closed;
