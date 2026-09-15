@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createSocket, type Socket } from "node:dgram";
 import { tmpdir, userInfo } from "node:os";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -657,6 +658,55 @@ test("real macOS sandbox runner maps active cancellation to process-group termin
   }
 });
 
+test("real macOS sandbox runner enforces UDP loopback allowlists", {
+  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-udp-"));
+  const root = await realpath(directory);
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof()
+  });
+  const allowedServer = await startUdpServer();
+  const deniedServer = await startUdpServer();
+  const sendScript = "use Socket qw(AF_INET SOCK_DGRAM inet_aton sockaddr_in); socket(my $s, AF_INET, SOCK_DGRAM, 0) or die $!; send($s, 'udp-probe', 0, sockaddr_in($ARGV[0], inet_aton('127.0.0.1'))) or die $!; print \"sent\\n\";";
+  try {
+    const allowed = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.udp-allowlist",
+      networkPolicy: "allowlist",
+      networkAllowlist: [`udp://localhost:${allowedServer.port}`],
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/usr/bin/perl",
+        args: ["-e", sendScript, String(allowedServer.port)]
+      }
+    }, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.equal(allowed.resultClass, "SUCCEEDED", JSON.stringify(allowed));
+    assert.equal(allowed.stdout, "sent\n");
+    assert.equal((await withTimeout(allowedServer.message, 1_000)).toString(), "udp-probe");
+
+    const denied = await runner.run({
+      ...resolvedProfile(root),
+      profile: "tests.udp-denylist",
+      networkPolicy: "allowlist",
+      networkAllowlist: [`udp://localhost:${allowedServer.port}`],
+      process: {
+        ...resolvedProfile(root).process,
+        executable: "/usr/bin/perl",
+        args: ["-e", sendScript, String(deniedServer.port)]
+      }
+    }, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.notEqual(denied.resultClass, "SUCCEEDED", JSON.stringify(denied));
+    await assert.rejects(withTimeout(deniedServer.message, 250), /timed out/u);
+  } finally {
+    await closeUdpServer(allowedServer.socket);
+    await closeUdpServer(deniedServer.socket);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
@@ -692,4 +742,45 @@ async function closeHttpServer(server: ReturnType<typeof createServer>): Promise
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
+}
+
+async function startUdpServer(): Promise<{ socket: Socket; port: number; message: Promise<Buffer> }> {
+  const socket = createSocket("udp4");
+  const message = new Promise<Buffer>((resolve, reject) => {
+    socket.once("message", (value) => resolve(value));
+    socket.once("error", reject);
+  });
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      socket.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      socket.removeListener("error", onError);
+      resolve();
+    };
+    socket.once("error", onError);
+    socket.once("listening", onListening);
+    socket.bind(0, "127.0.0.1");
+  });
+  const address = socket.address();
+  if (typeof address === "string" || address === null) {
+    await closeUdpServer(socket);
+    throw new Error("UDP fixture did not expose a numeric port");
+  }
+  return { socket, port: address.port, message };
+}
+
+async function closeUdpServer(socket: Socket): Promise<void> {
+  await new Promise<void>((resolve) => {
+    try { socket.close(() => resolve()); }
+    catch { resolve(); }
+  });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timed out")), timeoutMs))
+  ]);
 }
