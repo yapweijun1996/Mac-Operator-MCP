@@ -4,15 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Privileged policy-state addendum: source revision `7926c99` gives all 44
-catalog tools explicit default-policy lifecycle records. The three L5 helper
-tools now carry their independent scopes, privileged family, target types,
-budgets, and explicit approval policy while remaining `implemented=false` and
-`enabled=false`; package targets are represented as a first-class Broker
-policy target. Focused policy and contract-conformance checks pass 10/10 with
-typecheck, lint, and diff checks passing. This does not enable helper
-operations or close root-domain signing/install evidence. Evidence:
-`evidence/2026-09-15-privileged-policy-state.md`.
+Privileged Broker dispatch addendum: source revision `24c704e` wires all three
+L5 contracts through Broker planning, normalized payload validation, approval
+intent, Broker-owned Job creation/lease, and the separately authenticated
+`PrivilegedHelperJobExecutor`. The helper boundary remains explicitly
+disabled by default, while the default policy now records the tools as
+`implemented=true` and `enabled=false`; no root operation is enabled by this
+change. A fake authenticated helper integration test passes 2/2, including a
+fail-closed no-helper admission check. The helper factory now keeps the signed
+Edge-envelope digest separate from the normalized privileged-argument digest.
+Physical helper signing, root-domain installation, real adapters, and
+production enablement remain open. Evidence:
+`evidence/2026-09-15-privileged-broker-dispatch.md`.
 
 Physical secret-boundary regression addendum: source revision `356ebd4`
 passes the non-overlapping built suite 598/598 with zero skips and zero

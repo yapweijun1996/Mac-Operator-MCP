@@ -3,12 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Privileged policy-state verification: source revision `7926c99` represents all
-44 catalog tools in the default Broker policy and keeps the three privileged
-helper tools explicitly scoped but unimplemented and disabled. Policy and
-contract-conformance checks pass 10/10; this does not claim helper signing,
-root-domain installation, or privileged enablement. Evidence:
-`evidence/2026-09-15-privileged-policy-state.md`.
+Privileged Broker dispatch verification: source revision `24c704e` connects all
+three L5 contracts to normalized payload planning, explicit approval intent,
+Broker-owned Job lease transitions, and the separately authenticated helper
+executor. The default helper and policy remain disabled; a focused fake-helper
+integration suite passes 2/2 and confirms no Job is created when the helper
+boundary is unavailable. This does not claim helper signing, root-domain
+installation, real privileged adapters, or privileged enablement. Evidence:
+`evidence/2026-09-15-privileged-broker-dispatch.md`.
 
 Physical secret-boundary regression verification: source revision `356ebd4`
 passes 598/598 non-overlapping built tests with zero skips and zero failures
