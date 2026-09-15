@@ -531,6 +531,17 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
     guestIdentity: guest,
     attestation: guestAttestation(guest)
   });
+  assert.equal(Object.isFrozen(executor.guestIdentity), true);
+  assert.equal(Object.isFrozen(executor.attestation), true);
+  assert.equal(Object.isFrozen(executor.attestation.guestIdentity), true);
+  assert.throws(
+    () => { (executor.guestIdentity as unknown as { imageSha256: string }).imageSha256 = "0".repeat(64); },
+    TypeError
+  );
+  assert.throws(
+    () => { (executor.attestation as unknown as { sandboxProfile: string }).sandboxProfile = "other-profile"; },
+    TypeError
+  );
   const result = await executor.run({
     profile,
     guestIdentity: guest,

@@ -380,8 +380,8 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
     }
     this.available = options.available;
     this.transport = options.transport;
-    this.guestIdentity = guestIdentity;
-    this.attestation = attestation;
+    this.guestIdentity = freezeRuntimeSnapshot(guestIdentity);
+    this.attestation = freezeRuntimeSnapshot(attestation);
     if (options.signedAttestation !== undefined) this.signedAttestation = options.signedAttestation;
   }
 
@@ -743,6 +743,27 @@ function freezeTaskIsolationProof(proof: TaskIsolationProof): TaskIsolationProof
   };
   freeze(proof);
   return proof;
+}
+
+/**
+ * Guest identity and attestation are retained by a long-lived executor and
+ * consulted for every exchange. Freeze the validated copies so readonly
+ * TypeScript fields cannot become a mutable runtime authorization surface.
+ */
+function freezeRuntimeSnapshot<T>(value: T): T {
+  const seen = new Set<object>();
+  const freeze = (candidate: unknown): void => {
+    if (candidate === null || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) freeze(item);
+    } else {
+      for (const child of Object.values(candidate)) freeze(child);
+    }
+    Object.freeze(candidate);
+  };
+  freeze(value);
+  return value;
 }
 
 function virtualizationAttestationMatchesProof(
