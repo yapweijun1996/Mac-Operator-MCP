@@ -29,6 +29,17 @@ evidence, sandbox, credential, VM, persistence, and capability enablement
 evidence remain open.
 Evidence: `evidence/2026-09-15-readonly-adapter-result-boundaries.md`.
 
+Virtualization VM result-boundary addendum: source revision `c22fc98` makes
+native guest lifecycle start/stop/status readbacks plain records with the
+exact `bootId`, `guestIdentity`, and `state` fields. Accessor, inherited,
+symbolic, and unknown result fields fail closed before guest identity or boot
+identity comparison. Focused native VM lifecycle tests pass 9/9; the
+non-overlapping package regression passes 524 total (518 pass, 6 skipped,
+0 fail). This closes local VM readback shape integrity only; native
+attestation production, VM isolation, credential/persistence isolation, and
+`mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-vm-result-boundary.md`.
+
 Process-worker result boundary addendum: source revision `a01b62e` hardens
 native process metadata and worker-result parsers. Inventory/detail records
 now require plain data and exact fields; owners are bounded uid identities,

@@ -27,6 +27,16 @@ sandbox/credential/VM isolation, persistence, and capability enablement
 remain unverified.
 Evidence: `evidence/2026-09-15-readonly-adapter-result-boundaries.md`.
 
+Virtualization VM result-boundary addendum: commit `c22fc98` rejects native
+guest lifecycle results unless transition/status records are plain data with
+the exact declared fields. Guest identity parsing remains digest/runtime
+bound, while boot/state readbacks are checked before publication. Focused
+native VM lifecycle tests pass 9/9; the non-overlapping package regression
+passes 524 total (518 pass, 6 skipped, 0 fail). This proves local VM result
+shape integrity only; native attestation production, VM/credential/
+persistence isolation, and task enablement remain unverified.
+Evidence: `evidence/2026-09-15-virtualization-vm-result-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` requires native
 process inventory/detail results to be plain records with exact fields and
 bounded uid/child identities. The generic worker envelope accepts only its

@@ -24,6 +24,14 @@ non-overlapping package regression passes 523 total (517 pass, 6 skipped,
 persistence, and capability enablement evidence remains open.
 Evidence: `evidence/2026-09-15-readonly-adapter-result-boundaries.md`.
 
+Virtualization VM result-boundary addendum: commit `c22fc98` applies exact
+plain-data checks to native guest lifecycle start/stop/status results before
+boot and guest identities are compared. Focused native VM lifecycle tests
+pass 9/9; the non-overlapping package regression passes 524 total (518 pass,
+6 skipped, 0 fail). Native attestation, VM isolation, credential/persistence
+isolation, and `mac_task_run` enablement evidence remains open.
+Evidence: `evidence/2026-09-15-virtualization-vm-result-boundary.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` applies plain-data
 and exact-field validation to native process inventory/detail results and
 worker envelopes. Owner identities and child PID arrays receive bounded,
