@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Filesystem-root identity addendum: source revision `bed6a75` binds each
+filesystem plan to the authorized policy-root directory's native device/inode
+as well as its storage-volume identity. Planned operations recheck both before
+and after native target access; renaming the authorized root and creating a
+same-volume replacement at the original path is rejected before result
+publication. Focused filesystem and security-fuzz suites pass 37/37 and 8/8;
+the serial physical regression passes 643/643 with no skips or failures.
+This closes same-volume policy-root replacement for the implemented plan
+boundary only; kernel-held descriptor execution, in-syscall remount proof,
+production task enablement, and installed evidence remain open. Evidence:
+`evidence/2026-09-16-filesystem-root-identity.md`.
+
 Additional-target authority addendum: source revision `b2d3264` makes the
 Broker's final success gate revalidate every normalized target, including
 additional filesystem roots. A same-version policy revision that removes a

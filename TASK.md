@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-018 filesystem-root identity addendum: source revision `bed6a75` binds
+filesystem plans to the authorized policy-root directory device/inode in
+addition to the storage-volume identity. A same-volume root rename and
+replacement at the original pathname is rejected before planned readback;
+focused filesystem and security-fuzz suites pass 37/37 and 8/8, and the
+serial physical regression passes 643/643 with no skips or failures. This
+closes the policy-root target-swap gap for the implemented filesystem plan
+boundary only; remount, kernel-held descriptor, packaging, and release gates
+remain open. Evidence:
+`evidence/2026-09-16-filesystem-root-identity.md`.
+
 MOP-016 additional-target authority addendum: source revision `b2d3264` passes
 the full normalized target set into Broker's final success recheck. A dynamic
 policy revocation of a second multi-root search target during dispatch is
@@ -1908,7 +1919,7 @@ non-cooperating-process lock evidence remain open.
   Job revocation isolation to authenticated Edge-key identities. Matching Edge
   or Edge-key revocations cancel only their queued Jobs; legacy/null and
   malformed provenance is handled conservatively or fails closed.
-- `MOP-018` — `IN_PROGRESS` — Descriptor-backed bounded regular-file metadata, content-read, full-file `mac_hash_file`, bounded `mac_list_directory`, and depth/entry-bounded `mac_directory_tree` slices have canonical target binding, independent root policy, final-symlink/special-file denial, single-link enforcement where content is opened, local-volume restriction, plan-captured root volume identity, native `f_fsid`/filesystem-type checks, canonical secret checks before I/O, post-operation identity stability, strict encoding/digest handling, protected-entry filtering, and audit identity. Physical/removable remount evidence, configurable secret corpus, syscall timeout/cancellation, packaging, and release evidence remain.
+- `MOP-018` — `IN_PROGRESS` — Descriptor-backed bounded regular-file metadata, content-read, full-file `mac_hash_file`, bounded `mac_list_directory`, and depth/entry-bounded `mac_directory_tree` slices have canonical target binding, independent root policy, final-symlink/special-file denial, single-link enforcement where content is opened, local-volume restriction, plan-captured volume plus policy-root device/inode identity, native `f_fsid`/filesystem-type checks, canonical secret checks before I/O, post-operation identity stability, strict encoding/digest handling, protected-entry filtering, and audit identity. A same-volume root-directory rename/replacement regression now fails closed before planned readback. Physical/removable remount evidence, configurable secret corpus, syscall timeout/cancellation, packaging, and release evidence remain.
 - `MOP-019` — `IN_PROGRESS` — Bounded local success and adversarial metadata/content-read cases pass on the real Mac; a dedicated read-only host probe now records bounded system/network/process facts and `/System/Library` metadata/list/tree readback without active probes, content reads, credential access, or mutation. Clean-revision, installed-service, full filesystem/secret, and production policy evidence remain. Evidence: `evidence/2026-09-13-l0-l1-host-readback.md`.
 
 ## P2 — Remote Edge
