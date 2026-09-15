@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Operator IPC data-shape addendum: source revision `8ed6e298` makes the
+policy-signer and approval issuance parsers accept only plain data records,
+including the nested signed approval payload. Inherited, accessor, hidden,
+and symbolic fields are rejected before authority verification or persistence.
+Focused suites pass 14/14; the non-overlapping package regression passes 504
+total (498 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks
+pass. This closes local operator parser integrity only; protected key
+distribution, production packaging, VM, helper, and capability enablement
+evidence remain open.
+Evidence: `evidence/2026-09-15-operator-ipc-data-shapes.md`.
+
 Real sandbox readback addendum: on the physical Mac mini (macOS 26.2,
 Darwin 25.2.0, arm64), `MOPS_REAL_SANDBOX=1 node --test
 packages/broker/dist/sandbox-profile.test.js` passes 16/16 with no skips.

@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Operator IPC data-shape addendum: source revision `8ed6e298` applies the
+shared plain-data-record guard to policy-signer command and approval issuance
+parsers, including nested approval payloads. Inherited, accessor, symbolic,
+and hidden fields fail closed before signature/digest verification or
+persistence. Focused policy-signer and approval suites pass 14/14; the
+non-overlapping package regression passes 504 total (498 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This local parser
+hardening does not close production key distribution, packaging, VM,
+credential, helper, or capability enablement gates.
+Evidence: `evidence/2026-09-15-operator-ipc-data-shapes.md`.
+
 Real sandbox readback addendum: source revision `a8b4660` records a fresh
 physical-Mac run of the opt-in sandbox suite with 16/16 tests passing and no
 skips. It strengthens host evidence for deny-default filesystem/environment,

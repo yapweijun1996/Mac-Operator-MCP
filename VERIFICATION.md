@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Operator IPC data-shape addendum: commit `8ed6e298` applies the shared
+plain-data-record check to policy-signer command and approval issuance
+parsers, including the nested approval payload. Inherited, hidden, symbolic,
+and accessor-bearing authority fields fail closed before proof/digest
+verification or persistence. Focused policy-signer and approval suites pass
+14/14; the non-overlapping package regression passes 504 total (498 pass,
+6 skipped, 0 fail); build, typecheck, lint, and diff checks pass. This proves
+local parser integrity only and does not close protected key, packaging, VM,
+helper, or capability gates.
+Evidence: `evidence/2026-09-15-operator-ipc-data-shapes.md`.
+
 Real sandbox readback addendum: the physical Mac mini run at source revision
 `a8b4660` executes `MOPS_REAL_SANDBOX=1 node --test
 packages/broker/dist/sandbox-profile.test.js` with 16/16 passing and no skips.

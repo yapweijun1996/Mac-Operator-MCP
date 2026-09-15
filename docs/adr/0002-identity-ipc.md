@@ -36,6 +36,14 @@ The native transport candidate is now implemented at source revision `0cdb8f0`: 
 
 Revision `6683344` generalizes the candidate transport to the policy-signer and approval operator channels. Their HMAC/signed-command handlers receive only a socket already authorized by the native UID/GID/PID policy, while the old private-handle verifier remains an explicit compatibility path. Production acceptance still requires packaging/signing, Node/runtime pinning, caller PID lifecycle configuration, protected key distribution, and installed startup/readback evidence for all channel families.
 
+Revision `8ed6e298` applies the shared plain-data-record boundary to the
+policy-signer command parser and approval issuance parser, including the
+nested signed approval payload. These operator channels now reject inherited,
+accessor, hidden, and symbolic fields before digest/signature verification or
+persistence. This is parser hardening only; it does not change the wire
+schema, replace OS peer authentication, or close production key-distribution,
+packaging, and installed-startup evidence requirements.
+
 Revision `f76e8a0` adds an explicit stronger peer policy containing the accepted
 PID's native `startTimeMicros`. The native Broker and compatibility verifier
 read the current process identity after peer credentials and reject a reused PID
