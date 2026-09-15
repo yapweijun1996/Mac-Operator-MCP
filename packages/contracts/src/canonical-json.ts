@@ -107,9 +107,24 @@ function scanJsonValue(value: string, state: JsonScanState, depth: number): void
   try { parsed = JSON.parse(token); }
   catch { throw new TypeError("JSON value is malformed"); }
   if (typeof parsed === "number") {
-    if (!Number.isFinite(parsed) || JSON.stringify(parsed) !== canonicalizeJsonNumberToken(token)) {
+    const canonical = JSON.stringify(parsed);
+    if (!Number.isFinite(parsed) || canonical !== canonicalizeJsonNumberToken(token)) {
       throw new TypeError("JSON number is not representable by the canonical wire profile");
     }
+    assertSafePlainDecimalInteger(token, parsed);
+  }
+}
+
+/**
+ * Plain decimal integer wire values must remain exactly representable in
+ * JavaScript so another runtime cannot preserve a different integer while
+ * verifying a request or audit digest. Scientific notation remains governed
+ * by the versioned ECMAScript JSON.stringify profile and is bounded by each
+ * field's contract before authority decisions.
+ */
+function assertSafePlainDecimalInteger(token: string, value: number): void {
+  if (/^-?\d+$/u.test(token) && Number.isInteger(value) && !Number.isSafeInteger(value)) {
+    throw new TypeError("JSON integer is outside the safe integer range");
   }
 }
 

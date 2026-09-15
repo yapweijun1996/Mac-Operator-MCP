@@ -68,3 +68,11 @@ test("strict JSON parsing rejects numbers that cannot reproduce the canonical wi
   assert.throws(() => parseJsonStrict("1e400"), /not representable/u);
   assert.throws(() => parseJsonStrict("1e-324"), /not representable/u);
 });
+
+test("canonical JSON rejects unsafe plain decimal integers across runtimes", () => {
+  assert.throws(() => parseJsonStrict("9007199254740992"), /safe integer/u);
+  assert.equal(canonicalJson(9_007_199_254_740_992), "9007199254740992");
+  assert.equal(parseJsonStrict("1e20"), 1e20);
+  assert.throws(() => parseJsonStrict("100000000000000000000"), /safe integer/u);
+  assert.equal(parseJsonStrict("1e21"), 1e21);
+});
