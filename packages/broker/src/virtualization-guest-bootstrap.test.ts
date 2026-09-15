@@ -231,6 +231,45 @@ test("guest bootstrap propagates shutdown cancellation into the guest agent", as
   assert.equal(bootstrap.readback().state, "closed");
 });
 
+test("guest bootstrap aborts guest execution when the connection deadline expires", async () => {
+  const stream = new TestStream(encodeFrame(requestFrame()));
+  let startedResolve!: () => void;
+  const started = new Promise<void>((resolve) => { startedResolve = resolve; });
+  let aborted = false;
+  const key = Buffer.alloc(32, 0x61);
+  const agent = new VirtualizationGuestAgent({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    expectedGuestIdentity: guestIdentity,
+    expectedSandboxProfile: "guest-task-v1",
+    expectedProfileDigest: "b".repeat(64),
+    now: () => now,
+    execute: async (_request, signal) => {
+      startedResolve();
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(new BrokerError("CANCELLED", "guest callback cancelled"));
+        }, { once: true });
+      });
+      throw new BrokerError("CANCELLED", "guest callback cancelled");
+    }
+  });
+  const bootstrap = new VirtualizationGuestBootstrap({
+    enabled: true,
+    agent,
+    source: new TestSource(stream),
+    connectionTimeoutMs: 25
+  });
+  await bootstrap.start();
+  await started;
+  await stream.closedPromise;
+  assert.equal(aborted, true);
+  assert.equal(bootstrap.readback().completedConnections, 0);
+  assert.equal(bootstrap.readback().rejectedConnections, 1);
+  await bootstrap.close();
+});
+
 function encodeFrame(frame: Uint8Array): Uint8Array {
   const header = Buffer.alloc(4);
   header.writeUInt32BE(frame.byteLength, 0);

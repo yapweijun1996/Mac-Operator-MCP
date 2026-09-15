@@ -126,7 +126,7 @@ export class VirtualizationGuestBootstrap {
           continue;
         }
         const record = { stream, controller: new AbortController(), promise: Promise.resolve() };
-        record.promise = this.serveStream(stream, record.controller.signal).finally(() => {
+        record.promise = this.serveStream(stream, record.controller).finally(() => {
           this.activeConnections.delete(record);
           if (this.stateValue === "stopping" && this.activeConnections.size === 0) this.stateValue = "stopped";
         });
@@ -140,7 +140,8 @@ export class VirtualizationGuestBootstrap {
     }
   }
 
-  private async serveStream(stream: VirtualizationGuestStream, signal: AbortSignal): Promise<void> {
+  private async serveStream(stream: VirtualizationGuestStream, controller: AbortController): Promise<void> {
+    const signal = controller.signal;
     const deadline = Date.now() + this.connectionTimeoutMs;
     try {
       const request = await withDeadline(
@@ -167,6 +168,12 @@ export class VirtualizationGuestBootstrap {
     } catch {
       this.rejectedConnections += 1;
     } finally {
+      // A deadline or transport failure must cancel guest execution before the
+      // stream is closed. Otherwise an adapter that ignores the response path
+      // could continue mutating guest state after the Broker has reported a
+      // timeout or rejection. Aborting after a successful response is harmless
+      // and keeps teardown idempotent.
+      controller.abort();
       await Promise.resolve(stream.close()).catch(() => undefined);
     }
   }
