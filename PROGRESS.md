@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-path owner-identity addendum: source revision `138b6ed` makes
+`assertProcessPathIdentityStable` compare executable/cwd owner UID and GID in
+addition to device, inode, mode, timestamps, and content identity. Focused
+process-supervisor tests pass 37/37, and the serial physical regression passes
+640/640 with no skips or failures. This closes an ownership-field omission in
+the supervised process target check only; kernel isolation, post-snapshot
+escape, and production task enablement remain open. Evidence:
+`evidence/2026-09-16-process-path-owner-identity.md`.
+
 Passing-evidence enforcement addendum: source revision `168da62` makes the
 matrix checker fail closed when a `PASS` target lacks a repository evidence
 path. The two existing PASS rows now reference their ledger/capability

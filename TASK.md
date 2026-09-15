@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+MOP-017 process-path identity addendum: source revision `138b6ed` binds
+executable and cwd owner UID/GID into the post-authorization stability check.
+The focused process-supervisor suite passes 37/37 and the serial physical
+regression passes 640/640 with no skips or failures. This addresses ownership
+drift in the supervised path only; kernel isolation, PID-reuse timing,
+post-snapshot escape, and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-16-process-path-owner-identity.md`.
+
 MOP-085 passing-evidence addendum: source revision `168da62` makes
 `npm run verify:matrix` reject any `PASS` row without a repository evidence
 reference, while retaining path containment and regular-file checks. The two
