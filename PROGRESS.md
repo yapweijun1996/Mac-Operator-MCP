@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Broker-backed privileged authority addendum: source revision `91806ae` adds
+`assertPrivilegedHelperCommandAuthority`, a reusable final Broker gate for
+helper IPC. It reconstructs Request/Approval/Job identity from durable state,
+checks deterministic command/intent proofs, and fails closed on disabled
+switches, Edge/key/principal/session revocation, expired approval, cancelled
+or non-running Jobs, and identity substitution. The combined
+helper/executor/dispatch suite passes 26/26. The latest physical
+non-overlapping suite passes 607/607 with zero skips and zero failures; the
+default helper/policy remain disabled and the existing Broker/Persistence
+process remained undisturbed. Evidence:
+`evidence/2026-09-15-privileged-authority-gate.md`.
+
 Privileged cancellation/lease addendum: source revision `6fab84d` closes the
 running-Job cancellation race before helper IPC, rechecks cancellation after
 command signing, retains `UNKNOWN_OUTCOME` after a command may have crossed

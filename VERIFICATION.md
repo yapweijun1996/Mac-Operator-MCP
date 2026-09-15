@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Broker-backed privileged authority verification: source revision `91806ae`
+adds a reusable final authority callback for helper IPC. It reconstructs
+Request/Approval/Job identity from durable state and rejects disabled
+switches, Edge/key/principal/session revocation, cancelled or non-running
+Jobs, expired approvals, and command/intent identity substitution. The
+combined helper/executor/dispatch suite passes 26/26. The latest physical
+non-overlapping regression passes 607/607 with zero skips and zero failures;
+the existing Broker/Persistence process was not restarted. Evidence:
+`evidence/2026-09-15-privileged-authority-gate.md`.
+
 Privileged cancellation and lease verification: source revision `6fab84d`
 closes the pre-dispatch cancellation race, rechecks cancellation after helper
 command signing, preserves `UNKNOWN_OUTCOME` when cancellation occurs after

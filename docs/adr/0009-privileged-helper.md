@@ -199,6 +199,15 @@ and digest checks, so a helper handler receives no shell text, executable path,
 environment, credential, or arbitrary argument map. The descriptor column is
 optional for legacy non-privileged Jobs and has an empty migration default.
 
+Revision `91806ae` adds a reusable Broker-backed authority callback for the
+helper IPC server. It resolves the original Request and Job through the
+consumed Approval, verifies deterministic command and intent identities, and
+rechecks switch, Edge/key, principal/session, approval, and Job cancellation
+state on every helper authority poll. This makes the required runtime callback
+an explicit implementation boundary; the default helper and policy remain
+disabled until production helper provenance, signing, installation, and
+adapter evidence are accepted.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
