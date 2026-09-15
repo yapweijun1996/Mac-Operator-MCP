@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Backup-quarantine age-test verification at source revision `4db2d0d` covers
+stale completion, recent quarantine preservation, and invalid timestamp
+fail-closed behavior. Build, lint, typecheck, and diff checks pass; the
+dedicated quarantine suite passes 3/3. Native unlink recovery and production
+crash/remount evidence remain open. Evidence:
+`evidence/2026-09-15-backup-quarantine-age-tests.md`.
+
 Backup-quarantine age verification at source revision `8119e94` encodes a
 bounded creation timestamp in new quarantine names and uses it for stale-age
 decisions, avoiding mtime-based interference with active deletion. Build,

@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Backup-quarantine age-test addendum: commit `4db2d0d` covers stale deletion,
+recent quarantine preservation, and invalid timestamp rejection. Dedicated
+quarantine tests pass 3/3; native unlink recovery and production
+crash/remount evidence remain open. Evidence:
+`evidence/2026-09-15-backup-quarantine-age-tests.md`.
+
 Backup-quarantine age addendum: commit `8119e94` encodes a bounded creation
 timestamp in new quarantine names and uses it for stale recovery, protecting
 active deletion of old files from concurrent cleanup. Dedicated regression

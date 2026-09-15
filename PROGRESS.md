@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Backup-quarantine age-test addendum: source revision `4db2d0d` adds dedicated
+coverage for stale cleanup, recent-entry preservation, and invalid timestamp
+fail-closed behavior. Build, lint, typecheck, diff checks, and the 3-test
+quarantine suite pass; native unlink recovery and production crash/remount
+evidence remain open. Evidence:
+`evidence/2026-09-15-backup-quarantine-age-tests.md`.
+
 Backup-quarantine age addendum: source revision `8119e94` adds a bounded
 creation timestamp to quarantine names and bases stale recovery on that value,
 not the original file mtime. This prevents an active deletion of an old file
