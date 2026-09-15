@@ -1034,7 +1034,7 @@ Latest guest-attestation keyring addendum: commits `73148a6`, `db83881`, and `c5
 Broker manager for protected Ed25519 public-key configuration. Owner-only
 canonical files are opened with `O_NOFOLLOW`, device/inode and digest bound,
 size limited, and rejected on duplicate paths, weak modes, replacement, or
-non-Ed25519 content. BrokerStore schema version `8` persists independent
+non-Ed25519 content. The schema-version-8 migration persists independent
 activation/rollback history and the dedicated `guest_attestation_key`
 revocation kind; each verifier checks that revocation dynamically. Focused
 persistence/keyring tests pass 50/50 and the physical-Darwin full regression
