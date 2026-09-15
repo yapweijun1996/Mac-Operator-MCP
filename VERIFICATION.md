@@ -2643,3 +2643,12 @@ skipped, 0 failed). This is configuration-shape evidence only and does not
 close process-wide/adapter quotas, kernel or disk limits, production
 packaging, or capability enablement. Evidence:
 `evidence/2026-09-15-broker-family-limit-boundary.md`.
+
+Durable admission-limit verification at source revision `999435d` confirms
+`BrokerStore` rejects inherited and accessor-shaped global/session/family
+limit records before key enumeration, value reads, or request insertion. The
+focused persistence test passes 1/1; the non-overlapping package regression
+passes 539 total (533 passed, 6 skipped, 0 failed). This remains local
+configuration-shape evidence and does not close kernel/process quotas, disk
+exhaustion, or production service evidence. Evidence:
+`evidence/2026-09-15-admission-limit-boundary.md`.

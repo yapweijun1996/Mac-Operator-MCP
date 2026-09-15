@@ -2974,3 +2974,12 @@ constructor tests pass 2/2; the non-overlapping package regression passes 539
 total (533 passed, 6 skipped, 0 failed). Process-wide/adapter quotas, kernel
 and disk limits, production packaging, and capability enablement remain open.
 Evidence: `evidence/2026-09-15-broker-family-limit-boundary.md`.
+
+Durable request-admission limit validation now applies the same plain-data
+boundary inside `BrokerStore` (source revision `999435d`). Inherited and
+accessor-shaped global/session/family limit records fail closed before any
+value read or request-row insertion. Focused persistence validation passes 1/1;
+the non-overlapping package regression remains 539 total (533 passed, 6
+skipped, 0 failed). Kernel/process quotas, disk exhaustion, and production
+service evidence remain open. Evidence:
+`evidence/2026-09-15-admission-limit-boundary.md`.

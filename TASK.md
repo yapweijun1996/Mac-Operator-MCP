@@ -1752,3 +1752,11 @@ inherited and accessor overrides fail closed. Focused constructor tests pass
 skipped, 0 failed). Process-wide/adapter quotas, kernel/disk limits,
 production packaging, and capability gates remain open. Evidence:
 `evidence/2026-09-15-broker-family-limit-boundary.md`.
+
+Durable admission-limit boundary addendum: commit `999435d` applies the
+plain-data check inside `BrokerStore.admitRequest` before reading global,
+session, or capability-family limits. Focused persistence validation passes
+1/1; the non-overlapping package regression remains 539 total (533 passed, 6
+skipped, 0 failed). Kernel/process quotas, disk exhaustion, production
+service evidence, and capability gates remain open. Evidence:
+`evidence/2026-09-15-admission-limit-boundary.md`.
