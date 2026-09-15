@@ -1656,6 +1656,18 @@ installed-service evidence.
 
 ## Current evidence
 
+Latest Job-ledger startup-integrity addendum: the BrokerStore now validates
+every persisted Job row before restart reconciliation. Lease owner/token
+formats, heartbeat/expiry ordering, and the bounded lease window fail closed;
+mixed local-process and virtualization guest ownership metadata is rejected
+before recovery. Focused Job-state/startup tests pass 5/5; the
+non-overlapping package regression passes 585 total (579 passed, 6 skipped,
+0 failed), with build, lint, and diff checks passing. The long-running Broker
+and persistence suites were not restarted. This is persisted-ledger and
+old-writer fencing evidence only; physical crash process ownership, credential
+rotation, remount durability, and production task enablement remain open.
+Evidence: `evidence/2026-09-15-job-ledger-startup-integrity.md`.
+
 Latest Broker restart-recovery addendum: source commit `a20fed7` persists
 bounded non-secret task-process PID/process-group/start-time identities for the
 root and observed descendants before task execution proceeds. A new
