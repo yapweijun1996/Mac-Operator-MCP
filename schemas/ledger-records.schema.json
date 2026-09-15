@@ -147,7 +147,9 @@
               "startTimeMicros": { "type": "integer", "minimum": 1 }
             }
           }
-        }
+        },
+        "taskDescriptorDigest": { "$ref": "#/$defs/digest" },
+        "ownershipProof": { "const": "sandbox-exec-no-fork-v1" }
       }
     },
     "request_record": {

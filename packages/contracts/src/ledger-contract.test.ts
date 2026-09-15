@@ -89,6 +89,15 @@ test("versioned ledger schemas accept bounded request, approval, Job, and audit 
         truncated: false,
         cancelRequested: false,
         revision: 0,
+        processMetadata: {
+          pid: 1234,
+          processGroupId: 1234,
+          startTimeMicros: 987654321,
+          recordedAtMs: 3,
+          descendants: [],
+          taskDescriptorDigest: digest,
+          ownershipProof: "sandbox-exec-no-fork-v1"
+        },
         privilegedPayload: { operation: "service_control", service_id: "system/com.example.test", action: "start" }
       }
     },
@@ -162,4 +171,47 @@ test("versioned ledger schemas reject authority expansion and malformed state", 
     }
   };
   assert.equal(validate(withBadAudit), false);
+});
+
+test("versioned ledger schema rejects malformed task descriptor persistence metadata", () => {
+  const valid = {
+    schema_version: "0.1",
+    record_type: "job",
+    record: {
+      jobId: "job:descriptor-schema",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task_profile:tests.descriptor",
+      policyVersion: "policy-0.1",
+      payloadDigest: digest,
+      idempotencyKey: "descriptor-schema",
+      state: "running",
+      resultClass: "accepted",
+      createdAtMs: 1,
+      startedAtMs: 2,
+      finishedAtMs: null,
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      cancelRequested: false,
+      revision: 1,
+      processMetadata: {
+        pid: 1234,
+        processGroupId: 1234,
+        startTimeMicros: 987654321,
+        recordedAtMs: 3,
+        descendants: [],
+        taskDescriptorDigest: digest
+      }
+    }
+  };
+  assert.equal(validate(valid), true);
+  const malformedDigest = structuredClone(valid) as { record: { processMetadata: { taskDescriptorDigest: string } } };
+  malformedDigest.record.processMetadata.taskDescriptorDigest = "not-a-digest";
+  assert.equal(validate(malformedDigest), false);
+  const malformedProof = structuredClone(valid) as unknown as { record: { processMetadata: { ownershipProof?: string } } };
+  malformedProof.record.processMetadata.ownershipProof = "caller-controlled";
+  assert.equal(validate(malformedProof), false);
 });

@@ -15,8 +15,10 @@ automatic upgrade. Focused descriptor persistence tests pass 2/2. The serial
 physical regression with install, sandbox, and Keychain opt-ins passes
 643/648 with 0 failures and 5 explicit descriptor-capability skips; the three
 pre-existing long-running suites were excluded and left untouched. Native
-descriptor execution, immutable snapshots, remount resistance,
-credential/process isolation, and production task enablement remain open.
+descriptor execution, immutable snapshots, remount resistance, and the
+versioned ledger schema's matching optional digest/proof fields are now
+covered. Credential/process isolation and production task enablement remain
+open.
 Evidence: `evidence/2026-09-16-task-descriptor-persistence.md`.
 
 MOP-045 descriptor-admission addendum: source revisions `a05cce8`, `c23cfb7`,

@@ -16,8 +16,10 @@ pass 2/2. The serial physical regression with install, sandbox, and Keychain
 opt-ins passes 643/648 with 0 failures and 5 explicit descriptor-capability
 skips; the three pre-existing long-running suites were excluded and left
 untouched. This binds recovery metadata to the resolved execution contract
-only; native descriptor execution, immutable snapshots, remount resistance,
-credential/process isolation, and production task enablement remain open.
+only; the versioned ledger schema now accepts the matching optional digest and
+host-owned proof fields. Native descriptor execution, immutable snapshots,
+remount resistance, credential/process isolation, and production task
+enablement remain open.
 Evidence: `evidence/2026-09-16-task-descriptor-persistence.md`.
 
 Descriptor-required process admission addendum: source revisions `a05cce8`,

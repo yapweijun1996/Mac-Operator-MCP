@@ -1,8 +1,13 @@
 # Task descriptor persistence boundary
 
-Date: 2026-09-16  
-Source revision: `0229fe3`  
+Date: 2026-09-16
+Source revision: `0229fe3`
 Host: Darwin 25.2.0, arm64, Node v25.5.0
+
+Schema alignment revision: the versioned ledger schema now accepts the
+optional `taskDescriptorDigest` and host-owned `ownershipProof` process
+metadata fields; runtime validation remains authoritative for cross-field
+invariants and legacy-row compatibility.
 
 ## Boundary
 
@@ -29,6 +34,13 @@ node --test packages/broker/dist/process-job-descriptor.test.js
 tests 2
 pass 2
 fail 0
+
+node --test packages/contracts/dist/ledger-contract.test.js
+tests 3
+pass 3
+fail 0
+
+npm run verify:contracts
 
 MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 \
   node --test --test-concurrency=1 <all dist tests except the three
