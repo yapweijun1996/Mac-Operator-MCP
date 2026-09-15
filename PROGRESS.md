@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Authority-ledger startup-integrity addendum: commit `ba34100` makes BrokerStore
+scan every persisted Approval, Revocation, and Kill-switch row before policy
+evaluation and recovery. Approval lifecycle pairing, bounded authority
+identities/targets, revocation subjects, and switch state now fail closed as
+`AUDIT_UNAVAILABLE` when malformed. Focused authority startup tests pass 5/5;
+the combined Request/Job/Approval/authority slice passes 15/15, and the
+non-overlapping package regression remains 587 total (581 pass, 6 skipped, 0
+fail). Build, lint, and diff checks pass. Production Keychain distribution,
+external rollback detection, physical crash recovery, and approval UI remain
+open. Evidence: `evidence/2026-09-15-authority-ledger-startup-integrity.md`.
+
 Request-ledger startup-integrity addendum: commit `040284a` makes BrokerStore
 scan every persisted Request before restart reconciliation. Request identity,
 tool, policy, payload digest, capability-family storage, lifecycle state, and

@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Authority-ledger startup-integrity addendum: commit `ba34100` scans every
+persisted Approval, Revocation, and Kill-switch row before policy evaluation,
+request admission, or recovery. Malformed approval lifecycle fields,
+authority identities/targets, revocation subjects, and switch state fail closed
+as `AUDIT_UNAVAILABLE`. Focused authority startup tests pass 5/5; the combined
+Request/Job/Approval/authority slice passes 15/15; the non-overlapping package
+regression passes 587 total (581 passed, 6 explicitly skipped, 0 failed).
+This proves local persisted authority fencing only; production Keychain,
+external rollback, crash recovery, installed operation, and approval UI remain
+unverified. Evidence:
+`evidence/2026-09-15-authority-ledger-startup-integrity.md`.
+
 Request-ledger startup-integrity addendum: commit `040284a` scans every
 persisted Request before restart reconciliation and rejects malformed identity,
 tool, policy, payload-digest, capability-family, lifecycle, and mutation-link
