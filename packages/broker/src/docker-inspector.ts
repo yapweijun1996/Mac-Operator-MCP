@@ -303,11 +303,14 @@ function parseInspection(objectType: DockerObjectType, requestedId: string, outp
   if ((value.ID !== undefined || value.Id !== undefined) && !reportedId) {
     throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned an ambiguous object identity");
   }
+  if (!reportedId) {
+    throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned no object identity");
+  }
   const name = boundedValue(value.Name, 256);
   if (!dockerObjectIdentityMatches(objectType, requestedId, reportedId, name)) {
     throw new BrokerError("CONFLICT", "Docker object identity changed during inspection");
   }
-  const id = reportedId ?? requestedId;
+  const id = reportedId;
   const stateValue = isPlainDataRecord(value.State) ? boundedValue(value.State.Status, 128) : "";
   const imageValue = isPlainDataRecord(value.Config) ? boundedValue(value.Config.Image, 256) : "";
   const ports = objectType === "container" ? parsePorts(isPlainDataRecord(value.NetworkSettings) ? value.NetworkSettings.Ports : undefined, warnings) : [];
@@ -344,6 +347,7 @@ export function dockerObjectIdentityMatches(
   reportedName: string
 ): boolean {
   if (!isDockerObjectType(objectType) || requestedId.length === 0) return false;
+  if (!reportedId) return false;
   const requestedName = normalizeDockerName(requestedId);
   const responseName = normalizeDockerName(reportedName);
   const requestedLooksLikeId = DOCKER_HEX_ID_PATTERN.test(requestedId);

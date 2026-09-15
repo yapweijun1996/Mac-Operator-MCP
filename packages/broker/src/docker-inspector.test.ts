@@ -104,6 +104,15 @@ test("Docker inspect rejects a different object when the requested target is an 
   );
 });
 
+test("Docker inspect rejects missing object identity even when a name matches", async () => {
+  const supervisor = new FakeSupervisor([result(JSON.stringify([{ Name: "/web" }]))]);
+  const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+  await assert.rejects(
+    inspector.inspect("container", "web", { timeoutMs: 10_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+});
+
 test("Docker inspect accepts bounded ID prefixes and exact name readback", () => {
   const fullId = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
   assert.equal(dockerObjectIdentityMatches("container", fullId.slice(0, 12), fullId, "/web"), true);
