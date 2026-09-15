@@ -2781,3 +2781,12 @@ non-overlapping package regression passes 553 total (547 passed, 6 skipped,
 0 failed). The feature remains disabled by default and real permission-granted
 Accessibility evidence is still required. Evidence:
 `evidence/2026-09-15-ui-type-boundary.md`.
+
+Job-state verification confirms BrokerStore rejects corrupted state/result
+combinations and invalid lifecycle timestamps, leases, or cancellation markers
+before exposing a Job. A cancellation request increments the Job revision and
+fences a late success; only an explicit unknown recovery can close the active
+Job safely. Focused invariant/corruption tests pass 2/2, and the existing
+persistence suite passes 56/56. This does not close physical disk exhaustion,
+production identity, or ADR acceptance. Evidence:
+`evidence/2026-09-15-job-state-invariants.md`.

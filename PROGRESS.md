@@ -3111,3 +3111,13 @@ and process-supervisor tests pass; the non-overlapping package regression
 passes 553 total (547 passed, 6 skipped, 0 failed). Real Accessibility-
 permission, focus-race, and adversarial application evidence remains open.
 Evidence: `evidence/2026-09-15-ui-type-boundary.md`.
+
+BrokerStore Job state invariants are now enforced at the persistence readback
+boundary (source revision `9f8a927`). Stored state/result
+class combinations, lifecycle timestamps, lease fields, and cancellation
+markers must agree or the row fails closed as `AUDIT_UNAVAILABLE`. A durable
+running-Job cancellation revision also prevents a late `completed/success`
+transition; recovery must retain `UNKNOWN`. Focused invariant and corruption
+tests pass; persistence regression remains green. Disk-exhaustion, production
+Keychain/code-signing identity, and ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-job-state-invariants.md`.
