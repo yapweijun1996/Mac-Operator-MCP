@@ -2951,3 +2951,11 @@ package regression passes 538 total (532 passed, 6 skipped, 0 failed).
 Developer ID, installed lifecycle, Keychain, remote deployment, helper, and
 release gates remain open. Evidence:
 `evidence/2026-09-15-startup-config-boundary.md`.
+
+Broker persistence migration now performs an in-transaction final readback of
+the schema marker and complete ordered registry (source revision `7ce59c1`).
+Focused migration tests pass 3/3; the non-overlapping package regression passes
+538 total (532 passed, 6 skipped, 0 failed). Physical disk recovery,
+production backups, Keychain deployment, installed recovery, and release
+acceptance remain open. Evidence:
+`evidence/2026-09-15-schema-migration-readback.md`.

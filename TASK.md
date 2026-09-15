@@ -1728,3 +1728,11 @@ package regression passes 538 total (532 passed, 6 skipped). Developer ID,
 installed lifecycle, Keychain, remote deployment, helper, and release gates
 remain open. Evidence:
 `evidence/2026-09-15-startup-config-boundary.md`.
+
+Schema migration readback addendum: commit `7ce59c1` now reads back the exact
+schema marker and ordered migration registry inside the migration transaction
+before startup recovery. Marker, registry, and tampering tests pass 3/3; the
+non-overlapping package regression passes 538 total (532 passed, 6 skipped).
+Physical disk recovery, production backups, Keychain deployment, installed
+recovery, and release acceptance remain open. Evidence:
+`evidence/2026-09-15-schema-migration-readback.md`.

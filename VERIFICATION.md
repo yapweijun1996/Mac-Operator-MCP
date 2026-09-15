@@ -2616,3 +2616,12 @@ passed, 6 skipped, 0 failed). This remains representation evidence only and
 does not close Developer ID, installed lifecycle, Keychain, remote deployment,
 helper, or release gates. Evidence:
 `evidence/2026-09-15-startup-config-boundary.md`.
+
+Schema migration verification at source revision `7ce59c1` confirms startup
+reads back the exact schema marker and ordered migration registry before
+recovery. Three focused migration tests pass (3/3), including tampered
+registry rejection; the non-overlapping package regression passes 538 total
+(532 passed, 6 skipped, 0 failed). This does not close physical disk recovery,
+production backups, Keychain deployment, installed recovery, or release
+acceptance. Evidence:
+`evidence/2026-09-15-schema-migration-readback.md`.
