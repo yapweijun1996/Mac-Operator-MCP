@@ -2888,7 +2888,16 @@ export class BrokerStore {
   }
 
   private insertAudit(event: AuditEvent): string {
-    const evidenceJson = canonicalJson(redactEvidence(event.evidence));
+    validateAuditEventForPersistence(event);
+    let evidenceJson: string;
+    try {
+      evidenceJson = canonicalJson(redactEvidence(event.evidence));
+    } catch {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Audit evidence could not be canonicalized");
+    }
+    if (Buffer.byteLength(evidenceJson, "utf8") > 1_048_576) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Audit evidence exceeds its persistence budget");
+    }
     const previous = this.database.prepare("SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1").get() as { event_hash: string } | undefined;
     const previousHash = previous?.event_hash ?? "0".repeat(64);
     const eventHash = sha256(canonicalJson({ ...event, evidence: parseJsonStrict(evidenceJson), previousHash }));
@@ -3365,6 +3374,22 @@ function validateStoredAuditRow(row: AuditRow): void {
   try {
     parseJsonStrict(row.evidence_json);
   } catch {
+    fail();
+  }
+}
+
+function validateAuditEventForPersistence(event: AuditEvent): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Audit event is malformed");
+  };
+  const bounded = (value: unknown, maxLength: number): value is string =>
+    typeof value === "string" && value.length >= 1 && value.length <= maxLength && !value.includes("\0");
+  if (!bounded(event.requestId, 256) || !bounded(event.principalId, 128) ||
+      !bounded(event.tool, 160) || !/^(?:mac_[a-z0-9_]{1,123}|internal_[A-Za-z0-9._:-]{1,140})$/u.test(event.tool) ||
+      !["decision", "intent", "completion"].includes(event.eventType) ||
+      !["allow", "deny"].includes(event.decision) || !bounded(event.resultClass, 128) ||
+      !bounded(event.targetRef, 4096) || !bounded(event.policyVersion, 160) ||
+      !Number.isSafeInteger(event.timestampMs) || event.timestampMs < 0) {
     fail();
   }
 }
