@@ -1818,6 +1818,14 @@ checks. The old Broker/Persistence process was left undisturbed, so its full
 result and the remaining physical production/release gates are not claimed.
 Evidence: `evidence/2026-09-15-release-gate-rerun.md`.
 
+Latest audit-outage availability decision: after keyed audit-tail publication
+failure, every Broker MCP admission—including a read-only request—fails
+closed as `AUDIT_UNAVAILABLE` until restart with a verified tail. The focused
+test confirms no Request row is created and host recovery readback remains
+available. This closes the previously open read-only audit-failure decision;
+external immutable anchoring and production recovery remain open. Evidence:
+`evidence/2026-09-15-audit-readonly-fail-closed.md`.
+
 Latest Broker restart-recovery addendum: source commit `a20fed7` persists
 bounded non-secret task-process PID/process-group/start-time identities for the
 root and observed descendants before task execution proceeds. A new

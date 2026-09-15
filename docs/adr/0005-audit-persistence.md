@@ -21,6 +21,15 @@ Select the storage backend and process ownership. Define transaction boundaries,
 - Secret content is removed before persistence.
 - Edge, Broker, helper, and operator access remain least privilege.
 
+## Availability decision
+
+When the keyed audit tail cannot be published or verified, every MCP request
+admission fails closed, including read-only tools. The Broker may remain
+inspectable through authenticated host recovery/readback procedures, but it
+must be restarted with a verified tail before accepting new requests. This
+avoids an unrecorded read side channel at the cost of availability during an
+audit outage.
+
 ## Candidate baseline
 
 An embedded transactional database owned by the Broker is the initial candidate for request/job/idempotency state and append events. Acceptance depends on crash-injection, lock/concurrency, integrity, backup, and migration tests.
@@ -126,6 +135,11 @@ cutover. The focused migration suite covers fresh initialization, legacy
 preservation, future-version refusal, and registry-integrity refusal.
 
 `node:sqlite` remains an experimental Node feature on the verified runtime. Backend acceptance is deferred until broader concurrent-access and crash tests, production Keychain anchor provisioning, explicit single-owner service policy, access control, disk-quota/exhaustion behavior, a documented operator cutover and stale-lock recovery runbook, production code-signing/Keychain identity review, an external rollback-resistant anchor, and final ADR acceptance are implemented and tested. Encrypted backup storage, the schema-version gate, the forward-only migration registry, the keyed local anchor boundary with cross-process locking, and the development-host Keychain ACL boundary are implemented; production rollback execution remains host-only.
+
+The chosen audit-outage policy is covered by `audit-anchor-readonly.test.ts`:
+after a committed tail cannot publish, a subsequent read-only Broker
+admission returns `AUDIT_UNAVAILABLE` without creating a Request row. The
+frozen SQLite tail remains available to the host recovery path.
 
 BrokerStore now also validates persisted Job state/result/timestamp/lease/cancellation invariants before exposing a row, and a durable cancellation revision prevents a late active-Job success. This closes a local mutation-state consistency gap but does not satisfy the remaining disk-exhaustion, production identity, rollback, or ADR acceptance gates.
 

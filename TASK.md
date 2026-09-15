@@ -39,6 +39,12 @@ diff checks. The old Broker/persistence process was left undisturbed; full
 suite and production/release gates remain open. Evidence:
 `evidence/2026-09-15-release-gate-rerun.md`.
 
+Audit-outage availability decision addendum: BrokerStore now fails closed for
+all MCP admissions, including read-only tools, after keyed audit-tail
+publication failure; a focused test proves no Request row is created until a
+restart with verified tail. The host recovery/readback path remains separate.
+Evidence: `evidence/2026-09-15-audit-readonly-fail-closed.md`.
+
 Physical Darwin sandbox addendum: correctly exporting `MOPS_REAL_SANDBOX=1`
 to the test processes yields 595 total (593 pass, 2 skipped, 0 fail) on
 Darwin arm64/macOS 26.2. Real sandbox, protected-surface, fork/`setsid`,

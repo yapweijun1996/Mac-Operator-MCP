@@ -89,7 +89,12 @@ Capability levels L0-L5 are planning and discovery labels. They are not an inher
 8. Broker verifies meaningful postconditions and classifies the result.
 9. Broker redacts output, persists completion evidence, and returns the stable result envelope.
 
-If durable audit intent cannot be recorded, mutating and privileged operations fail before execution. Read-only behavior under audit-store failure remains an explicit deployment policy decision.
+If durable audit state or its keyed tail cannot be recorded, all Broker
+request admissions fail closed, including read-only requests. Direct
+operator recovery/readback APIs may inspect the frozen state, but no MCP
+request can proceed until the Broker is restarted with a verified audit tail.
+This prevents an audit outage from creating an unrecorded read side channel;
+it is a deliberate availability trade-off.
 
 ## Identity and IPC design
 
@@ -165,7 +170,7 @@ Configuration changes that alter authority are versioned, validated, audited, an
 
 Decided: Broker final authority; separate Edge and Broker; structured tools; deny-first policy; secret deny zones; bounded execution; redacted audit; kill switches; separate privileged helper; no unrestricted shell.
 
-Open: TypeScript/Node runtime confirmation; transport and remote authentication provider; IPC authentication primitive; sandbox implementation; policy/config serialization format; audit storage backend; macOS packaging/signing; read-only behavior during audit failure; generic process execution eligibility.
+Open: transport and remote authentication provider; IPC authentication primitive; sandbox implementation; policy/config serialization format; audit storage backend; macOS packaging/signing; generic process execution eligibility.
 
 The filesystem authority classes, precedence, default discovery direction, secret zones, and narrow write-root direction are locked in `FILESYSTEM_POLICY.md`; implementations may refine platform mechanics without replacing that model.
 

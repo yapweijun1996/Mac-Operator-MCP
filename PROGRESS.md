@@ -40,6 +40,13 @@ and diff checks. The old Broker/persistence process remains undisturbed, so
 their complete result and the physical production/release gates are not
 claimed. Evidence: `evidence/2026-09-15-release-gate-rerun.md`.
 
+Audit-outage availability decision addendum: BrokerStore now explicitly
+documents and tests the fail-closed policy that an unavailable keyed audit
+tail blocks all MCP request admissions, including read-only requests, until
+restart with a verified tail. The focused audit-anchor read-only test proves
+no Request row is created after publication failure; direct host recovery
+readback remains available. Evidence: `evidence/2026-09-15-audit-readonly-fail-closed.md`.
+
 Physical Darwin sandbox addendum: with `MOPS_REAL_SANDBOX=1` correctly
 exported to the test processes, the same non-overlapping built set passes 595
 total (593 pass, 2 explicit skips, 0 fail) on Darwin arm64/macOS 26.2. The

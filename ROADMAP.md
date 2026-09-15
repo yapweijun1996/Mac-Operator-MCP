@@ -118,7 +118,6 @@ Authority and credential defects take priority over functional expansion. Then a
 - Select an enforceable macOS child-process sandbox; the current deprecated `sandbox-exec` experiment is not a production selection.
 - Close scope and approval semantics through `MOP-080` and `MOP-082`.
 - Complete input/output schema detail and automated validation for all 44 machine-readable tool contracts; the mandatory audit/postcondition fields and delivery-wave naming are already closed.
-- Decide read-only behavior during audit-store failure.
 - Select remote authentication/tunnel only after the local vertical slice is verified.
 - Define packaging/signing before GUI and privileged distribution.
 
