@@ -59,6 +59,8 @@ for (const row of rows) {
   const statusWord = status?.split(" ", 1)[0];
   if (statusWord === undefined || !allowedStatuses.has(statusWord)) {
     failures.push(`VERIFICATION.md:${row.line}: unsupported status ${status ?? "<missing>"}`);
+  } else if (statusWord === "PASS" && extractEvidence(`${requiredEvidence} ${status}`).length === 0) {
+    failures.push(`VERIFICATION.md:${row.line}: PASS target must reference repository evidence`);
   }
 }
 
