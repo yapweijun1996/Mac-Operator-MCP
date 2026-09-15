@@ -49,3 +49,37 @@ test("verified token projection rejects the wrong resource audience", () => {
     resourceServerUrl
   }), /resource does not match/u);
 });
+
+test("verified token projection rejects inherited, accessor, and sparse identity data", () => {
+  const base: AuthInfo = {
+    token: "secret",
+    clientId: "client-1",
+    scopes: ["mac.control.read"],
+    expiresAt: 1_700_000_060,
+    resource: resourceServerUrl,
+    extra: {
+      principalId: "principal-1",
+      issuer: "issuer-1",
+      sessionId: "session-1",
+      issuedAtMs: 1_700_000_000_000
+    }
+  };
+  const inheritedExtra = Object.create(base.extra!) as Record<string, unknown>;
+  assert.throws(
+    () => projectPrincipal({ ...base, extra: inheritedExtra }, { edgeId: "edge-1", brokerAudience: "mac-operator-broker", resourceServerUrl }),
+    /identity metadata is malformed/u
+  );
+
+  const accessorScopes = ["mac.control.read"] as string[];
+  Object.defineProperty(accessorScopes, "0", { enumerable: true, get: () => "mac.control.read" });
+  assert.throws(
+    () => projectPrincipal({ ...base, scopes: accessorScopes }, { edgeId: "edge-1", brokerAudience: "mac-operator-broker", resourceServerUrl }),
+    /scopes are malformed/u
+  );
+
+  const sparseScopes = new Array(1) as string[];
+  assert.throws(
+    () => projectPrincipal({ ...base, scopes: sparseScopes }, { edgeId: "edge-1", brokerAudience: "mac-operator-broker", resourceServerUrl }),
+    /scopes are malformed/u
+  );
+});

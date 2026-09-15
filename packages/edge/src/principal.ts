@@ -1,5 +1,6 @@
 import { SCOPES, type PrincipalContext, type Scope } from "@mac-operator/contracts";
 import type { AuthInfo } from "@modelcontextprotocol/server";
+import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const KNOWN_SCOPES = new Set<string>(SCOPES);
@@ -9,6 +10,12 @@ export function projectPrincipal(
   options: { edgeId: string; brokerAudience: string; resourceServerUrl: URL }
 ): PrincipalContext {
   const extra = auth.extra;
+  if (extra !== undefined && !isPlainDataRecord(extra)) {
+    throw new Error("Verified access token identity metadata is malformed");
+  }
+  if (!isPlainDataArray(auth.scopes, SCOPES.length)) {
+    throw new Error("Verified access token scopes are malformed");
+  }
   const principalId = readId(extra, "principalId");
   const issuer = readId(extra, "issuer");
   const sessionId = readId(extra, "sessionId");
