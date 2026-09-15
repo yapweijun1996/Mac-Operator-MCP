@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge runtime contract-integrity addendum: source revision `d35f1f7` requires
+the complete versioned governance envelope at runtime before MCP registration,
+including known scopes, normalized target, bounded budgets, independent
+filesystem/network/secret/approval policies, idempotency, postcondition,
+audit class, delivery wave, planned lifecycle state, functional schemas, and
+source provenance. Missing, unsupported, malformed, or unknown metadata fails
+closed. The Edge regression passes 52/52 and the full 44-contract verifier
+passes; this hardens the package boundary but does not replace Broker
+authority or close production signing/deployment evidence. Evidence:
+`evidence/2026-09-15-edge-runtime-contract-integrity.md`.
+
 Descriptor launch capability-gate addendum: source revision `07ba885` adds a
 versioned host-owned descriptor-execution capability contract and a stable
 fail-closed requirement gate. The gate requires a native launcher and

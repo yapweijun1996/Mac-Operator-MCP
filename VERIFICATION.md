@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge runtime contract-integrity verification at source revision `d35f1f7`:
+the Edge loader requires the complete governance envelope for every contract,
+including known scopes, target type, bounded budgets, independent policy
+fields, idempotency, postcondition, audit class, delivery wave, lifecycle
+state, functional schemas, and source provenance. It rejects incomplete,
+unknown, malformed, or unsupported metadata before MCP registration. The Edge
+package regression passes 52/52; all repository contracts load successfully;
+build, typecheck, lint, contract verification (44/44), and diff checks pass.
+This is runtime contract-shape evidence only; Broker authorization and
+production signing/deployment remain required. Evidence:
+`evidence/2026-09-15-edge-runtime-contract-integrity.md`.
+
 Safe-integer physical regression at source revisions `350ebbc` and `6f6bf2f`
 passes 634/634 non-overlapping tests with 0 skips and 0 failures on the
 physical Darwin arm64 host under install, sandbox, and Keychain opt-ins.

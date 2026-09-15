@@ -4,6 +4,20 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge runtime contract-integrity addendum: source revision `d35f1f7` makes the
+runtime contract registry fail closed unless each loaded tool has the complete
+versioned governance envelope: known scopes, normalized target, bounded
+budgets, independent filesystem/network/secret/approval policies, idempotency,
+postcondition, audit class, delivery wave, planned lifecycle state, functional
+schemas, and source provenance. Incomplete metadata, unsupported enum values,
+unknown scopes, malformed schemas/postconditions, and invalid provenance are
+rejected before MCP registration. The Edge package regression passes 52/52;
+the full contract directory loads successfully; build, typecheck, lint,
+contract verification (44/44), and diff checks pass. This hardens the runtime
+package boundary but does not replace Broker authority or close production
+signing/deployment gates. Evidence:
+`evidence/2026-09-15-edge-runtime-contract-integrity.md`.
+
 Safe-integer physical regression addendum: source revision `350ebbc` and
 `6f6bf2f` pass 634/634 non-overlapping tests with 0 skipped and 0 failed on
 the physical Darwin arm64 host under install, sandbox, and Keychain opt-ins,
