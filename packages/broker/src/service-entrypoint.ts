@@ -28,6 +28,8 @@ export interface ServiceSignalSource {
  */
 export class BrokerServiceEntrypoint {
   private stateValue: BrokerServiceState = "stopped";
+  /** Serialize service lifecycle transitions around the runtime boundary. */
+  private lifecycleQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly runtime: LocalBrokerRuntime,
@@ -52,7 +54,21 @@ export class BrokerServiceEntrypoint {
     return this.stateValue;
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    return this.enqueueLifecycle(() => this.startInternal());
+  }
+
+  stop(): Promise<void> {
+    return this.enqueueLifecycle(() => this.stopInternal());
+  }
+
+  private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
+    const next = this.lifecycleQueue.then(operation, operation);
+    this.lifecycleQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async startInternal(): Promise<void> {
     if (this.stateValue !== "stopped") throw new Error(`Broker service cannot start from ${this.stateValue}`);
     this.stateValue = "starting";
     try {
@@ -64,7 +80,7 @@ export class BrokerServiceEntrypoint {
     }
   }
 
-  async stop(): Promise<void> {
+  private async stopInternal(): Promise<void> {
     if (this.stateValue === "stopped") return;
     this.stateValue = "stopping";
     try {

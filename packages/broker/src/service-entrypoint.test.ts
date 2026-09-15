@@ -48,6 +48,35 @@ test("Broker service entrypoint fails closed when startup fails", async () => {
   assert.equal(service.state, "stopped");
 });
 
+test("Broker service serializes stop behind an in-flight start", async () => {
+  const events: string[] = [];
+  let releaseStart!: () => void;
+  const startGate = new Promise<void>((resolve) => { releaseStart = resolve; });
+  let runtimeState: import("./runtime.js").LocalBrokerRuntimeState = "stopped";
+  const runtime = {
+    get state() { return runtimeState; },
+    async start() {
+      events.push("start");
+      await startGate;
+      runtimeState = "running";
+    },
+    async close() {
+      events.push("close");
+      runtimeState = "stopped";
+    }
+  } as unknown as LocalBrokerRuntime;
+  const service = new BrokerServiceEntrypoint(runtime, metadata());
+
+  const starting = service.start();
+  await waitFor(() => events.includes("start"));
+  const stopping = service.stop();
+  assert.equal(service.state, "starting");
+  releaseStart();
+  await Promise.all([starting, stopping]);
+  assert.equal(service.state, "stopped");
+  assert.deepEqual(events, ["start", "close"]);
+});
+
 function channel(events: string[]): RuntimeChannel {
   return {
     async listen() { events.push("listen"); },
