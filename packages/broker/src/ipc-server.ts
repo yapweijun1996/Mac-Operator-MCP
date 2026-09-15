@@ -1,7 +1,7 @@
-import { chmod, lstat, rename, stat, symlink, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { chmod, lstat, readdir, rename, stat, symlink, unlink } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError, parseJsonUtf8Strict, type AuthenticatedBrokerResponse, type BrokerResult } from "@mac-operator/contracts";
 import type { Broker } from "./broker.js";
 import type { PeerCredentialVerifier } from "./peer-credentials.js";
@@ -22,6 +22,17 @@ export interface DetachedSocketPath {
   path: string;
   identity: SocketPathIdentity;
 }
+
+export interface SocketRecoveryResult {
+  status: "recovered" | "absent" | "not_stale" | "ambiguous";
+  path: string;
+  quarantinePath: string | null;
+  identity: SocketPathIdentity;
+}
+
+const MIN_SOCKET_RECOVERY_AGE_MS = 1_000;
+const MAX_SOCKET_RECOVERY_AGE_MS = 604_800_000;
+const SOCKET_QUARANTINE_PREFIX = ".mac-operator-removing-";
 
 export class BrokerIpcServer {
   private server: Server | undefined;
@@ -194,7 +205,7 @@ async function removeSocketByIdentity(
   if (current.device !== expected.device || current.inode !== expected.inode) {
     throw new Error(beforeError);
   }
-  const quarantine = join(dirname(path), `.mac-operator-removing-${randomUUID()}.sock`);
+  const quarantine = join(dirname(path), `${SOCKET_QUARANTINE_PREFIX}${Date.now()}-${randomUUID()}-${socketPathBasenameHash(path)}.sock`);
   try {
     await rename(path, quarantine);
   } catch (error) {
@@ -206,6 +217,79 @@ async function removeSocketByIdentity(
     throw new Error(duringError);
   }
   await unlink(quarantine);
+}
+
+/**
+ * Explicitly removes one stale socket quarantine left by a crash between the
+ * identity check and unlink. Recovery is never automatic and cannot select an
+ * artifact by nonce alone: the original basename fingerprint, socket
+ * identity, owner-only parent, and minimum age must all agree.
+ */
+export async function recoverOrphanedSocket(
+  path: string,
+  expected: SocketPathIdentity,
+  minAgeMs = 60_000
+): Promise<SocketRecoveryResult> {
+  assertRecoverableSocketPath(path);
+  if (!validSocketIdentity(expected) || !Number.isSafeInteger(minAgeMs) ||
+      minAgeMs < MIN_SOCKET_RECOVERY_AGE_MS || minAgeMs > MAX_SOCKET_RECOVERY_AGE_MS) {
+    throw new Error("IPC socket recovery precondition is malformed");
+  }
+  await validateSocketParent(path);
+  const parentPath = dirname(path);
+  const parentBefore = await readDirectoryIdentity(parentPath);
+  const candidateHash = socketPathBasenameHash(path);
+  const names = await readdir(parentPath);
+  const stale: string[] = [];
+  const recent: string[] = [];
+  let activeMatches = 0;
+  const now = Date.now();
+  for (const name of names) {
+    const createdAt = parseSocketQuarantineTimestamp(name, candidateHash);
+    if (createdAt === undefined) continue;
+    const candidatePath = join(parentPath, name);
+    const identity = await readSocketIdentity(candidatePath);
+    if (identity === undefined || identity.device !== expected.device || identity.inode !== expected.inode) continue;
+    const active = await probeRecoverySocket(candidatePath);
+    if (active) {
+      activeMatches += 1;
+      recent.push(name);
+      continue;
+    }
+    if (now >= createdAt && now - createdAt >= minAgeMs) stale.push(name);
+    else recent.push(name);
+  }
+  const parentAfter = await readDirectoryIdentity(parentPath);
+  if (parentBefore.device !== parentAfter.device || parentBefore.inode !== parentAfter.inode) {
+    throw new Error("IPC socket recovery parent changed during scan");
+  }
+  const makeResult = (status: SocketRecoveryResult["status"], quarantinePath: string | null): SocketRecoveryResult => ({
+    status,
+    path,
+    quarantinePath,
+    identity: expected
+  });
+  if (activeMatches > 0 || stale.length > 1 || recent.length > 1 || (stale.length > 0 && recent.length > 0)) {
+    return makeResult("ambiguous", null);
+  }
+  if (stale.length === 0) {
+    return makeResult(recent.length === 1 ? "not_stale" : "absent", recent.length === 1 ? join(parentPath, recent[0]!) : null);
+  }
+  const candidatePath = join(parentPath, stale[0]!);
+  const parentFinal = await readDirectoryIdentity(parentPath);
+  if (parentBefore.device !== parentFinal.device || parentBefore.inode !== parentFinal.inode) {
+    throw new Error("IPC socket recovery parent changed before removal");
+  }
+  const current = await readSocketIdentity(candidatePath);
+  if (current === undefined) return makeResult("absent", null);
+  if (current.device !== expected.device || current.inode !== expected.inode || await probeRecoverySocket(candidatePath)) {
+    throw new Error("IPC socket recovery artifact changed or became active");
+  }
+  await unlink(candidatePath);
+  if (await readSocketIdentity(candidatePath) !== undefined) {
+    throw new Error("IPC socket recovery postcondition failed");
+  }
+  return makeResult("recovered", candidatePath);
 }
 
 /**
@@ -238,6 +322,48 @@ export async function removeDetachedSocket(detached: DetachedSocketPath | undefi
   await unlinkOwnedSocket(detached.path, detached.identity);
 }
 
+function assertRecoverableSocketPath(path: string): void {
+  if (typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path || path.includes("\0") || basename(path).length === 0) {
+    throw new Error("IPC socket recovery path must be canonical and absolute");
+  }
+}
+
+function validSocketIdentity(identity: SocketPathIdentity): boolean {
+  return Number.isSafeInteger(identity.device) && identity.device >= 0 &&
+    Number.isSafeInteger(identity.inode) && identity.inode > 0;
+}
+
+async function readDirectoryIdentity(path: string): Promise<SocketPathIdentity> {
+  const value = await lstat(path);
+  if (!value.isDirectory()) throw new Error("IPC socket recovery parent is not a directory");
+  return { device: value.dev, inode: value.ino };
+}
+
+function socketPathBasenameHash(path: string): string {
+  return createHash("sha256").update(basename(path), "utf8").digest("hex");
+}
+
+function parseSocketQuarantineTimestamp(name: string, basenameHash: string): number | undefined {
+  const prefix = SOCKET_QUARANTINE_PREFIX.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const pattern = new RegExp(`^${prefix}(\\d{1,13})-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-${basenameHash}\\.sock$`, "u");
+  const match = pattern.exec(name);
+  if (!match) return undefined;
+  const timestamp = Number(match[1]);
+  return Number.isSafeInteger(timestamp) ? timestamp : undefined;
+}
+
+async function probeRecoverySocket(path: string): Promise<boolean> {
+  try {
+    return await probeSocket(path);
+  } catch (error) {
+    // macOS reports EINVAL for a detached Unix socket inode that no longer
+    // has a listening endpoint. That is the expected inactive state for a
+    // crash orphan; every other liveness ambiguity remains fail-closed.
+    if ((error as NodeJS.ErrnoException).code === "EINVAL") return false;
+    throw error;
+  }
+}
+
 async function renameSocket(path: string, target: string): Promise<void> {
   await rename(path, target);
 }
@@ -266,7 +392,9 @@ function probeSocket(path: string): Promise<boolean> {
         finish(() => resolve(false));
         return;
       }
-      finish(() => reject(new Error("IPC socket liveness probe failed")));
+      const failure = new Error("IPC socket liveness probe failed") as NodeJS.ErrnoException;
+      failure.code = error.code;
+      finish(() => reject(failure));
     });
     socket.setTimeout(250, () => finish(() => reject(new Error("IPC socket liveness probe timed out"))));
   });

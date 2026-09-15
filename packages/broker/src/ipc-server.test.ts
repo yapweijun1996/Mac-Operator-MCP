@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { chmod, mkdtemp, rm, stat, unlink, rename } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
-import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, unlinkOwnedSocket } from "./ipc-server.js";
+import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, recoverOrphanedSocket, removeDetachedSocket, removeStaleSocket, unlinkOwnedSocket } from "./ipc-server.js";
 import { MacOsPeerCredentialVerifier } from "./peer-credentials.js";
 import { BrokerStore } from "./persistence.js";
 
@@ -223,6 +223,42 @@ test("IPC stale cleanup quarantines the exact socket inode before unlinking", as
   try {
     await removeStaleSocket(socketPath);
     assert.equal(await stat(socketPath).catch(() => undefined), undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("IPC orphan recovery removes only stale identity-bound socket quarantines", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-orphan-recovery-"));
+  const socketPath = join(directory, "broker.sock");
+  const basenameHash = createHash("sha256").update("broker.sock", "utf8").digest("hex");
+  const makeOrphan = async (createdAt: number, nonce: string): Promise<{ identity: { device: number; inode: number }; path: string }> => {
+    const server = createServer();
+    await listenServer(server, socketPath);
+    const identity = await captureSocketPathIdentity(socketPath);
+    const detached = await detachOwnedSocket(socketPath, identity);
+    await closeServer(server);
+    await unlink(socketPath).catch(() => undefined);
+    const orphanPath = join(directory, `${".mac-operator-removing-"}${createdAt}-${nonce}-${basenameHash}.sock`);
+    await rename(detached!.path, orphanPath);
+    return { identity, path: orphanPath };
+  };
+  try {
+    const stale = await makeOrphan(Date.now() - 120_000, "11111111-1111-4111-8111-111111111111");
+    const recovered = await recoverOrphanedSocket(socketPath, stale.identity, 60_000);
+    assert.equal(recovered.status, "recovered");
+    assert.equal(recovered.quarantinePath, stale.path);
+    assert.equal(await stat(stale.path).catch(() => undefined), undefined);
+
+    const recent = await makeOrphan(Date.now(), "22222222-2222-4222-8222-222222222222");
+    const notStale = await recoverOrphanedSocket(socketPath, recent.identity, 60_000);
+    assert.equal(notStale.status, "not_stale");
+    assert.equal(notStale.quarantinePath, recent.path);
+    assert.equal((await stat(recent.path)).isSocket(), true);
+
+    const wrongTarget = await recoverOrphanedSocket(join(directory, "other.sock"), recent.identity, 60_000);
+    assert.equal(wrongTarget.status, "absent");
+    assert.equal((await stat(recent.path)).isSocket(), true);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
