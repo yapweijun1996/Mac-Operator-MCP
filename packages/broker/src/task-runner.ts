@@ -208,6 +208,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
     requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
     const taskExecutableIdentity = await captureTaskProcessPathIdentity(profile.process.executable, "executable");
     const taskCwdIdentity = await captureTaskProcessPathIdentity(profile.cwd, "directory");
+    const taskFilesystemRootIdentities = await captureTaskFilesystemRootIdentities(profile.filesystemRoots);
     const filesystemIdentity = captureTaskFilesystemIdentity(profile, this.filesystemIdentityObserver);
     const args = buildSandboxExecArguments(profile);
     const requiresOwnershipPersistence = control.onProcessStarted !== undefined || control.onProcessOwnershipChanged !== undefined;
@@ -221,6 +222,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
         assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
         await assertProcessPathIdentityStable(profile.process.executable, taskExecutableIdentity, "executable");
         await assertProcessPathIdentityStable(profile.cwd, taskCwdIdentity, "directory");
+        await assertTaskFilesystemRootIdentitiesStable(profile.filesystemRoots, taskFilesystemRootIdentities);
         control.onProcessStarted?.(annotateOwnership(snapshot));
       }
       : undefined;
@@ -249,6 +251,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
     }
     await assertProcessPathIdentityStable(profile.process.executable, taskExecutableIdentity, "executable");
     await assertProcessPathIdentityStable(profile.cwd, taskCwdIdentity, "directory");
+    await assertTaskFilesystemRootIdentitiesStable(profile.filesystemRoots, taskFilesystemRootIdentities);
     assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
     return mapProcessResult(result);
   }
@@ -617,6 +620,36 @@ async function captureTaskProcessPathIdentity(
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("POLICY_DENIED", "Task process path identity could not be established");
+  }
+}
+
+async function captureTaskFilesystemRootIdentities(
+  roots: readonly string[]
+): Promise<readonly { rootPath: string; identity: ProcessPathIdentity }[]> {
+  const uniqueRoots = [...new Set(roots)].sort();
+  if (uniqueRoots.length === 0) throw new BrokerError("POLICY_DENIED", "Task filesystem roots are unavailable");
+  return Promise.all(uniqueRoots.map(async (rootPath) => ({
+    rootPath,
+    identity: await captureTaskProcessPathIdentity(rootPath, "directory")
+  })));
+}
+
+async function assertTaskFilesystemRootIdentitiesStable(
+  roots: readonly string[],
+  expected: readonly { rootPath: string; identity: ProcessPathIdentity }[]
+): Promise<void> {
+  const uniqueRoots = [...new Set(roots)].sort();
+  if (uniqueRoots.length !== expected.length || uniqueRoots.some((rootPath, index) => rootPath !== expected[index]?.rootPath)) {
+    throw new BrokerError("POLICY_DENIED", "Task filesystem roots changed after authorization");
+  }
+  for (const [index, rootPath] of uniqueRoots.entries()) {
+    const prior = expected[index];
+    if (prior === undefined) throw new BrokerError("POLICY_DENIED", "Task filesystem roots changed after authorization");
+    try {
+      await assertProcessPathIdentityStable(rootPath, prior.identity, "directory");
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Task filesystem root changed after authorization");
+    }
   }
 }
 

@@ -150,7 +150,11 @@ test("Broker close drains its shared OS process supervisor", async () => {
       timeoutMs: 5_000,
       outputCapBytes: 100
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const activeDeadline = Date.now() + 2_000;
+    while (supervisor.activeCount() < 1 && Date.now() < activeDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(supervisor.activeCount(), 1);
     await broker.close();
     const result = await running;
     assert.equal(result.resultClass, "CANCELLED");

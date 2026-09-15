@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir, userInfo } from "node:os";
@@ -247,6 +247,54 @@ test("SandboxExecTaskRunner rejects a task executable swap after authorization",
     await assert.rejects(
       runner.run(profile, { timeoutMs: 1_000, shouldCancel: () => false, onProcessStarted: () => undefined }),
       /Executable changed after authorization/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("SandboxExecTaskRunner rejects a non-cwd filesystem root swap after authorization", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("The task filesystem root identity callback uses the macOS runner boundary");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-sbpl-root-swap-"));
+  const root = await realpath(directory);
+  const workRoot = join(root, "work");
+  const secondaryRoot = join(root, "secondary");
+  const movedRoot = join(root, "secondary-authorized");
+  await mkdir(workRoot, { mode: 0o700 });
+  await mkdir(secondaryRoot, { mode: 0o700 });
+  const profile = resolvedProfile(workRoot, { filesystemRoots: [workRoot, secondaryRoot] });
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof(),
+    supervisor: {
+      run: async (request) => {
+        renameSync(secondaryRoot, movedRoot);
+        mkdirSync(secondaryRoot, { mode: 0o700 });
+        await request.onStarted?.({ identity: { pid: 42, processGroupId: 42, startTimeMicros: 123456 }, descendants: [] });
+        return {
+          state: "completed" as const,
+          resultClass: "SUCCEEDED" as const,
+          exitCode: 0,
+          signal: null,
+          stdout: "must-not-publish",
+          stderr: "",
+          truncated: false,
+          durationMs: 1,
+          processId: 42,
+          processGroupId: 42,
+          terminationObserved: true
+        };
+      }
+    }
+  });
+  try {
+    await assert.rejects(
+      runner.run(profile, { timeoutMs: 1_000, shouldCancel: () => false, onProcessStarted: () => undefined }),
+      /Task filesystem root changed after authorization/u
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
