@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { BrokerError, CAPABILITY_FAMILIES, CONTRACT_VERSION, PLANNED_TOOL_NAMES, SCOPES, type CapabilityFamily, type RuntimeToolState, type Scope } from "@mac-operator/contracts";
 import type { BrokerStore, SwitchName } from "./persistence.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 export interface ToolPolicy {
   tool: string;
@@ -185,15 +186,9 @@ function validateToolPolicy(name: string, tool: ToolPolicy): void {
 }
 
 function hasOnlyKeys(value: unknown, keys: readonly string[]): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return false;
-    const allowed = new Set(keys);
-    return Object.keys(value).every((key) => allowed.has(key));
-  } catch {
-    return false;
-  }
+  if (!isPlainDataRecord(value)) return false;
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key));
 }
 
 function isPolicyId(value: unknown): value is string {

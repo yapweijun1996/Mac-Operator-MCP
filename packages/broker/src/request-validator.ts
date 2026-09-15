@@ -1,4 +1,5 @@
 import { BrokerError, CONTRACT_VERSION, PROTOCOL_VERSION, SCOPES, type BrokerRequest, type Scope } from "@mac-operator/contracts";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const KNOWN_SCOPES = new Set<Scope>(SCOPES);
 
@@ -7,6 +8,7 @@ const HEX_64_PATTERN = /^[a-f0-9]{64}$/u;
 
 export function parseBrokerRequest(value: unknown): BrokerRequest {
   if (!isRecord(value)) throw new BrokerError("AUTH_INVALID", "Request envelope must be an object");
+  if (!isSafeRequestValue(value)) throw new BrokerError("AUTH_INVALID", "Request envelope contains unsupported values");
   const exactKeys = new Set([
     "protocolVersion", "requestId", "contractVersion", "tool", "arguments", "principal",
     "timestampMs", "nonce", "policyAudience", "policyVersion", "authenticationKeyId", "payloadDigest", "authenticationProof"
@@ -55,11 +57,46 @@ export function parseBrokerRequest(value: unknown): BrokerRequest {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return isPlainDataRecord(value);
+}
+
+function isSafeRequestValue(value: unknown): boolean {
+  const active = new Set<object>();
+  let nodes = 0;
+  const visit = (candidate: unknown, depth: number): boolean => {
+    if (nodes++ >= 10_000 || depth > 64) return false;
+    if (candidate === null || typeof candidate === "string" || typeof candidate === "boolean") return true;
+    if (typeof candidate === "number") return Number.isFinite(candidate);
+    if (typeof candidate !== "object" || active.has(candidate)) return false;
+    if (Array.isArray(candidate)) {
+      if (!isPlainDataArray(candidate)) return false;
+      active.add(candidate);
+      try { return candidate.every((item) => visit(item, depth + 1)); }
+      finally { active.delete(candidate); }
+    }
+    if (!isPlainDataRecord(candidate)) return false;
+    active.add(candidate);
+    try {
+      return Object.keys(candidate).every((key) => visit(candidate[key], depth + 1));
+    } catch {
+      return false;
+    } finally {
+      active.delete(candidate);
+    }
+  };
+  return visit(value, 0);
+}
+
+function isPlainDataArray(value: readonly unknown[]): boolean {
   try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) return false;
-    Object.keys(value);
+    if (Object.getOwnPropertySymbols(value).length > 0 || Object.keys(value).length !== value.length) return false;
+    const names = Object.getOwnPropertyNames(value);
+    if (names.length !== value.length + 1 || !names.includes("length")) return false;
+    for (const name of names) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, name);
+      if (descriptor === undefined || !("value" in descriptor)) return false;
+      if (name !== "length" && (!/^(?:0|[1-9][0-9]*)$/u.test(name) || Number(name) >= value.length)) return false;
+    }
     return true;
   } catch {
     return false;

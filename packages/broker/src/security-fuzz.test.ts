@@ -130,6 +130,39 @@ test("request parsing rejects inherited envelope, argument, and principal fields
     () => parseBrokerRequest(principalRequest),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
   );
+
+  const hiddenEnvelope = { ...base } as Record<string, unknown>;
+  delete hiddenEnvelope.tool;
+  Object.defineProperty(hiddenEnvelope, "tool", { value: base.tool, enumerable: false });
+  assert.throws(
+    () => parseBrokerRequest(hiddenEnvelope),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
+  const nestedHiddenArgument = { ...base } as Record<string, unknown>;
+  const nestedArguments = { patch: {} } as Record<string, unknown>;
+  Object.defineProperty(nestedArguments.patch, "path", { value: "/private", enumerable: false });
+  nestedHiddenArgument.arguments = nestedArguments;
+  assert.throws(
+    () => parseBrokerRequest(nestedHiddenArgument),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
+  const sparseArguments = { values: [] } as Record<string, unknown>;
+  (sparseArguments.values as unknown[]).length = 2;
+  const sparseRequest = { ...base, arguments: sparseArguments };
+  assert.throws(
+    () => parseBrokerRequest(sparseRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
+  const accessorArguments = {} as Record<string, unknown>;
+  Object.defineProperty(accessorArguments, "path", { enumerable: true, get: () => "/private" });
+  const accessorRequest = { ...base, arguments: accessorArguments };
+  assert.throws(
+    () => parseBrokerRequest(accessorRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
 });
 
 test("guest request mutations fail closed before any guest exchange", () => {
