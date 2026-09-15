@@ -1,7 +1,8 @@
 import { constants } from "node:fs";
-import { lstat, open, realpath, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, open, realpath, rename, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parseJsonUtf8Strict } from "@mac-operator/contracts";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 
@@ -182,11 +183,26 @@ async function unlinkExactLock(path: string, device: number, inode: number): Pro
   if (!current.isFile() || current.isSymbolicLink() || current.dev !== device || current.ino !== inode) {
     throw new ServiceInstanceLockError("LOCK_CHANGED", "Broker service lock ownership changed");
   }
-  try { await unlink(path); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock could not be released");
-    }
+  const quarantine = join(dirname(path), `.mac-operator-lock-removing-${randomUUID()}`);
+  try {
+    await rename(path, quarantine);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock could not be released");
+  }
+  let quarantined: Awaited<ReturnType<typeof lstat>>;
+  try {
+    quarantined = await lstat(quarantine);
+  } catch {
+    throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock quarantine could not be verified");
+  }
+  if (!quarantined.isFile() || quarantined.isSymbolicLink() || quarantined.dev !== device || quarantined.ino !== inode) {
+    throw new ServiceInstanceLockError("LOCK_CHANGED", "Broker service lock changed during release");
+  }
+  try {
+    await unlink(quarantine);
+  } catch {
+    throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock quarantine could not be removed");
   }
 }
 
