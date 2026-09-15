@@ -285,6 +285,17 @@ test("path mutation corpus cannot escape the authorized root or secret zones", (
       totalBytes: 1_000_000,
       availableBytes: 500_000,
       usedBytes: 500_000
+    }),
+    statPathWithinRoot: (_root: string, target: string) => ({
+      rootPath,
+      path: target === rootPath ? rootPath : target,
+      type: target === rootPath ? "directory" : "file",
+      sizeBytes: 0,
+      modifiedAtMs: 0,
+      mode: "0700",
+      isSymlink: false,
+      device: "1",
+      inode: target === rootPath ? "2" : "3"
     })
   } as unknown as FilesystemNativeAdapter;
   const inspector = new FilesystemInspector([{

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, mkdir, readFile, readlink, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -126,7 +126,17 @@ test("filesystem native metadata and volume results reject unstable authority fi
   };
   const native = {
     statStorageVolumeWithinRoot: () => volume,
-    statPathWithinRoot: () => ({ ...metadata, extra: "authority" })
+    statPathWithinRoot: (_root: string, target: string) => target === rootPath ? {
+      rootPath,
+      path: rootPath,
+      type: "directory" as const,
+      sizeBytes: 0,
+      modifiedAtMs: 0,
+      mode: "0700",
+      isSymlink: false,
+      device: "1",
+      inode: "2"
+    } : { ...metadata, extra: "authority" }
   } as unknown as FilesystemNativeAdapter;
   const inspector = new FilesystemInspector([rootPolicy(rootPath)], native);
   assert.throws(() => inspector.statPath(metadata.path), /escaped its authorized root or volume/u);
@@ -912,6 +922,27 @@ test("filesystem plans fail closed when the authorized volume identity changes",
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("filesystem plans fail closed when the authorized root directory is replaced", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-fs-root-identity-"));
+  const directory = join(parent, "allowed");
+  const movedDirectory = join(parent, "allowed-moved");
+  const file = join(directory, "value.txt");
+  await mkdir(directory);
+  await writeFile(file, "safe");
+  try {
+    const inspector = new FilesystemInspector([root(directory)]);
+    const plan = inspector.planPath(file, "metadata");
+    await rename(directory, movedDirectory);
+    await mkdir(directory);
+    assert.throws(
+      () => inspector.statPlanned(plan, false),
+      /root identity changed during authorization/u
+    );
+  } finally {
+    await rm(parent, { recursive: true, force: true });
   }
 });
 

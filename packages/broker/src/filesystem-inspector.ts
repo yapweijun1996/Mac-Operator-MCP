@@ -172,6 +172,9 @@ export interface FilesystemPathPlan {
 export interface FilesystemVolumeIdentity {
   rootPath: string;
   id: string;
+  /** Device/inode identity of the authorized policy root directory. */
+  device: string;
+  inode: string;
 }
 
 export interface FilesystemIdentityPrecondition {
@@ -355,16 +358,28 @@ export class FilesystemInspector {
       throw new BrokerError("POLICY_DENIED", "Filesystem path is inside a denied zone");
     }
     let volume: NativeStorageVolume;
+    let rootMetadata: NativePathMetadata;
     try {
       volume = parseNativeStorageVolume(this.native.statStorageVolumeWithinRoot(root.path));
+      rootMetadata = parseNativeMetadata(this.native.statPathWithinRoot(root.path, root.path, false));
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem root volume identity could not be established");
+    }
+    if (rootMetadata.type !== "directory" || rootMetadata.isSymlink ||
+        rootMetadata.path !== rootMetadata.rootPath || volume.rootPath !== rootMetadata.path ||
+        !/^\d+$/u.test(rootMetadata.device) || !/^\d+$/u.test(rootMetadata.inode)) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem root identity could not be established");
     }
     return {
       rootId: root.rootId,
       requestedPath: lexicalPath,
       root,
-      rootIdentity: { rootPath: volume.rootPath, id: volume.id }
+      rootIdentity: {
+        rootPath: volume.rootPath,
+        id: volume.id,
+        device: rootMetadata.device,
+        inode: rootMetadata.inode
+      }
     };
   }
 
@@ -1323,6 +1338,18 @@ export class FilesystemInspector {
     }
     if (volume.rootPath !== plan.rootIdentity.rootPath || volume.id !== plan.rootIdentity.id) {
       throw new BrokerError("POLICY_DENIED", "Filesystem root volume identity changed during authorization");
+    }
+    let rootMetadata: NativePathMetadata;
+    try {
+      rootMetadata = parseNativeMetadata(this.native.statPathWithinRoot(plan.root.path, plan.root.path, false));
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Filesystem root identity could not be verified");
+    }
+    if (
+        rootMetadata.type !== "directory" || rootMetadata.isSymlink ||
+        rootMetadata.path !== rootMetadata.rootPath || rootMetadata.path !== plan.rootIdentity.rootPath ||
+        rootMetadata.device !== plan.rootIdentity.device || rootMetadata.inode !== plan.rootIdentity.inode) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem root identity changed during authorization");
     }
   }
 }
