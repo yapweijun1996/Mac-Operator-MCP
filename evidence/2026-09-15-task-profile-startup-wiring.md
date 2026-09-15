@@ -1,7 +1,7 @@
 # Task-profile startup wiring evidence
 
 Date: 2026-09-15
-Source revision: pending local commit (`test: prove startup task profile execution`)
+Source revision: `52a8e91` (`test: prove startup task profile execution`)
 
 ## Boundary
 
