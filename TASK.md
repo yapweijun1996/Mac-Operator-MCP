@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox-task path addendum: source revision `2599502` extends process identity
+binding into `SandboxExecTaskRunner`, covering the profile's actual executable
+and cwd in addition to the outer `sandbox-exec` process. Device/inode/mode
+readback runs before dispatch, through awaited startup ownership capture, and
+after execution; a real Darwin regression rejects an executable replaced
+after authorization. The complete physical-Darwin suite passes 603/603 with
+0 skipped tests. This is startup swap detection only; descriptor/fexec
+atomicity remains open. Evidence:
+`evidence/2026-09-15-sandbox-task-path-identity.md`.
+
 Process-path identity addendum: source revision `5efe002` binds process
 execution to canonical executable/cwd device, inode, and mode readback before
 spawn, after spawn, and after startup ownership capture. The physical-Darwin

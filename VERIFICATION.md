@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Sandbox-task path addendum: source revision `2599502` binds the actual task
+executable and cwd carried inside the `sandbox-exec` argument vector to
+Broker-captured device/inode/mode identities. The startup callback is awaited
+so its identity and filesystem checks complete before active ownership is
+persisted; final readback repeats the checks. The target-swap regression and
+complete physical-Darwin suite pass 603/603 with 0 skipped tests. Build,
+typecheck, lint, contract verification, native canonical probe, and diff
+checks pass. This closes inner-task startup swap detection, not an atomic
+kernel descriptor/fexec race proof. Evidence:
+`evidence/2026-09-15-sandbox-task-path-identity.md`.
+
 Process-path identity addendum: source revision `5efe002` captures canonical
 executable and cwd device/inode/mode identities before child creation and
 rechecks them after spawn and after startup ownership callbacks. A changed or

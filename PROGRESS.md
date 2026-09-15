@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox-task path addendum: source revision `2599502` reuses the Broker-owned
+process path identity gate for the executable and cwd embedded inside a
+`sandbox-exec` task profile. The runner captures device/inode/mode before
+dispatch, awaits asynchronous startup ownership checks, rechecks those paths
+after startup and after execution, and leaves the Job unresolved when the
+target changes. A physical-Darwin regression replaces the inner task
+executable after authorization and proves rejection; the complete suite passes
+603/603 with 0 skipped tests. The checks detect startup-window swaps but do
+not claim a kernel-held descriptor/fexec guarantee. Evidence:
+`evidence/2026-09-15-sandbox-task-path-identity.md`.
+
 Process-path identity addendum: source revision `5efe002` makes
 `ProcessSupervisor` retain the device/inode/mode identity of the canonical
 executable and cwd during request validation, recheck both immediately after
