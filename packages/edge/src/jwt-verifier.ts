@@ -206,6 +206,9 @@ function createBoundedJwksFetch(fetcher: FetchImplementation, expectedUrl: URL):
     if (response.redirected || (response.url !== "" && response.url !== expectedUrl.href)) {
       throw new Error("JWT remote JWKS redirects are not allowed");
     }
+    if (!response.ok || response.status < 200 || response.status >= 300) {
+      throw new Error("JWT remote JWKS response status is not successful");
+    }
     const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     if (contentType !== "application/json" && contentType !== "application/jwk-set+json") {
       throw new Error("JWT remote JWKS response content type is not JSON");
