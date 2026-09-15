@@ -213,7 +213,15 @@ test("task runner isolation proof requires every boundary and the selected sandb
     processTreePolicy: "single_process",
     evidenceRef: "evidence://task-runner"
   } as const;
-  assert.deepEqual(validateTaskIsolationProof(proof), proof);
+  const validated = validateTaskIsolationProof(proof);
+  assert.deepEqual(validated, proof);
+  assert.equal(Object.isFrozen(validated), true);
+  const frozen = validateTaskIsolationProof(proof);
+  assert.equal(Object.isFrozen(frozen), true);
+  assert.throws(
+    () => { (frozen as unknown as { sandboxProfile: string }).sandboxProfile = "other-profile"; },
+    TypeError
+  );
   assert.throws(
     () => validateTaskIsolationProof({ ...proof, credentials: "unknown" }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
@@ -280,7 +288,16 @@ test("virtualization isolation proofs require an immutable guest identity", () =
     evidenceRef: "evidence://virtualization-guest",
     virtualizationGuest: guest
   } as const;
-  assert.deepEqual(validateTaskIsolationProof(proof), proof);
+  const validated = validateTaskIsolationProof(proof);
+  assert.deepEqual(validated, proof);
+  assert.equal(Object.isFrozen(validated), true);
+  assert.equal(Object.isFrozen(validated.virtualizationGuest), true);
+  assert.throws(
+    () => {
+      (validated.virtualizationGuest as unknown as { imageSha256: string }).imageSha256 = "0".repeat(64);
+    },
+    TypeError
+  );
   const attestation = guestAttestation(guest, proof.evidenceRef);
   assert.deepEqual(validateVirtualizationGuestAttestation(attestation), attestation);
   assert.throws(

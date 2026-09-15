@@ -706,7 +706,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
   ) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is not complete");
   }
-  return {
+  return freezeTaskIsolationProof({
     schemaVersion: "0.1",
     sandboxMechanism: proof.sandboxMechanism,
     sandboxProfile: proof.sandboxProfile,
@@ -721,7 +721,28 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     ...(proof.sandboxMechanism === "virtualization"
       ? { virtualizationGuest: parseVirtualizationGuestIdentity(proof.virtualizationGuest) }
       : {})
+  });
+}
+
+/**
+ * Proof data is retained by long-lived runners and exposed through a readonly
+ * TypeScript property. Freeze the complete data graph so that readonly does
+ * not become a mutable runtime authorization surface.
+ */
+function freezeTaskIsolationProof(proof: TaskIsolationProof): TaskIsolationProof {
+  const seen = new Set<object>();
+  const freeze = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) freeze(item);
+    } else {
+      for (const child of Object.values(value)) freeze(child);
+    }
+    Object.freeze(value);
   };
+  freeze(proof);
+  return proof;
 }
 
 function virtualizationAttestationMatchesProof(
