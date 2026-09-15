@@ -4,6 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+System-published guest-image addendum: commit `e00554c` makes image
+publication explicit and requires the enabled native VM path to consume only
+root-owned, canonical, non-symlink images and parent directories without
+group/other write bits. The native C++ boundary repeats the check before
+`initWithURL:` because Virtualization.framework accepts a pathname, while
+descriptor/inode/digest readback remains in place. Focused image/native tests
+pass 12/12; the non-overlapping package regression passes 508 total (502
+pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks pass. This
+is a compensating control against unprivileged target replacement, not proof
+of atomic descriptor attachment, VM boot, guest isolation, or capability
+enablement.
+Evidence: `evidence/2026-09-15-system-published-guest-image.md`.
+
 Nested authenticated-data addendum: source revision `54fe71a` applies
 plain-data checks to helper payloads/results/verification/evidence, Broker and
 Helper status readbacks, and nested authority/status failures. Malformed

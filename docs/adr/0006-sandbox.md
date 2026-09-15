@@ -278,6 +278,18 @@ This preserves serialized VM mutation even when an adapter does not honor
 focused lifecycle tests and current physical-Darwin regression are recorded in
 [`evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md`](../../evidence/2026-09-15-virtualization-guest-lifecycle-timeout-fence.md).
 
+Commit `e00554c` makes the image publication boundary explicit. The enabled
+native adapter accepts only a `system-published` image whose canonical file
+and parent are root-owned, non-symlink paths with no group/other write bits;
+the native `ValidateImage` path repeats this check immediately before the
+pathname attachment. Broker-owned images remain valid for protocol/test
+fixtures but fail closed before native loading. This blocks unprivileged
+same-user replacement across the framework pathname window, while root
+rotation and the absence of an atomic descriptor attachment API remain open.
+The image/native suites pass 12/12 and the non-overlapping package regression
+passes 508 total (502 pass, 6 skipped, 0 fail). Evidence:
+[`evidence/2026-09-15-system-published-guest-image.md`](../../evidence/2026-09-15-system-published-guest-image.md).
+
 ## Virtio-socket connector
 
 Commit `b8551d6` adds a bounded native `exchangeGuestFrame` operation over

@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+System-published guest-image addendum: commit `e00554c` adds a startup-owned
+publication mode and requires the native Virtualization.framework path to
+accept only root-owned, canonical, non-symlink images with a non-writable
+unprivileged publication boundary. The native C++ preflight repeats the
+policy before pathname attachment. Focused image/native suites pass 12/12;
+the non-overlapping package regression passes 508 total (502 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This mitigates
+unprivileged pathname target replacement but does not close root rotation,
+atomic descriptor attachment, VM boot, guest isolation, or production task
+enablement.
+Evidence: `evidence/2026-09-15-system-published-guest-image.md`.
+
 Nested authenticated-data addendum: commit `54fe71a` requires plain-data
 records for helper payloads/results/verification/evidence, Broker and Helper
 status readbacks, and nested authority/status failures before canonicalization

@@ -4,6 +4,19 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+System-published guest-image addendum: source revision `e00554c` adds an
+explicit image publication mode. Enabled native Virtualization.framework
+creation now requires a root-owned, non-symlink image and canonical parent
+with no group/other write bits; broker-owned fixtures remain available for
+protocol/test seams but are rejected before native loading. The native C++
+preflight repeats this publication check because attachment uses a pathname
+after descriptor hashing. Focused image/native suites pass 12/12; the
+non-overlapping package regression passes 508 total (502 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This narrows the
+unprivileged target-swap window but does not close root rotation, VM boot,
+guest isolation, attestation production, or `mac_task_run` enablement.
+Evidence: `evidence/2026-09-15-system-published-guest-image.md`.
+
 Nested authenticated-data addendum: source revision `54fe71a` validates
 plain-data shapes for helper payloads/results/verification/evidence, Broker
 and Helper status readbacks, and nested authority/status failures. Accessors,
