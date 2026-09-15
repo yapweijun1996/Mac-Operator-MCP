@@ -99,7 +99,15 @@ const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
  * authority and recovery decisions unsafe.
  */
 export const BROKER_SCHEMA_VERSION = 11;
-const MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS = 4096;
+const MAX_REPLAY_LEDGER_ROWS = 4096;
+type ReplayLedgerTable =
+  | "nonces"
+  | "approval_nonces"
+  | "policy_signer_nonces"
+  | "authority_control_nonces"
+  | "privileged_helper_nonces"
+  | "broker_status_nonces"
+  | "virtualization_guest_nonces";
 
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
@@ -794,6 +802,11 @@ export class BrokerStore {
    */
   private verifyReplayLedgerIntegrity(): void {
     try {
+      const replayTables: readonly ReplayLedgerTable[] = [
+        "nonces", "approval_nonces", "policy_signer_nonces", "authority_control_nonces",
+        "privileged_helper_nonces", "broker_status_nonces", "virtualization_guest_nonces"
+      ];
+      for (const table of replayTables) assertReplayLedgerCapacity(this.database, table);
       const requestRows = this.database.prepare(
         "SELECT edge_id, nonce, request_id, accepted_at_ms, expires_at_ms FROM nonces"
       ).all() as unknown[];
@@ -827,9 +840,6 @@ export class BrokerStore {
       const guestRows = this.database.prepare(
         "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM virtualization_guest_nonces"
       ).all() as unknown[];
-      if (guestRows.length > MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS) {
-        throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest replay ledger is at capacity");
-      }
       for (const row of guestRows) validateStoredReplayRow("virtualization_guest", row);
     } catch (error) {
       if (error instanceof BrokerError) throw error;
@@ -1000,6 +1010,7 @@ export class BrokerStore {
     try {
       return this.runTransaction(() => {
         this.database.prepare("DELETE FROM nonces WHERE expires_at_ms < ?").run(input.receivedAtMs);
+        assertReplayLedgerCapacity(this.database, "nonces");
         enforceRequestAdmissionLimits(this.database, input, limits);
         this.database.prepare(
           "INSERT INTO nonces(edge_id, nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
@@ -1051,6 +1062,7 @@ export class BrokerStore {
     try {
       return this.runTransaction(() => {
         this.database.prepare("DELETE FROM nonces WHERE expires_at_ms < ?").run(input.request.receivedAtMs);
+        assertReplayLedgerCapacity(this.database, "nonces");
         this.database.prepare(
           "INSERT INTO nonces(edge_id, nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
         ).run(
@@ -1215,6 +1227,7 @@ export class BrokerStore {
     try {
       return this.runTransaction(() => {
         this.database.prepare("DELETE FROM approval_nonces WHERE expires_at_ms < ?").run(input.timestampMs);
+        assertReplayLedgerCapacity(this.database, "approval_nonces");
         this.database.prepare(`
           INSERT INTO approval_nonces(issuer_id, key_id, nonce, request_id, accepted_at_ms, expires_at_ms)
           VALUES (?, ?, ?, ?, ?, ?)
@@ -1608,6 +1621,7 @@ export class BrokerStore {
     try {
       this.runTransaction(() => {
         this.database.prepare("DELETE FROM policy_signer_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        assertReplayLedgerCapacity(this.database, "policy_signer_nonces");
         this.database.prepare(
           "INSERT INTO policy_signer_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
         ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
@@ -1636,6 +1650,7 @@ export class BrokerStore {
     try {
       this.runTransaction(() => {
         this.database.prepare("DELETE FROM authority_control_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        assertReplayLedgerCapacity(this.database, "authority_control_nonces");
         this.database.prepare(
           "INSERT INTO authority_control_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
         ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
@@ -1664,6 +1679,7 @@ export class BrokerStore {
     try {
       this.runTransaction(() => {
         this.database.prepare("DELETE FROM privileged_helper_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        assertReplayLedgerCapacity(this.database, "privileged_helper_nonces");
         this.database.prepare(
           "INSERT INTO privileged_helper_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
         ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
@@ -1692,6 +1708,7 @@ export class BrokerStore {
     try {
       this.runTransaction(() => {
         this.database.prepare("DELETE FROM broker_status_nonces WHERE expires_at_ms < ?").run(input.timestampMs);
+        assertReplayLedgerCapacity(this.database, "broker_status_nonces");
         this.database.prepare(
           "INSERT INTO broker_status_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
         ).run(input.nonce, input.requestId, input.timestampMs, input.expiresAtMs);
@@ -1720,10 +1737,7 @@ export class BrokerStore {
     try {
       this.runTransaction(() => {
         this.database.prepare("DELETE FROM virtualization_guest_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
-        const row = this.database.prepare("SELECT COUNT(*) AS count FROM virtualization_guest_nonces").get() as { count?: unknown } | undefined;
-        if (!Number.isSafeInteger(row?.count) || (row?.count as number) < 0 || (row?.count as number) >= MAX_VIRTUALIZATION_GUEST_REPLAY_ROWS) {
-          throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest replay ledger is at capacity");
-        }
+        assertReplayLedgerCapacity(this.database, "virtualization_guest_nonces");
         this.database.prepare(
           "INSERT INTO virtualization_guest_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
         ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
@@ -3900,6 +3914,14 @@ type ReplayLedgerKind =
   | "privileged_helper"
   | "broker_status"
   | "virtualization_guest";
+
+/** Keep every replay ledger bounded before a new authority decision is stored. */
+function assertReplayLedgerCapacity(database: DatabaseSync, table: ReplayLedgerTable): void {
+  const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count?: unknown } | undefined;
+  if (!Number.isSafeInteger(row?.count) || (row?.count as number) < 0 || (row?.count as number) >= MAX_REPLAY_LEDGER_ROWS) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Replay ledger is at capacity");
+  }
+}
 
 /** Validate one persisted replay row before it can participate in admission. */
 function validateStoredReplayRow(kind: ReplayLedgerKind, value: unknown): void {
