@@ -182,6 +182,7 @@ export class Broker {
     this.processExecutor = options.processExecutor ?? new WorkerProcessExecutor();
     this.processSupervisor = options.processSupervisor ?? new ProcessSupervisor({
       maxConcurrent: 16,
+      requireRootOwnedExecutable: true,
       allowedEnvironmentKeys: [
         "DOCKER_CONFIG", "DOCKER_HOST", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_SYSTEM", "GIT_NO_REPLACE_OBJECTS", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "HOME"

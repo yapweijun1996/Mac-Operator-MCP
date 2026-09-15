@@ -342,6 +342,39 @@ test("process supervisor rejects group- or other-writable executables", async ()
   }
 });
 
+test("process supervisor can require root-owned executables for fixed adapters", async () => {
+  const supervisor = new ProcessSupervisor({ requireRootOwnedExecutable: true });
+  const trusted = await supervisor.run({
+    executable: "/usr/bin/printf",
+    args: ["root-owned"],
+    cwd: CWD,
+    timeoutMs: 1_000,
+    outputCapBytes: 100
+  });
+  assert.equal(trusted.state, "completed");
+  assert.equal(trusted.stdout, "root-owned");
+
+  const uid = process.getuid?.();
+  if (uid === 0) return;
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-owner-"));
+  const executable = join(await realpath(directory), "runner");
+  try {
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await assert.rejects(
+      supervisor.run({
+        executable,
+        args: [],
+        cwd: CWD,
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      }),
+      /not root-owned/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("process supervisor rejects executable target swaps after startup authorization", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("The startup identity callback uses the macOS native process observer");

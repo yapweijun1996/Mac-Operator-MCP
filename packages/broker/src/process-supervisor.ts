@@ -63,6 +63,8 @@ interface ChildProcessCapture {
 export interface ProcessPathIdentity {
   device: number;
   inode: number;
+  ownerUid: number;
+  ownerGid: number;
   mode: number;
   /** Metadata that changes on ordinary in-place content mutation. */
   size: number;
@@ -159,6 +161,8 @@ export interface ProcessSupervisorOptions {
   pollIntervalMs?: number;
   terminationGraceMs?: number;
   allowedEnvironmentKeys?: readonly string[];
+  /** Require executable files to be owned by root for fixed host adapters. */
+  requireRootOwnedExecutable?: boolean;
 }
 
 export type ProcessExecutionState = "completed" | "failed" | "cancelled" | "timed_out" | "unknown";
@@ -190,6 +194,7 @@ export class ProcessSupervisor {
   private readonly pollIntervalMs: number;
   private readonly terminationGraceMs: number;
   private readonly allowedEnvironmentKeys: ReadonlySet<string>;
+  private readonly requireRootOwnedExecutable: boolean;
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
@@ -199,10 +204,12 @@ export class ProcessSupervisor {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.terminationGraceMs = options.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS;
     this.allowedEnvironmentKeys = new Set(options.allowedEnvironmentKeys ?? []);
+    this.requireRootOwnedExecutable = options.requireRootOwnedExecutable ?? false;
     if (!Number.isSafeInteger(this.maxConcurrent) || this.maxConcurrent < 1 || this.maxConcurrent > 64 ||
         !Number.isSafeInteger(this.maxConcurrentPerExecutable) || this.maxConcurrentPerExecutable < 1 || this.maxConcurrentPerExecutable > 64 ||
         !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 5 || this.pollIntervalMs > 1_000 ||
-        !Number.isSafeInteger(this.terminationGraceMs) || this.terminationGraceMs < 25 || this.terminationGraceMs > 10_000) {
+        !Number.isSafeInteger(this.terminationGraceMs) || this.terminationGraceMs < 25 || this.terminationGraceMs > 10_000 ||
+        typeof this.requireRootOwnedExecutable !== "boolean") {
       throw new Error("Process supervisor limits are outside the supported range");
     }
     for (const key of this.allowedEnvironmentKeys) validateEnvironmentKey(key);
@@ -213,7 +220,7 @@ export class ProcessSupervisor {
     // checks. Otherwise a caller could mutate a target, argument, or
     // environment while validation is in flight and change what gets spawned.
     const safeRequest = snapshotProcessRequest(request);
-    const validatedPaths = await validateRequest(safeRequest, this.allowedEnvironmentKeys);
+    const validatedPaths = await validateRequest(safeRequest, this.allowedEnvironmentKeys, this.requireRootOwnedExecutable);
     if (this.closing) {
       throw new BrokerError("CANCELLED", "Process authority is closed");
     }
@@ -918,7 +925,11 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number):
   return capture;
 }
 
-async function validateRequest(request: ProcessExecutionRequest, allowedEnvironmentKeys: ReadonlySet<string>): Promise<ValidatedProcessPaths> {
+async function validateRequest(
+  request: ProcessExecutionRequest,
+  allowedEnvironmentKeys: ReadonlySet<string>,
+  requireRootOwnedExecutable: boolean
+): Promise<ValidatedProcessPaths> {
   if (!isPlainDataRecord(request) ||
       !hasAllowedKeys(request, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
       !isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
@@ -974,6 +985,9 @@ async function validateRequest(request: ProcessExecutionRequest, allowedEnvironm
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("TARGET_NOT_FOUND", "Broker-resolved executable was not found");
+  }
+  if (requireRootOwnedExecutable && executable.ownerUid !== 0) {
+    throw new BrokerError("POLICY_DENIED", "Executable is not root-owned");
   }
   let cwd: ProcessPathIdentity;
   try {
@@ -1088,6 +1102,8 @@ async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
   const identity: ProcessPathIdentity = {
     device: stat.dev,
     inode: stat.ino,
+    ownerUid: stat.uid,
+    ownerGid: stat.gid,
     mode: stat.mode & 0o7777,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
@@ -1119,6 +1135,8 @@ async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
   return {
     device: stat.dev,
     inode: stat.ino,
+    ownerUid: stat.uid,
+    ownerGid: stat.gid,
     mode: stat.mode & 0o7777,
     size: stat.size,
     mtimeMs: stat.mtimeMs,
@@ -1127,10 +1145,11 @@ async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
 }
 
 function sameProcessPathMetadata(
-  stat: { dev: number; ino: number; mode: number; size: number; mtimeMs: number; ctimeMs: number },
+  stat: { dev: number; ino: number; uid: number; gid: number; mode: number; size: number; mtimeMs: number; ctimeMs: number },
   identity: ProcessPathIdentity
 ): boolean {
   return stat.dev === identity.device && stat.ino === identity.inode &&
+    stat.uid === identity.ownerUid && stat.gid === identity.ownerGid &&
     (stat.mode & 0o7777) === identity.mode && stat.size === identity.size &&
     stat.mtimeMs === identity.mtimeMs && stat.ctimeMs === identity.ctimeMs;
 }
