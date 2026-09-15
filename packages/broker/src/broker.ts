@@ -485,6 +485,7 @@ export class Broker {
           job.policyVersion !== policy.version || this.options.store.isRevoked("principal", job.ownerPrincipalId) ||
           this.options.store.isRevoked("session", job.ownerSessionId) ||
           (job.ownerEdgeId !== null && this.options.store.isRevoked("edge", job.ownerEdgeId)) ||
+          (job.ownerEdgeKeyId !== null && this.options.store.isRevoked("edge_key", job.ownerEdgeKeyId)) ||
           this.taskRunner.mechanism !== "virtualization" ||
           typeof this.taskRunner.recoverUnknownTask !== "function") {
         unavailable += 1;
@@ -515,7 +516,8 @@ export class Broker {
         if (currentPolicy.killSwitches.global || currentPolicy.killSwitches.process || currentTool?.implemented !== true ||
             currentTool.enabled !== true || job.policyVersion !== currentPolicy.version ||
             this.options.store.isRevoked("principal", job.ownerPrincipalId) || this.options.store.isRevoked("session", job.ownerSessionId) ||
-            (job.ownerEdgeId !== null && this.options.store.isRevoked("edge", job.ownerEdgeId))) {
+            (job.ownerEdgeId !== null && this.options.store.isRevoked("edge", job.ownerEdgeId)) ||
+            (job.ownerEdgeKeyId !== null && this.options.store.isRevoked("edge_key", job.ownerEdgeKeyId))) {
           throw new BrokerError("REVOKED", "Guest status lookup authority is revoked");
         }
       };
