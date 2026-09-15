@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045/086 task isolation-proof immutability addendum at source revision
+`d179132`: validated `TaskIsolationProof` objects are recursively frozen
+before runner retention or
+exposure, including nested virtualization guest identity. Mutation attempts
+against proof fields now fail at runtime. Focused task-runner/sandbox/guest
+tests pass 32/32 with 5 explicit descriptor-capability skips; the serial
+physical regression passes 662/667 with 0 failures and 5 skips. Evidence:
+`evidence/2026-09-16-task-isolation-proof-immutability.md`.
+
 MOP-084/085 Edge contract immutable-snapshot addendum at source revision
 `1bedb5d`: validated contract objects are recursively frozen before registry
 retention and MCP registration, preventing later mutation of required scopes

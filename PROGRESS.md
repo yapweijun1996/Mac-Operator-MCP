@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Task isolation-proof immutability addendum at source revision `d179132`:
+validated `TaskIsolationProof` objects are recursively frozen before a runner
+retains or exposes them. Sandbox and virtualization proof fields, including
+nested guest identity, therefore remain the host-validated runtime snapshot.
+Focused task-runner/sandbox/guest tests pass 32/32 with 5 explicit
+descriptor-capability skips; the serial physical regression passes 662/667
+with 0 failures and 5 skips. Evidence:
+`evidence/2026-09-16-task-isolation-proof-immutability.md`.
+
 Edge contract immutable-snapshot addendum at source revision `1bedb5d`:
 validated contract objects are recursively frozen before they are retained by
 the Edge registry or exposed to MCP registration. Required scopes and the

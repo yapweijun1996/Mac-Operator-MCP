@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Task isolation-proof immutability verification: the validated
+`TaskIsolationProof` graph is recursively frozen before a sandbox or
+virtualization runner retains or exposes it. Negative coverage proves that
+top-level proof fields and nested guest identity cannot be changed after
+validation. Focused task-runner/sandbox/guest tests pass 32/32 with 5 explicit
+descriptor-capability skips; the serial physical regression passes 662/667
+with 0 failures and 5 skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes runtime proof-object mutation only;
+native descriptor execution, production credential/process isolation,
+remount resistance, installed provenance, and task enablement remain open.
+Evidence: `evidence/2026-09-16-task-isolation-proof-immutability.md`.
+
 Edge contract immutable-snapshot verification at source revision `1bedb5d`:
 the validated contract graph is recursively frozen before the registry shares
 it with MCP registration or callers. Mutation attempts against the contract,
