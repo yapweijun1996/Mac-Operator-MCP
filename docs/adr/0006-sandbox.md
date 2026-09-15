@@ -84,6 +84,12 @@ pathname. This removes a pathname-reopen ambiguity but remains a contract
 boundary only; native atomic execution, close-on-exec, immutable snapshots,
 remount resistance, and production task enablement are still unproven.
 
+Commit `d8f0202` extends the descriptor-bound seam to the working directory:
+the supervisor opens and validates both executable and cwd descriptors and
+passes neither pathname to the adapter. This removes the corresponding cwd
+reopen ambiguity, while native descriptor execution, close-on-exec, immutable
+selection, remount resistance, and production task enablement remain unproven.
+
 Commits `d68176b` and `28007cf` harden the virtualization startup seam's
 shutdown recovery: `VirtualizationGuestRuntimeImpl` clears a rejected close
 promise and remains retryable when transport, task-runner, or lifecycle

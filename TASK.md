@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 descriptor launcher executable-and-cwd boundary addendum at source
+revision `d8f0202`: descriptor-required ProcessSupervisor execution opens and
+identity-checks both the Broker-validated executable and cwd, then passes only
+borrowed descriptors to the native adapter. Neither pathname is supplied and
+pathname spawn cannot be selected as fallback. Focused process/capability tests
+pass 42/42; the serial physical regression passes 657/662 with 0 failures and
+5 explicit descriptor-capability skips. Native descriptor execution,
+close-on-exec, immutable snapshot, remount, production isolation, and task
+enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-launcher-cwd-boundary.md`.
+
 MOP-045 descriptor launcher FD-boundary addendum at source revision `2c2b10d`:
 descriptor-required ProcessSupervisor execution opens and identity-checks the
 Broker-validated executable, then passes only a borrowed descriptor FD to the

@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Descriptor launcher executable-and-cwd boundary verification at source
+revision `d8f0202`: descriptor-required ProcessSupervisor execution opens and
+identity-checks both the validated executable and cwd, passing only borrowed
+descriptors to the native adapter. Neither pathname is supplied and pathname
+spawn is not a fallback. Focused process/capability tests pass 42/42; the
+serial physical regression passes 657/662 with 0 failures and 5 explicit
+descriptor-capability skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes only the executable/cwd pathname
+reopen ambiguity; native descriptor execution, close-on-exec, immutable
+selection, remount resistance, production isolation, and task enablement
+remain open. Evidence:
+`evidence/2026-09-16-descriptor-launcher-cwd-boundary.md`.
+
 Descriptor launcher FD-boundary verification at source revision `2c2b10d`:
 descriptor-required ProcessSupervisor execution now opens the validated
 executable with `O_NOFOLLOW`, rechecks complete descriptor metadata, and passes

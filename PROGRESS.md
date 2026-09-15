@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Descriptor launcher executable-and-cwd boundary addendum at source revision
+`d8f0202`: descriptor-required ProcessSupervisor execution now opens and
+identity-checks both the executable and working directory, passing only their
+borrowed FDs to the native adapter. Neither pathname is supplied to the
+adapter, and pathname spawn remains unavailable as a fallback. Focused
+process/capability tests pass 42/42; the serial physical regression passes
+657/662 with 0 failures and 5 explicit descriptor-capability skips. Native
+descriptor execution, close-on-exec, immutable snapshots, remount resistance,
+production isolation, and task enablement remain open. Evidence:
+`evidence/2026-09-16-descriptor-launcher-cwd-boundary.md`.
+
 Descriptor launcher FD-boundary addendum at source revision `2c2b10d`:
 descriptor-required `ProcessSupervisor` execution now opens the validated
 executable with `O_NOFOLLOW`, rechecks complete descriptor metadata, and gives
