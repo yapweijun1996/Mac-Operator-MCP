@@ -22,6 +22,7 @@ export interface EdgeRequestFactoryOptions {
 
 export class EdgeRequestFactory {
   private readonly options: EdgeRequestFactoryOptions;
+  private disposed = false;
 
   constructor(options: EdgeRequestFactoryOptions) {
     if (options.authenticationKey.byteLength < 32) throw new Error("Edge authentication key must contain at least 32 bytes");
@@ -84,6 +85,7 @@ export class EdgeRequestFactory {
   }
 
   create(tool: string, argumentsValue: Readonly<Record<string, unknown>>, principal: PrincipalContext): BrokerRequest {
+    if (this.disposed) throw new Error("Edge request factory is disposed");
     const now = (this.options.now ?? Date.now)();
     const randomId = this.options.randomId ?? randomUUID;
     const request = signRequest({
@@ -103,11 +105,14 @@ export class EdgeRequestFactory {
   }
 
   verifyResponse(request: BrokerRequest, response: AuthenticatedBrokerResponse): boolean {
+    if (this.disposed) return false;
     return verifyBrokerResponse(request, response, this.options.authenticationKey);
   }
 
   /** Wipe the in-memory Edge-to-Broker authentication key during shutdown. */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.options.authenticationKey.fill(0);
   }
 }

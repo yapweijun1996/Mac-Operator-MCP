@@ -128,6 +128,33 @@ test("Edge request factory copies injected key bytes and validates key IDs", () 
   }), /key ID is malformed/u);
 });
 
+test("Edge request factory fails closed after key disposal", () => {
+  const key = randomBytes(32);
+  const factory = new EdgeRequestFactory({
+    authenticationKey: key,
+    authenticationKeyId: "edge-key-1",
+    brokerAudience: "mac-operator-broker",
+    policyVersion: () => "policy-1",
+    now: () => 1_700_000_000_000,
+    randomId: () => "disposed-id"
+  });
+  factory.dispose();
+  factory.dispose();
+  assert.throws(
+    () => factory.create("mac_health", {}, {
+      principalId: "principal-1",
+      issuer: "issuer-1",
+      audience: "mac-operator-broker",
+      sessionId: "session-1",
+      edgeId: "edge-1",
+      scopes: ["mac.control.read"],
+      issuedAtMs: 1_699_999_000_000,
+      expiresAtMs: 1_700_001_000_000
+    }),
+    /factory is disposed/u
+  );
+});
+
 test("Edge Keychain delivery client fails closed before transport for malformed startup bindings", async () => {
   await assert.rejects(
     loadEdgeAuthenticationKeyFromBroker({
