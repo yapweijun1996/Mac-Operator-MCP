@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -14,6 +15,7 @@ import {
   executePrivilegedHelperPackagePlan,
   observePrivilegedHelperPackageReadback,
   readPrivilegedHelperCodeSignature,
+  readPrivilegedHelperAuthoritySocketReadback,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
   validatePrivilegedHelperFilesystemReadback,
@@ -47,6 +49,17 @@ const base: PrivilegedHelperPackagePlanInput = {
   contractVersion: "0.1",
   policyVersion: "policy-0.1"
 };
+
+function authoritySocketForPlan(plan: { helperAuthoritySocketPath: string; brokerPeer: { uid: number; gid?: number } }) {
+  return {
+    path: plan.helperAuthoritySocketPath,
+    ownerUid: plan.brokerPeer.uid,
+    ownerGid: plan.brokerPeer.gid ?? 20,
+    mode: 0o600,
+    device: 3,
+    inode: 4
+  };
+}
 
 test("privileged helper package plan is a fixed root-domain native LaunchDaemon", () => {
   const plan = buildPrivilegedHelperPackagePlan(base);
@@ -120,6 +133,14 @@ test("privileged helper package plan rejects user-domain, interpreter, socket, a
 test("privileged helper package readback binds root service, Broker peer, and disabled adapter", async () => {
   const plan = buildPrivilegedHelperPackagePlan(base);
   const renderedPlistBytes = Buffer.from(plan.renderedPlist, "utf8");
+  const authoritySocket = {
+    path: plan.helperAuthoritySocketPath,
+    ownerUid: plan.brokerPeer.uid,
+    ownerGid: plan.brokerPeer.gid ?? 20,
+    mode: 0o600,
+    device: 3,
+    inode: 4
+  };
   const readback = {
     domain: "system" as const,
     label: plan.label,
@@ -134,6 +155,7 @@ test("privileged helper package readback binds root service, Broker peer, and di
       inode: "2"
     },
     launchd: plan.launchd,
+    authoritySocket,
     helper: {
       component: "mac-operator-privileged-helper" as const,
       state: "running" as const,
@@ -175,6 +197,7 @@ test("privileged helper package readback binds root service, Broker peer, and di
     },
     processIdentity: readback.processIdentity,
     plist: readback.plist,
+    authoritySocket: readback.authoritySocket,
     helper: readback.helper,
     signature: readback.signature
   });
@@ -196,6 +219,7 @@ test("privileged helper package readback binds root service, Broker peer, and di
       },
       processIdentity: readback.processIdentity,
       plist: readback.plist,
+      authoritySocket: readback.authoritySocket,
       helper: readback.helper,
       signature: readback.signature
     }),
@@ -251,17 +275,20 @@ test("privileged helper package readback binds root service, Broker peer, and di
   let launchdReads = 0;
   let processReads = 0;
   let plistReads = 0;
+  let authoritySocketReads = 0;
   const observer: PrivilegedHelperPackageReadbackObserver = {
     readLaunchd: async () => { launchdReads += 1; return launchdSource; },
     readProcessIdentity: (pid) => { processReads += 1; return { pid, startTimeMicros: 987654321 }; },
     readPlist: async () => { plistReads += 1; return readback.plist; },
     readRuntime: async () => readback.helper,
+    readAuthoritySocket: async () => { authoritySocketReads += 1; return readback.authoritySocket; },
     readSignature: async () => readback.signature
   };
   assert.deepEqual(await observePrivilegedHelperPackageReadback(plan, observer), readback);
   assert.equal(launchdReads, 2);
   assert.equal(processReads, 2);
   assert.equal(plistReads, 2);
+  assert.equal(authoritySocketReads, 1);
 
   let swappedReads = 0;
   await assert.rejects(
@@ -274,6 +301,43 @@ test("privileged helper package readback binds root service, Broker peer, and di
     }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
   );
+});
+
+test("privileged helper authority socket readback binds Broker ownership and rejects symlink replacement", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-authority-socket-"));
+  const socketPath = join(directory, "authority.sock");
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  const plan = buildPrivilegedHelperPackagePlan({
+    ...base,
+    brokerPeer: { uid, gid },
+    helperAuthoritySocketPath: socketPath
+  });
+  const server = createServer();
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolvePromise);
+    });
+    await chmod(socketPath, 0o600);
+    const readback = await readPrivilegedHelperAuthoritySocketReadback(plan);
+    assert.equal(readback.path, socketPath);
+    assert.equal(readback.ownerUid, uid);
+    assert.equal(readback.ownerGid, gid);
+    assert.equal(readback.mode & 0o077, 0);
+    assert.ok(readback.inode > 0);
+    await new Promise<void>((resolvePromise, reject) => server.close((error) => error ? reject(error) : resolvePromise()));
+    await unlink(socketPath).catch(() => undefined);
+    await symlink(join(directory, "outside.sock"), socketPath);
+    await assert.rejects(
+      readPrivilegedHelperAuthoritySocketReadback(plan),
+      (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+    );
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise())).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("privileged helper package upgrades require an exact previous source revision", () => {
@@ -349,6 +413,7 @@ test("privileged helper host observer wires bounded launchd and native readback 
     launchdExecutor,
     processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
     readPlist: async () => plist,
+    readAuthoritySocket: async () => ({ ...authoritySocketForPlan(plan) }),
     readSignature: async () => signature
   });
   const readback = await observePrivilegedHelperPackageReadback(plan, observer);

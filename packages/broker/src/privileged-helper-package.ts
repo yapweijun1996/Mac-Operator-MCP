@@ -141,8 +141,18 @@ export interface PrivilegedHelperPackageReadback {
   processIdentity: PeerProcessIdentity;
   plist: MacOsPlistReadback;
   launchd: PrivilegedHelperLaunchdReadback;
+  authoritySocket: PrivilegedHelperAuthoritySocketReadback;
   helper: PrivilegedHelperRuntimeReadback;
   signature: CodeSignatureReadback;
+}
+
+export interface PrivilegedHelperAuthoritySocketReadback {
+  path: string;
+  ownerUid: number;
+  ownerGid: number;
+  mode: number;
+  device: number;
+  inode: number;
 }
 
 export interface PrivilegedHelperPackageReadbackSources {
@@ -150,6 +160,7 @@ export interface PrivilegedHelperPackageReadbackSources {
   processIdentity: PeerProcessIdentity;
   plist: MacOsPlistReadback;
   helper: PrivilegedHelperRuntimeReadback;
+  authoritySocket: PrivilegedHelperAuthoritySocketReadback;
   signature: CodeSignatureReadback;
 }
 
@@ -158,6 +169,7 @@ export interface PrivilegedHelperPackageReadbackObserver {
   readProcessIdentity(pid: number): Promise<PeerProcessIdentity> | PeerProcessIdentity;
   readPlist(plan: PrivilegedHelperPackagePlan): Promise<MacOsPlistReadback>;
   readRuntime(): Promise<PrivilegedHelperRuntimeReadback>;
+  readAuthoritySocket(plan: PrivilegedHelperPackagePlan): Promise<PrivilegedHelperAuthoritySocketReadback>;
   readSignature(): Promise<CodeSignatureReadback>;
 }
 
@@ -169,6 +181,7 @@ export interface PrivilegedHelperPackageHostObserverOptions {
   launchdExecutor?: LaunchdReadbackExecutor;
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
   readPlist?: (plan: PrivilegedHelperPackagePlan) => Promise<MacOsPlistReadback>;
+  readAuthoritySocket?: (plan: PrivilegedHelperPackagePlan) => Promise<PrivilegedHelperAuthoritySocketReadback>;
   readSignature?: (plan: PrivilegedHelperPackagePlan) => Promise<CodeSignatureReadback>;
 }
 
@@ -571,6 +584,37 @@ export function validatePrivilegedHelperFilesystemReadback(
   }
 }
 
+/**
+ * Reads the Broker-owned authority socket as a separate ownership domain.
+ * The socket is intentionally not included in the root-owned helper file
+ * preflight; only its exact endpoint identity and restricted mode are checked.
+ */
+export async function readPrivilegedHelperAuthoritySocketReadback(
+  plan: PrivilegedHelperPackagePlan
+): Promise<PrivilegedHelperAuthoritySocketReadback> {
+  let first;
+  let second;
+  try {
+    first = await lstat(plan.helperAuthoritySocketPath);
+    second = await lstat(plan.helperAuthoritySocketPath);
+  } catch {
+    fail("READBACK_FAILED", "privileged helper authority socket is unavailable");
+  }
+  if (!first.isSocket() || first.isSymbolicLink() || !second.isSocket() || second.isSymbolicLink() ||
+      first.uid !== second.uid || first.gid !== second.gid || first.mode !== second.mode ||
+      first.dev !== second.dev || first.ino !== second.ino) {
+    fail("SERVICE_MISMATCH", "privileged helper authority socket identity changed during readback");
+  }
+  return {
+    path: plan.helperAuthoritySocketPath,
+    ownerUid: first.uid,
+    ownerGid: first.gid,
+    mode: first.mode & 0o777,
+    device: first.dev,
+    inode: first.ino
+  };
+}
+
 export function requiredPrivilegedHelperFilesystemPaths(
   plan: PrivilegedHelperPackagePlan,
   requirePlist = plan.operation !== "install"
@@ -847,6 +891,17 @@ export function validatePrivilegedHelperPackageReadback(
       !isPrivilegedHelperPlistReadback(readback.plist, plan)) {
     fail("INVALID_READBACK", "privileged helper readback identity is malformed");
   }
+  const authoritySocket = readback.authoritySocket;
+  if (authoritySocket === null || typeof authoritySocket !== "object" ||
+      authoritySocket.path !== plan.helperAuthoritySocketPath ||
+      !Number.isSafeInteger(authoritySocket.ownerUid) || authoritySocket.ownerUid !== plan.brokerPeer.uid ||
+      !Number.isSafeInteger(authoritySocket.ownerGid) || authoritySocket.ownerGid < 0 || authoritySocket.ownerGid > 2_147_483_647 ||
+      (plan.brokerPeer.gid !== undefined && authoritySocket.ownerGid !== plan.brokerPeer.gid) ||
+      !Number.isSafeInteger(authoritySocket.mode) || (authoritySocket.mode & 0o077) !== 0 ||
+      !Number.isSafeInteger(authoritySocket.device) || authoritySocket.device < 0 ||
+      !Number.isSafeInteger(authoritySocket.inode) || authoritySocket.inode < 0) {
+    fail("SERVICE_MISMATCH", "privileged helper authority socket ownership or identity does not match the plan");
+  }
   if (readback.launchd === null || typeof readback.launchd !== "object" ||
       readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
       !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
@@ -894,6 +949,7 @@ export function composePrivilegedHelperPackageReadback(
       sources.processIdentity === null || typeof sources.processIdentity !== "object" ||
       sources.plist === null || typeof sources.plist !== "object" ||
       sources.helper === null || typeof sources.helper !== "object" ||
+      sources.authoritySocket === null || typeof sources.authoritySocket !== "object" ||
       sources.signature === null || typeof sources.signature !== "object") {
     fail("INVALID_READBACK", "privileged helper readback sources are malformed");
   }
@@ -916,6 +972,7 @@ export function composePrivilegedHelperPackageReadback(
     processIdentity: sources.processIdentity,
     plist: sources.plist,
     launchd: plan.launchd,
+    authoritySocket: sources.authoritySocket,
     helper: sources.helper,
     signature: sources.signature
   };
@@ -943,6 +1000,7 @@ export async function observePrivilegedHelperPackageReadback(
     const processBefore = await observer.readProcessIdentity(launchdBefore.pid);
     const plistBefore = await observer.readPlist(plan);
     const helper = await observer.readRuntime();
+    const authoritySocket = await observer.readAuthoritySocket(plan);
     const signature = await observer.readSignature();
     const launchdAfter = await observer.readLaunchd(serviceId);
     if (!sameLaunchdIdentity(launchdBefore, launchdAfter) || launchdAfter.pid === null) {
@@ -961,6 +1019,7 @@ export async function observePrivilegedHelperPackageReadback(
       processIdentity: processAfter,
       plist: plistAfter,
       helper,
+      authoritySocket,
       signature
     });
   } catch (error) {
@@ -990,6 +1049,7 @@ export function createPrivilegedHelperPackageHostObserver(
     readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? capturePeerProcessIdentity(pid),
     readPlist: options.readPlist ?? (async (candidate) => readPrivilegedHelperPlistReadback(candidate)),
     readRuntime,
+    readAuthoritySocket: options.readAuthoritySocket ?? (async (candidate) => readPrivilegedHelperAuthoritySocketReadback(candidate)),
     readSignature: options.readSignature === undefined
       ? async () => readPrivilegedHelperCodeSignature(plan, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor })
       : async () => options.readSignature!(plan)
