@@ -5,8 +5,8 @@ Version: 0.1
 Last verified: 2026-09-15
 
 Latest local regression addendum: the non-overlapping built test set now
-passes 594 total (588 pass, 6 explicit skips, 0 fail), including the new
-audit credential-field redaction test. Broker/persistence suites were not
+passes 595 total (589 pass, 6 explicit skips, 0 fail), including the new
+audit credential-field and secret-shaped-string redaction tests. Broker/persistence suites were not
 restarted because their existing long-running process remained active.
 Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 

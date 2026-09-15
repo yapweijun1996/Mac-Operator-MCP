@@ -4,9 +4,9 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Latest regression addendum: the non-overlapping built suite passes 594 total
-(588 pass, 6 skipped, 0 fail), including audit-target and credential-field
-redaction coverage; the existing Broker/persistence process was left
+Latest regression addendum: the non-overlapping built suite passes 595 total
+(589 pass, 6 skipped, 0 fail), including audit-target, credential-field, and
+secret-shaped-string redaction coverage; the existing Broker/persistence process was left
 undisturbed. Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 
 Audit-evidence redaction addendum: the persistence and privileged-helper

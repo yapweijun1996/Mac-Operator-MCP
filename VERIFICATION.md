@@ -4,9 +4,9 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Latest local regression verification: the serial built test set excluding the
-already-running Broker/persistence suites passes 594 total (588 passed, 6
-explicitly skipped, 0 failed). The run includes normalized failure-target and
-credential-field redaction coverage. Evidence:
+already-running Broker/persistence suites passes 595 total (589 passed, 6
+explicitly skipped, 0 failed). The run includes normalized failure-target,
+credential-field, and secret-shaped-string redaction coverage. Evidence:
 `evidence/2026-09-15-latest-local-regression.md`.
 
 Audit-evidence redaction verification: the persistence and privileged-helper

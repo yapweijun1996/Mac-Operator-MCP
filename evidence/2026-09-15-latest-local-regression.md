@@ -15,14 +15,14 @@ find packages -path '*/dist/*.test.js' ! -name 'broker.test.js' ! -name 'persist
 ## Result
 
 ```text
-tests 594
-pass 588
+tests 595
+pass 589
 fail 0
 skipped 6
 ```
 
-The run includes the audit failure-target and credential-field redaction
-changes. The six skips are explicit host-gated tests (including real
+The run includes the audit failure-target, credential-field, and
+secret-shaped-string redaction changes. The six skips are explicit host-gated tests (including real
 Keychain/sandbox/install checks); no test was force-enabled. This is a local
 regression result only and does not claim completion of physical-Mac,
 production-signing, installed lifecycle, isolation, or independent review
