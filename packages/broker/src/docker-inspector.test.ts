@@ -64,6 +64,7 @@ test("Docker status uses fixed local-only commands and omits raw daemon metadata
 });
 
 test("Docker signature policy verifies the fixed executable before daemon access", async () => {
+  const executable = process.execPath;
   const supervisor = new FakeSupervisor([
     result(""),
     result("", { stderr: "Identifier=docker\nTeamIdentifier=9BNSXJN65R\nCDHash=56df8f23b2a6bfd9d54bb07516561e3e24805ccd\n" }),
@@ -72,27 +73,28 @@ test("Docker signature policy verifies the fixed executable before daemon access
   ]);
   const inspector = new DockerInspectorImpl({
     supervisor,
-    executable: "/Applications/Docker.app/Contents/Resources/bin/docker",
+    executable,
     requireCodeSignature: true,
     codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
   });
   const status = await inspector.status(false, false, { timeoutMs: 10_000, shouldCancel: () => false });
   assert.equal(status.daemon.available, true);
   assert.deepEqual(supervisor.calls.slice(0, 2).map((call) => call.args), [
-    ["--verify", "--strict", "--deep", "/Applications/Docker.app/Contents/Resources/bin/docker"],
-    ["-dv", "--verbose=4", "/Applications/Docker.app/Contents/Resources/bin/docker"]
+    ["--verify", "--strict", "--deep", executable],
+    ["-dv", "--verbose=4", executable]
   ]);
   assert.deepEqual(supervisor.calls[0]?.environment, {});
 });
 
 test("Docker signature policy denies an untrusted executable before daemon access", async () => {
+  const executable = process.execPath;
   const supervisor = new FakeSupervisor([
     result(""),
     result("", { stderr: "Identifier=com.attacker.docker\nTeamIdentifier=9BNSXJN65R\n" })
   ]);
   const inspector = new DockerInspectorImpl({
     supervisor,
-    executable: "/Applications/Docker.app/Contents/Resources/bin/docker",
+    executable,
     requireCodeSignature: true,
     codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
   });

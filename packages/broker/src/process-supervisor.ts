@@ -86,6 +86,8 @@ interface ValidatedProcessPaths {
 export interface ProcessExecutionRequest {
   /** Broker-resolved executable; shell strings and relative paths are rejected. */
   executable: string;
+  /** Optional Broker-owned content identity captured before a trusted handoff. */
+  expectedExecutableContentSha256?: string;
   args: readonly string[];
   /** Broker-authorized, canonical working directory. */
   cwd: string;
@@ -1054,7 +1056,7 @@ async function validateRequest(
   trustedUserOwnedExecutablePaths: ReadonlySet<string>
 ): Promise<ValidatedProcessPaths> {
   if (!isPlainDataRecord(request) ||
-      !hasAllowedKeys(request, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
+      !hasAllowedKeys(request, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
       !isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
       !isDenseStringArray(request.args, MAX_ARGUMENTS) ||
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
@@ -1072,6 +1074,10 @@ async function validateRequest(
   }
   if (request.allowUserOwnedExecutable !== undefined && typeof request.allowUserOwnedExecutable !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process executable ownership policy is malformed");
+  }
+  if (request.expectedExecutableContentSha256 !== undefined &&
+      (typeof request.expectedExecutableContentSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(request.expectedExecutableContentSha256))) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process executable content identity is malformed");
   }
   if ((request.shouldCancel !== undefined && typeof request.shouldCancel !== "function") ||
       (request.onStarted !== undefined && typeof request.onStarted !== "function") ||
@@ -1119,6 +1125,10 @@ async function validateRequest(
       currentUid !== undefined && executable.ownerUid === currentUid;
     if (!trustedUserOwned) throw new BrokerError("POLICY_DENIED", "Executable is not root-owned");
   }
+  if (request.expectedExecutableContentSha256 !== undefined &&
+      executable.contentSha256 !== request.expectedExecutableContentSha256) {
+    throw new BrokerError("POLICY_DENIED", "Executable content identity does not match the authorized handoff");
+  }
   let cwd: ProcessPathIdentity;
   try {
     cwd = await validateDirectory(request.cwd);
@@ -1136,7 +1146,7 @@ function isCanonicalAbsolutePath(value: string): boolean {
 
 function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (!isPlainDataRecord(value) ||
-      !hasAllowedKeys(value, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
+      !hasAllowedKeys(value, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
   }
   if (!isDenseStringArray(value.args, MAX_ARGUMENTS)) {
@@ -1158,6 +1168,10 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (value.allowUserOwnedExecutable !== undefined && typeof value.allowUserOwnedExecutable !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process executable ownership policy is malformed");
   }
+  if (value.expectedExecutableContentSha256 !== undefined &&
+      (typeof value.expectedExecutableContentSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.expectedExecutableContentSha256))) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process executable content identity is malformed");
+  }
   if ((value.shouldCancel !== undefined && typeof value.shouldCancel !== "function") ||
       (value.onStarted !== undefined && typeof value.onStarted !== "function") ||
       (value.onOwnershipChanged !== undefined && typeof value.onOwnershipChanged !== "function")) {
@@ -1170,6 +1184,9 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
     timeoutMs: value.timeoutMs as number,
     outputCapBytes: value.outputCapBytes as number
   };
+  if (value.expectedExecutableContentSha256 !== undefined) {
+    snapshot.expectedExecutableContentSha256 = value.expectedExecutableContentSha256 as string;
+  }
   if (value.allowUserOwnedExecutable !== undefined) snapshot.allowUserOwnedExecutable = value.allowUserOwnedExecutable as boolean;
   if (environment !== undefined) snapshot.environment = Object.fromEntries(Object.entries(environment)) as Record<string, string>;
   if (value.stdin !== undefined) snapshot.stdin = value.stdin as string;

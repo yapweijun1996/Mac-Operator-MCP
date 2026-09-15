@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { BrokerError, parseJsonStrict } from "@mac-operator/contracts";
-import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { captureProcessPathIdentity, ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { redactBoundedText, redactLogText } from "./secret-policy.js";
 
@@ -156,11 +156,11 @@ export class DockerInspectorImpl implements DockerInspector {
 
   async status(includeImages: boolean, includeStorage: boolean, control: DockerExecutionControl): Promise<SafeDockerStatus> {
     validateDockerStatusRequest(includeImages, includeStorage);
-    await this.verifyCodeSignature(control);
+    const expectedExecutableContentSha256 = await this.verifyCodeSignature(control);
     const warnings: string[] = [];
     let version: ProcessExecutionResult;
     try {
-      version = await this.run(["version", "--format", "{{.Server.Version}}"], control, MAX_STATUS_OUTPUT_BYTES);
+      version = await this.run(["version", "--format", "{{.Server.Version}}"], control, MAX_STATUS_OUTPUT_BYTES, expectedExecutableContentSha256);
     } catch (error) {
       if (error instanceof BrokerError && error.errorClass === "TARGET_NOT_FOUND") {
         return {
@@ -184,7 +184,7 @@ export class DockerInspectorImpl implements DockerInspector {
       };
     }
     const daemonVersion = boundedValue(version.stdout.trim(), 128);
-    const containersResult = await this.run(["ps", "--all", "--no-trunc", "--format", "{{json .}}"], control, MAX_STATUS_OUTPUT_BYTES);
+    const containersResult = await this.run(["ps", "--all", "--no-trunc", "--format", "{{json .}}"], control, MAX_STATUS_OUTPUT_BYTES, expectedExecutableContentSha256);
     throwForDockerProcess(containersResult, "Docker container listing", true);
     const containers = parseContainerLines(containersResult.stdout, warnings);
     let images: SafeDockerImage[] = [];
@@ -193,7 +193,7 @@ export class DockerInspectorImpl implements DockerInspector {
       warnings.push("Docker container listing failed and was omitted");
     }
     if (includeImages) {
-      const imagesResult = await this.run(["images", "--no-trunc", "--format", "{{json .}}"], control, MAX_STATUS_OUTPUT_BYTES);
+      const imagesResult = await this.run(["images", "--no-trunc", "--format", "{{json .}}"], control, MAX_STATUS_OUTPUT_BYTES, expectedExecutableContentSha256);
       throwForDockerProcess(imagesResult, "Docker image listing", true);
       images = parseImageLines(imagesResult.stdout, warnings);
       truncated ||= imagesResult.truncated;
@@ -219,16 +219,16 @@ export class DockerInspectorImpl implements DockerInspector {
 
   async inspect(objectType: DockerObjectType, id: string, control: DockerExecutionControl): Promise<SafeDockerInspection> {
     validateDockerObjectRequest(objectType, id);
-    await this.verifyCodeSignature(control);
+    const expectedExecutableContentSha256 = await this.verifyCodeSignature(control);
     const deadlineMs = Date.now() + Math.min(control.timeoutMs, MAX_TIMEOUT_MS);
-    const first = await this.inspectOnce(objectType, id, control, deadlineMs);
+    const first = await this.inspectOnce(objectType, id, control, deadlineMs, expectedExecutableContentSha256);
     if (DOCKER_HEX_ID_PATTERN.test(id)) return first;
 
     // Names are mutable aliases. Re-observe the canonical ID so a replacement
     // between name resolution and result publication cannot be returned as the
     // originally selected object. This remains a bounded observation fence,
     // not a kernel-held Docker object handle.
-    const second = await this.inspectOnce(objectType, first.id, control, deadlineMs);
+    const second = await this.inspectOnce(objectType, first.id, control, deadlineMs, expectedExecutableContentSha256);
     if (normalizeDockerName(first.name) !== normalizeDockerName(second.name)) {
       throw new BrokerError("CONFLICT", "Docker object identity changed during inspection");
     }
@@ -241,11 +241,11 @@ export class DockerInspectorImpl implements DockerInspector {
 
   async logs(containerId: string, tail: number, sinceSeconds: number, control: DockerExecutionControl): Promise<SafeDockerLogs> {
     validateDockerLogsRequest(containerId, tail, sinceSeconds);
-    await this.verifyCodeSignature(control);
+    const expectedExecutableContentSha256 = await this.verifyCodeSignature(control);
     const args = ["logs", "--timestamps", "--tail", String(tail)];
     if (sinceSeconds > 0) args.push("--since", `${sinceSeconds}s`);
     args.push(containerId);
-    const result = await this.run(args, control, MAX_OUTPUT_BYTES);
+    const result = await this.run(args, control, MAX_OUTPUT_BYTES, expectedExecutableContentSha256);
     throwForDockerProcess(result, "Docker logs", true);
     if (result.resultClass !== "SUCCEEDED" && result.resultClass !== "OUTPUT_LIMIT") {
       throw new BrokerError("EXECUTION_FAILED", "Docker logs failed");
@@ -253,7 +253,12 @@ export class DockerInspectorImpl implements DockerInspector {
     return parseLogs(containerId, tail, result);
   }
 
-  private async run(args: readonly string[], control: DockerExecutionControl, outputCapBytes: number): Promise<ProcessExecutionResult> {
+  private async run(
+    args: readonly string[],
+    control: DockerExecutionControl,
+    outputCapBytes: number,
+    expectedExecutableContentSha256?: string
+  ): Promise<ProcessExecutionResult> {
     return this.supervisor.run({
       executable: this.executable,
       args,
@@ -262,6 +267,7 @@ export class DockerInspectorImpl implements DockerInspector {
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
       outputCapBytes,
       allowUserOwnedExecutable: true,
+      ...(expectedExecutableContentSha256 === undefined ? {} : { expectedExecutableContentSha256 }),
       shouldCancel: control.shouldCancel
     });
   }
@@ -272,12 +278,18 @@ export class DockerInspectorImpl implements DockerInspector {
    * mismatch denies the adapter before any Docker daemon request is started.
    * This is a bounded observation fence, not a kernel-held executable handle.
    */
-  private async verifyCodeSignature(control: DockerExecutionControl): Promise<void> {
-    if (!this.requireCodeSignature) return;
+  private async verifyCodeSignature(control: DockerExecutionControl): Promise<string | undefined> {
+    if (!this.requireCodeSignature) return undefined;
     const timeoutMs = Math.min(control.timeoutMs, CODE_SIGNATURE_TIMEOUT_MS);
+    let expectedExecutableContentSha256: string | undefined;
     let verification: ProcessExecutionResult;
     let details: ProcessExecutionResult;
     try {
+      const identity = await captureProcessPathIdentity(this.executable, "executable");
+      expectedExecutableContentSha256 = identity.contentSha256;
+      if (expectedExecutableContentSha256 === undefined) {
+        throw new BrokerError("POLICY_DENIED", "Docker executable content identity is unavailable");
+      }
       verification = await this.supervisor.run({
         executable: CODESIGN_EXECUTABLE,
         args: ["--verify", "--strict", "--deep", this.executable],
@@ -318,19 +330,21 @@ export class DockerInspectorImpl implements DockerInspector {
         (this.codeSignatureExpectation.cdHash !== undefined && cdHash !== this.codeSignatureExpectation.cdHash)) {
       throw new BrokerError("POLICY_DENIED", "Docker executable code signature does not match the Broker trust policy");
     }
+    return expectedExecutableContentSha256;
   }
 
   private async inspectOnce(
     objectType: DockerObjectType,
     id: string,
     control: DockerExecutionControl,
-    deadlineMs: number
+    deadlineMs: number,
+    expectedExecutableContentSha256?: string
   ): Promise<SafeDockerInspection> {
     const remainingMs = Math.max(1, Math.min(deadlineMs - Date.now(), MAX_TIMEOUT_MS));
     const result = await this.run(["inspect", "--type", objectType, id], {
       timeoutMs: remainingMs,
       shouldCancel: control.shouldCancel
-    }, MAX_OUTPUT_BYTES);
+    }, MAX_OUTPUT_BYTES, expectedExecutableContentSha256);
     throwForDockerProcess(result, "Docker inspection");
     if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "Docker inspection failed");
     return parseInspection(objectType, id, result.stdout, result.truncated);

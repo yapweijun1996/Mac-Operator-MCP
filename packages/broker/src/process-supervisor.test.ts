@@ -545,6 +545,36 @@ test("process supervisor captures a cryptographic executable content identity", 
   }
 });
 
+test("process supervisor binds an expected executable content identity before spawn", async () => {
+  const executable = process.execPath;
+  const identity = await captureProcessPathIdentity(executable, "executable");
+  const supervisor = new ProcessSupervisor();
+  try {
+    await assert.rejects(
+      supervisor.run({
+        executable,
+        args: ["-e", "process.stdout.write('unexpected')"],
+        cwd: CWD,
+        timeoutMs: 2_000,
+        outputCapBytes: 100,
+        expectedExecutableContentSha256: "0".repeat(64)
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+    const result = await supervisor.run({
+      executable,
+      args: ["-e", "process.stdout.write('bound')"],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 100,
+      expectedExecutableContentSha256: identity.contentSha256!
+    });
+    assert.equal(result.stdout, "bound");
+  } finally {
+    await supervisor.close();
+  }
+});
+
 test("process supervisor rejects executable owner identity drift after authorization", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-owner-drift-"));
   const executable = join(await realpath(directory), "runner");
