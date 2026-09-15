@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-argument secret-boundary addendum: source revision `17d10e2` rejects
+credential-bearing option names and known token signatures in fixed profile
+arguments, combined task arguments, and the final `ProcessSupervisor` spawn
+boundary. Secret-policy tests pass 5/5, task-profile tests pass 4/4,
+process-supervisor tests pass 30/30, and the non-overlapping physical-Darwin
+regression passes 489/489 with 0 skipped tests. Build, typecheck, lint,
+contract, canonical-JSON, audit, and diff checks pass. Arbitrary opaque
+strings, sandbox isolation, and Broker-managed credential workflows remain
+separate boundaries. Evidence:
+`evidence/2026-09-15-process-argument-secret-boundary.md`.
+
 Edge remote-JWKS response addendum: source revision `3cca22c` wraps every
 remote JWKS fetch with an Edge-owned 256 KiB streaming body cap and strict JSON
 MIME check before `jose` parses key material; invalid or oversized responses

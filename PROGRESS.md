@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-argument secret-boundary addendum: source revision `17d10e2` adds a
+shared Broker policy that rejects credential-bearing argv option names and
+known token signatures when fixed profiles load, task arguments resolve, and
+immediately before child spawn. Secret-policy tests pass 5/5, task-profile
+tests pass 4/4, process-supervisor tests pass 30/30, and the non-overlapping
+physical-Darwin regression passes 489/489 with 0 skipped tests. Build,
+typecheck, lint, contract, canonical-JSON, audit, and diff checks pass.
+Evidence: `evidence/2026-09-15-process-argument-secret-boundary.md`.
+
 Edge remote-JWKS response addendum: source revision `3cca22c` installs a
 bounded streaming fetch wrapper before `jose` JSON parsing. Only JSON JWKS MIME
 types are accepted and responses over 256 KiB or with invalid length metadata

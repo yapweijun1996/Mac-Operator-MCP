@@ -49,6 +49,14 @@ The real-host smoke is recorded in
 and remains partial. The runner is not wired into the production Broker
 capability state, and this ADR remains proposed.
 
+Commit `17d10e2` adds a shared Broker argument-secret gate before any task
+profile or child-process dispatch. Fixed profile arguments, the combined
+fixed-plus-requested task arguments, and the final `ProcessSupervisor` spawn
+boundary reject credential-bearing option names and known token signatures,
+because argv is observable through the host process table. This narrows one
+credential-leak path but is not arbitrary secret detection, sandbox isolation,
+or evidence that would authorize `mac_task_run`.
+
 ## Virtualization.framework candidate seam
 
 The current Darwin host exposes the `Virtualization.framework` headers and
