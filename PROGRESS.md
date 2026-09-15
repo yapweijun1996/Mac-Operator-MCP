@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Darwin descriptor-exec boundary addendum: a physical Darwin 25.2.0 probe found
+no public `fexecve`/`execveat` SDK declaration, no executable-fd API in
+`spawn.h`, and `/dev/fd/N` execution returned permission denied (status 126).
+The Broker therefore does not claim descriptor/fexec atomicity; the existing
+canonical path, no-follow, digest, and startup revalidation remain compensating
+controls. `VT-FS-02`, immutable snapshot alternatives, and production
+`mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-15-darwin-descriptor-exec-boundary.md`.
+
 Process argv false-positive addendum: source revision `7231964` limits
 sensitive option-name matching to explicit Unix options while retaining
 full-argument token-signature scanning. A real-Darwin sandbox run now passes

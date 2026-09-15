@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Darwin descriptor-exec boundary addendum: on Darwin 25.2.0 arm64, the
+installed SDK exposes no public `fexecve`/`execveat` declaration and no
+executable-file-descriptor `posix_spawn` operation. A direct `/dev/fd/N`
+execution probe returned status 126 (`Permission denied`). This is recorded as
+a host capability limitation; no pathname shim is treated as atomic descriptor
+execution. `VT-FS-02` and production task enablement remain open. Evidence:
+`evidence/2026-09-15-darwin-descriptor-exec-boundary.md`.
+
 Process argv false-positive addendum: source revision `7231964` restricts
 sensitive option-name matching to explicit Unix options and preserves
 full-argument concrete token-signature scanning. Real-Darwin sandbox tests pass

@@ -57,6 +57,15 @@ because argv is observable through the host process table. This narrows one
 credential-leak path but is not arbitrary secret detection, sandbox isolation,
 or evidence that would authorize `mac_task_run`.
 
+The physical Darwin descriptor-exec probe is recorded in
+[`evidence/2026-09-15-darwin-descriptor-exec-boundary.md`](../../evidence/2026-09-15-darwin-descriptor-exec-boundary.md).
+The installed SDK has no public `fexecve`/`execveat` or executable-file-
+descriptor `posix_spawn` operation, and `/dev/fd/N` execution is denied by the
+host. Consequently, canonical path revalidation is explicitly a compensating
+control rather than atomic executable selection. This ADR must not be accepted
+until a supported descriptor primitive or an immutable, code-signed executable
+snapshot is proven on the target host.
+
 ## Virtualization.framework candidate seam
 
 The current Darwin host exposes the `Virtualization.framework` headers and

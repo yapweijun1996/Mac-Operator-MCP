@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Darwin descriptor-exec boundary addendum: the physical host probe records no
+public `fexecve`/`execveat` declaration or executable-fd `posix_spawn` API, and
+direct `/dev/fd/N` execution fails with permission denied (status 126). No
+pathname shim is accepted as fexec evidence. Descriptor/fexec or an immutable
+Broker-owned snapshot with code-signing proof remains required for `VT-FS-02`;
+the existing ProcessSupervisor path revalidation is compensating control only.
+Evidence: `evidence/2026-09-15-darwin-descriptor-exec-boundary.md`.
+
 Process argv false-positive addendum: source revision `7231964` applies
 sensitive option-name checks only to explicit Unix options and keeps concrete
 token/credential signature checks on every argument. Real-Darwin sandbox tests

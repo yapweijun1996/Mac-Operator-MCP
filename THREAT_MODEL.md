@@ -84,7 +84,7 @@ Likelihood and impact are rated 1-5. Risk is `likelihood × impact`: Low 1-4, Me
 | T-002 Replay or stale request | TB-02 | 16 High | Timestamp, nonce, payload binding, durable replay policy | VT-AUTH-02 | Open |
 | T-003 Compromised Edge expands authority | TB-02 | 20 Critical | Broker-owned policy; target normalization; independent deny | VT-AUTH-03 | Open |
 | T-004 Path traversal or symlink/mount escape | TB-03/TB-08 | 20 Critical | F0-F5 precedence; canonical and handle-bound access | VT-FS-01 | Open |
-| T-005 TOCTOU target replacement | TB-03 | 16 High | Parent/target revalidation; no-follow/descriptor operations | VT-FS-02 | Open |
+| T-005 TOCTOU target replacement | TB-03 | 16 High | Parent/target revalidation; no-follow/descriptor operations; atomic descriptor execution or immutable snapshot | VT-FS-02 | Open |
 | T-006 Secret disclosure in content, error or audit | TB-03/TB-05 | 20 Critical | F0 zones; pre-open deny; bounded redaction defense | VT-SEC-01 | Open |
 | T-007 Sensitive personal-data sweep | TB-03 | 15 High | F1 opt-in and purpose-built adapters | VT-SEC-02 | Open |
 | T-008 Malicious task steals controller credentials | TB-04 | 25 Critical | Proven child credential, env and filesystem isolation | VT-SBX-01 | Blocked by sandbox PoC |
