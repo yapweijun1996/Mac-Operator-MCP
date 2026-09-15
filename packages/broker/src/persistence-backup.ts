@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { constants, createReadStream, type Dirent } from "node:fs";
-import { chmod, lstat, open, readdir, rename, statfs, unlink } from "node:fs/promises";
+import { chmod, link, lstat, open, readdir, statfs, unlink } from "node:fs/promises";
 import { backup, DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonStrict, parseJsonUtf8Strict, sha256 } from "@mac-operator/contracts";
@@ -108,7 +108,7 @@ export async function createBrokerBackup(
     if (!sameFileIdentity(encryptedTemporaryIdentity, encryptedBeforeRename)) {
       throw new BrokerError("CONFLICT", "Encrypted Broker backup changed before publication", true);
     }
-    await rename(encryptedTemporary, destination);
+    await publishNewBackup(encryptedTemporary, destination, encryptedTemporaryIdentity);
     await cleanupTemporaryBackupFiles(rawTemporary);
     await cleanupTemporaryBackupFiles(verifyTemporary);
     await syncDirectory(protectedDirectory);
@@ -207,7 +207,7 @@ export async function restoreBrokerBackup(
     if (!sameFileIdentity(temporaryIdentity, temporaryBeforeRename)) {
       throw new BrokerError("CONFLICT", "Broker restore temporary changed before publication", true);
     }
-    await rename(temporary, destination);
+    await publishNewBackup(temporary, destination, temporaryIdentity);
     moved = true;
     await syncDirectory(protectedDirectory);
     const restored = await inspectSnapshot(destination);
@@ -379,7 +379,35 @@ function isOwnedByCurrentUser(uid: number): boolean {
 }
 
 function sameFileIdentity(left: Awaited<ReturnType<typeof lstat>>, right: Awaited<ReturnType<typeof lstat>>): boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtimeMs === right.mtimeMs;
+  return left.dev === right.dev && left.ino === right.ino && left.uid === right.uid && left.mode === right.mode &&
+    left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+
+/**
+ * Publish a prepared backup without ever replacing an operator-selected
+ * destination. `rename` is intentionally avoided here because it overwrites
+ * an existing path after a prior existence check, leaving a target-swap race.
+ */
+async function publishNewBackup(
+  sourcePath: string,
+  destinationPath: string,
+  expectedSourceIdentity: Awaited<ReturnType<typeof lstat>>
+): Promise<void> {
+  try {
+    await link(sourcePath, destinationPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new BrokerError("CONFLICT", "Broker backup publication destination already exists", true);
+    }
+    throw error;
+  }
+  const source = await lstat(sourcePath).catch(() => undefined);
+  const destination = await lstat(destinationPath).catch(() => undefined);
+  if (source === undefined || destination === undefined || !sameFileIdentity(expectedSourceIdentity, source) ||
+      !sameFileIdentity(source, destination)) {
+    throw new BrokerError("CONFLICT", "Broker backup publication identity could not be verified", true);
+  }
+  await unlink(sourcePath);
 }
 
 function backupTimestamp(name: string): number {

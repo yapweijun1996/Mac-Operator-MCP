@@ -570,6 +570,25 @@ test("BrokerStore retention is bounded and rejects symlink backup entries", asyn
   }
 });
 
+test("BrokerStore restore never replaces an existing destination", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-restore-no-replace-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const destinationPath = join(directory, "restored.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    const manifest = await store.backupTo(directory, { keySource: testBackupKeySource, nowMs: 1_700_000_000_100 });
+    await writeFile(destinationPath, "operator-placeholder", { mode: 0o600 });
+    await assert.rejects(
+      BrokerStore.restoreBackup(manifest.path, destinationPath, testBackupKeySource),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(await readFile(destinationPath, "utf8"), "operator-placeholder");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore retention refuses legacy plaintext backup names", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-backup-plaintext-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
