@@ -361,8 +361,10 @@ export function authenticateBrokerStatusResponse(
   }
   const expected = ["ok", "kind", "requestId", "resultClass", "error", "responseProof"];
   if (response.ok !== false || !sameKeys(response, expected) || typeof response.resultClass !== "string" ||
-      !isPlainDataRecord(response.error) || typeof (response.error as Record<string, unknown>).message !== "string" ||
-      typeof (response.error as Record<string, unknown>).retryable !== "boolean") {
+      !isPlainDataRecord(response.error) || !sameKeys(response.error as Record<string, unknown>, ["message", "retryable"]) ||
+      typeof (response.error as Record<string, unknown>).message !== "string" ||
+      typeof (response.error as Record<string, unknown>).retryable !== "boolean" ||
+      !boundedStatusMessage((response.error as Record<string, unknown>).message as string)) {
     throw new BrokerError("EXECUTION_FAILED", "Broker status failure is malformed");
   }
   return response as unknown as BrokerStatusFailureResponse;
@@ -434,7 +436,7 @@ function statusSuccess(request: UnsignedBrokerStatusRequest, status: BrokerServi
 }
 
 function statusFailure(errorClass: ErrorClass, message: string, requestId: string, retryable: boolean, request: UnsignedBrokerStatusRequest | undefined, key: Buffer): BrokerStatusFailureResponse {
-  const body = { ok: false as const, kind: "broker_status" as const, requestId, resultClass: errorClass, error: { message: message.slice(0, 512), retryable } };
+  const body = { ok: false as const, kind: "broker_status" as const, requestId, resultClass: errorClass, error: { message: boundedStatusMessage(message), retryable } };
   return { ...body, responseProof: statusResponseProof(request, body, key) };
 }
 
@@ -451,6 +453,12 @@ function statusResponseProof(request: UnsignedBrokerStatusRequest | undefined, b
 function safeEqualHex(left: string, right: string): boolean {
   if (!/^[a-f0-9]{64}$/u.test(left) || !/^[a-f0-9]{64}$/u.test(right)) return false;
   return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
+}
+
+function boundedStatusMessage(value: string): string {
+  return typeof value === "string" && value.length <= 512 && !value.includes("\0") && !/[\r\n]/u.test(value)
+    ? value
+    : "Broker status request failed";
 }
 
 function sameKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

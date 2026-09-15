@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 import {
   authenticateBrokerStatusRequest,
@@ -151,6 +152,48 @@ test("Broker status IPC authenticates readback and rejects durable replay", asyn
     const replayAfterRestart = await sendStatus(socketPath, signBrokerStatusRequest(request, authenticationKey));
     assert.equal(replayAfterRestart.ok, false);
     if (!replayAfterRestart.ok) assert.equal(replayAfterRestart.resultClass, "REPLAY_DENIED");
+  } finally {
+    await server.close();
+    store.close();
+    authenticationKey.fill(0);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Broker status failure responses bound hostile error text", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-broker-status-failure-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const socketPath = join(directory, "broker-status.sock");
+  const authenticationKey = randomBytes(32);
+  const server = new BrokerStatusIpcServer({
+    socketPath,
+    authenticationKey,
+    replayGuard: { admit: (request) => store.admitBrokerStatusRequest(request) },
+    peerCredentialVerifier: { verify: () => undefined },
+    authorizeStatus: () => { throw new BrokerError("POLICY_DENIED", "line one\nline two"); },
+    readStatus: () => { throw new Error("must not read status"); },
+    now: () => NOW
+  });
+  try {
+    await server.listen();
+    const request: UnsignedBrokerStatusRequest = {
+      protocolVersion: "0.1",
+      contractVersion: "0.1",
+      requestId: `request:broker-status-${"e".repeat(16)}`,
+      nonce: `broker-status-nonce-${"f".repeat(16)}`,
+      timestampMs: NOW,
+      expiresAtMs: NOW + 30_000,
+      kind: "broker_status"
+    };
+    const response = await sendStatus(socketPath, signBrokerStatusRequest(request, authenticationKey));
+    assert.equal(response.ok, false);
+    if (!response.ok) {
+      assert.equal(response.resultClass, "POLICY_DENIED");
+      assert.equal(response.error.message, "Broker status request failed");
+      const authenticated = authenticateBrokerStatusResponse(response, request, authenticationKey);
+      assert.equal(authenticated.ok, false);
+      if (!authenticated.ok) assert.equal(authenticated.error.message, "Broker status request failed");
+    }
   } finally {
     await server.close();
     store.close();
