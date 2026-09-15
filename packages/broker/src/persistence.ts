@@ -3890,13 +3890,29 @@ function validTerminalOutcome(
 }
 
 function queuedJobAffectedBySwitch(name: SwitchName, tool: string): boolean {
-  if (name === "global" || name === "mutations") return true;
+  if (name === "global") return true;
+  if (name === "mutations") return MUTATION_JOB_TOOLS.has(tool);
   if (name === "process" || name === "network") return tool === "mac_task_run";
   if (name === "gui") return tool === "mac_app_open" || tool === "mac_app_focus" || tool.startsWith("mac_ui_");
   if (name === "destructive") return tool === "mac_apply_patch";
   if (name === "privileged") return tool.startsWith("mac_priv_");
   return false;
 }
+
+const MUTATION_JOB_TOOLS = new Set([
+  "mac_app_open",
+  "mac_app_focus",
+  "mac_ui_action",
+  "mac_git_stage",
+  "mac_git_commit",
+  "mac_write_file_atomic",
+  "mac_apply_patch",
+  "mac_task_run",
+  "mac_job_cancel",
+  "mac_priv_service_control",
+  "mac_priv_package_install",
+  "mac_priv_power"
+]);
 
 function queuedJobAffectedByRevocation(kind: RevocationKind, subjectId: string, row: JobRow): boolean {
   if (kind === "principal") return row.owner_principal_id === subjectId;

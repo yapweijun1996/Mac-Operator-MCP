@@ -1588,6 +1588,11 @@ test("kill switches and revocations cancel queued jobs in the same persistence t
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-authority-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   try {
+    store.createJob({
+      ...jobInput("job:queued-read", "idem-queued-read"),
+      tool: "mac_health",
+      targetRef: "host:broker"
+    });
     store.createJob(jobInput("job:queued-task", "idem-queued-task"));
     store.createJob({
       ...jobInput("job:queued-write", "idem-queued-write"),
@@ -1595,6 +1600,7 @@ test("kill switches and revocations cancel queued jobs in the same persistence t
       targetRef: "path:test-root"
     });
     store.setSwitch("mutations", true, "test", 2);
+    assert.equal(store.ownedJob("job:queued-read", "principal-1")?.state, "queued");
     assert.equal(store.ownedJob("job:queued-task", "principal-1")?.state, "cancelled");
     assert.equal(store.ownedJob("job:queued-write", "principal-1")?.state, "cancelled");
     assert.equal(store.ownedJob("job:queued-task", "principal-1")?.cancelRequested, true);
