@@ -683,6 +683,7 @@ export class BrokerStore {
       `);
       this.migrateSchema(schemaVersion);
       this.verifyReplayLedgerIntegrity();
+      this.verifyConfigurationLedgerIntegrity();
       this.verifyAuditIntegrity();
       this.verifyExternalAuditAnchor();
       if (this.runtimeFenceEnabled) this.acquireRuntimeFence(Date.now());
@@ -747,6 +748,51 @@ export class BrokerStore {
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Replay ledger integrity could not be verified");
+    }
+  }
+
+  /**
+   * Active policy/key configuration is authority state. Verify both the
+   * singleton and its history before startup can restore or roll back it.
+   */
+  private verifyConfigurationLedgerIntegrity(): void {
+    try {
+      const policyHistory = this.database.prepare(
+        "SELECT revision, version, payload_digest, key_id, activated_at_ms FROM policy_history"
+      ).all() as unknown[];
+      for (const row of policyHistory) validateStoredPolicyHistoryRow(row);
+      const activePolicy = this.database.prepare(
+        "SELECT revision, version, payload_digest, key_id, activated_at_ms FROM active_policy WHERE singleton = 1"
+      ).get() as unknown;
+      if (activePolicy !== undefined) {
+        validateStoredPolicyHistoryRow(activePolicy);
+        assertStoredPolicyMatchesHistory(this.database, activePolicy);
+      }
+
+      const ledgers = [
+        ["approval key", "approval_key_config_history", "active_approval_key_config"],
+        ["Edge key", "edge_key_config_history", "active_edge_key_config"],
+        ["authority key", "authority_key_config_history", "active_authority_key_config"],
+        ["helper key", "helper_key_config_history", "active_helper_key_config"],
+        ["guest attestation key", "guest_attestation_key_config_history", "active_guest_attestation_key_config"],
+        ["policy signer", "policy_signer_config_history", "active_policy_signer_config"]
+      ] as const;
+      for (const [label, historyTable, activeTable] of ledgers) {
+        const historyRows = this.database.prepare(
+          `SELECT revision, payload_digest, activated_at_ms FROM ${historyTable}`
+        ).all() as unknown[];
+        for (const row of historyRows) validateStoredConfigIdentityRow(row, label);
+        const active = this.database.prepare(
+          `SELECT revision, payload_digest, activated_at_ms FROM ${activeTable} WHERE singleton = 1`
+        ).get() as unknown;
+        if (active !== undefined) {
+          validateStoredConfigIdentityRow(active, label);
+          assertStoredConfigMatchesHistory(this.database, historyTable, active, label);
+        }
+      }
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Configuration ledger integrity could not be verified");
     }
   }
 
@@ -2171,6 +2217,10 @@ export class BrokerStore {
       key_id: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) {
+      validateStoredPolicyHistoryRow(row);
+      assertStoredPolicyMatchesHistory(this.database, row);
+    }
     return row ? {
       revision: row.revision,
       version: row.version,
@@ -2245,6 +2295,10 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) {
+      validateStoredConfigIdentityRow(row, "Approval key");
+      assertStoredConfigMatchesHistory(this.database, "approval_key_config_history", row, "Approval key");
+    }
     return row ? {
       revision: row.revision,
       payloadDigest: row.payload_digest,
@@ -2317,6 +2371,10 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) {
+      validateStoredConfigIdentityRow(row, "Edge key");
+      assertStoredConfigMatchesHistory(this.database, "edge_key_config_history", row, "Edge key");
+    }
     return row ? {
       revision: row.revision,
       payloadDigest: row.payload_digest,
@@ -2389,6 +2447,10 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) {
+      validateStoredConfigIdentityRow(row, "Authority key");
+      assertStoredConfigMatchesHistory(this.database, "authority_key_config_history", row, "Authority key");
+    }
     return row ? {
       revision: row.revision,
       payloadDigest: row.payload_digest,
@@ -2461,6 +2523,10 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) {
+      validateStoredConfigIdentityRow(row, "Helper key");
+      assertStoredConfigMatchesHistory(this.database, "helper_key_config_history", row, "Helper key");
+    }
     return row ? {
       revision: row.revision,
       payloadDigest: row.payload_digest,
@@ -2588,6 +2654,7 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) validateStoredConfigIdentityRow(row, "Guest attestation key");
     return row ? { revision: row.revision, payloadDigest: row.payload_digest, activatedAtMs: row.activated_at_ms } : undefined;
   }
 
@@ -2600,6 +2667,10 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) {
+      validateStoredConfigIdentityRow(row, "Guest attestation key");
+      assertStoredConfigMatchesHistory(this.database, "guest_attestation_key_config_history", row, "Guest attestation key");
+    }
     return row ? {
       revision: row.revision,
       payloadDigest: row.payload_digest,
@@ -2727,6 +2798,7 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) validateStoredConfigIdentityRow(row, "Policy signer");
     return row ? { revision: row.revision, payloadDigest: row.payload_digest, activatedAtMs: row.activated_at_ms } : undefined;
   }
 
@@ -2739,6 +2811,10 @@ export class BrokerStore {
       payload_digest: string;
       activated_at_ms: number;
     } | undefined;
+    if (row !== undefined) {
+      validateStoredConfigIdentityRow(row, "Policy signer");
+      assertStoredConfigMatchesHistory(this.database, "policy_signer_config_history", row, "Policy signer");
+    }
     return row ? { revision: row.revision, payloadDigest: row.payload_digest, activatedAtMs: row.activated_at_ms } : undefined;
   }
 
@@ -3340,6 +3416,79 @@ function validateConfigActivationIdentity(identity: {
       !/^[a-f0-9]{64}$/u.test(identity.payloadDigest) ||
       !Number.isSafeInteger(identity.activatedAtMs) || identity.activatedAtMs < 0) {
     throw new BrokerError("PRECONDITION_FAILED", `${label} identity is malformed`);
+  }
+}
+
+function validateStoredConfigIdentityRow(value: unknown, label: string): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", `Stored ${label} configuration state is malformed`);
+  };
+  const row = isPlainDataRecord(value) ? value : undefined;
+  if (row === undefined || !Number.isSafeInteger(row.revision) || (row.revision as number) < 1 ||
+      typeof row.payload_digest !== "string" || !/^[a-f0-9]{64}$/u.test(row.payload_digest as string) ||
+      !Number.isSafeInteger(row.activated_at_ms) || (row.activated_at_ms as number) < 0) {
+    fail();
+  }
+}
+
+function validateStoredPolicyHistoryRow(value: unknown): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored policy configuration state is malformed");
+  };
+  const row = isPlainDataRecord(value) ? value : undefined;
+  if (row === undefined || !Number.isSafeInteger(row.revision) || (row.revision as number) < 1 ||
+      typeof row.version !== "string" || !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(row.version as string) ||
+      typeof row.payload_digest !== "string" || !/^[a-f0-9]{64}$/u.test(row.payload_digest as string) ||
+      typeof row.key_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(row.key_id as string) ||
+      !Number.isSafeInteger(row.activated_at_ms) || (row.activated_at_ms as number) < 0) {
+    fail();
+  }
+}
+
+function assertStoredConfigMatchesHistory(
+  database: DatabaseSync,
+  historyTable: string,
+  active: unknown,
+  label: string
+): void {
+  const activeRow = isPlainDataRecord(active) ? active : undefined;
+  if (activeRow === undefined) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", `Stored ${label} configuration state is malformed`);
+  }
+  const revision = activeRow.revision as number;
+  if (!Number.isSafeInteger(revision)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", `Stored ${label} configuration state is malformed`);
+  }
+  const historical = database.prepare(
+    `SELECT revision, payload_digest, activated_at_ms FROM ${historyTable} WHERE revision = ?`
+  ).get(revision) as unknown;
+  if (!isPlainDataRecord(historical) ||
+      historical.revision !== activeRow.revision ||
+      historical.payload_digest !== activeRow.payload_digest ||
+      (historical.activated_at_ms as number) > (activeRow.activated_at_ms as number)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", `Stored ${label} configuration history does not match active state`);
+  }
+}
+
+function assertStoredPolicyMatchesHistory(database: DatabaseSync, active: unknown): void {
+  const activeRow = isPlainDataRecord(active) ? active : undefined;
+  if (activeRow === undefined) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored policy configuration state is malformed");
+  }
+  const revision = activeRow.revision as number;
+  if (!Number.isSafeInteger(revision)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored policy configuration state is malformed");
+  }
+  const historical = database.prepare(
+    "SELECT revision, version, payload_digest, key_id, activated_at_ms FROM policy_history WHERE revision = ?"
+  ).get(revision) as unknown;
+  if (!isPlainDataRecord(historical) ||
+      historical.revision !== activeRow.revision ||
+      historical.version !== activeRow.version ||
+      historical.payload_digest !== activeRow.payload_digest ||
+      historical.key_id !== activeRow.key_id ||
+      (historical.activated_at_ms as number) > (activeRow.activated_at_ms as number)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored policy history does not match active state");
   }
 }
 
