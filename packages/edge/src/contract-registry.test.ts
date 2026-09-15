@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -200,15 +200,36 @@ test("contract registry rejects a directory owner change during loading", async 
   });
 });
 
+test("contract registry requires a canonical absolute directory", async () => {
+  await assert.rejects(
+    () => ToolContractRegistry.load("tool-contracts"),
+    /directory is invalid/u
+  );
+
+  await withTempDirectory(async (directory) => {
+    const parent = join(directory, "parent");
+    const target = join(parent, "contracts");
+    const link = join(directory, "link");
+    await mkdir(target, { recursive: true });
+    await symlink(parent, link);
+    const aliased = join(link, "contracts");
+    await assert.rejects(
+      () => ToolContractRegistry.load(aliased),
+      /directory is not canonical/u
+    );
+  });
+});
+
 async function writeContract(directory: string, contract: object): Promise<void> {
   await writeFile(join(directory, "mac_test.json"), JSON.stringify(contract), "utf8");
 }
 
 async function withTempDirectory(run: (directory: string) => Promise<void>): Promise<void> {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-contracts-"));
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), "mac-operator-contracts-"));
+  const directory = await realpath(temporaryDirectory);
   try {
     await run(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(temporaryDirectory, { recursive: true, force: true });
   }
 }

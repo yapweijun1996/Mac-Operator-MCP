@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
-import { lstat, open, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import { CONTRACT_VERSION, SCOPES, decodeUtf8Strict, parseJsonStrict } from "@mac-operator/contracts";
 import { isPlainDataRecord } from "./plain-record.js";
 import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
@@ -69,13 +69,19 @@ export class ToolContractRegistry {
   private constructor(private readonly contracts: ReadonlyMap<string, EdgeToolContract>) {}
 
   static async load(directory: string): Promise<ToolContractRegistry> {
-    if (typeof directory !== "string" || directory.length === 0 || directory.includes("\0")) {
+    if (typeof directory !== "string" || directory.length === 0 || directory.includes("\0") ||
+        !isAbsolute(directory) || resolve(directory) !== directory || directory.includes("\n") || directory.includes("\r")) {
       throw new Error("Tool contract directory is invalid");
     }
     const directoryStat = await lstat(directory);
     const currentUid = process.getuid?.();
     if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || currentUid === undefined || directoryStat.uid !== currentUid) {
       throw new Error("Tool contract path must be a directory (regular non-symlink) owned by the Edge user");
+    }
+    try {
+      if (await realpath(directory) !== directory) throw new Error("Tool contract directory is not canonical");
+    } catch {
+      throw new Error("Tool contract directory is not canonical");
     }
     if ((directoryStat.mode & 0o022) !== 0) throw new Error("Tool contract directory must not be writable by group or other users");
     const files = (await readdir(directory, { withFileTypes: true }))
@@ -101,7 +107,9 @@ export class ToolContractRegistry {
     }
     const finalDirectoryStat = await lstat(directory);
     const finalCurrentUid = process.getuid?.();
-    if (!finalDirectoryStat.isDirectory() || finalDirectoryStat.isSymbolicLink() ||
+    let finalCanonical = false;
+    try { finalCanonical = (await realpath(directory)) === directory; } catch { /* fail closed below */ }
+    if (!finalCanonical || !finalDirectoryStat.isDirectory() || finalDirectoryStat.isSymbolicLink() ||
         finalCurrentUid === undefined || finalDirectoryStat.uid !== finalCurrentUid ||
         finalDirectoryStat.dev !== directoryStat.dev || finalDirectoryStat.ino !== directoryStat.ino ||
         (finalDirectoryStat.mode & 0o022) !== 0) {
