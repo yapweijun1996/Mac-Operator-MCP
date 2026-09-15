@@ -20,6 +20,7 @@ import {
   readPrivilegedHelperStatus,
   signPrivilegedHelperCommand,
   signPrivilegedHelperStatusRequest,
+  validateUnsignedPrivilegedHelperStatusRequest,
   validatePrivilegedHelperExecutionResult,
   type PrivilegedHelperResponse,
   type PrivilegedHelperStatusReadback,
@@ -166,6 +167,34 @@ test("privileged helper parser rejects accessor command fields", () => {
       (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
   );
   key.fill(0);
+});
+
+test("privileged helper status request boundary rejects accessors and inherited fields", () => {
+  const valid = {
+    protocolVersion: "0.1" as const,
+    contractVersion: CONTRACT_VERSION,
+    requestId: "request:status-boundary-1",
+    nonce: "status-nonce-boundary-0001",
+    timestampMs: NOW,
+    expiresAtMs: NOW + 5_000,
+    kind: "status" as const
+  };
+  validateUnsignedPrivilegedHelperStatusRequest(valid);
+
+  const accessor = { ...valid } as Record<string, unknown>;
+  Object.defineProperty(accessor, "kind", { enumerable: true, get: () => "status" });
+  assert.throws(
+    () => validateUnsignedPrivilegedHelperStatusRequest(accessor as never),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+
+  const inherited = Object.create({ kind: "status" }) as Record<string, unknown>;
+  Object.assign(inherited, { ...valid });
+  delete inherited.kind;
+  assert.throws(
+    () => validateUnsignedPrivilegedHelperStatusRequest(inherited as never),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
 });
 
 test("privileged helper nested result and payload records reject non-data fields", () => {

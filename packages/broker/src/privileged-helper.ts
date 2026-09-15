@@ -718,10 +718,12 @@ export function authenticatePrivilegedHelperStatusRequest(
 }
 
 export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedPrivilegedHelperStatusRequest): void {
-  const keys = request !== null && typeof request === "object" && !Array.isArray(request) ? Object.keys(request) : [];
   const allowed = ["protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind"];
+  if (!isPlainDataRecord(request)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper status request fields are malformed");
+  }
+  const keys = Object.keys(request);
   if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
-      request === null || typeof request !== "object" || Array.isArray(request) ||
       request.protocolVersion !== PROTOCOL_VERSION || request.contractVersion !== CONTRACT_VERSION ||
       !/^request:status-[A-Za-z0-9._:-]{1,240}$/u.test(request.requestId) || !NONCE_PATTERN.test(request.nonce) ||
       !Number.isSafeInteger(request.timestampMs) || request.timestampMs < 0 ||
@@ -1135,8 +1137,7 @@ function responseProof(command: UnsignedPrivilegedHelperCommand | undefined, bod
 }
 
 function isStatusRequestEnvelope(value: unknown): boolean {
-  return value !== null && typeof value === "object" && !Array.isArray(value) &&
-    (value as { kind?: unknown }).kind === "status";
+  return isPlainDataRecord(value) && value.kind === "status";
 }
 
 function statusRequestProof(request: UnsignedPrivilegedHelperStatusRequest, key: Buffer): string {
@@ -1277,7 +1278,7 @@ function parseSignedStatusRequest(value: unknown): { unsigned: UnsignedPrivilege
  * admitted, authorized, or used for status access by itself.
  */
 function unsignedPrivilegedHelperStatusCandidate(raw: unknown): UnsignedPrivilegedHelperStatusRequest | undefined {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  if (!isPlainDataRecord(raw)) return undefined;
   const record = raw as Record<string, unknown>;
   const allowed = [
     "protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "authenticationProof"
