@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Real sandbox readback addendum: the physical Mac mini run at source revision
+`a8b4660` executes `MOPS_REAL_SANDBOX=1 node --test
+packages/broker/dist/sandbox-profile.test.js` with 16/16 passing and no skips.
+It provides current-host evidence for deny-default profile behavior,
+protected-surface/environment denials, loopback TCP/UDP allowlists,
+fork/setsid denial, and cancellation. This remains partial evidence for the
+deprecated candidate and does not close VT-SBX-01/02, MOP-043/045, or
+production task enablement.
+Evidence: `evidence/2026-09-15-real-sandbox-16-tests.md`.
+
 Authenticated IPC data-shape addendum: commit `27e102b` applies a shared
 plain-data-record check to Authority Control, Broker Status, Privileged Helper,
 and Virtualization Guest authenticated parsers. Accessor, hidden, symbolic,

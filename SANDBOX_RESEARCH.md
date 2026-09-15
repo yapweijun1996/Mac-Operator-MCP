@@ -130,3 +130,15 @@ partial deny-list evidence: it does not prove real credential-content
 isolation, remount resistance, post-snapshot process escape, crash cleanup, or
 production support for deprecated `sandbox-exec`. Evidence:
 `evidence/2026-09-14-sandbox-controller-secret-zones.md`.
+
+## 2026-09-15 current-host 16-test readback
+
+At source revision `a8b4660`, the physical Mac mini (macOS 26.2 / Darwin
+25.2.0, arm64) ran `MOPS_REAL_SANDBOX=1 node --test
+packages/broker/dist/sandbox-profile.test.js`; all 16 tests passed with no
+skips. This includes the current UDP loopback allowlist, single-process
+fork/setsid denial, protected-surface and environment denial, and owned
+cancellation checks. The candidate remains deprecated `sandbox-exec` and
+production task enablement remains gated by credential-content, remount,
+crash/restart, Docker/persistence, process-tree, packaging, and independent
+review evidence. Evidence: `evidence/2026-09-15-real-sandbox-16-tests.md`.

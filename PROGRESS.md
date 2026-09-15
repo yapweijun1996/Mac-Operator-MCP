@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Real sandbox readback addendum: on the physical Mac mini (macOS 26.2,
+Darwin 25.2.0, arm64), `MOPS_REAL_SANDBOX=1 node --test
+packages/broker/dist/sandbox-profile.test.js` passes 16/16 with no skips.
+The run covers the current deny-default profile, environment and protected
+surface denials, TCP/UDP loopback allowlists, fork/setsid escape denial, and
+owned cancellation. This remains partial evidence for deprecated
+`sandbox-exec`; real credential-content, remount, crash/restart, Docker,
+production packaging, and task-runner enablement gates remain open.
+Evidence: `evidence/2026-09-15-real-sandbox-16-tests.md`.
+
 Authenticated IPC data-shape addendum: source revision `27e102b` applies the
 shared plain-data-record guard to Authority Control, Broker Status, Privileged
 Helper, and Virtualization Guest transport parsers. Accessors, hidden fields,

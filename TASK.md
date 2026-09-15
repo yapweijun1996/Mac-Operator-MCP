@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Real sandbox readback addendum: source revision `a8b4660` records a fresh
+physical-Mac run of the opt-in sandbox suite with 16/16 tests passing and no
+skips. It strengthens host evidence for deny-default filesystem/environment,
+TCP/UDP loopback, fork/setsid, and cancellation behavior, but does not close
+MOP-086/MOP-045 or enable `mac_task_run` because deprecated sandbox-exec,
+credential-content, remount, crash/restart, Docker, and production packaging
+evidence remain incomplete.
+Evidence: `evidence/2026-09-15-real-sandbox-16-tests.md`.
+
 Authenticated IPC data-shape addendum: source revision `27e102b` makes the
 Authority Control, Broker Status, Privileged Helper, and guest transport
 parsers accept only plain data records at their authenticated boundaries.
