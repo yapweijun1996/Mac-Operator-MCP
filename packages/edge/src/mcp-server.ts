@@ -8,6 +8,7 @@ import {
 import type { ToolContractRegistry } from "./contract-registry.js";
 import type { BrokerGateway } from "./gateway.js";
 import { projectPrincipal } from "./principal.js";
+import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 
 interface CapabilityState {
   name: string;
@@ -109,12 +110,12 @@ export function mapGatewayError(tool: string, error: unknown): BrokerFailure {
 }
 
 function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry): string[] {
-  if (result.data === null || typeof result.data !== "object" || Array.isArray(result.data)) {
+  if (!isPlainDataRecord(result.data)) {
     throw new Error("Broker capability response data is malformed");
   }
-  const capabilities = (result.data as Record<string, unknown>).capabilities;
-  if (!Array.isArray(capabilities)) throw new Error("Broker capability response list is malformed");
-  const data = result.data as Record<string, unknown>;
+  const capabilities = result.data.capabilities;
+  if (!isPlainDataArray(capabilities, 128)) throw new Error("Broker capability response list is malformed");
+  const data = result.data;
   if (data.protocol_version !== PROTOCOL_VERSION || data.contract_version !== CONTRACT_VERSION) {
     throw new Error("Broker capability response version is incompatible");
   }
@@ -143,11 +144,13 @@ function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry
 }
 
 function parseCapability(value: unknown): CapabilityState {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new Error("Broker capability item is malformed");
   }
-  const record = value as Record<string, unknown>;
-  if (typeof record.name !== "string" || record.name.length < 1 || record.name.length > 128 ||
+  const record = value;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== 5 || keys.join(",") !== "contract_version,enabled,implemented,name,planned" ||
+      typeof record.name !== "string" || record.name.length < 1 || record.name.length > 128 ||
       !/^mac_[a-z0-9_]+$/u.test(record.name) || typeof record.planned !== "boolean" ||
       typeof record.implemented !== "boolean" || typeof record.enabled !== "boolean" ||
       (record.contract_version !== null && (typeof record.contract_version !== "string" || record.contract_version.length > 64))) {

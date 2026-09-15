@@ -205,6 +205,59 @@ test("MCP factory rejects duplicate or unknown capability entries", async () => 
   await assert.rejects(Promise.resolve(unknownFactory(authContext)), /not registered/u);
 });
 
+test("MCP factory rejects non-data capability envelopes", async () => {
+  const resourceServerUrl = new URL("https://edge.example.test/mcp");
+  const contracts = await ToolContractRegistry.load(resolve(repositoryRoot, "tool-contracts"));
+  const authContext = {
+    era: "modern" as const,
+    authInfo: {
+      token: "test-token",
+      clientId: "client-1",
+      scopes: ["mac.control.read"],
+      expiresAt: Math.floor(Date.now() / 1_000) + 60,
+      resource: resourceServerUrl,
+      extra: {
+        principalId: "principal-1",
+        issuer: "issuer-1",
+        sessionId: "session-1",
+        issuedAtMs: Date.now() - 1_000
+      }
+    }
+  };
+  const accessorCapability = {
+    name: "mac_health",
+    planned: true,
+    implemented: true,
+    enabled: false,
+    contract_version: "0.1"
+  } as Record<string, unknown>;
+  Object.defineProperty(accessorCapability, "name", { enumerable: true, get: () => "mac_health" });
+  const accessorFactory = createGovernedMcpServerFactory({
+    edgeId: "edge-1", brokerAudience: "mac-operator-broker", resourceServerUrl, contracts,
+    gateway: { async execute() {
+      return {
+        ok: true, request_id: "capability-request", tool: "mac_capabilities", result_class: "SUCCEEDED",
+        data: { protocol_version: "0.1", contract_version: "0.1", capabilities: [accessorCapability] },
+        warnings: [], truncated: false, verification: {}, duration_ms: 1
+      };
+    } }
+  });
+  await assert.rejects(Promise.resolve(accessorFactory(authContext)), /capability item is malformed/u);
+
+  const sparseCapabilities = new Array(1);
+  const sparseFactory = createGovernedMcpServerFactory({
+    edgeId: "edge-1", brokerAudience: "mac-operator-broker", resourceServerUrl, contracts,
+    gateway: { async execute() {
+      return {
+        ok: true, request_id: "capability-request", tool: "mac_capabilities", result_class: "SUCCEEDED",
+        data: { protocol_version: "0.1", contract_version: "0.1", capabilities: sparseCapabilities },
+        warnings: [], truncated: false, verification: {}, duration_ms: 1
+      };
+    } }
+  });
+  await assert.rejects(Promise.resolve(sparseFactory(authContext)), /capability response list is malformed/u);
+});
+
 test("MCP factory fails closed without verified authentication context", async () => {
   const factory = createGovernedMcpServerFactory({
     edgeId: "edge-1",
