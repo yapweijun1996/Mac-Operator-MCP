@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process environment secret-value addendum: source revision `d821242` extends
+the disabled ProcessSupervisor boundary to reject known token, credential, and
+authorization signatures in explicitly allowlisted environment values before
+child spawn. The focused suite passes 34/34 with typecheck, lint, and diff
+checks passing. This is defense-in-depth only; production credential/process
+isolation and `mac_task_run` enablement remain gated by MOP-045/MOP-086.
+Evidence: `evidence/2026-09-15-process-environment-secret-values.md`.
+
 Latest regression addendum: the non-overlapping built suite passes 595 total
 (589 pass, 6 skipped, 0 fail), including audit-target, credential-field, and
 secret-shaped-string redaction coverage; the existing Broker/persistence process was left

@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process environment secret-value addendum: source revision `d821242` extends
+the disabled ProcessSupervisor boundary so explicitly allowlisted environment
+values are rejected when they match known token, credential, or authorization
+signatures. The focused process-supervisor suite passes 34/34, with typecheck,
+lint, and diff checks passing. This is defense-in-depth and does not close
+production sandbox credential isolation or `mac_task_run` enablement. Evidence:
+`evidence/2026-09-15-process-environment-secret-values.md`.
+
 Broker lifecycle serialization addendum: source revision `6297c58` serializes
 Broker service `start()` and `stop()` transitions around the native runtime;
 the focused service-entrypoint suite passes 3/3, with typecheck, lint, and
