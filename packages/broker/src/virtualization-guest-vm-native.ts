@@ -141,6 +141,9 @@ export async function createNativeVirtualizationGuestVm(
     return unavailableAdapter();
   }
   const image = await verifyVirtualizationGuestImage(options.image);
+  if (image.publication !== "system-published") {
+    throw new BrokerError("POLICY_DENIED", "Native Virtualization guest VM requires a system-published image");
+  }
   const guestIdentity = parseVirtualizationGuestIdentity(image.guestIdentity);
   const native = loadNativeVirtualizationGuestVmBinding();
   let handle: unknown;

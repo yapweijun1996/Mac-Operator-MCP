@@ -74,4 +74,33 @@ test("guest image preflight rejects malformed startup configuration", async () =
     () => loadVirtualizationGuestImage({ path: "/tmp/guest.img", expectedSha256: "0".repeat(64), runtimeVersion: "bad version" }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
   );
+  await assert.rejects(
+    () => loadVirtualizationGuestImage({
+      path: "/tmp/guest.img",
+      expectedSha256: "0".repeat(64),
+      runtimeVersion: "macos-26.2-vz-1",
+      publication: "untrusted" as never
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+});
+
+test("system-published image policy rejects broker-owned fixtures", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-image-system-"));
+  const imagePath = join(directory, "guest.img");
+  const content = Buffer.from("guest-image-fixture\n", "utf8");
+  await writeFile(imagePath, content, { mode: 0o600 });
+  try {
+    await assert.rejects(
+      () => loadVirtualizationGuestImage({
+        path: imagePath,
+        expectedSha256: createHash("sha256").update(content).digest("hex"),
+        runtimeVersion: "macos-26.2-vz-1",
+        publication: "system-published"
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

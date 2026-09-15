@@ -10,11 +10,22 @@ const RUNTIME_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const DEFAULT_MAX_IMAGE_BYTES = 512 * 1024 * 1024 * 1024;
 const IMAGE_CHUNK_BYTES = 1024 * 1024;
 
+/**
+ * Describes who owns the publication path for a guest image.
+ *
+ * broker-owned is useful for protocol and test fixtures. The native
+ * Virtualization.framework adapter requires system-published so that an
+ * unprivileged process cannot replace the image path after descriptor
+ * preflight and before the framework opens it.
+ */
+export type VirtualizationGuestImagePublication = "broker-owned" | "system-published";
+
 export interface VirtualizationGuestImageConfig {
   path: string;
   expectedSha256: string;
   runtimeVersion: string;
   maxBytes?: number;
+  publication?: VirtualizationGuestImagePublication;
 }
 
 export interface LoadedVirtualizationGuestImage {
@@ -23,6 +34,7 @@ export interface LoadedVirtualizationGuestImage {
   device: string;
   inode: string;
   sizeBytes: number;
+  publication?: VirtualizationGuestImagePublication;
 }
 
 /** Re-reads the startup-bound image before a VM dispatch or status recovery. */
@@ -42,9 +54,11 @@ export async function verifyVirtualizationGuestImage(
     path: loaded.path,
     expectedSha256: loaded.guestIdentity.imageSha256,
     runtimeVersion: loaded.guestIdentity.runtimeVersion,
-    maxBytes: loaded.sizeBytes
+    maxBytes: loaded.sizeBytes,
+    ...(loaded.publication === undefined ? {} : { publication: loaded.publication })
   });
-  if (verified.device !== loaded.device || verified.inode !== loaded.inode || verified.sizeBytes !== loaded.sizeBytes) {
+  if (verified.device !== loaded.device || verified.inode !== loaded.inode || verified.sizeBytes !== loaded.sizeBytes ||
+      verified.publication !== (loaded.publication ?? "broker-owned")) {
     throw new BrokerError("POLICY_DENIED", "Virtualization guest image identity changed after preflight");
   }
   return verified;
@@ -60,16 +74,18 @@ export async function loadVirtualizationGuestImage(
 ): Promise<LoadedVirtualizationGuestImage> {
   validateConfig(config);
   const maxBytes = config.maxBytes ?? DEFAULT_MAX_IMAGE_BYTES;
+  const publication = config.publication ?? "broker-owned";
   const canonicalParent = await realpath(dirname(config.path)).catch(() => undefined);
   const canonicalPath = canonicalParent === undefined ? undefined : join(canonicalParent, basename(config.path));
   const pathStat = canonicalPath === undefined ? undefined : await lstat(canonicalPath).catch(() => undefined);
   const currentUid = process.getuid?.();
-  if (!pathStat || !pathStat.isFile() || pathStat.isSymbolicLink() ||
-      currentUid === undefined || pathStat.uid !== currentUid ||
-      (pathStat.mode & 0o077) !== 0 || pathStat.size < 1 || pathStat.size > maxBytes) {
-    throw new BrokerError("POLICY_DENIED", "Virtualization guest image is not a protected owner-only regular file");
+  if (!pathStat || !pathStat.isFile() || pathStat.isSymbolicLink() || currentUid === undefined ||
+      !isProtectedImage(pathStat, currentUid, publication) || pathStat.size < 1 || pathStat.size > maxBytes) {
+    throw new BrokerError("POLICY_DENIED", publication === "system-published"
+      ? "Virtualization guest image is not a protected system-published regular file"
+      : "Virtualization guest image is not a protected owner-only regular file");
   }
-  await assertProtectedDirectory(canonicalParent!, currentUid);
+  await assertProtectedDirectory(canonicalParent!, currentUid, publication);
 
   const handle = await open(canonicalPath!, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => undefined);
   if (!handle) throw new BrokerError("POLICY_DENIED", "Virtualization guest image could not be opened safely");
@@ -88,7 +104,8 @@ export async function loadVirtualizationGuestImage(
       guestIdentity: { imageSha256: digest, runtimeVersion: config.runtimeVersion },
       device: String(after.dev),
       inode: String(after.ino),
-      sizeBytes: after.size
+      sizeBytes: after.size,
+      publication
     };
   } finally {
     await handle.close();
@@ -100,15 +117,32 @@ function validateConfig(config: VirtualizationGuestImageConfig): void {
       typeof config.path !== "string" || !isAbsolute(config.path) || resolve(config.path) !== config.path || config.path.includes("\0") || config.path.length > 4_096 ||
       typeof config.expectedSha256 !== "string" || !SHA256_PATTERN.test(config.expectedSha256) ||
       typeof config.runtimeVersion !== "string" || !RUNTIME_VERSION_PATTERN.test(config.runtimeVersion) ||
-      (config.maxBytes !== undefined && (!Number.isSafeInteger(config.maxBytes) || config.maxBytes < 1 || config.maxBytes > DEFAULT_MAX_IMAGE_BYTES))) {
+      (config.maxBytes !== undefined && (!Number.isSafeInteger(config.maxBytes) || config.maxBytes < 1 || config.maxBytes > DEFAULT_MAX_IMAGE_BYTES)) ||
+      (config.publication !== undefined && config.publication !== "broker-owned" && config.publication !== "system-published")) {
     throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest image configuration is malformed");
   }
 }
 
-async function assertProtectedDirectory(path: string, currentUid: number): Promise<void> {
+function isProtectedImage(
+  image: { uid: number; mode: number },
+  currentUid: number,
+  publication: VirtualizationGuestImagePublication
+): boolean {
+  if (publication === "system-published") {
+    return image.uid === 0 && (image.mode & 0o022) === 0 && (image.mode & 0o444) !== 0;
+  }
+  return image.uid === currentUid && (image.mode & 0o077) === 0;
+}
+
+async function assertProtectedDirectory(path: string, currentUid: number, publication: VirtualizationGuestImagePublication): Promise<void> {
   const directory = await lstat(path).catch(() => undefined);
-  if (!directory || !directory.isDirectory() || directory.isSymbolicLink() || directory.uid !== currentUid || (directory.mode & 0o077) !== 0) {
-    throw new BrokerError("POLICY_DENIED", "Virtualization guest image directory is not protected");
+  const protectedDirectory = publication === "system-published"
+    ? directory?.uid === 0 && (directory.mode & 0o022) === 0
+    : directory?.uid === currentUid && (directory.mode & 0o077) === 0;
+  if (!directory || !directory.isDirectory() || directory.isSymbolicLink() || !protectedDirectory) {
+    throw new BrokerError("POLICY_DENIED", publication === "system-published"
+      ? "Virtualization guest image directory is not system-published"
+      : "Virtualization guest image directory is not protected");
   }
 }
 

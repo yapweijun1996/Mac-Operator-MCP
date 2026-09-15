@@ -43,6 +43,8 @@ test("native Virtualization guest close cannot resurrect a retained handle or di
   assert.match(source, /CloseActiveVirtioConnections\(handle\);\s*\[handle\.machine stopWithCompletionHandler/u);
   assert.doesNotMatch(source, /operation->handle->magic\s*=\s*kHandleMagic/u);
   assert.match(source, /handle\.machine = nil;\s*\/\/ Keep the serial queue alive until the external handle finalizer runs\./u);
+  assert.match(source, /IsSystemPublishedImage\(resolved_path, path_stat\)/u);
+  assert.match(source, /initWithURL:url readOnly:YES/u);
 });
 
 test("native Virtualization guest lifecycle remains disabled without explicit host gates", async () => {
@@ -100,6 +102,27 @@ test("native Virtualization guest lifecycle creation fails closed without a vali
         await adapter.close?.();
       }
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native Virtualization guest lifecycle rejects broker-owned images before native loading", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-vz-lifecycle-publication-"));
+  const imagePath = join(directory, "guest.raw");
+  const bytes = Buffer.alloc(1024, 0x42);
+  await writeFile(imagePath, bytes, { mode: 0o600 });
+  try {
+    const image = await loadVirtualizationGuestImage({
+      path: await realpath(imagePath),
+      expectedSha256: createHash("sha256").update(bytes).digest("hex"),
+      runtimeVersion: "macos-26.2-vz-1"
+    });
+    await assert.rejects(
+      () => createNativeVirtualizationGuestVm({ image, enabled: true, hostEvidenceAccepted: true }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED" &&
+        error.message.includes("system-published")
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

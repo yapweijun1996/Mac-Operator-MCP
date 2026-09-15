@@ -227,6 +227,33 @@ bool HashDescriptor(int descriptor, off_t size, std::string* digest) {
   return true;
 }
 
+bool IsSystemPublishedImage(const char* canonical_path, const struct stat& path_stat) {
+  // The Virtualization.framework image attachment accepts a pathname, not an
+  // already-open descriptor. Require a root-owned publication boundary so an
+  // unprivileged process cannot replace the image between our descriptor
+  // readback and initWithURL:. Root may still rotate the artifact, but that is
+  // an explicit host administration action and is detected by later readback.
+  if (!S_ISREG(path_stat.st_mode) || path_stat.st_uid != 0 ||
+      (path_stat.st_mode & 0022) != 0 || (path_stat.st_mode & 0444) == 0) {
+    return false;
+  }
+  char parent_path[PATH_MAX];
+  if (strlcpy(parent_path, canonical_path, sizeof(parent_path)) >= sizeof(parent_path)) return false;
+  char* separator = strrchr(parent_path, '/');
+  if (separator == nullptr) return false;
+  if (separator == parent_path) {
+    parent_path[1] = '\0';
+  } else {
+    *separator = '\0';
+  }
+  struct stat parent_stat{};
+  if (lstat(parent_path, &parent_stat) != 0 || !S_ISDIR(parent_stat.st_mode) ||
+      parent_stat.st_uid != 0 || (parent_stat.st_mode & 0022) != 0) {
+    return false;
+  }
+  return true;
+}
+
 bool ValidateImage(const char* requested_path, const char* expected_device,
                    const char* expected_inode, const char* expected_digest,
                    std::string* canonical_path) {
@@ -240,7 +267,7 @@ bool ValidateImage(const char* requested_path, const char* expected_device,
   struct stat path_stat{};
   const uid_t current_uid = getuid();
   if (lstat(resolved_path, &path_stat) != 0 || !S_ISREG(path_stat.st_mode) ||
-      path_stat.st_uid != current_uid || (path_stat.st_mode & 0077) != 0 ||
+      current_uid == static_cast<uid_t>(-1) || !IsSystemPublishedImage(resolved_path, path_stat) ||
       path_stat.st_size < 1 || static_cast<uint64_t>(path_stat.st_size) > kMaxImageBytes ||
       std::to_string(static_cast<unsigned long long>(path_stat.st_dev)) != expected_device ||
       std::to_string(static_cast<unsigned long long>(path_stat.st_ino)) != expected_inode) return false;
