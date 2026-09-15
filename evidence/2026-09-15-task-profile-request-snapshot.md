@@ -3,6 +3,12 @@
 Date: 2026-09-15
 Source revision: `04f77eb`
 Host: physical macOS host used by the repository test harness
+Dirty-state status: clean at implementation verification; documentation was committed separately
+Tool contract version: 0.1
+Policy version: 0.1
+Verification timestamp: 2026-09-15T05:08:30Z
+Artifact hashes: `packages/broker/src/task-profile.ts` SHA-256
+`0646f35f6c25b1f23d290240e53e420312455ed9e8aacf2f095c445939639043`
 
 ## Finding and fix
 

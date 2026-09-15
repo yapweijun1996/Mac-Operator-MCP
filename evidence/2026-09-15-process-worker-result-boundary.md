@@ -3,6 +3,13 @@
 Date: 2026-09-15
 Source revision: `a01b62e`
 Host: physical macOS host used by the repository test harness
+Dirty-state status: clean at implementation verification; documentation was committed separately
+Tool contract version: 0.1
+Policy version: 0.1
+Verification timestamp: 2026-09-15T05:08:30Z
+Artifact hashes: `packages/broker/src/process-inspector.ts` SHA-256
+`1b695fb41a069253fa32b9955c9e301581ff19c6feaa723108d6c2dab238911a`; `packages/broker/src/worker-executor.ts` SHA-256
+`b378a68c800f7ebc791ae4511f8ae5ce0a4f9f645dc2c7fcc5f5a3fea21c0338`
 
 ## Decision
 

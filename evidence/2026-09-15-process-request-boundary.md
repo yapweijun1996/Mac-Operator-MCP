@@ -3,6 +3,12 @@
 Date: 2026-09-15
 Source revision: `78dd404`
 Host: physical macOS host used by the repository test harness
+Dirty-state status: clean at implementation verification; documentation was committed separately
+Tool contract version: 0.1
+Policy version: 0.1
+Verification timestamp: 2026-09-15T05:08:30Z
+Artifact hashes: `packages/broker/src/process-supervisor.ts` SHA-256
+`12f789d7535e3bded175d4ff6421a81063ab78ca0626ff6dc57e1146fff69ab4`
 
 ## Decision
 

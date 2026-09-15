@@ -3,6 +3,12 @@
 Date: 2026-09-15
 Source revision: `31dc880`
 Host: physical macOS host used by the repository test harness
+Dirty-state status: clean at implementation verification; documentation was committed separately
+Tool contract version: 0.1
+Policy version: 0.1
+Verification timestamp: 2026-09-15T05:08:30Z
+Artifact hashes: `packages/broker/src/virtualization-guest-executor.ts` SHA-256
+`a2d1ea91e46e38008be263154ba17dd2a82a7c74fe1e16b430f32b3a9f4fa2e4`
 
 ## Finding and fix
 
