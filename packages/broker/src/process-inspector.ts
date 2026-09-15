@@ -52,7 +52,7 @@ export function inspectProcess(pid: number): SafeProcessDetail {
 export function parseProcessInventory(value: unknown): SafeProcessInventory {
   if (!isPlainDataRecord(value) || !hasExactKeys(value, PROCESS_INVENTORY_KEYS)) throw new Error("Malformed native process inventory");
   const record = value;
-  if (!Array.isArray(record.processes) || record.processes.length > 500 || typeof record.truncated !== "boolean") {
+  if (!isDenseArray(record.processes, 500) || typeof record.truncated !== "boolean") {
     throw new Error("Malformed native process inventory");
   }
   const processes: SafeProcessInfo[] = [];
@@ -122,6 +122,16 @@ function isDenseNumberArray(value: unknown, maxLength: number): value is readonl
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (descriptor === undefined || !("value" in descriptor) ||
         !Number.isSafeInteger(descriptor.value) || descriptor.value < 1 || descriptor.value > 99_999_999) return false;
+  }
+  return true;
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
+      Object.keys(value).length !== value.length || Object.getOwnPropertyNames(value).length !== value.length + 1) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) return false;
   }
   return true;
 }
