@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process argv false-positive addendum: source revision `7231964` applies
+sensitive option-name checks only to explicit Unix options and keeps concrete
+token/credential signature checks on every argument. Real-Darwin sandbox tests
+pass 16/16 after the canary regression was fixed; focused process/secret tests
+pass 35/35 and the non-overlapping package regression passes 494 total (488
+pass, 6 skipped, 0 fail). Build, typecheck, lint, and diff checks pass. This
+does not close opaque secret classification or production credential/process
+isolation. Evidence: `evidence/2026-09-15-secret-argv-script-boundary.md`.
+
 Capability-list integrity addendum: source revision `399a17c` makes Edge
 capability parsing fail closed on duplicate or unregistered tool names and
 malformed name/version fields. The non-overlapping package regression passes

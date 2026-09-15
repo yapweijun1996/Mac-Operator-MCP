@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process argv false-positive addendum: source revision `7231964` restricts
+sensitive option-name matching to explicit Unix options and preserves
+full-argument concrete token-signature scanning. Real-Darwin sandbox tests pass
+16/16 after the canary-script regression was fixed; focused process/secret
+tests pass 35/35 and the non-overlapping package regression passes 494 total
+(488 pass, 6 skipped, 0 fail). Build, typecheck, lint, and diff checks pass.
+This does not prove opaque-secret classification or production credential
+isolation. Evidence: `evidence/2026-09-15-secret-argv-script-boundary.md`.
+
 Capability-list integrity addendum: source revision `399a17c` makes the Edge
 reject duplicate and unregistered capability names plus malformed name/version
 fields before registering MCP tools. The non-overlapping package regression

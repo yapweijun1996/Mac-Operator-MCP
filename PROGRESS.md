@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process argv false-positive addendum: source revision `7231964` limits
+sensitive option-name matching to explicit Unix options while retaining
+full-argument token-signature scanning. A real-Darwin sandbox run now passes
+16/16 after exposing and fixing the canary-script false positive; the focused
+process/secret suite passes 35/35 and the non-overlapping package regression
+passes 494 total (488 pass, 6 skipped, 0 fail). Build, typecheck, lint, and
+diff checks pass. This closes one false-positive boundary only; opaque secret
+classification and production credential isolation remain open. Evidence:
+`evidence/2026-09-15-secret-argv-script-boundary.md`.
+
 Capability-list integrity addendum: source revision `399a17c` makes the Edge
 reject duplicate or unregistered capability names and malformed name/version
 fields before MCP registration. The non-overlapping package regression passes
