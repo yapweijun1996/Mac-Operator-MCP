@@ -2,7 +2,18 @@
 
 Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
-Last verified: 2026-09-15
+Last verified: 2026-09-16
+
+Privileged-helper response-schema addendum: source revision `cd80e0d` makes
+command results and success/failure responses exact-field envelopes, including
+the nested verification and error records. Unknown fields, accessors, inherited
+records, unbounded error messages, and unsupported result classes fail closed
+after the existing HMAC identity checks. Focused privileged-helper tests pass
+15/15, and the serial physical regression passes 640/640 with no skips or
+failures. This closes response-shape integrity for the implemented helper IPC
+contract only; helper enablement, production signing/install, real privileged
+adapters, and independent-review gates remain open. Evidence:
+`evidence/2026-09-16-privileged-helper-response-schema.md`.
 
 Process-path owner-identity addendum: source revision `138b6ed` makes
 `assertProcessPathIdentityStable` compare executable/cwd owner UID and GID in

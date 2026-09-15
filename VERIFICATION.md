@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged-helper response-schema verification at source revision `cd80e0d`
+requires exact command-result, success/failure-response, status-response, and
+nested verification/error fields. Unknown fields and unbounded failure
+messages fail closed after HMAC identity verification. Focused helper tests
+pass 15/15; the serial physical regression passes 640/640 with no skips or
+failures. This closes response-shape integrity only; helper enablement,
+production signing/install, real privileged adapters, and independent review
+remain release gates. Evidence:
+`evidence/2026-09-16-privileged-helper-response-schema.md`.
+
 Process-path owner-identity verification at source revision `138b6ed` adds
 owner UID/GID comparison to the supervised executable/cwd stability check.
 Focused process-supervisor tests pass 37/37; the serial physical regression
@@ -2270,6 +2280,12 @@ Each evidence record must identify source commit, dirty-state status, tool contr
 Status values are `OPEN`, `BLOCKED`, `PASS`, and `FAIL`. Documentation presence can close a documentation task but cannot produce `PASS` for runtime behavior.
 
 ## Requirement-to-release matrix
+
+Privileged-helper response-schema addendum at source revision `cd80e0d`:
+command results and success/failure responses now use exact-field envelopes,
+including nested verification and error records. Focused helper tests pass
+15/15, and the serial physical regression passes 640/640 with no skips or
+failures. Evidence: `evidence/2026-09-16-privileged-helper-response-schema.md`.
 
 | Verification target | Requirement | Threat | Task | Test/evidence required | Gate | Status |
 |---|---|---|---|---|---|---|

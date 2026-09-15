@@ -2,7 +2,14 @@
 
 Status: Active
 Version: 0.1
-Last verified: 2026-09-15
+Last verified: 2026-09-16
+
+Privileged-helper response-schema addendum: source revision `cd80e0d` requires
+exact top-level and nested fields for helper command results, command
+responses, status responses, and failure records. Focused helper tests pass
+15/15; the serial physical regression passes 640/640 with no skips or
+failures. Evidence:
+`evidence/2026-09-16-privileged-helper-response-schema.md`.
 
 MOP-017 process-path identity addendum: source revision `138b6ed` binds
 executable and cwd owner UID/GID into the post-authorization stability check.
