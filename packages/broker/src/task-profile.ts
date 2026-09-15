@@ -165,7 +165,7 @@ export class TaskProfileRegistry {
     assertArgumentsDoNotContainSecrets(args);
 
     const environment = { ...(profile.environment ?? {}) };
-    return {
+    return freezeResolvedTaskProfile({
       profile: profile.profile,
       cwd,
       process: { executable, args, cwd, environment, timeoutMs: profile.timeoutMs, outputCapBytes: profile.outputCapBytes },
@@ -176,7 +176,7 @@ export class TaskProfileRegistry {
       processTreePolicy: profile.processTreePolicy ?? "single_process",
       sandboxProfile: profile.sandboxProfile,
       verificationStrategy: profile.verificationStrategy
-    };
+    });
   }
 
   private async findAllowedCwdRoot(roots: readonly string[], cwd: string): Promise<string | undefined> {
@@ -360,6 +360,27 @@ function cloneProfile(profile: TaskProfile): TaskProfile {
     filesystemRoots: [...profile.filesystemRoots],
     ...(profile.networkAllowlist ? { networkAllowlist: [...profile.networkAllowlist] } : {})
   };
+}
+
+/**
+ * The resolved profile is the authorization snapshot handed to an adapter.
+ * Freeze the complete data graph so adapters cannot widen targets, budgets, or
+ * environment after the Broker has completed admission.
+ */
+function freezeResolvedTaskProfile(profile: ResolvedTaskProfile): ResolvedTaskProfile {
+  const seen = new Set<object>();
+  const freeze = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) freeze(item);
+    } else {
+      for (const child of Object.values(value)) freeze(child);
+    }
+    Object.freeze(value);
+  };
+  freeze(profile);
+  return profile;
 }
 
 function snapshotTaskRunRequest(value: unknown): TaskRunRequest {

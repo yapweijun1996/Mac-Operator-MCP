@@ -48,6 +48,18 @@ test("named task resolution fixes executable, environment, roots, and budgets", 
     assert.equal(resolved.credentialPolicy, "none");
     assert.equal(resolved.processTreePolicy, "single_process");
     assert.equal(resolved.sandboxProfile, "deny-default-v0.1");
+    assert.equal(Object.isFrozen(resolved), true);
+    assert.equal(Object.isFrozen(resolved.process), true);
+    assert.equal(Object.isFrozen(resolved.process.args), true);
+    assert.equal(Object.isFrozen(resolved.process.environment), true);
+    assert.throws(
+      () => { (resolved.process as unknown as { executable: string }).executable = "/bin/sh"; },
+      TypeError
+    );
+    assert.throws(
+      () => { (resolved.filesystemRoots as string[]).push("/tmp/escape"); },
+      TypeError
+    );
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
