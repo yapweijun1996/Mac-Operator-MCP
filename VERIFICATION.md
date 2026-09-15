@@ -2832,3 +2832,13 @@ helper-owned status, trailing-frame rejection, denied peers, Job binding, and
 active revocation. No real privileged mutation was performed. Production
 installation, signing, Keychain, and enablement remain open. Evidence:
 `evidence/2026-09-15-helper-boundary-38-tests.md`.
+
+The helper/install-plan focused suite passes 47/47 on the physical macOS host
+at source revision `3d9e326`. Install plans, signature/readback composition,
+socket and native peer boundaries, revision preconditions, host confirmation,
+non-root rejection, and recovery ordering remain fail-closed. No root command,
+launchd bootstrap, package installation, reboot, shutdown, Keychain
+provisioning, or privileged mutation was executed. Developer ID provenance,
+real root-domain lifecycle, protected production Keychain material, and
+independent release review remain open. Evidence:
+`evidence/2026-09-15-helper-install-plan-47-tests.md`.

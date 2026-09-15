@@ -3170,3 +3170,13 @@ payloads, helper-owned status, trailing frames, denied peers, Job binding, and
 active revocation. No root command or real privileged mutation was executed;
 production signing, installation, Keychain, approval UI, and enablement remain
 gated. Evidence: `evidence/2026-09-15-helper-boundary-38-tests.md`.
+
+The helper/install-plan focused boundary suite passes 47/47 on the physical
+macOS host at source revision `3d9e326`. It covers fixed per-user and
+root-domain package plans, signature/readback binding, socket separation,
+native peer identity, exact revision preconditions, host-only confirmation,
+non-root rejection, and operation recovery. No root command, launchd
+bootstrap, package install, reboot, shutdown, or privileged mutation was
+executed. Developer ID provenance, protected production Keychain material,
+real root-domain lifecycle, and independent release review remain open.
+Evidence: `evidence/2026-09-15-helper-install-plan-47-tests.md`.

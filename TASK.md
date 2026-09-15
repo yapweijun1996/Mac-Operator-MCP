@@ -1626,6 +1626,14 @@ exchange through the production-shaped observer. Root installation and live
 launchd evidence remain blocked. Evidence:
 `evidence/2026-09-13-helper-observer-ipc-integration.md`.
 
+Helper/install-plan boundary addendum: source revision `3d9e326` passes the
+focused 47-test package/runtime/install-plan suite on the physical macOS host.
+The suite covers fixed package plans, signature/readback binding, socket and
+native peer identity, exact revision preconditions, host confirmation,
+non-root rejection, and recovery ordering. It does not prove Developer ID
+provenance, protected production Keychain material, or root-domain lifecycle;
+those gates remain blocked.
+
 Source revision `a1bd63c` additionally verifies that an already-created
 key-manager server rejects status reads immediately after helper-key revocation;
 the latest default suite is 400 tests with 397 passed and 3 sandbox tests
