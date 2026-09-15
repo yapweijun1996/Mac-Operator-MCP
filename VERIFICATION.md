@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Root-helper authority-poller construction verification: source revision
+`a79d813` removes injectable authority-poller selection from the no-
+`BrokerStore` root-helper factory. When an adapter is enabled, startup must
+construct `PrivilegedHelperAuthorityClient` from the fixed authority socket
+and native Broker peer policy; a missing socket fails closed. Focused runtime
+tests pass 5/5, and the latest physical non-overlapping regression passes
+615/615 with zero skips and zero failures. Evidence:
+`evidence/2026-09-15-privileged-helper-poller-construction.md`.
+
 Privileged helper authority-socket ACL verification: source revision
 `fe9d681` adds an independent Broker-owned socket readback. It requires a
 Unix socket at the planned endpoint, expected Broker UID/GID, no group/other

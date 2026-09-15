@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Root-helper authority-poller construction addendum: source revision `a79d813`
+removes injectable poller selection from the no-`BrokerStore` root-helper
+factory. Enabled adapters now require a fixed authority socket and native
+Broker peer policy so the factory itself constructs the authenticated
+`PrivilegedHelperAuthorityClient`; missing authority configuration fails
+closed. Focused runtime tests pass 5/5 and the latest physical
+non-overlapping suite passes 615/615 with zero skips and zero failures.
+Evidence: `evidence/2026-09-15-privileged-helper-poller-construction.md`.
+
 Privileged helper authority-socket ACL addendum: source revision `fe9d681`
 adds an independent Broker-owned Unix-socket readback. It checks expected
 Broker UID/GID, owner-only permissions, socket type, and stable

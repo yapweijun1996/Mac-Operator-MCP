@@ -243,6 +243,12 @@ owner-only mode, Unix-socket type, and stable device/inode/mode/ownership over
 two reads; this endpoint is deliberately excluded from root-owned helper file
 preflight.
 
+Revision `a79d813` removes authority-poller injection from the root-helper
+key-material factory. If an adapter is enabled, the factory constructs the
+authenticated poller itself from the fixed authority socket and native Broker
+peer policy; missing authority configuration fails closed. The general runtime
+factory retains injection only for Broker-side compatibility and test seams.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
