@@ -901,7 +901,16 @@ export class FilesystemInspector {
       .sort((left, right) => right.sizeBytes - left.sizeBytes || left.path.localeCompare(right.path))
       .slice(0, topN);
     return {
-      volumes: [...volumes.values()].sort((left, right) => left.id.localeCompare(right.id)),
+      volumes: [...volumes.values()]
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(({ id, name, mountPath, totalBytes, availableBytes, usedBytes }) => ({
+          id,
+          name,
+          mountPath,
+          totalBytes,
+          availableBytes,
+          usedBytes
+        })),
       consumers,
       analyzedRoots,
       warnings,
