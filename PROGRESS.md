@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Filesystem authorization-snapshot addendum at source revision `29abdd0`:
+`FilesystemInspector` now recursively freezes normalized root policies and
+planned targets, including deny zones and captured volume/device/inode
+identity, before asynchronous worker execution. Focused filesystem tests pass
+38/38; the serial physical regression passes 666/671 with 0 failures and 5
+explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-filesystem-authorization-snapshot.md`.
+
 Privileged Helper adapter command-boundary addendum at source revision
 `60fe9ec`: `AllowlistedPrivilegedHelper` now validates the complete unsigned
 or signed command shape, target, operation, and payload digest before invoking

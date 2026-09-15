@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Filesystem authorization-snapshot verification at source revision `29abdd0`:
+normalized root policies and complete filesystem plans are recursively frozen
+before asynchronous worker execution. Negative coverage proves target, root
+policy, deny-zone, and captured volume identity mutation attempts fail at
+runtime. Focused filesystem tests pass 38/38; the serial physical regression
+passes 666/671 with 0 failures and 5 explicit descriptor-capability skips. The
+three pre-existing long-running suites were excluded and left untouched. This
+closes post-authorization in-process plan mutation only; native descriptor
+execution, production sandbox enablement, remount resistance, and privileged
+capability enablement remain open. Evidence:
+`evidence/2026-09-16-filesystem-authorization-snapshot.md`.
+
 Privileged Helper adapter command-boundary verification at source revision
 `60fe9ec`: `AllowlistedPrivilegedHelper` validates the strict command envelope
 before selecting or invoking an operation handler. Negative coverage proves a

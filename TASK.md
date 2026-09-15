@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045/080/081 Filesystem authorization-snapshot addendum at source revision
+`29abdd0`: normalized root policies and filesystem plans are recursively frozen
+before asynchronous worker execution, preventing target, deny-zone, or volume
+identity substitution after authorization. Focused filesystem tests pass
+38/38; the serial physical regression passes 666/671 with 0 failures and 5
+explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-filesystem-authorization-snapshot.md`.
+
 MOP-091/092 Privileged Helper adapter command-boundary addendum at source
 revision `60fe9ec`: `AllowlistedPrivilegedHelper` validates command shape,
 target, operation, and payload binding before selecting or invoking a handler.
