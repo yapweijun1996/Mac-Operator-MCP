@@ -682,6 +682,7 @@ export class BrokerStore {
       );
       `);
       this.migrateSchema(schemaVersion);
+      this.verifyCoreSchemaLayout();
       this.verifyReplayLedgerIntegrity();
       this.verifyConfigurationLedgerIntegrity();
       this.verifyRequestLedgerIntegrity();
@@ -703,6 +704,54 @@ export class BrokerStore {
     this.runtimeFenceAcquired = false;
     this.database.close();
     this.auditAnchor?.close();
+  }
+
+  /**
+   * SQLite migrations are forward-only and must own the complete shape of
+   * authority tables. Reject silently-added columns so a newer or tampered
+   * writer cannot smuggle state that this runtime would ignore in `SELECT *`.
+   */
+  private verifyCoreSchemaLayout(): void {
+    const expected: Readonly<Record<string, readonly string[]>> = {
+      requests: [
+        "request_id", "edge_id", "principal_id", "session_id", "tool", "policy_version", "payload_digest",
+        "mutation", "capability_families", "state", "result_class", "target_ref", "approval_id", "job_id",
+        "received_at_ms", "updated_at_ms", "revision"
+      ],
+      approvals: [
+        "approval_id", "approver_principal_id", "requesting_principal_id", "tool", "contract_version", "target_kind",
+        "target_ref", "payload_digest", "policy_version", "approval_class", "unattended", "issued_at_ms",
+        "expires_at_ms", "use_limit", "used_count", "last_consumed_at_ms", "last_request_id", "revoked_at_ms",
+        "revocation_reason", "revision"
+      ],
+      jobs: [
+        "job_id", "owner_edge_id", "owner_edge_key_id", "owner_principal_id", "owner_session_id", "tool", "target_ref",
+        "policy_version", "payload_digest", "idempotency_key", "state", "result_class", "created_at_ms", "started_at_ms",
+        "finished_at_ms", "exit_code", "stdout_text", "stderr_text", "output_truncated", "cancel_requested",
+        "cancel_reason", "lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms",
+        "lease_expires_at_ms", "write_metadata_json", "process_metadata_json", "guest_metadata_json",
+        "privileged_payload_json", "revision"
+      ],
+      audit_events: [
+        "sequence", "request_id", "principal_id", "tool", "event_type", "decision", "result_class", "target_ref",
+        "policy_version", "evidence_json", "timestamp_ms", "previous_hash", "event_hash"
+      ],
+      revocations: ["kind", "subject_id", "revoked_at_ms", "reason"],
+      switches: ["name", "disabled", "changed_at_ms", "reason"]
+    };
+    try {
+      for (const [table, columns] of Object.entries(expected)) {
+        const rows = this.database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>;
+        const actual = rows.map((row) => row.name).sort();
+        const expectedNames = [...columns].sort();
+        if (actual.length !== expectedNames.length || actual.some((name, index) => name !== expectedNames[index])) {
+          throw new BrokerError("AUDIT_UNAVAILABLE", `Persisted ${table} schema shape is not recognized`);
+        }
+      }
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Core persistence schema shape could not be verified");
+    }
   }
 
   /**
