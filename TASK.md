@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/012 Guest identity authority-snapshot addendum at source revision
+`5d1084e`: Guest Agent, transport client, VM lifecycle, and runtime now retain
+copied, frozen identity authority; caller mutation cannot alter digest/runtime
+checks used for exchanges or lifecycle readback. Focused Guest tests pass
+32/32; the serial physical regression passes 669/674 with 0 failures and 5
+explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-identity-authority-snapshots.md`.
+
 MOP-086/012 Guest attestation key snapshot addendum at source revision
 `3325376`: the loader and KeyManager expose a copied, recursively frozen
 authority graph, converting protected public-key bytes to immutable PEM

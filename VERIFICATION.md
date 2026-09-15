@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest identity authority-snapshot verification at source revision `5d1084e`:
+the Guest Agent, Broker transport client, VM lifecycle, and composed runtime
+copy and freeze expected or published Guest identity objects before retaining
+them. Negative coverage proves top-level and caller-object mutations fail at
+runtime or leave the bound identity unchanged. Focused Guest
+lifecycle/transport/agent/startup tests pass 32/32; the serial physical
+regression passes 669/674 with 0 failures and 5 explicit descriptor-capability
+skips. The three pre-existing long-running suites were excluded and left
+untouched. This closes in-process Guest identity reference substitution only;
+native VM boot, descriptor pinning, remount resistance, signed attestation
+production, guest isolation, and production enablement remain open. Evidence:
+`evidence/2026-09-16-guest-identity-authority-snapshots.md`.
+
 Guest attestation key snapshot verification at source revision `3325376`:
 the protected loader and KeyManager copy and recursively freeze config
 documents, key entries, active arrays, and public-key material before exposing

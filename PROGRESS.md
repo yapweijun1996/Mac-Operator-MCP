@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Guest identity authority-snapshot addendum at source revision `5d1084e`:
+the Guest Agent, transport client, VM lifecycle, and composed runtime now
+copy and freeze expected or published Guest identities at construction.
+Focused Guest lifecycle/transport/agent/startup tests pass 32/32; the serial
+physical regression passes 669/674 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-identity-authority-snapshots.md`.
+
 Guest attestation key snapshot addendum at source revision `3325376`:
 the loader and KeyManager now copy and recursively freeze the complete active
 key authority graph; protected PEM bytes are exposed only as immutable strings.
