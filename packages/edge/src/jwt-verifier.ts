@@ -188,7 +188,7 @@ function createKeySet(options: ValidatedOptions): RemoteJWKSet | ReturnType<type
     };
     const fetcher = options.jwksFetch ?? (globalThis.fetch as FetchImplementation | undefined);
     if (typeof fetcher !== "function") throw new Error("JWT remote JWKS fetch is unavailable");
-    remoteOptions[customFetch] = createBoundedJwksFetch(fetcher);
+    remoteOptions[customFetch] = createBoundedJwksFetch(fetcher, options.jwksUri);
     return createRemoteJWKSet(options.jwksUri, remoteOptions);
   } catch {
     throw new Error("JWT remote JWKS configuration is malformed");
@@ -200,9 +200,12 @@ function createKeySet(options: ValidatedOptions): RemoteJWKSet | ReturnType<type
  * startup-owned configuration, but its response is still an untrusted network
  * input and must not become an unbounded JSON allocation.
  */
-function createBoundedJwksFetch(fetcher: FetchImplementation): FetchImplementation {
+function createBoundedJwksFetch(fetcher: FetchImplementation, expectedUrl: URL): FetchImplementation {
   return async (url, init) => {
     const response = await fetcher(url, init);
+    if (response.redirected || (response.url !== "" && response.url !== expectedUrl.href)) {
+      throw new Error("JWT remote JWKS redirects are not allowed");
+    }
     const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     if (contentType !== "application/json" && contentType !== "application/jwk-set+json") {
       throw new Error("JWT remote JWKS response content type is not JSON");

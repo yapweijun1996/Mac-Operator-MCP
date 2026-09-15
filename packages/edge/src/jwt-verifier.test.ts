@@ -183,6 +183,26 @@ test("JWT verifier rejects malformed and oversized remote JWKS content lengths",
   await assertInvalid(oversizedLength, token);
 });
 
+test("JWT verifier rejects redirected remote JWKS responses", async () => {
+  const { privateKey } = await generateKeyPair("RS256");
+  const token = await createToken(privateKey);
+  const verifier = createJwtAccessTokenVerifier({
+    issuer,
+    issuerId: "issuer-prod",
+    resourceServerUrl,
+    jwksUri: new URL("https://issuer.example.test/.well-known/jwks.json"),
+    jwksFetch: async () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+      Object.defineProperty(response, "redirected", { value: true });
+      return response;
+    }
+  });
+  await assertInvalid(verifier, token);
+});
+
 async function createJwks(publicKey: CryptoKey, keyId = "key-1"): Promise<JSONWebKeySet> {
   const jwk = await exportJWK(publicKey);
   return {
