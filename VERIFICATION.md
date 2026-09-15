@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Schema-migration readback verification at source revision `a26e6d8` opens
+legacy Request and Job SQLite layouts, reads historical rows without
+fabricating new authority metadata, and confirms the current complete
+post-migration column sets. This is temporary local migration evidence only;
+production backup restore, crash recovery, disk exhaustion, and release
+upgrade/rollback remain unverified. Evidence:
+`evidence/2026-09-15-schema-migration-readback.md`.
+
 Core-schema-layout addendum: commit `a26e6d8` verifies the complete
 post-migration column set for every Broker persistence table and rejects
 unknown or missing columns as `AUDIT_UNAVAILABLE`. The schema-layout test passes 1/1; the

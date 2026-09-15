@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Schema-migration readback addendum: the current BrokerStore successfully opens
+legacy Request and Job layouts, preserves historical records, and accepts the
+post-migration complete column sets at source revision `a26e6d8`. Temporary
+physical-host checks confirmed nullable Request linkage and absence of
+fabricated Job metadata, while the schema-layout guard remained fail-closed for
+unknown columns. Production backup restore, crash recovery, disk exhaustion,
+and release upgrade/rollback evidence remain open. Evidence:
+`evidence/2026-09-15-schema-migration-readback.md`.
+
 Core-schema-layout addendum: commit `a26e6d8` extends the complete
 post-migration column-set check to every Broker persistence table, including
 nonce ledgers, runtime fence, active/history configuration, Request/Approval/

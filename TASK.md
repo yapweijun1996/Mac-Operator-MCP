@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Schema-migration readback addendum: legacy Request and Job database layouts
+open successfully under the current BrokerStore, retain historical records,
+and pass the complete post-migration schema-layout check at source revision
+`a26e6d8`. The temporary host check does not claim production backup restore,
+crash recovery, disk exhaustion, or release upgrade/rollback acceptance.
+Evidence: `evidence/2026-09-15-schema-migration-readback.md`.
+
 Filesystem-worker result boundary addendum: source revisions `5657267` and
 `86a6792` harden every filesystem worker result as plain data with exact
 operation-specific fields, dense bounded arrays, and validated nested

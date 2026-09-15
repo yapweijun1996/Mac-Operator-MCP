@@ -47,3 +47,20 @@ This proves local migration marker/registry readback only. It does not prove
 physical disk-exhaustion recovery, production backup operations, Keychain
 deployment, installed service recovery, or final release acceptance. Those
 gates remain fail-closed and incomplete.
+
+## Legacy Request and Job layout readback
+
+At implementation revision `a26e6d8`, temporary physical-host checks opened
+legacy Request and Job SQLite layouts with the current `BrokerStore`.
+
+- A legacy `requests` row remained readable with `approvalId: null` and
+  `jobId: null`; the migrated table contained 17 columns.
+- A legacy `jobs` row remained readable without fabricated write or privileged
+  metadata; the migrated table contained 31 columns including lease fields.
+- The complete post-migration schema-layout guard accepted both migrated
+  databases and still rejects unknown columns.
+
+This additional check is temporary local SQLite evidence, not production
+backup-restore, disk-failure, crash-recovery, or cross-version upgrade/rollback
+acceptance. No production database, service, or privileged operation was
+touched.
