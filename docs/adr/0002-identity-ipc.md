@@ -130,6 +130,12 @@ socket device/inode identity after connect before sending a signed request;
 this complements, but does not replace, native peer identity and response HMAC
 verification.
 
+Revision `ea50824` applies the same post-read descriptor identity check to the
+Edge authentication-key metadata reader. Device, inode, owner, mode, size,
+mtime, and ctime must remain stable after reading; changed bytes are wiped and
+rejected before Edge key activation. This closes only the local read window and
+does not establish installed cross-process key distribution.
+
 Revision `a26a188` adds a bounded, read-only Swift standard-library probe for
 the `jcs-utf8-v1` canonical JSON vectors. It independently reproduces
 ECMAScript escaping, UTF-16 property ordering, UTF-8 digest bytes, and the

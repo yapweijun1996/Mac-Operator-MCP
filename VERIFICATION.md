@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Protected descriptor readback verification at source revision `ea50824`:
+protected policy and key metadata readers now perform a post-read descriptor
+identity check covering device, inode, owner, mode, size, mtime, and ctime;
+changed or oversized content is wiped and rejected before parsing or key
+activation. Focused protected-reader tests pass 38/38, and the serial physical
+regression passes 652/657 with 0 failures and 5 explicit
+descriptor-capability skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes the protected read-window race only;
+atomic executable selection, remount resistance, production isolation,
+installed signing, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-protected-descriptor-readback.md`.
+
 Descriptor child-handle validation verification at source revision `537bb37`:
 the Broker validates a future native launcher result as a ChildProcess-like
 handle before capture, identity observation, or cleanup. Invalid shapes fail

@@ -74,6 +74,12 @@ validity window expires. The factory checks before issuing; the IPC server
 checks before replay admission and authority/dispatch. This remains disabled
 helper lifecycle evidence and does not enable privileged operations.
 
+Revision `ea50824` extends the protected helper-key metadata reader with a
+post-read descriptor identity check covering owner, mode, size, mtime, and
+ctime, wiping changed bytes before parsing. This closes the helper-key
+read-window race only; helper signing, root-domain installation, and live
+privileged enablement remain open.
+
 Revision `4afbe75` adds a host-only plist apply primitive for the helper
 package. It requires explicit operation confirmation and root ownership,
 reuses the descriptor-relative native writer, binds target device/inode

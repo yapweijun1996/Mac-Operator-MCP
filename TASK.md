@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-080/081/084/085/086 protected descriptor readback addendum at source
+revision `ea50824`: all protected policy and key metadata readers perform a
+post-read descriptor identity/metadata check and wipe changed or oversized
+bytes before parsing. Focused protected-reader tests pass 38/38; the serial
+physical regression passes 652/657 with 0 failures and 5 explicit
+descriptor-capability skips. Atomic executable selection, remount, production
+isolation, signing, and enablement gates remain open. Evidence:
+`evidence/2026-09-16-protected-descriptor-readback.md`.
+
 MOP-045 descriptor child-handle validation addendum at source revision
 `537bb37`: the future native launcher result is validated as a
 ChildProcess-like handle before output, identity, or cleanup handling. Invalid

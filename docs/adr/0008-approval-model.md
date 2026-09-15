@@ -36,6 +36,12 @@ The Broker-owned SQLite prototype persists the proposed binding fields and accep
 
 This does not accept the ADR. The issuer channel is a disabled prototype with injected HMAC keys and a separate owner-only local IPC socket. Issuer-key files now use protected owner-only loading/provisioning and durable `approval_key` revocation before retirement. A versioned owner-only metadata config atomically rotates and reloads non-secret key paths with canonical revision/digest readback; BrokerStore activation history and audited intent/completion reject revision rollback and make startup restore exact. This remains an activation guard rather than Keychain-backed secret distribution or installed-service identity. Keychain storage, human UI/preview delivery, unattended-profile authority, batch approvals, privileged-helper integration, and active-work revocation semantics beyond the pre-dispatch gate remain open. Its versioned envelope is materialized in `schemas/approval-issuance.schema.json`.
 
+Revision `ea50824` extends the approval issuer-key metadata reader with a
+post-read descriptor identity check and byte wipe on change. This prevents an
+in-place config mutation from being parsed during the protected read window;
+it does not provide the missing human approval channel or production issuer
+key distribution.
+
 The disabled-by-default `mac_ui_type` implementation now uses the same
 single-use `trusted_gui` approval binding as `mac_ui_action`. Its bounded text
 payload is delivered over a Broker-owned stdin channel rather than argv and is

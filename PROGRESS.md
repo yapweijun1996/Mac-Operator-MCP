@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Protected descriptor readback addendum at source revision `ea50824`: policy,
+Edge-key, approval-key, policy-signer, authority-control, privileged-helper,
+and guest-attestation readers now compare descriptor identity and metadata
+after reading. In-place changes or size violations wipe the read bytes and
+fail before parsing or key activation. Focused protected-reader tests pass
+38/38; the serial physical regression passes 652/657 with 0 failures and 5
+explicit descriptor-capability skips. This closes the read-window race only;
+atomic executable selection, remount resistance, production isolation,
+installed signing, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-protected-descriptor-readback.md`.
+
 Descriptor child-handle validation addendum at source revision `537bb37`:
 native launcher results are validated as ChildProcess-like handles before
 output capture, process identity observation, or cleanup; malformed native

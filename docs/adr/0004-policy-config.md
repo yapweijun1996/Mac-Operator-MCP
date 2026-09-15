@@ -37,6 +37,14 @@ Policy activation identity is persisted with audit intent and completion in the 
 
 The candidate passes schema, tamper, weak-permission, symlink, per-key public-key digest, downgrade, unimplemented-enable, deny-over-allow, static kill-switch, transactional activation, restart-match, explicit rollback, stale-request-policy, protected multi-key loading, signer validity-window, unknown-key, durable activation/restore/reload, audited revocation, verified-history rollback, replay-bound HMAC operator-channel, peer-denial, and revocation migration tests. This ADR remains `Proposed`: installed startup wiring, native caller/process identity packaging, crash injection, general migration, Keychain distribution, and production cross-runtime adapter evidence are still required before acceptance.
 
+Revision `ea50824` adds a shared post-read descriptor check for the policy
+file, Edge/approval/authority/helper key metadata, signer public keys, and
+guest-attestation public keys. The reader compares device, inode, owner, mode,
+size, mtime, and ctime after reading and wipes changed or oversized bytes
+before parsing or activation. This closes an in-place read-window race only;
+it does not change the signed-policy model or close production distribution and
+installation gates.
+
 Revision `a26a188` provides an independent bounded native Swift readback of
 the canonical JSON vector set, including Unicode ordering and SHA-256 bytes.
 It strengthens cross-runtime evidence for the serialization profile but does
