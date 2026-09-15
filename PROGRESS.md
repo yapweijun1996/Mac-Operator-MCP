@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Serial physical regression addendum: source revision `54d4590` passes 637/637
+non-overlapping tests with 0 skipped and 0 failed under install, sandbox, and
+Keychain opt-ins with serial execution. The run includes exact native Node
+runtime binding, native IPC, filesystem/write recovery, process supervision,
+sandbox, helper, GUI, virtualization, packaged LaunchAgent, and HTTPS Edge
+boundaries; the three pre-existing long-running suites were excluded and left
+undisturbed. Evidence:
+`evidence/2026-09-15-serial-physical-regression-native-node-runtime.md`.
+
 Native Node runtime-binding addendum: source revision `54d4590` makes all three
 Broker native addons export their build-time Node version and requires exact
 equality with the running `process.versions.node`, in addition to N-API

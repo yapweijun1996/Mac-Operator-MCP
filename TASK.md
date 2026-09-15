@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+MOP-007 physical regression addendum: source revision `54d4590` passes 637/637
+non-overlapping tests with 0 skipped and 0 failed under the install, sandbox,
+and Keychain opt-ins with serial execution. Exact native Node runtime binding,
+native IPC, filesystem/write recovery, process supervision, sandbox, helper,
+GUI, virtualization, packaged LaunchAgent, and HTTPS Edge boundaries are
+covered; the three pre-existing long-running suites were excluded and left
+untouched. Evidence:
+`evidence/2026-09-15-serial-physical-regression-native-node-runtime.md`.
+
 Native Node runtime-binding addendum: commit `54d4590` exports the exact
 build-time Node version from the peer-credentials, read-only virtualization,
 and virtualization lifecycle addons. Loaders require exact equality with the

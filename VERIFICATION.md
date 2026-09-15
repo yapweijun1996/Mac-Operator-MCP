@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Serial physical-Darwin regression at source revision `54d4590` passes 637/637
+non-overlapping tests with 0 skips and 0 failures under the install, sandbox,
+and Keychain opt-ins, serializing execution. The run includes the exact native
+Node runtime binding and all existing native IPC, filesystem, process,
+sandbox, helper, GUI, virtualization, packaged-service, and HTTPS Edge
+boundaries. The three existing long-running suites were excluded without
+interruption. Evidence:
+`evidence/2026-09-15-serial-physical-regression-native-node-runtime.md`.
+
 Native Node runtime-binding verification at source revision `54d4590`: all
 three Broker native addons export the build-time Node version and each loader
 requires exact equality with the running `process.versions.node` after the
