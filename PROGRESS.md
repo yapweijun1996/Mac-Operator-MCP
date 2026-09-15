@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Guest image binding addendum at source revision `e613a5a`:
+`VirtualizationTaskRunner` now copies and recursively freezes the startup-bound
+`LoadedVirtualizationGuestImage` (path, Guest identity, publication, and
+captured device/inode/size) before retaining it across asynchronous dispatch
+and recovery. Focused task-runner tests pass 13/13; the serial physical
+regression passes 666/671 with 0 failures and 5 explicit descriptor-capability
+skips. Evidence:
+`evidence/2026-09-16-guest-image-binding-snapshot.md`.
+
 Guest admission evidence addendum at source revision `b726d69`:
 `VirtualizationGuestTransportExecutor` now recursively freezes the bounded
 guest-request admission snapshot before Job persistence callbacks receive it,

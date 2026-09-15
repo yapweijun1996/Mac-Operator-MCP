@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045/086 Guest image binding addendum at source revision `e613a5a`:
+`VirtualizationTaskRunner` copies and recursively freezes the startup-bound
+guest image path, identity, publication class, and captured device/inode/size
+before asynchronous dispatch and recovery. Focused task-runner tests pass
+13/13; the serial physical regression passes 666/671 with 0 failures and 5
+explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-image-binding-snapshot.md`.
+
 MOP-086/012 Guest admission evidence addendum at source revision `b726d69`:
 the guest transport freezes its bounded admission snapshot before Broker Job
 persistence callbacks, preventing request/nonce/digest, identity, task-digest,

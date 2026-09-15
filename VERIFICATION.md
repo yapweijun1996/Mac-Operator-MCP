@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest image binding verification at source revision `e613a5a`:
+`VirtualizationTaskRunner` retains a copied, recursively frozen startup image
+binding; negative coverage proves path and nested identity mutation attempts
+fail at runtime. Focused task-runner tests pass 13/13; the serial physical
+regression passes 666/671 with 0 failures and 5 explicit descriptor-capability
+skips. The three pre-existing long-running suites were excluded and left
+untouched. This closes post-constructor in-process image binding mutation only;
+native VM descriptor pinning, remount resistance, signed provenance, and
+production virtualization remain open. Evidence:
+`evidence/2026-09-16-guest-image-binding-snapshot.md`.
+
 Guest admission evidence verification at source revision `b726d69`:
 `VirtualizationGuestTransportExecutor` recursively freezes the bounded guest
 request admission snapshot before Broker Job persistence callbacks. Negative
