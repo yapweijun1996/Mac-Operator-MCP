@@ -66,6 +66,12 @@ export class VirtualizationGuestVmLifecycle {
   private readonly startTimeoutMs: number;
   private readonly stopTimeoutMs: number;
   private queue = Promise.resolve();
+  /**
+   * Native lifecycle calls may ignore AbortSignal after a caller timeout.
+   * Keep that operation fenced until its promise settles so a later status or
+   * transition cannot overlap an unknown VM mutation.
+   */
+  private activeOperation: Promise<unknown> | undefined;
   private currentState: VirtualizationGuestVmState;
   private currentBootId: string | null = null;
   private closed = false;
@@ -258,6 +264,9 @@ export class VirtualizationGuestVmLifecycle {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest VM lifecycle is closed");
     }
     if (!this.available) throw new BrokerError("POLICY_DENIED", "Virtualization guest VM lifecycle is not enabled");
+    if (this.activeOperation !== undefined) {
+      throw new BrokerError("UNKNOWN_OUTCOME", "Virtualization guest VM operation is still settling", true);
+    }
     if (!sameVirtualizationGuestIdentity(this.expectedGuestIdentity, this.adapter.guestIdentity)) {
       this.currentState = "unknown";
       this.currentBootId = null;
@@ -284,8 +293,14 @@ export class VirtualizationGuestVmLifecycle {
       timeoutController.abort();
       rejectAbort?.(new BrokerError("TIMEOUT", `Virtualization guest VM ${operationName} exceeded its execution budget`, true));
     }, timeoutMs);
+    const operationPromise = Promise.resolve().then(() => operation(combinedSignal));
+    this.activeOperation = operationPromise;
+    const clearActiveOperation = (): void => {
+      if (this.activeOperation === operationPromise) this.activeOperation = undefined;
+    };
+    operationPromise.then(clearActiveOperation, clearActiveOperation);
     try {
-      return await Promise.race([operation(combinedSignal), abortResult]);
+      return await Promise.race([operationPromise, abortResult]);
     } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       if (callerSignal !== undefined) callerSignal.removeEventListener("abort", callerAbort);

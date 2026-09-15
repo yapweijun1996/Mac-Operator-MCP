@@ -129,6 +129,43 @@ test("VM lifecycle maps timeout and cancellation to unknown recovery state", asy
   assert.equal(cancelled.state, "stopped");
 });
 
+test("VM lifecycle fences a timed-out native operation until it settles", async () => {
+  let releaseStart: (() => void) | undefined;
+  let startCalls = 0;
+  const delayedStart = new Promise<VirtualizationGuestVmStartResult>((resolve) => {
+    releaseStart = () => resolve({ state: "running", guestIdentity, bootId });
+  });
+  const lifecycle = new VirtualizationGuestVmLifecycle({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    expectedGuestIdentity: guestIdentity,
+    adapter: adapterFixture({
+      start: async () => {
+        startCalls += 1;
+        return delayedStart;
+      },
+      status: async () => ({ state: "stopped", guestIdentity, bootId: null })
+    }),
+    startTimeoutMs: 10,
+    stopTimeoutMs: 100
+  });
+
+  await assert.rejects(
+    lifecycle.start(),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "TIMEOUT"
+  );
+  await assert.rejects(
+    lifecycle.status(),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable === true
+  );
+  assert.equal(startCalls, 1);
+
+  releaseStart?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  const recovered = await lifecycle.status();
+  assert.equal(recovered.state, "stopped");
+});
+
 test("VM lifecycle close drains a running adapter and rejects new work", async () => {
   let closed = 0;
   let stopped = 0;
