@@ -12,6 +12,27 @@ const CWD = process.cwd();
 test("process supervisor rejects invalid per-executable capacity", () => {
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 0 }), /limits are outside/u);
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 65 }), /limits are outside/u);
+  assert.throws(() => new ProcessSupervisor({ requireDescriptorExecution: "yes" as never }), /limits are outside/u);
+});
+
+test("process supervisor denies descriptor-required admission before spawning", async () => {
+  const supervisor = new ProcessSupervisor({ requireDescriptorExecution: true });
+  let started = false;
+  await assert.rejects(
+    supervisor.run({
+      executable: "/usr/bin/true",
+      args: [],
+      cwd: CWD,
+      timeoutMs: 1_000,
+      outputCapBytes: 100,
+      onStarted: () => { started = true; }
+    }),
+    (error: unknown) => error instanceof BrokerError &&
+      error.errorClass === "POLICY_DENIED" &&
+      error.message === "Kernel descriptor executable launch is unavailable"
+  );
+  assert.equal(started, false);
+  assert.equal(supervisor.activeCount(), 0);
 });
 
 test("process supervisor rejects non-data request shapes before spawning", async () => {

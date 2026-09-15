@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
+import { requireProcessDescriptorExecution } from "./process-launch-capability.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { isPlainDataRecord } from "./plain-record.js";
@@ -164,6 +165,12 @@ export interface ProcessSupervisorOptions {
   allowedEnvironmentKeys?: readonly string[];
   /** Require executable files to be owned by root for fixed host adapters. */
   requireRootOwnedExecutable?: boolean;
+  /**
+   * Require a host-proven kernel descriptor-exec boundary before admission.
+   * This is Broker-owned configuration; request arguments cannot enable or
+   * disable it. When unavailable, no child process is started.
+   */
+  requireDescriptorExecution?: boolean;
 }
 
 export type ProcessExecutionState = "completed" | "failed" | "cancelled" | "timed_out" | "unknown";
@@ -196,6 +203,7 @@ export class ProcessSupervisor {
   private readonly terminationGraceMs: number;
   private readonly allowedEnvironmentKeys: ReadonlySet<string>;
   private readonly requireRootOwnedExecutable: boolean;
+  private readonly requireDescriptorExecution: boolean;
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
@@ -206,11 +214,13 @@ export class ProcessSupervisor {
     this.terminationGraceMs = options.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS;
     this.allowedEnvironmentKeys = new Set(options.allowedEnvironmentKeys ?? []);
     this.requireRootOwnedExecutable = options.requireRootOwnedExecutable ?? false;
+    this.requireDescriptorExecution = options.requireDescriptorExecution ?? false;
     if (!Number.isSafeInteger(this.maxConcurrent) || this.maxConcurrent < 1 || this.maxConcurrent > 64 ||
         !Number.isSafeInteger(this.maxConcurrentPerExecutable) || this.maxConcurrentPerExecutable < 1 || this.maxConcurrentPerExecutable > 64 ||
         !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 5 || this.pollIntervalMs > 1_000 ||
         !Number.isSafeInteger(this.terminationGraceMs) || this.terminationGraceMs < 25 || this.terminationGraceMs > 10_000 ||
-        typeof this.requireRootOwnedExecutable !== "boolean") {
+        typeof this.requireRootOwnedExecutable !== "boolean" ||
+        typeof this.requireDescriptorExecution !== "boolean") {
       throw new Error("Process supervisor limits are outside the supported range");
     }
     for (const key of this.allowedEnvironmentKeys) validateEnvironmentKey(key);
@@ -222,6 +232,7 @@ export class ProcessSupervisor {
     // environment while validation is in flight and change what gets spawned.
     const safeRequest = snapshotProcessRequest(request);
     const validatedPaths = await validateRequest(safeRequest, this.allowedEnvironmentKeys, this.requireRootOwnedExecutable);
+    if (this.requireDescriptorExecution) requireProcessDescriptorExecution();
     if (this.closing) {
       throw new BrokerError("CANCELLED", "Process authority is closed");
     }

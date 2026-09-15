@@ -190,7 +190,11 @@ export class SandboxExecTaskRunner implements TaskRunner {
       : validateTaskIsolationProof(options.isolationProof);
     this.isolationProof = proof;
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
-      allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? []
+      allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? [],
+      // A host sandbox is not a complete executable-selection boundary. Keep
+      // production task admission closed until the native descriptor launcher
+      // is available and independently attested.
+      requireDescriptorExecution: true
     });
     this.sandboxProfileOptions = normalizeTaskSandboxProfileOptions({
       ...(options.protectedFilesystemRoots === undefined ? {} : { protectedFilesystemRoots: [...options.protectedFilesystemRoots] })
