@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest-profile boundary addendum: commit `5f67e18` validates startup-owned
+Virtualization guest profiles and unsigned digest-bound requests as plain
+records with exact known fields. Dense bounded arrays and plain environment
+data are required before digest lookup or asynchronous target readback;
+prototype, accessor, hidden/symbolic, sparse, unknown-field, and inherited
+authority shapes fail closed. The focused guest executor suite passes 10/10;
+the non-overlapping package regression passes 516 total (510 pass, 6 skipped,
+0 fail). This proves manifest/request representation integrity only; it does
+not prove native attestation production, VM boot/isolation, credential or
+persistence isolation, or task enablement.
+Evidence: `evidence/2026-09-15-guest-profile-boundary.md`.
+
 Process-request snapshot addendum: commit `aa8040e` takes a synchronous
 snapshot of the plain, exact-shape ProcessSupervisor request before any
 asynchronous target identity check. Subsequent spawn, capacity, environment,

@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-profile boundary addendum: commit `5f67e18` applies strict plain-record,
+known-field, dense-array, and bounded-collection checks to startup-owned guest
+profiles and digest-bound guest task requests. Inherited/accessor/symbolic,
+sparse, unknown, and malformed environment data fails closed before profile
+resolution or target readback. Focused guest executor tests pass 10/10; the
+non-overlapping package regression passes 516 total (510 pass, 6 skipped,
+0 fail). Native attestation, VM, credential, persistence, and
+`mac_task_run` enablement evidence remains open.
+Evidence: `evidence/2026-09-15-guest-profile-boundary.md`.
+
 Process-request snapshot addendum: commit `aa8040e` copies the complete
 validated ProcessSupervisor request before asynchronous path identity checks.
 All spawn, budget, environment, callback, stability, and cancellation logic

@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-profile boundary addendum: source revision `5f67e18` hardens the
+startup-owned Virtualization guest profile registry and task request parser.
+Profiles and requests must be plain records with known fields; executable,
+cwd, filesystem-root, argument, network, and environment collections reject
+symbolic, inherited, accessor, sparse, and oversized shapes before digest
+resolution or target readback. The focused guest executor suite passes 10/10;
+the non-overlapping package regression passes 516 total (510 pass, 6 skipped,
+0 fail). This closes guest manifest representation integrity only; native
+attestation production, VM isolation, credentials, persistence, and
+`mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-guest-profile-boundary.md`.
+
 Process-request snapshot addendum: source revision `aa8040e` snapshots the
 validated ProcessSupervisor request before the first asynchronous executable
 or cwd identity check. The spawn path, capacity keys, environment, callbacks,
