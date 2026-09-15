@@ -2858,3 +2858,10 @@ corruption tests pass 14/14 with stable `AUDIT_UNAVAILABLE` on malformed rows.
 Protected production Keychain/cross-process storage, human approval UI,
 unattended ownership, and ADR acceptance remain open. Evidence:
 `evidence/2026-09-15-approval-row-invariants.md`.
+
+The non-overlapping package regression after the Approval readback change
+reports 563 tests total (557 passed, 6 explicitly skipped, 0 failed). The
+already-running `broker.test.js` and `persistence.test.js` processes were
+excluded, so this is a bounded regression result rather than a claim about a
+fresh full-suite run. Evidence:
+`evidence/2026-09-15-approval-row-invariants.md`.

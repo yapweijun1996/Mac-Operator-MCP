@@ -1643,9 +1643,10 @@ persisted Approval rows before they influence intent admission, consumption,
 status readback, or revocation. Single-use counters, timestamp/expiry order,
 consumption and revocation pairing, bounded identity/target/digest fields, and
 revision values fail closed as `AUDIT_UNAVAILABLE`; focused approval authority
-and corruption tests pass 14/14. Protected production Keychain/cross-process
-storage, human approval UI, unattended ownership, and ADR acceptance remain
-open.
+and corruption tests pass 14/14. The non-overlapping package regression reports
+563 tests total (557 passed, 6 explicitly skipped, 0 failed). Protected
+production Keychain/cross-process storage, human approval UI, unattended
+ownership, and ADR acceptance remain open.
 
 Source revision `a1bd63c` additionally verifies that an already-created
 key-manager server rejects status reads immediately after helper-key revocation;

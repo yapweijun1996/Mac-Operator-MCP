@@ -3195,3 +3195,9 @@ approval authority and corruption tests pass 14/14; protected production
 Keychain/cross-process storage, human approval UI, unattended ownership, and
 ADR acceptance remain open. Evidence:
 `evidence/2026-09-15-approval-row-invariants.md`.
+
+The non-overlapping package regression after the Approval readback change
+reports 563 tests total (557 passed, 6 explicitly skipped, 0 failed). The
+existing `broker.test.js` and `persistence.test.js` processes were excluded
+because they were already running; no test was restarted or killed. Evidence:
+`evidence/2026-09-15-approval-row-invariants.md`.
