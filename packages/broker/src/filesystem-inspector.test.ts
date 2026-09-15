@@ -10,7 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
-import { FilesystemInspector } from "./filesystem-inspector.js";
+import { FilesystemInspector, type FilesystemNativeAdapter } from "./filesystem-inspector.js";
 
 const require = createRequire(import.meta.url);
 
@@ -93,6 +93,40 @@ test("descriptor-backed metadata returns the opened target identity", async () =
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("filesystem native metadata and volume results reject unstable authority fields", () => {
+  const rootPath = "/tmp/mac-operator-native-shape-root";
+  const volume = {
+    rootPath,
+    id: "dev:1:fsid:1:1",
+    name: "test",
+    mountPath: "/tmp",
+    totalBytes: 1_000_000,
+    availableBytes: 500_000,
+    usedBytes: 500_000
+  };
+  const metadata = {
+    rootPath,
+    path: `${rootPath}/file.txt`,
+    type: "file" as const,
+    sizeBytes: 1,
+    modifiedAtMs: 0,
+    mode: "0600",
+    isSymlink: false,
+    device: "1",
+    inode: "2"
+  };
+  const native = {
+    statStorageVolumeWithinRoot: () => volume,
+    statPathWithinRoot: () => ({ ...metadata, extra: "authority" })
+  } as unknown as FilesystemNativeAdapter;
+  const inspector = new FilesystemInspector([rootPolicy(rootPath)], native);
+  assert.throws(() => inspector.statPath(metadata.path), /escaped its authorized root or volume/u);
+
+  const volumeWithExtra = { ...volume, extra: "authority" };
+  const volumeNative = { ...native, statStorageVolumeWithinRoot: () => volumeWithExtra } as unknown as FilesystemNativeAdapter;
+  assert.throws(() => new FilesystemInspector([rootPolicy(rootPath)], volumeNative).planPath(metadata.path), /volume identity could not be established/u);
 });
 
 test("descriptor-backed atomic write creates and verifies a file", async () => {
@@ -1059,6 +1093,10 @@ test("descriptor-backed atomic write resists a directory rename and replacement 
 
 function root(path: string) {
   return { rootId: "test-root", path, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+}
+
+function rootPolicy(path: string) {
+  return { rootId: "native-shape-root", path, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
 }
 
 function writeRoot(path: string) {

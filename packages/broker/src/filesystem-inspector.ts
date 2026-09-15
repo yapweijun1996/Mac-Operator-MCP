@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
 
 export interface FilesystemRootPolicy {
@@ -1253,14 +1254,22 @@ export class FilesystemInspector {
 }
 
 function parseNativeRead(value: unknown): { rootPath: string; path: string; content: Buffer; sizeBytes: number; truncated: boolean; device: string; inode: string } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native read");
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, ["rootPath", "path", "content", "sizeBytes", "truncated", "device", "inode"])) throw new Error("Malformed native read");
   const record = value as Record<string, unknown>;
   if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
       typeof record.path !== "string" || !isAbsolute(record.path) || !Buffer.isBuffer(record.content) ||
       !Number.isSafeInteger(record.sizeBytes) || (record.sizeBytes as number) < 0 || (record.sizeBytes as number) > 1_000_000_000 ||
       typeof record.truncated !== "boolean" || typeof record.device !== "string" || !/^\d+$/u.test(record.device) ||
       typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)) throw new Error("Malformed native read");
-  return record as { rootPath: string; path: string; content: Buffer; sizeBytes: number; truncated: boolean; device: string; inode: string };
+  return {
+    rootPath: record.rootPath,
+    path: record.path,
+    content: Buffer.from(record.content),
+    sizeBytes: record.sizeBytes as number,
+    truncated: record.truncated,
+    device: record.device,
+    inode: record.inode
+  };
 }
 
 function parseNativeHash(value: unknown): {
@@ -1272,7 +1281,7 @@ function parseNativeHash(value: unknown): {
   device: string;
   inode: string;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native hash");
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, ["rootPath", "path", "algorithm", "digest", "sizeBytes", "device", "inode"])) throw new Error("Malformed native hash");
   const record = value as Record<string, unknown>;
   if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
       typeof record.path !== "string" || !isAbsolute(record.path) ||
@@ -1285,14 +1294,14 @@ function parseNativeHash(value: unknown): {
       typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)) {
     throw new Error("Malformed native hash");
   }
-  return record as {
-    rootPath: string;
-    path: string;
-    algorithm: "sha256" | "sha512";
-    digest: string;
-    sizeBytes: number;
-    device: string;
-    inode: string;
+  return {
+    rootPath: record.rootPath,
+    path: record.path,
+    algorithm: record.algorithm as "sha256" | "sha512",
+    digest: record.digest,
+    sizeBytes: record.sizeBytes as number,
+    device: record.device,
+    inode: record.inode
   };
 }
 
@@ -1302,17 +1311,17 @@ function parseNativeDirectoryListing(value: unknown): {
   entries: SafeDirectoryEntry[];
   nextCursor: string | null;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native directory listing");
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, ["rootPath", "path", "entries", "nextCursor"])) throw new Error("Malformed native directory listing");
   const record = value as Record<string, unknown>;
   if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
       typeof record.path !== "string" || !isAbsolute(record.path) ||
-      !Array.isArray(record.entries) || record.entries.length > 501 ||
+      !isDenseNativeArray(record.entries, 501) ||
       (record.nextCursor !== null && typeof record.nextCursor !== "string")) {
     throw new Error("Malformed native directory listing");
   }
   const entries: SafeDirectoryEntry[] = [];
   for (const value of record.entries) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native directory entry");
+    if (!isPlainDataRecord(value) || !hasExactNativeFields(value, ["name", "type", "sizeBytes", "modifiedAtMs", "hidden"])) throw new Error("Malformed native directory entry");
     const entry = value as Record<string, unknown>;
     if (typeof entry.name !== "string" || entry.name.length === 0 || entry.name.length > 1024 ||
         entry.name.includes("\0") || entry.name.includes("/") ||
@@ -1348,7 +1357,7 @@ function parseNativeWrite(value: unknown): {
   inode: string;
   readback: Buffer;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native write");
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, ["rootPath", "path", "bytesWritten", "sha256", "created", "device", "inode", "readback"])) throw new Error("Malformed native write");
   const record = value as Record<string, unknown>;
   if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
       typeof record.path !== "string" || !isAbsolute(record.path) ||
@@ -1358,7 +1367,16 @@ function parseNativeWrite(value: unknown): {
       typeof record.inode !== "string" || !/^\d+$/u.test(record.inode) || !Buffer.isBuffer(record.readback)) {
     throw new Error("Malformed native write");
   }
-  return record as unknown as { rootPath: string; path: string; bytesWritten: number; sha256: string; created: boolean; device: string; inode: string; readback: Buffer };
+  return {
+    rootPath: record.rootPath,
+    path: record.path,
+    bytesWritten: record.bytesWritten as number,
+    sha256: record.sha256,
+    created: record.created,
+    device: record.device,
+    inode: record.inode,
+    readback: Buffer.from(record.readback)
+  };
 }
 
 function parseNativeUnlink(value: unknown): {
@@ -1368,7 +1386,7 @@ function parseNativeUnlink(value: unknown): {
   device: string;
   inode: string;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native unlink");
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, ["rootPath", "path", "removed", "device", "inode"])) throw new Error("Malformed native unlink");
   const record = value as Record<string, unknown>;
   if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
       typeof record.path !== "string" || !isAbsolute(record.path) ||
@@ -1377,7 +1395,28 @@ function parseNativeUnlink(value: unknown): {
       typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)) {
     throw new Error("Malformed native unlink");
   }
-  return record as { rootPath: string; path: string; removed: boolean; device: string; inode: string };
+  return {
+    rootPath: record.rootPath,
+    path: record.path,
+    removed: record.removed,
+    device: record.device,
+    inode: record.inode
+  };
+}
+
+function hasExactNativeFields(value: Record<string, unknown>, required: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === required.length && required.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isDenseNativeArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
+      Object.keys(value).length !== value.length || Object.getOwnPropertyNames(value).length !== value.length + 1) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) return false;
+  }
+  return true;
 }
 
 function normalizeRelative(path: string): string {
@@ -1462,7 +1501,9 @@ function isRelativeContained(root: string, target: string): boolean {
 }
 
 function parseNativeMetadata(value: unknown): NativePathMetadata {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native metadata");
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, [
+    "rootPath", "path", "type", "sizeBytes", "modifiedAtMs", "mode", "isSymlink", "device", "inode"
+  ])) throw new Error("Malformed native metadata");
   const record = value as Record<string, unknown>;
   const allowedTypes = new Set(["file", "directory", "symlink", "other"]);
   if (
@@ -1475,11 +1516,23 @@ function parseNativeMetadata(value: unknown): NativePathMetadata {
     typeof record.device !== "string" || !/^\d+$/u.test(record.device) ||
     typeof record.inode !== "string" || !/^\d+$/u.test(record.inode)
   ) throw new Error("Malformed native metadata");
-  return record as unknown as NativePathMetadata;
+  return {
+    rootPath: record.rootPath,
+    path: record.path,
+    type: record.type as NativePathMetadata["type"],
+    sizeBytes: record.sizeBytes,
+    modifiedAtMs: record.modifiedAtMs,
+    mode: record.mode,
+    isSymlink: record.isSymlink,
+    device: record.device,
+    inode: record.inode
+  };
 }
 
 function parseNativeStorageVolume(value: unknown): NativeStorageVolume {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Malformed native storage volume");
+  if (!isPlainDataRecord(value) || !hasExactNativeFields(value, [
+    "rootPath", "id", "name", "mountPath", "totalBytes", "availableBytes", "usedBytes"
+  ])) throw new Error("Malformed native storage volume");
   const record = value as Record<string, unknown>;
   if (typeof record.rootPath !== "string" || !isAbsolute(record.rootPath) ||
       typeof record.id !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/u.test(record.id) ||
