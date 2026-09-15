@@ -369,8 +369,16 @@ export class Broker {
         if (priorCompletion === "PROCESS_DRAINED") drained += 1;
         else if (priorCompletion === "PROCESS_ABSENT") absent += 1;
         else if (priorCompletion === "PROCESS_IDENTITY_MISMATCH") identityMismatch += 1;
-        else unknown += 1;
-        continue;
+        // A recovery observer failure is not terminal. Retry on a later
+        // startup using the same persisted PID/start-time identity; never
+        // promote the Job and never issue a fresh task execution request.
+        if (priorCompletion === "PROCESS_RECOVERY_UNKNOWN") {
+          // Continue below and record the fresh observation only.
+        } else {
+          if (priorCompletion !== "PROCESS_DRAINED" && priorCompletion !== "PROCESS_ABSENT" &&
+              priorCompletion !== "PROCESS_IDENTITY_MISMATCH") unknown += 1;
+          continue;
+        }
       }
       if (!this.options.store.auditEventExists(auditRequestId, "intent")) {
         this.options.store.appendAudit({

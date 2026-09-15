@@ -295,6 +295,78 @@ test("restarted Broker recovers an exact task process identity without resolving
   }
 });
 
+test("restarted Broker retries an observer-unknown process recovery on a later startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-process-recovery-retry-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const nowMs = Date.now() - 10_000;
+  let store = new BrokerStore(databasePath);
+  const key = randomBytes(32);
+  const policy = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const lease = {
+    ownerId: "broker:recovery-retry",
+    token: "lease:recovery-retry-1234",
+    expiresAtMs: nowMs + 30_000
+  };
+  let broker: Broker | undefined;
+  try {
+    store.createJob({
+      jobId: "job:task-process-recovery-retry",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task_profile:tests.echo",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "task-process-recovery-retry",
+      createdAtMs: nowMs
+    });
+    const started = store.startJob("job:task-process-recovery-retry", "principal-1", 0, nowMs + 1, lease);
+    store.recordJobProcessOwnership(
+      "job:task-process-recovery-retry",
+      "principal-1",
+      started.revision,
+      {
+        pid: 12345,
+        processGroupId: 12345,
+        startTimeMicros: 123456,
+        recordedAtMs: nowMs + 2,
+        descendants: []
+      },
+      lease,
+      nowMs + 2
+    );
+    store.close();
+    store = new BrokerStore(databasePath);
+    const outcomes = [
+      { outcome: "unknown", processId: 12345, processGroupId: 12345, terminationObserved: false },
+      { outcome: "drained", processId: 12345, processGroupId: 12345, terminationObserved: true }
+    ];
+    const recoverySupervisor = {
+      recoverOwnedProcess: async () => outcomes.shift()!
+    } as unknown as ProcessSupervisor;
+    broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), processSupervisor: recoverySupervisor, now: () => nowMs + 10 });
+    assert.deepEqual(await broker.reconcileRestartedTaskProcesses(), {
+      inspected: 1,
+      drained: 0,
+      absent: 0,
+      identityMismatch: 0,
+      unknown: 1
+    });
+    assert.deepEqual(await broker.reconcileRestartedTaskProcesses(), {
+      inspected: 1,
+      drained: 1,
+      absent: 0,
+      identityMismatch: 0,
+      unknown: 0
+    });
+    assert.equal(store.auditEventResult("job-process-recovery-job:task-process-recovery-retry-3", "completion"), "PROCESS_DRAINED");
+  } finally {
+    await broker?.close().catch(() => undefined);
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("restarted Broker reconciles a guest Job only through an authenticated terminal status result", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-job-recovery-"));
   const databasePath = join(directory, "broker.sqlite");
