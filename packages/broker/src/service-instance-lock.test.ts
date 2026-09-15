@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, realpath, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { BrokerServiceInstanceLock, ServiceInstanceLockError } from "./service-instance-lock.js";
+import { BrokerServiceInstanceLock, recoverOrphanedServiceInstanceLock, ServiceInstanceLockError } from "./service-instance-lock.js";
 
 const identity = { pid: 12_345, startTimeMicros: 678_901 };
 
@@ -82,6 +83,47 @@ test("service instance lock refuses to remove a replacement lock on close", asyn
     await assert.rejects(lock.close(), (error: unknown) => error instanceof ServiceInstanceLockError && error.code === "LOCK_CHANGED");
     assert.equal((await lstat(path)).isFile(), true);
     lock = undefined;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("service instance lock orphan recovery requires a stale owner and exact artifact identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-instance-lock-recovery-"));
+  const canonicalDirectory = await realpath(directory);
+  const path = join(canonicalDirectory, "broker.instance.lock");
+  const basenameHash = createHash("sha256").update("broker.instance.lock", "utf8").digest("hex");
+  const staleName = `.mac-operator-lock-removing-${Date.now() - 120_000}-11111111-1111-4111-8111-111111111111-${basenameHash}`;
+  const stalePath = join(canonicalDirectory, staleName);
+  try {
+    await writeFile(stalePath, `${JSON.stringify({ schemaVersion: "0.1", pid: 33_333, startTimeMicros: 111_222 })}\n`, { mode: 0o600 });
+    const staleIdentity = await lstat(stalePath);
+    const recovered = await recoverOrphanedServiceInstanceLock(path, {
+      device: staleIdentity.dev,
+      inode: staleIdentity.ino
+    }, { probe: () => "stale", minAgeMs: 60_000 });
+    assert.equal(recovered.status, "recovered");
+    assert.equal(recovered.quarantinePath, stalePath);
+    await assert.rejects(lstat(stalePath), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT");
+
+    const recentName = `.mac-operator-lock-removing-${Date.now()}-22222222-2222-4222-8222-222222222222-${basenameHash}`;
+    const recentPath = join(canonicalDirectory, recentName);
+    await writeFile(recentPath, `${JSON.stringify({ schemaVersion: "0.1", pid: 33_333, startTimeMicros: 111_222 })}\n`, { mode: 0o600 });
+    const recentIdentity = await lstat(recentPath);
+    const recent = await recoverOrphanedServiceInstanceLock(path, {
+      device: recentIdentity.dev,
+      inode: recentIdentity.ino
+    }, { probe: () => "stale", minAgeMs: 60_000 });
+    assert.equal(recent.status, "not_stale");
+    assert.equal(recent.quarantinePath, recentPath);
+    assert.equal((await lstat(recentPath)).isFile(), true);
+
+    const active = await recoverOrphanedServiceInstanceLock(path, {
+      device: recentIdentity.dev,
+      inode: recentIdentity.ino
+    }, { probe: () => "active", minAgeMs: 60_000 });
+    assert.equal(active.status, "ambiguous");
+    assert.equal((await lstat(recentPath)).isFile(), true);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

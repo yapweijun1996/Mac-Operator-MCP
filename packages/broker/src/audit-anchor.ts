@@ -1,5 +1,5 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { constants, chmodSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { constants, chmodSync, closeSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalJson, parseJsonUtf8Strict } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
@@ -52,6 +52,18 @@ export interface AuditAnchorLockRecoveryResult {
   device: number;
   inode: number;
 }
+
+export interface AuditAnchorLockOrphanRecoveryResult {
+  status: "recovered" | "absent" | "not_stale" | "ambiguous";
+  path: string;
+  lockPath: string;
+  quarantinePath: string | null;
+  device: number;
+  inode: number;
+}
+
+const MIN_ANCHOR_LOCK_RECOVERY_AGE_MS = 1_000;
+const MAX_ANCHOR_LOCK_RECOVERY_AGE_MS = 604_800_000;
 
 /**
  * Keyed, Broker-owned audit tail anchor. The key is supplied by startup code
@@ -170,6 +182,114 @@ export function recoverAuditAnchorLock(
     device: options.expectedLockDevice,
     inode: options.expectedLockInode
   };
+}
+
+/**
+ * Explicitly removes one stale audit-anchor lock quarantine left by a crash.
+ * The host stop gate is mandatory because the lock payload does not carry a
+ * trustworthy process start-time identity of its own.
+ */
+export function recoverAuditAnchorLockOrphan(
+  options: AuditAnchorLockRecoveryOptions & { minAgeMs?: number }
+): AuditAnchorLockOrphanRecoveryResult {
+  validateAnchorPath(options.path);
+  validateLockIdentity(options.expectedLockDevice, options.expectedLockInode);
+  const minAgeMs = options.minAgeMs ?? 60_000;
+  if (!Number.isSafeInteger(minAgeMs) || minAgeMs < MIN_ANCHOR_LOCK_RECOVERY_AGE_MS || minAgeMs > MAX_ANCHOR_LOCK_RECOVERY_AGE_MS) {
+    throw new Error("Audit anchor lock recovery age is malformed");
+  }
+  const anchorPath = canonicalAnchorPath(options.path);
+  validateAnchorDirectory(anchorPath);
+  options.assertServiceStopped();
+  const lockPath = `${anchorPath}.lock`;
+  const parentPath = dirname(lockPath);
+  const parentBefore = protectedDirectoryIdentity(parentPath);
+  const lockBaseName = basename(lockPath);
+  const basenameHash = anchorLockBasenameHash(lockPath);
+  const stale: string[] = [];
+  const recent: string[] = [];
+  const now = Date.now();
+  for (const name of readdirSync(parentPath)) {
+    const createdAt = parseAnchorLockQuarantineTimestamp(name, lockBaseName, basenameHash);
+    if (createdAt === undefined) continue;
+    const candidatePath = join(parentPath, name);
+    let candidate: ReturnType<typeof lstatSync>;
+    try { candidate = lstatSync(candidatePath); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    const uid = process.getuid?.();
+    if (!candidate.isFile() || candidate.isSymbolicLink() || candidate.nlink !== 1 || uid === undefined || candidate.uid !== uid ||
+        (candidate.mode & 0o077) !== 0 || candidate.dev !== options.expectedLockDevice || candidate.ino !== options.expectedLockInode) continue;
+    if (now >= createdAt && now - createdAt >= minAgeMs) stale.push(name);
+    else recent.push(name);
+  }
+  const parentAfter = protectedDirectoryIdentity(parentPath);
+  if (parentBefore.device !== parentAfter.device || parentBefore.inode !== parentAfter.inode) {
+    throw new Error("Audit anchor lock recovery parent changed during scan");
+  }
+  let target: ReturnType<typeof lstatSync> | undefined;
+  try { target = lstatSync(lockPath); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const targetOccupied = target !== undefined && (target.dev !== options.expectedLockDevice || target.ino !== options.expectedLockInode);
+  const makeResult = (status: AuditAnchorLockOrphanRecoveryResult["status"], quarantinePath: string | null): AuditAnchorLockOrphanRecoveryResult => ({
+    status,
+    path: anchorPath,
+    lockPath,
+    quarantinePath,
+    device: options.expectedLockDevice,
+    inode: options.expectedLockInode
+  });
+  if (targetOccupied || stale.length > 1 || recent.length > 1 || (stale.length > 0 && recent.length > 0)) {
+    return makeResult("ambiguous", null);
+  }
+  if (stale.length === 0) {
+    return makeResult(recent.length === 1 ? "not_stale" : "absent", recent.length === 1 ? join(parentPath, recent[0]!) : null);
+  }
+  const candidatePath = join(parentPath, stale[0]!);
+  const parentFinal = protectedDirectoryIdentity(parentPath);
+  if (parentBefore.device !== parentFinal.device || parentBefore.inode !== parentFinal.inode) {
+    throw new Error("Audit anchor lock recovery parent changed before removal");
+  }
+  const current = lstatSync(candidatePath);
+  const uid = process.getuid?.();
+  if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || uid === undefined || current.uid !== uid ||
+      (current.mode & 0o077) !== 0 || current.dev !== options.expectedLockDevice || current.ino !== options.expectedLockInode) {
+    throw new Error("Audit anchor lock recovery artifact changed");
+  }
+  unlinkSync(candidatePath);
+  syncDirectory(parentPath);
+  try { lstatSync(candidatePath); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return makeResult("recovered", candidatePath);
+    throw error;
+  }
+  throw new Error("Audit anchor lock recovery postcondition failed");
+}
+
+function anchorLockBasenameHash(path: string): string {
+  return createHash("sha256").update(basename(path), "utf8").digest("hex");
+}
+
+function parseAnchorLockQuarantineTimestamp(name: string, lockBaseName: string, basenameHash: string): number | undefined {
+  const escapedBaseName = lockBaseName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const escapedHash = basenameHash.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = new RegExp(`^${escapedBaseName}\\.removing-(\\d{1,13})-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-${escapedHash}$`, "u").exec(name);
+  if (!match) return undefined;
+  const timestamp = Number(match[1]);
+  return Number.isSafeInteger(timestamp) ? timestamp : undefined;
+}
+
+function protectedDirectoryIdentity(path: string): { device: number; inode: number } {
+  const directory = lstatSync(path);
+  const uid = process.getuid?.();
+  if (!directory.isDirectory() || directory.isSymbolicLink() || uid === undefined || directory.uid !== uid || (directory.mode & 0o077) !== 0 || realpathSync(path) !== path) {
+    throw new Error("Audit anchor lock recovery parent is not protected");
+  }
+  return { device: directory.dev, inode: directory.ino };
 }
 
 function anchorMac(key: Buffer, keyId: string, sequence: number, eventHash: string): string {
@@ -309,7 +429,7 @@ function removeExactAnchorLock(path: string, device: number, inode: number): voi
   if (!current.isFile() || current.isSymbolicLink() || current.dev !== device || current.ino !== inode) {
     throw new Error("Audit anchor lock ownership changed before removal");
   }
-  const quarantine = `${path}.removing-${randomBytes(12).toString("hex")}`;
+  const quarantine = `${path}.removing-${Date.now()}-${randomUUID()}-${anchorLockBasenameHash(path)}`;
   try {
     renameSync(path, quarantine);
   } catch (error) {

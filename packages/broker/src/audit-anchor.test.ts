@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdtemp, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { AuditAnchorManager, recoverAuditAnchorLock } from "./audit-anchor.js";
+import { AuditAnchorManager, recoverAuditAnchorLock, recoverAuditAnchorLockOrphan } from "./audit-anchor.js";
 
 const key = Buffer.from("audit-anchor-test-key-0123456789abcdef", "ascii");
 const firstHash = "a".repeat(64);
@@ -166,6 +167,58 @@ test("stopped-service audit anchor recovery refuses a replacement lock", {
       /identity precondition/u
     );
     assert.equal((await lstat(lockPath)).isFile(), true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stopped-service audit anchor orphan recovery requires a stale exact artifact", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-orphan-recovery-"));
+  const path = join(await realpath(directory), "audit.anchor");
+  const lockPath = `${path}.lock`;
+  const lockBaseName = "audit.anchor.lock";
+  const basenameHash = createHash("sha256").update(lockBaseName, "utf8").digest("hex");
+  const staleName = `${lockBaseName}.removing-${Date.now() - 120_000}-11111111-1111-4111-8111-111111111111-${basenameHash}`;
+  const stalePath = join(dirname(lockPath), staleName);
+  try {
+    await writeFile(stalePath, "stopped-service-orphan\n", { mode: 0o600 });
+    const staleIdentity = await stat(stalePath);
+    const recovered = recoverAuditAnchorLockOrphan({
+      path,
+      expectedLockDevice: staleIdentity.dev,
+      expectedLockInode: staleIdentity.ino,
+      minAgeMs: 60_000,
+      assertServiceStopped: () => undefined
+    });
+    assert.equal(recovered.status, "recovered");
+    assert.equal(recovered.quarantinePath, stalePath);
+    await assertRejectsMissing(stalePath);
+
+    const recentName = `${lockBaseName}.removing-${Date.now()}-22222222-2222-4222-8222-222222222222-${basenameHash}`;
+    const recentPath = join(dirname(lockPath), recentName);
+    await writeFile(recentPath, "recent\n", { mode: 0o600 });
+    const recentIdentity = await stat(recentPath);
+    const recent = recoverAuditAnchorLockOrphan({
+      path,
+      expectedLockDevice: recentIdentity.dev,
+      expectedLockInode: recentIdentity.ino,
+      minAgeMs: 60_000,
+      assertServiceStopped: () => undefined
+    });
+    assert.equal(recent.status, "not_stale");
+    assert.equal(recent.quarantinePath, recentPath);
+    assert.equal((await lstat(recentPath)).isFile(), true);
+
+    assert.throws(
+      () => recoverAuditAnchorLockOrphan({
+        path,
+        expectedLockDevice: recentIdentity.dev,
+        expectedLockInode: recentIdentity.ino,
+        minAgeMs: 60_000,
+        assertServiceStopped: () => { throw new Error("service is still running"); }
+      }),
+      /service is still running/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

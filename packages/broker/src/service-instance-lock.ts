@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { lstat, open, realpath, rename, unlink } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, open, readdir, realpath, rename, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parseJsonUtf8Strict } from "@mac-operator/contracts";
@@ -45,6 +45,22 @@ interface LockFileRecord {
   fileInode: number;
   document: LockDocument;
 }
+
+export interface ServiceInstanceLockRecoveryResult {
+  status: "recovered" | "absent" | "not_stale" | "ambiguous";
+  path: string;
+  quarantinePath: string | null;
+  identity: FileIdentity;
+}
+
+export interface FileIdentity {
+  device: number;
+  inode: number;
+}
+
+const MIN_LOCK_RECOVERY_AGE_MS = 1_000;
+const MAX_LOCK_RECOVERY_AGE_MS = 604_800_000;
+const LOCK_QUARANTINE_PREFIX = ".mac-operator-lock-removing-";
 
 /**
  * Holds an owner-only, exclusive startup lock for one packaged Broker.
@@ -183,7 +199,7 @@ async function unlinkExactLock(path: string, device: number, inode: number): Pro
   if (!current.isFile() || current.isSymbolicLink() || current.dev !== device || current.ino !== inode) {
     throw new ServiceInstanceLockError("LOCK_CHANGED", "Broker service lock ownership changed");
   }
-  const quarantine = join(dirname(path), `.mac-operator-lock-removing-${randomUUID()}`);
+  const quarantine = join(dirname(path), `${LOCK_QUARANTINE_PREFIX}${Date.now()}-${randomUUID()}-${lockPathBasenameHash(path)}`);
   try {
     await rename(path, quarantine);
   } catch (error) {
@@ -204,6 +220,136 @@ async function unlinkExactLock(path: string, device: number, inode: number): Pro
   } catch {
     throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock quarantine could not be removed");
   }
+}
+
+/**
+ * Explicitly completes one stale service-lock quarantine after a crash. The
+ * original lock document must still prove a stale PID/start-time identity;
+ * active, unknown, malformed, recent, or ambiguous artifacts are preserved.
+ */
+export async function recoverOrphanedServiceInstanceLock(
+  path: string,
+  expected: FileIdentity,
+  options: { minAgeMs?: number; probe?: ServiceInstanceLockOptions["probe"] } = {}
+): Promise<ServiceInstanceLockRecoveryResult> {
+  validateLockPath(path);
+  const minAgeMs = options.minAgeMs ?? 60_000;
+  if (!validFileIdentity(expected) || !Number.isSafeInteger(minAgeMs) ||
+      minAgeMs < MIN_LOCK_RECOVERY_AGE_MS || minAgeMs > MAX_LOCK_RECOVERY_AGE_MS) {
+    throw new ServiceInstanceLockError("LOCK_INVALID", "Broker service lock recovery precondition is malformed");
+  }
+  const ownerUid = process.getuid?.();
+  if (ownerUid === undefined) throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock requires a POSIX owner identity");
+  const parentPath = dirname(path);
+  await validateLockRecoveryParent(parentPath, ownerUid);
+  const parentBefore = await readDirectoryIdentity(parentPath);
+  const basenameHash = lockPathBasenameHash(path);
+  const names = await readdir(parentPath);
+  const stale: string[] = [];
+  const recent: string[] = [];
+  let ambiguous = 0;
+  const now = Date.now();
+  const probe = options.probe ?? probeNativeProcessIdentity;
+  for (const name of names) {
+    const createdAt = parseLockQuarantineTimestamp(name, basenameHash);
+    if (createdAt === undefined) continue;
+    const candidatePath = join(parentPath, name);
+    let candidate: Awaited<ReturnType<typeof lstat>>;
+    try { candidate = await lstat(candidatePath); }
+    catch { ambiguous += 1; continue; }
+    if (!candidate.isFile() || candidate.isSymbolicLink() || candidate.nlink !== 1 || candidate.uid !== ownerUid ||
+        (candidate.mode & 0o077) !== 0 || candidate.dev !== expected.device || candidate.ino !== expected.inode) continue;
+    let record: LockFileRecord;
+    try { record = await readLockFile(candidatePath, ownerUid); }
+    catch { ambiguous += 1; continue; }
+    let state: ServiceInstanceProbeResult;
+    try { state = await probe(record.document); }
+    catch { state = "unknown"; }
+    if (state !== "stale") {
+      ambiguous += 1;
+      continue;
+    }
+    if (now >= createdAt && now - createdAt >= minAgeMs) stale.push(name);
+    else recent.push(name);
+  }
+  const parentAfter = await readDirectoryIdentity(parentPath);
+  if (parentBefore.device !== parentAfter.device || parentBefore.inode !== parentAfter.inode) {
+    throw new ServiceInstanceLockError("LOCK_CHANGED", "Broker service lock recovery parent changed during scan");
+  }
+  const target = await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock target could not be inspected");
+  });
+  const targetOccupied = target !== undefined && (target.dev !== expected.device || target.ino !== expected.inode);
+  const makeResult = (status: ServiceInstanceLockRecoveryResult["status"], quarantinePath: string | null): ServiceInstanceLockRecoveryResult => ({
+    status,
+    path,
+    quarantinePath,
+    identity: expected
+  });
+  if (targetOccupied || ambiguous > 0 || stale.length > 1 || recent.length > 1 || (stale.length > 0 && recent.length > 0)) {
+    return makeResult("ambiguous", null);
+  }
+  if (stale.length === 0) {
+    return makeResult(recent.length === 1 ? "not_stale" : "absent", recent.length === 1 ? join(parentPath, recent[0]!) : null);
+  }
+  const candidatePath = join(parentPath, stale[0]!);
+  const parentFinal = await readDirectoryIdentity(parentPath);
+  if (parentBefore.device !== parentFinal.device || parentBefore.inode !== parentFinal.inode) {
+    throw new ServiceInstanceLockError("LOCK_CHANGED", "Broker service lock recovery parent changed before removal");
+  }
+  const current = await lstat(candidatePath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new ServiceInstanceLockError("LOCK_UNAVAILABLE", "Broker service lock recovery artifact could not be inspected");
+  });
+  if (current === undefined) return makeResult("absent", null);
+  if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || current.uid !== ownerUid || (current.mode & 0o077) !== 0 ||
+      current.dev !== expected.device || current.ino !== expected.inode) {
+    throw new ServiceInstanceLockError("LOCK_CHANGED", "Broker service lock recovery artifact changed");
+  }
+  await unlink(candidatePath);
+  await syncLockDirectory(parentPath);
+  if (await lstat(candidatePath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  })) {
+    throw new ServiceInstanceLockError("LOCK_CHANGED", "Broker service lock recovery postcondition failed");
+  }
+  return makeResult("recovered", candidatePath);
+}
+
+async function validateLockRecoveryParent(path: string, ownerUid: number): Promise<void> {
+  const parent = await lstat(path);
+  if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== ownerUid || (parent.mode & 0o077) !== 0 || await realpath(path) !== path) {
+    throw new ServiceInstanceLockError("LOCK_INVALID", "Broker service lock recovery parent is not protected");
+  }
+}
+
+async function readDirectoryIdentity(path: string): Promise<FileIdentity> {
+  const value = await lstat(path);
+  if (!value.isDirectory() || value.isSymbolicLink()) throw new ServiceInstanceLockError("LOCK_INVALID", "Broker service lock recovery parent is not a directory");
+  return { device: value.dev, inode: value.ino };
+}
+
+function validFileIdentity(identity: FileIdentity): boolean {
+  return Number.isSafeInteger(identity.device) && identity.device >= 0 && Number.isSafeInteger(identity.inode) && identity.inode > 0;
+}
+
+function lockPathBasenameHash(path: string): string {
+  return createHash("sha256").update(path.slice(path.lastIndexOf("/") + 1), "utf8").digest("hex");
+}
+
+function parseLockQuarantineTimestamp(name: string, basenameHash: string): number | undefined {
+  const prefix = LOCK_QUARANTINE_PREFIX.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = new RegExp(`^${prefix}(\\d{1,13})-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-${basenameHash}$`, "u").exec(name);
+  if (!match) return undefined;
+  const timestamp = Number(match[1]);
+  return Number.isSafeInteger(timestamp) ? timestamp : undefined;
+}
+
+async function syncLockDirectory(path: string): Promise<void> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try { await handle.sync(); } finally { await handle.close(); }
 }
 
 function parseLockDocument(value: unknown): LockDocument {
