@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Request-ledger startup-integrity addendum: commit `040284a` scans every
+persisted Request before restart reconciliation and rejects malformed identity,
+tool, policy, payload-digest, capability-family, lifecycle, and mutation-link
+fields as `AUDIT_UNAVAILABLE`. Focused Request-state/startup tests pass 4/4;
+the non-overlapping package regression passes 587 total (581 passed, 6
+explicitly skipped, 0 failed). This proves local persisted-ledger fencing only;
+physical crash recovery, old-worker ownership, credential rotation, remount
+durability, and production task enablement remain unverified. Evidence:
+`evidence/2026-09-15-request-ledger-startup-integrity.md`.
+
 Filesystem-worker result boundary addendum: commits `5657267` and `86a6792`
 enforce operation-specific exact fields, plain-data nested records, dense
 bounded arrays, and bounded scalar values before filesystem results reach the

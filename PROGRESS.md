@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Request-ledger startup-integrity addendum: commit `040284a` makes BrokerStore
+scan every persisted Request before restart reconciliation. Request identity,
+tool, policy, payload digest, capability-family storage, lifecycle state, and
+mutation linkage now fail closed as `AUDIT_UNAVAILABLE` when malformed. The
+focused Request-state/startup tests pass 4/4; the non-overlapping package
+regression passes 587 total (581 pass, 6 skipped, 0 fail). Build, lint, and
+diff checks pass. Physical crash recovery, old-worker ownership, credential
+rotation, remount durability, and production task enablement remain open.
+Evidence: `evidence/2026-09-15-request-ledger-startup-integrity.md`.
+
 Job-ledger startup-integrity addendum: the BrokerStore now validates every
 persisted Job row before restart reconciliation. Job identity fields, lease
 owner/token formats, heartbeat/expiry ordering, and the bounded lease window
