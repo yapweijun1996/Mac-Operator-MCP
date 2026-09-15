@@ -9,6 +9,7 @@ import { parseTaskNetworkDestination } from "./task-profile.js";
 import { redactBoundedText } from "./secret-policy.js";
 import {
   validateUnsignedVirtualizationGuestRequest,
+  validateUnsignedVirtualizationGuestStatusRequest,
   virtualizationGuestRequestDigest,
   virtualizationGuestStatusRequestDigest,
   type UnsignedVirtualizationGuestRequest,
@@ -281,20 +282,21 @@ export class VirtualizationGuestProfileExecutor {
   }
 
   async lookup(request: UnsignedVirtualizationGuestStatusRequest): Promise<UnsignedVirtualizationGuestStatusResponse> {
+    const safeRequest = snapshotGuestStatusRequest(request);
     if (this.closed) throw new BrokerError("POLICY_DENIED", "Guest task executor is closed");
-    const result = this.ledger.lookup(request);
+    const result = this.ledger.lookup(safeRequest);
     return {
       schemaVersion: "0.1",
       protocolVersion: "0.1",
       contractVersion: "0.1",
       kind: "virtualization_guest_task_status_result",
-      requestId: request.requestId,
-      nonce: request.nonce,
-      guestIdentity: { ...request.guestIdentity },
-      originalRequestId: request.originalRequestId,
-      originalNonce: request.originalNonce,
-      originalRequestDigest: request.originalRequestDigest,
-      statusRequestDigest: virtualizationGuestStatusRequestDigest(request),
+      requestId: safeRequest.requestId,
+      nonce: safeRequest.nonce,
+      guestIdentity: { ...safeRequest.guestIdentity },
+      originalRequestId: safeRequest.originalRequestId,
+      originalNonce: safeRequest.originalNonce,
+      originalRequestDigest: safeRequest.originalRequestDigest,
+      statusRequestDigest: virtualizationGuestStatusRequestDigest(safeRequest),
       ...result,
       outputPolicy: "broker-redacted-v1"
     };
@@ -529,6 +531,28 @@ function snapshotGuestRequest(value: unknown): UnsignedVirtualizationGuestReques
   };
   validateUnsignedVirtualizationGuestRequest(snapshot);
   return snapshot;
+}
+
+function snapshotGuestStatusRequest(value: unknown): UnsignedVirtualizationGuestStatusRequest {
+  validateUnsignedVirtualizationGuestStatusRequest(value as UnsignedVirtualizationGuestStatusRequest);
+  const request = value as UnsignedVirtualizationGuestStatusRequest;
+  return {
+    schemaVersion: request.schemaVersion,
+    protocolVersion: request.protocolVersion,
+    contractVersion: request.contractVersion,
+    kind: request.kind,
+    requestId: request.requestId,
+    nonce: request.nonce,
+    timestampMs: request.timestampMs,
+    expiresAtMs: request.expiresAtMs,
+    guestIdentity: { ...request.guestIdentity },
+    originalRequestId: request.originalRequestId,
+    originalNonce: request.originalNonce,
+    originalRequestDigest: request.originalRequestDigest,
+    timeoutMs: request.timeoutMs,
+    outputCapBytes: request.outputCapBytes,
+    operation: request.operation
+  };
 }
 
 async function assertGuestProfileTargets(profile: VirtualizationGuestTaskProfile): Promise<void> {

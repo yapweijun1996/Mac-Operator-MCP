@@ -144,6 +144,23 @@ test("guest executor rejects an invalid transport envelope before adapter execut
       executor.execute({ ...fixture.request, schemaVersion: "0.2" } as never),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
     );
+    const signedStatus = createVirtualizationGuestStatusRequest({
+      guestIdentity,
+      originalRequestId: fixture.request.requestId,
+      originalNonce: fixture.request.nonce,
+      originalRequestDigest: virtualizationGuestRequestDigest(fixture.request),
+      timeoutMs: 2_000,
+      outputCapBytes: 1_024,
+      requestId: "request:guest-status-envelope-0123456789",
+      nonce: "guest-status-nonce-envelope-0123456789",
+      timestampMs: now,
+      expiresAtMs: now + 30_000
+    }, key, { now });
+    const { authenticationProof: _authenticationProof, ...unsignedStatus } = signedStatus;
+    await assert.rejects(
+      executor.lookup({ ...unsignedStatus, operation: "task_run" } as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
     assert.equal(starts, 0);
     await executor.close();
   } finally {
