@@ -24,10 +24,16 @@ export interface ProtectedTlsMaterial {
 export async function loadProtectedTlsMaterial(
   paths: ProtectedTlsMaterialPaths
 ): Promise<ProtectedTlsMaterial> {
-  return {
-    certificate: await readProtectedTlsFile(paths.certificatePath, "TLS certificate"),
-    privateKey: await readProtectedTlsFile(paths.privateKeyPath, "TLS private key")
-  };
+  const certificate = await readProtectedTlsFile(paths.certificatePath, "TLS certificate");
+  try {
+    return {
+      certificate,
+      privateKey: await readProtectedTlsFile(paths.privateKeyPath, "TLS private key")
+    };
+  } catch (error) {
+    certificate.fill(0);
+    throw error;
+  }
 }
 
 async function readProtectedTlsFile(path: string, label: string): Promise<Buffer> {
@@ -61,7 +67,7 @@ async function readProtectedTlsFile(path: string, label: string): Promise<Buffer
       throw new Error(`${label} changed while reading`);
     }
     if (content.byteLength > MAX_TLS_FILE_BYTES) throw new Error(`${label} exceeds the supported size`);
-    return Buffer.from(content);
+    return content;
   } finally {
     await handle.close();
   }
