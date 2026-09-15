@@ -201,6 +201,22 @@ test("JWT verifier rejects redirected remote JWKS responses", async () => {
     }
   });
   await assertInvalid(verifier, token);
+
+  const mismatchedUrl = createJwtAccessTokenVerifier({
+    issuer,
+    issuerId: "issuer-prod",
+    resourceServerUrl,
+    jwksUri: new URL("https://issuer.example.test/.well-known/jwks.json"),
+    jwksFetch: async () => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+      Object.defineProperty(response, "url", { value: "https://other.example.test/jwks.json" });
+      return response;
+    }
+  });
+  await assertInvalid(mismatchedUrl, token);
 });
 
 async function createJwks(publicKey: CryptoKey, keyId = "key-1"): Promise<JSONWebKeySet> {
