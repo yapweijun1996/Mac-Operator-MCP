@@ -3,6 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import type { ProcessExecutionRequest } from "./process-supervisor.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { assertArgumentsDoNotContainSecrets } from "./secret-policy.js";
 
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -14,6 +15,8 @@ const MAX_ENVIRONMENT_BYTES = 16 * 1024;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_ARGUMENT_PATTERN_LENGTH = 256;
+const MAX_PROFILE_PATHS = 32;
+const MAX_NETWORK_DESTINATIONS = 32;
 const NETWORK_DESTINATION_PATTERN = /^(tcp|udp):\/\/(localhost|127\.0\.0\.1):(\d{1,5})$/u;
 
 export type TaskNetworkPolicy = "none" | "allowlist";
@@ -78,13 +81,16 @@ export function validateTaskProfileRegistry(value: unknown): asserts value is Ta
   }
 }
 
-export function validateTaskRunArguments(argumentsValue: Readonly<Record<string, unknown>>): TaskRunRequest {
+export function validateTaskRunArguments(argumentsValue: unknown): TaskRunRequest {
+  if (!isPlainDataRecord(argumentsValue) || !hasAllowedKeys(argumentsValue, ["profile", "cwd", "args", "async"])) {
+    throw new BrokerError("PRECONDITION_FAILED", "Task run arguments are malformed");
+  }
   const keys = Object.keys(argumentsValue);
   if (keys.some((key) => !["profile", "cwd", "args", "async"].includes(key)) ||
       typeof argumentsValue.profile !== "string" || !PROFILE_ID_PATTERN.test(argumentsValue.profile) ||
       typeof argumentsValue.cwd !== "string" || argumentsValue.cwd.length < 1 || argumentsValue.cwd.length > 4_096 ||
       argumentsValue.cwd.includes("\0") ||
-      (argumentsValue.args !== undefined && (!Array.isArray(argumentsValue.args) || argumentsValue.args.some((value) => typeof value !== "string"))) ||
+      (argumentsValue.args !== undefined && !isStringArray(argumentsValue.args, MAX_PROFILE_ARGUMENTS)) ||
       (argumentsValue.async !== undefined && typeof argumentsValue.async !== "boolean")) {
     throw new BrokerError("PRECONDITION_FAILED", "Task run arguments are malformed");
   }
@@ -98,7 +104,7 @@ export function validateTaskRunArguments(argumentsValue: Readonly<Record<string,
   return {
     profile: argumentsValue.profile,
     cwd: argumentsValue.cwd,
-    ...(args === undefined ? {} : { args }),
+    ...(args === undefined ? {} : { args: [...args] }),
     asynchronous: argumentsValue.async ?? false
   };
 }
@@ -138,9 +144,10 @@ export class TaskProfileRegistry {
   }
 
   async resolve(request: TaskRunRequest): Promise<ResolvedTaskProfile> {
-    if (request === null || typeof request !== "object" || Array.isArray(request) ||
-        Object.keys(request as unknown as Record<string, unknown>).some((key) => !["profile", "cwd", "args", "asynchronous"].includes(key)) ||
-        typeof request.profile !== "string" || !PROFILE_ID_PATTERN.test(request.profile)) {
+    if (!isPlainDataRecord(request) ||
+        !hasAllowedKeys(request, ["profile", "cwd", "args", "asynchronous"]) ||
+        typeof request.profile !== "string" || !PROFILE_ID_PATTERN.test(request.profile) ||
+        (request.args !== undefined && !isStringArray(request.args, MAX_PROFILE_ARGUMENTS))) {
       throw new BrokerError("PRECONDITION_FAILED", "Task profile request is malformed");
     }
     const profile = this.profiles.get(request.profile);
@@ -187,26 +194,36 @@ export class TaskProfileRegistry {
 }
 
 function validateProfileDocument(profile: TaskProfile): void {
-  if (profile === null || typeof profile !== "object" || Array.isArray(profile) ||
+  if (!isPlainDataRecord(profile) ||
+      !hasAllowedKeys(profile, [
+        "schemaVersion", "profile", "executable", "fixedArgs", "allowedCwdRoots",
+        "allowedArgumentPattern", "maxArguments", "environment", "filesystemRoots",
+        "networkPolicy", "networkAllowlist", "credentialPolicy", "processTreePolicy",
+        "sandboxProfile", "timeoutMs", "outputCapBytes", "verificationStrategy", "enabled"
+      ]) ||
       profile.schemaVersion !== "0.1" ||
       typeof profile.profile !== "string" || !PROFILE_ID_PATTERN.test(profile.profile) ||
       typeof profile.executable !== "string" || !isCanonicalAbsolutePath(profile.executable) ||
-      !Array.isArray(profile.allowedCwdRoots) || profile.allowedCwdRoots.length === 0 ||
+      !isStringArray(profile.allowedCwdRoots, MAX_PROFILE_PATHS) || profile.allowedCwdRoots.length === 0 ||
       profile.allowedCwdRoots.some((root) => typeof root !== "string" || !isCanonicalAbsolutePath(root)) ||
-      !Array.isArray(profile.filesystemRoots) || profile.filesystemRoots.some((root) => typeof root !== "string" || !isCanonicalAbsolutePath(root)) ||
+      !isStringArray(profile.filesystemRoots, MAX_PROFILE_PATHS) || profile.filesystemRoots.some((root) => typeof root !== "string" || !isCanonicalAbsolutePath(root)) ||
       profile.filesystemRoots.length === 0 ||
       typeof profile.sandboxProfile !== "string" || !PROFILE_ID_PATTERN.test(profile.sandboxProfile) ||
       !Number.isSafeInteger(profile.timeoutMs) || profile.timeoutMs < 1 || profile.timeoutMs > MAX_TIMEOUT_MS ||
       !Number.isSafeInteger(profile.outputCapBytes) || profile.outputCapBytes < 1 || profile.outputCapBytes > MAX_OUTPUT_BYTES ||
       profile.verificationStrategy !== "exit_status_and_declared_task_verification" ||
       typeof profile.enabled !== "boolean" ||
-      (profile.fixedArgs !== undefined && !Array.isArray(profile.fixedArgs)) ||
+      (profile.fixedArgs !== undefined && !isStringArray(profile.fixedArgs, MAX_PROFILE_ARGUMENTS)) ||
       (profile.environment !== undefined && !isPlainRecord(profile.environment)) ||
-      (profile.networkAllowlist !== undefined && !Array.isArray(profile.networkAllowlist)) ||
+      (profile.networkAllowlist !== undefined && !isStringArray(profile.networkAllowlist, MAX_NETWORK_DESTINATIONS)) ||
       (profile.credentialPolicy !== undefined && profile.credentialPolicy !== "none") ||
       (profile.processTreePolicy !== undefined && profile.processTreePolicy !== "single_process" && profile.processTreePolicy !== "owned_group") ||
       (profile.networkPolicy !== "none" && profile.networkPolicy !== "allowlist")) {
     throw new Error("Task profile document is malformed");
+  }
+  if (!isStringArray(profile.allowedCwdRoots, MAX_PROFILE_PATHS) ||
+      !isStringArray(profile.filesystemRoots, MAX_PROFILE_PATHS)) {
+    throw new Error("Task profile paths are malformed");
   }
   validateArguments(profile.fixedArgs ?? [], MAX_PROFILE_ARGUMENTS, /[\s\S]*/u, true);
   assertArgumentsDoNotContainSecrets(profile.fixedArgs ?? []);
@@ -350,7 +367,24 @@ function cloneProfile(profile: TaskProfile): TaskProfile {
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return isPlainDataRecord(value);
+}
+
+function hasAllowedKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const allowedSet = new Set(allowed);
+  return Object.keys(value).every((key) => allowedSet.has(key));
+}
+
+function isStringArray(value: unknown, maxLength: number): value is readonly string[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
+      Object.keys(value).length !== value.length || Object.getOwnPropertyNames(value).length !== value.length + 1) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "string") return false;
+  }
+  return true;
 }
 
 function validateArguments(

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
+import { TaskProfileRegistry, validateTaskRunArguments, type TaskProfile } from "./task-profile.js";
 
 function profile(root: string, overrides: Partial<TaskProfile> = {}): TaskProfile {
   return {
@@ -138,6 +138,42 @@ test("task profile documents reject secret environments, unanchored arguments, a
         profile(root, { fixedArgs: ["--api-key=opaque-value"], allowedArgumentPattern: "^[a-zA-Z0-9._=-]{1,64}$" })
       ]),
       /protected secret option/u
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("task profile boundaries reject inherited, accessor, symbolic, and sparse authority data", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-task-profile-shape-"));
+  try {
+    const canonicalRoot = await realpath(root);
+    const base = profile(canonicalRoot);
+    assert.throws(() => new TaskProfileRegistry([Object.create(base) as TaskProfile]), /malformed/u);
+    const accessorProfile = { ...base } as Record<string, unknown>;
+    Object.defineProperty(accessorProfile, "executable", { enumerable: true, get: () => "/bin/echo" });
+    assert.throws(() => new TaskProfileRegistry([accessorProfile as unknown as TaskProfile]), /malformed/u);
+    const symbolicProfile = { ...base } as Record<string, unknown>;
+    Object.defineProperty(symbolicProfile, Symbol("hidden"), { value: "authority" });
+    assert.throws(() => new TaskProfileRegistry([symbolicProfile as unknown as TaskProfile]), /malformed/u);
+    assert.throws(() => new TaskProfileRegistry([{ ...base, unexpected: true } as TaskProfile]), /malformed/u);
+    const sparseArgs = new Array<string>(1);
+    assert.throws(() => new TaskProfileRegistry([profile(canonicalRoot, { fixedArgs: sparseArgs })]), /malformed/u);
+    const accessorRoots = [canonicalRoot] as string[];
+    Object.defineProperty(accessorRoots, "0", { enumerable: true, get: () => canonicalRoot });
+    assert.throws(() => new TaskProfileRegistry([profile(canonicalRoot, { allowedCwdRoots: accessorRoots })]), /malformed/u);
+
+    assert.throws(
+      () => validateTaskRunArguments(Object.create({ profile: "tests.echo", cwd: canonicalRoot })),
+      /malformed/u
+    );
+    const sparseRequestArgs = new Array<string>(1);
+    assert.throws(
+      () => validateTaskRunArguments({ profile: "tests.echo", cwd: canonicalRoot, args: sparseRequestArgs }),
+      /malformed/u
+    );
+    const registry = new TaskProfileRegistry([base]);
+    await assert.rejects(
+      registry.resolve(Object.create({ profile: "tests.echo", cwd: canonicalRoot })),
+      /malformed/u
     );
   } finally { await rm(root, { recursive: true, force: true }); }
 });
