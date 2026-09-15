@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+Broker status response-schema addendum: source revision `d6f704b` requires
+exact nested status failure fields and sanitizes hostile error text before
+signing. Focused status tests pass 3/3; the serial physical regression passes
+641/641 with no skips or failures. Evidence:
+`evidence/2026-09-16-broker-status-response-schema.md`.
+
 Privileged-helper response-schema addendum: source revision `cd80e0d` requires
 exact top-level and nested fields for helper command results, command
 responses, status responses, and failure records. Focused helper tests pass

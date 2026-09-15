@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Broker status response-schema verification at source revision `d6f704b`
+requires exact nested failure fields and bounded, line-safe status error text
+before signing. Focused status tests pass 3/3; the serial physical regression
+passes 641/641 with no skips or failures. This closes the local status IPC
+response boundary only; production installation and privileged capability
+gates remain open. Evidence:
+`evidence/2026-09-16-broker-status-response-schema.md`.
+
 Privileged-helper response-schema verification at source revision `cd80e0d`
 requires exact command-result, success/failure-response, status-response, and
 nested verification/error fields. Unknown fields and unbounded failure

@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Broker status response-schema addendum: source revision `d6f704b` requires
+exact nested failure fields and bounds status error text to 512 characters
+without NUL or line breaks before signing. Focused Broker status tests pass
+3/3, and the serial physical regression passes 641/641 with no skips or
+failures. This closes the local status IPC response boundary only; production
+installation, signing, and privileged capability gates remain open. Evidence:
+`evidence/2026-09-16-broker-status-response-schema.md`.
+
 Privileged-helper response-schema addendum: source revision `cd80e0d` makes
 command results and success/failure responses exact-field envelopes, including
 the nested verification and error records. Unknown fields, accessors, inherited
