@@ -1,21 +1,29 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { sha256 } from "@mac-operator/contracts";
+import { canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
 import {
   captureLaunchdBrokerProcessIdentity,
   createPrivilegedHelperRuntimeForLaunchdBroker,
   createPrivilegedHelperRuntimeFromActiveKeyConfig,
   PrivilegedHelperStartupError
 } from "./privileged-helper-runtime.js";
-import { FailClosedPrivilegedHelper } from "./privileged-helper.js";
+import {
+  AllowlistedPrivilegedHelper,
+  authenticatePrivilegedHelperResponse,
+  FailClosedPrivilegedHelper,
+  signPrivilegedHelperCommand,
+  type UnsignedPrivilegedHelperCommand
+} from "./privileged-helper.js";
 import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials.js";
 import { BrokerStore } from "./persistence.js";
 import { PrivilegedHelperKeyManager, writePrivilegedHelperKeyConfig, type PrivilegedHelperKeyConfig } from "./privileged-helper-keyring.js";
 import { capturePeerProcessIdentity } from "./peer-credentials.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
+import { PrivilegedHelperAuthorityIpcServer } from "./privileged-helper-authority-ipc.js";
 
 function success(stdout: string): ProcessExecutionResult {
   return {
@@ -97,6 +105,101 @@ test("privileged helper startup restores an activated key and owns a separate na
   }
 });
 
+test("privileged helper runtime auto-wires and disposes the Broker authority poller", async () => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || uid < 1 || gid === undefined) throw new Error("POSIX non-root identity is unavailable");
+  const root = await mkdtemp(join(tmpdir(), "mops-rt-"));
+  const keyPath = join(root, "helper.key");
+  const configPath = join(root, "helper-keys.json");
+  const helperSocketPath = join(root, "helper.sock");
+  const brokerSocketPath = join(root, "broker.sock");
+  const authoritySocketPath = join(root, "authority.sock");
+  const store = new BrokerStore(join(root, "broker.sqlite"));
+  const now = Date.now();
+  const peerPolicy = { expectedUid: uid, expectedGid: gid, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) };
+  let authority: PrivilegedHelperAuthorityIpcServer | undefined;
+  let runtime: Awaited<ReturnType<typeof createPrivilegedHelperRuntimeFromActiveKeyConfig>> | undefined;
+  try {
+    const provisioned = await provisionAuthenticationKey(keyPath);
+    const key = await loadAuthenticationKey(keyPath);
+    await writePrivilegedHelperKeyConfig(configPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        keyId: "helper-key-1", keySource: "file", path: keyPath,
+        keyDigest: provisioned.digest, notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+      }]
+    });
+    const manager = new PrivilegedHelperKeyManager(configPath, store, () => now);
+    await manager.activate();
+    manager.dispose();
+
+    authority = new PrivilegedHelperAuthorityIpcServer({
+      socketPath: authoritySocketPath,
+      authenticationKey: key,
+      replayGuard: { admit: () => undefined },
+      authorizeCommand: () => undefined,
+      peerPolicy,
+      now: () => now
+    });
+    await authority.listen();
+    runtime = await createPrivilegedHelperRuntimeFromActiveKeyConfig({
+      helperKeyConfigPath: configPath,
+      helperKeyStore: store,
+      socketPath: helperSocketPath,
+      brokerSocketPath,
+      authoritySocketPath,
+      peerPolicy,
+      replayGuard: { admit: () => undefined },
+      adapter: new AllowlistedPrivilegedHelper({
+        service_control: async (command, control) => {
+          assert.equal(control.shouldCancel(), false);
+          return {
+            operation: command.operation,
+            targetRef: command.targetRef,
+            state: "completed",
+            resultClass: "SUCCEEDED",
+            evidence: {}, warnings: [], truncated: false,
+            verification: { status: "verified", strategy: "allowlisted_postcondition" }
+          };
+        }
+      }),
+      authorizeCommand: () => undefined
+    });
+    await runtime.start();
+    const payload = { operation: "service_control" as const, service_id: "system/com.example.test", action: "start" as const };
+    const unsigned: UnsignedPrivilegedHelperCommand = {
+      protocolVersion: "0.1",
+      contractVersion: CONTRACT_VERSION,
+      commandId: "priv-command:runtime-authority-0001",
+      requestId: "request:runtime-authority-0001",
+      nonce: "helper-nonce-runtime-authority-0001",
+      nonceExpiresAtMs: now + 30_000,
+      timestampMs: now,
+      expiresAtMs: now + 30_000,
+      operation: "service_control",
+      targetRef: "service:system/com.example.test",
+      payload,
+      payloadDigest: sha256(canonicalJson(payload)),
+      policyVersion: "policy-test-1",
+      approvalId: "approval:runtime-authority-0001",
+      intentId: "intent:runtime-authority-0001"
+    };
+    const response = await sendHelperCommand(helperSocketPath, signPrivilegedHelperCommand(unsigned, key));
+    const verified = authenticatePrivilegedHelperResponse(response, unsigned, key);
+    assert.equal(verified.ok, true);
+    await runtime.close();
+    assert.equal(runtime.state, "stopped");
+    key.fill(0);
+  } finally {
+    await runtime?.close().catch(() => undefined);
+    await authority?.close().catch(() => undefined);
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("privileged helper caller capture binds the exact Broker LaunchAgent and rejects smuggled services", async () => {
   const uid = process.getuid?.();
   if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
@@ -161,3 +264,32 @@ test("privileged helper startup fails closed before key restore for invalid boun
     await rm(root, { recursive: true, force: true });
   }
 });
+
+async function sendHelperCommand(socketPath: string, payload: unknown): Promise<import("./privileged-helper.js").PrivilegedHelperResponse> {
+  return new Promise((resolvePromise, reject) => {
+    const socket = connect(socketPath);
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    socket.once("error", fail);
+    socket.on("data", (chunk) => {
+      chunks.push(chunk);
+      const combined = Buffer.concat(chunks);
+      const newline = combined.indexOf(0x0a);
+      if (newline === -1) return;
+      settled = true;
+      socket.destroy();
+      try { resolvePromise(JSON.parse(combined.subarray(0, newline).toString("utf8"))); }
+      catch (error) { reject(error); }
+    });
+    socket.on("close", () => {
+      if (!settled) fail(new Error("Privileged helper runtime closed without a response"));
+    });
+    socket.once("connect", () => socket.write(`${JSON.stringify(payload)}\n`));
+  });
+}

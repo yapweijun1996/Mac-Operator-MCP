@@ -42,6 +42,8 @@ export interface PrivilegedHelperRuntimeOptions {
   socketPath: string;
   /** The helper must never reuse the unprivileged Broker socket. */
   brokerSocketPath: string;
+  /** Broker-owned authority polling socket; required when an adapter is enabled. */
+  authoritySocketPath?: string;
   /** Optional additional local control socket paths that must remain distinct. */
   reservedSocketPaths?: readonly string[];
   /** Production helper startup requires native peer credentials and identity. */
@@ -90,7 +92,10 @@ export class PrivilegedHelperRuntime {
   private stateValue: PrivilegedHelperRuntimeState = "stopped";
   private operation: Promise<void> = Promise.resolve();
 
-  constructor(private readonly server: PrivilegedHelperIpcServer) {}
+  constructor(
+    private readonly server: PrivilegedHelperIpcServer,
+    private readonly authorityPoller?: PrivilegedHelperAuthorityPoller
+  ) {}
 
   get state(): PrivilegedHelperRuntimeState {
     return this.stateValue;
@@ -126,7 +131,11 @@ export class PrivilegedHelperRuntime {
     if (this.stateValue === "stopped") return;
     this.stateValue = "stopping";
     try {
-      await this.server.close();
+      try {
+        await this.server.close();
+      } finally {
+        this.authorityPoller?.dispose?.();
+      }
       this.stateValue = "stopped";
     } catch (error) {
       this.stateValue = "failed";
@@ -214,15 +223,28 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
       "Privileged helper startup requires an explicit native peer process identity"
     );
   }
-  if (options.adapter.available && options.authorityPoller === undefined) {
-    throw new PrivilegedHelperStartupError(
-      "HELPER_AUTHORITY_UNAVAILABLE",
-      "Privileged helper startup requires a separately authenticated Broker authority poller when an adapter is enabled"
-    );
-  }
   const manager = new PrivilegedHelperKeyManager(options.helperKeyConfigPath, options.helperKeyStore);
+  let authorityPoller = options.authorityPoller;
   try {
     await manager.restore();
+    if (options.adapter.available && authorityPoller === undefined) {
+      if (options.authoritySocketPath === undefined) {
+        throw new PrivilegedHelperStartupError(
+          "HELPER_AUTHORITY_UNAVAILABLE",
+          "Privileged helper startup requires an authority socket when an adapter is enabled"
+        );
+      }
+      authorityPoller = manager.createAuthorityPoller({
+        socketPath: options.authoritySocketPath,
+        peerPolicy: options.peerPolicy
+      });
+    }
+    if (options.adapter.available && authorityPoller === undefined) {
+      throw new PrivilegedHelperStartupError(
+        "HELPER_AUTHORITY_UNAVAILABLE",
+        "Privileged helper startup requires a separately authenticated Broker authority poller when an adapter is enabled"
+      );
+    }
     const server = manager.createServer({
       ...(options.serverOptions ?? {}),
       socketPath: options.socketPath,
@@ -230,15 +252,17 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
       replayGuard: options.replayGuard,
       adapter: options.adapter,
       authorizeCommand: options.authorizeCommand,
-      ...(options.authorityPoller === undefined ? {} : { authorityPoller: options.authorityPoller }),
+      ...(authorityPoller === undefined ? {} : { authorityPoller }),
       ...(options.authorityPollIntervalMs === undefined ? {} : { authorityPollIntervalMs: options.authorityPollIntervalMs }),
       ...(options.readStatus === undefined ? {} : { readStatus: options.readStatus }),
       ...(options.authorizeStatus === undefined ? {} : { authorizeStatus: options.authorizeStatus })
     });
     manager.dispose();
-    return new PrivilegedHelperRuntime(server);
+    return new PrivilegedHelperRuntime(server, authorityPoller);
   } catch (error) {
+    authorityPoller?.dispose?.();
     manager.dispose();
+    if (error instanceof PrivilegedHelperStartupError) throw error;
     throw new PrivilegedHelperStartupError(
       "HELPER_KEY_CONFIG_UNAVAILABLE",
       error instanceof Error ? error.message : "Privileged helper key configuration could not be restored"
@@ -247,7 +271,12 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
 }
 
 function validateSocketBoundary(options: PrivilegedHelperRuntimeOptions): void {
-  const paths = [options.socketPath, options.brokerSocketPath, ...(options.reservedSocketPaths ?? [])];
+  const paths = [
+    options.socketPath,
+    options.brokerSocketPath,
+    ...(options.authoritySocketPath === undefined ? [] : [options.authoritySocketPath]),
+    ...(options.reservedSocketPaths ?? [])
+  ];
   if (paths.some((path) => !isAbsolute(path) || resolve(path) !== path || path.includes("\0"))) {
     throw new PrivilegedHelperStartupError("HELPER_SOCKET_INVALID", "Privileged helper socket paths must be canonical absolute paths");
   }

@@ -287,6 +287,7 @@ export class PrivilegedHelperAuthorityIpcServer {
 
 export interface PrivilegedHelperAuthorityPoller {
   assertAuthorized(command: SignedPrivilegedHelperCommand): Promise<void>;
+  dispose?: () => void;
 }
 
 export interface PrivilegedHelperAuthorityClientOptions {
