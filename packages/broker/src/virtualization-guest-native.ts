@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { validateNativeAdapterPath } from "./peer-credentials.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const require = createRequire(import.meta.url);
 const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
@@ -84,15 +85,18 @@ export function inspectVirtualizationGuestConfiguration(
     throw new Error("Virtualization guest image identity is malformed");
   }
   const result = loadNativeVirtualizationGuestAdapter().inspectGuestConfiguration(imagePath, device, inode, sha256);
-  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+  return parseVirtualizationGuestConfigurationResult(result);
+}
+
+export function parseVirtualizationGuestConfigurationResult(result: unknown): VirtualizationGuestConfigurationReadback {
+  if (!isPlainDataRecord(result) || !hasExactFields(result, [
+    "configurationValid", "device", "hostDirectorySharingAttached", "hostNetworkAttached", "inode",
+    "path", "readOnlyAttachment", "sha256", "sizeBytes", "vmBootAttempted"
+  ])) {
     throw new Error("Virtualization guest native readback is malformed");
   }
   const value = result as Record<string, unknown>;
-  if (Object.keys(value).some((key) => ![
-    "configurationValid", "device", "hostDirectorySharingAttached", "hostNetworkAttached", "inode",
-    "path", "readOnlyAttachment", "sha256", "sizeBytes", "vmBootAttempted"
-  ].includes(key)) ||
-      typeof value.path !== "string" || typeof value.device !== "string" || typeof value.inode !== "string" ||
+  if (typeof value.path !== "string" || typeof value.device !== "string" || typeof value.inode !== "string" ||
       typeof value.sha256 !== "string" || typeof value.sizeBytes !== "number" ||
       !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes < 1 ||
       typeof value.readOnlyAttachment !== "boolean" || typeof value.configurationValid !== "boolean" ||
@@ -100,7 +104,23 @@ export function inspectVirtualizationGuestConfiguration(
       typeof value.hostDirectorySharingAttached !== "boolean") {
     throw new Error("Virtualization guest native readback is malformed");
   }
-  return value as unknown as VirtualizationGuestConfigurationReadback;
+  return {
+    path: value.path,
+    device: value.device,
+    inode: value.inode,
+    sha256: value.sha256,
+    sizeBytes: value.sizeBytes,
+    readOnlyAttachment: value.readOnlyAttachment,
+    configurationValid: value.configurationValid,
+    vmBootAttempted: value.vmBootAttempted,
+    hostNetworkAttached: value.hostNetworkAttached,
+    hostDirectorySharingAttached: value.hostDirectorySharingAttached
+  };
+}
+
+function hasExactFields(value: Record<string, unknown>, required: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === required.length && required.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
 function readArtifact(nativePath: string): NativeAdapterArtifact {

@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   inspectVirtualizationGuestConfiguration,
   loadNativeVirtualizationGuestAdapter,
+  parseVirtualizationGuestConfigurationResult,
   validateNativeVirtualizationGuestAdapterPath
 } from "./virtualization-guest-native.js";
 
@@ -70,4 +71,27 @@ test("native Virtualization.framework guest artifact rejects symlinked or mismat
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("native Virtualization guest configuration readback rejects unstable authority fields", () => {
+  const valid = {
+    path: "/private/tmp/guest.raw",
+    device: "1",
+    inode: "2",
+    sha256: "a".repeat(64),
+    sizeBytes: 1_024,
+    readOnlyAttachment: true,
+    configurationValid: true,
+    vmBootAttempted: false,
+    hostNetworkAttached: false,
+    hostDirectorySharingAttached: false
+  };
+  assert.deepEqual(parseVirtualizationGuestConfigurationResult(valid), valid);
+  assert.throws(
+    () => parseVirtualizationGuestConfigurationResult({ ...valid, extra: "authority" }),
+    /malformed/u
+  );
+  const accessor = { ...valid } as Record<string, unknown>;
+  Object.defineProperty(accessor, "sha256", { enumerable: true, get: () => valid.sha256 });
+  assert.throws(() => parseVirtualizationGuestConfigurationResult(accessor), /malformed/u);
 });
