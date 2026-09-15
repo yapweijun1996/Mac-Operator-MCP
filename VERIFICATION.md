@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest-executor close-drain addendum: source revision `9f772fe` waits for
+tracked active adapter executions after cancellation and adapter shutdown,
+preventing close from returning while guest work remains live. Guest executor
+tests pass 8/8; the combined guest/transport/lifecycle/startup/native suite
+passes 53/53 with 0 skipped tests. Build, typecheck, lint, and diff checks
+pass. VM boot, guest isolation, and production `mac_task_run` enablement are
+not claimed. Evidence:
+`evidence/2026-09-15-virtualization-guest-close-drain.md`.
+
 Guest-executor admission-concurrency addendum: source revision `eb9aa47`
 reserves guest capacity before asynchronous manifest resolution and checks
 active plus pending admissions against `maxConcurrent`. Focused guest executor

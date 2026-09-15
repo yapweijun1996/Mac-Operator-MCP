@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-executor close-drain addendum: source revision `9f772fe` tracks active
+adapter promises and makes executor close abort, invoke the adapter close hook,
+and await all active executions before returning. Guest executor tests pass
+8/8; the combined guest/transport/lifecycle/startup/native focused suite passes
+53/53 with 0 skipped tests. Build, typecheck, lint, and diff checks pass. VM
+boot, guest isolation, and production `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-virtualization-guest-close-drain.md`.
+
 Guest-executor admission-concurrency addendum: source revision `eb9aa47`
 reserves a slot before asynchronous manifest readback and enforces
 `active + inFlight <= maxConcurrent`, preventing concurrent admissions from
