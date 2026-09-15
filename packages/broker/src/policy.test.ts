@@ -50,6 +50,38 @@ test("runtime Broker policy rejects malformed tool authority before use", () => 
   );
 });
 
+test("runtime Broker policy rejects inherited authority fields", () => {
+  const base = createDefaultPolicy("edge-1", false, ["mac.control.read"]);
+  const health = base.tools.get("mac_health");
+  const principal = base.principalGrants.get("principal-1");
+  assert.ok(health);
+  assert.ok(principal);
+  const inheritedKillSwitches = Object.create({
+    global: false,
+    mutations: false,
+    process: false,
+    network: false,
+    gui: false,
+    destructive: false,
+    privileged: false
+  }) as Record<string, boolean>;
+  const inheritedTool = Object.create(health) as Record<string, unknown>;
+  const inheritedGrant = Object.create(principal) as Record<string, unknown>;
+
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, killSwitches: inheritedKillSwitches as never }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy is malformed"
+  );
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, tools: new Map([["mac_health", inheritedTool]]) as never }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains a malformed tool policy"
+  );
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, principalGrants: new Map([["principal-1", inheritedGrant]]) as never }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed principal authority"
+  );
+});
+
 test("policy authority snapshots isolate mutable caller references", () => {
   const base = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
   const snapshot = cloneBrokerPolicy(base);

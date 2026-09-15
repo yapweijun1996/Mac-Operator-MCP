@@ -83,11 +83,11 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
       !(policy.principalGrants instanceof Map) || !Array.isArray(policy.targetRules) ||
       !Array.isArray(policy.filesystemRoots) || !(policy.tools instanceof Map) ||
       policy.killSwitches === null || typeof policy.killSwitches !== "object" ||
+      !hasOnlyKeys(policy.killSwitches, SWITCH_NAMES) ||
       SWITCH_NAMES.some((name) => typeof policy.killSwitches[name] !== "boolean")) {
     throw new BrokerError("POLICY_DENIED", "Active Broker policy is malformed");
   }
-  if (!hasOnlyKeys(policy.killSwitches, SWITCH_NAMES) ||
-      [...policy.trustedEdgeIds].some((edgeId) => !isPolicyId(edgeId)) ||
+  if ([...policy.trustedEdgeIds].some((edgeId) => !isPolicyId(edgeId)) ||
       [...policy.trustedEdgeKeys].some(([identity, window]) =>
         !isPolicyKeyIdentity(identity) || !hasOnlyKeys(window, ["notBeforeMs", "expiresAtMs"]) ||
         !Number.isSafeInteger(window.notBeforeMs) || window.notBeforeMs < 0 ||
@@ -186,8 +186,14 @@ function validateToolPolicy(name: string, tool: ToolPolicy): void {
 
 function hasOnlyKeys(value: unknown, keys: readonly string[]): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const allowed = new Set(keys);
-  return Object.keys(value).every((key) => allowed.has(key));
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    const allowed = new Set(keys);
+    return Object.keys(value).every((key) => allowed.has(key));
+  } catch {
+    return false;
+  }
 }
 
 function isPolicyId(value: unknown): value is string {
