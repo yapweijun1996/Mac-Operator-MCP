@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-091/092 Privileged Helper Job input-boundary addendum at source revision
+`340eb2c`: the helper Job executor validates the operation allowlist and
+Broker Job/Lease identities before any store lookup, renewal, or command
+signing. Focused Helper Job executor tests pass 10/10; the serial physical
+regression passes 664/669 with 0 failures and 5 explicit descriptor-capability
+skips. Evidence:
+`evidence/2026-09-16-privileged-helper-job-input-boundary.md`.
+
 MOP-086/012 Guest status-lookup validation addendum at source revision
 `6ad2046`: `VirtualizationGuestProfileExecutor.lookup()` snapshots and
 validates the complete status envelope before bounded-ledger access and

@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged Helper Job input-boundary addendum at source revision `340eb2c`:
+`PrivilegedHelperJobExecutor` now rejects unknown operations and malformed
+Job/Lease identities before store lookup, lease renewal, or command signing.
+Focused Helper Job executor tests pass 10/10; the serial physical regression
+passes 664/669 with 0 failures and 5 explicit descriptor-capability skips.
+Evidence: `evidence/2026-09-16-privileged-helper-job-input-boundary.md`.
+
 Guest status-lookup validation addendum at source revision `6ad2046`:
 `VirtualizationGuestProfileExecutor.lookup()` now snapshots and strictly
 validates status requests before consulting the bounded ledger or publishing

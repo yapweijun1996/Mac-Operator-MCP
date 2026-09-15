@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged Helper Job input-boundary verification at source revision
+`340eb2c`: `PrivilegedHelperJobExecutor` rejects unknown operations and
+malformed Job/Lease identities before BrokerStore access, lease renewal, or
+command issuance. Negative coverage proves no command factory or client call
+occurs and the running Job remains unchanged. Focused Helper Job executor
+tests pass 10/10; the serial physical regression passes 664/669 with 0
+failures and 5 explicit descriptor-capability skips. The three pre-existing
+long-running suites were excluded and left untouched. This closes the local
+helper executor input boundary only; separate helper authentication,
+privileged host deployment, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-privileged-helper-job-input-boundary.md`.
+
 Guest status-lookup validation verification at source revision `6ad2046`:
 `VirtualizationGuestProfileExecutor.lookup()` now snapshots and invokes
 `validateUnsignedVirtualizationGuestStatusRequest` before bounded-ledger access
