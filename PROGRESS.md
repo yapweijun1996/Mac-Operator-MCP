@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Passing-evidence enforcement addendum: source revision `168da62` makes the
+matrix checker fail closed when a `PASS` target lacks a repository evidence
+path. The two existing PASS rows now reference their ledger/capability
+artifacts. Matrix, docs, lint, typecheck, and diff checks pass for 28 targets,
+24 threats, 30 tasks, and 3 evidence references. This enforces traceability
+presence only; OPEN/BLOCKED runtime gates and independent review remain.
+Evidence: `evidence/2026-09-16-verification-matrix-pass-evidence.md`.
+
 Sandbox Keychain-canary addendum: source revision `bc5ee74` adds an opt-in
 physical-Darwin canary that provisions a synthetic Broker-owned Keychain item
 bound to the task executable, then runs `/usr/bin/security` through the

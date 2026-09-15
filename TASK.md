@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+MOP-085 passing-evidence addendum: source revision `168da62` makes
+`npm run verify:matrix` reject any `PASS` row without a repository evidence
+reference, while retaining path containment and regular-file checks. The two
+existing PASS rows now reference concrete ledger/capability artifacts. Local
+matrix, docs, lint, typecheck, and diff checks pass for 28 targets, 24 threats,
+30 tasks, and 3 evidence references. This is traceability enforcement only;
+runtime gates remain OPEN/BLOCKED. Evidence:
+`evidence/2026-09-16-verification-matrix-pass-evidence.md`.
+
 MOP-086 Keychain-canary addendum: source revision `bc5ee74` adds an opt-in
 physical-Darwin regression using a synthetic Broker-owned Keychain item bound
 to the task executable. A sandboxed `/usr/bin/security` lookup is denied with

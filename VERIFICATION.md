@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Passing-evidence enforcement at source revision `168da62` makes the matrix
+checker fail closed when a `PASS` row has no repository evidence reference.
+The two PASS rows now reference concrete ledger/capability artifacts. Local
+matrix, docs, lint, typecheck, and diff checks pass for 28 targets, 24 threats,
+30 tasks, and 3 evidence references. This strengthens traceability only and
+does not close runtime gates. Evidence:
+`evidence/2026-09-16-verification-matrix-pass-evidence.md`.
+
 Sandbox Keychain-canary verification at source revision `bc5ee74` adds one
 real ACL-bound credential path to the MOP-086 boundary. An opt-in
 physical-Darwin task invokes `/usr/bin/security` against a synthetic
