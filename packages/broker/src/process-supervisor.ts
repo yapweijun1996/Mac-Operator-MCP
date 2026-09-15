@@ -407,10 +407,10 @@ export class ProcessSupervisor {
             throw new BrokerError("POLICY_DENIED", "Process descendants could not be captured");
           }
           if (safeRequest.onStarted !== undefined) {
-            await safeRequest.onStarted({
+            await safeRequest.onStarted(freezeProcessOwnershipSnapshot({
               identity: { pid: processId, processGroupId: processId, startTimeMicros },
               descendants: processTree.snapshotDescendants()
-            });
+            }));
           }
           await assertProcessPathStable(safeRequest.executable, validatedPaths.executable, "Executable");
           await assertProcessPathStable(safeRequest.cwd, validatedPaths.cwd, "Process cwd");
@@ -879,14 +879,14 @@ export class ProcessSupervisor {
           return;
         }
         try {
-          request.onOwnershipChanged({
+          request.onOwnershipChanged(freezeProcessOwnershipSnapshot({
             identity: {
               pid: processId,
               processGroupId: processId,
               startTimeMicros
             },
             descendants
-          });
+          }));
         } catch {
           terminate("orphaned");
         }
@@ -1344,6 +1344,28 @@ function validateProcessOwnershipSnapshot(snapshot: ProcessOwnershipSnapshot): v
     }
     previousPid = descendant.pid;
   }
+}
+
+/**
+ * Ownership evidence is handed to persistence callbacks before a process is
+ * admitted as active. Freeze the complete callback snapshot so a callback
+ * cannot rewrite the PID, process-group, start-time, or descendant proof that
+ * the Broker records for later cancellation and recovery.
+ */
+function freezeProcessOwnershipSnapshot<T extends ProcessOwnershipSnapshot>(snapshot: T): T {
+  const seen = new Set<object>();
+  const freeze = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const child of value) freeze(child);
+    } else {
+      for (const child of Object.values(value)) freeze(child);
+    }
+    Object.freeze(value);
+  };
+  freeze(snapshot);
+  return snapshot;
 }
 
 function hasExactFields(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {

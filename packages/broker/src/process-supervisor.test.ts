@@ -783,6 +783,13 @@ test("process supervisor captures and recovers an exact persisted root identity"
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("root ownership snapshot timeout")), 2_000))
   ]);
   assert.ok(snapshot);
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(Object.isFrozen(snapshot!.identity), true);
+  assert.equal(Object.isFrozen(snapshot!.descendants), true);
+  assert.throws(
+    () => { (snapshot!.identity as unknown as { pid: number }).pid = 1; },
+    TypeError
+  );
   const recovered = await supervisor.recoverOwnedProcess(snapshot!.identity, 1_000);
   assert.equal(recovered.outcome, "drained");
   assert.equal(recovered.terminationObserved, true);
