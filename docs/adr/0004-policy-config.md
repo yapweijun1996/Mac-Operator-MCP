@@ -64,3 +64,11 @@ extra-property arrays fail closed before authorization or capability
 advertisement. This is in-memory policy integrity evidence only; ADR-0004
 remains Proposed pending production signer/Keychain distribution, migration,
 installation, and cross-runtime evidence.
+
+Commit `cb704af` applies the same bounded, dense, known,
+and unique scope-list semantics to parsed request principals and direct
+`authorizeTool` callers. This prevents a representation mismatch where an
+unbounded or duplicate caller list could reach a separate authorization helper;
+malformed lists fail with `AUTH_INVALID` before policy lookup. The change is
+local parser/authority evidence and does not close production token issuance or
+ADR acceptance.

@@ -2703,3 +2703,11 @@ package regression passes 544 total (538 passed, 6 skipped, 0 failed). This
 does not close production signer/Keychain distribution, installed reload, or
 capability enablement. Evidence:
 `evidence/2026-09-15-policy-input-boundary.md`.
+
+Scope-boundary verification confirms request parsing and direct `authorizeTool`
+calls reject duplicate, unknown, sparse, or oversized principal scope arrays
+with `AUTH_INVALID` before authority lookup. The focused policy/security-fuzz
+suite passes 15/15. This remains local representation evidence and does not
+close production token issuance, cross-process identity packaging, or
+capability enablement. Evidence:
+`evidence/2026-09-15-scope-boundary.md`.

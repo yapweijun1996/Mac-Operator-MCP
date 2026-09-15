@@ -1806,3 +1806,12 @@ helpers before matching or grant lookup. Focused policy tests pass 2/2; the
 non-overlapping package regression passes 544 total (538 passed, 6 skipped, 0
 failed). Production signer/Keychain, installed reload, and capability gates
 remain open. Evidence: `evidence/2026-09-15-policy-input-boundary.md`.
+
+Scope-list boundary addendum: commit `cb704af` validates principal scope
+arrays at request parsing and direct tool authorization. Duplicate, unknown,
+sparse, and oversized lists fail with `AUTH_INVALID` before policy lookup;
+focused policy/security-fuzz verification passes 15/15; the non-overlapping
+package regression passes 545 total (539 passed, 6 skipped, 0 failed).
+Production token issuance, cross-process identity packaging, and capability
+gates remain open.
+Evidence: `evidence/2026-09-15-scope-boundary.md`.

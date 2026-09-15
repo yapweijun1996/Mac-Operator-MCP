@@ -3033,3 +3033,12 @@ calls. Focused policy tests pass 2/2; the non-overlapping package regression
 passes 544 total (538 passed, 6 skipped, 0 failed). Production signer/Keychain,
 installed reload, and capability enablement remain open. Evidence:
 `evidence/2026-09-15-policy-input-boundary.md`.
+
+Scope authority is now consistent at both request parsing and direct tool
+authorization boundaries (source revision `cb704af`). Principal
+scope arrays must be dense, known, unique, and bounded by the registered scope
+set; malformed lists fail with `AUTH_INVALID` before policy lookup. Focused
+policy/security-fuzz verification passes 15/15; the non-overlapping package
+regression passes 545 total (539 passed, 6 skipped, 0 failed). Production token issuance,
+cross-process identity packaging, and capability enablement remain open.
+Evidence: `evidence/2026-09-15-scope-boundary.md`.
