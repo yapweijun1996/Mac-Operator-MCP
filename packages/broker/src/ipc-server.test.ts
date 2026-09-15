@@ -9,7 +9,7 @@ import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
-import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket } from "./ipc-server.js";
+import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, unlinkOwnedSocket } from "./ipc-server.js";
 import { MacOsPeerCredentialVerifier } from "./peer-credentials.js";
 import { BrokerStore } from "./persistence.js";
 
@@ -209,6 +209,38 @@ test("IPC close fences a replacement listener while closing", async () => {
     await removeDetachedSocket(detached);
   } finally {
     await closeServer(blocked).catch(() => undefined);
+    await closeServer(second);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("IPC stale cleanup quarantines the exact socket inode before unlinking", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-stale-quarantine-"));
+  const socketPath = join(directory, "stale.sock");
+  const first = createServer();
+  await listenServer(first, socketPath);
+  await closeServer(first);
+  try {
+    await removeStaleSocket(socketPath);
+    assert.equal(await stat(socketPath).catch(() => undefined), undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("IPC close refuses to unlink a replacement socket identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-close-identity-"));
+  const socketPath = join(directory, "replacement.sock");
+  const first = createServer();
+  const second = createServer();
+  await listenServer(first, socketPath);
+  const firstIdentity = await captureSocketPathIdentity(socketPath);
+  await closeServer(first);
+  await listenServer(second, socketPath);
+  try {
+    await assert.rejects(unlinkOwnedSocket(socketPath, firstIdentity), /ownership changed before close/u);
+    assert.equal((await stat(socketPath)).isSocket(), true);
+  } finally {
     await closeServer(second);
     await rm(directory, { recursive: true, force: true });
   }

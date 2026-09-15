@@ -139,11 +139,7 @@ export async function removeStaleSocket(path: string): Promise<void> {
     throw new Error("IPC socket changed while checking ownership");
   }
   if (active) throw new Error("IPC socket is already active");
-  try {
-    await unlink(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
+  await removeSocketByIdentity(path, initial, "IPC socket changed before removal", "IPC socket changed during removal");
 }
 
 /** Fails closed when a live listener already owns the configured pathname. */
@@ -178,16 +174,38 @@ export async function captureSocketPathIdentity(path: string): Promise<SocketPat
 
 export async function unlinkOwnedSocket(path: string, expected: SocketPathIdentity | undefined): Promise<void> {
   if (expected === undefined) return;
+  await removeSocketByIdentity(path, expected, "IPC socket ownership changed before close", "IPC socket ownership changed during close");
+}
+
+/**
+ * Removes an exact socket inode without unlinking a replacement pathname.
+ * The rename selects the pathname atomically; the private quarantine is then
+ * rechecked before deletion. A mismatch is left as a recovery artifact rather
+ * than deleting a socket that appeared after the initial identity read.
+ */
+async function removeSocketByIdentity(
+  path: string,
+  expected: SocketPathIdentity,
+  beforeError: string,
+  duringError: string
+): Promise<void> {
   const current = await readSocketIdentity(path);
   if (current === undefined) return;
   if (current.device !== expected.device || current.inode !== expected.inode) {
-    throw new Error("IPC socket ownership changed before close");
+    throw new Error(beforeError);
   }
+  const quarantine = join(dirname(path), `.mac-operator-removing-${randomUUID()}.sock`);
   try {
-    await unlink(path);
+    await rename(path, quarantine);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
   }
+  const quarantined = await readSocketIdentity(quarantine);
+  if (quarantined === undefined || quarantined.device !== expected.device || quarantined.inode !== expected.inode) {
+    throw new Error(duringError);
+  }
+  await unlink(quarantine);
 }
 
 /**
