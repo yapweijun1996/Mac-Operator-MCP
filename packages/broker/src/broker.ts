@@ -225,7 +225,12 @@ export class Broker {
         try { await resource.close.call(resource); }
         catch (error) { firstError ??= error; }
       }
-      if (firstError !== undefined) throw firstError;
+      if (firstError !== undefined) {
+        // Keep the Broker fenced against new work, but permit an explicit
+        // shutdown retry after a resource reports a recoverable close failure.
+        this.closePromise = undefined;
+        throw firstError;
+      }
     })();
     return this.closePromise;
   }

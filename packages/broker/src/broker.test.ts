@@ -167,6 +167,44 @@ test("Broker close drains its shared OS process supervisor", async () => {
   }
 });
 
+test("Broker close remains retryable after a resource cleanup failure", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-close-retry-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  let closeCalls = 0;
+  const taskRunner: TaskRunner = {
+    available: false,
+    mechanism: null,
+    isolationProof: null,
+    run: async () => {
+      throw new Error("disabled test runner");
+    },
+    close: async () => {
+      closeCalls += 1;
+      if (closeCalls === 1) throw new Error("synthetic task-runner close failure");
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    taskRunner,
+    now: () => NOW
+  });
+  try {
+    await assert.rejects(broker.close(), /synthetic task-runner close failure/u);
+    const result = await broker.handle(signRequest(unsigned({ requestId: "request-close-fenced" }), key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "CANCELLED");
+    await broker.close();
+    assert.equal(closeCalls, 2);
+  } finally {
+    await broker.close().catch(() => undefined);
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("restarted Broker recovers an exact task process identity without resolving the Job", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Cross-Broker task process recovery is a macOS native boundary");
