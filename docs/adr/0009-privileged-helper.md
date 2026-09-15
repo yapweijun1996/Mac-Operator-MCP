@@ -209,7 +209,7 @@ disabled until production helper provenance, signing, installation, and
 adapter evidence are accepted.
 
 Revision `2660bdf`, hardened in `becea16` and `1eea5cb`, and wired in
-`d717525`, adds the independent helper-to-Broker authority-polling socket,
+`d717525` and `b9d038a`, adds the independent helper-to-Broker authority-polling socket,
 wipes copied keys on setup failure, and strictly validates failure bodies. Both peers require explicit
 OS-peer authentication, request and
 response proofs use direction-separated HMAC domains, and request IDs/nonces

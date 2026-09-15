@@ -4,8 +4,8 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Privileged helper authority-polling IPC addendum: source revision `d717525`
-(building on `2660bdf`, `becea16`, and `1eea5cb`) adds an independent
+Privileged helper authority-polling IPC addendum: source revision `b9d038a`
+(building on `d717525`, `2660bdf`, `becea16`, and `1eea5cb`) adds an independent
 helper-to-Broker Unix socket, wires it into native Broker startup with
 rollback, wipes copied keys on setup failure, and strictly validates failure
 bodies. Both peers are explicitly
@@ -17,8 +17,8 @@ operations poll before dispatch, during execution, and before publishing
 success; a post-dispatch authority change becomes retryable
 `UNKNOWN_OUTCOME`. Runtime startup rejects enabled adapters without the
 poller. Focused helper/authority tests pass 18/18, runtime/keyring tests pass
-6/6, native startup assembly tests pass 8/8, and the latest physical
-non-overlapping suite passes 612/612 with zero skips and zero failures. The
+7/7, native startup assembly tests pass 8/8, and the latest physical
+non-overlapping suite passes 613/613 with zero skips and zero failures. The
 default helper/policy remain disabled and the
 existing Broker/Persistence process was left undisturbed. Evidence:
 `evidence/2026-09-15-privileged-authority-polling-ipc.md`.

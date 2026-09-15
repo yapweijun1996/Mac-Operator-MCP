@@ -1,7 +1,7 @@
 # Privileged helper authority-polling IPC evidence
 
 Date: 2026-09-15
-Source revision: `d717525` (authority polling implementation: `2660bdf`)
+Source revision: `b9d038a` (authority polling implementation: `2660bdf`)
 Status: implemented boundary; disabled by default and not a privileged-release acceptance
 
 ## Scope
@@ -38,9 +38,9 @@ explicit native helper process identity.
 - `npx tsc -b packages/broker/tsconfig.json --pretty false` — passed.
 - `npm run lint -- --quiet` — passed for 628 tracked files.
 - `node --test packages/broker/dist/privileged-helper-authority-ipc.test.js packages/broker/dist/privileged-helper.test.js` — 18/18 passed.
-- `node --test packages/broker/dist/privileged-helper-runtime.test.js packages/broker/dist/privileged-helper-keyring.test.js` — 6/6 passed in the combined focused run.
+- `node --test packages/broker/dist/privileged-helper-runtime.test.js packages/broker/dist/privileged-helper-keyring.test.js` — 7/7 passed in the combined focused run.
 - `node --test packages/broker/dist/native-runtime-startup.test.js` — 8/8 passed.
-- Physical non-overlapping built suite with `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 MOPS_REAL_SANDBOX=1` — 612/612 passed, zero failures and zero skips.
+- Physical non-overlapping built suite with `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 MOPS_REAL_SANDBOX=1` — 613/613 passed, zero failures and zero skips.
 - Existing long-running `broker.test.js` / `persistence.test.js` process was observed and left undisturbed.
 
 ## Boundary cases covered

@@ -4,7 +4,7 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Privileged helper authority-polling IPC verification: source revision
-`d717525` (building on `2660bdf`, `becea16`, and `1eea5cb`) adds a separately
+`b9d038a` (building on `d717525`, `2660bdf`, `becea16`, and `1eea5cb`) adds a separately
 authenticated helper-to-Broker authority channel, wires the Broker listener
 into native startup with rollback, wipes copied keys on setup failure, and
 strictly validates failure bodies.
@@ -17,8 +17,8 @@ polls before dispatch, during execution, and before success publication;
 authority loss after execution begins is reported as retryable
 `UNKNOWN_OUTCOME`. Enabled adapters are rejected at runtime construction when
 no authority poller is supplied. Focused helper/authority tests pass 18/18,
-runtime/keyring tests pass 6/6, native startup assembly tests pass 8/8, and
-the latest physical non-overlapping regression passes 612/612 with zero skips
+runtime/keyring tests pass 7/7, native startup assembly tests pass 8/8, and
+the latest physical non-overlapping regression passes 613/613 with zero skips
 and zero failures. The existing
 Broker/Persistence process was not restarted. Evidence:
 `evidence/2026-09-15-privileged-authority-polling-ipc.md`.
