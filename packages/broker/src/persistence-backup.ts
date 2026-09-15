@@ -8,7 +8,7 @@ import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonStrict, parseJso
 const BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite\.enc$/u;
 const LEGACY_PLAINTEXT_BACKUP_NAME_PATTERN = /^broker-backup-(\d{1,16})-([a-f0-9]{24})\.sqlite$/u;
 const BACKUP_TEMP_NAME_PATTERN = /^\.broker-backup-(\d{1,16})-[a-f0-9]{24}\.(?:sqlite|sqlite\.enc)\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?$/u;
-const BACKUP_QUARANTINE_NAME_PATTERN = /^(?:broker-backup-\d{1,16}-[a-f0-9]{24}\.sqlite\.enc|\.broker-backup-\d{1,16}-[a-f0-9]{24}\.(?:sqlite|sqlite\.enc)\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?)\.unlink-[a-f0-9]{24}$/u;
+const BACKUP_QUARANTINE_NAME_PATTERN = /^(?:broker-backup-\d{1,16}-[a-f0-9]{24}\.sqlite\.enc|\.broker-backup-\d{1,16}-[a-f0-9]{24}\.(?:sqlite|sqlite\.enc)\.tmp-[a-f0-9]{24}(?:-(?:wal|shm|journal))?)\.unlink-(\d{1,16})-[a-f0-9]{24}$/u;
 const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 const MAX_BACKUP_FILES = 256;
 const MAX_BACKUP_TEMP_FILES = 256;
@@ -310,7 +310,12 @@ async function cleanupStaleBackupQuarantines(
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || !isOwnedByCurrentUser(stat.uid)) {
       throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup directory contains an unsafe quarantine entry");
     }
-    if (nowMs - stat.mtimeMs < BACKUP_TEMP_STALE_MS) continue;
+    const match = BACKUP_QUARANTINE_NAME_PATTERN.exec(entry.name);
+    const createdAtMs = match === null ? Number.NaN : Number(match[1]);
+    if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Broker backup quarantine timestamp is invalid");
+    }
+    if (nowMs - createdAtMs < BACKUP_TEMP_STALE_MS) continue;
     await removeExactProtectedFile(path, stat);
     removed.push(path);
   }
@@ -431,7 +436,7 @@ async function removeExactProtectedFile(
   if (!sameFileIdentity(expected, initial)) {
     throw new BrokerError("CONFLICT", "Protected file changed before removal", true);
   }
-  const quarantine = `${path}.unlink-${randomBytes(12).toString("hex")}`;
+  const quarantine = `${path}.unlink-${Date.now()}-${randomBytes(12).toString("hex")}`;
   try {
     await rename(path, quarantine);
     const quarantined = await lstat(quarantine);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rename, rm, stat, utimes } from "node:fs/promises";
+import { mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -14,10 +14,8 @@ test("Broker backup pruning completes a stale deletion quarantine", async () => 
       nowMs: 1_700_000_000_000,
       retainCount: 2
     });
-    const quarantine = `${manifest.path}.unlink-${"a".repeat(24)}`;
+    const quarantine = `${manifest.path}.unlink-${Date.now() - 2 * 60 * 60 * 1_000}-${"a".repeat(24)}`;
     await rename(manifest.path, quarantine);
-    const stale = new Date(Date.now() - 2 * 60 * 60 * 1_000);
-    await utimes(quarantine, stale, stale);
 
     const result = await store.pruneBackups(directory, 2);
 
