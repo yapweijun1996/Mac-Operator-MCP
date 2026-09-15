@@ -3068,12 +3068,13 @@ package regression remains 546 total (540 passed, 6 skipped, 0 failed).
 Evidence: `evidence/2026-09-15-kill-switch-fail-closed.md`.
 
 Broker-owned Job records now persist the admitting Edge identity in schema
-version `10` (source revisions `e0b9db8`, `66688ec`, `9a52c59`). All Broker mutation Job
+version `11` (source revisions `e0b9db8`, `66688ec`, `9a52c59`, `8dbbd67`). All Broker mutation Job
 paths bind the authenticated request Edge; idempotent reuse rejects a different
 Edge, and legacy Jobs migrate with null provenance. Edge revocation now cancels
 only matching queued Jobs while null or malformed provenance fails closed
-conservatively. Restarted guest recovery also rechecks a persisted Job Edge
-before status lookup. Build, typecheck, lint, and a temporary schema/readback and
+conservatively. Edge-key revocation now has the same precision through persisted
+key identity. Restarted guest recovery also rechecks a persisted Job Edge before
+status lookup. Build, typecheck, lint, and a temporary schema/readback and
 revocation smoke pass; the non-overlapping package regression remains 546
 total (540 passed, 6 skipped, 0 failed). Evidence:
 `evidence/2026-09-15-job-edge-provenance.md`.

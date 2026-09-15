@@ -94,6 +94,7 @@ Commit `e0b9db8` adds schema version `10` Job Edge provenance. Broker-created
 mutation Jobs persist the authenticated Edge that admitted them; idempotent
 reuse is bound to that identity, and Edge revocation isolates matching queued
 Jobs. Legacy/null provenance is intentionally cancelled conservatively, while
-malformed persisted provenance fails closed. This closes a local authority
-correlation gap but does not close production policy distribution or ADR
-acceptance.
+malformed persisted provenance fails closed. Commit `8dbbd67` extends the
+same boundary with schema version `11` Edge-key provenance and precise
+Edge-key revocation. These changes close a local authority-correlation gap but
+do not close production policy distribution or ADR acceptance.

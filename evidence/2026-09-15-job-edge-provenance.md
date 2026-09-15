@@ -1,7 +1,7 @@
 # Job Edge provenance evidence
 
 Date: 2026-09-15
-Source revisions: `e0b9db8`, `66688ec`, `9a52c59`
+Source revisions: `e0b9db8`, `66688ec`, `9a52c59`, `8dbbd67`
 
 ## Decision
 
@@ -13,15 +13,17 @@ readback.
 
 ## Implementation
 
-- BrokerStore schema version `10` adds nullable `jobs.owner_edge_id`.
-- The migration is forward-only and adds the column to legacy Job ledgers with
-  `NULL` provenance.
+- BrokerStore schema versions `10` and `11` add nullable `jobs.owner_edge_id`
+  and `jobs.owner_edge_key_id`.
+- The migrations are forward-only and add both columns to legacy Job ledgers
+  with `NULL` provenance.
 - Every Broker-owned mutation Job admission passes the authenticated request
-  Edge. Atomic and ordinary idempotent reuse reject a different Edge identity.
+  Edge and Edge-key identity. Atomic and ordinary idempotent reuse reject a
+  different authority identity.
 - Restarted guest-task recovery rechecks the persisted Job Edge before making a
   status lookup, so a revoked Edge cannot close an unknown Job as success.
-- Edge revocation cancels matching queued Jobs, plus legacy/null or malformed
-  provenance; non-matching, valid Edge Jobs remain queued.
+- Edge and Edge-key revocation cancel matching queued Jobs, plus legacy/null or
+  malformed provenance; non-matching, valid identities remain queued.
 - The public `BrokerJob` result does not expose Edge identity; it remains
   Broker-owned authority evidence.
 
@@ -31,13 +33,15 @@ Passed:
 
 - `npm run build`
 - `npm run typecheck`
-- `npm run lint` (`Style check passed for 564 tracked files.`)
+- `npm run lint` (`Style check passed for 565 tracked files.`)
 - `git diff --check`
 - Non-overlapping package regression: 546 tests, 540 passed, 6 skipped, 0
   failed.
-- Temporary BrokerStore smoke: schema `10`; `owner_edge_id` read back as
-  `edge-1`, `edge-2`, and `NULL`; revoking `edge-1` produced states
-  `cancelled`, `queued`, `cancelled`; the column read back as nullable `TEXT`.
+- Temporary BrokerStore smoke: schema `11`; Edge-key identities read back as
+  `edge-1:key-old`, `edge-1:key-new`, and `NULL`; revoking `edge-1:key-old`
+  produced states `cancelled`, `queued`, `cancelled`; both provenance columns
+  read back as nullable `TEXT`; malformed key provenance returned
+  `AUDIT_UNAVAILABLE`.
 
 The persistence test file already had a long-lived test process running, so the
 new focused persistence tests were not launched concurrently. Their cases are
@@ -47,6 +51,6 @@ persistence run.
 
 ## Remaining risk
 
-Edge-key provenance is not yet persisted on Jobs, so revoking an Edge key still
-uses conservative queued-Job cancellation. Active process termination and
-production installed-service evidence remain open.
+Active process termination and production installed-service evidence remain
+open. Other upstream authority kinds without persisted Job provenance still use
+conservative queued-Job cancellation.
