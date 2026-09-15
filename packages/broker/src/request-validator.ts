@@ -55,5 +55,13 @@ export function parseBrokerRequest(value: unknown): BrokerRequest {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return false;
+    Object.keys(value);
+    return true;
+  } catch {
+    return false;
+  }
 }

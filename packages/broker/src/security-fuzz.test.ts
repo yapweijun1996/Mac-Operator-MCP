@@ -10,6 +10,7 @@ import {
 } from "@mac-operator/contracts";
 import { authorizePrincipalProjection, authorizeTarget, type BrokerPolicy } from "./policy.js";
 import { createDefaultPolicy } from "./default-policy.js";
+import { parseBrokerRequest } from "./request-validator.js";
 import { FilesystemInspector, type FilesystemNativeAdapter } from "./filesystem-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 import {
@@ -102,6 +103,33 @@ test("deterministic request mutations never bypass the Broker authentication pro
       assert.equal(verifyRequestAuthentication(altered, KEY), false, `mutation accepted at sequence ${sequence}`);
     }
   }
+});
+
+test("request parsing rejects inherited envelope, argument, and principal fields", () => {
+  const base = signRequest(brokerRequest(0), KEY);
+  const inheritedEnvelope = Object.create({ tool: base.tool }) as Record<string, unknown>;
+  Object.assign(inheritedEnvelope, base);
+  delete inheritedEnvelope.tool;
+  assert.throws(
+    () => parseBrokerRequest(inheritedEnvelope),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
+  const inheritedArguments = Object.create({ path: "/private" }) as Record<string, unknown>;
+  const argumentRequest = { ...base, arguments: inheritedArguments };
+  assert.throws(
+    () => parseBrokerRequest(argumentRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
+
+  const inheritedPrincipal = Object.create({ principalId: base.principal.principalId }) as Record<string, unknown>;
+  Object.assign(inheritedPrincipal, base.principal);
+  delete inheritedPrincipal.principalId;
+  const principalRequest = { ...base, principal: inheritedPrincipal };
+  assert.throws(
+    () => parseBrokerRequest(principalRequest),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "AUTH_INVALID"
+  );
 });
 
 test("guest request mutations fail closed before any guest exchange", () => {
