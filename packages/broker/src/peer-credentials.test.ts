@@ -144,6 +144,28 @@ test("native adapter binds its compiled N-API version to the runtime", () => {
   assert.equal(native.nativeNodeVersion, process.versions.node);
 });
 
+test("native process-group observer returns bounded start-time identities", () => {
+  const native = loadNativePeerAdapter();
+  const identity = native.getProcessIdentity(process.pid) as {
+    pid: number;
+    processGroupId: number;
+    startTimeMicros: number;
+  };
+  const snapshot = native.listProcessGroupMembers(identity.processGroupId) as {
+    processes: readonly {
+      pid: number;
+      parentPid: number;
+      processGroupId: number;
+      startTimeMicros: number;
+    }[];
+    truncated: boolean;
+  };
+  assert.equal(snapshot.truncated, false);
+  assert.ok(snapshot.processes.some((item) => item.pid === process.pid));
+  assert.ok(snapshot.processes.every((item) => item.processGroupId === identity.processGroupId));
+  assert.ok(snapshot.processes.every((item) => Number.isSafeInteger(item.startTimeMicros) && item.startTimeMicros > 0));
+});
+
 test("native adapter runtime binding rejects malformed or mismatched versions", () => {
   assert.doesNotThrow(() => assertNativeNodeRuntimeVersion(process.versions.node));
   assert.throws(

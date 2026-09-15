@@ -2753,6 +2753,71 @@ napi_value ListDescendantProcesses(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value ListProcessGroupMembers(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "listProcessGroupMembers requires process group id");
+    return nullptr;
+  }
+  int32_t requested_group = 0;
+  if (napi_get_value_int32(env, args[0], &requested_group) != napi_ok || requested_group < 1 || requested_group > 99'999'999) {
+    napi_throw_type_error(env, nullptr, "Process group id must be between 1 and 99999999");
+    return nullptr;
+  }
+
+  const int requested_bytes = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
+  if (requested_bytes <= 0) {
+    ThrowSystemError(env, "Process group members could not be enumerated");
+    return nullptr;
+  }
+  constexpr size_t MAX_PID_BYTES = 65'536 * sizeof(pid_t);
+  const size_t buffer_bytes = std::min(static_cast<size_t>(requested_bytes), MAX_PID_BYTES);
+  std::vector<pid_t> pids(buffer_bytes / sizeof(pid_t));
+  const int returned_bytes = proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(buffer_bytes));
+  if (returned_bytes <= 0) {
+    ThrowSystemError(env, "Process group members could not be read");
+    return nullptr;
+  }
+  const size_t pid_count = std::min(static_cast<size_t>(returned_bytes) / sizeof(pid_t), pids.size());
+  bool truncated = static_cast<size_t>(requested_bytes) > MAX_PID_BYTES;
+  std::vector<ProcessIdentityRecord> members;
+  members.reserve(256);
+  std::set<pid_t> seen;
+  for (size_t index = 0; index < pid_count; ++index) {
+    const pid_t pid = pids[index];
+    if (pid <= 0 || !seen.insert(pid).second) continue;
+    ProcessIdentityRecord identity{};
+    if (!ReadProcessIdentity(pid, &identity) || identity.process_group_id != static_cast<pid_t>(requested_group)) continue;
+    if (members.size() >= 256) {
+      truncated = true;
+      break;
+    }
+    members.push_back(identity);
+  }
+  std::sort(members.begin(), members.end(), [](const ProcessIdentityRecord& left, const ProcessIdentityRecord& right) {
+    return left.pid < right.pid;
+  });
+
+  napi_value result;
+  napi_value process_array;
+  napi_create_object(env, &result);
+  napi_create_array_with_length(env, members.size(), &process_array);
+  for (size_t index = 0; index < members.size(); ++index) {
+    const ProcessIdentityRecord& identity = members[index];
+    napi_value item;
+    napi_create_object(env, &item);
+    SetNumber(env, item, "pid", static_cast<double>(identity.pid));
+    SetNumber(env, item, "parentPid", static_cast<double>(identity.parent_pid));
+    SetNumber(env, item, "processGroupId", static_cast<double>(identity.process_group_id));
+    SetNumber(env, item, "startTimeMicros", static_cast<double>(identity.start_time_micros));
+    napi_set_element(env, process_array, index, item);
+  }
+  napi_set_named_property(env, result, "processes", process_array);
+  SetBoolean(env, result, "truncated", truncated);
+  return result;
+}
+
 napi_value IsProcessIdentityAlive(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value args[2];
@@ -2938,6 +3003,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "inspectProcess", function);
   napi_create_function(env, "listDescendantProcesses", NAPI_AUTO_LENGTH, ListDescendantProcesses, nullptr, &function);
   napi_set_named_property(env, exports, "listDescendantProcesses", function);
+  napi_create_function(env, "listProcessGroupMembers", NAPI_AUTO_LENGTH, ListProcessGroupMembers, nullptr, &function);
+  napi_set_named_property(env, exports, "listProcessGroupMembers", function);
   napi_create_function(env, "isProcessIdentityAlive", NAPI_AUTO_LENGTH, IsProcessIdentityAlive, nullptr, &function);
   napi_set_named_property(env, exports, "isProcessIdentityAlive", function);
   napi_create_function(env, "getProcessIdentity", NAPI_AUTO_LENGTH, GetProcessIdentity, nullptr, &function);

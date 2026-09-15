@@ -44,6 +44,7 @@ interface NativePeerCredentials {
   sha256Utf8(value: string): unknown;
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
+  listProcessGroupMembers(processGroupId: number): unknown;
   statStorageVolumeWithinRoot(rootPath: string): unknown;
   readKeychainGenericPassword(service: string, account: string, trustedExecutablePath: string): unknown;
   writeKeychainGenericPassword(service: string, account: string, key: Buffer, trustedExecutablePath: string): unknown;
@@ -66,7 +67,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "sha256Utf8", "getPeerCredentials", "createUnixListener", "acceptUnixClient", "closeUnixDescriptor",
   "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot", "recoverUnlinkFileWithinRoot",
-  "listProcesses", "inspectProcess", "listDescendantProcesses", "isProcessIdentityAlive", "getProcessIdentity",
+  "listProcesses", "inspectProcess", "listDescendantProcesses", "listProcessGroupMembers", "isProcessIdentityAlive", "getProcessIdentity",
   "readKeychainGenericPassword", "writeKeychainGenericPassword",
   "inspectKeychainGenericPassword", "deleteKeychainGenericPassword"
 ] as const;

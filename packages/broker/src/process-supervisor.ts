@@ -22,6 +22,7 @@ const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_MAX_CONCURRENT_PER_EXECUTABLE = 4;
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
+  listProcessGroupMembers(processGroupId: number): unknown;
   isProcessIdentityAlive(pid: number, startTimeMicros: number): unknown;
   getProcessIdentity(pid: number): unknown;
 }
@@ -443,6 +444,7 @@ export class ProcessSupervisor {
     try {
       native = loadNativePeerAdapter() as unknown as NativeProcessTreeAdapter;
       if (typeof native.listDescendantProcesses !== "function" ||
+          typeof native.listProcessGroupMembers !== "function" ||
           typeof native.isProcessIdentityAlive !== "function" ||
           typeof native.getProcessIdentity !== "function") {
         throw new Error("Process tree observer is unavailable");
@@ -1312,7 +1314,8 @@ function createProcessTreeTracker(processId: number): ProcessTreeTracker | undef
   if (process.platform !== "darwin") return undefined;
   try {
     const native = loadNativePeerAdapter() as unknown as Partial<NativeProcessTreeAdapter>;
-    if (typeof native.listDescendantProcesses !== "function" || typeof native.isProcessIdentityAlive !== "function" ||
+    if (typeof native.listDescendantProcesses !== "function" || typeof native.listProcessGroupMembers !== "function" ||
+        typeof native.isProcessIdentityAlive !== "function" ||
         typeof native.getProcessIdentity !== "function") return undefined;
     return new ProcessTreeTracker(native as NativeProcessTreeAdapter, processId);
   } catch {
@@ -1418,16 +1421,33 @@ class ProcessTreeTracker {
   sample(): void {
     if (this.failed) return;
     try {
-      const snapshot = parseProcessTreeSnapshot(this.native.listDescendantProcesses(this.processId));
-      if (snapshot.truncated) {
+      const snapshots = [parseProcessTreeSnapshot(this.native.listDescendantProcesses(this.processId))];
+      const processGroupId = this.rootIdentity?.processGroupId;
+      if (processGroupId !== undefined) {
+        snapshots.push(parseProcessTreeSnapshot(this.native.listProcessGroupMembers(processGroupId)));
+      }
+      const observedByPid = new Map<number, ProcessTreeIdentity>();
+      for (const snapshot of snapshots) {
+        if (snapshot.truncated) {
+          this.failed = true;
+          return;
+        }
+        for (const identity of snapshot.processes) {
+          if (identity.pid === this.processId) continue;
+          const existing = observedByPid.get(identity.pid);
+          if (existing !== undefined && existing.startTimeMicros !== identity.startTimeMicros) {
+            this.failed = true;
+            return;
+          }
+          observedByPid.set(identity.pid, identity);
+        }
+      }
+      const observed = [...observedByPid.values()];
+      if (detectProcessIdentityReplacement(this.snapshotDescendants(), observed)) {
         this.failed = true;
         return;
       }
-      if (detectProcessIdentityReplacement(this.snapshotDescendants(), snapshot.processes)) {
-        this.failed = true;
-        return;
-      }
-      for (const identity of snapshot.processes) this.descendants.set(identity.pid, identity);
+      for (const identity of observed) this.descendants.set(identity.pid, identity);
     } catch {
       this.failed = true;
     }
