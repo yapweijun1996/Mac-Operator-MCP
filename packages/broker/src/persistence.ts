@@ -1822,6 +1822,12 @@ export class BrokerStore {
     }
     return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
       if (current.startedAtMs === null || outcome.finishedAtMs < current.startedAtMs) throw malformedJob();
+      // A cancellation request is a durable authority change. If it wins the
+      // revision race before completion, never persist a late success; the
+      // caller must recover the running Job as unknown instead.
+      if (current.cancelRequested && outcome.state === "completed") {
+        throw new BrokerError("CANCELLED", "Job cancellation was requested before completion");
+      }
       this.database.prepare(`
         UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = ?,
           stdout_text = ?, stderr_text = ?, output_truncated = ?, process_metadata_json = CASE WHEN ? = 'unknown' THEN process_metadata_json ELSE '' END,
@@ -3388,6 +3394,7 @@ function mapApproval(row: ApprovalRow): ApprovalRecord {
 }
 
 function mapJob(row: JobRow): BrokerJob {
+  validateStoredJobState(row);
   if (row.owner_edge_id !== null &&
       (typeof row.owner_edge_id !== "string" || !isValidEdgeId(row.owner_edge_id))) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job Edge provenance is malformed");
@@ -3423,6 +3430,48 @@ function mapJob(row: JobRow): BrokerJob {
     ...(row.guest_metadata_json ? { guestMetadata: parseGuestTaskJobMetadata(row.guest_metadata_json) } : {}),
     ...(row.privileged_payload_json ? { privilegedPayload: parsePrivilegedHelperPayload(row.privileged_payload_json) } : {})
   };
+}
+
+/**
+ * Validate the durable Job state machine before exposing a row to Broker
+ * logic. SQLite CHECK constraints protect enum values, but they do not prove
+ * that timestamps, result classes, cancellation markers, and leases agree.
+ * A forged or partially migrated row must become AUDIT_UNAVAILABLE rather
+ * than influence an authorization or recovery decision.
+ */
+function validateStoredJobState(row: JobRow): void {
+  const fail = (): never => { throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job state invariants are malformed"); };
+  const timestamp = (value: number | null): boolean => value === null || (Number.isSafeInteger(value) && value >= 0);
+  if (!Number.isSafeInteger(row.revision) || row.revision < 0 || !timestamp(row.created_at_ms) || !timestamp(row.started_at_ms) ||
+      !timestamp(row.finished_at_ms) || !timestamp(row.lease_acquired_at_ms) || !timestamp(row.lease_heartbeat_at_ms) ||
+      !timestamp(row.lease_expires_at_ms) || row.cancel_requested !== 0 && row.cancel_requested !== 1 ||
+      row.output_truncated !== 0 && row.output_truncated !== 1) fail();
+  if (row.created_at_ms < 0 || row.started_at_ms !== null && row.started_at_ms < row.created_at_ms ||
+      row.finished_at_ms !== null && row.started_at_ms !== null && row.finished_at_ms < row.started_at_ms) fail();
+  if (row.state === "queued") {
+    if (row.result_class !== "queued" || row.started_at_ms !== null || row.finished_at_ms !== null || row.cancel_requested !== 0) fail();
+  } else if (row.state === "running") {
+    if (row.result_class !== "accepted" || row.started_at_ms === null || row.finished_at_ms !== null) fail();
+  } else if (row.state === "completed") {
+    if (row.result_class !== "success" || row.started_at_ms === null || row.finished_at_ms === null) fail();
+  } else if (row.state === "failed") {
+    if (!["failed", "denied", "verification_failed"].includes(row.result_class) || row.started_at_ms === null || row.finished_at_ms === null) fail();
+  } else if (row.state === "cancelled") {
+    if (row.result_class !== "denied" || row.finished_at_ms === null) fail();
+  } else if (row.state === "unknown") {
+    if (row.result_class !== "unknown" || row.finished_at_ms === null) fail();
+  } else {
+    fail();
+  }
+  const leaseFields = [row.lease_owner_id, row.lease_token, row.lease_acquired_at_ms, row.lease_heartbeat_at_ms, row.lease_expires_at_ms];
+  const leasePresent = leaseFields.some((value) => value !== null);
+  if (leasePresent && leaseFields.some((value) => value === null)) fail();
+  if (row.state !== "running" && leasePresent) fail();
+  if (row.lease_acquired_at_ms !== null && (row.started_at_ms === null || row.lease_acquired_at_ms < row.started_at_ms)) fail();
+  if (row.lease_heartbeat_at_ms !== null && row.lease_heartbeat_at_ms < row.lease_acquired_at_ms!) fail();
+  if (row.lease_expires_at_ms !== null && row.lease_expires_at_ms <= row.lease_acquired_at_ms!) fail();
+  if (row.cancel_requested === 0 && row.cancel_reason !== null) fail();
+  if (row.cancel_requested === 1 && (row.cancel_reason === null || row.cancel_reason.length < 1 || row.cancel_reason.length > 200 || row.cancel_reason.includes("\0"))) fail();
 }
 
 function validateJobCreation(input: CreateJobInput): void {
