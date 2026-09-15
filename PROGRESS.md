@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge contract foreign-owner regression addendum at source revision `edd2cff`:
+the contract registry now has direct negative coverage for a mismatched Edge
+UID before parsing, with the simulated process identity restored in a
+`finally` block. Focused contract/readback tests pass 15/15; the serial
+physical regression passes 658/663 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-edge-contract-owner-test.md`.
+
 Edge contract ownership addendum at source revision `1500196`: the Edge
 contract directory and each contract file must be owned by the Edge UID in
 addition to being regular, non-symlink, and not group/other writable before

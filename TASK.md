@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-084/085 Edge contract foreign-owner regression addendum at source revision
+`edd2cff`: direct negative coverage rejects a mismatched Edge UID before
+contract parsing and restores the simulated identity in a `finally` block.
+Focused contract/readback tests pass 15/15; the serial physical regression
+passes 658/663 with 0 failures and 5 explicit descriptor-capability skips.
+Evidence: `evidence/2026-09-16-edge-contract-owner-test.md`.
+
 MOP-084/085 Edge contract ownership addendum at source revision `1500196`:
 the Edge contract directory and files are required to be owned by the Edge UID
 before parsing or MCP advertisement, alongside existing non-symlink and
