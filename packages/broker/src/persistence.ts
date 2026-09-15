@@ -684,6 +684,7 @@ export class BrokerStore {
       this.migrateSchema(schemaVersion);
       this.verifyReplayLedgerIntegrity();
       this.verifyConfigurationLedgerIntegrity();
+      this.verifyJobLedgerIntegrity();
       this.verifyAuditIntegrity();
       this.verifyExternalAuditAnchor();
       if (this.runtimeFenceEnabled) this.acquireRuntimeFence(Date.now());
@@ -793,6 +794,24 @@ export class BrokerStore {
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Configuration ledger integrity could not be verified");
+    }
+  }
+
+  /**
+   * Jobs are durable authority and recovery inputs. Validate every persisted
+   * row before startup reconciliation can inspect or mutate it; otherwise a
+   * malformed terminal row or ownership descriptor could remain dormant until
+   * a later status/recovery request.
+   */
+  private verifyJobLedgerIntegrity(): void {
+    try {
+      const rows = this.database.prepare(
+        "SELECT * FROM jobs ORDER BY created_at_ms, job_id"
+      ).all() as unknown as JobRow[];
+      for (const row of rows) mapJob(row);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Job ledger integrity could not be verified");
     }
   }
 
@@ -3965,11 +3984,26 @@ function validateStoredJobState(row: JobRow): void {
   const leasePresent = leaseFields.some((value) => value !== null);
   if (leasePresent && leaseFields.some((value) => value === null)) fail();
   if (row.state !== "running" && leasePresent) fail();
+  if (leasePresent &&
+      (typeof row.lease_owner_id !== "string" || !JOB_LEASE_OWNER_PATTERN.test(row.lease_owner_id) ||
+       typeof row.lease_token !== "string" || !JOB_LEASE_TOKEN_PATTERN.test(row.lease_token))) fail();
   if (row.lease_acquired_at_ms !== null && (row.started_at_ms === null || row.lease_acquired_at_ms < row.started_at_ms)) fail();
   if (row.lease_heartbeat_at_ms !== null && row.lease_heartbeat_at_ms < row.lease_acquired_at_ms!) fail();
   if (row.lease_expires_at_ms !== null && row.lease_expires_at_ms <= row.lease_acquired_at_ms!) fail();
+  if (row.lease_expires_at_ms !== null && row.lease_heartbeat_at_ms !== null &&
+      row.lease_heartbeat_at_ms > row.lease_expires_at_ms) fail();
+  if (row.lease_acquired_at_ms !== null && row.lease_expires_at_ms !== null &&
+      row.lease_expires_at_ms - row.lease_acquired_at_ms > MAX_JOB_LEASE_MS) fail();
   if (row.cancel_requested === 0 && row.cancel_reason !== null) fail();
   if (row.cancel_requested === 1 && (row.cancel_reason === null || row.cancel_reason.length < 1 || row.cancel_reason.length > 200 || row.cancel_reason.includes("\0"))) fail();
+
+  const hasWriteMetadata = row.write_metadata_json.length > 0;
+  const hasProcessMetadata = row.process_metadata_json.length > 0;
+  const hasGuestMetadata = row.guest_metadata_json.length > 0;
+  if (hasWriteMetadata && row.tool !== "mac_write_file_atomic") fail();
+  if ((hasProcessMetadata || hasGuestMetadata) && row.tool !== "mac_task_run") fail();
+  if (hasProcessMetadata && hasGuestMetadata) fail();
+  if ((hasProcessMetadata || hasGuestMetadata) && row.state !== "running" && row.state !== "unknown") fail();
 }
 
 function validateJobCreation(input: CreateJobInput): void {

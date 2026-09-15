@@ -47,7 +47,8 @@ test("a durable running-job cancellation fences a late success", async () => {
 test("stored Job state/result mismatches fail closed on readback", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-corruption-"));
   const databasePath = join(directory, "broker.sqlite");
-  let store = new BrokerStore(databasePath);
+  let store: BrokerStore | undefined = new BrokerStore(databasePath);
+  let reopenedStore: BrokerStore | undefined;
   store.createJob({
     jobId: "job:corrupt-state",
     ownerPrincipalId: "principal-1",
@@ -60,6 +61,7 @@ test("stored Job state/result mismatches fail closed on readback", async () => {
     createdAtMs: 1
   });
   store.close();
+  store = undefined;
   try {
     const database = new DatabaseSync(databasePath);
     try {
@@ -67,13 +69,12 @@ test("stored Job state/result mismatches fail closed on readback", async () => {
     } finally {
       database.close();
     }
-    store = new BrokerStore(databasePath);
     assert.throws(
-      () => store.ownedJob("job:corrupt-state", "principal-1"),
+      () => { reopenedStore = new BrokerStore(databasePath); },
       (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
     );
   } finally {
-    store.close();
+    reopenedStore?.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
