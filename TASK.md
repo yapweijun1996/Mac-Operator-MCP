@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Authentication-key memory lifecycle addendum: commit `42766c9` clears partial
+loads and superseded raw Edge/approval snapshots, with explicit manager
+disposal and startup cleanup after Broker handoff. Focused keyring tests pass
+10/10. Production delivery, signing, and shutdown evidence remain open.
+Evidence: `evidence/2026-09-15-authentication-key-memory-lifecycle.md`.
+
 Backup-cleanup target-fence addendum: commit `f25c900` removes Broker backup
 and temporary files through identity-checked same-directory quarantine with
 non-overwriting restoration on failure. Build, lint, typecheck, diff checks,

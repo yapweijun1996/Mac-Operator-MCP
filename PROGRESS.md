@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Authentication-key memory lifecycle addendum: source revision `42766c9` wipes
+partially loaded Edge and approval issuer key buffers on failure, clears old
+manager snapshots on replacement, and adds explicit disposal. Native Edge
+startup clears its raw snapshot after handing defensive copies to the Broker.
+Build, lint, typecheck, diff checks, and the focused 10-test keyring suite pass;
+production cross-process delivery and signing gates remain open. Evidence:
+`evidence/2026-09-15-authentication-key-memory-lifecycle.md`.
+
 Backup-cleanup target-fence addendum: source revision `f25c900` routes backup
 retention, stale temporary, restore, publication, and decrypt-failure cleanup
 through a same-directory quarantine and identity recheck before deletion.

@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Authentication-key memory verification at source revision `42766c9` clears
+partially loaded Edge/approval buffers on failure and old manager snapshots on
+replacement or explicit disposal; native Edge startup clears its raw snapshot
+after Broker handoff. Build, lint, typecheck, diff checks, and the focused
+Edge/approval keyring suite pass 10/10. Production cross-process delivery,
+signing identity, and final shutdown evidence remain open. Evidence:
+`evidence/2026-09-15-authentication-key-memory-lifecycle.md`.
+
 Backup-cleanup verification at source revision `f25c900` applies one protected
 same-directory quarantine primitive to retention, stale temporary, restore,
 publication, and decrypt-failure removals. Expected file identity is checked
