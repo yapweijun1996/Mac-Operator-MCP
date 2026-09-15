@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process ownership evidence addendum at source revision `17aa71e`:
+`ProcessSupervisor` now recursively freezes ownership snapshots before
+`onStarted` and `onOwnershipChanged` persistence callbacks, preventing PID,
+process-group, start-time, descendant, or no-fork-proof substitution. Focused
+supervisor tests pass 39/39; the serial physical regression passes 666/671
+with 0 failures and 5 explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-process-ownership-evidence-snapshot.md`.
+
 Guest transport provenance-snapshot addendum at source revision `6241e24`:
 `VirtualizationGuestTransportExecutor` now recursively freezes validated Guest
 identity and attestation snapshots, including nested identity, before any

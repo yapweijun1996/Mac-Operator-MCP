@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process ownership evidence verification at source revision `17aa71e`:
+`ProcessSupervisor` recursively freezes ownership snapshots before invoking
+persistence callbacks. Negative coverage proves callback-side PID mutation is
+rejected at runtime and cannot alter the recovery evidence graph. Focused
+supervisor tests pass 39/39; the serial physical regression passes 666/671
+with 0 failures and 5 explicit descriptor-capability skips. The three
+pre-existing long-running suites were excluded and left untouched. This
+closes callback-side in-process evidence mutation only; kernel process-tree
+isolation, descriptor execution, production sandboxing, and task enablement
+remain open. Evidence:
+`evidence/2026-09-16-process-ownership-evidence-snapshot.md`.
+
 Guest transport provenance-snapshot verification at source revision `6241e24`:
 `VirtualizationGuestTransportExecutor` recursively freezes the validated Guest
 identity and attestation graph retained for later exchange and recovery.

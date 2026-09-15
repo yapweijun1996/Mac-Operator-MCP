@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-044/045 Process ownership evidence addendum at source revision `17aa71e`:
+`ProcessSupervisor` recursively freezes ownership snapshots before persistence
+callbacks, protecting PID, process-group, start-time, descendant, and no-fork
+proof data used for cancellation and recovery. Focused supervisor tests pass
+39/39; the serial physical regression passes 666/671 with 0 failures and 5
+explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-process-ownership-evidence-snapshot.md`.
+
 MOP-086/012 Guest transport provenance-snapshot addendum at source revision
 `6241e24`: `VirtualizationGuestTransportExecutor` recursively freezes its
 validated Guest identity and attestation snapshots, including nested identity,
