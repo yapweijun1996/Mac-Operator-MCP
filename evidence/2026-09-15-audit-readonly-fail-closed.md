@@ -2,7 +2,7 @@
 
 Date: 2026-09-15
 
-Source revision: `7e0cc43`
+Source revision: `e1308c9`
 
 ## Decision
 
