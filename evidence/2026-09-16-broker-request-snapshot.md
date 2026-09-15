@@ -2,7 +2,7 @@
 
 - Date: 2026-09-16
 - Host: local development macOS host
-- Source revision: `cbc27ea`
+- Source revision: `0795958`
 - Contract/protocol versions: 0.1
 - Evidence class: local request-boundary regression
 
@@ -28,13 +28,15 @@ Focused command:
 
 ```text
 npx tsc -b --pretty false
-node --test packages/broker/dist/request-validator.test.js
+node --test packages/broker/dist/request-validator.test.js packages/broker/dist/broker-ipc-request-snapshot.test.js
 npm run lint
 git diff --check
 ```
 
-Result: 2/2 request-snapshot tests passed, the typecheck passed, the style
-check passed for 731 tracked files, and the diff check passed.
+Result: 3/3 request-snapshot tests passed, the typecheck passed, the style
+check passed, and the diff check passed. The IPC regression mutates the
+caller-owned request during the Broker's first asynchronous time read and
+still receives a response authenticated to the pre-dispatch snapshot.
 
 The tests mutate the original arguments, nested values, scopes, principal, and
 an own `__proto__` field after parsing. The frozen Broker snapshot remains

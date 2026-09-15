@@ -14,15 +14,17 @@ unbounded local replay-ledger growth only; remote retention, disk exhaustion,
 cross-runtime, and installed-service recovery evidence remain open. Evidence:
 `evidence/2026-09-16-replay-ledger-capacity.md`.
 
-Broker request-snapshot verification at source revision `cbc27ea`:
+Broker request-snapshot verification at source revision `0795958`:
 `parseBrokerRequest` recursively copies and freezes the complete validated
 request envelope, and `Broker.handleForIpc` carries that snapshot through
 asynchronous dispatch and response signing. Focused request-boundary tests
-pass 2/2; typecheck, style, and diff checks pass. Negative coverage mutates
+pass 3/3; typecheck, style, and diff checks pass. Negative coverage mutates
 arguments, nested values, scopes, principal fields, and an own `__proto__`
-field after parsing without changing the Broker view. This closes same-process
-request-object substitution only; native transport, remote issuer, replay,
-policy, target, and installed-service evidence remain independent gates.
+field after parsing without changing the Broker view; the IPC regression also
+mutates the original request during async dispatch and still verifies the
+pre-dispatch response binding. This closes same-process request-object
+substitution only; native transport, remote issuer, replay, policy, target,
+and installed-service evidence remain independent gates.
 Evidence: `evidence/2026-09-16-broker-request-snapshot.md`.
 
 Guest identity authority-snapshot verification at source revision `5d1084e`:
