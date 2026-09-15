@@ -150,6 +150,10 @@ test("root-helper Keychain key config requires an explicit executable ACL bindin
       loadPrivilegedHelperKeyConfigWithoutBroker(configPath),
       /explicit trusted executable path/u
     );
+    await assert.rejects(
+      loadPrivilegedHelperKeyConfigWithoutBroker(configPath, join(directory, "missing-helper")),
+      /Keychain trusted executable path is not canonical/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

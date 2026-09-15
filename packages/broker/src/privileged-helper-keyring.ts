@@ -7,7 +7,8 @@ import {
   assertProtectedSecretDirectory,
   loadAuthenticationKey,
   loadKeychainAuthenticationKey,
-  syncProtectedDirectory
+  syncProtectedDirectory,
+  verifyKeychainProtection
 } from "./credentials.js";
 import type { HelperKeyConfigActivationIdentity, BrokerStore } from "./persistence.js";
 import {
@@ -291,6 +292,9 @@ async function loadPrivilegedHelperKeyConfigInternal(
   }
   if (entry.keySource === "keychain" && trustedExecutablePath === undefined) {
     throw new Error("Privileged helper Keychain source requires an explicit trusted executable path");
+  }
+  if (entry.keySource === "keychain") {
+    verifyKeychainProtection(entry.service!, entry.account!, trustedExecutablePath!);
   }
   const key = entry.keySource === "keychain"
     ? await loadKeychainAuthenticationKey(entry.service!, entry.account!, trustedExecutablePath!)
