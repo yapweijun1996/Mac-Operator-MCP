@@ -66,6 +66,16 @@ control rather than atomic executable selection. This ADR must not be accepted
 until a supported descriptor primitive or an immutable, code-signed executable
 snapshot is proven on the target host.
 
+Commit `b228089` adds a Broker-owned descriptor launcher seam to
+`ProcessSupervisor`. Descriptor-required admission now requires both the
+attested host capability and a concrete launcher adapter; capability metadata
+without the adapter returns `POLICY_DENIED`, and pathname `spawn` is never a
+fallback. Commit `537bb37` also validates the native adapter's result as a
+ChildProcess-like handle before output capture, process identity observation,
+or cleanup. These changes close the latent fallback and malformed-return
+boundaries only; they do not provide the native descriptor primitive or change
+the disabled `mac_task_run` gate.
+
 Commits `d68176b` and `28007cf` harden the virtualization startup seam's
 shutdown recovery: `VirtualizationGuestRuntimeImpl` clears a rejected close
 promise and remains retryable when transport, task-runner, or lifecycle
