@@ -357,7 +357,8 @@ export class BrokerPrivilegedHelperCommandFactory {
         request.targetRef === null || request.targetRef !== job.targetRef ||
         request.tool !== job.tool || request.policyVersion !== job.policyVersion ||
         job.ownerSessionId !== input.sessionId ||
-        job.state !== "running" || job.tool !== `mac_priv_${operation === "service_control" ? "service_control" : operation === "package_install" ? "package_install" : "power"}` ||
+        job.state !== "running" || job.cancelRequested ||
+        job.tool !== `mac_priv_${operation === "service_control" ? "service_control" : operation === "package_install" ? "package_install" : "power"}` ||
         !validTarget(operation, job.targetRef)) {
       throw new BrokerError("CONFLICT", "Privileged helper request and running Job identity do not match");
     }

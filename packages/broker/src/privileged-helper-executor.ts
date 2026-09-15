@@ -118,7 +118,17 @@ export class PrivilegedHelperJobExecutor {
       throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper Job executor is disabled");
     }
     validateInput(input);
-    const current = this.requireRunningJob(input);
+    let current: BrokerJob;
+    try {
+      current = this.requireRunningJob(input);
+    } catch (error) {
+      // A cancellation can win the revision race immediately after the
+      // Broker starts a Job but before this executor obtains its first lease.
+      // Close that pre-dispatch window instead of leaving a cancelled Job
+      // stranded in `running` until restart reconciliation.
+      this.finishCancelledBeforeDispatch(input);
+      throw error;
+    }
     let lease = this.options.store.renewJobLease(
       current.jobId,
       input.principalId,
@@ -143,6 +153,7 @@ export class PrivilegedHelperJobExecutor {
     let command: SignedPrivilegedHelperCommand;
     try {
       input.assertAuthority();
+      this.assertJobNotCancelled(input, current.jobId);
       if (leaseRenewalFailure !== undefined) throw leaseRenewalFailure;
       command = this.commandFactory!.issue({
         requestId: input.requestId,
@@ -156,6 +167,9 @@ export class PrivilegedHelperJobExecutor {
           command.payloadDigest !== current.payloadDigest || command.policyVersion !== current.policyVersion) {
         throw new BrokerError("CONFLICT", "Privileged helper command is not bound to the running Job");
       }
+      // The Job may be cancelled while the command factory is signing. Check
+      // again before any bytes can cross the helper IPC boundary.
+      this.assertJobNotCancelled(input, current.jobId);
     } catch (error) {
       // No command crossed the helper boundary. Persist a denial/failure when
       // the lease is still available so the Job cannot remain indefinitely
@@ -212,6 +226,31 @@ export class PrivilegedHelperJobExecutor {
     return current;
   }
 
+  private assertJobNotCancelled(input: PrivilegedHelperJobExecutionInput, jobId: string): void {
+    const current = this.options.store.ownedJob(jobId, input.principalId);
+    if (!current || current.state !== "running") {
+      throw new BrokerError("CONFLICT", "Privileged helper Job is no longer running", true);
+    }
+    if (current.cancelRequested) {
+      throw new BrokerError("CANCELLED", "Privileged helper Job was cancelled before command dispatch");
+    }
+  }
+
+  private finishCancelledBeforeDispatch(input: PrivilegedHelperJobExecutionInput): void {
+    const current = this.options.store.ownedJob(input.job.jobId, input.principalId);
+    if (!current || current.state !== "running" || !current.cancelRequested) return;
+    try {
+      this.options.store.finishJob(current.jobId, input.principalId, current.revision, {
+        state: "cancelled",
+        resultClass: "denied",
+        finishedAtMs: this.now()
+      }, input.lease, this.now());
+    } catch {
+      // If the lease was concurrently lost, startup/owner reconciliation must
+      // retain the conservative unresolved state rather than guessing.
+    }
+  }
+
   private finishBeforeDispatch(current: BrokerJob, input: PrivilegedHelperJobExecutionInput, error: unknown): void {
     const nowMs = this.now();
     const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Privileged helper command could not be issued");
@@ -220,7 +259,9 @@ export class PrivilegedHelperJobExecutor {
       ? "denied"
       : brokerError.errorClass === "VERIFICATION_FAILED" ? "verification_failed" : "failed";
     try {
-      this.options.store.finishJob(current.jobId, input.principalId, current.revision, {
+      const latest = this.options.store.ownedJob(current.jobId, input.principalId);
+      const candidate = latest?.state === "running" ? latest : current;
+      this.options.store.finishJob(candidate.jobId, input.principalId, candidate.revision, {
         state,
         resultClass,
         finishedAtMs: nowMs

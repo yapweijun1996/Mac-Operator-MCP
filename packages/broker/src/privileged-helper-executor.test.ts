@@ -83,6 +83,50 @@ test("enabled privileged helper Job executor commits only a verified completed r
   }
 });
 
+test("long helper execution renews the Broker Job lease before completion", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-lease-renewal-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const setup = admitRunningJob(store, "job:helper-executor-lease-renewal", "request:helper-executor-lease-renewal");
+    const command = signedCommand(setup.job.targetRef, setup.job.payloadDigest);
+    let nowMs = NOW + 10;
+    const executor = new PrivilegedHelperJobExecutor({
+      store,
+      enabled: true,
+      now: () => nowMs,
+      leaseDurationMs: 3_000,
+      commandFactory: { issue: () => command },
+      commandClient: async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
+        nowMs = NOW + 1_500;
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
+        return {
+          ok: true as const,
+          commandId: command.commandId,
+          requestId: command.requestId,
+          result: {
+            operation: "service_control" as const,
+            targetRef: setup.job.targetRef,
+            state: "completed" as const,
+            resultClass: "SUCCEEDED" as const,
+            evidence: { post_state: "running" },
+            warnings: [],
+            truncated: false,
+            verification: { status: "verified" as const, strategy: "allowlisted_postcondition" as const }
+          },
+          responseProof: "a".repeat(64)
+        };
+      }
+    });
+    const outcome = await executor.execute(executionInput(setup.job, setup.lease));
+    assert.equal(outcome.job.state, "completed");
+    assert.equal(setup.lease.expiresAtMs, NOW + 4_500);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("transport loss after command issuance records UNKNOWN_OUTCOME", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-unknown-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -141,6 +185,129 @@ test("helper acceptance without completion stays UNKNOWN_OUTCOME", async () => {
     const outcome = await executor.execute(executionInput(setup.job, setup.lease));
     assert.equal(outcome.job.state, "unknown");
     assert.equal(outcome.job.resultClass, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("active cancellation after helper dispatch stays UNKNOWN_OUTCOME", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-cancelled-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const setup = admitRunningJob(store, "job:helper-executor-cancelled", "request:helper-executor-cancelled");
+    const command = signedCommand(setup.job.targetRef, setup.job.payloadDigest);
+    const executor = new PrivilegedHelperJobExecutor({
+      store,
+      enabled: true,
+      now: () => NOW + 10,
+      commandFactory: { issue: () => command },
+      commandClient: async () => {
+        const cancellation = store.requestJobCancellation(
+          setup.job.jobId,
+          "principal-1",
+          "operator-cancelled",
+          NOW + 20
+        );
+        assert.equal(cancellation.job.cancelRequested, true);
+        return {
+          ok: true as const,
+          commandId: command.commandId,
+          requestId: command.requestId,
+          result: {
+            operation: "service_control" as const,
+            targetRef: setup.job.targetRef,
+            state: "completed" as const,
+            resultClass: "SUCCEEDED" as const,
+            evidence: { post_state: "running" },
+            warnings: [],
+            truncated: false,
+            verification: { status: "verified" as const, strategy: "allowlisted_postcondition" as const }
+          },
+          responseProof: "a".repeat(64)
+        };
+      }
+    });
+    await assert.rejects(
+      () => executor.execute(executionInput(setup.job, setup.lease)),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable
+    );
+    const job = store.ownedJob(setup.job.jobId, "principal-1");
+    assert.equal(job?.state, "unknown");
+    assert.equal(job?.resultClass, "unknown");
+    assert.equal(job?.cancelRequested, true);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("cancellation during command signing closes the Job before helper IPC", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-cancel-before-ipc-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const setup = admitRunningJob(store, "job:helper-executor-cancel-before-ipc", "request:helper-executor-cancel-before-ipc");
+    let commandCalls = 0;
+    const executor = new PrivilegedHelperJobExecutor({
+      store,
+      enabled: true,
+      now: () => NOW + 10,
+      commandFactory: {
+        issue: () => {
+          store.requestJobCancellation(setup.job.jobId, "principal-1", "operator-cancelled", NOW + 20);
+          return signedCommand(setup.job.targetRef, setup.job.payloadDigest);
+        }
+      },
+      commandClient: async () => {
+        commandCalls += 1;
+        throw new Error("helper IPC must not be reached");
+      }
+    });
+    await assert.rejects(
+      () => executor.execute(executionInput(setup.job, setup.lease)),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+    );
+    assert.equal(commandCalls, 0);
+    const job = store.ownedJob(setup.job.jobId, "principal-1");
+    assert.equal(job?.state, "cancelled");
+    assert.equal(job?.resultClass, "denied");
+    assert.equal(job?.cancelRequested, true);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a pre-dispatch cancellation is terminalized without issuing a helper command", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-cancel-pre-dispatch-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const setup = admitRunningJob(store, "job:helper-executor-cancel-pre-dispatch", "request:helper-executor-cancel-pre-dispatch");
+    store.requestJobCancellation(setup.job.jobId, "principal-1", "operator-cancelled", NOW + 20);
+    let factoryCalls = 0;
+    const executor = new PrivilegedHelperJobExecutor({
+      store,
+      enabled: true,
+      now: () => NOW + 10,
+      commandFactory: {
+        issue: () => {
+          factoryCalls += 1;
+          return signedCommand(setup.job.targetRef, setup.job.payloadDigest);
+        }
+      },
+      commandClient: async () => {
+        throw new Error("helper IPC must not be reached");
+      }
+    });
+    await assert.rejects(
+      () => executor.execute(executionInput(setup.job, setup.lease)),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(factoryCalls, 0);
+    const job = store.ownedJob(setup.job.jobId, "principal-1");
+    assert.equal(job?.state, "cancelled");
+    assert.equal(job?.resultClass, "denied");
+    assert.equal(job?.cancelRequested, true);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
