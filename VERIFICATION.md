@@ -37,6 +37,17 @@ shape integrity only; native attestation production, VM/credential/
 persistence isolation, and task enablement remain unverified.
 Evidence: `evidence/2026-09-15-virtualization-vm-result-boundary.md`.
 
+Persisted Job readback addendum: commits `2cc1db7`, `937ffcd`, and `5f4980d` validate
+stored app-open/app-focus/UI-action/write/patch result envelopes as plain
+records with exact nested fields before a completed Job is reused. Invalid
+stored records map to `UNKNOWN_OUTCOME`; no malformed payload can become a
+verified postcondition. Focused persisted-result tests pass 2/2; the
+non-overlapping package regression passes 527 total (521 pass, 6 skipped,
+0 fail). This proves stored-result shape integrity only; SQLite corruption,
+crash ownership, disk exhaustion, service recovery, and final release gates
+remain unverified.
+Evidence: `evidence/2026-09-15-persisted-job-readbacks.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` requires native
 process inventory/detail results to be plain records with exact fields and
 bounded uid/child identities. The generic worker envelope accepts only its

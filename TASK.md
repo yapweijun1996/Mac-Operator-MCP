@@ -40,6 +40,19 @@ attestation production, VM isolation, credential/persistence isolation, and
 `mac_task_run` enablement remain open.
 Evidence: `evidence/2026-09-15-virtualization-vm-result-boundary.md`.
 
+Persisted Job readback addendum: source revisions `2cc1db7`, `937ffcd`, and
+`5f4980d`
+make completed app-open, app-focus, UI-action, filesystem-write, and
+filesystem-patch Job results exact plain-data records before reuse or
+postcondition publication. Nested targets, preconditions, reobservations,
+and patch files reject unknown fields; malformed stored data remains
+`UNKNOWN_OUTCOME`. Focused persisted-result tests pass 2/2; the
+non-overlapping package regression passes 527 total (521 pass, 6 skipped,
+0 fail). This closes local stored-result integrity only; SQLite corruption,
+crash ownership, disk exhaustion, service recovery, and final release gates
+remain open.
+Evidence: `evidence/2026-09-15-persisted-job-readbacks.md`.
+
 Process-worker result boundary addendum: source revision `a01b62e` hardens
 native process metadata and worker-result parsers. Inventory/detail records
 now require plain data and exact fields; owners are bounded uid identities,

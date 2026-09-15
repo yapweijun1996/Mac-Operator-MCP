@@ -32,6 +32,16 @@ pass 9/9; the non-overlapping package regression passes 524 total (518 pass,
 isolation, and `mac_task_run` enablement evidence remains open.
 Evidence: `evidence/2026-09-15-virtualization-vm-result-boundary.md`.
 
+Persisted Job readback addendum: commits `2cc1db7`, `937ffcd`, and `5f4980d`
+require exact plain-data shapes for stored app, UI, write, and patch results plus
+nested target/precondition/file records. Unknown or malformed persisted
+fields fail closed as `UNKNOWN_OUTCOME` before idempotent reuse or readback
+publication. Focused persisted-result tests pass 2/2; the non-overlapping
+package regression passes 527 total (521 pass, 6 skipped, 0 fail). SQLite
+corruption, crash ownership, disk exhaustion, service recovery, and release
+evidence remain open.
+Evidence: `evidence/2026-09-15-persisted-job-readbacks.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` applies plain-data
 and exact-field validation to native process inventory/detail results and
 worker envelopes. Owner identities and child PID arrays receive bounded,
