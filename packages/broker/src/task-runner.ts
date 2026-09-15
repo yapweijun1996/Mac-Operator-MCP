@@ -8,6 +8,7 @@ import {
   type ProcessOwnershipSnapshot,
   type ProcessPathIdentity
 } from "./process-supervisor.js";
+import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { buildSandboxExecArguments, normalizeTaskSandboxProfileOptions, type TaskSandboxProfileOptions } from "./sandbox-profile.js";
@@ -189,6 +190,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
       ? null
       : validateTaskIsolationProof(options.isolationProof);
     this.isolationProof = proof;
+    const usesHostProcessSupervisor = options.supervisor === undefined;
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
       allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? [],
       // A host sandbox is not a complete executable-selection boundary. Keep
@@ -206,9 +208,12 @@ export class SandboxExecTaskRunner implements TaskRunner {
     // The current sandbox evidence covers only the no-fork single-process
     // profile. Keep the owned-group variant unavailable until a separate
     // process-tree ownership and escape-resistance proof is accepted.
+    const descriptorExecutionAvailable = !usesHostProcessSupervisor ||
+      inspectProcessDescriptorExecutionCapability().available;
     this.available = options.enabled === true && options.hostEvidenceAccepted === true &&
       proof?.sandboxMechanism === "sandbox-exec" &&
-      proof?.processTreePolicy === "single_process" && process.platform === "darwin";
+      proof?.processTreePolicy === "single_process" && process.platform === "darwin" &&
+      descriptorExecutionAvailable;
   }
 
   close(): Promise<void> {

@@ -148,6 +148,15 @@ test("SandboxExecTaskRunner refuses the unevidenced owned-group policy", async (
   );
 });
 
+test("SandboxExecTaskRunner availability includes the host descriptor gate", () => {
+  const runner = new SandboxExecTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof()
+  });
+  assert.equal(runner.available, process.platform === "darwin" && inspectProcessDescriptorExecutionCapability().available);
+});
+
 test("SandboxExecTaskRunner exposes its supervisor close boundary", async () => {
   let closeCalls = 0;
   const runner = new SandboxExecTaskRunner({

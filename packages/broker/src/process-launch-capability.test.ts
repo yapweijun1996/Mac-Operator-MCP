@@ -12,6 +12,7 @@ test("descriptor execution capability is unavailable without the native launcher
   assert.equal(capability.schemaVersion, "0.1");
   assert.equal(capability.mechanism, "darwin-descriptor-exec-v1");
   assert.equal(capability.available, false);
+  assert.equal(capability.executableCoverage, "unproven");
   assert.equal(capability.immutableSelection, "unproven");
   assert.equal(capability.closeOnExec, "unproven");
   assert.throws(
@@ -25,6 +26,7 @@ test("descriptor execution capability requires an attested complete boundary", (
     schemaVersion: "0.1",
     mechanism: "darwin-descriptor-exec-v1",
     available: true,
+    executableCoverage: "all-child-executables",
     immutableSelection: "enforced",
     closeOnExec: "enforced",
     evidenceRef: "evidence://descriptor-exec"
@@ -39,6 +41,10 @@ test("descriptor execution capability requires an attested complete boundary", (
     /incomplete/u
   );
   assert.throws(
+    () => parseProcessDescriptorExecutionCapability({ ...valid, executableCoverage: "launcher-only" }),
+    /incomplete/u
+  );
+  assert.throws(
     () => parseProcessDescriptorExecutionCapability({ ...valid, extra: true }),
     /malformed/u
   );
@@ -49,6 +55,7 @@ test("descriptor execution capability rejects accessor and prototype authority",
     schemaVersion: "0.1",
     mechanism: "darwin-descriptor-exec-v1",
     available: true,
+    executableCoverage: "all-child-executables",
     immutableSelection: "enforced",
     closeOnExec: "enforced",
     evidenceRef: "evidence://descriptor-exec"

@@ -14,6 +14,7 @@ import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-
 import { FilesystemInspector } from "./filesystem-inspector.js";
 import { BrokerStore, redactEvidence, type BrokerJob, type GuestTaskJobMetadata, type JobLease } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
+import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import { SandboxExecTaskRunner } from "./task-runner.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
@@ -23,6 +24,15 @@ import { ProcessSupervisor } from "./process-supervisor.js";
 import type { ProcessExecutor } from "./process-executor.js";
 
 const NOW = 1_700_000_000_000;
+
+function realSandboxCanRun(): boolean {
+  if (process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1") return false;
+  try {
+    return inspectProcessDescriptorExecutionCapability().available;
+  } catch {
+    return false;
+  }
+}
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-test-"));
@@ -2171,7 +2181,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
 });
 
 test("real macOS Broker task path preserves sandbox, approval, and Job readback", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-broker-"));
   const root = await realpath(directory);
@@ -2244,7 +2254,7 @@ test("real macOS Broker task path preserves sandbox, approval, and Job readback"
 });
 
 test("real macOS Broker task path enforces a profile-owned network allowlist", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-network-"));
   const root = await realpath(directory);
@@ -2343,7 +2353,7 @@ test("real macOS Broker task path enforces a profile-owned network allowlist", {
 });
 
 test("real macOS Broker task crash keeps the Job unknown", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-crash-"));
   const root = await realpath(directory);
@@ -2428,7 +2438,7 @@ test("real macOS Broker task crash keeps the Job unknown", {
 });
 
 test("real macOS Broker task cancellation drains the process after session revocation", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-revoke-"));
   const root = await realpath(directory);
@@ -2520,7 +2530,7 @@ test("real macOS Broker task cancellation drains the process after session revoc
 });
 
 test("real macOS Broker task cancellation drains the process after Edge revocation", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-edge-revoke-"));
   const root = await realpath(directory);
@@ -2610,7 +2620,7 @@ test("real macOS Broker task cancellation drains the process after Edge revocati
 });
 
 test("real macOS Broker task cancellation drains the process after process kill switch", {
-  skip: process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX !== "1"
+  skip: !realSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-kill-switch-"));
   const root = await realpath(directory);

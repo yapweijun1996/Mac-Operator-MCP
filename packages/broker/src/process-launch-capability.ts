@@ -17,6 +17,8 @@ export interface ProcessDescriptorExecutionCapability {
   schemaVersion: "0.1";
   mechanism: "darwin-descriptor-exec-v1";
   available: boolean;
+  /** Whether the proof covers every executable in a task boundary. */
+  executableCoverage: "unproven" | "launcher-only" | "all-child-executables";
   immutableSelection: "enforced" | "unproven";
   closeOnExec: "enforced" | "unproven";
   evidenceRef?: string;
@@ -57,7 +59,8 @@ export function inspectProcessDescriptorExecutionCapability(): ProcessDescriptor
  */
 export function requireProcessDescriptorExecution(): ProcessDescriptorExecutionCapability {
   const capability = inspectProcessDescriptorExecutionCapability();
-  if (!capability.available || capability.immutableSelection !== "enforced" || capability.closeOnExec !== "enforced") {
+  if (!capability.available || capability.executableCoverage !== "all-child-executables" ||
+      capability.immutableSelection !== "enforced" || capability.closeOnExec !== "enforced") {
     throw new BrokerError("POLICY_DENIED", "Kernel descriptor executable launch is unavailable");
   }
   return capability;
@@ -67,24 +70,28 @@ export function parseProcessDescriptorExecutionCapability(value: unknown): Proce
   if (!isPlainDataRecord(value)) throw new BrokerError("POLICY_DENIED", "Process descriptor launch capability is malformed");
   const capability = value as Partial<ProcessDescriptorExecutionCapability>;
   const keys = Object.keys(value);
-  const allowed = new Set(["schemaVersion", "mechanism", "available", "immutableSelection", "closeOnExec", "evidenceRef"]);
+  const allowed = new Set(["schemaVersion", "mechanism", "available", "executableCoverage", "immutableSelection", "closeOnExec", "evidenceRef"]);
   if (keys.some((key) => !allowed.has(key)) ||
       capability.schemaVersion !== "0.1" ||
       capability.mechanism !== "darwin-descriptor-exec-v1" ||
       typeof capability.available !== "boolean" ||
+      (capability.executableCoverage !== "unproven" && capability.executableCoverage !== "launcher-only" &&
+       capability.executableCoverage !== "all-child-executables") ||
       (capability.immutableSelection !== "enforced" && capability.immutableSelection !== "unproven") ||
       (capability.closeOnExec !== "enforced" && capability.closeOnExec !== "unproven") ||
       (capability.evidenceRef !== undefined &&
        (typeof capability.evidenceRef !== "string" || !EVIDENCE_REFERENCE_PATTERN.test(capability.evidenceRef)))) {
     throw new BrokerError("POLICY_DENIED", "Process descriptor launch capability is malformed");
   }
-  if (capability.available && (capability.immutableSelection !== "enforced" || capability.closeOnExec !== "enforced" || capability.evidenceRef === undefined)) {
+  if (capability.available && (capability.executableCoverage !== "all-child-executables" ||
+      capability.immutableSelection !== "enforced" || capability.closeOnExec !== "enforced" || capability.evidenceRef === undefined)) {
     throw new BrokerError("POLICY_DENIED", "Process descriptor launch capability is incomplete");
   }
   return {
     schemaVersion: "0.1",
     mechanism: "darwin-descriptor-exec-v1",
     available: capability.available,
+    executableCoverage: capability.executableCoverage,
     immutableSelection: capability.immutableSelection,
     closeOnExec: capability.closeOnExec,
     ...(capability.evidenceRef === undefined ? {} : { evidenceRef: capability.evidenceRef })
@@ -96,6 +103,7 @@ function unavailableCapability(): ProcessDescriptorExecutionCapability {
     schemaVersion: "0.1",
     mechanism: "darwin-descriptor-exec-v1",
     available: false,
+    executableCoverage: "unproven",
     immutableSelection: "unproven",
     closeOnExec: "unproven"
   };
