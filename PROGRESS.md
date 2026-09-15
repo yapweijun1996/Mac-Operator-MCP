@@ -16,6 +16,13 @@ boundary, not a kernel launcher implementation; descriptor/fexec, remount, and
 production task enablement remain open. Evidence:
 `evidence/2026-09-15-descriptor-launch-capability-gate.md`.
 
+Serial physical regression addendum: source revision `eaca6c6` passes 633/633
+non-overlapping tests with 0 skips and 0 failures under the install, sandbox,
+and Keychain opt-ins, serializing execution. This includes the rebuilt native
+mount-flag identity checks and descriptor capability gate; the three existing
+long-running suites were excluded and left undisturbed. Evidence:
+`evidence/2026-09-15-serial-physical-regression-mount-flags.md`.
+
 Filesystem mount-flag identity addendum: source revision `eaca6c6` extends the
 native descriptor boundary to compare `f_fsid`, filesystem type, and `f_flags`
 and includes flags in storage-volume IDs. The physical Darwin adapter returns

@@ -15,6 +15,13 @@ fexec, remount, immutable-snapshot, and production `mac_task_run` evidence
 remain open. Evidence:
 `evidence/2026-09-15-descriptor-launch-capability-gate.md`.
 
+Serial physical regression addendum: source revision `eaca6c6` passes 633/633
+non-overlapping tests with 0 skips and 0 failures using the install, sandbox,
+and Keychain opt-ins with serial execution. Mount-flag identity checks and
+the descriptor capability gate are covered; the three existing long-running
+test suites were excluded without interruption. Evidence:
+`evidence/2026-09-15-serial-physical-regression-mount-flags.md`.
+
 Filesystem mount-flag identity addendum: source revision `eaca6c6` binds the
 native filesystem identity to `f_fsid`, filesystem type, and `f_flags`, and
 includes flags in volume IDs. The physical adapter readback and focused

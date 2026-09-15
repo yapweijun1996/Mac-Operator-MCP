@@ -14,6 +14,14 @@ fail-closed boundary but does not close `VT-FS-02`, remount resistance, or
 production task enablement. Evidence:
 `evidence/2026-09-15-descriptor-launch-capability-gate.md`.
 
+Serial physical-Darwin regression at source revision `eaca6c6` passes 633/633
+non-overlapping tests with 0 skips and 0 failures under the install, sandbox,
+and Keychain opt-ins, serializing execution. The rebuilt native mount-flag
+identity boundary and descriptor capability gate are included; the existing
+Broker, persistence, and privileged-helper IPC long tests were excluded and
+not interrupted. Evidence:
+`evidence/2026-09-15-serial-physical-regression-mount-flags.md`.
+
 Filesystem mount-flag identity verification at source revision `eaca6c6`
 extends native `SameFilesystem` checks to include `f_flags` and records that
 field in storage-volume IDs. Physical Darwin readback shows the new bounded
