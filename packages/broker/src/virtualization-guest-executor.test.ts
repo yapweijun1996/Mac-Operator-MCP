@@ -246,9 +246,13 @@ test("guest profile executor cancels active work before close can publish succes
     );
     const execution = executor.execute(fixture.request);
     await started;
-    await executor.close();
+    let closed = false;
+    const closing = executor.close().then(() => { closed = true; });
     assert.equal(observedSignal?.aborted, true);
+    await Promise.resolve();
+    assert.equal(closed, false);
     resolveRun(successfulResult());
+    await closing;
     const result = await execution;
     assert.equal(result.state, "cancelled");
     assert.equal(result.resultClass, "CANCELLED");

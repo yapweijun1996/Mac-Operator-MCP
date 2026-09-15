@@ -170,6 +170,7 @@ export class VirtualizationGuestTaskProfileRegistry {
 export class VirtualizationGuestProfileExecutor {
   private readonly ledger = new GuestExecutionLedger();
   private readonly activeControllers = new Set<AbortController>();
+  private readonly activeExecutions = new Set<Promise<unknown>>();
   private readonly maxConcurrent: number;
   private active = 0;
   private inFlight = 0;
@@ -217,13 +218,20 @@ export class VirtualizationGuestProfileExecutor {
     this.active += 1;
     this.ledger.start(request);
     try {
-      const result = await this.adapter.run({
+      const execution = this.adapter.run({
         request,
         profile,
         timeoutMs: Math.min(request.timeoutMs, profile.timeoutMs),
         outputCapBytes: Math.min(request.outputCapBytes, profile.outputCapBytes),
         signal: controller.signal
       });
+      this.activeExecutions.add(execution);
+      let result: VirtualizationGuestExecutionResult;
+      try {
+        result = await execution;
+      } finally {
+        this.activeExecutions.delete(execution);
+      }
       if (controller.signal.aborted || this.closed) {
         const cancelled = this.executionResult("cancelled", "CANCELLED", null, "Guest task was cancelled before result publication");
         this.ledger.complete(request, cancelled);
@@ -283,6 +291,7 @@ export class VirtualizationGuestProfileExecutor {
     this.closed = true;
     for (const controller of this.activeControllers) controller.abort();
     await this.adapter.close?.();
+    await Promise.allSettled([...this.activeExecutions]);
   }
 
   private cancelled(request: UnsignedVirtualizationGuestRequest): UnsignedVirtualizationGuestResponse {
