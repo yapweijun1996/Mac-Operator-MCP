@@ -9,6 +9,13 @@ Latest regression addendum: the non-overlapping built suite passes 595 total
 secret-shaped-string redaction coverage; the existing Broker/persistence process was left
 undisturbed. Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 
+Physical Darwin sandbox addendum: correctly exporting `MOPS_REAL_SANDBOX=1`
+to the test processes yields 595 total (593 pass, 2 skipped, 0 fail) on
+Darwin arm64/macOS 26.2. Real sandbox, protected-surface, fork/`setsid`,
+TCP/UDP allowlist, and active cancellation checks passed; real Keychain ACL
+and temporary install gates remain skipped. Evidence:
+`evidence/2026-09-15-real-sandbox-regression.md`.
+
 Audit-evidence redaction addendum: the persistence and privileged-helper
 response boundaries now redact common credential and key field aliases and
 secret-shaped strings before canonicalization or response publication; focused

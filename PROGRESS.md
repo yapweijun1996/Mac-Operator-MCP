@@ -10,6 +10,13 @@ audit credential-field and secret-shaped-string redaction tests. Broker/persiste
 restarted because their existing long-running process remained active.
 Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 
+Physical Darwin sandbox addendum: with `MOPS_REAL_SANDBOX=1` correctly
+exported to the test processes, the same non-overlapping built set passes 595
+total (593 pass, 2 explicit skips, 0 fail) on Darwin arm64/macOS 26.2. The
+real sandbox, credential-canary, fork/`setsid`, TCP/UDP allowlist, and active
+cancellation checks ran; only real Keychain ACL and temporary install gates
+skipped. Evidence: `evidence/2026-09-15-real-sandbox-regression.md`.
+
 Audit-evidence redaction addendum: source revision `42ca30c` expands both the
 recursive persistence redactor and the separately authenticated privileged
 helper response redactor to cover common API/access/refresh token,

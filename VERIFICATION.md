@@ -9,6 +9,14 @@ explicitly skipped, 0 failed). The run includes normalized failure-target,
 credential-field, and secret-shaped-string redaction coverage. Evidence:
 `evidence/2026-09-15-latest-local-regression.md`.
 
+Physical Darwin sandbox verification: with `MOPS_REAL_SANDBOX=1` exported to
+the test processes, the non-overlapping built set passes 595 total (593
+passed, 2 explicitly skipped, 0 failed) on Darwin arm64/macOS 26.2. Real
+sandbox, protected-surface, fork/`setsid`, TCP/UDP allowlist, and active
+cancellation checks ran; real Keychain ACL and temporary install remain
+explicitly skipped. Evidence:
+`evidence/2026-09-15-real-sandbox-regression.md`.
+
 Audit-evidence redaction verification: the persistence and privileged-helper
 response boundaries cover common API/access/refresh token, client/HMAC/
 signing/SSH key, bearer/JWT, password/passphrase, cookie, credential, and
