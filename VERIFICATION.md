@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Request-authentication key lifetime verification at source revision `fec6e5b`
+clears transient Edge HMAC copies after request verification and authenticated
+response signing, including failures. Build, lint, typecheck, diff checks, and
+the focused IPC boundary suite pass 18/18. Production key storage and full
+Broker regression remain open. Evidence:
+`evidence/2026-09-15-request-authentication-key-lifetime.md`.
+
 Authentication-key memory verification at source revision `42766c9` clears
 partially loaded Edge/approval buffers on failure and old manager snapshots on
 replacement or explicit disposal; native Edge startup clears its raw snapshot

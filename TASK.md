@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Request-authentication key lifetime addendum: commit `fec6e5b` clears transient
+Edge HMAC key copies in Broker authentication and response signing `finally`
+paths. Focused IPC tests pass 18/18. Production key storage and full Broker
+regression remain open. Evidence:
+`evidence/2026-09-15-request-authentication-key-lifetime.md`.
+
 Authentication-key memory lifecycle addendum: commit `42766c9` clears partial
 loads and superseded raw Edge/approval snapshots, with explicit manager
 disposal and startup cleanup after Broker handoff. Focused keyring tests pass

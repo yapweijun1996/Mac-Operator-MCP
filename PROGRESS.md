@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Request-authentication key lifetime addendum: source revision `fec6e5b` clears
+per-request Edge HMAC copies after verification and response signing on both
+success and failure paths. Build, lint, typecheck, diff checks, and the focused
+18-test IPC boundary suite pass; production key storage and full Broker
+regression remain open. Evidence:
+`evidence/2026-09-15-request-authentication-key-lifetime.md`.
+
 Authentication-key memory lifecycle addendum: source revision `42766c9` wipes
 partially loaded Edge and approval issuer key buffers on failure, clears old
 manager snapshots on replacement, and adds explicit disposal. Native Edge
