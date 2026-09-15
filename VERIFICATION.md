@@ -2580,3 +2580,12 @@ representation evidence only and does not close helper provenance, production
 Keychain, root-domain installation, real privileged execution, crash recovery,
 or capability enablement. Evidence:
 `evidence/2026-09-15-helper-status-boundary.md`.
+
+Helper status readback verification at source revision `e9d67e6` confirms the
+readback validator checks plain-data shape before key enumeration or state
+access. Focused request/readback tests pass 2/2; the complete non-overlapping
+package regression passes 538 total (532 passed, 6 skipped, 0 failed). This
+remains representation evidence only and does not close helper provenance,
+production Keychain, root-domain installation, real privileged execution,
+crash recovery, or capability enablement. Evidence:
+`evidence/2026-09-15-helper-status-boundary.md`.

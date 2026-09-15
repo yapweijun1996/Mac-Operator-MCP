@@ -1693,3 +1693,12 @@ with stable `PRECONDITION_FAILED` behavior. Focused status-boundary tests pass
 production Keychain, real privileged adapter, crash-recovery, and helper
 enablement gates remain open. Evidence:
 `evidence/2026-09-15-helper-status-boundary.md`.
+
+Helper status readback addendum: commit `e9d67e6` applies the same plain-data
+check before readback key enumeration and helper-owned state access. Focused
+status request/readback tests pass 2/2; the non-overlapping package regression
+passes 538 total (532 passed, 6 skipped, 0 failed). This remains
+representation evidence only and does not close helper provenance, root-domain
+installation, production Keychain, real privileged adapters, crash recovery,
+or enablement. Evidence:
+`evidence/2026-09-15-helper-status-boundary.md`.

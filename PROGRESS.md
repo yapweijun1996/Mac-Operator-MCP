@@ -2920,3 +2920,11 @@ status tests pass 1/1; the non-overlapping package regression passes 537 total
 production Keychain, root-domain installation, real privileged execution,
 crash recovery, or enablement gates. Evidence:
 `evidence/2026-09-15-helper-status-boundary.md`.
+
+The helper status readback validator now shares the same plain-data boundary
+before key enumeration or helper-owned state access (source revision `e9d67e6`).
+Focused request/readback tests pass 2/2; the complete non-overlapping package
+regression passes 538 total (532 passed, 6 skipped, 0 failed). Helper
+provenance, production Keychain, root-domain installation, real privileged
+execution, crash recovery, and enablement remain open. Evidence:
+`evidence/2026-09-15-helper-status-boundary.md`.
