@@ -1876,3 +1876,10 @@ fresh host evidence only; deprecated `sandbox-exec`, credential-content,
 remount, crash/restart, Docker/persistence, process-tree, packaging, and
 independent review gates remain open. Evidence:
 `evidence/2026-09-15-real-sandbox-16-tests.md`.
+
+The current physical-host `mac_app_list` readback passes 4/4 at source revision
+`c4bf986`, including the real running-app inventory case and fixed-command,
+bounded-result, redaction, and malformed-result checks. This remains read-only
+host evidence; GUI mutation, Accessibility permission, packaging, and final
+readback gates remain open. Evidence:
+`evidence/2026-09-15-app-inventory-host-readback.md`.

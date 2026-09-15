@@ -3137,3 +3137,10 @@ are validated before audit verification or caller readback. Focused audit-row
 corruption tests pass 1/1; the non-overlapping package regression passes 559
 total (553 passed, 6 skipped, 0 failed). Evidence:
 `evidence/2026-09-15-audit-row-invariants.md`.
+
+The current physical-host `mac_app_list` readback passes 4/4 at source revision
+`c4bf986`, including the real running-app inventory case and fixed-command,
+bounded-result, redaction, and malformed-result checks. This remains read-only
+host evidence; GUI mutation, Accessibility permission, packaging, and final
+readback gates remain open. Evidence:
+`evidence/2026-09-15-app-inventory-host-readback.md`.
