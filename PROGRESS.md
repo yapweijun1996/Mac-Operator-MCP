@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+UNKNOWN process recovery addendum: source revision `436917d` treats
+`PROCESS_RECOVERY_UNKNOWN` as retryable observer uncertainty. Later startup
+reconciliation retries the exact persisted PID/start-time/process-group
+identity without replaying task execution or promoting the Job; definitive
+drained, absent, and identity-mismatch outcomes remain terminal. A physical
+host probe and regression coverage verify unknown-then-drained recovery.
+Evidence: `evidence/2026-09-15-process-recovery-retry.md`.
+
 Persistence backup publication addendum: source revision `8e57790` replaces
 backup/restore `rename` publication with same-directory hard-link publication
 that cannot overwrite an existing destination. The source temporary identity

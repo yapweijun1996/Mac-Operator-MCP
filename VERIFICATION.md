@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+UNKNOWN process recovery verification: source revision `436917d` retries a
+restart-reconciled task only when the prior result was
+`PROCESS_RECOVERY_UNKNOWN`; the same persisted process identity is used and no
+task execution is replayed. Definitive drained, absent, and identity-mismatch
+results remain terminal. A physical-host probe and regression coverage verify
+unknown-then-drained recovery; build, lint, and typecheck pass. Evidence:
+`evidence/2026-09-15-process-recovery-retry.md`.
+
 Persistence backup publication verification: source revision `8e57790` uses
 same-directory hard-link publication for encrypted backup creation and fresh
 restore, so an existing destination cannot be replaced after an existence
