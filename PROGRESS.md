@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Serial physical regression addendum: source revision `339d932` passes 630/630
+tests with 0 skips and 0 failures under
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1`, using
+`--test-concurrency=1`. The run includes real sandbox, Keychain, temporary
+LaunchAgent, native IPC, write-recovery, helper, GUI, virtualization, and
+HTTPS Edge boundaries, and verifies the fixed-adapter root-owner gate. The
+already-running `broker.test.js`, `persistence.test.js`, and
+`privileged-helper-authority-ipc.test.js` suites were deliberately excluded
+and not restarted. Kernel-held descriptor execution, remount resistance,
+production Developer ID deployment, and task enablement remain open. Evidence:
+`evidence/2026-09-15-serial-physical-regression.md`.
+
 Process executable permission addendum: source revision `339d932` rejects
 group- or other-writable executable files before child admission and lets the
 Broker's fixed-adapter supervisor require root ownership. Owner UID/GID now

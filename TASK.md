@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Serial physical regression addendum: source revision `339d932` passes 630/630
+non-overlapping tests with 0 skips and 0 failures under the install, sandbox,
+and Keychain opt-ins. The three existing long-running Broker/persistence/
+privileged-helper IPC suites were excluded and left undisturbed. Descriptor
+execution, remount durability, production signing/deployment, and task-runner
+enablement remain release gates. Evidence:
+`evidence/2026-09-15-serial-physical-regression.md`.
+
 Process executable permission addendum: commit `339d932` rejects executable
 files with group/other write bits before child spawn; the Broker's fixed
 adapter supervisor additionally requires root ownership, and owner UID/GID are

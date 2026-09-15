@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Serial physical-Darwin regression at source revision `339d932` passes 630/630
+with 0 skips and 0 failures under the install, sandbox, and Keychain opt-ins,
+serializing test execution. It covers the root-owned fixed-adapter executable
+gate plus the non-overlapping native IPC, filesystem/write recovery, helper,
+GUI, virtualization, policy/audit, temporary LaunchAgent, and HTTPS Edge
+boundaries. The long-running Broker, persistence, and privileged-helper IPC
+suites were excluded without interruption. Descriptor/fexec, remount,
+production signing/deployment, and task-runner enablement remain open.
+Evidence: `evidence/2026-09-15-serial-physical-regression.md`.
+
 Process executable permission verification at source revision `339d932`
 rejects group- or other-writable executable paths before spawning, and the
 Broker's fixed-adapter supervisor additionally requires root ownership. The
