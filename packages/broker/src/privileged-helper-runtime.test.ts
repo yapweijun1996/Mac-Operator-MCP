@@ -259,6 +259,19 @@ test("privileged helper startup fails closed before key restore for invalid boun
       }),
       (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PEER_POLICY_INVALID"
     );
+    await assert.rejects(
+      createPrivilegedHelperRuntimeFromActiveKeyConfig({
+        helperKeyConfigPath: join(root, "missing.json"),
+        helperKeyStore: store,
+        socketPath: join(root, "helper.sock"),
+        brokerSocketPath: join(root, "broker.sock"),
+        peerPolicy: { expectedUid: 0, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) },
+        replayGuard: { admit: () => undefined },
+        adapter: new FailClosedPrivilegedHelper(),
+        authorizeCommand: () => undefined
+      }),
+      (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PEER_POLICY_INVALID"
+    );
   } finally {
     store.close();
     await rm(root, { recursive: true, force: true });

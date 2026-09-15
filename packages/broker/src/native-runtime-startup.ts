@@ -357,6 +357,12 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
       "Privileged helper authority startup requires an explicit native helper process identity"
     );
   }
+  if (helperAuthorityPeerPolicy.expectedUid !== 0) {
+    throw new NativeRuntimeStartupError(
+      "HELPER_AUTHORITY_CONFIG_UNAVAILABLE",
+      "Privileged helper authority startup requires a root helper peer identity"
+    );
+  }
   const helperKeyManager = new PrivilegedHelperKeyManager(helperKeyConfigPath, edgeKeyStore);
   let authorityChannel: import("./privileged-helper-authority-ipc.js").PrivilegedHelperAuthorityIpcServer;
   try {

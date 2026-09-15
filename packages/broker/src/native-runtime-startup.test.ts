@@ -362,7 +362,7 @@ test("launchd startup assembles the helper-to-Broker authority channel separatel
       edgeKeyStore: store,
       helperKeyConfigPath: helperConfigPath,
       helperAuthoritySocketPath: join(root, "helper-authority.sock"),
-      helperAuthorityPeerPolicy: { expectedUid: uid, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) },
+      helperAuthorityPeerPolicy: { expectedUid: 0, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) },
       commandExecutor: new FakeLaunchdExecutor(success(`${serviceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`)),
       createBroker: (edgeAuthenticationKeys) => new Broker({
         store, policy: createDefaultPolicy("edge-1"), edgeAuthenticationKeys, now: () => now

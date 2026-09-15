@@ -223,6 +223,12 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
       "Privileged helper startup requires an explicit native peer process identity"
     );
   }
+  if (!Number.isSafeInteger(options.peerPolicy.expectedUid) || options.peerPolicy.expectedUid < 1) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_PEER_POLICY_INVALID",
+      "Privileged helper startup requires a non-root Broker peer identity"
+    );
+  }
   const manager = new PrivilegedHelperKeyManager(options.helperKeyConfigPath, options.helperKeyStore);
   let authorityPoller = options.authorityPoller;
   try {

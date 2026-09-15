@@ -321,6 +321,9 @@ export class PrivilegedHelperAuthorityClient implements PrivilegedHelperAuthorit
     if (!options.peerCredentialVerifier && !options.peerPolicy) {
       throw new Error("Privileged helper authority client requires a Broker peer verifier or native peer policy");
     }
+    if (options.peerPolicy !== undefined && (!Number.isSafeInteger(options.peerPolicy.expectedUid) || options.peerPolicy.expectedUid < 1)) {
+      throw new Error("Privileged helper authority client requires a non-root Broker peer identity");
+    }
     const keyCopy = Buffer.from(options.authenticationKey);
     try {
       this.peerCredentialVerifier = options.peerCredentialVerifier ?? new MacOsPeerCredentialVerifier(options.peerPolicy!);
