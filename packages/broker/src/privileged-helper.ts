@@ -8,6 +8,7 @@ import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, rem
 import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ApprovalRecord, type BrokerJob, type BrokerStore, type PrivilegedHelperPayload, type RequestRecord } from "./persistence.js";
 import { redactLogText } from "./secret-policy.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import type { PrivilegedHelperAuthorityPoller } from "./privileged-helper-authority-ipc.js";
 
 export type { PrivilegedHelperPayload } from "./persistence.js";
 
@@ -26,6 +27,8 @@ const APPROVAL_ID_PATTERN = /^approval:[A-Za-z0-9._:-]{1,240}$/u;
 const INTENT_ID_PATTERN = /^intent:[A-Za-z0-9._:-]{1,240}$/u;
 const SERVICE_TARGET_PATTERN = /^service:[A-Za-z0-9._:@/+\-]{1,255}$/u;
 const PACKAGE_TARGET_PATTERN = /^package:[A-Za-z0-9._:@/+\-]{1,255}$/u;
+const DEFAULT_AUTHORITY_POLL_INTERVAL_MS = 1_000;
+const MAX_AUTHORITY_POLL_INTERVAL_MS = 60_000;
 
 export type PrivilegedHelperOperation = "service_control" | "package_install" | "power";
 export type PrivilegedHelperState = "accepted" | "completed" | "failed" | "cancelled" | "unknown";
@@ -511,6 +514,10 @@ export interface PrivilegedHelperIpcServerOptions {
   readStatus?: () => PrivilegedHelperStatusReadback;
   /** Final Broker/helper authority gate for status requests. */
   authorizeStatus?: () => void;
+  /** Optional separately authenticated Broker authority poll channel. */
+  authorityPoller?: PrivilegedHelperAuthorityPoller;
+  /** Poll interval used while an allowlisted helper operation is active. */
+  authorityPollIntervalMs?: number;
   peerCredentialVerifier?: { verify(socket: Socket): unknown };
   peerPolicy?: NativePeerPolicy;
   maxRequestBytes?: number;
@@ -535,6 +542,7 @@ export class PrivilegedHelperIpcServer {
   private readonly maxRequestAgeMs: number;
   private readonly allowedClockSkewMs: number;
   private readonly now: () => number;
+  private readonly authorityPollIntervalMs: number;
 
   constructor(private readonly options: PrivilegedHelperIpcServerOptions) {
     if (!options.peerCredentialVerifier && !options.peerPolicy) {
@@ -548,9 +556,11 @@ export class PrivilegedHelperIpcServer {
     this.maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_COMMAND_AGE_MS;
     this.allowedClockSkewMs = options.allowedClockSkewMs ?? 5_000;
     this.now = options.now ?? Date.now;
+    this.authorityPollIntervalMs = options.authorityPollIntervalMs ?? DEFAULT_AUTHORITY_POLL_INTERVAL_MS;
     if (!Number.isSafeInteger(this.maxRequestBytes) || this.maxRequestBytes < 256 || this.maxRequestBytes > MAX_COMMAND_BYTES * 4 ||
         !Number.isSafeInteger(this.maxRequestAgeMs) || this.maxRequestAgeMs < 1 || this.maxRequestAgeMs > MAX_COMMAND_AGE_MS ||
-        !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > 60_000) {
+        !Number.isSafeInteger(this.allowedClockSkewMs) || this.allowedClockSkewMs < 0 || this.allowedClockSkewMs > 60_000 ||
+        !Number.isSafeInteger(this.authorityPollIntervalMs) || this.authorityPollIntervalMs < 1 || this.authorityPollIntervalMs > MAX_AUTHORITY_POLL_INTERVAL_MS) {
       throw new Error("Privileged helper IPC limits are invalid");
     }
   }
@@ -688,20 +698,44 @@ export class PrivilegedHelperIpcServer {
       }
       let response: PrivilegedHelperResponse;
       let command: UnsignedPrivilegedHelperCommand | undefined;
+      let signedCommand: SignedPrivilegedHelperCommand | undefined;
+      let executionStarted = false;
+      let authorityRevoked = false;
       try {
         command = unsignedPrivilegedHelperCommandCandidate(raw);
         command = authenticatePrivilegedHelperCommand(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+        signedCommand = raw as SignedPrivilegedHelperCommand;
         if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
           throw new BrokerError("PRECONDITION_FAILED", "Privileged helper request contained trailing data");
         }
         this.options.keyAuthorityCheck?.();
         this.options.replayGuard.admit(command);
         this.options.authorizeCommand(command);
-        let authorityRevoked = false;
+        let authorityFailure: unknown;
+        let authorityPollInFlight: Promise<void> | undefined;
+        let authorityPollTimer: NodeJS.Timeout | undefined;
+        const pollAuthority = async (initial: boolean): Promise<void> => {
+          if (!this.options.authorityPoller || authorityPollInFlight) return;
+          const poll = Promise.resolve().then(() => this.options.authorityPoller!.assertAuthorized(signedCommand!));
+          authorityPollInFlight = poll.then(
+            () => undefined,
+            (error: unknown) => {
+              authorityRevoked = true;
+              authorityFailure = error;
+            }
+          ).finally(() => { authorityPollInFlight = undefined; });
+          await authorityPollInFlight;
+          if (initial && authorityFailure !== undefined) throw authorityFailure;
+        };
+        if (this.options.authorityPoller) {
+          await pollAuthority(true);
+          authorityPollTimer = setInterval(() => { void pollAuthority(false); }, this.authorityPollIntervalMs);
+          authorityPollTimer.unref?.();
+        }
         const control: PrivilegedHelperExecutionControl = {
           timeoutMs: Math.max(1, command.expiresAtMs - this.now()),
           shouldCancel: () => {
-            if (socket.destroyed || this.now() >= command!.expiresAtMs) return true;
+            if (socket.destroyed || this.now() >= command!.expiresAtMs || authorityRevoked) return true;
             try {
               this.options.authorizeCommand(command!);
               return false;
@@ -711,19 +745,29 @@ export class PrivilegedHelperIpcServer {
             }
           }
         };
-        if (!this.options.adapter.available) throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not enabled");
-        const result = await this.options.adapter.execute(command, control);
         try {
-          this.options.authorizeCommand(command);
-        } catch {
-          authorityRevoked = true;
+          if (!this.options.adapter.available) throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not enabled");
+          executionStarted = true;
+          const result = await this.options.adapter.execute(command, control);
+          if (authorityPollInFlight) await authorityPollInFlight;
+          if (this.options.authorityPoller) await pollAuthority(false);
+          try {
+            this.options.authorizeCommand(command);
+          } catch (error) {
+            authorityRevoked = true;
+            authorityFailure ??= error;
+          }
+          if (authorityRevoked || this.now() >= command.expiresAtMs) {
+            throw new BrokerError("UNKNOWN_OUTCOME", "Privileged helper authority changed during execution", true);
+          }
+          response = success(command, validatePrivilegedHelperExecutionResult(result, command), this.authenticationKey);
+        } finally {
+          if (authorityPollTimer) clearInterval(authorityPollTimer);
         }
-        if (authorityRevoked || this.now() >= command.expiresAtMs) {
-          throw new BrokerError("UNKNOWN_OUTCOME", "Privileged helper authority changed during execution", true);
-        }
-        response = success(command, validatePrivilegedHelperExecutionResult(result, command), this.authenticationKey);
       } catch (error) {
-        const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper command is invalid");
+        const brokerError = executionStarted && authorityRevoked
+          ? new BrokerError("UNKNOWN_OUTCOME", "Privileged helper authority changed during execution", true)
+          : error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper command is invalid");
         const fallback = command ?? fallbackCommand();
         response = this.failure(brokerError.errorClass, brokerError.message, fallback.commandId, fallback.requestId, brokerError.retryable, command);
       }

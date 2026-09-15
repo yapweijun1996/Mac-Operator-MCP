@@ -566,6 +566,59 @@ test("privileged helper does not publish success after active authority revocati
   }
 });
 
+test("privileged helper polls the separate Broker authority before and after execution", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-authority-poll-"));
+  const socketPath = join(directory, "helper.sock");
+  const key = randomBytes(32);
+  let polls = 0;
+  let executions = 0;
+  const server = new PrivilegedHelperIpcServer({
+    socketPath,
+    authenticationKey: key,
+    replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+    authorizeCommand: () => undefined,
+    authorityPoller: {
+      assertAuthorized: async () => {
+        polls += 1;
+        if (polls >= 2) throw new BrokerError("REVOKED", "Broker authority was revoked");
+      }
+    },
+    authorityPollIntervalMs: 1,
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter: new AllowlistedPrivilegedHelper({
+      service_control: async (request) => {
+        executions += 1;
+        return {
+          operation: request.operation,
+          targetRef: request.targetRef,
+          state: "completed",
+          resultClass: "SUCCEEDED",
+          evidence: {}, warnings: [], truncated: false,
+          verification: { status: "verified", strategy: "allowlisted_postcondition" }
+        };
+      }
+    }),
+    now: () => NOW
+  });
+  try {
+    await server.listen();
+    const request = command(7);
+    const response = await sendCommand(socketPath, signPrivilegedHelperCommand(request, key));
+    const verified = authenticatePrivilegedHelperResponse(response, request, key);
+    assert.equal(executions, 1);
+    assert.equal(polls, 2);
+    assert.equal(verified.ok, false);
+    if (!verified.ok) {
+      assert.equal(verified.resultClass, "UNKNOWN_OUTCOME");
+      assert.equal(verified.error.retryable, true);
+    }
+  } finally {
+    await server.close();
+    key.fill(0);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("privileged helper rejects a denied peer before parsing", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-peer-"));
   const socketPath = join(directory, "helper.sock");

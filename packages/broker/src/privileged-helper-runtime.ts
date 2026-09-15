@@ -12,6 +12,7 @@ import {
 } from "./privileged-helper.js";
 import type { BrokerStore } from "./persistence.js";
 import type { NativePeerPolicy } from "./native-peer-ipc-server.js";
+import type { PrivilegedHelperAuthorityPoller } from "./privileged-helper-authority-ipc.js";
 
 export type PrivilegedHelperRuntimeState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
@@ -22,7 +23,8 @@ export type PrivilegedHelperStartupErrorCode =
   | "INVALID_HELPER_SERVICE"
   | "HELPER_SERVICE_UNAVAILABLE"
   | "HELPER_PROCESS_NOT_RUNNING"
-  | "HELPER_PROCESS_IDENTITY_UNAVAILABLE";
+  | "HELPER_PROCESS_IDENTITY_UNAVAILABLE"
+  | "HELPER_AUTHORITY_UNAVAILABLE";
 
 export class PrivilegedHelperStartupError extends Error {
   readonly code: PrivilegedHelperStartupErrorCode;
@@ -47,6 +49,9 @@ export interface PrivilegedHelperRuntimeOptions {
   replayGuard: PrivilegedHelperReplayGuard;
   adapter: PrivilegedHelperAdapter;
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
+  /** Optional separately authenticated Broker authority poll channel. */
+  authorityPoller?: PrivilegedHelperAuthorityPoller;
+  authorityPollIntervalMs?: number;
   /** Helper-owned runtime metadata source; never inferred from launchd. */
   readStatus?: () => PrivilegedHelperStatusReadback;
   /** Broker-owned final authority gate for status reads. */
@@ -209,6 +214,12 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
       "Privileged helper startup requires an explicit native peer process identity"
     );
   }
+  if (options.adapter.available && options.authorityPoller === undefined) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_AUTHORITY_UNAVAILABLE",
+      "Privileged helper startup requires a separately authenticated Broker authority poller when an adapter is enabled"
+    );
+  }
   const manager = new PrivilegedHelperKeyManager(options.helperKeyConfigPath, options.helperKeyStore);
   try {
     await manager.restore();
@@ -219,6 +230,8 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
       replayGuard: options.replayGuard,
       adapter: options.adapter,
       authorizeCommand: options.authorizeCommand,
+      ...(options.authorityPoller === undefined ? {} : { authorityPoller: options.authorityPoller }),
+      ...(options.authorityPollIntervalMs === undefined ? {} : { authorityPollIntervalMs: options.authorityPollIntervalMs }),
       ...(options.readStatus === undefined ? {} : { readStatus: options.readStatus }),
       ...(options.authorizeStatus === undefined ? {} : { authorizeStatus: options.authorizeStatus })
     });

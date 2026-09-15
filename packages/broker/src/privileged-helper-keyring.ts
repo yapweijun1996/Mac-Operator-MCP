@@ -16,6 +16,10 @@ import {
   type BrokerPrivilegedHelperCommandFactoryOptions,
   type PrivilegedHelperIpcServerOptions
 } from "./privileged-helper.js";
+import {
+  PrivilegedHelperAuthorityClient,
+  type PrivilegedHelperAuthorityClientOptions
+} from "./privileged-helper-authority-ipc.js";
 
 const MAX_CONFIG_BYTES = 128 * 1024;
 const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -160,6 +164,27 @@ export class PrivilegedHelperKeyManager {
             options.authorizeStatus!();
           }
         })
+      });
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  /**
+   * Creates the helper-side Broker authority poller from the same active key
+   * binding as the command server. The caller never receives the key bytes;
+   * key rotation, revocation, and validity are rechecked for every poll.
+   */
+  createAuthorityPoller(
+    options: Omit<PrivilegedHelperAuthorityClientOptions, "authenticationKey" | "keyAuthorityCheck">
+  ): PrivilegedHelperAuthorityClient {
+    const key = this.assertUsable();
+    const binding = this.captureBinding();
+    try {
+      return new PrivilegedHelperAuthorityClient({
+        ...options,
+        authenticationKey: key,
+        keyAuthorityCheck: () => this.assertBindingUsable(binding)
       });
     } finally {
       key.fill(0);
