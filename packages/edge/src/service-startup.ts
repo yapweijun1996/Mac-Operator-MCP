@@ -89,6 +89,8 @@ export interface EdgeServiceSignalSource {
 /** Owns the process-facing HTTPS Edge lifecycle and never changes authority at runtime. */
 export class EdgeServiceEntrypoint {
   private stateValue: EdgeServiceState = "stopped";
+  /** Serialize lifecycle transitions so stop cannot race a still-pending start. */
+  private lifecycleQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly edge: HttpsMcpEdge,
@@ -103,7 +105,21 @@ export class EdgeServiceEntrypoint {
     return this.stateValue;
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    return this.enqueueLifecycle(() => this.startInternal());
+  }
+
+  stop(): Promise<void> {
+    return this.enqueueLifecycle(() => this.stopInternal());
+  }
+
+  private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
+    const next = this.lifecycleQueue.then(operation, operation);
+    this.lifecycleQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  private async startInternal(): Promise<void> {
     if (this.stateValue !== "stopped") throw new Error(`Edge service cannot start from ${this.stateValue}`);
     this.stateValue = "starting";
     try {
@@ -138,7 +154,7 @@ export class EdgeServiceEntrypoint {
     }
   }
 
-  async stop(): Promise<void> {
+  private async stopInternal(): Promise<void> {
     if (this.stateValue === "stopped") return;
     this.stateValue = "stopping";
     try {

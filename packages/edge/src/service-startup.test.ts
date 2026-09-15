@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -8,11 +9,13 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { sha256 } from "@mac-operator/contracts";
 import {
+  EdgeServiceEntrypoint,
   createEdgeServiceFromStartupConfig,
   loadEdgeServiceStartupConfig,
   validateEdgeServiceStartupConfig,
   type EdgeServiceStartupConfig
 } from "./service-startup.js";
+import type { HttpsMcpEdge } from "./https-edge.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -105,6 +108,54 @@ test("Edge service startup assembles protected TLS and IPC bindings and owns lis
     key.fill(0);
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Edge service serializes stop behind an in-flight start", async () => {
+  const port = 44_322;
+  const emitter = new EventEmitter();
+  let listening = false;
+  let closeCalls = 0;
+  Object.defineProperty(emitter, "listening", { configurable: false, enumerable: true, get: () => listening });
+  const server = Object.assign(emitter, {
+    address: () => listening ? { address: "127.0.0.1", family: "IPv4", port } : null,
+    listen: () => {
+      setTimeout(() => {
+        listening = true;
+        emitter.emit("listening");
+      }, 20);
+    },
+    close: (callback: (error?: Error) => void) => {
+      closeCalls += 1;
+      listening = false;
+      callback();
+    }
+  }) as unknown as import("node:https").Server;
+  let edge: HttpsMcpEdge;
+  edge = {
+    server,
+    handler: { close: async () => {} },
+    close: async () => {
+      await edge.handler.close();
+      if (!server.listening) return;
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => error ? rejectClose(error) : resolveClose());
+      });
+    }
+  } as HttpsMcpEdge;
+  const service = new EdgeServiceEntrypoint(edge, {
+    bindHost: "127.0.0.1",
+    bindPort: port,
+    sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+    contractVersion: "0.1",
+    policyVersion: "policy-1"
+  });
+
+  const starting = service.start();
+  const stopping = service.stop();
+  await Promise.all([starting, stopping]);
+  assert.equal(service.state, "stopped");
+  assert.equal(server.listening, false);
+  assert.equal(closeCalls, 1);
 });
 
 function baseConfig(packageRoot: string, dataRoot: string, runtimeRoot: string, overrides: Partial<EdgeServiceStartupConfig> = {}): EdgeServiceStartupConfig {
