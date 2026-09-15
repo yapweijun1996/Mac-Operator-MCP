@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Safe-integer physical regression at source revisions `350ebbc` and `6f6bf2f`
+passes 634/634 non-overlapping tests with 0 skips and 0 failures on the
+physical Darwin arm64 host under install, sandbox, and Keychain opt-ins.
+The existing Broker, persistence, and privileged-helper IPC long-running
+suites were excluded without interruption. Evidence:
+`evidence/2026-09-15-serial-physical-regression-safe-integer.md`.
+
 Strict numeric-input verification at source revision `350ebbc`: inbound canonical JSON parsing now rejects
 plain decimal integer tokens outside JavaScript's safe-integer range before
 request, response, or audit-digest verification. Scientific notation remains

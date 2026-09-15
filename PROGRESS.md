@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Safe-integer physical regression addendum: source revision `350ebbc` and
+`6f6bf2f` pass 634/634 non-overlapping tests with 0 skipped and 0 failed on
+the physical Darwin arm64 host under install, sandbox, and Keychain opt-ins,
+serializing execution. The run includes the inbound numeric parser boundary,
+native IPC, filesystem/write recovery, helper, GUI, virtualization, HTTPS
+Edge, and packaged-service checks; the three pre-existing long-running suites
+were excluded and left undisturbed. Evidence:
+`evidence/2026-09-15-serial-physical-regression-safe-integer.md`.
+
 Strict numeric-input addendum: source revision `350ebbc` rejects non-safe plain
 decimal integer tokens during inbound canonical JSON parsing, preventing a
 JavaScript/foreign-runtime integer interpretation split during authentication

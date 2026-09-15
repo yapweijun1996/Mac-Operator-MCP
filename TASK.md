@@ -1687,6 +1687,7 @@ this does not claim persistent installation or signing provenance.
 - `MOP-005` — `DONE` — Materialized the locked capability taxonomy, lifecycle, catalog, standard, and all 44 KB tool contracts with unique provenance, deterministic mandatory fields, and canonical delivery-wave naming. Upstream KB writeback is tracked separately in `KB_SYNC.md`.
 - `MOP-006` — `DONE` — Created the initial threat model for remote client, Edge, IPC, Broker, adapters, child processes, GUI, helper, audit, policy, and secret stores, with verification targets.
 - `MOP-007` — `IN_PROGRESS` — Strict typecheck, build, Node test, AJV contract validation, dependency audit, unit/integration/adversarial foundation tests, a dependency-free tracked-file style/lint check, and a least-privilege macOS CI workflow exist. First remote CI evidence remains pending.
+- MOP-007 physical regression addendum: source revisions `350ebbc` and `6f6bf2f` pass 634/634 non-overlapping tests with 0 skipped and 0 failed under `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1` and `--test-concurrency=1` on the physical Darwin arm64 host. Existing `broker.test.js`, `persistence.test.js`, and `privileged-helper-authority-ipc.test.js` runs were excluded and left untouched. Evidence: `evidence/2026-09-15-serial-physical-regression-safe-integer.md`.
 - MOP-007 local-gate addendum: source revision `48d5b12` passes the native
   canonical-JSON check (5/5 vectors) and `npm audit --audit-level=high` reports
   zero vulnerabilities. This is local evidence only; first remote CI execution
