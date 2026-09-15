@@ -60,6 +60,7 @@ test("contract registry loads bounded regular files and exposes the parsed contr
     assert.deepEqual(registry.get("mac_test"), {
       schemaVersion: "0.1",
       toolName: "mac_test",
+      requiredScopes: ["mac.control.read"],
       purpose: "bounded test contract",
       inputSchema: validContract.input_schema,
       outputSchema: validContract.output_schema,

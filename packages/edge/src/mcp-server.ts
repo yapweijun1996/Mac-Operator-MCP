@@ -12,6 +12,7 @@ import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 
 interface CapabilityState {
   name: string;
+  scopes: readonly string[];
   planned: boolean;
   implemented: boolean;
   enabled: boolean;
@@ -131,6 +132,9 @@ function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry
     if (!contract) {
       throw new Error(`Broker capability is not registered: ${item.name}`);
     }
+    if (JSON.stringify(item.scopes) !== JSON.stringify(contract.requiredScopes)) {
+      throw new Error(`Broker capability scopes are incompatible for ${item.name}`);
+    }
     if (!item.enabled) continue;
     if (!item.planned || !item.implemented) {
       throw new Error(`Broker capability state is inconsistent for ${item.name}`);
@@ -150,18 +154,22 @@ function parseCapability(value: unknown): CapabilityState {
   const record = value;
   const keys = Object.keys(record).sort();
   const allowedKeys = new Set(["contract_version", "enabled", "implemented", "name", "planned", "reason", "scopes"]);
-  if (keys.length < 5 || keys.length > allowedKeys.size || keys.some((key) => !allowedKeys.has(key)) ||
+  const requiredKeys = ["contract_version", "enabled", "implemented", "name", "planned", "scopes"];
+  if (keys.length < requiredKeys.length || keys.length > allowedKeys.size || keys.some((key) => !allowedKeys.has(key)) ||
+      requiredKeys.some((key) => !Object.prototype.hasOwnProperty.call(record, key)) ||
       typeof record.name !== "string" || record.name.length < 1 || record.name.length > 128 ||
       !/^mac_[a-z0-9_]+$/u.test(record.name) || typeof record.planned !== "boolean" ||
       typeof record.implemented !== "boolean" || typeof record.enabled !== "boolean" ||
       (record.contract_version !== null && (typeof record.contract_version !== "string" || record.contract_version.length > 64)) ||
-      (record.scopes !== undefined && (!isPlainDataArray(record.scopes, SCOPES.length) ||
-        record.scopes.some((scope) => typeof scope !== "string" || !SCOPES.includes(scope as typeof SCOPES[number])))) ||
+      (!isPlainDataArray(record.scopes, SCOPES.length) || record.scopes.length < 1 ||
+        new Set(record.scopes).size !== record.scopes.length ||
+        record.scopes.some((scope) => typeof scope !== "string" || !SCOPES.includes(scope as typeof SCOPES[number]))) ||
       (record.reason !== undefined && (typeof record.reason !== "string" || record.reason.length > 128))) {
     throw new Error("Broker capability item is malformed");
   }
   return {
     name: record.name,
+    scopes: record.scopes as string[],
     planned: record.planned,
     implemented: record.implemented,
     enabled: record.enabled,

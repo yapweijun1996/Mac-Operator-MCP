@@ -25,8 +25,8 @@ test("MCP factory advertises only Broker-enabled tools and never forwards bearer
           protocol_version: "0.1",
           contract_version: "0.1",
           capabilities: [
-            { name: "mac_health", planned: true, implemented: true, enabled: true, contract_version: "0.1" },
-            { name: "mac_policy_explain", planned: true, implemented: true, enabled: false, contract_version: "0.1" }
+            { name: "mac_health", scopes: ["mac.control.read"], planned: true, implemented: true, enabled: true, contract_version: "0.1" },
+            { name: "mac_policy_explain", scopes: ["mac.policy.explain"], planned: true, implemented: true, enabled: false, contract_version: "0.1" }
           ]
         },
         warnings: [],
@@ -81,7 +81,7 @@ test("MCP factory rejects an enabled Broker capability with an incompatible cont
           data: {
             protocol_version: "0.1",
             contract_version: "0.1",
-            capabilities: [{ name: "mac_health", planned: true, implemented: true, enabled: true, contract_version: "9.9" }]
+            capabilities: [{ name: "mac_health", scopes: ["mac.control.read"], planned: true, implemented: true, enabled: true, contract_version: "9.9" }]
           },
           warnings: [],
           truncated: false,
@@ -112,6 +112,54 @@ test("MCP factory rejects an enabled Broker capability with an incompatible cont
   );
 });
 
+test("MCP factory rejects Broker capability scopes that drift from the contract", async () => {
+  const resourceServerUrl = new URL("https://edge.example.test/mcp");
+  const factory = createGovernedMcpServerFactory({
+    edgeId: "edge-1",
+    brokerAudience: "mac-operator-broker",
+    resourceServerUrl,
+    contracts: await ToolContractRegistry.load(resolve(repositoryRoot, "tool-contracts")),
+    gateway: {
+      async execute(): Promise<BrokerResult> {
+        return {
+          ok: true,
+          request_id: "capability-request",
+          tool: "mac_capabilities",
+          result_class: "SUCCEEDED",
+          data: {
+            protocol_version: "0.1",
+            contract_version: "0.1",
+            capabilities: [{ name: "mac_health", scopes: ["mac.files.read"], planned: true, implemented: true, enabled: true, contract_version: "0.1" }]
+          },
+          warnings: [],
+          truncated: false,
+          verification: {},
+          duration_ms: 1
+        };
+      }
+    }
+  });
+  await assert.rejects(
+    Promise.resolve(factory({
+      era: "modern",
+      authInfo: {
+        token: "test-token",
+        clientId: "client-1",
+        scopes: ["mac.control.read"],
+        expiresAt: Math.floor(Date.now() / 1_000) + 60,
+        resource: resourceServerUrl,
+        extra: {
+          principalId: "principal-1",
+          issuer: "issuer-1",
+          sessionId: "session-1",
+          issuedAtMs: Date.now() - 1_000
+        }
+      }
+    })),
+    /capability scopes are incompatible/u
+  );
+});
+
 test("MCP factory rejects an enabled capability with an incomplete runtime state", async () => {
   const resourceServerUrl = new URL("https://edge.example.test/mcp");
   const factory = createGovernedMcpServerFactory({
@@ -129,7 +177,7 @@ test("MCP factory rejects an enabled capability with an incomplete runtime state
           data: {
             protocol_version: "0.1",
             contract_version: "0.1",
-            capabilities: [{ name: "mac_health", planned: true, implemented: false, enabled: true, contract_version: "0.1" }]
+            capabilities: [{ name: "mac_health", scopes: ["mac.control.read"], planned: true, implemented: false, enabled: true, contract_version: "0.1" }]
           },
           warnings: [],
           truncated: false,
@@ -179,7 +227,7 @@ test("MCP factory rejects duplicate or unknown capability entries", async () => 
       }
     }
   };
-  const valid = { name: "mac_health", planned: true, implemented: true, enabled: false, contract_version: "0.1" };
+  const valid = { name: "mac_health", scopes: ["mac.control.read"], planned: true, implemented: true, enabled: false, contract_version: "0.1" };
   const duplicateFactory = createGovernedMcpServerFactory({
     edgeId: "edge-1", brokerAudience: "mac-operator-broker", resourceServerUrl, contracts,
     gateway: { async execute() {
@@ -226,6 +274,7 @@ test("MCP factory rejects non-data capability envelopes", async () => {
   };
   const accessorCapability = {
     name: "mac_health",
+    scopes: ["mac.control.read"],
     planned: true,
     implemented: true,
     enabled: false,

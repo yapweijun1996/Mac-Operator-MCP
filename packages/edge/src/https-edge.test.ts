@@ -99,7 +99,7 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
           ? {
             protocol_version: "0.1",
             contract_version: "0.1",
-            capabilities: [{ name: "mac_health", planned: true, implemented: true, enabled: true, contract_version: "0.1" }]
+            capabilities: [{ name: "mac_health", scopes: ["mac.control.read"], planned: true, implemented: true, enabled: true, contract_version: "0.1" }]
           }
           : { overall: "healthy", components: [] },
         warnings: [],

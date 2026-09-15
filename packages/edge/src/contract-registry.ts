@@ -55,6 +55,7 @@ const POSTCONDITION_STRATEGIES = new Set([
 export interface EdgeToolContract {
   schemaVersion: string;
   toolName: string;
+  requiredScopes: readonly string[];
   purpose: string;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
@@ -176,6 +177,7 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
   return {
     schemaVersion,
     toolName,
+    requiredScopes: [...scopes as string[]],
     purpose,
     inputSchema: objectField(record, "input_schema", file),
     outputSchema: objectField(record, "output_schema", file),
