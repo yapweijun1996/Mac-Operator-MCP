@@ -148,11 +148,18 @@ test("privileged helper command is signed, bounded, and excludes raw execution a
   );
   const sanitized = validatePrivilegedHelperExecutionResult({
     operation: "service_control", targetRef: "service:system/com.example.test", state: "completed", resultClass: "SUCCEEDED",
-    evidence: { token: "sk-proj-1234567890123456", note: "password=super-secret-value" },
+    evidence: {
+      token: "sk-proj-1234567890123456",
+      api_key: "api-secret",
+      signing_key: "signing-secret",
+      note: "password=super-secret-value"
+    },
     warnings: ["secret=another-secret-value"], truncated: false,
     verification: { status: "verified", strategy: "allowlisted_postcondition", summary: "token=hidden-value" }
   });
   assert.equal(sanitized.evidence.token, "[REDACTED]");
+  assert.equal(sanitized.evidence.api_key, "[REDACTED]");
+  assert.equal(sanitized.evidence.signing_key, "[REDACTED]");
   assert.equal(sanitized.evidence.note, "[REDACTED]");
   assert.equal(sanitized.warnings[0], "[REDACTED]");
   assert.equal(sanitized.verification.summary, "[REDACTED]");

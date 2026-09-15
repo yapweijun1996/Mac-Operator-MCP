@@ -1036,7 +1036,7 @@ export function validatePrivilegedHelperExecutionResult(
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper readback hash is malformed");
   }
   const evidence = Object.fromEntries(Object.entries(result.evidence).map(([key, value]) => {
-    if (/password|passwd|token|secret|credential|private|api[_-]?key/iu.test(key)) return [key, "[REDACTED]"] as const;
+    if (/(?:access[_-]?token|api[_-]?key|authorization|bearer|client[_-]?secret|cookie|credential|hmac[_-]?key|jwt|password|passwd|passphrase|private[_-]?key|refresh[_-]?token|secret|signing[_-]?key|ssh[_-]?key|token)/iu.test(key)) return [key, "[REDACTED]"] as const;
     return [key, typeof value === "string" ? redactLogText(value).text : value] as const;
   }));
   const warnings = result.warnings.map((warning) => redactLogText(warning).text);
