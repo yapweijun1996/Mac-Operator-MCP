@@ -9,6 +9,7 @@ import {
   capturePeerProcessIdentity,
   loadNativePeerAdapter,
   MacOsPeerCredentialVerifier,
+  validateKeychainTrustedExecutablePath,
   validateNativeAdapterPath
 } from "./peer-credentials.js";
 
@@ -172,6 +173,30 @@ test("native adapter path validation rejects symlinks and writable artifacts", a
     await chmod(regularPath, 0o622);
     assert.throws(() => validateNativeAdapterPath(regularPath), /protected/u);
     assert.throws(() => validateNativeAdapterPath(`${regularPath}/..`), /canonical/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Keychain trusted executable validation binds the current owner and protected mode", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-keychain-executable-"));
+  const canonicalDirectory = await realpath(directory);
+  const executablePath = join(canonicalDirectory, "broker-executable");
+  const symlinkPath = join(canonicalDirectory, "broker-executable-link");
+  try {
+    await writeFile(executablePath, "broker-placeholder", { mode: 0o700 });
+    validateKeychainTrustedExecutablePath(executablePath);
+    await chmod(executablePath, 0o702);
+    assert.throws(
+      () => validateKeychainTrustedExecutablePath(executablePath),
+      /protected regular file/u
+    );
+    await chmod(executablePath, 0o700);
+    await symlink(executablePath, symlinkPath);
+    assert.throws(
+      () => validateKeychainTrustedExecutablePath(symlinkPath),
+      /canonical/u
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

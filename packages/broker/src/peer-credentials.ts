@@ -308,6 +308,10 @@ export function validateKeychainTrustedExecutablePath(path: string): void {
   if (!linkStat.isFile() || linkStat.isSymbolicLink() || (linkStat.mode & 0o022) !== 0) {
     throw new Error("Keychain trusted executable must be a protected regular file");
   }
+  const currentUid = process.getuid?.();
+  if (currentUid === undefined || linkStat.uid !== currentUid) {
+    throw new Error("Keychain trusted executable must be owned by the current user");
+  }
 }
 
 export function validateKeychainCoordinates(service: string, account: string): void {

@@ -346,7 +346,7 @@ bool ValidateCanonicalExecutablePath(const char* path, struct stat* identity) {
   if (realpath(path, canonical) == nullptr || strcmp(canonical, path) != 0) return false;
   struct stat observed{};
   if (lstat(path, &observed) != 0 || !S_ISREG(observed.st_mode) || S_ISLNK(observed.st_mode) ||
-      (observed.st_mode & (S_IWGRP | S_IWOTH)) != 0) return false;
+      (observed.st_mode & (S_IWGRP | S_IWOTH)) != 0 || observed.st_uid != geteuid()) return false;
   if (identity != nullptr) *identity = observed;
   return true;
 }

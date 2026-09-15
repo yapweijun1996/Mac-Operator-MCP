@@ -191,7 +191,7 @@ test("real macOS Keychain ACL binds one Broker executable and retires by digest"
     });
     assert.throws(
       () => verifyKeychainProtection(service, account, "/usr/bin/security"),
-      /protection is not approved/u
+      /protection is not approved|owned by the current user/u
     );
     await assert.rejects(
       retireKeychainAuthenticationKey(service, account, "0".repeat(64)),
