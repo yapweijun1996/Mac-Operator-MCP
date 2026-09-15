@@ -3,6 +3,20 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Resolved task-profile snapshot verification at source revision `45e1472`:
+`TaskProfileRegistry.resolve()` recursively freezes the exact Broker-owned
+profile snapshot handed to task adapters. Negative coverage proves that
+executable/cwd-adjacent process data, environment, and filesystem-root
+collections cannot be widened after resolution. Focused
+task-profile/task-runner/sandbox tests pass 32/32 with 5 explicit
+descriptor-capability skips; the serial physical regression passes 662/667
+with 0 failures and 5 skips. The three pre-existing long-running suites were
+excluded and left untouched. This closes adapter-side mutation of a resolved
+profile only; native descriptor execution, production credential/process
+isolation, remount resistance, installed provenance, and task enablement
+remain open. Evidence:
+`evidence/2026-09-16-resolved-task-profile-snapshot.md`.
+
 Task isolation-proof immutability verification: the validated
 `TaskIsolationProof` graph is recursively frozen before a sandbox or
 virtualization runner retains or exposes it. Negative coverage proves that

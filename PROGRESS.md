@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Resolved task-profile snapshot addendum at source revision `45e1472`:
+`TaskProfileRegistry.resolve()` now recursively freezes the Broker-authorized
+profile handed to task adapters, including executable/cwd, environment,
+filesystem roots, network allowlist, and budgets. Focused task-profile,
+task-runner, and sandbox tests pass 32/32 with 5 explicit
+descriptor-capability skips; the serial physical regression passes 662/667
+with 0 failures and 5 skips. Evidence:
+`evidence/2026-09-16-resolved-task-profile-snapshot.md`.
+
 Task isolation-proof immutability addendum at source revision `d179132`:
 validated `TaskIsolationProof` objects are recursively frozen before a runner
 retains or exposes them. Sandbox and virtualization proof fields, including

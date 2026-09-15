@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-043/045/086 resolved task-profile snapshot addendum at source revision
+`45e1472`: `TaskProfileRegistry.resolve()` recursively freezes the
+Broker-authorized profile handed to adapters, covering executable/cwd,
+environment, filesystem roots, network allowlist, and budgets. Focused
+task-profile/task-runner/sandbox tests pass 32/32 with 5 explicit
+descriptor-capability skips; the serial physical regression passes 662/667
+with 0 failures and 5 skips. Evidence:
+`evidence/2026-09-16-resolved-task-profile-snapshot.md`.
+
 MOP-045/086 task isolation-proof immutability addendum at source revision
 `d179132`: validated `TaskIsolationProof` objects are recursively frozen
 before runner retention or
