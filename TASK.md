@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-031 target-identity addendum at source revision `93daffb`:
+`mac_process_inspect` now binds the adapter result PID to the requested PID;
+substitution is rejected as `CONFLICT` before success publication and is
+persisted as a failed request with its completion audit. Focused process
+inspection tests pass 2/2, with typecheck, lint, and diff checks passing.
+Native PID-reuse/start-time proof and installed-process evidence remain open.
+Evidence: `evidence/2026-09-16-process-inspect-target-binding.md`.
+
 MOP-086/012 Guest identity authority-snapshot addendum at source revision
 `5d1084e`: Guest Agent, transport client, VM lifecycle, and runtime now retain
 copied, frozen identity authority; caller mutation cannot alter digest/runtime

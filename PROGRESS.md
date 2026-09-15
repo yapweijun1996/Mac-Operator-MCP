@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process inspection target-binding addendum at source revision `93daffb`:
+`mac_process_inspect` now rejects a worker/native adapter result whose returned
+PID differs from the requested PID, before response serialization or success
+completion. The negative Broker test confirms a stable `CONFLICT`, failed
+request state, and redacted completion audit; the focused process-inspect suite
+passes 2/2 with typecheck, lint, and diff checks passing. This closes the
+adapter-result identity substitution boundary only; OS PID-reuse/start-time
+proof, installed service identity, remote revocation, and release evidence
+remain open. Evidence:
+`evidence/2026-09-16-process-inspect-target-binding.md`.
+
 Signed policy schema alignment addendum at source revision `3c76604`, with
 grammar centralization revalidated at `9a4554e`: the
 policy document schema now represents `docker_runtime` and `docker_object` and
