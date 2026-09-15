@@ -3,6 +3,20 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Signed Guest attestation snapshot verification at source revision `08770f3`:
+the verifier, `VirtualizationGuestTransportExecutor`, and
+`VirtualizationTaskRunner` copy and recursively freeze the complete signed
+attestation envelope and verification result before long-lived retention.
+Negative coverage proves top-level, payload, nested identity, and original
+caller-object mutation attempts cannot alter the bound data. Focused
+attestation/runner tests pass 20/20; the serial physical regression passes
+667/672 with 0 failures and 5 explicit descriptor-capability skips. The three
+pre-existing long-running suites were excluded and left untouched. This closes
+in-process post-verification object substitution only; native attestation
+production, protected private-key distribution, VM boot, guest isolation,
+remount resistance, and production enablement remain open. Evidence:
+`evidence/2026-09-16-signed-guest-attestation-snapshot.md`.
+
 Guest image binding verification at source revision `e613a5a`:
 `VirtualizationTaskRunner` retains a copied, recursively frozen startup image
 binding; negative coverage proves path and nested identity mutation attempts

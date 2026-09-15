@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/012 Signed Guest attestation snapshot addendum at source revision
+`08770f3`: the verifier, Guest transport executor, and TaskRunner bind copied,
+recursively frozen signed attestation envelopes and verification results before
+later freshness, revocation, signature, or proof checks. Focused
+attestation/runner tests pass 20/20; the serial physical regression passes
+667/672 with 0 failures and 5 explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-signed-guest-attestation-snapshot.md`.
+
 MOP-045/086 Guest image binding addendum at source revision `e613a5a`:
 `VirtualizationTaskRunner` copies and recursively freezes the startup-bound
 guest image path, identity, publication class, and captured device/inode/size

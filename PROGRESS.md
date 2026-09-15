@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Signed Guest attestation snapshot addendum at source revision `08770f3`:
+the verifier, `VirtualizationGuestTransportExecutor`, and
+`VirtualizationTaskRunner` now copy and recursively freeze the complete signed
+attestation envelope and verification result before long-lived retention.
+Focused attestation/runner tests pass 20/20; the serial physical regression
+passes 667/672 with 0 failures and 5 explicit descriptor-capability skips.
+Evidence: `evidence/2026-09-16-signed-guest-attestation-snapshot.md`.
+
 Guest image binding addendum at source revision `e613a5a`:
 `VirtualizationTaskRunner` now copies and recursively freezes the startup-bound
 `LoadedVirtualizationGuestImage` (path, Guest identity, publication, and
