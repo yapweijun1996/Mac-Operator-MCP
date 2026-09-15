@@ -289,10 +289,22 @@ export function parseKeychainGenericPasswordMetadata(value: unknown): KeychainGe
 }
 
 export function validateKeychainTrustedExecutablePath(path: string): void {
-  if (!isAbsolute(path) || resolve(path) !== path || realpathSync.native(path) !== path) {
+  if (typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path) {
     throw new Error("Keychain trusted executable path is not canonical");
   }
-  const linkStat = lstatSync(path);
+  let canonicalPath: string;
+  try {
+    canonicalPath = realpathSync.native(path);
+  } catch {
+    throw new Error("Keychain trusted executable path is not canonical");
+  }
+  if (canonicalPath !== path) throw new Error("Keychain trusted executable path is not canonical");
+  let linkStat: ReturnType<typeof lstatSync>;
+  try {
+    linkStat = lstatSync(path);
+  } catch {
+    throw new Error("Keychain trusted executable must be a protected regular file");
+  }
   if (!linkStat.isFile() || linkStat.isSymbolicLink() || (linkStat.mode & 0o022) !== 0) {
     throw new Error("Keychain trusted executable must be a protected regular file");
   }
