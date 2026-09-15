@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Additional-target authority addendum: source revision `b2d3264` makes the
+Broker's final success gate revalidate every normalized target, including
+additional filesystem roots. A same-version policy revision that removes a
+second root during dispatch now yields `CANCELLED` before success publication;
+the focused regression passes 1/1 and the serial physical regression passes
+642/642 with no skips or failures. This closes the final multi-root
+readback-to-publication gap only; remote propagation, installed recovery,
+remount races, and production enablement remain open. Evidence:
+`evidence/2026-09-16-additional-target-authority.md`.
+
 Broker status response-schema addendum: source revision `d6f704b` requires
 exact nested failure fields and bounds status error text to 512 characters
 without NUL or line breaks before signing. Focused Broker status tests pass

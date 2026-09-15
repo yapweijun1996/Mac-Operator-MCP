@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-016 additional-target authority addendum: source revision `b2d3264` passes
+the full normalized target set into Broker's final success recheck. A dynamic
+policy revocation of a second multi-root search target during dispatch is
+returned as `CANCELLED`, with no false success completion. The focused
+regression passes 1/1 and the serial physical regression passes 642/642 with
+no skips or failures. Evidence:
+`evidence/2026-09-16-additional-target-authority.md`.
+
 Broker status response-schema addendum: source revision `d6f704b` requires
 exact nested status failure fields and sanitizes hostile error text before
 signing. Focused status tests pass 3/3; the serial physical regression passes
