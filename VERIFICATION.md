@@ -2737,7 +2737,7 @@ remain open. Evidence:
 `evidence/2026-09-15-kill-switch-fail-closed.md`.
 
 Job Edge-provenance verification at source revisions `e0b9db8`, `66688ec`,
-`9a52c59`, and `8dbbd67` confirms schema versions `10` and `11` add nullable
+`9a52c59`, `8dbbd67`, and `08c8100` confirms schema versions `10` and `11` add nullable
 `owner_edge_id` and `owner_edge_key_id` columns with forward-only migration for
 legacy ledgers. Broker-created mutation Jobs bind the authenticated Edge and
 Edge-key, idempotent reuse checks both identities, and Edge/Edge-key revocation

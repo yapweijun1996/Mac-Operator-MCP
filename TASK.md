@@ -1391,7 +1391,7 @@ this does not claim persistent installation or signing provenance.
   device/inode/mode stability while loading. This hardens the untrusted
   package boundary; Developer ID/package provenance and installed-service
   evidence remain open.
-- Job provenance clarification: source revision `8dbbd67` adds schema version
+- Job provenance clarification: source revisions `8dbbd67` and `08c8100` add schema version
   `11` and persists the authenticated Edge-key identity alongside Edge
   provenance for Broker-created Jobs. Edge-key revocation now isolates matching
   queued Jobs; legacy/null or malformed provenance remains conservative or

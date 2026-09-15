@@ -1,7 +1,7 @@
 # Job Edge provenance evidence
 
 Date: 2026-09-15
-Source revisions: `e0b9db8`, `66688ec`, `9a52c59`, `8dbbd67`
+Source revisions: `e0b9db8`, `66688ec`, `9a52c59`, `8dbbd67`, `08c8100`
 
 ## Decision
 
@@ -24,6 +24,8 @@ readback.
   status lookup, so a revoked Edge cannot close an unknown Job as success.
 - Edge and Edge-key revocation cancel matching queued Jobs, plus legacy/null or
   malformed provenance; non-matching, valid identities remain queued.
+- Edge-key identities require the authenticated Edge prefix and a bounded key ID
+  shape; orphaned or malformed stored values fail closed on read and revoke.
 - The public `BrokerJob` result does not expose Edge identity; it remains
   Broker-owned authority evidence.
 

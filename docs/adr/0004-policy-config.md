@@ -96,5 +96,6 @@ reuse is bound to that identity, and Edge revocation isolates matching queued
 Jobs. Legacy/null provenance is intentionally cancelled conservatively, while
 malformed persisted provenance fails closed. Commit `8dbbd67` extends the
 same boundary with schema version `11` Edge-key provenance and precise
-Edge-key revocation. These changes close a local authority-correlation gap but
+Edge-key revocation; `08c8100` makes the key identity shape and Edge binding
+explicit at creation, readback, and revoke boundaries. These changes close a local authority-correlation gap but
 do not close production policy distribution or ADR acceptance.
