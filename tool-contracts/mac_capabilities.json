@@ -79,6 +79,12 @@
                   "maxLength": 128,
                   "pattern": "^[A-Za-z0-9._:@/+-]+$"
                 },
+                "planned": {
+                  "type": "boolean"
+                },
+                "implemented": {
+                  "type": "boolean"
+                },
                 "enabled": {
                   "type": "boolean"
                 },
@@ -105,6 +111,8 @@
               },
               "required": [
                 "name",
+                "planned",
+                "implemented",
                 "enabled",
                 "scopes",
                 "contract_version"

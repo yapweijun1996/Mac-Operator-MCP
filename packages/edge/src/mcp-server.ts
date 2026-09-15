@@ -11,6 +11,8 @@ import { projectPrincipal } from "./principal.js";
 
 interface CapabilityState {
   name: string;
+  planned: boolean;
+  implemented: boolean;
   enabled: boolean;
   contractVersion: string | null;
 }
@@ -120,6 +122,9 @@ function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry
   const enabled: string[] = [];
   for (const item of parsed) {
     if (!item.enabled) continue;
+    if (!item.planned || !item.implemented) {
+      throw new Error(`Broker capability state is inconsistent for ${item.name}`);
+    }
     const contract = contracts.get(item.name);
     if (!contract || item.contractVersion !== contract.schemaVersion || item.contractVersion !== CONTRACT_VERSION) {
       throw new Error(`Broker capability contract version is incompatible for ${item.name}`);
@@ -134,9 +139,16 @@ function parseCapability(value: unknown): CapabilityState {
     throw new Error("Broker capability item is malformed");
   }
   const record = value as Record<string, unknown>;
-  if (typeof record.name !== "string" || typeof record.enabled !== "boolean" ||
+  if (typeof record.name !== "string" || typeof record.planned !== "boolean" ||
+      typeof record.implemented !== "boolean" || typeof record.enabled !== "boolean" ||
       (record.contract_version !== null && typeof record.contract_version !== "string")) {
     throw new Error("Broker capability item is malformed");
   }
-  return { name: record.name, enabled: record.enabled, contractVersion: record.contract_version as string | null };
+  return {
+    name: record.name,
+    planned: record.planned,
+    implemented: record.implemented,
+    enabled: record.enabled,
+    contractVersion: record.contract_version as string | null
+  };
 }

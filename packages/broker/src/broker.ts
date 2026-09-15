@@ -1147,6 +1147,8 @@ export class Broker {
               const tool = policy.tools.get(state.tool);
               return {
                 name: state.tool,
+                planned: state.planned,
+                implemented: state.implemented,
                 enabled: state.enabled,
                 scopes: tool ? [...tool.requiredScopes] : [],
                 contract_version: tool?.contractVersion ?? null,

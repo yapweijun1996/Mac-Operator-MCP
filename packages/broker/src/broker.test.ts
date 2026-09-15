@@ -1099,16 +1099,16 @@ test("capability discovery separates planned, implemented, and enabled", async (
     const result = await context.broker.handle(request);
     assert.equal(result.ok, true);
     if (result.ok) {
-      const capabilities = (result.data as { capabilities: Array<{ name: string; enabled: boolean; reason: string }> }).capabilities;
+      const capabilities = (result.data as { capabilities: Array<{ name: string; planned: boolean; implemented: boolean; enabled: boolean; reason: string }> }).capabilities;
       assert.equal(capabilities.length, 44);
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_health"), {
-        name: "mac_health", enabled: true, scopes: ["mac.control.read"], contract_version: "0.1", reason: "enabled"
+        name: "mac_health", planned: true, implemented: true, enabled: true, scopes: ["mac.control.read"], contract_version: "0.1", reason: "enabled"
       });
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_policy_explain"), {
-        name: "mac_policy_explain", enabled: false, scopes: ["mac.policy.explain"], contract_version: "0.1", reason: "scope_not_granted"
+        name: "mac_policy_explain", planned: true, implemented: true, enabled: false, scopes: ["mac.policy.explain"], contract_version: "0.1", reason: "scope_not_granted"
       });
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_task_run"), {
-        name: "mac_task_run", enabled: false, scopes: ["mac.task.run"], contract_version: "0.1", reason: "disabled_by_policy"
+        name: "mac_task_run", planned: true, implemented: true, enabled: false, scopes: ["mac.task.run"], contract_version: "0.1", reason: "disabled_by_policy"
       });
     }
   } finally { await context.close(); }
@@ -1135,6 +1135,8 @@ test("capability discovery reflects persisted and policy kill switches", async (
         .find((capability) => capability.name === "mac_process_list");
       assert.deepEqual(processCapability, {
         name: "mac_process_list",
+        planned: true,
+        implemented: true,
         enabled: false,
         scopes: ["mac.process.read"],
         contract_version: "0.1",
@@ -1168,6 +1170,8 @@ test("capability discovery reflects persisted and policy kill switches", async (
         .find((capability) => capability.name === "mac_process_list");
       assert.deepEqual(processCapability, {
         name: "mac_process_list",
+        planned: true,
+        implemented: true,
         enabled: false,
         scopes: ["mac.process.read"],
         contract_version: "0.1",
