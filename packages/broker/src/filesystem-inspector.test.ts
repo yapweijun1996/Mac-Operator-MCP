@@ -20,6 +20,8 @@ test("native filesystem boundary opens targets relative to a pinned root descrip
   assert.match(source, /RelativePathWithinRoot\(resolved_root, canonical_target, relative_target\)/gu);
   assert.match(source, /openat\(root_descriptor, relative_target/u);
   assert.match(source, /openat\(root_descriptor, relative_parent/u);
+  assert.equal(source.match(/stat\(canonical_parent_path, &canonical_parent_stat\)/gu)?.length, 3);
+  assert.equal(source.match(/SameDirectoryIdentity\(parent_stat, canonical_parent_stat\)/gu)?.length, 3);
   assert.doesNotMatch(source, /int target_descriptor = open\(requested_target/u);
   assert.match(source, /renameatx_np\(parent_descriptor, base_name, parent_descriptor, quarantine_name, RENAME_EXCL\)/u);
   assert.match(source, /linkat\(parent_descriptor, quarantine_name, parent_descriptor, base_name, 0\)/u);

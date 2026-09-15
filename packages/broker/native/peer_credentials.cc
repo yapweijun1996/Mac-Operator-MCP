@@ -292,6 +292,14 @@ bool SameFilesystem(int descriptor, const struct statfs& expected) {
       actual.f_flags == expected.f_flags;
 }
 
+// A canonical parent path is still a name lookup. Pin the parent directory
+// identity after that lookup and reject a replacement before any child name
+// is created, renamed, or removed through the descriptor.
+bool SameDirectoryIdentity(const struct stat& left, const struct stat& right) {
+  return S_ISDIR(left.st_mode) && S_ISDIR(right.st_mode) &&
+      left.st_dev == right.st_dev && left.st_ino == right.st_ino;
+}
+
 void SetString(napi_env env, napi_value object, const char* name, const char* value) {
   napi_value property;
   napi_create_string_utf8(env, value, NAPI_AUTO_LENGTH, &property);
@@ -1894,6 +1902,12 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, "Filesystem write parent escaped the authorized root");
     return nullptr;
   }
+  struct stat canonical_parent_stat;
+  if (stat(canonical_parent_path, &canonical_parent_stat) != 0 || !S_ISDIR(canonical_parent_stat.st_mode)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem write parent identity could not be captured");
+    return nullptr;
+  }
   int parent_descriptor = openat(root_descriptor, relative_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (parent_descriptor < 0) {
     close(root_descriptor);
@@ -1904,7 +1918,8 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   char parent_descriptor_path[PATH_MAX];
   if (fstat(parent_descriptor, &parent_stat) != 0 || !DescriptorPath(parent_descriptor, parent_descriptor_path) ||
       !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev ||
-      !SameFilesystem(parent_descriptor, root_filesystem)) {
+      !SameFilesystem(parent_descriptor, root_filesystem) ||
+      !SameDirectoryIdentity(parent_stat, canonical_parent_stat)) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem write parent identity is not authorized");
@@ -2170,6 +2185,12 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, "Filesystem unlink parent escaped the authorized root");
     return nullptr;
   }
+  struct stat canonical_parent_stat;
+  if (stat(canonical_parent_path, &canonical_parent_stat) != 0 || !S_ISDIR(canonical_parent_stat.st_mode)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink parent identity could not be captured");
+    return nullptr;
+  }
   int parent_descriptor = openat(root_descriptor, relative_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (parent_descriptor < 0) {
     close(root_descriptor);
@@ -2180,7 +2201,8 @@ napi_value UnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
   char parent_descriptor_path[PATH_MAX];
   if (fstat(parent_descriptor, &parent_stat) != 0 || !DescriptorPath(parent_descriptor, parent_descriptor_path) ||
       !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev ||
-      !SameFilesystem(parent_descriptor, root_filesystem)) {
+      !SameFilesystem(parent_descriptor, root_filesystem) ||
+      !SameDirectoryIdentity(parent_stat, canonical_parent_stat)) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink parent identity is not authorized");
@@ -2387,6 +2409,12 @@ napi_value RecoverUnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, "Filesystem unlink recovery parent escaped the authorized root");
     return nullptr;
   }
+  struct stat canonical_parent_stat;
+  if (stat(canonical_parent_path, &canonical_parent_stat) != 0 || !S_ISDIR(canonical_parent_stat.st_mode)) {
+    close(root_descriptor);
+    ThrowSystemError(env, "Filesystem unlink recovery parent identity could not be captured");
+    return nullptr;
+  }
   int parent_descriptor = openat(root_descriptor, relative_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (parent_descriptor < 0) {
     close(root_descriptor);
@@ -2397,7 +2425,8 @@ napi_value RecoverUnlinkFileWithinRoot(napi_env env, napi_callback_info info) {
   char parent_descriptor_path[PATH_MAX];
   if (fstat(parent_descriptor, &parent_stat) != 0 || !DescriptorPath(parent_descriptor, parent_descriptor_path) ||
       !IsWithinRoot(resolved_root, parent_descriptor_path) || parent_stat.st_dev != root_stat.st_dev ||
-      !SameFilesystem(parent_descriptor, root_filesystem)) {
+      !SameFilesystem(parent_descriptor, root_filesystem) ||
+      !SameDirectoryIdentity(parent_stat, canonical_parent_stat)) {
     close(parent_descriptor);
     close(root_descriptor);
     ThrowSystemError(env, "Filesystem unlink recovery parent identity is not authorized");
