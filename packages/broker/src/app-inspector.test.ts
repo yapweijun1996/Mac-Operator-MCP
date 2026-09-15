@@ -44,6 +44,9 @@ test("app inventory validates filters and rejects malformed metadata", () => {
   assert.throws(() => parseAppInventoryResult(success(JSON.stringify([
     { app_id: "bundle:../bad", bundle_id: "../bad", name: "bad", running: false }
   ]))), /malformed metadata/u);
+  assert.throws(() => parseAppInventoryResult(success(JSON.stringify([
+    { app_id: "bundle:com.example.App", bundle_id: "com.example.App", name: "App", running: true, extra: "authority" }
+  ]))), /malformed metadata/u);
 });
 
 test("app inventory uses a fixed Broker-owned JXA command boundary", async () => {

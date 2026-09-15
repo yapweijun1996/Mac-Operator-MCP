@@ -1,5 +1,6 @@
 import { BrokerError, parseJsonStrict } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { redactLogText } from "./secret-policy.js";
 
 const OSASCRIPT = "/usr/bin/osascript";
@@ -147,7 +148,7 @@ export function parseAppInventoryResult(result: ProcessExecutionResult, runningO
   const warnings: string[] = [];
   let redacted = false;
   for (const value of parsed) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    if (!isPlainDataRecord(value) || !hasExactFields(value, ["app_id", "bundle_id", "name", "running"], ["version"])) {
       throw new BrokerError("VERIFICATION_FAILED", "App inventory returned malformed metadata");
     }
     const record = value as Record<string, unknown>;
@@ -188,3 +189,9 @@ export function parseAppInventoryResult(result: ProcessExecutionResult, runningO
 }
 
 export const appInventoryScriptForTesting = APP_INVENTORY_SCRIPT;
+
+function hasExactFields(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
+  const allowed = new Set([...required, ...optional]);
+  const keys = Object.keys(value);
+  return required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) && keys.every((key) => allowed.has(key));
+}

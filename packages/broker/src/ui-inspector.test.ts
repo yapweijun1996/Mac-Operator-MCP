@@ -80,6 +80,67 @@ test("Accessibility observation validates identity, hint, and node budgets", () 
   })), appId, 10), /malformed node metadata/u);
 });
 
+test("Accessibility result validation rejects unstable authority fields", () => {
+  const validObservation = {
+    status: "ok",
+    app_id: appId,
+    window_index: 0,
+    window_title: "Example",
+    focused: false,
+    nodes: [{ index: 0, role: "AXButton", label: "Save", enabled: true, focused: false, secure: false }],
+    truncated: false
+  };
+  assert.throws(
+    () => parseUiObserveResult(success(JSON.stringify({ ...validObservation, extra: "authority" })), appId, 10),
+    /malformed metadata/u
+  );
+  assert.throws(
+    () => parseUiObserveResult(success(JSON.stringify({
+      ...validObservation,
+      nodes: [{ ...validObservation.nodes[0], extra: "authority" }]
+    })), appId, 10),
+    /malformed node metadata/u
+  );
+
+  const validAction = {
+    status: "ok",
+    app_id: appId,
+    window_index: 0,
+    window_title: "Example",
+    element_index: 0,
+    role: "AXButton",
+    enabled: true,
+    focused: false,
+    secure: false,
+    accepted: true
+  };
+  const windowId = opaqueWindowId(appId, 0, "Example");
+  const snapshot = {
+    elementRef: opaqueElementId(windowId, 0, "AXButton", "Save", false),
+    appId,
+    windowId,
+    windowIndex: 0,
+    windowTitle: "Example",
+    elementIndex: 0,
+    role: "AXButton",
+    label: "Save",
+    enabled: true,
+    focused: false,
+    secure: false,
+    ownerPrincipalId: "principal-1",
+    ownerSessionId: "session-1",
+    observedAtMs: 1_000
+  } as const;
+  assert.throws(
+    () => parseUiActionResult(success(JSON.stringify({ ...validAction, extra: "authority" })), snapshot, "press"),
+    /malformed metadata/u
+  );
+  assert.throws(
+    () => parseUiActionResult(success(JSON.stringify({ status: "error", error: "stale_target", extra: true })), snapshot, "press"),
+    /malformed metadata/u
+  );
+});
+
 test("Accessibility observation uses a fixed Broker-owned JXA command boundary", async () => {
   let observed: { executable: string; args: readonly string[]; cwd: string; environment?: Readonly<Record<string, string>>; timeoutMs: number; outputCapBytes: number } | undefined;
   const inspector = new MacUiInspectorImpl({

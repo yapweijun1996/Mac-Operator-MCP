@@ -1,5 +1,6 @@
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { redactLogText } from "./secret-policy.js";
 
 const OSASCRIPT = "/usr/bin/osascript";
@@ -380,9 +381,10 @@ export function parseUiActionResult(
   }
   let parsed: unknown;
   try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
+  if (!isPlainDataRecord(parsed)) throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
+    if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
     switch (record.error) {
       case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
       case "app_not_running":
@@ -393,6 +395,9 @@ export function parseUiActionResult(
       case "invalid_target": throw new BrokerError("PRECONDITION_FAILED", "UI action target metadata is malformed");
       default: throw new BrokerError("EXECUTION_FAILED", "Accessibility action failed");
     }
+  }
+  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "element_index", "role", "enabled", "focused", "secure", "accepted"])) {
+    throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
   }
   if (record.status !== "ok" || record.app_id !== snapshot.appId ||
       record.window_index !== snapshot.windowIndex || record.window_title !== snapshot.windowTitle ||
@@ -436,12 +441,13 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   }
   let parsed: unknown;
   try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata"); }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isPlainDataRecord(parsed)) {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
   }
   const record = parsed as Record<string, unknown>;
   validateSensitiveUiTarget(appId);
   if (record.status === "error") {
+    if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
     switch (record.error) {
       case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
       case "app_not_running": throw new BrokerError("TARGET_NOT_FOUND", "The requested app is not running");
@@ -450,10 +456,13 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
       default: throw new BrokerError("EXECUTION_FAILED", "Accessibility observation failed");
     }
   }
+  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "focused", "nodes", "truncated"])) {
+    throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
+  }
   if (record.status !== "ok" || record.app_id !== appId ||
       !Number.isSafeInteger(record.window_index) || (record.window_index as number) < 0 || (record.window_index as number) >= MAX_NODES ||
       typeof record.window_title !== "string" || record.window_title.length > MAX_LABEL_LENGTH ||
-      typeof record.focused !== "boolean" || !Array.isArray(record.nodes) || record.nodes.length > maxNodes ||
+      typeof record.focused !== "boolean" || !isDenseArray(record.nodes, maxNodes) ||
       typeof record.truncated !== "boolean") {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
   }
@@ -466,7 +475,7 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   let redacted = false;
   const nodes: SafeUiNode[] = [];
   for (const [index, value] of record.nodes.entries()) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    if (!isPlainDataRecord(value) || !hasExactFields(value, ["index", "role", "label", "enabled", "focused", "secure"])) {
       throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed node metadata");
     }
     const node = value as Record<string, unknown>;
@@ -519,3 +528,19 @@ export const uiObserveExecutableForTesting = OSASCRIPT;
 export const uiObserveScriptForTesting = UI_OBSERVE_SCRIPT;
 export const uiActionExecutableForTesting = OSASCRIPT;
 export const uiActionScriptForTesting = UI_ACTION_SCRIPT;
+
+function hasExactFields(value: Record<string, unknown>, required: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === required.length && required.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== value.length + 1 || Object.keys(value).length !== value.length) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) return false;
+  }
+  return true;
+}
