@@ -3,6 +3,7 @@
 Status: PARTIAL MOP-004/MOP-071 evidence; capability enablement remains gated
 
 Date: 2026-09-15
+Implementation revision: `183ecd4`
 
 ## Scope
 
@@ -16,9 +17,10 @@ check compares the post-migration column set.
 
 ## Verification
 
-- Schema-layout startup test: 1 passed, 0 failed.
+- Schema-layout startup tests: 2 passed, 0 failed, including one case for
+  every persisted table.
 - Request/link/Job focused slice: 12 passed, 0 failed.
-- Non-overlapping package regression: 592 total, 586 passed, 6 skipped, 0 failed.
+- Non-overlapping package regression: 593 total, 587 passed, 6 skipped, 0 failed.
 - `npm run build`: passed.
 - `npm run lint`: passed for 602 tracked files before this evidence file was added.
 - `git diff --check`: passed.

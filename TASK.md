@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Schema-startup error and coverage addendum: source revision `183ecd4` gives
+malformed persistence migrations a stable `AUDIT_UNAVAILABLE` class and tests
+unknown-column rejection across all 29 Broker persistence tables (2/2 schema
+tests; 593 total package regression, 587 passed, 6 skipped, 0 failed).
+Production crash recovery, signing/Keychain, installed lifecycle, isolation,
+disk exhaustion, and independent review remain open. Evidence:
+`evidence/2026-09-15-core-schema-layout.md`.
+
 Schema-migration readback addendum: legacy Request and Job database layouts
 open successfully under the current BrokerStore, retain historical records,
 and pass the complete post-migration schema-layout check at source revision

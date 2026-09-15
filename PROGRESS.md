@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Schema-startup error and coverage addendum: source revision `183ecd4` maps
+malformed persistence versions, migration registries, runtime fences, replay
+schemas, and metadata migrations to stable `AUDIT_UNAVAILABLE` failures. The
+schema-layout regression now injects an unknown column into every persisted
+table and passes 2/2; the non-overlapping package regression passes 593 total
+(587 pass, 6 skipped, 0 fail). Production crash recovery, signing/Keychain,
+installed lifecycle, isolation, disk exhaustion, and independent review remain
+open. Evidence: `evidence/2026-09-15-core-schema-layout.md`.
+
 Schema-migration readback addendum: the current BrokerStore successfully opens
 legacy Request and Job layouts, preserves historical records, and accepts the
 post-migration complete column sets at source revision `a26e6d8`. Temporary

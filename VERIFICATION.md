@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Schema-startup verification at source revision `183ecd4` confirms malformed
+persistence versions, migration registries, runtime fences, replay schemas,
+and metadata migrations fail with stable `AUDIT_UNAVAILABLE` errors. Unknown
+column injection across every persisted table passes 2/2; the non-overlapping
+package regression passes 593 total (587 passed, 6 explicitly skipped, 0
+failed). Production crash recovery, signing/Keychain, installed lifecycle,
+isolation, disk exhaustion, and independent review remain unverified. Evidence:
+`evidence/2026-09-15-core-schema-layout.md`.
+
 Schema-migration readback verification at source revision `a26e6d8` opens
 legacy Request and Job SQLite layouts, reads historical rows without
 fabricating new authority metadata, and confirms the current complete
