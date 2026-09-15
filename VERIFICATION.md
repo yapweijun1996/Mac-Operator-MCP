@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Backup quarantine recovery verification at source revision `38c5381` scans
+only bounded, recognized Broker backup quarantine names, leaves recent entries
+untouched, and removes stale owner-only regular files through identity-fenced
+cleanup. Unexpected type/owner/mode/count fails closed. Build, lint, typecheck,
+and diff checks pass; the dedicated regression and physical probe pass. Native
+unlink, IPC/lock/anchor orphan recovery and production crash/remount evidence
+remain open. Evidence:
+`evidence/2026-09-15-backup-quarantine-recovery.md`.
+
 IPC key-copy gate verification at source revision `af68248` moves all
 non-secret constructor validation ahead of authentication-key copying across
 the Policy Signer, Authority Control, Broker Status, Privileged Helper, and

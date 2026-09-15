@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Backup quarantine recovery addendum: source revision `38c5381` adds a bounded
+strict-name scan for stale Broker backup cleanup quarantines. Recent entries
+remain untouched; stale owner-only regular files are identity-checked and
+removed, while unexpected entries fail closed. Build, lint, typecheck, diff
+checks, the dedicated regression, and a physical probe pass. Native unlink,
+IPC/lock/anchor orphan recovery and production crash/remount evidence remain
+open. Evidence: `evidence/2026-09-15-backup-quarantine-recovery.md`.
+
 IPC key-copy gate addendum: source revision `af68248` validates non-secret
 constructor limits and bindings before copying authentication keys for Policy
 Signer, Authority Control, Broker Status, Privileged Helper, and guest

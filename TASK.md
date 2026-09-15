@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Backup quarantine recovery addendum: commit `38c5381` adds bounded strict-name
+recovery for stale Broker backup cleanup quarantines, with recent-entry skip,
+owner-only validation, and identity-fenced removal. Dedicated regression and
+physical probe pass; native unlink, IPC/lock/anchor orphan recovery and
+production crash/remount evidence remain open. Evidence:
+`evidence/2026-09-15-backup-quarantine-recovery.md`.
+
 IPC key-copy gate addendum: commit `af68248` validates all non-secret
 constructor limits/bindings before copying authentication keys in Policy
 Signer, Authority Control, Broker Status, Privileged Helper, and guest
