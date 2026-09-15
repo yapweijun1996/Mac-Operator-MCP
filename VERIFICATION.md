@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge TLS hostname binding verification at source revision `9c647db`: the
+protected startup loader now checks the certificate SAN/CN against the
+configured resource hostname after public-key pairing and before listener
+construction. A real OpenSSL-generated wrong-hostname negative case passes;
+the focused TLS suite passes 5/5 and the HTTPS/cross-process/service-startup
+suites pass 10/10. This proves startup identity binding only, not complete
+chain trust, issuer availability, or launchd deployment. Evidence:
+`evidence/2026-09-16-edge-tls-host-binding.md`.
+
 Edge TLS material pairing verification at source revision `3dacdbe`: protected
 certificate/private-key loading now derives both public SPKI values and rejects
 invalid or mismatched pairs before the HTTPS listener is constructed. The
