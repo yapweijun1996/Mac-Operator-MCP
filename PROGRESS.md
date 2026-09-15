@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Write-cleanup Job-recovery addendum: source revision `def8e82` persists the
+temporary device/inode before unlink and reconnects restart reconciliation to
+the explicit native quarantine recovery boundary. Recovery derives the exact
+temporary basename from the Job record, removes only a unique stale
+identity-bound quarantine, and preserves recent, ambiguous, replacement, or
+unproven artifacts. Completion audit classes distinguish removed, recovered,
+absent, and skipped outcomes. Build, lint, and the focused filesystem plus
+Job-recovery suites pass 38/38. Production crash/remount injection and
+installed-service evidence remain open. Evidence:
+`evidence/2026-09-15-write-recovery-journal.md`.
+
 Service-lock and audit-anchor orphan-recovery addendum: source revision
 `3ddc056` adds timestamped UUID/basename-fingerprint quarantine
 names plus explicit recovery. Service locks require stale PID/start-time
@@ -12,7 +23,7 @@ owner-only parents, exact regular single-link identity, bounded age, unique
 selection, and post-removal readback; active, unknown, recent, malformed, or
 ambiguous candidates remain untouched. Build, lint, diff checks, and the
 dedicated 6-test service-lock and 10-test audit-anchor/read-only suites pass.
-Production crash/remount and persisted Job integration remain open. Evidence:
+Production crash/remount evidence remains open. Evidence:
 `evidence/2026-09-15-service-lock-orphan-recovery.md` and
 `evidence/2026-09-15-audit-anchor-lock-orphan-recovery.md`.
 
@@ -22,8 +33,7 @@ requiring canonical owner-only parent identity, matching socket device/inode,
 inactive liveness, bounded age, and a unique stale candidate. Recent, active,
 mixed-age, and ambiguous entries remain untouched; removal has absence
 readback. Build, lint, diff checks, and the dedicated 11-test Darwin IPC suite
-pass. Production crash/remount evidence and persisted Job integration remain
-open. Evidence:
+pass. Production crash/remount evidence remains open. Evidence:
 `evidence/2026-09-15-ipc-socket-orphan-recovery.md`.
 
 Filesystem unlink orphan-recovery addendum: the native unlink boundary now
@@ -33,7 +43,8 @@ device/inode, bounded age, same-root canonical parent, and a unique regular
 single-link match. Recent or ambiguous artifacts remain untouched. Build,
 lint, typecheck, diff checks, and the dedicated 36-test filesystem suite pass;
 the Darwin physical probe covers stale, recent, and wrong-target cases.
-Production crash/remount evidence and persisted Job integration remain open.
+Production crash/remount evidence remains open; persisted Job integration is
+covered by `def8e82` above.
 Evidence: `evidence/2026-09-15-filesystem-unlink-orphan-recovery.md`.
 
 Backup-quarantine age-test addendum: source revision `4db2d0d` adds dedicated

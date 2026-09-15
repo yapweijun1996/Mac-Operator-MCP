@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Write-cleanup Job-recovery addendum: commit `def8e82` records the exact
+temporary device/inode before unlink and reconnects restart reconciliation to
+the explicit native quarantine recovery boundary. Only unique stale
+identity-bound artifacts are removed; recent, ambiguous, replacement, and
+unproven artifacts remain untouched. Focused Job-recovery and filesystem
+tests pass 38/38. Production crash/remount injection and installed-service
+readback remain open. Evidence:
+`evidence/2026-09-15-write-recovery-journal.md`.
+
 Service-lock and audit-anchor orphan-recovery addendum: source revision
 `3ddc056` adds explicit stale recovery with timestamped
 basename-fingerprint quarantine names. Service owner identity must be stale;
@@ -11,7 +20,7 @@ audit lock recovery requires the host stop gate. Stable protected parents,
 single-link exact identity, age bounds, ambiguity preservation, directory sync,
 and absence readback are enforced. Build, lint, diff checks, and the 6-test
 service-lock plus 10-test audit-anchor/read-only suites pass. Production
-crash/remount and persisted Job integration remain open. Evidence:
+crash/remount evidence remains open. Evidence:
 `evidence/2026-09-15-service-lock-orphan-recovery.md` and
 `evidence/2026-09-15-audit-anchor-lock-orphan-recovery.md`.
 
@@ -19,8 +28,8 @@ IPC socket orphan-recovery addendum: source revision `49b575a`
 adds explicit identity/age-gated recovery for crash leftovers, with strict
 basename fingerprints, owner-only parent checks, inactive-liveness checks,
 ambiguity preservation, and post-removal readback. Build, lint, diff checks,
-and the 11-test Darwin IPC suite pass. Production crash/remount evidence and
-persisted Job integration remain open. Evidence:
+and the 11-test Darwin IPC suite pass. Production crash/remount evidence
+remains open. Evidence:
 `evidence/2026-09-15-ipc-socket-orphan-recovery.md`.
 
 Filesystem unlink orphan-recovery addendum: the native adapter now uses
@@ -29,8 +38,8 @@ explicit identity/age-gated recovery operation. The Broker boundary rejects
 malformed ages, root/deny-zone escapes, non-unique candidates, and identity
 mismatches; recent artifacts are preserved. Build, lint, typecheck, diff
 checks, and the dedicated 36-test filesystem suite pass, including the Darwin
-physical probe. Production crash/remount evidence and persisted Job
-integration remain open. Evidence:
+physical probe. Production crash/remount evidence remains open; persisted Job
+integration is covered by `def8e82` above. Evidence:
 `evidence/2026-09-15-filesystem-unlink-orphan-recovery.md`.
 
 Backup-quarantine age-test addendum: commit `4db2d0d` covers stale deletion,

@@ -3,13 +3,22 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Write-cleanup Job-recovery verification at source revision `def8e82` persists
+the exact temporary device/inode before the unlink boundary and reconnects
+restart reconciliation to identity/age-gated native quarantine recovery. The
+focused integration suite passes 2/2; combined with the filesystem boundary
+suite, 38/38 pass. Recent, ambiguous, replacement, and unproven artifacts are
+preserved and completion audit classes are explicit. Production crash/remount
+injection and installed-service readback remain open. Evidence:
+`evidence/2026-09-15-write-recovery-journal.md`.
+
 Service-lock and audit-anchor orphan-recovery verification covers timestamped
 UUID/basename-fingerprint quarantine names, stable owner-only parent
 identity, exact regular single-link device/inode, bounded age, unique
 selection, and durable absence readback. Service locks additionally require
 stale PID/start-time proof; audit locks require the host stop gate. Build,
 lint, diff checks, and the dedicated suites pass 6/6 and 10/10. Production
-crash/remount and persisted Job integration remain open. Evidence:
+crash/remount evidence remains open. Evidence:
 `evidence/2026-09-15-service-lock-orphan-recovery.md` and
 `evidence/2026-09-15-audit-anchor-lock-orphan-recovery.md`.
 
@@ -19,7 +28,7 @@ checks canonical owner-only parent identity before and after scanning, exact
 socket device/inode, inactive endpoint state (including macOS detached-socket
 `EINVAL`), bounded age, unique selection, and absence readback. Build, lint,
 diff checks, and the dedicated Darwin IPC suite pass 11/11. Production
-crash/remount evidence and persisted Job integration remain open. Evidence:
+crash/remount evidence remains open. Evidence:
 `evidence/2026-09-15-ipc-socket-orphan-recovery.md`.
 
 Filesystem unlink orphan-recovery verification covers the native quarantine
@@ -29,7 +38,8 @@ single-link artifact with the recorded device/inode, preserves recent or
 ambiguous entries, and verifies durable absence after `unlinkat`/`fsync`.
 Build, lint, typecheck, diff checks, and the dedicated filesystem suite pass
 36/36, including the Darwin physical stale/recent/wrong-target probe.
-Production crash/remount evidence and persisted Job integration remain open.
+Production crash/remount evidence remains open; persisted Job integration is
+covered by `def8e82` above.
 Evidence: `evidence/2026-09-15-filesystem-unlink-orphan-recovery.md`.
 
 Backup-quarantine age-test verification at source revision `4db2d0d` covers
