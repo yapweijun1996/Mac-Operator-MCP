@@ -1799,3 +1799,10 @@ package regression passes 543 total (537 passed, 6 skipped, 0 failed). OAuth
 provider correctness, key rotation, remote deployment, and capability gates
 remain open. Evidence:
 `evidence/2026-09-15-principal-projection-boundary.md`.
+
+Direct policy-input boundary addendum: commit `88d9179` validates dense known
+scope arrays and canonical plain target records inside exported authorization
+helpers before matching or grant lookup. Focused policy tests pass 2/2; the
+non-overlapping package regression passes 544 total (538 passed, 6 skipped, 0
+failed). Production signer/Keychain, installed reload, and capability gates
+remain open. Evidence: `evidence/2026-09-15-policy-input-boundary.md`.

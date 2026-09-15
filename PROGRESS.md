@@ -3025,3 +3025,11 @@ package regression passes 543 total (537 passed, 6 skipped, 0 failed). OAuth
 provider behavior, key rotation, remote deployment, and capability enablement
 remain open. Evidence:
 `evidence/2026-09-15-principal-projection-boundary.md`.
+
+Direct policy authorization now rejects malformed projected scopes and target
+records before policy matching (source revision `88d9179`). Dense known-scope
+arrays and canonical policy targets are required even for exported helper
+calls. Focused policy tests pass 2/2; the non-overlapping package regression
+passes 544 total (538 passed, 6 skipped, 0 failed). Production signer/Keychain,
+installed reload, and capability enablement remain open. Evidence:
+`evidence/2026-09-15-policy-input-boundary.md`.

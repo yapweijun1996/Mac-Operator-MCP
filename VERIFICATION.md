@@ -2695,3 +2695,11 @@ passes 3/3; the non-overlapping package regression passes 543 total (537
 passed, 6 skipped, 0 failed). This does not close OAuth provider correctness,
 key rotation, remote deployment, or capability enablement. Evidence:
 `evidence/2026-09-15-principal-projection-boundary.md`.
+
+Direct policy-input verification at source revision `88d9179` confirms exported
+authorization helpers reject malformed projected scopes and targets before
+matching or grant lookup. Focused policy tests pass 2/2; the non-overlapping
+package regression passes 544 total (538 passed, 6 skipped, 0 failed). This
+does not close production signer/Keychain distribution, installed reload, or
+capability enablement. Evidence:
+`evidence/2026-09-15-policy-input-boundary.md`.
