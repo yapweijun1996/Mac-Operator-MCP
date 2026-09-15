@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { sha256 } from "@mac-operator/contracts";
+import { BrokerError, sha256 } from "@mac-operator/contracts";
 import { BrokerStore } from "./persistence.js";
 import {
   PolicySignerKeyManager,
@@ -15,6 +15,7 @@ import {
 } from "./policy-signer-keyring.js";
 import {
   PolicySignerIpcServer,
+  authenticatePolicySignerCommand,
   signPolicySignerCommand,
   type PolicySignerIpcResponse,
   type UnsignedPolicySignerCommand
@@ -184,6 +185,27 @@ test("policy signer IPC drops a denied peer before parsing", async () => {
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("policy signer command parser rejects inherited and accessor authority fields", () => {
+  const key = randomBytes(32);
+  const signed = signPolicySignerCommand(command("reload", 7, { expectedPreviousRevision: 1 }), key);
+
+  const inherited = Object.create({ authenticationProof: signed.authenticationProof }) as Record<string, unknown>;
+  for (const [field, value] of Object.entries(signed)) {
+    if (field !== "authenticationProof") inherited[field] = value;
+  }
+  assert.throws(
+    () => authenticatePolicySignerCommand(inherited, key, NOW),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+
+  const accessor = { ...signed } as Record<string, unknown>;
+  Object.defineProperty(accessor, "reasonCode", { enumerable: true, get: () => "INJECTED" });
+  assert.throws(
+    () => authenticatePolicySignerCommand(accessor, key, NOW),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
 });
 
 function currentProcessPeerPolicy(): { expectedUid: number; expectedGid: number; allowedProcessIds: ReadonlySet<number> } {

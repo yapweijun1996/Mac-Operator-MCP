@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import type { ApprovalRecord, AuthenticatedApprovalIssuance, BrokerStore, IssueApprovalInput } from "./persistence.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const APPROVAL_ISSUE_DOMAIN = "mac-operator-approval-issue-v0.1\0";
 const MAX_PREVIEW_BYTES = 8 * 1024;
@@ -196,7 +197,7 @@ export function signApprovalIssuance(issuance: UnsignedApprovalIssuance, key: Bu
 }
 
 function parseSignedIssuance(value: unknown): SignedApprovalIssuance {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new BrokerError("PRECONDITION_FAILED", "Approval issuance envelope is malformed");
   }
   const record = value as Record<string, unknown>;
@@ -209,8 +210,7 @@ function parseSignedIssuance(value: unknown): SignedApprovalIssuance {
       typeof record.nonce !== "string" || typeof record.issuerId !== "string" || typeof record.keyId !== "string" ||
       !Number.isSafeInteger(record.nonceExpiresAtMs) || !Number.isSafeInteger(record.timestampMs) ||
       typeof record.previewDigest !== "string" || typeof record.issuanceDigest !== "string" ||
-      typeof record.authenticationProof !== "string" || record.approval === null ||
-      typeof record.approval !== "object" || Array.isArray(record.approval)) {
+      typeof record.authenticationProof !== "string" || !isPlainDataRecord(record.approval)) {
       throw new BrokerError("PRECONDITION_FAILED", "Approval issuance envelope is malformed");
   }
   const approvalRecord = record.approval as Record<string, unknown>;
@@ -239,7 +239,7 @@ function parseSignedIssuance(value: unknown): SignedApprovalIssuance {
     issuerId,
     keyId,
     timestampMs,
-    approval: record.approval as IssueApprovalInput,
+    approval: record.approval as unknown as IssueApprovalInput,
     previewDigest,
     issuanceDigest,
     authenticationProof

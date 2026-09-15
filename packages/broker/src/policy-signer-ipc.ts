@@ -6,6 +6,7 @@ import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-i
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { PolicySignerKeyManager } from "./policy-signer-keyring.js";
 import type { BrokerStore } from "./persistence.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const POLICY_SIGNER_COMMAND_DOMAIN = "mac-operator-policy-signer-command-v0.1\0";
 
@@ -270,7 +271,7 @@ function parseSignedPolicySignerCommand(value: unknown): {
   unsigned: UnsignedPolicySignerCommand;
   authenticationProof: string;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new BrokerError("PRECONDITION_FAILED", "Policy signer command envelope is malformed");
   }
   const record = value as Record<string, unknown>;

@@ -187,6 +187,36 @@ test("tampered approval issuance fails before persistence", async () => {
   }
 });
 
+test("approval issuance parser rejects inherited and accessor authority fields", async () => {
+  const context = await fixture();
+  try {
+    const issuance = signed(approval({ approvalId: "approval:shape" }), context.key);
+    const inheritedApproval = Object.create({ targetRef: issuance.approval.targetRef }) as Record<string, unknown>;
+    for (const [field, value] of Object.entries(issuance.approval)) {
+      if (field !== "targetRef") inheritedApproval[field] = value;
+    }
+    const inherited = { ...issuance, approval: inheritedApproval };
+    assert.throws(
+      () => context.authority.issue(inherited),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+
+    const accessor = { ...issuance, approval: { ...issuance.approval } } as Record<string, unknown>;
+    Object.defineProperty(accessor.approval as Record<string, unknown>, "targetRef", {
+      enumerable: true,
+      get: () => "path:injected"
+    });
+    assert.throws(
+      () => context.authority.issue(accessor),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    assert.equal(context.store.approvalRecord("approval:shape"), undefined);
+    assert.deepEqual(context.store.auditRows(), []);
+  } finally {
+    await context.close();
+  }
+});
+
 test("unattended approval requires an explicitly enabled profile issuer", async () => {
   const context = await fixture();
   try {
