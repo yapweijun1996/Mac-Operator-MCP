@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process-request snapshot addendum: commit `aa8040e` takes a synchronous
+snapshot of the plain, exact-shape ProcessSupervisor request before any
+asynchronous target identity check. Subsequent spawn, capacity, environment,
+callback, stability, and cancellation operations read only the snapshot. A
+hostile test mutates executable, args, cwd, and environment immediately after
+calling `run`; the result still uses the authorized values. Focused
+process-supervisor/task-profile/task-runner tests pass 50/50; the
+non-overlapping package regression passes 515 total (509 pass, 6 skipped,
+0 fail). This proves one local request TOCTOU control only; it does not prove
+production sandbox, credential isolation, VM, persistence, or task
+enablement.
+Evidence: `evidence/2026-09-15-process-request-snapshot.md`.
+
 Process-request boundary addendum: commit `78dd404` validates the
 ProcessSupervisor request at the Broker boundary before child admission.
 Only plain records with the declared fields are accepted; executable/cwd

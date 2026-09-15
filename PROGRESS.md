@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-request snapshot addendum: commit `aa8040e` copies the complete
+validated ProcessSupervisor request before asynchronous path identity checks.
+All spawn, budget, environment, callback, stability, and cancellation logic
+uses the immutable snapshot; a caller mutation during validation cannot change
+what is admitted. Focused process-supervisor/task-profile/task-runner tests
+pass 50/50; the non-overlapping package regression passes 515 total (509
+pass, 6 skipped, 0 fail). This closes one local request TOCTOU window only;
+sandbox, credential, VM, persistence, and `mac_task_run` evidence remains
+open.
+Evidence: `evidence/2026-09-15-process-request-snapshot.md`.
+
 Process-request boundary addendum: commit `78dd404` makes ProcessSupervisor
 admit only plain, exact-shape requests before spawning. Canonical executable
 and cwd paths, dense bounded string arguments, plain environment data,

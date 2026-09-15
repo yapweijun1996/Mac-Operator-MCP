@@ -4,6 +4,19 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-request snapshot addendum: source revision `aa8040e` snapshots the
+validated ProcessSupervisor request before the first asynchronous executable
+or cwd identity check. The spawn path, capacity keys, environment, callbacks,
+and every later stability/revocation check now use that snapshot, so caller
+mutation during filesystem awaits cannot substitute a target, argument, or
+environment after authorization. The focused process-supervisor,
+task-profile, and task-runner suite passes 50/50; the non-overlapping package
+regression passes 515 total (509 pass, 6 skipped, 0 fail). Build, typecheck,
+lint, and diff checks are required before release. This closes one local
+request TOCTOU window only; child sandbox, credential isolation, VM,
+persistence, and `mac_task_run` enablement evidence remains open.
+Evidence: `evidence/2026-09-15-process-request-snapshot.md`.
+
 Process-request boundary addendum: source revision `78dd404` makes
 ProcessSupervisor validate requests as plain data records with an exact
 allowlist before any child-process admission. Executable and cwd paths must
