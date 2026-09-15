@@ -234,17 +234,21 @@ export function validateDockerStatusRequest(includeImages: boolean, includeStora
 
 export function validateDockerObjectRequest(objectType: DockerObjectType, id: string): void {
   if (!isDockerObjectType(objectType) || typeof id !== "string" || !OBJECT_ID_PATTERN.test(id) ||
-      id.includes("..") || id.includes("\\") || id.includes("\0") || id.includes("\n")) {
+      hasUnsafeDockerTargetSyntax(id) || id.includes("..") || id.includes("\\") || id.includes("\0") || id.includes("\n")) {
     throw new BrokerError("PRECONDITION_FAILED", "Docker object target is outside the supported range");
   }
 }
 
 export function validateDockerLogsRequest(containerId: string, tail: number, sinceSeconds: number): void {
-  if (typeof containerId !== "string" || !OBJECT_ID_PATTERN.test(containerId) ||
+  if (typeof containerId !== "string" || !OBJECT_ID_PATTERN.test(containerId) || hasUnsafeDockerTargetSyntax(containerId) ||
       !Number.isSafeInteger(tail) || tail < 1 || tail > MAX_LOG_LINES ||
       !Number.isSafeInteger(sinceSeconds) || sinceSeconds < 0 || sinceSeconds > 31_536_000) {
     throw new BrokerError("PRECONDITION_FAILED", "Docker log arguments are outside the supported range");
   }
+}
+
+function hasUnsafeDockerTargetSyntax(value: string): boolean {
+  return value.startsWith("-") || value.startsWith("/") || /^(?:unix|tcp|http|https):\/\//iu.test(value);
 }
 
 function resolveDockerExecutable(): string {

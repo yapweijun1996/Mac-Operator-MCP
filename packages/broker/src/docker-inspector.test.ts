@@ -187,8 +187,12 @@ test("real Docker Desktop readback uses the trusted executable exception", {
 
 test("Docker target validation rejects traversal-like and unsupported identifiers", () => {
   assert.throws(() => validateDockerObjectRequest("container", "../secret"), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
+  assert.throws(() => validateDockerObjectRequest("container", "--format"), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
+  assert.throws(() => validateDockerObjectRequest("container", "/var/run/docker.sock"), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
+  assert.throws(() => validateDockerObjectRequest("image", "unix:///var/run/docker.sock"), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
   assert.throws(() => validateDockerObjectRequest("plugin" as never, "abc123"), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
   assert.throws(() => validateDockerLogsRequest("abc123", 0, 1), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
+  assert.throws(() => validateDockerLogsRequest("--tail", 20, 1), (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED");
 });
 
 test("Docker line result parsers require plain known-field records and reject alias ambiguity", () => {
