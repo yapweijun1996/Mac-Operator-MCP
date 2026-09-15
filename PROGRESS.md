@@ -2824,17 +2824,21 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
 - Runtime implementation: local foundation only; no meaningful whole-program percentage is claimed.
 - Released tools: 0 of 44 planned.
-- Implemented local Broker handlers: 41 of 44 planned. The three privileged
-  helper tools remain outside the default Broker policy until independent
-  root-domain signing, installation, and live readback evidence is accepted.
+- Implemented local Broker dispatch paths: 44 of 44 planned. The three
+  privileged helper paths remain disabled in the default policy until
+  independent root-domain signing, installation, live readback, and real
+  adapter evidence is accepted.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: the latest non-overlapping built regression passes 598
-  total (592 passed, 6 explicit opt-in skips, 0 failed); the existing
+- Automated tests: the latest non-overlapping built regression passes 601
+  total (595 passed, 6 explicit opt-in skips, 0 failed); the existing
   Broker/Persistence test process remains separately undisturbed.
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
-- Privileged helper: protocol/IPC candidate only; no privileged process, adapter, signing, or enablement.
-- Machine-readable tool contracts: 44 of 44 materialized with unique KB provenance; all remain planned, not implemented or enabled.
+- Privileged helper: protocol/IPC plus Broker Job dispatch candidate; no
+  privileged process, real adapter, signing, or enablement.
+- Machine-readable tool contracts: 44 of 44 materialized with unique KB
+  provenance; all remain planned, the Broker dispatch paths are implemented,
+  and enabled delivery remains 0 of 44.
 
 Percentages beyond these objective counts are intentionally omitted because the delivery scope and estimates are not yet baselined.
 
@@ -2843,9 +2847,8 @@ Percentages beyond these objective counts are intentionally omitted because the 
 - Contract envelope schema: complete and validated for all 44 materialized contracts. This covers identity, capability, policy, budgets, lifecycle, audit, delivery wave, provenance, and summary fields.
 - Per-tool functional input/output schema objects exist and compile for all 44 contracts. Success schemas use `SUCCEEDED`; failures use the shared stable-error schema.
 - Schema presence is complete. Semantic review, compatibility fixtures, and
-  runtime conformance currently cover the forty-one implemented local
-  handlers; the three privileged helper contracts remain planned until their
-  separately authenticated root-domain boundary is released.
+  runtime conformance currently cover all forty-four Broker dispatch paths;
+  separately authenticated root-domain helper release gates remain open.
 
 ## Current phase
 

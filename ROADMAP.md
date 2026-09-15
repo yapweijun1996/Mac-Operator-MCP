@@ -67,17 +67,18 @@ Exit: approved workflows pass real-application tests and sensitive or stale targ
 
 Status: `IN_PROGRESS` (release gated)
 
-The helper protocol, separately authenticated IPC boundary, runtime, and
-non-executing root-domain package plan are implemented as fail-closed
-candidates: OS peer authorization precedes parsing, HMAC commands/responses
-are digest-bound, helper request/nonce replay is durable, only three operation
-names are representable, and a Broker-owned factory signs commands only for
-matching explicit-approval, intent-linked running Jobs after active authority
-checks. Focused helper/runtime/package/install-plan tests pass on the physical
-macOS host. Finalize Developer ID provenance, protected production Keychain
-material, root-domain lifecycle readback, operation-specific rollback and
-recovery, compatibility, and independent review before enabling any
-privileged adapter.
+The helper protocol, separately authenticated IPC boundary, runtime,
+non-executing root-domain package plan, and Broker Job dispatch paths are
+implemented as fail-closed candidates: OS peer authorization precedes parsing,
+HMAC commands/responses are digest-bound, helper request/nonce replay is
+durable, only three operation names are representable, and a Broker-owned
+factory signs commands only for matching explicit-approval, intent-linked
+running Jobs after active authority checks. Focused helper/runtime/package,
+install-plan, and Broker-dispatch tests pass on the physical macOS host. The
+default policy and executor remain disabled. Finalize Developer ID provenance,
+protected production Keychain material, root-domain lifecycle readback,
+operation-specific rollback and recovery, compatibility, real adapters, and
+independent review before enabling any privileged adapter.
 
 Exit: independent review and adversarial real-host tests pass; no arbitrary root execution path exists.
 
