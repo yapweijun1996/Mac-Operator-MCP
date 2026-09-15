@@ -511,6 +511,45 @@ const tools: ToolPolicy[] = [
     enabled: false
   },
   {
+    tool: "mac_priv_service_control",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.priv.service"],
+    capabilityFamilies: ["privileged"],
+    targetType: "service",
+    mutation: true,
+    approvalPolicy: "explicit_privileged_policy",
+    outputCapBytes: 262_144,
+    timeoutMs: 30_000,
+    implemented: false,
+    enabled: false
+  },
+  {
+    tool: "mac_priv_package_install",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.priv.package"],
+    capabilityFamilies: ["privileged"],
+    targetType: "package",
+    mutation: true,
+    approvalPolicy: "explicit_privileged_policy",
+    outputCapBytes: 1_048_576,
+    timeoutMs: 600_000,
+    implemented: false,
+    enabled: false
+  },
+  {
+    tool: "mac_priv_power",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.priv.power"],
+    capabilityFamilies: ["privileged"],
+    targetType: "broker",
+    mutation: true,
+    approvalPolicy: "explicit_privileged_policy",
+    outputCapBytes: 262_144,
+    timeoutMs: 30_000,
+    implemented: false,
+    enabled: false
+  },
+  {
     tool: "mac_job_status",
     contractVersion: "0.1",
     requiredScopes: ["mac.job.read"],

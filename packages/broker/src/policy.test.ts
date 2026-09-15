@@ -10,6 +10,27 @@ test("runtime Broker policy accepts the default tool contract shape", () => {
   assert.doesNotThrow(() => validateBrokerPolicy(createDefaultPolicy("edge-1")));
 });
 
+test("default Broker policy represents every planned tool and keeps privileged tools explicit but disabled", () => {
+  const policy = createDefaultPolicy("edge-1");
+  const privileged = [
+    ["mac_priv_service_control", "mac.priv.service", "service", 30_000, 262_144],
+    ["mac_priv_package_install", "mac.priv.package", "package", 600_000, 1_048_576],
+    ["mac_priv_power", "mac.priv.power", "broker", 30_000, 262_144]
+  ] as const;
+  assert.equal(policy.tools.size, 44);
+  for (const [toolName, scope, targetType, timeoutMs, outputCapBytes] of privileged) {
+    const tool = policy.tools.get(toolName);
+    assert.ok(tool);
+    assert.deepEqual(tool.requiredScopes, [scope]);
+    assert.equal(tool.capabilityFamilies[0], "privileged");
+    assert.equal(tool.targetType, targetType);
+    assert.equal(tool.timeoutMs, timeoutMs);
+    assert.equal(tool.outputCapBytes, outputCapBytes);
+    assert.equal(tool.implemented, false);
+    assert.equal(tool.enabled, false);
+  }
+});
+
 test("runtime Broker policy rejects malformed tool authority before use", () => {
   const base = createDefaultPolicy("edge-1");
   const health = base.tools.get("mac_health");

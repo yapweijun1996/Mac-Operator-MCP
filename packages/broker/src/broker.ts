@@ -3631,6 +3631,19 @@ export class Broker {
       }
       throw new BrokerError("POLICY_DENIED", "No service identifier is authorized for this tool");
     }
+    if (tool.targetType === "package") {
+      for (const rule of policy.targetRules.filter((candidate) =>
+        candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
+        candidate.target.kind === "package" && candidate.effect === "allow")) {
+        try {
+          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          return;
+        } catch {
+          // Continue until one independently authorized package identity is found.
+        }
+      }
+      throw new BrokerError("POLICY_DENIED", "No package identity is authorized for this tool");
+    }
     if (tool.targetType === "log_source") {
       for (const rule of policy.targetRules.filter((candidate) =>
         candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
@@ -4509,6 +4522,8 @@ function executionTarget(toolPolicy: ToolPolicy): NormalizedTarget {
       return { kind: "process", reference: "all" };
     case "service":
       throw new BrokerError("PRECONDITION_FAILED", "Service target requires service-specific planning");
+    case "package":
+      throw new BrokerError("PRECONDITION_FAILED", "Package target requires package-specific planning");
     case "log_source":
       throw new BrokerError("PRECONDITION_FAILED", "Log target requires log-source-specific planning");
     case "app_set":
