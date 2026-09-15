@@ -652,6 +652,25 @@ test("process supervisor refuses a swapped persisted root identity", async (t) =
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor rejects non-data persisted ownership snapshots", async () => {
+  const supervisor = new ProcessSupervisor();
+  const identity = { pid: 1, processGroupId: 1, startTimeMicros: 1 };
+  const accessor: Record<string, unknown> = {};
+  Object.defineProperty(accessor, "pid", { enumerable: true, get: () => 1 });
+  await assert.rejects(
+    supervisor.recoverOwnedProcess(accessor as never, 250),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+  await assert.rejects(
+    supervisor.recoverOwnedProcess({ identity, descendants: [], extra: true } as never, 250),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+  await assert.rejects(
+    supervisor.recoverOwnedProcess({ identity: { ...identity, extra: true }, descendants: [] } as never, 250),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+});
+
 test("process supervisor keeps an empty snapshot unresolved after root exit", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Persisted process recovery is a macOS native boundary");

@@ -406,7 +406,7 @@ export class ProcessSupervisor {
     timeoutMs = 5_000
   ): Promise<ProcessRecoveryResult> {
     const persistedValue = persisted as unknown;
-    const snapshot: ProcessOwnershipSnapshot = persistedValue !== null && typeof persistedValue === "object" && "identity" in persistedValue
+    const snapshot: ProcessOwnershipSnapshot = isPlainDataRecord(persistedValue) && Object.prototype.hasOwnProperty.call(persistedValue, "identity")
       ? persisted as ProcessOwnershipSnapshot
       : { identity: persisted as ProcessOwnershipIdentity, descendants: [] };
     validateProcessOwnershipSnapshot(snapshot);
@@ -1165,7 +1165,7 @@ function processGroupAlive(processId: number): boolean {
 }
 
 function validateProcessOwnershipIdentity(identity: ProcessOwnershipIdentity): void {
-  if (identity === null || typeof identity !== "object" ||
+  if (!isPlainDataRecord(identity) || !hasExactFields(identity, ["pid", "processGroupId", "startTimeMicros"]) ||
       !Number.isSafeInteger(identity.pid) || identity.pid < 1 || identity.pid > 99_999_999 ||
       !Number.isSafeInteger(identity.processGroupId) || identity.processGroupId !== identity.pid ||
       !Number.isSafeInteger(identity.startTimeMicros) || identity.startTimeMicros < 1) {
@@ -1174,7 +1174,8 @@ function validateProcessOwnershipIdentity(identity: ProcessOwnershipIdentity): v
 }
 
 function validateProcessOwnershipSnapshot(snapshot: ProcessOwnershipSnapshot): void {
-  if (snapshot === null || typeof snapshot !== "object" || !Array.isArray(snapshot.descendants)) {
+  if (!isPlainDataRecord(snapshot) || !hasExactFields(snapshot, ["identity", "descendants"], ["ownershipProof"]) ||
+      !isDenseArray(snapshot.descendants, 256)) {
     throw new BrokerError("PRECONDITION_FAILED", "Process ownership snapshot is malformed");
   }
   validateProcessOwnershipIdentity(snapshot.identity);
@@ -1189,7 +1190,7 @@ function validateProcessOwnershipSnapshot(snapshot: ProcessOwnershipSnapshot): v
   }
   let previousPid = 0;
   for (const descendant of snapshot.descendants) {
-    if (descendant === null || typeof descendant !== "object" ||
+    if (!isPlainDataRecord(descendant) || !hasExactFields(descendant, ["pid", "startTimeMicros"]) ||
         !Number.isSafeInteger(descendant.pid) || descendant.pid < 1 || descendant.pid > 99_999_999 ||
         descendant.pid === snapshot.identity.pid || descendant.pid <= previousPid ||
         !Number.isSafeInteger(descendant.startTimeMicros) || descendant.startTimeMicros < 1) {
@@ -1197,6 +1198,20 @@ function validateProcessOwnershipSnapshot(snapshot: ProcessOwnershipSnapshot): v
     }
     previousPid = descendant.pid;
   }
+}
+
+function hasExactFields(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
+  const allowed = new Set([...required, ...optional]);
+  const keys = Object.keys(value);
+  return required.every((key) => Object.prototype.hasOwnProperty.call(value, key)) && keys.every((key) => allowed.has(key));
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.prototype.hasOwnProperty.call(value, index)) return false;
+  }
+  return true;
 }
 
 function persistedDescendantState(
