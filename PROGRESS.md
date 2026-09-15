@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem directory-rename race addendum: commit `7fe59fd` adds a
+physical-host runtime race harness that renames an authorized child directory,
+briefly replaces it with an outside symlink, and restores it during bounded
+descriptor-relative reads. Only authorized bytes are accepted; outside
+resolution is rejected. The focused filesystem suite passes 33/33; the
+non-overlapping package regression passes 510 total (504 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. Runtime directory
+create/rename evidence is now covered, while physical remount, broader volume,
+and production resource evidence remain open.
+Evidence: `evidence/2026-09-15-filesystem-directory-rename-race.md`.
+
 Filesystem root-descriptor addendum: commit `6fb5372` makes native
 metadata/list/read/hash and atomic write/unlink operations descriptor-relative
 to the authorized root. A traversal-free relative-path helper rejects

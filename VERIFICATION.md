@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Filesystem directory-rename race addendum: commit `7fe59fd` adds a
+physical-host runtime race harness that repeatedly renames an authorized child
+directory, replaces it with an outside symlink, and restores it during bounded
+descriptor-relative reads. Successful results contain only authorized bytes;
+outside resolution is rejected. The focused filesystem suite passes 33/33; the
+non-overlapping package regression passes 510 total (504 pass, 6 skipped,
+0 fail); build, typecheck, lint, and diff checks pass. This covers runtime
+directory create/rename behavior but physical remount, broader volume, and
+production resource evidence remain open.
+Evidence: `evidence/2026-09-15-filesystem-directory-rename-race.md`.
+
 Filesystem root-descriptor addendum: commit `6fb5372` makes native filesystem
 target opens descriptor-relative to a pinned authorized root, with
 traversal-free relative conversion and canonical parent handling for

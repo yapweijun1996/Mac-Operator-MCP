@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem directory-rename race addendum: source revision `7fe59fd` adds a
+physical-host runtime race test that repeatedly renames an authorized child
+directory, replaces it with an outside symlink, and restores it while a
+descriptor-relative content read is in flight. Successful reads contain only
+the authorized bytes and remain under the canonical authorized root; escape
+observations fail closed. The focused filesystem suite passes 33/33; the
+non-overlapping package regression passes 510 total (504 pass, 6 skipped,
+0 fail). Build, typecheck, lint, and diff checks pass. This adds runtime
+directory create/rename evidence but does not close physical remount, broader
+volume, or production resource-exhaustion evidence.
+Evidence: `evidence/2026-09-15-filesystem-directory-rename-race.md`.
+
 Filesystem root-descriptor addendum: source revision `6fb5372` changes native
 metadata/list/read/hash and atomic write/unlink paths to derive traversal-free
 relative targets and open them through the already-pinned root descriptor.
