@@ -7,7 +7,7 @@ import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { assertArgumentsDoNotContainSecrets } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, assertEnvironmentValuesDoNotContainSecrets } from "./secret-policy.js";
 
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
@@ -967,6 +967,7 @@ async function validateRequest(request: ProcessExecutionRequest, allowedEnvironm
       throw new BrokerError("PRECONDITION_FAILED", "Process environment exceeds the supported size");
     }
   }
+  assertEnvironmentValuesDoNotContainSecrets(request.environment ?? {});
   let executable: ProcessPathIdentity;
   try {
     executable = await validateExecutable(request.executable);

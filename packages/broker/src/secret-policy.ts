@@ -92,6 +92,23 @@ export function assertArgumentsDoNotContainSecrets(argumentsValue: readonly stri
   }
 }
 
+/**
+ * Reject known credential signatures before a child process receives an
+ * explicitly allowlisted environment value. Key-name filtering remains the
+ * primary boundary, while this value check catches opaque profiles that would
+ * otherwise smuggle a token through a generic variable such as PROFILE_DATA.
+ */
+export function assertEnvironmentValuesDoNotContainSecrets(environment: Readonly<Record<string, string>>): void {
+  if (!environment || typeof environment !== "object" || Array.isArray(environment)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process environment is malformed");
+  }
+  for (const value of Object.values(environment)) {
+    if (typeof value !== "string" || SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(value))) {
+      throw new BrokerError("POLICY_DENIED", "Process environment value matched a protected secret signature");
+    }
+  }
+}
+
 export function redactLogText(value: string): { text: string; redacted: boolean } {
   const result = redactBoundedText(value, 8_192);
   return { text: result.text, redacted: result.redacted || result.truncated };

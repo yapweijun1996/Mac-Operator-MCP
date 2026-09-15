@@ -275,6 +275,17 @@ test("process supervisor rejects secret-shaped or non-allowlisted environment ke
     }),
     /protected secret option/u
   );
+  await assert.rejects(
+    supervisor.run({
+      executable: "/usr/bin/printf",
+      args: ["ok"],
+      cwd: CWD,
+      environment: { SAFE_PROFILE: "Bearer opaque-token-value-123456" },
+      timeoutMs: 1_000,
+      outputCapBytes: 100
+    }),
+    /environment value matched a protected secret signature/u
+  );
 });
 
 test("process supervisor rejects symlink executables and non-canonical cwd", async () => {
