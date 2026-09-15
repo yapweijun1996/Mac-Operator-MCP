@@ -1,7 +1,7 @@
 # Task-profile startup wiring evidence
 
 Date: 2026-09-15
-Source revision: `d7b3840` (`feat: wire task profiles through service startup`)
+Source revision: `f73693a` (`fix: validate task profile registry at broker boundary`)
 
 ## Boundary
 
