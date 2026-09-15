@@ -1,12 +1,19 @@
 # Mac-Operator-MCP Roadmap
 
-Status: Active planning
+Status: Active implementation with gated release
 Version: 0.1
-Last verified: 2026-09-13
+Last verified: 2026-09-15
 
 ## Current position
 
-The repository has a committed TypeScript/Node implementation baseline. Work spans Phase 1 and the early Phase 2/4/5 slices: the authenticated Edge/Broker foundation, MCP discovery/error mapping, bounded post-authentication rate limiting, bounded L0/L1 plus Git/package/Docker inspection, and read-only app inventory are implemented locally, while production enablement remains closed.
+The repository has a committed TypeScript/Node implementation baseline. Work
+spans the authenticated Edge/Broker foundation, MCP discovery/error mapping,
+bounded post-authentication rate limiting, bounded L0/L1 plus
+Git/package/Docker inspection, read-only app inventory, GUI boundary
+prototypes, and the separately authenticated privileged-helper/package
+candidate. Production enablement remains closed where host identity,
+signing, installation, permission, or independent review evidence is still
+missing.
 
 ## Phase 0 — Foundation and contracts
 
@@ -58,15 +65,25 @@ Exit: approved workflows pass real-application tests and sensitive or stale targ
 
 ## Phase 6 — L5 privileged helper
 
-Status: `PLANNED`
+Status: `IN_PROGRESS` (release gated)
 
-The proposed helper protocol and separately authenticated IPC boundary are implemented as a fail-closed candidate: OS peer authorization precedes parsing, HMAC commands/responses are digest-bound, helper request/nonce replay is durable, only three operation names are representable, and a Broker-owned factory signs commands only for matching explicit-approval, intent-linked running Jobs after active authority checks. Finalize local caller identity, package/signing model, operation-specific preconditions/verification, rollback, audit, compatibility, and emergency disable before implementing any privileged adapter.
+The helper protocol, separately authenticated IPC boundary, runtime, and
+non-executing root-domain package plan are implemented as fail-closed
+candidates: OS peer authorization precedes parsing, HMAC commands/responses
+are digest-bound, helper request/nonce replay is durable, only three operation
+names are representable, and a Broker-owned factory signs commands only for
+matching explicit-approval, intent-linked running Jobs after active authority
+checks. Focused helper/runtime/package/install-plan tests pass on the physical
+macOS host. Finalize Developer ID provenance, protected production Keychain
+material, root-domain lifecycle readback, operation-specific rollback and
+recovery, compatibility, and independent review before enabling any
+privileged adapter.
 
 Exit: independent review and adversarial real-host tests pass; no arbitrary root execution path exists.
 
 ## Phase 7 — Production hardening and controlled expansion
 
-Status: `PLANNED`
+Status: `IN_PROGRESS` (release gated)
 
 Complete fuzzing, denial-of-service controls, audit privacy/integrity, credential rotation, crash and upgrade recovery, packaging, signing, observability, backups, rollback, operator runbooks, and release review. Add capabilities only through the same policy, scope, audit, and evidence model.
 
