@@ -223,6 +223,23 @@ test("privileged helper runtime disposes its authority poller on startup failure
   assert.equal(startupDisposals, 1);
   await assert.rejects(startupRuntime.start(), /cannot restart after authority poller disposal/);
 
+  let cleanupDisposals = 0;
+  const cleanupServer = {
+    listen: async () => { throw new Error("listener startup failed"); },
+    close: async () => { throw new Error("listener cleanup failed"); }
+  } as unknown as PrivilegedHelperIpcServer;
+  const cleanupPoller = {
+    assertAuthorized: async () => undefined,
+    dispose: () => { cleanupDisposals += 1; }
+  };
+  const cleanupRuntime = new PrivilegedHelperRuntime(cleanupServer, cleanupPoller);
+  await assert.rejects(
+    cleanupRuntime.start(),
+    (error: unknown) => error instanceof AggregateError && error.message === "Privileged helper startup failed and cleanup also failed"
+  );
+  assert.equal(cleanupRuntime.state, "failed");
+  assert.equal(cleanupDisposals, 1);
+
   let unopenedDisposals = 0;
   const unopenedServer = {
     listen: async () => undefined,
