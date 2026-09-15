@@ -1736,3 +1736,11 @@ non-overlapping package regression passes 538 total (532 passed, 6 skipped).
 Physical disk recovery, production backups, Keychain deployment, installed
 recovery, and release acceptance remain open. Evidence:
 `evidence/2026-09-15-schema-migration-readback.md`.
+
+Runtime policy array-boundary addendum: commit `d1f96f2` requires dense bounded
+plain arrays for principal scopes, target rules, filesystem roots, deny paths,
+tool scopes, and capability families before authorization or discovery.
+Focused hostile-array tests pass 2/2; the non-overlapping package regression
+passes 539 total (533 passed, 6 skipped). ADR-0004, production signer/Keychain,
+installed reload, and capability gates remain open. Evidence:
+`evidence/2026-09-15-policy-array-boundary.md`.

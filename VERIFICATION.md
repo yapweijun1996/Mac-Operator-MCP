@@ -2625,3 +2625,12 @@ registry rejection; the non-overlapping package regression passes 538 total
 production backups, Keychain deployment, installed recovery, or release
 acceptance. Evidence:
 `evidence/2026-09-15-schema-migration-readback.md`.
+
+Runtime policy-array verification at source revision `d1f96f2` confirms
+principal scopes, target rules, filesystem roots, deny paths, tool scopes, and
+capability families reject sparse, symbolic, accessor, and extra-property
+arrays before authority use. Focused tests pass 2/2; the non-overlapping
+package regression passes 539 total (533 passed, 6 skipped, 0 failed). This
+does not close ADR-0004, production signer/Keychain, installed reload, or
+capability enablement. Evidence:
+`evidence/2026-09-15-policy-array-boundary.md`.

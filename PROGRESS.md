@@ -2959,3 +2959,10 @@ Focused migration tests pass 3/3; the non-overlapping package regression passes
 production backups, Keychain deployment, installed recovery, and release
 acceptance remain open. Evidence:
 `evidence/2026-09-15-schema-migration-readback.md`.
+
+Runtime policy authority arrays now require dense bounded data-only shapes
+before authorization or capability discovery (source revision `d1f96f2`).
+Focused hostile-array tests pass 2/2; the non-overlapping package regression
+passes 539 total (533 passed, 6 skipped, 0 failed). ADR-0004, production
+signer/Keychain, installed reload, and capability enablement remain open.
+Evidence: `evidence/2026-09-15-policy-array-boundary.md`.

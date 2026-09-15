@@ -56,3 +56,11 @@ symlink policy is preserved by canonicalizing only the target parent, while
 traversal and empty components fail closed. This reduces root rename/target
 replacement exposure but does not prove physical remount resistance or close
 the remaining production resource and cross-volume evidence gates.
+
+Revision `d1f96f2` extends runtime policy validation to require dense bounded
+authority arrays for principal scopes, target rules, filesystem roots, deny
+paths, tool scopes, and capability families. Sparse, symbolic, accessor, and
+extra-property arrays fail closed before authorization or capability
+advertisement. This is in-memory policy integrity evidence only; ADR-0004
+remains Proposed pending production signer/Keychain distribution, migration,
+installation, and cross-runtime evidence.
