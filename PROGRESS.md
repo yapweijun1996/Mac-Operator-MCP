@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Nested authenticated-data addendum: source revision `54fe71a` applies
+plain-data checks to helper payloads/results/verification/evidence, Broker and
+Helper status readbacks, and nested authority/status failures. Malformed
+accessor, hidden, symbolic, and prototype-bearing values fail closed before
+canonicalization, redaction, or postcondition checks. Focused suites pass
+17/17; the non-overlapping package regression passes 506 total (500 pass,
+6 skipped, 0 fail); build, typecheck, lint, and diff checks pass. This closes
+local nested representation integrity only; production peer, packaging, VM,
+credential, helper, and capability evidence remain open.
+Evidence: `evidence/2026-09-15-nested-authenticated-data.md`.
+
 Guest attestation data-shape addendum: source revision `d276615` makes the
 signed guest attestation envelope, payload, and nested identity accept only
 plain data records before canonicalization or signature verification.

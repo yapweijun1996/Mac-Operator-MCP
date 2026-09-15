@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Nested authenticated-data addendum: commit `54fe71a` requires plain-data
+records for helper payloads/results/verification/evidence, Broker and Helper
+status readbacks, and nested authority/status failures before canonicalization
+or redaction. Focused authority-control, Broker-status, and privileged-helper
+suites pass 17/17; the non-overlapping package regression passes 506 total
+(500 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks pass.
+This proves local nested parser integrity only and does not close production
+peer, packaging, VM, credential, helper, or capability gates.
+Evidence: `evidence/2026-09-15-nested-authenticated-data.md`.
+
 Guest attestation data-shape addendum: commit `d276615` applies the shared
 plain-data-record check to the signed attestation envelope, payload, and
 nested guest identity before digest/signature verification. Inherited,

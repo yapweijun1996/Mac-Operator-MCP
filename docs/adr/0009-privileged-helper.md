@@ -11,6 +11,12 @@ Privileged operations must cross a separate helper IPC channel. The unprivileged
 
 The command carries only the normalized target, the digest of Broker-validated arguments, the active policy version, approval identity, and mutation-intent identity. It never carries shell text, executable paths, arbitrary arguments, filesystem roots, or credential material. Responses are bound to the complete command digest, bounded to flat redacted evidence, and require an allowlisted postcondition status before success is accepted.
 
+Revision `54fe71a` hardens the nested helper boundary: command payloads,
+execution results, verification records, evidence, and nested failures must
+be plain data records before canonicalization or redaction. This preserves the
+allowlisted payload/result contract for direct in-process callers as well as
+JSON frames; it does not enable helper installation or privileged execution.
+
 The repository currently provides the protocol, peer/authentication boundary, durable nonce adapter, bounded response validation, explicit handler-map validation, a Broker-owned command factory that binds signed commands to persisted approved running Jobs, and a fail-closed default adapter. No real root process, privileged command, package installer, service mutation, reboot, launchd registration, signing, or production enablement is included.
 
 Revision `ee6d37b` additionally binds the shared contract version into the

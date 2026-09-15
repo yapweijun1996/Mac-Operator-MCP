@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Nested authenticated-data addendum: source revision `54fe71a` validates
+plain-data shapes for helper payloads/results/verification/evidence, Broker
+and Helper status readbacks, and nested authority/status failures. Accessors,
+hidden, symbolic, and prototype-provided fields fail closed before
+canonicalization, redaction, or postcondition checks. Focused authority,
+status, and helper suites pass 17/17; the non-overlapping package regression
+passes 506 total (500 pass, 6 skipped, 0 fail); build, typecheck, lint, and
+diff checks pass. This closes local nested parser integrity only; production
+peer, packaging, VM, credential, helper, and enablement gates remain open.
+Evidence: `evidence/2026-09-15-nested-authenticated-data.md`.
+
 Guest attestation data-shape addendum: source revision `d276615` requires the
 signed guest attestation envelope, payload, and nested identity to be plain
 data records before canonical digest and Ed25519 verification. Inherited,

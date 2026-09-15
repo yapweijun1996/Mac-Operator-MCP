@@ -44,6 +44,13 @@ persistence. This is parser hardening only; it does not change the wire
 schema, replace OS peer authentication, or close production key-distribution,
 packaging, and installed-startup evidence requirements.
 
+Revision `54fe71a` extends the same representation boundary to nested
+authenticated IPC values: Broker and Helper status readbacks, nested failure
+objects, and Helper result/verification/evidence records. Canonicalization,
+redaction, and postcondition checks now receive only plain data records for
+these values. This remains local parser hardening and does not change the wire
+schema or close production transport and packaging requirements.
+
 Revision `f76e8a0` adds an explicit stronger peer policy containing the accepted
 PID's native `startTimeMicros`. The native Broker and compatibility verifier
 read the current process identity after peer credentials and reject a reused PID
