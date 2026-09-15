@@ -43,6 +43,27 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
   }
 });
 
+test("BrokerStore reads back the complete migration registry before startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-schema-readback-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE schema_migrations SET name = ? WHERE version = 9").run("tampered");
+    } finally {
+      database.close();
+    }
+    assert.throws(
+      () => new BrokerStore(databasePath),
+      /migration identity changed/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("BrokerStore bounds virtualization guest replay ledger capacity", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-replay-capacity-"));
   const databasePath = join(directory, "broker.sqlite");

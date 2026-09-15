@@ -2954,6 +2954,17 @@ export class BrokerStore {
         }
       }
       this.database.exec(`PRAGMA user_version = ${BROKER_SCHEMA_VERSION}`);
+      const finalVersion = this.readSchemaVersion();
+      if (finalVersion !== BROKER_SCHEMA_VERSION) {
+        throw new Error("Broker persistence schema marker readback is inconsistent");
+      }
+      const finalRows = this.database.prepare(
+        "SELECT version, name FROM schema_migrations ORDER BY version"
+      ).all() as Array<{ version?: unknown; name?: unknown }>;
+      if (finalRows.length !== migrations.length || finalRows.some((row, index) =>
+        row.version !== migrations[index]?.version || row.name !== migrations[index]?.name)) {
+        throw new Error("Broker schema migration registry readback is inconsistent");
+      }
     });
   }
 
