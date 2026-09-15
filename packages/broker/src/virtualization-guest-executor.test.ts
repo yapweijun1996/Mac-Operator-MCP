@@ -122,6 +122,35 @@ test("guest profile registry resolves only the digest-bound startup manifest", a
   }
 });
 
+test("guest executor rejects an invalid transport envelope before adapter execution", async () => {
+  const fixture = await profileFixture();
+  try {
+    let starts = 0;
+    const executor = new VirtualizationGuestProfileExecutor(
+      new VirtualizationGuestTaskProfileRegistry([fixture.profile]),
+      {
+        available: true,
+        async run() {
+          starts += 1;
+          return successfulResult();
+        }
+      }
+    );
+    await assert.rejects(
+      executor.execute({ ...fixture.request, operation: "task_status" } as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    await assert.rejects(
+      executor.execute({ ...fixture.request, schemaVersion: "0.2" } as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    assert.equal(starts, 0);
+    await executor.close();
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("guest profile registry rejects shell executables and unsafe environment material", async () => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-guest-executor-invalid-")));
   try {

@@ -8,6 +8,7 @@ import { assertArgumentsDoNotContainSecrets, containsKnownSecretSignature } from
 import { parseTaskNetworkDestination } from "./task-profile.js";
 import { redactBoundedText } from "./secret-policy.js";
 import {
+  validateUnsignedVirtualizationGuestRequest,
   virtualizationGuestRequestDigest,
   virtualizationGuestStatusRequestDigest,
   type UnsignedVirtualizationGuestRequest,
@@ -508,7 +509,7 @@ function snapshotGuestRequest(value: unknown): UnsignedVirtualizationGuestReques
       typeof identity.runtimeVersion !== "string" || !GUEST_RUNTIME_VERSION_PATTERN.test(identity.runtimeVersion)) {
     throw new BrokerError("PRECONDITION_FAILED", "Guest task request digest binding is malformed");
   }
-  return {
+  const snapshot: UnsignedVirtualizationGuestRequest = {
     schemaVersion: value.schemaVersion as "0.1",
     protocolVersion: value.protocolVersion as UnsignedVirtualizationGuestRequest["protocolVersion"],
     contractVersion: value.contractVersion as UnsignedVirtualizationGuestRequest["contractVersion"],
@@ -526,6 +527,8 @@ function snapshotGuestRequest(value: unknown): UnsignedVirtualizationGuestReques
     outputCapBytes: value.outputCapBytes as number,
     operation: value.operation as "task_run"
   };
+  validateUnsignedVirtualizationGuestRequest(snapshot);
+  return snapshot;
 }
 
 async function assertGuestProfileTargets(profile: VirtualizationGuestTaskProfile): Promise<void> {
@@ -563,11 +566,10 @@ async function assertCanonicalDirectory(path: string): Promise<string> {
 }
 
 function validateGuestRequestShape(request: UnsignedVirtualizationGuestRequest): void {
-  if (!isPlainDataRecord(request) || !hasAllowedKeys(request, GUEST_REQUEST_KEYS) ||
-      !SHA256_PATTERN.test(request.profileDigest) || !SHA256_PATTERN.test(request.taskDigest) ||
-      !PROFILE_PATTERN.test(request.sandboxProfile)) {
-    throw new BrokerError("PRECONDITION_FAILED", "Guest task request digest binding is malformed");
-  }
+  // Registry callers may bypass the executor snapshot path. Re-run the full
+  // transport validator here so version, kind, identifiers, freshness fields,
+  // guest identity, operation, and resource bounds remain Broker-owned.
+  validateUnsignedVirtualizationGuestRequest(request);
 }
 
 function hasAllowedKeys(value: Record<string, unknown>, allowed: ReadonlySet<string> | readonly string[]): boolean {
