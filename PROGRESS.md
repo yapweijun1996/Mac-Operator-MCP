@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge lifecycle serialization addendum: source revision `04132fe` serializes
+Edge `start()` and `stop()` transitions through one lifecycle queue, so a
+stop requested during listener startup cannot be followed by a stale
+`running` publication. The focused Edge startup suite passes 5/5, with
+typecheck, lint, and diff checks passing. Evidence:
+`evidence/2026-09-15-edge-lifecycle-serialization.md`.
+
 Latest local regression addendum: the non-overlapping built test set now
 passes 595 total (589 pass, 6 explicit skips, 0 fail), including the new
 audit credential-field and secret-shaped-string redaction tests. Broker/persistence suites were not

@@ -3,6 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge lifecycle verification: source revision `04132fe` serializes Edge
+startup and shutdown transitions and passes the focused service-startup suite
+5/5. This closes the local lifecycle race boundary only; installed launchd
+identity, remote deployment, and release gates remain open. Evidence:
+`evidence/2026-09-15-edge-lifecycle-serialization.md`.
+
 Latest local regression verification: the serial built test set excluding the
 already-running Broker/persistence suites passes 595 total (589 passed, 6
 explicitly skipped, 0 failed). The run includes normalized failure-target,
