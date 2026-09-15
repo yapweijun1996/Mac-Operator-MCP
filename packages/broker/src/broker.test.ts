@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
@@ -4241,6 +4241,65 @@ test("restart write recovery cleans only the recorded temporary artifact", async
     );
     assert.deepEqual(broker.reconcileRestartedWriteArtifacts(), { inspected: 1, removed: 0, absent: 1, skipped: 0 });
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("restart write recovery retries a previously skipped temporary cleanup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-recovery-retry-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const target = join(directory, "target.txt");
+  const temporaryName = ".mac-operator-write-recovery-retry";
+  const temporaryPath = join(directory, temporaryName);
+  const outside = join(directory, "outside.txt");
+  const store = new BrokerStore(databasePath);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  let restartedStore: BrokerStore | undefined;
+  let restartedBroker: Broker | undefined;
+  try {
+    await writeFile(outside, "outside", { mode: 0o600 });
+    await symlink(outside, temporaryPath);
+    store.createJob({
+      jobId: "job:write-recovery-retry",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_write_file_atomic",
+      targetRef: "path:test-root",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "write-recovery-retry",
+      createdAtMs: NOW,
+      writeMetadata: {
+        rootId: "test-root",
+        path: target,
+        bytes: 6,
+        desiredSha256: sha256(Buffer.from("orphan")),
+        expectedSha256: null,
+        createOnly: true,
+        temporaryName
+      }
+    });
+    store.startJob("job:write-recovery-retry", "principal-1", 0, NOW + 1);
+    store.close();
+    restartedStore = new BrokerStore(databasePath);
+    restartedBroker = new Broker({
+      store: restartedStore,
+      policy: createDefaultPolicy("edge-1", true, ["mac.control.read"], ["edge-key-1"], [root]),
+      edgeAuthenticationKeys: {} as EdgeKeyring,
+      now: () => NOW + 10
+    });
+    assert.deepEqual(restartedBroker.reconcileRestartedWriteArtifacts(), { inspected: 1, removed: 0, absent: 0, skipped: 1 });
+    assert.equal(restartedStore.auditEventResult("job-temp-cleanup-job:write-recovery-retry-2", "completion"), "TEMPORARY_CLEANUP_SKIPPED");
+    await rm(temporaryPath);
+    await writeFile(temporaryPath, "orphan", { mode: 0o600 });
+    assert.deepEqual(restartedBroker.reconcileRestartedWriteArtifacts(), { inspected: 1, removed: 1, absent: 0, skipped: 0 });
+    assert.equal(restartedStore.auditEventResult("job-temp-cleanup-job:write-recovery-retry-2", "completion"), "TEMPORARY_REMOVED");
+    await assert.rejects(readFile(temporaryPath), /ENOENT/u);
+    assert.equal(await readFile(outside, "utf8"), "outside");
+  } finally {
+    await restartedBroker?.close().catch(() => undefined);
+    restartedStore?.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }

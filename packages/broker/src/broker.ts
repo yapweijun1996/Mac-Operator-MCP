@@ -271,8 +271,15 @@ export class Broker {
       const priorCompletion = this.options.store.auditEventResult(auditRequestId, "completion");
       if (priorCompletion !== undefined) {
         if (priorCompletion === "TEMPORARY_REMOVED" || priorCompletion === "TEMPORARY_ABSENT") absent += 1;
-        else skipped += 1;
-        continue;
+        else if (priorCompletion === "TEMPORARY_CLEANUP_SKIPPED") {
+          // A failed inspection may be transient (for example, a temporary
+          // root identity race). Retry the exact recorded artifact later;
+          // cleanupWriteTemporary still applies its own identity and symlink
+          // checks before unlinking anything.
+        } else {
+          skipped += 1;
+          continue;
+        }
       }
       if (!this.options.store.auditEventExists(auditRequestId, "intent")) {
         this.options.store.appendAudit({
