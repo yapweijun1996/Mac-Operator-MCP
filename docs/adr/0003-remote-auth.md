@@ -42,6 +42,13 @@ silently changing the key source, but it does not provide DNS/TLS pinning,
 external issuer evidence, or public deployment acceptance. Evidence:
 [`evidence/2026-09-15-edge-jwks-redirect-boundary.md`](../../evidence/2026-09-15-edge-jwks-redirect-boundary.md).
 
+Commit `fc04641` extends the same boundary to HTTP response status: only 2xx
+JWKS responses are read and parsed; non-success responses fail closed before
+key material handling. This prevents JSON error responses from entering the
+key parser, but does not provide external issuer, DNS/TLS, rotation/revocation,
+or public deployment evidence. Evidence:
+[`evidence/2026-09-15-edge-jwks-status-boundary.md`](../../evidence/2026-09-15-edge-jwks-status-boundary.md).
+
 The packaged Edge now has a fixed `service-main.js` entrypoint and strict
 owner-only `edge-service.json` startup document. It assembles the existing
 HTTPS/JWT/contract/signed-IPC boundary only from canonical root-bound paths,

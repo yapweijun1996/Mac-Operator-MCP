@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge JWKS response-status addendum: source revision `fc04641` requires the
+Edge-owned remote JWKS fetch to return a 2xx response before body handling or
+`jose` parsing. JWT tests pass 8/8, all Edge tests pass 41/41, and the
+non-overlapping physical-Darwin regression passes 491 total (485 pass, 6
+skipped, 0 fail). Build, typecheck, lint, and diff checks pass. External OAuth
+issuer, DNS/TLS, and remote deployment evidence remain unproven. Evidence:
+`evidence/2026-09-15-edge-jwks-status-boundary.md`.
+
 Edge JWKS redirect-boundary addendum: source revision `c97140a` rejects
 redirected responses and non-empty final URLs that differ from the configured
 JWKS endpoint before key parsing. JWT tests pass 7/7, all Edge tests pass

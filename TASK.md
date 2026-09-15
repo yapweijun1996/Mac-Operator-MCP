@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Edge JWKS response-status addendum: source revision `fc04641` rejects any
+non-2xx remote JWKS response before body handling or key parsing. JWT tests
+pass 8/8, all Edge tests pass 41/41, and the non-overlapping physical-Darwin
+regression passes 491 total (485 pass, 6 skipped, 0 fail). Build, typecheck,
+lint, and diff checks pass. This closes response-status interpretation only;
+external issuer and deployment evidence remain open. Evidence:
+`evidence/2026-09-15-edge-jwks-status-boundary.md`.
+
 Edge JWKS redirect-boundary addendum: source revision `c97140a` rejects
 redirected remote responses and any non-empty final URL that differs from the
 startup-configured JWKS endpoint. JWT tests pass 7/7, all Edge tests pass

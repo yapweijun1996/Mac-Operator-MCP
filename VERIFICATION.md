@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge JWKS response-status addendum: source revision `fc04641` requires a 2xx
+remote JWKS response before body handling or `jose` parsing. JWT tests pass
+8/8, all Edge tests pass 41/41, and the non-overlapping physical-Darwin
+regression passes 491 total (485 pass, 6 skipped, 0 fail). Build, typecheck,
+lint, and diff checks pass. External issuer, DNS/TLS, rotation/revocation
+propagation, and remote deployment evidence remain open. Evidence:
+`evidence/2026-09-15-edge-jwks-status-boundary.md`.
+
 Edge JWKS redirect-boundary addendum: source revision `c97140a` rejects
 redirected responses and non-empty final URLs that differ from the configured
 JWKS endpoint before `jose` parsing. JWT tests pass 7/7, all Edge tests pass
