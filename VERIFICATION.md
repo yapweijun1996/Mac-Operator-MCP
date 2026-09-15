@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Backup-quarantine age verification at source revision `8119e94` encodes a
+bounded creation timestamp in new quarantine names and uses it for stale-age
+decisions, avoiding mtime-based interference with active deletion. Build,
+lint, typecheck, and diff checks pass; the dedicated regression passes 1/1.
+Native unlink recovery and production crash/remount evidence remain open.
+Evidence: `evidence/2026-09-15-backup-quarantine-age.md`.
+
 Backup quarantine recovery verification at source revision `38c5381` scans
 only bounded, recognized Broker backup quarantine names, leaves recent entries
 untouched, and removes stale owner-only regular files through identity-fenced

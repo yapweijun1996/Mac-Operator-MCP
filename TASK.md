@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Backup-quarantine age addendum: commit `8119e94` encodes a bounded creation
+timestamp in new quarantine names and uses it for stale recovery, protecting
+active deletion of old files from concurrent cleanup. Dedicated regression
+passes 1/1; native unlink recovery and production crash/remount evidence
+remain open. Evidence: `evidence/2026-09-15-backup-quarantine-age.md`.
+
 Backup quarantine recovery addendum: commit `38c5381` adds bounded strict-name
 recovery for stale Broker backup cleanup quarantines, with recent-entry skip,
 owner-only validation, and identity-fenced removal. Dedicated regression and
