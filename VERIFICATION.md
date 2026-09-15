@@ -2813,3 +2813,9 @@ returns stable `POLICY_DENIED` and no UI nodes or labels when host permission
 is absent. Permission-granted real-app evidence and GUI mutation readback
 remain open. Evidence:
 `evidence/2026-09-15-ui-permission-denial-host-readback.md`.
+
+Dependency verification reports zero high-severity-or-greater npm advisories
+from `npm audit --omit=dev --audit-level=high`. This point-in-time check does
+not replace native artifact provenance, macOS signing, runtime isolation, or
+independent release review. Evidence:
+`evidence/2026-09-15-dependency-audit.md`.

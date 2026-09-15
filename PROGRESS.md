@@ -3150,3 +3150,9 @@ stable `POLICY_DENIED` when Accessibility permission is absent, without
 returning UI content. Permission-granted observation, focus races, GUI
 mutation, packaging, and final readback remain open. Evidence:
 `evidence/2026-09-15-ui-permission-denial-host-readback.md`.
+
+The current production dependency audit reports zero high-severity-or-greater
+npm advisories with `npm audit --omit=dev --audit-level=high`. This is
+point-in-time dependency evidence only and does not close native signing,
+runtime isolation, or release review gates. Evidence:
+`evidence/2026-09-15-dependency-audit.md`.
