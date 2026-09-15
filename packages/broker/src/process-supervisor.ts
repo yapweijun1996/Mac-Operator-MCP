@@ -35,6 +35,29 @@ interface ActiveProcessRun {
   drained: Promise<void>;
 }
 
+/**
+ * Captures child events immediately after spawn, before asynchronous path and
+ * ownership checks can yield to a short-lived child. The observer attaches
+ * callbacks later and consumes this bounded state without losing exit/output
+ * events.
+ */
+interface ChildProcessCapture {
+  stdout: Buffer<ArrayBufferLike>;
+  stderr: Buffer<ArrayBufferLike>;
+  stdoutBytes: number;
+  stderrBytes: number;
+  outputOverflow: boolean;
+  spawnError: boolean;
+  exited: boolean;
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  closed: boolean;
+  onOutput?: () => void;
+  onError?: () => void;
+  onExit?: () => void;
+  onClose?: () => void;
+}
+
 export interface ProcessPathIdentity {
   device: number;
   inode: number;
@@ -226,6 +249,7 @@ export class ProcessSupervisor {
       } catch {
         throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
       }
+      const capture = attachChildProcessCapture(child, request.outputCapBytes);
       const childPid = child.pid;
       if (typeof childPid !== "number" || !Number.isSafeInteger(childPid) || childPid <= 0) {
         child.kill("SIGKILL");
@@ -303,6 +327,7 @@ export class ProcessSupervisor {
         processId,
         startedAtMs,
         processTree,
+        capture,
         (stop) => { stopRun = stop; },
         () => {
           if (drained) return;
@@ -566,6 +591,7 @@ export class ProcessSupervisor {
     processId: number,
     startedAtMs: number,
     processTree: ProcessTreeTracker | undefined,
+    capture: ChildProcessCapture,
     registerStop: (stop: () => void) => void,
     onDrained: () => void
   ): Promise<ProcessExecutionResult> {
@@ -579,15 +605,13 @@ export class ProcessSupervisor {
       let timeoutTimer: NodeJS.Timeout | undefined;
       let cancellationPoll: NodeJS.Timeout | undefined;
       let groupDrainDeadlineMs: number | undefined;
-      let childExitCode: number | null = null;
-      let childExitSignal: NodeJS.Signals | null = null;
+      let childExitCode: number | null = capture.exited ? capture.exitCode : null;
+      let childExitSignal: NodeJS.Signals | null = capture.exited ? capture.exitSignal : null;
       let strictExitProof: Promise<boolean> | undefined;
       let released = false;
-      let stdoutBytes = 0;
-      let stderrBytes = 0;
-      let stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-      let stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-      let spawnError = false;
+      let stdout = capture.stdout;
+      let stderr = capture.stderr;
+      let spawnError = capture.spawnError;
       let reportedDescendantCount = -1;
 
       processTree?.sample();
@@ -603,16 +627,6 @@ export class ProcessSupervisor {
         released = true;
         this.activeProcesses -= 1;
         onDrained();
-      };
-      const append = (current: Buffer, chunk: Buffer, currentBytes: number): { value: Buffer; bytes: number; overflow: boolean } => {
-        const remaining = request.outputCapBytes - stdoutBytes - stderrBytes;
-        if (remaining <= 0) return { value: current, bytes: currentBytes, overflow: chunk.byteLength > 0 };
-        const accepted = chunk.subarray(0, Math.min(remaining, chunk.byteLength));
-        return {
-          value: accepted.byteLength === 0 ? current : Buffer.concat([current, accepted]),
-          bytes: currentBytes + accepted.byteLength,
-          overflow: accepted.byteLength < chunk.byteLength
-        };
       };
       const groupState = (): "alive" | "none" | "unknown" => {
         const rootState = processTree?.rootState() ?? "alive";
@@ -757,9 +771,9 @@ export class ProcessSupervisor {
       };
       notifyOwnership();
 
-      child.once("exit", (code, signal) => {
-        childExitCode = code;
-        childExitSignal = signal;
+      const handleExit = (): void => {
+        childExitCode = capture.exitCode;
+        childExitSignal = capture.exitSignal;
         if (request.requireCleanExitProof !== true || strictExitProof !== undefined) return;
         if (processTree === undefined) {
           strictExitProof = Promise.resolve(false);
@@ -774,28 +788,10 @@ export class ProcessSupervisor {
         // the root emits `exit`; let the bounded proof window distinguish
         // that teardown lag from a surviving descendant.
         strictExitProof = processTree.confirmNoDescendantsAfterExit(this.pollIntervalMs);
-      });
-
-      child.stdout?.on("data", (chunk: Buffer | string) => {
-        if (settled) return;
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const appended = append(stdout, bytes, stdoutBytes);
-        stdout = appended.value;
-        stdoutBytes = appended.bytes;
-        if (appended.overflow) terminate("output_limit");
-      });
-      child.stderr?.on("data", (chunk: Buffer | string) => {
-        if (settled) return;
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const appended = append(stderr, bytes, stderrBytes);
-        stderr = appended.value;
-        stderrBytes = appended.bytes;
-        if (appended.overflow) terminate("output_limit");
-      });
-      child.once("error", () => { spawnError = true; });
-      child.once("close", (code, signal) => {
-        childExitCode = code;
-        childExitSignal = signal;
+      };
+      const handleClose = (): void => {
+        childExitCode = capture.exitCode;
+        childExitSignal = capture.exitSignal;
         void (async () => {
           if (settled) return;
           processTree?.sample();
@@ -819,10 +815,22 @@ export class ProcessSupervisor {
             if (!clean) finishUnknown();
             else finish(childExitCode, childExitSignal);
           } else {
-            finish(code, signal);
+            finish(childExitCode, childExitSignal);
           }
         })();
-      });
+      };
+
+      capture.onOutput = () => {
+        stdout = capture.stdout;
+        stderr = capture.stderr;
+        if (!settled && capture.outputOverflow) terminate("output_limit");
+      };
+      capture.onError = () => { spawnError = true; };
+      capture.onExit = handleExit;
+      capture.onClose = handleClose;
+      capture.onOutput();
+      if (capture.exited) handleExit();
+      if (capture.closed) handleClose();
 
       timeoutTimer = setTimeout(() => terminate("timed_out"), request.timeoutMs);
       cancellationPoll = setInterval(() => {
@@ -840,6 +848,58 @@ export class ProcessSupervisor {
     try { return check(); }
     catch { return true; }
   }
+}
+
+function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number): ChildProcessCapture {
+  const capture: ChildProcessCapture = {
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.alloc(0),
+    stdoutBytes: 0,
+    stderrBytes: 0,
+    outputOverflow: false,
+    spawnError: false,
+    exited: false,
+    exitCode: null,
+    exitSignal: null,
+    closed: false
+  };
+  const append = (stream: "stdout" | "stderr", chunk: Buffer | string): void => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const remaining = outputCapBytes - capture.stdoutBytes - capture.stderrBytes;
+    const accepted = bytes.subarray(0, Math.max(0, Math.min(remaining, bytes.byteLength)));
+    if (stream === "stdout") {
+      if (accepted.byteLength > 0) capture.stdout = Buffer.concat([capture.stdout, accepted]);
+      capture.stdoutBytes += accepted.byteLength;
+    } else {
+      if (accepted.byteLength > 0) capture.stderr = Buffer.concat([capture.stderr, accepted]);
+      capture.stderrBytes += accepted.byteLength;
+    }
+    if (accepted.byteLength < bytes.byteLength) capture.outputOverflow = true;
+    capture.onOutput?.();
+  };
+  child.stdout?.on("data", (chunk: Buffer | string) => append("stdout", chunk));
+  child.stderr?.on("data", (chunk: Buffer | string) => append("stderr", chunk));
+  child.once("error", () => {
+    capture.spawnError = true;
+    capture.onError?.();
+  });
+  child.once("exit", (code, signal) => {
+    capture.exited = true;
+    capture.exitCode = code;
+    capture.exitSignal = signal;
+    capture.onExit?.();
+  });
+  child.once("close", (code, signal) => {
+    capture.closed = true;
+    if (!capture.exited) {
+      capture.exited = true;
+      capture.exitCode = code;
+      capture.exitSignal = signal;
+      capture.onExit?.();
+    }
+    capture.onClose?.();
+  });
+  return capture;
 }
 
 async function validateRequest(request: ProcessExecutionRequest, allowedEnvironmentKeys: ReadonlySet<string>): Promise<ValidatedProcessPaths> {

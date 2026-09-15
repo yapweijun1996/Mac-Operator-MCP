@@ -39,6 +39,26 @@ test("process supervisor uses an explicit environment and bounded output", async
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor captures output from a child that exits during startup checks", async () => {
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      const result = await supervisor.run({
+        executable: "/usr/bin/printf",
+        args: ["startup-race"],
+        cwd: CWD,
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      });
+      assert.equal(result.state, "completed");
+      assert.equal(result.stdout, "startup-race");
+    }
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
+  }
+});
+
 test("process supervisor requires a final native descendant readback for strict task exits", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Strict task exit proof uses the macOS native process observer");
