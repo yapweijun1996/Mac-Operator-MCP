@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-084/085 Edge contract immutable-snapshot addendum at source revision
+`1bedb5d`: validated contract objects are recursively frozen before registry
+retention and MCP registration, preventing later mutation of required scopes
+or functional input schemas. Focused Edge contract/readback tests pass 19/19;
+the serial physical regression passes 662/667 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-edge-contract-immutable-snapshot.md`.
+
 MOP-045/080/081 Filesystem parent-directory identity addendum at source
 revision `bba64c1`: native write, unlink, and unlink-recovery operations bind
 the canonical parent directory device/inode to the opened descriptor before

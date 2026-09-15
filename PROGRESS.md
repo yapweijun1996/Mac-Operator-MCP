@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Edge contract immutable-snapshot addendum at source revision `1bedb5d`:
+validated contract objects are recursively frozen before they are retained by
+the Edge registry or exposed to MCP registration. Required scopes and the
+functional input schema therefore remain the exact validated snapshot and
+cannot be mutated by later callers. Focused Edge contract/readback tests pass
+19/19; the serial physical regression passes 662/667 with 0 failures and 5
+explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-edge-contract-immutable-snapshot.md`.
+
 Filesystem parent-directory identity addendum at source revision `bba64c1`:
 native write, unlink, and unlink-recovery operations now compare the
 canonical parent directory device/inode with the opened parent descriptor

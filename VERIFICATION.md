@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge contract immutable-snapshot verification at source revision `1bedb5d`:
+the validated contract graph is recursively frozen before the registry shares
+it with MCP registration or callers. Mutation attempts against the contract,
+required scopes, and nested input-schema properties fail, preserving the
+validated authorization snapshot. Focused Edge contract/readback tests pass
+19/19; the serial physical regression passes 662/667 with 0 failures and 5
+explicit descriptor-capability skips. The three pre-existing long-running
+suites were excluded and left untouched. This closes post-validation object
+mutation only; installed provenance, signing, native descriptor execution,
+production isolation, remote issuer deployment, and capability enablement
+remain open. Evidence:
+`evidence/2026-09-16-edge-contract-immutable-snapshot.md`.
+
 Filesystem parent-directory identity verification at source revision
 `bba64c1`: native write, unlink, and unlink-recovery operations compare the
 canonical parent directory device/inode with the opened parent descriptor
