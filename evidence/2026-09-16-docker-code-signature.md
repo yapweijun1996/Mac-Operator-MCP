@@ -1,8 +1,8 @@
 # Docker CLI Code-Signature Evidence
 
-Date: 2026-09-16  
-Host: physical Mac mini, Darwin 26.2 arm64  
-Source revision: `60868eb`
+Date: 2026-09-16
+Host: physical Mac mini, Darwin 26.2 arm64
+Source revision: `872198b`
 
 ## Boundary implemented
 
@@ -45,9 +45,11 @@ Docker version --format '{{.Server.Version}}'
 
 The selected executable is the canonical regular file
 `/Applications/Docker.app/Contents/Resources/bin/docker`, owned by the current
-user (`uid=501`, `gid=80`) with mode `100755`. The shared ProcessSupervisor
-continues to enforce the fixed user-owned Docker exception and revalidates the
-canonical executable on each child start.
+user (`uid=501`, `gid=80`) with mode `100755`. The attested executable content
+SHA-256 is carried into each Docker child admission; ProcessSupervisor
+recomputes the digest before spawn and rejects a replacement between signature
+readback and launch. The shared supervisor also continues to enforce the fixed
+user-owned Docker exception and canonical, owner-only executable boundary.
 
 ## Verification
 
@@ -64,10 +66,10 @@ canonical executable on each child start.
 
 ## Remaining limits
 
-This proves the selected executable's current macOS code-signature identity,
-not notarization policy, a kernel-held executable descriptor, or an atomic
-signature-to-exec binding. A path replacement between the signature command
-and the later Docker child start is still bounded by ProcessSupervisor path,
-ownership, and content checks but is not eliminated without a native
-descriptor-backed launcher. The Docker daemon remains a Linux VM endpoint;
+This proves the selected executable's current macOS code-signature identity and
+a bounded content handoff, not notarization policy, a kernel-held executable
+descriptor, or an atomic signature-to-exec binding. A replacement after the
+content digest is captured but before the signature command is covered by the
+digest mismatch at Docker spawn; a native descriptor-backed launcher is still
+needed to eliminate all pathname races. The Docker daemon remains a Linux VM endpoint;
 raw socket proxying and Docker mutation are still excluded.
