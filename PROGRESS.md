@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process inspection start-time addendum at source revision `f01ddb8`: the
+native adapter reads PID plus `startTimeMicros` before and after bounded
+inspection and rejects any identity change, while keeping start time out of
+the public result. Focused process/Broker tests pass 8/8 and the physical
+Darwin L0/L1 readback passes 1/1; typecheck, lint, and diff checks pass. This
+narrows PID-reuse observation races but is not a kernel-held process handle or
+proof of post-readback liveness, installed identity, remote revocation, or
+release readiness. Evidence:
+`evidence/2026-09-16-process-inspect-start-time.md`.
+
 Process inspection target-binding addendum at source revision `93daffb`:
 `mac_process_inspect` now rejects a worker/native adapter result whose returned
 PID differs from the requested PID, before response serialization or success

@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-031 native identity addendum at source revision `f01ddb8`: bounded process
+inspection now fences the native PID and `startTimeMicros` before and after
+metadata collection, rejecting PID reuse or target replacement. Focused
+process/Broker tests pass 8/8 and the physical Darwin L0/L1 readback passes
+1/1; this remains an observation fence rather than a kernel-held handle or
+post-readback liveness guarantee. Evidence:
+`evidence/2026-09-16-process-inspect-start-time.md`.
+
 MOP-031 target-identity addendum at source revision `93daffb`:
 `mac_process_inspect` now binds the adapter result PID to the requested PID;
 substitution is rejected as `CONFLICT` before success publication and is
