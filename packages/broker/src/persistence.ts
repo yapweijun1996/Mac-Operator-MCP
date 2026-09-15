@@ -1336,6 +1336,9 @@ export class BrokerStore {
       let unknown = 0;
       for (const row of rows) {
         const current = mapRequest(row);
+        if (nowMs < current.receivedAtMs || nowMs < current.updatedAtMs) {
+          throw malformedRequest();
+        }
         const nextState: RequestState = current.state === "RUNNING" && current.mutation ? "UNKNOWN" : "FAILED";
         const resultClass = nextState === "UNKNOWN" ? "UNKNOWN_OUTCOME" : "EXECUTION_FAILED";
         this.database.prepare(`
@@ -2065,7 +2068,13 @@ export class BrokerStore {
       let queuedCancelled = 0;
       let runningUnknown = 0;
       for (const row of interrupted) {
-        const priorState = row.state;
+        const current = mapJob(row);
+        if (nowMs < current.createdAtMs ||
+            (current.startedAtMs !== null && nowMs < current.startedAtMs) ||
+            (row.lease_heartbeat_at_ms !== null && nowMs < row.lease_heartbeat_at_ms)) {
+          throw malformedJob();
+        }
+        const priorState = current.state;
         const nextState: JobState = priorState === "queued" ? "cancelled" : "unknown";
         const resultClass: JobResultClass = priorState === "queued" ? "denied" : "unknown";
         this.database.prepare(`
@@ -2073,19 +2082,19 @@ export class BrokerStore {
             cancel_reason = 'BROKER_RESTART', lease_owner_id = NULL, lease_token = NULL,
             lease_acquired_at_ms = NULL, lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL,
             revision = revision + 1 WHERE job_id = ? AND revision = ?
-        `).run(nextState, resultClass, nowMs, row.job_id, row.revision);
+        `).run(nextState, resultClass, nowMs, current.jobId, current.revision);
         if (priorState === "queued") queuedCancelled += 1;
         else runningUnknown += 1;
         this.insertAudit({
-          requestId: `job-reconcile-${row.job_id}-${row.revision + 1}`,
-          principalId: row.owner_principal_id,
+          requestId: `job-reconcile-${current.jobId}-${current.revision + 1}`,
+          principalId: current.ownerPrincipalId,
           tool: "internal_job_reconcile",
           eventType: "completion",
           decision: "allow",
           resultClass: nextState === "unknown" ? "UNKNOWN_OUTCOME" : "CANCELLED",
-          targetRef: `job:${row.job_id}`,
-          policyVersion: row.policy_version,
-          evidence: { priorState, nextState, revision: row.revision + 1 },
+          targetRef: `job:${current.jobId}`,
+          policyVersion: current.policyVersion,
+          evidence: { priorState, nextState, revision: current.revision + 1 },
           timestampMs: nowMs
         });
       }
