@@ -53,7 +53,10 @@ export function parseBrokerRequest(value: unknown): BrokerRequest {
   if (!isKnownScopeList(principal.scopes)) {
     throw new BrokerError("AUTH_INVALID", "Principal scopes contain an unknown value");
   }
-  return value as unknown as BrokerRequest;
+  // The parser is the trust-boundary handoff. Do not retain caller-owned
+  // objects after validation: a later mutation must not swap the arguments,
+  // principal, or target fields while authentication and authorization run.
+  return freezeRequestSnapshot(value) as BrokerRequest;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -106,4 +109,26 @@ function isPlainDataArray(value: readonly unknown[]): boolean {
 function isKnownScopeList(value: unknown): value is readonly Scope[] {
   if (!Array.isArray(value) || value.length > SCOPES.length || new Set(value).size !== value.length) return false;
   return value.every((scope) => typeof scope === "string" && KNOWN_SCOPES.has(scope as Scope));
+}
+
+function freezeRequestSnapshot(value: unknown): unknown {
+  const clone = (candidate: unknown): unknown => {
+    if (candidate === null || typeof candidate !== "object") return candidate;
+    if (Array.isArray(candidate)) {
+      const result: unknown[] = [];
+      for (const item of candidate) result.push(clone(item));
+      return Object.freeze(result);
+    }
+    const result = Object.create(null) as Record<string, unknown>;
+    for (const [key, item] of Object.entries(candidate as Record<string, unknown>)) {
+      Object.defineProperty(result, key, {
+        configurable: false,
+        enumerable: true,
+        writable: false,
+        value: clone(item)
+      });
+    }
+    return Object.freeze(result);
+  };
+  return clone(value);
 }

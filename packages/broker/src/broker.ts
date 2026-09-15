@@ -1234,9 +1234,20 @@ export class Broker {
   }
 
   async handleForIpc(rawRequest: unknown): Promise<AuthenticatedBrokerResponse | BrokerResult> {
-    const response = await this.handle(rawRequest);
+    // Parse once before dispatch and carry that immutable snapshot through the
+    // async handler. Re-reading caller-owned input after execution would let a
+    // same-process caller swap the signed target while the response envelope
+    // is being selected.
+    let parsedRequest: BrokerRequest | undefined;
     try {
-      const request = parseBrokerRequest(rawRequest);
+      parsedRequest = parseBrokerRequest(rawRequest);
+    } catch {
+      // Let handle() produce the normal bounded failure for malformed input.
+    }
+    const response = await this.handle(parsedRequest ?? rawRequest);
+    try {
+      const request = parsedRequest;
+      if (request === undefined) return response;
       const key = this.options.edgeAuthenticationKeys.keyByIdentity(
         request.principal.edgeId,
         request.authenticationKeyId
