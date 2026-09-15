@@ -116,6 +116,14 @@ test("contract registry rejects incomplete authority metadata", async () => {
   });
 });
 
+test("contract registry requires the explicit schema identity", async () => {
+  await withTempDirectory(async (directory) => {
+    const { $schema: _schema, ...withoutSchema } = validContract;
+    await writeContract(directory, withoutSchema);
+    await assert.rejects(() => ToolContractRegistry.load(directory), /missing a required field/u);
+  });
+});
+
 test("contract registry rejects unknown scopes and malformed postconditions", async () => {
   await withTempDirectory(async (directory) => {
     await writeContract(directory, { ...validContract, required_scopes: ["mac.not_a_scope"] });
