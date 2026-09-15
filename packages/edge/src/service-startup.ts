@@ -286,7 +286,8 @@ export async function createEdgeServiceFromStartupConfig(options: {
   const contracts = await ToolContractRegistry.load(config.contractsDirectory);
   const tls = await loadProtectedTlsMaterial({
     certificatePath: config.tlsCertificatePath,
-    privateKeyPath: config.tlsPrivateKeyPath
+    privateKeyPath: config.tlsPrivateKeyPath,
+    expectedHostname: new URL(config.resourceServerUrl).hostname
   });
   let requestFactory: EdgeRequestFactory | undefined;
   try {

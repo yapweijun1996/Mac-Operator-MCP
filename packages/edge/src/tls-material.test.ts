@@ -46,6 +46,23 @@ test("protected TLS loader rejects a certificate and private-key mismatch", asyn
   }
 });
 
+test("protected TLS loader rejects a certificate without the startup hostname", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-edge-tls-"));
+  const certificatePath = join(directory, "server.crt");
+  const privateKeyPath = join(directory, "server.key");
+  try {
+    await createTestCertificate(directory, certificatePath, privateKeyPath);
+    await chmod(certificatePath, 0o600);
+    await chmod(privateKeyPath, 0o600);
+    await assert.rejects(
+      loadProtectedTlsMaterial({ certificatePath, privateKeyPath, expectedHostname: "other.example.test" }),
+      /certificate hostname does not match/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("protected TLS loader rejects weak permissions and symlinked files", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-edge-tls-"));
   const certificatePath = join(directory, "server.crt");

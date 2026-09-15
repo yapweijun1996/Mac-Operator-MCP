@@ -9,6 +9,8 @@ const MAX_TLS_FILE_BYTES = 256 * 1024;
 export interface ProtectedTlsMaterialPaths {
   certificatePath: string;
   privateKeyPath: string;
+  /** Optional startup-bound hostname that the certificate must cover. */
+  expectedHostname?: string;
 }
 
 export interface ProtectedTlsMaterial {
@@ -30,7 +32,7 @@ export async function loadProtectedTlsMaterial(
   try {
     const privateKey = await readProtectedTlsFile(paths.privateKeyPath, "TLS private key");
     try {
-      assertTlsCertificateMatchesPrivateKey(certificate, privateKey);
+      assertTlsCertificateMatchesPrivateKey(certificate, privateKey, paths.expectedHostname);
     } catch (error) {
       privateKey.fill(0);
       throw error;
@@ -50,9 +52,19 @@ export async function loadProtectedTlsMaterial(
  * TLS server otherwise may defer this failure until the first client
  * handshake, which would publish a running Edge with invalid authority.
  */
-export function assertTlsCertificateMatchesPrivateKey(certificateBytes: Buffer, privateKeyBytes: Buffer): void {
+export function assertTlsCertificateMatchesPrivateKey(
+  certificateBytes: Buffer,
+  privateKeyBytes: Buffer,
+  expectedHostname?: string
+): void {
   try {
     const certificate = new X509Certificate(certificateBytes);
+    if (expectedHostname !== undefined &&
+        (typeof expectedHostname !== "string" || expectedHostname.length === 0 ||
+         expectedHostname !== expectedHostname.toLowerCase() || /[^a-z0-9.-]/u.test(expectedHostname) ||
+         certificate.checkHost(expectedHostname) === undefined)) {
+      throw new Error("TLS certificate hostname does not match");
+    }
     const privateKey = createPrivateKey(privateKeyBytes);
     const certificatePublicKey = Buffer.from(certificate.publicKey.export({ format: "der", type: "spki" }));
     const privatePublicKey = Buffer.from(createPublicKey(privateKey).export({ format: "der", type: "spki" }));
@@ -61,7 +73,8 @@ export function assertTlsCertificateMatchesPrivateKey(certificateBytes: Buffer, 
       throw new Error("TLS certificate and private key do not match");
     }
   } catch (error) {
-    if (error instanceof Error && error.message === "TLS certificate and private key do not match") throw error;
+    if (error instanceof Error && (error.message === "TLS certificate and private key do not match" ||
+        error.message === "TLS certificate hostname does not match")) throw error;
     throw new Error("TLS certificate and private key are invalid");
   }
 }
