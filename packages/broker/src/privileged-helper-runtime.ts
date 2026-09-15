@@ -119,6 +119,7 @@ const BROKER_SERVICE_PATTERN = /^gui\/([1-9][0-9]{0,9})\/(com\.mac-operator\.bro
 export class PrivilegedHelperRuntime {
   private stateValue: PrivilegedHelperRuntimeState = "stopped";
   private operation: Promise<void> = Promise.resolve();
+  private authorityPollerDisposed = false;
 
   constructor(
     private readonly server: PrivilegedHelperIpcServer,
@@ -139,6 +140,9 @@ export class PrivilegedHelperRuntime {
 
   private async startInternal(): Promise<void> {
     if (this.stateValue !== "stopped") throw new Error(`Privileged helper runtime cannot start from ${this.stateValue}`);
+    if (this.authorityPollerDisposed && this.authorityPoller !== undefined) {
+      throw new Error("Privileged helper runtime cannot restart after authority poller disposal");
+    }
     this.stateValue = "starting";
     try {
       await this.server.listen();
@@ -150,19 +154,24 @@ export class PrivilegedHelperRuntime {
       } catch (cleanupError) {
         this.stateValue = "failed";
         throw new AggregateError([error, cleanupError], "Privileged helper startup failed and cleanup also failed");
+      } finally {
+        this.disposeAuthorityPoller();
       }
       throw error;
     }
   }
 
   private async closeInternal(): Promise<void> {
-    if (this.stateValue === "stopped") return;
+    if (this.stateValue === "stopped") {
+      this.disposeAuthorityPoller();
+      return;
+    }
     this.stateValue = "stopping";
     try {
       try {
         await this.server.close();
       } finally {
-        this.authorityPoller?.dispose?.();
+        this.disposeAuthorityPoller();
       }
       this.stateValue = "stopped";
     } catch (error) {
@@ -175,6 +184,12 @@ export class PrivilegedHelperRuntime {
     const run = this.operation.catch(() => undefined).then(operation);
     this.operation = run;
     return run;
+  }
+
+  private disposeAuthorityPoller(): void {
+    if (this.authorityPollerDisposed) return;
+    this.authorityPollerDisposed = true;
+    this.authorityPoller?.dispose?.();
   }
 }
 

@@ -10,6 +10,7 @@ import {
   createPrivilegedHelperRuntimeFromKeyMaterial,
   createPrivilegedHelperRuntimeForLaunchdBroker,
   createPrivilegedHelperRuntimeFromActiveKeyConfig,
+  PrivilegedHelperRuntime,
   PrivilegedHelperStartupError
 } from "./privileged-helper-runtime.js";
 import {
@@ -17,6 +18,7 @@ import {
   authenticatePrivilegedHelperResponse,
   FailClosedPrivilegedHelper,
   signPrivilegedHelperCommand,
+  type PrivilegedHelperIpcServer,
   type UnsignedPrivilegedHelperCommand
 } from "./privileged-helper.js";
 import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials.js";
@@ -199,6 +201,43 @@ test("privileged helper runtime auto-wires and disposes the Broker authority pol
     store.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("privileged helper runtime disposes its authority poller on startup failure and unopened close", async () => {
+  let startupCloses = 0;
+  let startupDisposals = 0;
+  const startupServer = {
+    listen: async () => { throw new Error("listener startup failed"); },
+    close: async () => { startupCloses += 1; }
+  } as unknown as PrivilegedHelperIpcServer;
+  const startupPoller = {
+    assertAuthorized: async () => undefined,
+    dispose: () => { startupDisposals += 1; }
+  };
+  const startupRuntime = new PrivilegedHelperRuntime(startupServer, startupPoller);
+  await assert.rejects(startupRuntime.start(), /listener startup failed/);
+  assert.equal(startupRuntime.state, "stopped");
+  assert.equal(startupCloses, 1);
+  assert.equal(startupDisposals, 1);
+  await startupRuntime.close();
+  assert.equal(startupDisposals, 1);
+  await assert.rejects(startupRuntime.start(), /cannot restart after authority poller disposal/);
+
+  let unopenedDisposals = 0;
+  const unopenedServer = {
+    listen: async () => undefined,
+    close: async () => undefined
+  } as unknown as PrivilegedHelperIpcServer;
+  const unopenedPoller = {
+    assertAuthorized: async () => undefined,
+    dispose: () => { unopenedDisposals += 1; }
+  };
+  const unopenedRuntime = new PrivilegedHelperRuntime(unopenedServer, unopenedPoller);
+  await unopenedRuntime.close();
+  await unopenedRuntime.close();
+  assert.equal(unopenedRuntime.state, "stopped");
+  assert.equal(unopenedDisposals, 1);
+  await assert.rejects(unopenedRuntime.start(), /cannot restart after authority poller disposal/);
 });
 
 test("root-helper key-material startup does not require BrokerStore access", async () => {
