@@ -222,6 +222,15 @@ success publication, mapping post-dispatch authority loss to retryable
 poller. This remains disabled-by-default implementation evidence, not root
 helper release or privilege enablement.
 
+Revision `e786002` adds `createPrivilegedHelperRuntimeFromKeyMaterial` for the
+root-helper process. It loads a protected helper key config without opening
+`BrokerStore`, performs local validity-window checks, and requires the
+separately authenticated Broker authority poller for any enabled adapter.
+The earlier BrokerStore-backed runtime factory remains a Broker-side
+activation/compatibility path and is not the root-helper boundary. The root
+helper still cannot decide revocation, rotation, Request, Approval, Job, or
+kill-switch authority locally; those decisions remain on the Broker channel.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

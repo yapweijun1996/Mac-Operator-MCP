@@ -82,6 +82,10 @@ with post-dispatch authority loss mapped to `UNKNOWN_OUTCOME`. Native Broker
 startup now restores the active helper key and owns this authority listener
 with rollback on partial startup; production startup rejects root-as-Broker or
 non-root-as-helper peer-role substitutions. Finalize Developer ID provenance,
+and use the root-helper key-material startup path that does not open
+`BrokerStore`; revocation and active authority remain Broker-owned through the
+authenticated poll channel. The older BrokerStore-backed runtime factory is
+retained only for Broker-side activation and compatibility paths. Also finalize
 protected production Keychain material, root-domain lifecycle readback,
 operation-specific rollback and recovery, compatibility, real adapters, and
 independent review before enabling any privileged adapter.
