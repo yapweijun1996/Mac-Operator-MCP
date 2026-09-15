@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Service-instance-lock verification at source revision `d3ca767` removes exact
+lock identities through a private same-directory quarantine rename, validates
+device/inode/type after the move, and only then unlinks the quarantine.
+Replacement locks fail closed without deletion. Build, lint, typecheck, and
+diff checks pass; the focused service-lock suite passes 5/5. Orphan quarantine
+recovery and installed-service readback remain open. Evidence:
+`evidence/2026-09-15-service-lock-quarantine.md`.
+
 IPC socket quarantine verification at source revision `6e246bf` uses an
 identity-fenced same-directory rename before stale/owned Unix-socket removal,
 then rechecks device/inode identity in the private quarantine. Replacement

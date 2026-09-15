@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Service-lock quarantine addendum: commit `d3ca767` atomically moves exact
+owner-lock identities to private same-directory quarantine names, rechecks
+device/inode/type, and only then removes them. Replacement locks fail closed;
+focused service-lock tests pass 5/5. Orphan quarantine recovery and installed
+service readback remain open. Evidence:
+`evidence/2026-09-15-service-lock-quarantine.md`.
+
 IPC socket quarantine addendum: commit `6e246bf` moves stale and owned Unix
 sockets to private same-directory quarantine names before identity recheck and
 unlink, so a replacement pathname is not deleted after the initial check.

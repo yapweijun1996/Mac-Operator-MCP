@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Service-lock quarantine addendum: source revision `d3ca767` replaces direct
+owner-lock unlink with an identity-fenced same-directory quarantine rename and
+post-rename recheck before deletion. Replacement lock identities fail closed
+and are not removed. Build, lint, typecheck, diff checks, and the focused
+5-test service-lock suite pass; orphan quarantine recovery and installed
+service evidence remain open. Evidence:
+`evidence/2026-09-15-service-lock-quarantine.md`.
+
 IPC socket quarantine addendum: source revision `6e246bf` atomically moves
 stale and owned Unix sockets to private same-directory quarantine names,
 rechecks device/inode identity, and only then unlinks the quarantine. Identity
