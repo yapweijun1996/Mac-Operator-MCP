@@ -46,7 +46,7 @@
     }
   },
   "properties": {
-    "$schema": { "type": "string" },
+    "$schema": { "const": "./tool-contract.schema.json" },
     "schema_version": { "const": "0.1" },
     "tool_name": { "type": "string", "pattern": "^mac_[a-z0-9_]+$" },
     "capability_level": { "enum": ["L0", "L1", "L2", "L3", "L4", "L5"] },

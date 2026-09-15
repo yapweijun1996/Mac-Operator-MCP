@@ -120,7 +120,9 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
   if (keys.length !== REQUIRED_CONTRACT_KEYS.size || [...REQUIRED_CONTRACT_KEYS].some((key) => !Object.prototype.hasOwnProperty.call(record, key))) {
     throw new Error(`${file}: tool contract is missing a required field`);
   }
-  stringField(record, "$schema", file, 256);
+  if (record.$schema !== "./tool-contract.schema.json") {
+    throw new Error(`${file}: $schema is invalid`);
+  }
   const toolName = stringField(record, "tool_name", file);
   if (toolName.length > MAX_TOOL_NAME_LENGTH || !/^mac_[a-z0-9_]+$/u.test(toolName)) {
     throw new Error(`${file}: tool_name is invalid`);

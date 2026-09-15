@@ -124,6 +124,13 @@ test("contract registry requires the explicit schema identity", async () => {
   });
 });
 
+test("contract registry rejects a schema identity substitution", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, { ...validContract, $schema: "./other-schema.json" });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /\$schema is invalid/u);
+  });
+});
+
 test("contract registry rejects unknown scopes and malformed postconditions", async () => {
   await withTempDirectory(async (directory) => {
     await writeContract(directory, { ...validContract, required_scopes: ["mac.not_a_scope"] });
