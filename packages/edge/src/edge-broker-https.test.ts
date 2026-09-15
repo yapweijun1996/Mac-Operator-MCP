@@ -158,6 +158,13 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
     const replayed = await brokerClient.call(replayRequest);
     assert.equal(replayed.ok, false);
     if (!replayed.ok) assert.equal(replayed.result_class, "REPLAY_DENIED");
+    store.revoke("edge", "edge-1", "integration-edge-revocation", now);
+    const revokedResult = await client.callTool({ name: "mac_health", arguments: {} });
+    const revokedText = revokedResult.content?.find((item): item is { type: "text"; text: string } => item.type === "text");
+    assert.ok(revokedText);
+    const revokedPayload = JSON.parse(revokedText.text) as { ok: boolean; result_class: string };
+    assert.equal(revokedPayload.ok, false);
+    assert.equal(revokedPayload.result_class, "REVOKED");
   } finally {
     await client.close().catch(() => undefined);
     await transport?.close().catch(() => undefined);

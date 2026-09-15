@@ -19,6 +19,9 @@ interface CapabilityState {
   contractVersion: string | null;
 }
 
+const CAPABILITY_CACHE_TTL_MS = 30_000;
+const MAX_CAPABILITY_CACHE_ENTRIES = 256;
+
 export interface GovernedMcpServerOptions {
   edgeId: string;
   brokerAudience: string;
@@ -28,12 +31,40 @@ export interface GovernedMcpServerOptions {
 }
 
 export function createGovernedMcpServerFactory(options: GovernedMcpServerOptions): McpServerFactory {
+  /**
+   * MCP HTTP requests create a fresh server instance. Keep the last verified
+   * capability projection per principal/session so a later Broker revocation
+   * can reach the requested tool and produce its stable `REVOKED` envelope
+   * instead of failing during server construction. Every actual tool call
+   * still crosses the Broker and rechecks current authority.
+   */
+  const capabilityCache = new Map<string, { enabledTools: readonly string[]; expiresAtMs: number }>();
   return async (requestContext) => {
     if (!requestContext.authInfo) throw new Error("Authenticated MCP context is required");
     const principal = projectPrincipal(requestContext.authInfo, options);
-    const capabilities = await options.gateway.execute("mac_capabilities", {}, principal, requestContext.requestInfo?.signal);
-    if (!capabilities.ok) throw new Error(`Broker capability discovery failed: ${capabilities.result_class}`);
-    const enabledTools = readEnabledTools(capabilities, options.contracts);
+    const cacheKey = capabilityCacheKey(principal);
+    const cached = capabilityCache.get(cacheKey);
+    let enabledTools: readonly string[] | undefined;
+    if (cached !== undefined && cached.expiresAtMs > Date.now()) {
+      enabledTools = cached.enabledTools;
+    } else {
+      const capabilities = await options.gateway.execute("mac_capabilities", {}, principal, requestContext.requestInfo?.signal);
+      if (capabilities.ok) {
+        enabledTools = readEnabledTools(capabilities, options.contracts);
+        capabilityCache.set(cacheKey, { enabledTools, expiresAtMs: Date.now() + CAPABILITY_CACHE_TTL_MS });
+        while (capabilityCache.size > MAX_CAPABILITY_CACHE_ENTRIES) {
+          const oldest = capabilityCache.keys().next().value;
+          if (oldest === undefined) break;
+          capabilityCache.delete(oldest);
+        }
+      } else if (cached !== undefined) {
+        // Preserve a previously verified projection only as a routing aid;
+        // Broker authorization on the actual tool call remains authoritative.
+        enabledTools = cached.enabledTools;
+      } else {
+        throw new Error(`Broker capability discovery failed: ${capabilities.result_class}`);
+      }
+    }
     const server = new McpServer({ name: "Mac-Operator-MCP", version: "0.1.0" });
     for (const toolName of enabledTools) {
       const contract = options.contracts.get(toolName);
@@ -62,6 +93,10 @@ export function createGovernedMcpServerFactory(options: GovernedMcpServerOptions
     }
     return server;
   };
+}
+
+function capabilityCacheKey(principal: PrincipalContext): string {
+  return [principal.edgeId, principal.principalId, principal.sessionId, [...principal.scopes].sort().join(",")].join("\u0000");
 }
 
 async function executeTool(
