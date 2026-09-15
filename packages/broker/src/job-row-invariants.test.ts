@@ -166,3 +166,37 @@ test("BrokerStore rejects a persisted Job with malformed authority identity", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("BrokerStore rejects persisted Job output that is secret-shaped or oversized", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-output-row-"));
+  const databasePath = join(directory, "broker.sqlite");
+  let store: BrokerStore | undefined = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:output-row"));
+    const running = store.startJob("job:output-row", "principal-1", 0, 2, lease);
+    store.finishJob("job:output-row", "principal-1", running.revision, {
+      state: "completed",
+      resultClass: "success",
+      finishedAtMs: 3,
+      stdout: "safe"
+    }, lease, 3);
+    store.close();
+    store = undefined;
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE jobs SET stdout_text = ? WHERE job_id = ?")
+        .run("api_key=forged-secret", "job:output-row");
+    } finally {
+      database.close();
+    }
+
+    assert.throws(
+      () => { store = new BrokerStore(databasePath); },
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+  } finally {
+    store?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

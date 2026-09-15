@@ -4060,6 +4060,15 @@ function mapJob(row: JobRow): BrokerJob {
 function validateStoredJobState(row: JobRow): void {
   const fail = (): never => { throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job state invariants are malformed"); };
   const timestamp = (value: number | null): boolean => value === null || (Number.isSafeInteger(value) && value >= 0);
+  const boundedOutput = (value: unknown): value is string => {
+    if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 262_144) return false;
+    try {
+      assertContentDoesNotContainSecrets(Buffer.from(value, "utf8"));
+      return true;
+    } catch {
+      return false;
+    }
+  };
   if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(row.job_id) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_principal_id) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_session_id) ||
@@ -4071,7 +4080,12 @@ function validateStoredJobState(row: JobRow): void {
   if (!Number.isSafeInteger(row.revision) || row.revision < 0 || !timestamp(row.created_at_ms) || !timestamp(row.started_at_ms) ||
       !timestamp(row.finished_at_ms) || !timestamp(row.lease_acquired_at_ms) || !timestamp(row.lease_heartbeat_at_ms) ||
       !timestamp(row.lease_expires_at_ms) || row.cancel_requested !== 0 && row.cancel_requested !== 1 ||
-      row.output_truncated !== 0 && row.output_truncated !== 1) fail();
+      row.output_truncated !== 0 && row.output_truncated !== 1 ||
+      !boundedOutput(row.stdout_text) || !boundedOutput(row.stderr_text) ||
+      (row.exit_code !== null && (!Number.isSafeInteger(row.exit_code) || row.exit_code < -2_147_483_648 || row.exit_code > 2_147_483_647)) ||
+      (row.cancel_reason !== null && typeof row.cancel_reason !== "string") ||
+      typeof row.write_metadata_json !== "string" || typeof row.process_metadata_json !== "string" ||
+      typeof row.guest_metadata_json !== "string" || typeof row.privileged_payload_json !== "string") fail();
   if (row.created_at_ms < 0 || row.started_at_ms !== null && row.started_at_ms < row.created_at_ms ||
       row.finished_at_ms !== null && row.started_at_ms !== null && row.finished_at_ms < row.started_at_ms) fail();
   if (row.state === "queued") {
