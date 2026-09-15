@@ -644,15 +644,20 @@ test("process supervisor captures and recovers an exact persisted root identity"
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let resolveSnapshot!: () => void;
+  const snapshotReady = new Promise<void>((resolve) => { resolveSnapshot = resolve; });
   const running = supervisor.run({
     executable: "/bin/sleep",
     args: ["10"],
     cwd: CWD,
     timeoutMs: 5_000,
     outputCapBytes: 100,
-    onStarted: (value) => { snapshot = value; }
+    onStarted: (value) => { snapshot = value; resolveSnapshot(); }
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await Promise.race([
+    snapshotReady,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("root ownership snapshot timeout")), 2_000))
+  ]);
   assert.ok(snapshot);
   const recovered = await supervisor.recoverOwnedProcess(snapshot!.identity, 1_000);
   assert.equal(recovered.outcome, "drained");
@@ -668,21 +673,29 @@ test("process supervisor refuses a swapped persisted root identity", async (t) =
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let resolveSnapshot!: () => void;
+  const snapshotReady = new Promise<void>((resolve) => { resolveSnapshot = resolve; });
   const running = supervisor.run({
     executable: "/bin/sleep",
     args: ["10"],
     cwd: CWD,
     timeoutMs: 5_000,
     outputCapBytes: 100,
-    onStarted: (value) => { snapshot = value; }
+    onStarted: (value) => { snapshot = value; resolveSnapshot(); }
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await Promise.race([
+    snapshotReady,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("root ownership snapshot timeout")), 2_000))
+  ]);
   assert.ok(snapshot);
   const swapped = await supervisor.recoverOwnedProcess({ ...snapshot!.identity, startTimeMicros: snapshot!.identity.startTimeMicros + 1 }, 250);
   assert.equal(swapped.outcome, "identity_mismatch");
   assert.equal(swapped.terminationObserved, false);
   await supervisor.close();
-  await running;
+  await assert.rejects(
+    running,
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+  );
   assert.equal(supervisor.activeCount(), 0);
 });
 
@@ -712,16 +725,21 @@ test("process supervisor keeps an empty snapshot unresolved after root exit", as
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let resolveSnapshot!: () => void;
+  const snapshotReady = new Promise<void>((resolve) => { resolveSnapshot = resolve; });
   const running = supervisor.run({
     executable: "/bin/sleep",
     args: ["10"],
     cwd: CWD,
     timeoutMs: 5_000,
     outputCapBytes: 100,
-    onStarted: (value) => { snapshot = value; }
+    onStarted: (value) => { snapshot = value; resolveSnapshot(); }
   });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await Promise.race([
+      snapshotReady,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("root ownership snapshot timeout")), 2_000))
+    ]);
     assert.ok(snapshot);
     assert.deepEqual(snapshot!.descendants, []);
     process.kill(snapshot!.identity.pid, "SIGKILL");
@@ -743,16 +761,21 @@ test("process supervisor proves absence for a validated no-fork snapshot", async
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let resolveSnapshot!: () => void;
+  const snapshotReady = new Promise<void>((resolve) => { resolveSnapshot = resolve; });
   const running = supervisor.run({
     executable: "/bin/sleep",
     args: ["10"],
     cwd: CWD,
     timeoutMs: 5_000,
     outputCapBytes: 100,
-    onStarted: (value) => { snapshot = value; }
+    onStarted: (value) => { snapshot = value; resolveSnapshot(); }
   });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await Promise.race([
+      snapshotReady,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("root ownership snapshot timeout")), 2_000))
+    ]);
     assert.ok(snapshot);
     assert.deepEqual(snapshot!.descendants, []);
     process.kill(snapshot!.identity.pid, "SIGKILL");
