@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Core-schema-layout addendum: commit `d45ffaa` verifies the complete
+post-migration column set for core authority tables and rejects unknown or
+missing columns as `AUDIT_UNAVAILABLE`. The schema-layout test passes 1/1; the
+non-overlapping package regression passes 592 total (586 passed, 6 explicitly
+skipped, 0 failed). This is local schema-shape evidence only; physical crash
+recovery, production signing/Keychain, installed lifecycle, isolation, disk
+exhaustion, and independent review remain unverified. Evidence:
+`evidence/2026-09-15-core-schema-layout.md`.
+
 Local-gate checkpoint at source revision `7becf03`: native canonical-JSON
 vectors pass 5/5, dependency audit reports zero high-severity vulnerabilities,
 lint passes for 600 tracked files, and `git diff --check` passes. The

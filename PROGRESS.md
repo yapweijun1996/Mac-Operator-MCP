@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Core-schema-layout addendum: commit `d45ffaa` verifies the complete post-
+migration column set for `requests`, `approvals`, `jobs`, `audit_events`,
+`revocations`, and `switches`; unknown or missing columns fail closed as
+`AUDIT_UNAVAILABLE`. The schema-layout test passes 1/1 and the non-overlapping
+package regression passes 592 total (586 pass, 6 skipped, 0 fail). Build, lint,
+and diff checks pass. Physical crash recovery, production signing/Keychain,
+installed lifecycle, isolation, disk exhaustion, and independent review remain
+open. Evidence: `evidence/2026-09-15-core-schema-layout.md`.
+
 Local-gate checkpoint addendum: source revision `7becf03` passes 5/5 native
 canonical-JSON vectors, `npm audit --audit-level=high` reports zero
 vulnerabilities, lint passes for 600 tracked files, and `git diff --check`
