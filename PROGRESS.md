@@ -3238,3 +3238,12 @@ policy-signer tests pass 26/26; the non-overlapping package regression passes
 distribution, installed recovery, external rollback detection, and ADR
 acceptance remain open. Evidence:
 `evidence/2026-09-15-configuration-row-invariants.md`.
+
+Restart reconciliation now rejects a recovery timestamp earlier than a
+persisted Request received/updated time or Job created/start/heartbeat time
+before any state transition (source revision `5148a8b`). Focused Request, Job,
+and runtime tests pass 9/9; the non-overlapping package regression passes 582
+total (576 passed, 6 explicitly skipped, 0 failed). Crash ownership, real
+clock/rollback behavior, production Keychain, installed recovery, external
+rollback detection, and ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-reconciliation-clock-order.md`.
