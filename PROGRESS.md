@@ -3001,3 +3001,10 @@ non-overlapping package regression passes 540 total (534 passed, 6 skipped, 0
 failed). TLS/key lifecycle, remote deployment, launchd installation, and
 capability enablement remain open. Evidence:
 `evidence/2026-09-15-edge-config-shape-boundary.md`.
+
+Edge contract loading now rejects non-data records and unknown top-level
+contract fields (source revision `fa0dc50`) before MCP tool construction.
+Focused registry tests pass 2/2; the non-overlapping package regression passes
+541 total (535 passed, 6 skipped, 0 failed). Handler completeness, signing
+provenance, remote deployment, and capability enablement remain open. Evidence:
+`evidence/2026-09-15-contract-registry-boundary.md`.
