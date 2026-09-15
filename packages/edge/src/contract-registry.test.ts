@@ -161,6 +161,23 @@ test("contract registry rejects writable contract directories and files", async 
   });
 });
 
+test("contract registry rejects a foreign-owned contract directory", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, validContract);
+    const originalGetuid = process.getuid;
+    if (originalGetuid === undefined) return;
+    process.getuid = () => originalGetuid() + 1;
+    try {
+      await assert.rejects(
+        () => ToolContractRegistry.load(directory),
+        /owned by the Edge user/u
+      );
+    } finally {
+      process.getuid = originalGetuid;
+    }
+  });
+});
+
 async function writeContract(directory: string, contract: object): Promise<void> {
   await writeFile(join(directory, "mac_test.json"), JSON.stringify(contract), "utf8");
 }
