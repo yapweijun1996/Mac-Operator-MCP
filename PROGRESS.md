@@ -4,6 +4,22 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Task-descriptor persistence addendum: source revision `0229fe3` derives a
+non-secret SHA-256 digest from the complete Broker-resolved task descriptor
+(profile, executable, arguments, cwd, environment, filesystem/network/
+credential/process-tree policy, sandbox, verification, and budgets). The
+digest is written with the first process ownership snapshot, must remain
+identical on every later ownership update, and is validated on restart
+readback; malformed values fail closed while legacy rows without a digest
+remain readable and are not upgraded. Focused descriptor persistence tests
+pass 2/2. The serial physical regression with install, sandbox, and Keychain
+opt-ins passes 643/648 with 0 failures and 5 explicit descriptor-capability
+skips; the three pre-existing long-running suites were excluded and left
+untouched. This binds recovery metadata to the resolved execution contract
+only; native descriptor execution, immutable snapshots, remount resistance,
+credential/process isolation, and production task enablement remain open.
+Evidence: `evidence/2026-09-16-task-descriptor-persistence.md`.
+
 Descriptor-required process admission addendum: source revisions `a05cce8`,
 `c23cfb7`, and `495cd6e`
 connects the host-owned descriptor-execution capability gate to

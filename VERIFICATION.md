@@ -3,6 +3,20 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Task-descriptor persistence verification at source revision `0229fe3`: the
+Broker computes a non-secret SHA-256 digest over the complete resolved task
+descriptor and stores it with process ownership metadata. Every later
+ownership update must carry the same digest, restart parsing validates its
+shape, and legacy metadata without the field remains compatible without an
+upgrade. Focused descriptor persistence tests pass 2/2. The serial physical
+regression with install, sandbox, and Keychain opt-ins passes 643/648 with 0
+failures and 5 explicit descriptor-capability skips; the three pre-existing
+long-running suites were excluded and left untouched. This verifies metadata
+binding only; native descriptor execution, immutable snapshots, remount
+resistance, credential/process isolation, and production task enablement
+remain open. Evidence:
+`evidence/2026-09-16-task-descriptor-persistence.md`.
+
 Descriptor-required process admission verification at source revisions
 `a05cce8`, `c23cfb7`, and `495cd6e`: `ProcessSupervisor` now checks the
 host-owned descriptor-execution capability after request validation and before

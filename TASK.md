@@ -4,6 +4,21 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 task-descriptor persistence addendum: source revision `0229fe3`
+derives and persists a non-secret SHA-256 digest of the complete
+Broker-resolved task descriptor, including executable, arguments, cwd,
+environment, policy, sandbox, verification, and budgets. The digest is bound
+to the first process ownership snapshot, required to match on subsequent
+ownership updates, and preserved across restart readback; malformed values
+fail closed and legacy rows without a digest remain compatible without an
+automatic upgrade. Focused descriptor persistence tests pass 2/2. The serial
+physical regression with install, sandbox, and Keychain opt-ins passes
+643/648 with 0 failures and 5 explicit descriptor-capability skips; the three
+pre-existing long-running suites were excluded and left untouched. Native
+descriptor execution, immutable snapshots, remount resistance,
+credential/process isolation, and production task enablement remain open.
+Evidence: `evidence/2026-09-16-task-descriptor-persistence.md`.
+
 MOP-045 descriptor-admission addendum: source revisions `a05cce8`, `c23cfb7`,
 and `495cd6e` wire the
 host-owned descriptor-execution capability requirement into the real
