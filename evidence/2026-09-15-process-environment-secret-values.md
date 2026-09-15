@@ -2,16 +2,17 @@
 
 Date: 2026-09-15
 
-Source revision: `29bcec3`
+Source revision: `98b36ac`
 
 ## Boundary
 
 `ProcessSupervisor` already rejects secret-shaped environment names and
 requires an explicit profile allowlist. The shared policy now also rejects
 known token, credential, and authorization signatures in allowlisted
-environment values before local process or virtualization guest dispatch.
-This prevents a generic profile variable from being used as an opaque
-credential channel while preserving the existing explicit environment model.
+environment values before local process or virtualization guest dispatch;
+guest task arguments use the same protected-option check. This prevents a
+generic profile variable or argument from being used as an opaque credential
+channel while preserving the existing explicit environment model.
 
 ## Verification
 

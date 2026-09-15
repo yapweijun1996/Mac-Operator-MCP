@@ -4,13 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Process environment secret-value addendum: source revision `29bcec3` extends
+Process environment secret-value addendum: source revision `98b36ac` extends
 the shared policy across ProcessSupervisor, TaskProfile, and virtualization
 guest validation so explicitly allowlisted environment values are rejected
-when they match known token, credential, or authorization signatures. The
-focused process, task-profile, and guest suites pass 51/51, with typecheck,
-lint, and diff checks passing. This is defense-in-depth and does not close
-production sandbox credential isolation or `mac_task_run` enablement. Evidence:
+when they match known token, credential, or authorization signatures; guest
+task arguments also reject protected credential options. The focused process,
+task-profile, and guest suites pass 51/51, with typecheck, lint, and diff
+checks passing. This is defense-in-depth and does not close production sandbox
+credential isolation or `mac_task_run` enablement. Evidence:
 `evidence/2026-09-15-process-environment-secret-values.md`.
 
 Broker lifecycle serialization addendum: source revision `6297c58` serializes

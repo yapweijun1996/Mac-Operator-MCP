@@ -4,13 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
-Process environment secret-value addendum: source revision `29bcec3` extends
+Process environment secret-value addendum: source revision `98b36ac` extends
 the shared ProcessSupervisor, TaskProfile, and virtualization guest boundary
 to reject known token, credential, and authorization signatures in explicitly
-allowlisted environment values before child dispatch. The focused suites pass
-51/51 with typecheck, lint, and diff checks passing. This is defense-in-depth
-only; production credential/process isolation and `mac_task_run` enablement
-remain gated by MOP-045/MOP-086.
+allowlisted environment values before child dispatch; guest task arguments also
+reject protected credential options. The focused suites pass 51/51 with
+typecheck, lint, and diff checks passing. This is defense-in-depth only;
+production credential/process isolation and `mac_task_run` enablement remain
+gated by MOP-045/MOP-086.
 Evidence: `evidence/2026-09-15-process-environment-secret-values.md`.
 
 Latest regression addendum: the non-overlapping built suite passes 595 total

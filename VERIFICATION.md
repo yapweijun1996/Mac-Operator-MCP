@@ -3,12 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Process environment secret-value verification: source revision `29bcec3`
+Process environment secret-value verification: source revision `98b36ac`
 rejects known token/credential/authorization signatures in explicitly
 allowlisted environment values before local process or virtualization guest
-dispatch. The focused process, task-profile, and guest suites pass 51/51;
-this does not close VT-SBX-01/02, production credential isolation, or
-`mac_task_run` enablement. Evidence:
+dispatch, and guest task arguments reject protected credential options. The
+focused process, task-profile, and guest suites pass 51/51; this does not
+close VT-SBX-01/02, production credential isolation, or `mac_task_run`
+enablement. Evidence:
 `evidence/2026-09-15-process-environment-secret-values.md`.
 
 Broker lifecycle verification: source revision `6297c58` serializes Broker
