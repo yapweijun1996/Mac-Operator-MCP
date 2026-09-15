@@ -1365,6 +1365,10 @@ this does not claim persistent installation or signing provenance.
 - `MOP-005` — `DONE` — Materialized the locked capability taxonomy, lifecycle, catalog, standard, and all 44 KB tool contracts with unique provenance, deterministic mandatory fields, and canonical delivery-wave naming. Upstream KB writeback is tracked separately in `KB_SYNC.md`.
 - `MOP-006` — `DONE` — Created the initial threat model for remote client, Edge, IPC, Broker, adapters, child processes, GUI, helper, audit, policy, and secret stores, with verification targets.
 - `MOP-007` — `IN_PROGRESS` — Strict typecheck, build, Node test, AJV contract validation, dependency audit, unit/integration/adversarial foundation tests, a dependency-free tracked-file style/lint check, and a least-privilege macOS CI workflow exist. First remote CI evidence remains pending.
+- MOP-007 local-gate addendum: source revision `48d5b12` passes the native
+  canonical-JSON check (5/5 vectors) and `npm audit --audit-level=high` reports
+  zero vulnerabilities. This is local evidence only; first remote CI execution
+  remains pending.
 - `MOP-008` — `IN_PROGRESS` — Established the initial evidence and verification matrix; machine enforcement and real evidence remain pending the test baseline.
 
 ## P0 — Architecture closure

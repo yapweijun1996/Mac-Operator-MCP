@@ -2842,3 +2842,10 @@ provisioning, or privileged mutation was executed. Developer ID provenance,
 real root-domain lifecycle, protected production Keychain material, and
 independent release review remain open. Evidence:
 `evidence/2026-09-15-helper-install-plan-47-tests.md`.
+
+The local CI-equivalent native canonical-JSON check passes 5/5 vectors and
+`npm audit --audit-level=high` reports zero vulnerabilities at source revision
+`48d5b12`. This confirms the repository-local gates only; no remote GitHub
+Actions execution is claimed, and packaging, signing, runtime isolation, and
+release review remain open. Evidence:
+`evidence/2026-09-15-ci-local-equivalent.md`.

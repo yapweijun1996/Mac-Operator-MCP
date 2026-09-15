@@ -3180,3 +3180,9 @@ bootstrap, package install, reboot, shutdown, or privileged mutation was
 executed. Developer ID provenance, protected production Keychain material,
 real root-domain lifecycle, and independent release review remain open.
 Evidence: `evidence/2026-09-15-helper-install-plan-47-tests.md`.
+
+The local CI-equivalent canonical-JSON native check passes all 5/5 vectors and
+`npm audit --audit-level=high` reports zero vulnerabilities at source revision
+`48d5b12`. This is local, point-in-time evidence; it does not claim a remote
+GitHub Actions run or close packaging, signing, runtime-isolation, or release
+review gates. Evidence: `evidence/2026-09-15-ci-local-equivalent.md`.
