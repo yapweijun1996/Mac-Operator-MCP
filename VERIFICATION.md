@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Broker request-snapshot verification at source revision `cbc27ea`:
+`parseBrokerRequest` recursively copies and freezes the complete validated
+request envelope, and `Broker.handleForIpc` carries that snapshot through
+asynchronous dispatch and response signing. Focused request-boundary tests
+pass 2/2; typecheck, style, and diff checks pass. Negative coverage mutates
+arguments, nested values, scopes, principal fields, and an own `__proto__`
+field after parsing without changing the Broker view. This closes same-process
+request-object substitution only; native transport, remote issuer, replay,
+policy, target, and installed-service evidence remain independent gates.
+Evidence: `evidence/2026-09-16-broker-request-snapshot.md`.
+
 Guest identity authority-snapshot verification at source revision `5d1084e`:
 the Guest Agent, Broker transport client, VM lifecycle, and composed runtime
 copy and freeze expected or published Guest identity objects before retaining
