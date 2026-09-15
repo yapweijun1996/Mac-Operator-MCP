@@ -1,7 +1,7 @@
 # Privileged helper authority-polling IPC evidence
 
 Date: 2026-09-15
-Source revision: `becea16` (authority polling implementation: `2660bdf`)
+Source revision: `1eea5cb` (authority polling implementation: `2660bdf`)
 Status: implemented boundary; disabled by default and not a privileged-release acceptance
 
 ## Scope
@@ -30,7 +30,7 @@ when no separately authenticated authority poller is supplied.
 ## Verification
 
 - `npx tsc -b packages/broker/tsconfig.json --pretty false` — passed.
-- `npm run lint -- --quiet` — passed for 625 tracked files.
+- `npm run lint -- --quiet` — passed for 628 tracked files.
 - `node --test packages/broker/dist/privileged-helper-authority-ipc.test.js packages/broker/dist/privileged-helper.test.js` — 18/18 passed.
 - `node --test packages/broker/dist/privileged-helper-runtime.test.js packages/broker/dist/privileged-helper-keyring.test.js` — 6/6 passed in the combined focused run.
 - Physical non-overlapping built suite with `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 MOPS_REAL_SANDBOX=1` — 611/611 passed, zero failures and zero skips.

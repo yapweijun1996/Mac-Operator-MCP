@@ -4,8 +4,9 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Privileged helper authority-polling IPC verification: source revision
-`becea16` (building on `2660bdf`) adds a separately authenticated
-helper-to-Broker authority channel and wipes copied keys on setup failure.
+`1eea5cb` (building on `2660bdf` and `becea16`) adds a separately
+authenticated helper-to-Broker authority channel, wipes copied keys on setup
+failure, and strictly validates failure bodies.
 The Broker endpoint uses native/explicit peer authentication, a
 direction-specific HMAC envelope, durable replay admission, nested command
 authentication, and the Broker-backed Request/Approval/Job authority gate.

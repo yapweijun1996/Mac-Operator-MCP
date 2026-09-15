@@ -4,9 +4,10 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Privileged helper authority-polling IPC addendum: source revision `becea16`
-(building on `2660bdf`) adds an independent helper-to-Broker Unix socket and
-wipes copied keys on setup failure. Both peers are explicitly
+Privileged helper authority-polling IPC addendum: source revision `1eea5cb`
+(building on `2660bdf` and `becea16`) adds an independent helper-to-Broker Unix
+socket, wipes copied keys on setup failure, and strictly validates failure
+bodies. Both peers are explicitly
 authenticated, request/response HMAC domains are direction-separated, replay
 IDs/nonces use durable admission, and the Broker endpoint invokes the final
 Request/Approval/Job authority gate. The helper client fences socket identity,
