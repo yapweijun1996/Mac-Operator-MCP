@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Worker startup-failure addendum: `BoundedWorkerExecutor` now maps synchronous
+worker-factory exceptions to stable `EXECUTION_FAILED` without incrementing
+active capacity or exposing raw startup text. Worker-executor tests pass 8/8;
+build and diff checks pass. This closes error normalization only; worker
+sandboxing, credential separation, and production task-runner enablement
+remain open. Evidence:
+`evidence/2026-09-15-worker-startup-failure-boundary.md`.
+
 Edge JWKS response-status addendum: source revision `fc04641` requires the
 Edge-owned remote JWKS fetch to return a 2xx response before body handling or
 `jose` parsing. JWT tests pass 8/8, all Edge tests pass 41/41, and the

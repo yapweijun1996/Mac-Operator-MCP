@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Worker startup-failure addendum: `BoundedWorkerExecutor.run` catches a
+synchronous worker-factory exception, returns stable `EXECUTION_FAILED`, and
+does not consume active capacity. Worker-executor tests pass 8/8; build and
+diff checks pass. This does not prove worker sandboxing, credential
+separation, or production task-runner enablement. Evidence:
+`evidence/2026-09-15-worker-startup-failure-boundary.md`.
+
 Edge JWKS response-status addendum: source revision `fc04641` requires a 2xx
 remote JWKS response before body handling or `jose` parsing. JWT tests pass
 8/8, all Edge tests pass 41/41, and the non-overlapping physical-Darwin

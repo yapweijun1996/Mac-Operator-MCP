@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Worker startup-failure addendum: `BoundedWorkerExecutor` catches synchronous
+worker-factory failures and returns the stable `EXECUTION_FAILED` class while
+leaving capacity unchanged. Worker-executor tests pass 8/8 and the build and
+diff checks pass. This is a bounded error-normalization fix; worker
+sandboxing, credential/process isolation, and production task enablement
+remain governed by the existing MOP-045/MOP-086 gates. Evidence:
+`evidence/2026-09-15-worker-startup-failure-boundary.md`.
+
 Edge JWKS response-status addendum: source revision `fc04641` rejects any
 non-2xx remote JWKS response before body handling or key parsing. JWT tests
 pass 8/8, all Edge tests pass 41/41, and the non-overlapping physical-Darwin
