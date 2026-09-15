@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Packaged-service host addendum: source revision `42992e1` passes the physical
+Darwin `MOPS_REAL_INSTALL=1 node --test
+packages/broker/dist/packaged-service-smoke.test.js` smoke (1/1). The test
+bootstraps temporary-user Edge and Broker LaunchAgents, verifies executable and
+argument readback, PID/start-time identity, owner-only IPC sockets, authenticated
+Broker status, then boots both out and confirms label absence with temporary
+Keychain/data cleanup. It skips without mutation when fixed labels are already
+loaded. This closes the temporary packaged lifecycle slice only; Developer ID,
+production fixed-label ownership, deployment/rotation, and crash/remount
+durability remain open. Evidence:
+`evidence/2026-09-15-packaged-service-smoke.md`.
+
 Write-cleanup Job-recovery addendum: source revision `bfc9a28` persists the
 temporary device/inode before unlink and reconnects restart reconciliation to
 the explicit native quarantine recovery boundary. Recovery derives the exact

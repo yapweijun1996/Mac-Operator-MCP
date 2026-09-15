@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Packaged-service lifecycle verification at source revision `42992e1` passes
+1/1 on the physical Darwin host with
+`MOPS_REAL_INSTALL=1 node --test
+packages/broker/dist/packaged-service-smoke.test.js`. The isolated smoke
+bootstraps temporary-user Edge and Broker LaunchAgents, authenticates the
+Broker status readback, verifies executable/argument and PID identity, checks
+owner-only sockets, then boots both services out and confirms absence. A
+preflight skips without mutation if the fixed labels are already loaded. This
+is temporary-user lifecycle evidence, not Developer ID/provenance, production
+fixed-label ownership, or crash/remount durability. Evidence:
+`evidence/2026-09-15-packaged-service-smoke.md`.
+
 Write-cleanup Job-recovery verification at source revision `bfc9a28` persists
 the exact temporary device/inode before the unlink boundary and reconnects
 restart reconciliation to identity/age-gated native quarantine recovery. The

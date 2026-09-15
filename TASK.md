@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Packaged-service host addendum: source revision `42992e1` passes the physical
+Darwin `MOPS_REAL_INSTALL=1 node --test
+packages/broker/dist/packaged-service-smoke.test.js` smoke (1/1). Temporary
+user-domain Edge and Broker LaunchAgents bootstrap, authenticate, expose the
+expected sockets/status, and cleanly boot out with label-absence readback.
+Already-loaded fixed labels are not mutated. This closes temporary lifecycle
+evidence only; Developer ID/provenance, production service ownership,
+deployment/rotation, and crash/remount durability remain open. Evidence:
+`evidence/2026-09-15-packaged-service-smoke.md`.
+
 Write-cleanup Job-recovery addendum: commit `bfc9a28` records the exact
 temporary device/inode before unlink and reconnects restart reconciliation to
 the explicit native quarantine recovery boundary. Only unique stale
