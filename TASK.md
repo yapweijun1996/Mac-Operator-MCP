@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox-root identity addendum: source revision `f562bc2` binds every
+Broker-owned task filesystem root to a device/inode/mode snapshot, with
+startup and post-execution rechecks alongside the existing volume identity
+guard. A physical-Darwin regression replaces a non-cwd allowed root and
+rejects the synthetic success; the complete suite passes 604/604 with
+0 skipped tests. This closes root-path swap detection only; atomic descriptor
+execution and in-syscall remount resistance remain open. Evidence:
+`evidence/2026-09-15-sandbox-root-identity.md`.
+
 Sandbox-task path addendum: source revision `2599502` extends process identity
 binding into `SandboxExecTaskRunner`, covering the profile's actual executable
 and cwd in addition to the outer `sandbox-exec` process. Device/inode/mode

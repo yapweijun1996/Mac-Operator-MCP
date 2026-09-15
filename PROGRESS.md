@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox-root identity addendum: source revision `f562bc2` extends the task
+boundary from volume identity to each unique Broker-owned filesystem-root
+directory. Device/inode/mode snapshots are captured before dispatch and
+rechecked through awaited startup ownership and final execution readback;
+volume identity checks remain in place. A Darwin regression swaps a non-cwd
+allowed root and proves the runner rejects it. The complete physical-Darwin
+regression passes 604/604 with 0 skipped tests. This detects root-path swaps in
+the implemented windows but is not an in-syscall remount or kernel descriptor
+proof. Evidence: `evidence/2026-09-15-sandbox-root-identity.md`.
+
 Sandbox-task path addendum: source revision `2599502` reuses the Broker-owned
 process path identity gate for the executable and cwd embedded inside a
 `sandbox-exec` task profile. The runner captures device/inode/mode before

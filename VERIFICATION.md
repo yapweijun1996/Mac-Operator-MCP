@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Sandbox-root identity addendum: source revision `f562bc2` captures every
+unique task filesystem-root directory's device/inode/mode identity and
+rechecks it after startup ownership capture and after execution. A non-cwd
+root replacement is rejected with stable `POLICY_DENIED`; the physical-Darwin
+suite passes 604/604 with 0 skipped tests. Build, typecheck, lint, contract
+verification, native canonical probe, and diff checks pass. This closes the
+implemented root-path swap detection boundary, not in-syscall remount or
+kernel-held descriptor atomicity. Evidence:
+`evidence/2026-09-15-sandbox-root-identity.md`.
+
 Sandbox-task path addendum: source revision `2599502` binds the actual task
 executable and cwd carried inside the `sandbox-exec` argument vector to
 Broker-captured device/inode/mode identities. The startup callback is awaited

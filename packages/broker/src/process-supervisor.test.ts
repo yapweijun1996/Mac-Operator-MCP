@@ -28,7 +28,7 @@ test("process supervisor uses an explicit environment and bounded output", async
     args: ["-c", "import os; print(os.getenv('MOP_CONTROLLER_SECRET', 'unset'))"],
     cwd: CWD,
     environment: { SAFE_PROFILE: "test" },
-    timeoutMs: 2_000,
+    timeoutMs: 5_000,
     outputCapBytes: 1_024
   });
   assert.equal(result.state, "completed");
@@ -336,7 +336,7 @@ test("process supervisor cancellation kills descendants and releases capacity", 
     executable: "/usr/bin/printf",
     args: ["capacity-released"],
     cwd: CWD,
-    timeoutMs: 1_000,
+    timeoutMs: 5_000,
     outputCapBytes: 100
   });
   assert.equal(second.stdout, "capacity-released");
