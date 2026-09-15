@@ -304,10 +304,12 @@ export function authenticateBrokerStatusRequest(
 }
 
 export function validateUnsignedBrokerStatusRequest(request: UnsignedBrokerStatusRequest): void {
-  const keys = request !== null && typeof request === "object" && !Array.isArray(request) ? Object.keys(request) : [];
   const allowed = ["protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind"];
+  if (!isPlainDataRecord(request)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Broker status request fields are malformed");
+  }
+  const keys = Object.keys(request);
   if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
-      request === null || typeof request !== "object" || Array.isArray(request) ||
       request.protocolVersion !== PROTOCOL_VERSION || request.contractVersion !== CONTRACT_VERSION ||
       !STATUS_REQUEST_ID_PATTERN.test(request.requestId) || !STATUS_NONCE_PATTERN.test(request.nonce) ||
       !Number.isSafeInteger(request.timestampMs) || request.timestampMs < 0 ||

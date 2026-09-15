@@ -12,6 +12,7 @@ import {
   BrokerStatusIpcServer,
   readBrokerStatus,
   signBrokerStatusRequest,
+  validateUnsignedBrokerStatusRequest,
   type BrokerStatusResponse,
   type UnsignedBrokerStatusRequest
 } from "./broker-status-ipc.js";
@@ -33,6 +34,21 @@ test("Broker status parser rejects accessor request fields", () => {
   Object.defineProperty(signed, "kind", { enumerable: true, get: () => "broker_status" });
   assert.throws(
     () => authenticateBrokerStatusRequest(signed, key, NOW),
+    (error: unknown) => error instanceof Error && "errorClass" in error &&
+      (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
+  );
+  const accessor = { ...request } as Record<string, unknown>;
+  Object.defineProperty(accessor, "kind", { enumerable: true, get: () => "broker_status" });
+  assert.throws(
+    () => validateUnsignedBrokerStatusRequest(accessor as never),
+    (error: unknown) => error instanceof Error && "errorClass" in error &&
+      (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
+  );
+  const inherited = Object.create({ kind: "broker_status" }) as Record<string, unknown>;
+  Object.assign(inherited, request);
+  delete inherited.kind;
+  assert.throws(
+    () => validateUnsignedBrokerStatusRequest(inherited as never),
     (error: unknown) => error instanceof Error && "errorClass" in error &&
       (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
   );
