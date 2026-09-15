@@ -54,6 +54,24 @@ test("unknown and expired Edge key identities fail closed", () => {
   assert.throws(() => keyring.keyFor(expired, NOW), (error: unknown) => errorClass(error) === "AUTH_EXPIRED");
 });
 
+test("Edge keyring rejects malformed identities before loading authority", () => {
+  const key = randomBytes(32);
+  for (const record of [
+    { edgeId: "../edge", keyId: "edge-key-1" },
+    { edgeId: "edge-1", keyId: "../key" },
+    { edgeId: "edge-1", keyId: "edge/key" },
+    { edgeId: "edge-1", keyId: "" },
+    { edgeId: `edge-${"x".repeat(125)}`, keyId: "edge-key-1" }
+  ]) {
+    assert.throws(() => new EdgeKeyring([{
+      ...record,
+      key,
+      notBeforeMs: NOW - 1_000,
+      expiresAtMs: NOW + 60_000
+    }]), /identity is malformed/u);
+  }
+});
+
 test("Edge keyring disposal removes loaded authentication authority", () => {
   const key = randomBytes(32);
   const keyring = new EdgeKeyring([{

@@ -14,6 +14,7 @@ import {
   type BrokerBackupOptions,
   type BrokerBackupPruneResult
 } from "./persistence-backup.js";
+import { isValidEdgeId } from "./edge-keyring.js";
 
 export type SwitchName = "global" | "mutations" | "process" | "network" | "gui" | "destructive" | "privileged";
 const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
@@ -3388,7 +3389,7 @@ function mapApproval(row: ApprovalRow): ApprovalRecord {
 
 function mapJob(row: JobRow): BrokerJob {
   if (row.owner_edge_id !== null &&
-      (typeof row.owner_edge_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_edge_id))) {
+      (typeof row.owner_edge_id !== "string" || !isValidEdgeId(row.owner_edge_id))) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job Edge provenance is malformed");
   }
   if (row.owner_edge_key_id !== null &&
@@ -3426,7 +3427,7 @@ function mapJob(row: JobRow): BrokerJob {
 
 function validateJobCreation(input: CreateJobInput): void {
   if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(input.jobId) ||
-      (input.edgeId !== undefined && !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.edgeId)) ||
+      (input.edgeId !== undefined && !isValidEdgeId(input.edgeId)) ||
       (input.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.edgeKeyId, input.edgeId)) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.ownerPrincipalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.ownerSessionId) ||
@@ -3451,8 +3452,8 @@ function validateJobCreation(input: CreateJobInput): void {
 }
 
 function validEdgeKeyIdentity(value: unknown, edgeId: string | null | undefined): value is string {
-  if (typeof value !== "string" || typeof edgeId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(edgeId) ||
-      !/^[A-Za-z0-9._:@/-]{1,256}$/u.test(value) || !value.startsWith(`${edgeId}:`)) return false;
+  if (typeof value !== "string" || !isValidEdgeId(edgeId) ||
+      !/^[A-Za-z0-9._:-]{1,256}$/u.test(value) || !value.startsWith(`${edgeId}:`)) return false;
   return EDGE_KEY_ID_PATTERN.test(value.slice(edgeId.length + 1));
 }
 

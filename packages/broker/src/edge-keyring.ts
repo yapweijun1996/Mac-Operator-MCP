@@ -8,6 +8,18 @@ export interface EdgeAuthenticationKey {
   expiresAtMs: number;
 }
 
+/** Canonical bounded identities used by request authentication and revocation. */
+export const EDGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+export const EDGE_KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+
+export function isValidEdgeId(value: unknown): value is string {
+  return typeof value === "string" && EDGE_ID_PATTERN.test(value);
+}
+
+export function isValidEdgeKeyId(value: unknown): value is string {
+  return typeof value === "string" && EDGE_KEY_ID_PATTERN.test(value);
+}
+
 export class EdgeKeyring {
   private readonly keys = new Map<string, EdgeAuthenticationKey>();
 
@@ -16,6 +28,9 @@ export class EdgeKeyring {
   }
 
   add(record: EdgeAuthenticationKey): void {
+    if (!isValidEdgeId(record.edgeId) || !isValidEdgeKeyId(record.keyId)) {
+      throw new Error("Edge authentication key identity is malformed");
+    }
     if (record.key.byteLength < 32) throw new Error("Edge authentication key must contain at least 32 bytes");
     if (record.expiresAtMs <= record.notBeforeMs) throw new Error("Edge authentication key validity window is invalid");
     const identity = keyIdentity(record.edgeId, record.keyId);

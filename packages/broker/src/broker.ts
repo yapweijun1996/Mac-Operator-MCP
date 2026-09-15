@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
 import type { BrokerJob, BrokerStore, GuestTaskJobMetadata, JobLease, WriteJobMetadata } from "./persistence.js";
-import { EdgeKeyring, keyIdentity } from "./edge-keyring.js";
+import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
   authorizeTarget,
@@ -635,7 +635,7 @@ export class Broker {
    * check instead of publishing a late success.
    */
   revokeEdge(edgeId: string, reason = "Edge peer process identity was lost", nowMs = this.now()): void {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(edgeId)) {
+    if (!isValidEdgeId(edgeId)) {
       throw new Error("Edge identity is invalid");
     }
     this.options.store.revoke("edge", edgeId, reason, nowMs);

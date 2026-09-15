@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, open, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { BrokerError, canonicalJson, parseJsonUtf8Strict, sha256 } from "@mac-operator/contracts";
-import { EdgeKeyring, type EdgeAuthenticationKey } from "./edge-keyring.js";
+import { EdgeKeyring, isValidEdgeId, isValidEdgeKeyId, type EdgeAuthenticationKey } from "./edge-keyring.js";
 import {
   assertProtectedSecretDirectory,
   loadAuthenticationKey,
@@ -255,8 +255,8 @@ function validateEntry(value: unknown): void {
     typeof record.service === "string" && /^com\.mac-operator\.[A-Za-z0-9.-]{1,96}$/u.test(record.service) &&
     typeof record.account === "string" && /^[A-Za-z0-9._:-]{1,128}$/u.test(record.account);
   if (Object.keys(record).some((key) => !ENTRY_KEYS.has(key)) ||
-      typeof record.edgeId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(record.edgeId) ||
-      typeof record.keyId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(record.keyId) ||
+      !isValidEdgeId(record.edgeId) ||
+      !isValidEdgeKeyId(record.keyId) ||
       typeof record.keyDigest !== "string" || !/^[a-f0-9]{64}$/u.test(record.keyDigest) ||
       (!fileSource && !keychainSource) ||
       !Number.isSafeInteger(record.notBeforeMs) || (record.notBeforeMs as number) < 0 ||
