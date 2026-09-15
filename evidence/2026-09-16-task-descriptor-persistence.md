@@ -4,7 +4,8 @@ Date: 2026-09-16
 Source revision: `0229fe3`
 Host: Darwin 25.2.0, arm64, Node v25.5.0
 
-Schema alignment revision: the versioned ledger schema now accepts the
+Schema alignment revision: commit `1cfbf70` makes the versioned ledger schema
+accept the
 optional `taskDescriptorDigest` and host-owned `ownershipProof` process
 metadata fields; runtime validation remains authoritative for cross-field
 invariants and legacy-row compatibility.
