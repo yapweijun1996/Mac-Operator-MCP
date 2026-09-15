@@ -3501,6 +3501,7 @@ function validateStoredRequestState(row: RequestRow): void {
 }
 
 function mapApproval(row: ApprovalRow): ApprovalRecord {
+  validateStoredApproval(row);
   return {
     approvalId: row.approval_id,
     approverPrincipalId: row.approver_principal_id,
@@ -3523,6 +3524,62 @@ function mapApproval(row: ApprovalRow): ApprovalRecord {
     revocationReason: row.revocation_reason,
     revision: row.revision
   };
+}
+
+/**
+ * Validate a durable Approval before it can influence intent admission or
+ * revocation. SQLite CHECK constraints cover only a few scalar fields; the
+ * lifecycle counters, timestamps, and nullable consumption/revocation fields
+ * must still describe one coherent single-use approval after a crash,
+ * migration, or direct database tampering.
+ */
+function validateStoredApproval(row: ApprovalRow): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Approval state invariants are malformed");
+  };
+  const bounded = (value: unknown, maxLength: number): value is string =>
+    typeof value === "string" && value.length >= 1 && value.length <= maxLength && !value.includes("\0");
+  const timestamp = (value: number | null): boolean =>
+    value === null || (Number.isSafeInteger(value) && value >= 0);
+  const requestId = (value: string | null): boolean =>
+    value === null || /^[A-Za-z0-9._:@/+-]{1,256}$/u.test(value);
+  const approvalClass = ["trusted_write", "trusted_gui", "trusted_profile", "explicit_privileged_policy"];
+
+  if (!validApprovalId(row.approval_id) ||
+      !bounded(row.approver_principal_id, 128) || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.approver_principal_id) ||
+      !bounded(row.requesting_principal_id, 128) || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.requesting_principal_id) ||
+      !/^mac_[a-z0-9_]{1,123}$/u.test(row.tool) ||
+      !bounded(row.contract_version, 128) || !/^\d+\.\d+$/u.test(row.contract_version) ||
+      !bounded(row.target_kind, 64) || typeof row.target_ref !== "string" || !validApprovalTarget(row.target_kind, row.target_ref) ||
+      !/^[a-f0-9]{64}$/u.test(row.payload_digest) ||
+      !bounded(row.policy_version, 128) || !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(row.policy_version) ||
+      !approvalClass.includes(row.approval_class) ||
+      (row.unattended !== 0 && row.unattended !== 1) ||
+      !Number.isSafeInteger(row.issued_at_ms) || row.issued_at_ms < 0 ||
+      !Number.isSafeInteger(row.expires_at_ms) || row.expires_at_ms <= row.issued_at_ms ||
+      row.use_limit !== 1 || (row.used_count !== 0 && row.used_count !== 1) ||
+      !timestamp(row.last_consumed_at_ms) || !requestId(row.last_request_id) ||
+      !timestamp(row.revoked_at_ms) ||
+      (row.revocation_reason !== null && (!/^[A-Z0-9_:-]{1,64}$/u.test(row.revocation_reason))) ||
+      !Number.isSafeInteger(row.revision) || row.revision < 0) {
+    fail();
+  }
+
+  if (row.used_count === 0) {
+    if (row.last_consumed_at_ms !== null || row.last_request_id !== null) fail();
+  } else if (row.last_consumed_at_ms === null || row.last_request_id === null ||
+             row.last_consumed_at_ms < row.issued_at_ms || row.last_consumed_at_ms >= row.expires_at_ms) {
+    fail();
+  }
+
+  if (row.revoked_at_ms === null) {
+    if (row.revocation_reason !== null) fail();
+  } else if (row.revoked_at_ms < row.issued_at_ms || row.revocation_reason === null) {
+    fail();
+  }
+
+  const expectedRevision = row.used_count + (row.revoked_at_ms === null ? 0 : 1);
+  if (row.revision !== expectedRevision) fail();
 }
 
 function mapJob(row: JobRow): BrokerJob {
