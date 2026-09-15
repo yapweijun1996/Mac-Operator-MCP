@@ -16,6 +16,13 @@ startup path denies an approved read of the protected Broker database with
 requires independent host evidence. Evidence:
 `evidence/2026-09-15-task-profile-startup-wiring.md`.
 
+Task-profile regex-safety addendum: source revision `c637088` restricts
+host-owned argument patterns to a bounded anchored fragment without groups,
+alternation, or backreferences before JavaScript compilation. Nested and
+oversized patterns fail closed; task-profile tests pass 4/4. This closes only
+the profile-configuration regex DoS boundary, not production task enablement.
+Evidence: `evidence/2026-09-15-task-profile-regex-safety.md`.
+
 Sandbox startup-wiring addendum: source revision `2e605ea` connects the
 explicit host sandbox runner seam to Broker service assembly and always merges
 validated package/data/runtime roots into its protected set. Competing

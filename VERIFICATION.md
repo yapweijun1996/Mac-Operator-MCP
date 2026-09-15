@@ -15,6 +15,13 @@ with `VERIFICATION_FAILED` and a failed Job. Credential/process isolation and
 production `mac_task_run` enablement remain open. Evidence:
 `evidence/2026-09-15-task-profile-startup-wiring.md`.
 
+Task-profile regex-safety addendum: source revision `c637088` rejects
+oversized, nested-group, alternation, and backreference-bearing argument
+patterns before compilation, while preserving the bounded anchored patterns
+used by current profiles. Task-profile tests pass 4/4; production sandbox and
+descriptor/fexec evidence remain open. Evidence:
+`evidence/2026-09-15-task-profile-regex-safety.md`.
+
 Sandbox startup-wiring addendum: source revision `2e605ea` gives service
 startup an explicit host-only sandbox runner seam, derives protected
 package/data/runtime roots, and rejects competing virtualization and sandbox
