@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Native Node runtime-binding verification at source revision `54d4590`: all
+three Broker native addons export the build-time Node version and each loader
+requires exact equality with the running `process.versions.node` after the
+existing N-API checks. The physical Darwin arm64 build and focused native
+loader/boundary suite pass 22/22 with 0 failures and 0 skips; typecheck, lint,
+runtime export readback, and diff checks pass. Rebuilding remains required
+after Node upgrades; Developer ID provenance and installed deployment remain
+separate release gates. Evidence:
+`evidence/2026-09-15-native-node-runtime-binding.md`.
+
 Edge runtime contract-integrity verification at source revision `d35f1f7`:
 the Edge loader requires the complete governance envelope for every contract,
 including known scopes, target type, bounded budgets, independent policy

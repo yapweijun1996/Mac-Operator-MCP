@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Native Node runtime-binding addendum: source revision `54d4590` makes all three
+Broker native addons export their build-time Node version and requires exact
+equality with the running `process.versions.node`, in addition to N-API
+compatibility. Malformed or mismatched versions fail closed before loading.
+The physical Darwin arm64 build and focused native loader regression pass
+22/22; typecheck, lint, and diff checks pass. This closes runtime-version
+selection for the local artifacts but requires a rebuild after Node upgrades
+and does not close Developer ID provenance or installed deployment evidence.
+Evidence: `evidence/2026-09-15-native-node-runtime-binding.md`.
+
 Edge runtime contract-integrity addendum: source revision `d35f1f7` makes the
 runtime contract registry fail closed unless each loaded tool has the complete
 versioned governance envelope: known scopes, normalized target, bounded

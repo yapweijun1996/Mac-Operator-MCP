@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Native Node runtime-binding addendum: commit `54d4590` exports the exact
+build-time Node version from the peer-credentials, read-only virtualization,
+and virtualization lifecycle addons. Loaders require exact equality with the
+running Node version after N-API validation; malformed or mismatched artifacts
+fail closed. Build and the focused physical native suite pass 22/22, with
+typecheck, lint, runtime export readback, and diff checks passing. Rebuilds are
+required on Node upgrades; Developer ID provenance and installed deployment
+evidence remain open. Evidence:
+`evidence/2026-09-15-native-node-runtime-binding.md`.
+
 Edge runtime contract-integrity addendum: source revision `d35f1f7` requires
 the complete versioned governance envelope at runtime before MCP registration,
 including known scopes, normalized target, bounded budgets, independent
