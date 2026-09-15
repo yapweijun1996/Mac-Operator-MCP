@@ -12,9 +12,10 @@ Every model-facing tool is a capability request, never direct authority. The Edg
 
 Each contract declares `tool_name`, capability level, safety class, required scopes, normalized target type, timeout, output cap, network policy, filesystem policy, secret policy, approval policy, idempotency, structured postcondition verification, audit class, `tool_delivery_wave`, and implementation status.
 
-The top-level `$schema` identity is mandatory and must match the repository
-contract schema. The Edge loader and machine-readable validator both reject a
-contract that omits it, preventing schema-version ambiguity at startup.
+The top-level `$schema` identity is mandatory and must equal
+`./tool-contract.schema.json`. The Edge loader and machine-readable validator
+both reject omitted or substituted identities, preventing schema-version
+ambiguity at startup.
 
 ## Audit-class taxonomy
 

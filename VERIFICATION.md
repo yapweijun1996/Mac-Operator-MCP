@@ -3,10 +3,10 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Contract-schema identity verification at source revision `70302e0`: the
+Contract-schema identity verification at source revision `f7cd4fe`: the
 machine-readable tool-contract schema now requires the top-level `$schema`
 identity already enforced by the Edge loader. The focused contract-registry
-suite passes 9/9 and `npm run verify:contracts` validates 44 unique contracts;
+suite passes 10/10 and `npm run verify:contracts` validates 44 unique contracts;
 no runtime or host configuration changed. Evidence:
 `evidence/2026-09-16-contract-schema-identity.md`.
 
