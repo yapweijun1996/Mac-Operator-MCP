@@ -41,6 +41,7 @@ const base: PrivilegedHelperPackagePlanInput = {
   helperKeyConfigPath: `${root}/config/helper-keys.json`,
   helperSocketPath: `${root}/run/helper.sock`,
   brokerSocketPath: "/Users/operator/Library/Application Support/MacOperator/run/broker.sock",
+  helperAuthoritySocketPath: "/Users/operator/Library/Application Support/MacOperator/run/helper-authority.sock",
   brokerPeer: { uid: 501, gid: 20 },
   sourceRevision: "0123456789abcdef0123456789abcdef01234567",
   contractVersion: "0.1",
@@ -63,6 +64,7 @@ test("privileged helper package plan is a fixed root-domain native LaunchDaemon"
   assert.equal(plan.install.file.ownerUid, 0);
   assert.equal(plan.install.file.mode, 0o600);
   assert.equal(plan.adapterAvailable, false);
+  assert.equal(plan.helperAuthoritySocketPath, base.helperAuthoritySocketPath);
   assert.deepEqual(plan.enabledCapabilities, []);
   assert.match(plan.renderedPlist, /<key>UserName<\/key><string>root<\/string>/u);
   assert.doesNotMatch(plan.renderedPlist, /EnvironmentVariables|Shell/u);
@@ -91,6 +93,14 @@ test("privileged helper package plan rejects user-domain, interpreter, socket, a
   );
   assert.throws(
     () => buildPrivilegedHelperPackagePlan({ ...base, brokerSocketPath: base.helperSocketPath }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_SOCKET_BOUNDARY"
+  );
+  assert.throws(
+    () => buildPrivilegedHelperPackagePlan({ ...base, helperAuthoritySocketPath: base.helperSocketPath }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_SOCKET_BOUNDARY"
+  );
+  assert.throws(
+    () => buildPrivilegedHelperPackagePlan({ ...base, helperAuthoritySocketPath: `${root}/run/authority.sock` }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_SOCKET_BOUNDARY"
   );
   assert.throws(
@@ -132,6 +142,7 @@ test("privileged helper package readback binds root service, Broker peer, and di
       adapterAvailable: false as const,
       helperSocketPath: plan.helperSocketPath,
       brokerSocketPath: plan.brokerSocketPath,
+      helperAuthoritySocketPath: plan.helperAuthoritySocketPath,
       brokerPeerUid: plan.brokerPeer.uid,
       brokerPeerGid: plan.brokerPeer.gid ?? null,
       sourceRevision: plan.sourceRevision,
@@ -289,6 +300,7 @@ test("privileged helper host observer wires bounded launchd and native readback 
     adapterAvailable: false as const,
     helperSocketPath: plan.helperSocketPath,
     brokerSocketPath: plan.brokerSocketPath,
+    helperAuthoritySocketPath: plan.helperAuthoritySocketPath,
     brokerPeerUid: plan.brokerPeer.uid,
     brokerPeerGid: plan.brokerPeer.gid ?? null,
     sourceRevision: plan.sourceRevision,
@@ -364,6 +376,7 @@ test("privileged helper host observer can read runtime metadata through authenti
       adapterAvailable: false as const,
       helperSocketPath: plan.helperSocketPath,
       brokerSocketPath: plan.brokerSocketPath,
+      helperAuthoritySocketPath: plan.helperAuthoritySocketPath,
       brokerPeerUid: plan.brokerPeer.uid,
       brokerPeerGid: plan.brokerPeer.gid ?? null,
       sourceRevision: plan.sourceRevision,

@@ -91,6 +91,8 @@ export interface PrivilegedHelperPackagePlanInput {
   helperKeyConfigPath: string;
   helperSocketPath: string;
   brokerSocketPath: string;
+  /** Broker-owned authority socket used by the root helper for live polling. */
+  helperAuthoritySocketPath: string;
   brokerPeer: PrivilegedHelperBrokerPeerExpectation;
   sourceRevision: string;
   contractVersion: string;
@@ -122,6 +124,7 @@ export interface PrivilegedHelperRuntimeReadback {
   adapterAvailable: false;
   helperSocketPath: string;
   brokerSocketPath: string;
+  helperAuthoritySocketPath: string;
   brokerPeerUid: number;
   brokerPeerGid: number | null;
   sourceRevision: string;
@@ -180,6 +183,7 @@ export interface PrivilegedHelperPackagePlan {
   helperKeyConfigPath: string;
   helperSocketPath: string;
   brokerSocketPath: string;
+  helperAuthoritySocketPath: string;
   brokerPeer: PrivilegedHelperBrokerPeerExpectation;
   sourceRevision: string;
   contractVersion: string;
@@ -311,6 +315,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
   const helperKeyConfigPath = canonicalPath(input.helperKeyConfigPath, "helper key config");
   const helperSocketPath = canonicalPath(input.helperSocketPath, "helper socket");
   const brokerSocketPath = canonicalPath(input.brokerSocketPath, "Broker socket");
+  const helperAuthoritySocketPath = canonicalPath(input.helperAuthoritySocketPath, "helper authority socket");
   for (const [path, label] of [
     [signedArtifactPath, "signed helper artifact"],
     [helperKeyConfigPath, "helper key config"],
@@ -323,7 +328,12 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
       fail("INVALID_PACKAGE_PATH", `${label} must remain inside the helper root`);
     }
   }
-  if (helperSocketPath === brokerSocketPath) fail("INVALID_SOCKET_BOUNDARY", "helper and Broker sockets must be distinct");
+  if (helperSocketPath === brokerSocketPath || helperSocketPath === helperAuthoritySocketPath || brokerSocketPath === helperAuthoritySocketPath) {
+    fail("INVALID_SOCKET_BOUNDARY", "helper, Broker, and authority sockets must be distinct");
+  }
+  if (isDescendant(helperRoot, helperAuthoritySocketPath, false)) {
+    fail("INVALID_SOCKET_BOUNDARY", "helper authority socket must remain outside the root-owned helper package");
+  }
   validatePeerExpectation(input.brokerPeer);
   validateRevision(input.sourceRevision, "source revision");
   validateVersion(input.contractVersion, "contract version");
@@ -362,6 +372,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
     helperKeyConfigPath,
     helperSocketPath,
     brokerSocketPath,
+    helperAuthoritySocketPath,
     brokerPeer: { uid: input.brokerPeer.uid, ...(input.brokerPeer.gid === undefined ? {} : { gid: input.brokerPeer.gid }) },
     sourceRevision: input.sourceRevision,
     contractVersion: input.contractVersion,
@@ -381,6 +392,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
       "verify the helper artifact is Developer ID signed with the exact helper identifier before any root-domain write",
       "verify helper root, key config, socket parent, executable, and logs are root-owned regular paths with no symlinks or group/other writes",
       "verify the Broker peer UID/GID and native PID/start-time identity are captured by helper startup before accepting a request",
+      "verify the Broker-owned authority socket is distinct from the root helper socket and is authenticated before enabled dispatch",
       operation === "install" ? "verify the exact system LaunchDaemon is absent before installation" :
         operation === "uninstall" ? "verify the exact system LaunchDaemon identity before uninstall" :
           `verify the existing helper source revision matches ${expectedPreviousSourceRevision}`,
@@ -850,7 +862,9 @@ export function validatePrivilegedHelperPackageReadback(
       readback.helper.component !== "mac-operator-privileged-helper" || readback.helper.state !== "running" ||
       readback.helper.runtimeState !== "running" || readback.helper.nativeTransportRequired !== true ||
       readback.helper.adapterAvailable !== false || readback.helper.helperSocketPath !== plan.helperSocketPath ||
-      readback.helper.brokerSocketPath !== plan.brokerSocketPath || readback.helper.brokerPeerUid !== plan.brokerPeer.uid ||
+      readback.helper.brokerSocketPath !== plan.brokerSocketPath ||
+      readback.helper.helperAuthoritySocketPath !== plan.helperAuthoritySocketPath ||
+      readback.helper.brokerPeerUid !== plan.brokerPeer.uid ||
       readback.helper.brokerPeerGid !== (plan.brokerPeer.gid ?? null) ||
       readback.helper.sourceRevision !== plan.sourceRevision || readback.helper.contractVersion !== plan.contractVersion ||
       readback.helper.policyVersion !== plan.policyVersion || !Array.isArray(readback.helper.enabledCapabilities) ||

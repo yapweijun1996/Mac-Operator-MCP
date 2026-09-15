@@ -117,6 +117,8 @@ export interface PrivilegedHelperStatusReadback {
   adapterAvailable: false;
   helperSocketPath: string;
   brokerSocketPath: string;
+  /** Broker-owned authority socket polled by the root helper during work. */
+  helperAuthoritySocketPath: string;
   brokerPeerUid: number;
   brokerPeerGid: number | null;
   sourceRevision: string;
@@ -852,7 +854,7 @@ export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedP
 }
 
 export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperStatusReadback): PrivilegedHelperStatusReadback {
-  const allowed = ["component", "state", "runtimeState", "nativeTransportRequired", "adapterAvailable", "helperSocketPath", "brokerSocketPath", "brokerPeerUid", "brokerPeerGid", "sourceRevision", "contractVersion", "policyVersion", "enabledCapabilities"];
+  const allowed = ["component", "state", "runtimeState", "nativeTransportRequired", "adapterAvailable", "helperSocketPath", "brokerSocketPath", "helperAuthoritySocketPath", "brokerPeerUid", "brokerPeerGid", "sourceRevision", "contractVersion", "policyVersion", "enabledCapabilities"];
   if (!isPlainDataRecord(status)) {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper status readback is malformed");
   }
@@ -861,7 +863,10 @@ export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperS
       status.component !== "mac-operator-privileged-helper" || status.state !== "running" ||
       status.runtimeState !== "running" || status.nativeTransportRequired !== true ||
       status.adapterAvailable !== false || !canonicalStatusPath(status.helperSocketPath) ||
-      !canonicalStatusPath(status.brokerSocketPath) || status.helperSocketPath === status.brokerSocketPath ||
+      !canonicalStatusPath(status.brokerSocketPath) || !canonicalStatusPath(status.helperAuthoritySocketPath) ||
+      status.helperSocketPath === status.brokerSocketPath ||
+      status.helperSocketPath === status.helperAuthoritySocketPath ||
+      status.brokerSocketPath === status.helperAuthoritySocketPath ||
       !Number.isSafeInteger(status.brokerPeerUid) || status.brokerPeerUid < 1 || status.brokerPeerUid > 2_147_483_647 ||
       (status.brokerPeerGid !== null && (!Number.isSafeInteger(status.brokerPeerGid) || status.brokerPeerGid < 0 || status.brokerPeerGid > 2_147_483_647)) ||
       !/^[a-f0-9]{40}$/u.test(status.sourceRevision) ||

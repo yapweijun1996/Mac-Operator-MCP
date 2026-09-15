@@ -156,6 +156,7 @@ test("constructed helper server fences status reads after key revocation", async
         adapterAvailable: false as const,
         helperSocketPath: socketPath,
         brokerSocketPath,
+        helperAuthoritySocketPath: `${directory}/helper-authority.sock`,
         brokerPeerUid: 501,
         brokerPeerGid: 20,
         sourceRevision: "a".repeat(40),

@@ -105,7 +105,7 @@ async function sendStatus(socketPath: string, payload: unknown, suffix = ""): Pr
   });
 }
 
-function statusReadback(socketPath: string, brokerSocketPath: string): PrivilegedHelperStatusReadback {
+function statusReadback(socketPath: string, brokerSocketPath: string, helperAuthoritySocketPath = "/Users/operator/run/helper-authority.sock"): PrivilegedHelperStatusReadback {
   return {
     component: "mac-operator-privileged-helper",
     state: "running",
@@ -114,6 +114,7 @@ function statusReadback(socketPath: string, brokerSocketPath: string): Privilege
     adapterAvailable: false,
     helperSocketPath: socketPath,
     brokerSocketPath,
+    helperAuthoritySocketPath,
     brokerPeerUid: 501,
     brokerPeerGid: 20,
     sourceRevision: "a".repeat(40),
