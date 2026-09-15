@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged policy-state addendum: source revision `7926c99` gives all 44
+catalog tools explicit default-policy lifecycle records. The three L5 helper
+tools now carry their independent scopes, privileged family, target types,
+budgets, and explicit approval policy while remaining `implemented=false` and
+`enabled=false`; package targets are represented as a first-class Broker
+policy target. Focused policy and contract-conformance checks pass 10/10 with
+typecheck, lint, and diff checks passing. This does not enable helper
+operations or close root-domain signing/install evidence. Evidence:
+`evidence/2026-09-15-privileged-policy-state.md`.
+
 Physical secret-boundary regression addendum: source revision `356ebd4`
 passes the non-overlapping built suite 598/598 with zero skips and zero
 failures under `MOPS_REAL_SANDBOX=1`, `MOPS_REAL_KEYCHAIN=1`, and

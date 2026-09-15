@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged policy-state addendum: source revision `7926c99` gives all 44
+catalog tools explicit default-policy lifecycle records. The three L5 helper
+tools carry independent scopes, privileged family, target types, budgets, and
+explicit approval policy while remaining unimplemented and disabled; package
+targets are now first-class policy targets. Focused policy and
+contract-conformance checks pass 10/10. Root-domain signing, installation,
+and privileged enablement remain open. Evidence:
+`evidence/2026-09-15-privileged-policy-state.md`.
+
 Physical secret-boundary regression addendum: source revision `356ebd4`
 passes 598/598 non-overlapping built tests with zero skips and zero failures
 under all three physical gates. Real sandbox, temporary Keychain ACL, and

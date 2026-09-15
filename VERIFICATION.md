@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged policy-state verification: source revision `7926c99` represents all
+44 catalog tools in the default Broker policy and keeps the three privileged
+helper tools explicitly scoped but unimplemented and disabled. Policy and
+contract-conformance checks pass 10/10; this does not claim helper signing,
+root-domain installation, or privileged enablement. Evidence:
+`evidence/2026-09-15-privileged-policy-state.md`.
+
 Physical secret-boundary regression verification: source revision `356ebd4`
 passes 598/598 non-overlapping built tests with zero skips and zero failures
 under all three physical gates. Real sandbox, temporary Keychain ACL, and
