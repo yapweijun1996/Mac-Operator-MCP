@@ -67,6 +67,10 @@ test("HTTPS Edge normalizes case and rejects host-list syntax smuggling", () => 
     ...baseOptions(),
     allowedOrigins: ["client.example.test", " client.example.test"]
   }), /Origin allowlist contains an invalid hostname/u);
+
+  const accessorHosts = ["edge.example.test"] as string[];
+  Object.defineProperty(accessorHosts, "0", { enumerable: true, get: () => "edge.example.test" });
+  assert.throws(() => createHttpsMcpEdge({ ...baseOptions(), allowedHosts: accessorHosts }), /Host allowlist must not be empty/u);
 });
 
 test("official MCP client discovers Broker-enabled tools over HTTPS", async () => {

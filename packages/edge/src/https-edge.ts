@@ -18,6 +18,7 @@ import {
 import type { GovernedMcpServerOptions } from "./mcp-server.js";
 import { createGovernedMcpServerFactory } from "./mcp-server.js";
 import { FixedWindowRateLimiter, type RateLimitOptions } from "./rate-limiter.js";
+import { isPlainDataArray } from "./plain-record.js";
 
 const EDGE_REQUEST_TIMEOUT_MS = 30_000;
 const EDGE_HEADERS_TIMEOUT_MS = 10_000;
@@ -167,7 +168,7 @@ function validateHttpsUrl(value: unknown, label: string): URL {
 }
 
 function validateHostnameList(values: string[], label: string): string[] {
-  if (!Array.isArray(values) || values.length === 0) throw new Error(`${label} allowlist must not be empty`);
+  if (!isPlainDataArray(values, 64) || values.length === 0) throw new Error(`${label} allowlist must not be empty`);
   const normalized = values.map((value) => {
     if (typeof value !== "string" || value.length === 0 || value !== value.trim() || value.includes("\0")) {
       throw new Error(`${label} allowlist contains an invalid hostname`);

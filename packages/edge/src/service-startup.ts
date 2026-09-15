@@ -11,6 +11,7 @@ import { ToolContractRegistry } from "./contract-registry.js";
 import { createHttpsMcpEdge, type HttpsMcpEdge } from "./https-edge.js";
 import { createJwtAccessTokenVerifier } from "./jwt-verifier.js";
 import { loadProtectedTlsMaterial } from "./tls-material.js";
+import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -193,10 +194,10 @@ export async function loadEdgeServiceStartupConfig(path: string): Promise<EdgeSe
 }
 
 export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceStartupConfig {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new Error("Edge service startup config is malformed");
   }
-  const record = value as Record<string, unknown>;
+  const record = value;
   for (const key of Object.keys(record)) {
     if (!CONFIG_KEYS.has(key)) throw new Error(`Edge service startup config has an unknown field: ${key}`);
   }
@@ -460,7 +461,7 @@ function readHttpsUrl(value: unknown, label: string, requirePath: boolean): stri
 }
 
 function readHostList(value: unknown, label: string): string[] {
-  if (!Array.isArray(value) || value.length === 0) throw new Error(`Edge ${label} allowlist must not be empty`);
+  if (!isPlainDataArray(value, 64) || value.length === 0) throw new Error(`Edge ${label} allowlist must not be empty`);
   const normalized = value.map((entry) => {
     if (typeof entry !== "string" || entry.length === 0 || entry !== entry.trim() || /[\0\r\n]/u.test(entry)) {
       throw new Error(`Edge ${label} allowlist contains an invalid hostname`);

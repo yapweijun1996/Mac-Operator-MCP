@@ -27,6 +27,22 @@ test("Edge service startup config is strict, canonical, and root-bound", () => {
   assert.throws(() => validateEdgeServiceStartupConfig({ ...config, bindPort: 0 }), /out of bounds/u);
 });
 
+test("Edge service startup config rejects inherited, accessor, and sparse authority data", () => {
+  const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
+  const inherited = Object.create(config) as Record<string, unknown>;
+  assert.throws(() => validateEdgeServiceStartupConfig(inherited), /config is malformed/u);
+
+  const accessor = { ...config } as Record<string, unknown>;
+  Object.defineProperty(accessor, "bindPort", { enumerable: true, get: () => 44_321 });
+  assert.throws(() => validateEdgeServiceStartupConfig(accessor), /config is malformed/u);
+
+  const sparseHosts = new Array(1) as string[];
+  assert.throws(
+    () => validateEdgeServiceStartupConfig({ ...config, allowedHosts: sparseHosts }),
+    /allowlist must not be empty/u
+  );
+});
+
 test("Edge service startup config loader rejects weak and symlinked files", async () => {
   const root = await mkdtemp(join(tmpdir(), "mac-edge-config-loader-"));
   const configPath = join(root, "service.json");
