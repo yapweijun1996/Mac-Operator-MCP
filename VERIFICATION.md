@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Filesystem unlink orphan-recovery verification covers the native quarantine
+timestamp/basename fingerprint and explicit stale-artifact recovery. Recovery
+reopens the same local root and canonical parent, requires a unique regular
+single-link artifact with the recorded device/inode, preserves recent or
+ambiguous entries, and verifies durable absence after `unlinkat`/`fsync`.
+Build, lint, typecheck, diff checks, and the dedicated filesystem suite pass
+36/36, including the Darwin physical stale/recent/wrong-target probe.
+Production crash/remount evidence and persisted Job integration remain open.
+Evidence: `evidence/2026-09-15-filesystem-unlink-orphan-recovery.md`.
+
 Backup-quarantine age-test verification at source revision `4db2d0d` covers
 stale completion, recent quarantine preservation, and invalid timestamp
 fail-closed behavior. Build, lint, typecheck, and diff checks pass; the

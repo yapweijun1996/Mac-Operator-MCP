@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem unlink orphan-recovery addendum: the native adapter now uses
+timestamped quarantine names with a basename fingerprint and provides an
+explicit identity/age-gated recovery operation. The Broker boundary rejects
+malformed ages, root/deny-zone escapes, non-unique candidates, and identity
+mismatches; recent artifacts are preserved. Build, lint, typecheck, diff
+checks, and the dedicated 36-test filesystem suite pass, including the Darwin
+physical probe. Production crash/remount evidence and persisted Job
+integration remain open. Evidence:
+`evidence/2026-09-15-filesystem-unlink-orphan-recovery.md`.
+
 Backup-quarantine age-test addendum: commit `4db2d0d` covers stale deletion,
 recent quarantine preservation, and invalid timestamp rejection. Dedicated
 quarantine tests pass 3/3; native unlink recovery and production

@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Filesystem unlink orphan-recovery addendum: the native unlink boundary now
+records a timestamped, nonce-bearing basename fingerprint in its private
+quarantine name and exposes explicit recovery that requires the original
+device/inode, bounded age, same-root canonical parent, and a unique regular
+single-link match. Recent or ambiguous artifacts remain untouched. Build,
+lint, typecheck, diff checks, and the dedicated 36-test filesystem suite pass;
+the Darwin physical probe covers stale, recent, and wrong-target cases.
+Production crash/remount evidence and persisted Job integration remain open.
+Evidence: `evidence/2026-09-15-filesystem-unlink-orphan-recovery.md`.
+
 Backup-quarantine age-test addendum: source revision `4db2d0d` adds dedicated
 coverage for stale cleanup, recent-entry preservation, and invalid timestamp
 fail-closed behavior. Build, lint, typecheck, diff checks, and the 3-test
