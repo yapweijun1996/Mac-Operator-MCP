@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Persisted Job-output integrity addendum: commit `1cfc62c` revalidates Job
+stdout/stderr bounds and secret policy at startup, along with exit-code,
+cancellation-reason, and metadata-column types. Job-row/state tests pass 7/7;
+Request-link tests pass 3/3; the non-overlapping package regression passes 591
+total (585 pass, 6 skipped, 0 fail). Build, lint, and diff checks pass.
+Physical crash/old-worker ownership, credential rotation, remount durability,
+installed recovery, and independent review remain open. Evidence:
+`evidence/2026-09-15-job-output-integrity.md`.
+
 Request-link integrity addendum: commit `24c0641` binds Request-to-Job linkage
 to an existing Job whose owner, session, tool, target, policy, and Edge
 provenance match; missing or substituted Jobs fail with stable errors. Broker

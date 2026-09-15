@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Persisted Job-output integrity addendum: commit `1cfc62c` revalidates bounded,
+secret-free stdout/stderr plus exit-code, cancellation-reason, and metadata
+types before startup recovery or status publication. Job-row/state tests pass
+7/7 and Request-link tests pass 3/3; the non-overlapping package regression
+passes 591 total (585 passed, 6 explicitly skipped, 0 failed). This proves
+local persisted-output fencing only; crash recovery, old-worker ownership,
+credential rotation, remount durability, installed operation, and independent
+security review remain unverified. Evidence:
+`evidence/2026-09-15-job-output-integrity.md`.
+
 Request-link integrity addendum: commit `24c0641` validates Request-to-Job
 linkage inside the Broker transaction and cross-checks every persisted
 Approval/Job reference at startup. Missing references and owner/session/tool/
