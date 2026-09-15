@@ -231,79 +231,128 @@ test("Broker service startup restores signed authority before native runtime sta
       await assembly.close();
       assembly = undefined;
 
-    const taskRootPath = join(root, "task-root");
-    await mkdir(taskRootPath, { mode: 0o700 });
-    const taskRoot = await realpath(taskRootPath);
-    taskAssembly = await createBrokerServiceFromStartupConfig({
-      config,
-      now: () => now,
-      commandExecutor: new FakeLaunchdExecutor(`gui/${config.expectedEdgeUid}/com.mac-operator.edge`),
-      sandboxTaskRunner: {
-        enabled: true,
-        hostEvidenceAccepted: true,
-        allowedEnvironmentKeys: [],
-        isolationProof: startupSandboxProof()
-      },
-      taskProfileRegistry: new TaskProfileRegistry([startupTaskProfile(taskRoot)])
-    });
-    assert.equal(taskAssembly.sandboxTaskRunner?.available, true);
-    await taskAssembly.service.start();
+      const taskRootPath = join(root, "task-root");
+      await mkdir(taskRootPath, { mode: 0o700 });
+      const taskRoot = await realpath(taskRootPath);
+      taskAssembly = await createBrokerServiceFromStartupConfig({
+        config,
+        now: () => now,
+        commandExecutor: new FakeLaunchdExecutor(`gui/${config.expectedEdgeUid}/com.mac-operator.edge`),
+        sandboxTaskRunner: {
+          enabled: true,
+          hostEvidenceAccepted: true,
+          allowedEnvironmentKeys: [],
+          isolationProof: startupSandboxProof()
+        },
+        taskProfileRegistry: new TaskProfileRegistry([
+          startupTaskProfile(taskRoot),
+          startupProtectedReadProfile(taskRoot, config.brokerDatabasePath)
+        ])
+      });
+      assert.equal(taskAssembly.sandboxTaskRunner?.available, true);
+      await taskAssembly.service.start();
 
-    const argumentsValue = { profile: "tests.startup", cwd: taskRoot, args: [], async: false };
-    taskAssembly.store.issueApproval({
-      approvalId: "approval:startup-task",
-      approverPrincipalId: "operator-1",
-      requestingPrincipalId: "principal-1",
-      tool: "mac_task_run",
-      contractVersion: "0.1",
-      targetKind: "task_profile",
-      targetRef: "task_profile:tests.startup",
-      payloadDigest: sha256(canonicalJson(argumentsValue)),
-      policyVersion: "policy-1",
-      approvalClass: "trusted_profile",
-      unattended: false,
-      issuedAtMs: now - 1_000,
-      expiresAtMs: now + 60_000
-    });
-    const requestKey = await loadAuthenticationKey(keyPath);
-    const request = signRequest({
-      protocolVersion: "0.1",
-      requestId: "startup-task-request",
-      contractVersion: "0.1",
-      tool: "mac_task_run",
-      arguments: argumentsValue,
-      principal: {
-        principalId: "principal-1",
-        sessionId: "startup-task-session",
-        issuer: "test-issuer",
-        audience: "mac-operator-broker",
-        scopes: ["mac.control.read", "mac.task.run"],
+      const argumentsValue = { profile: "tests.startup", cwd: taskRoot, args: [], async: false };
+      taskAssembly.store.issueApproval({
+        approvalId: "approval:startup-task",
+        approverPrincipalId: "operator-1",
+        requestingPrincipalId: "principal-1",
+        tool: "mac_task_run",
+        contractVersion: "0.1",
+        targetKind: "task_profile",
+        targetRef: "task_profile:tests.startup",
+        payloadDigest: sha256(canonicalJson(argumentsValue)),
+        policyVersion: "policy-1",
+        approvalClass: "trusted_profile",
+        unattended: false,
         issuedAtMs: now - 1_000,
-        expiresAtMs: now + 60_000,
-        edgeId: "edge-1"
-      },
-      timestampMs: now,
-      nonce: "startup-task-nonce",
-      policyAudience: "mac-operator-broker",
-      policyVersion: "policy-1",
-      authenticationKeyId: "edge-key-1"
-    }, requestKey);
-    try {
-      const envelope = await sendNativeBrokerRequest(config.brokerSocketPath, request);
-      assert.equal(verifyBrokerResponse(request, envelope, requestKey), true);
-      assert.equal(envelope.response.ok, true, JSON.stringify(envelope.response));
-      if (envelope.response.ok) {
-        const data = envelope.response.data as { profile: string; stdout: string };
-        assert.equal(data.profile, "tests.startup");
-        assert.equal(data.stdout, "startup-sandbox\n");
-        assert.equal(envelope.response.verification.status, "verified");
+        expiresAtMs: now + 60_000
+      });
+      const requestKey = await loadAuthenticationKey(keyPath);
+      const request = signRequest({
+        protocolVersion: "0.1",
+        requestId: "startup-task-request",
+        contractVersion: "0.1",
+        tool: "mac_task_run",
+        arguments: argumentsValue,
+        principal: {
+          principalId: "principal-1",
+          sessionId: "startup-task-session",
+          issuer: "test-issuer",
+          audience: "mac-operator-broker",
+          scopes: ["mac.control.read", "mac.task.run"],
+          issuedAtMs: now - 1_000,
+          expiresAtMs: now + 60_000,
+          edgeId: "edge-1"
+        },
+        timestampMs: now,
+        nonce: "startup-task-nonce",
+        policyAudience: "mac-operator-broker",
+        policyVersion: "policy-1",
+        authenticationKeyId: "edge-key-1"
+      }, requestKey);
+      try {
+        const envelope = await sendNativeBrokerRequest(config.brokerSocketPath, request);
+        assert.equal(verifyBrokerResponse(request, envelope, requestKey), true);
+        assert.equal(envelope.response.ok, true, JSON.stringify(envelope.response));
+        if (envelope.response.ok) {
+          const data = envelope.response.data as { profile: string; stdout: string };
+          assert.equal(data.profile, "tests.startup");
+          assert.equal(data.stdout, "startup-sandbox\n");
+          assert.equal(envelope.response.verification.status, "verified");
+        }
+        const jobId = taskAssembly.store.requestRecord("startup-task-request")?.jobId;
+        assert.ok(jobId);
+        assert.equal(taskAssembly.store.ownedJob(jobId, "principal-1")?.state, "completed");
+
+        const protectedArguments = { profile: "tests.protected-read", cwd: taskRoot, args: [], async: false };
+        taskAssembly.store.issueApproval({
+          approvalId: "approval:startup-protected-read",
+          approverPrincipalId: "operator-1",
+          requestingPrincipalId: "principal-1",
+          tool: "mac_task_run",
+          contractVersion: "0.1",
+          targetKind: "task_profile",
+          targetRef: "task_profile:tests.protected-read",
+          payloadDigest: sha256(canonicalJson(protectedArguments)),
+          policyVersion: "policy-1",
+          approvalClass: "trusted_profile",
+          unattended: false,
+          issuedAtMs: now - 1_000,
+          expiresAtMs: now + 60_000
+        });
+        const protectedRequest = signRequest({
+          protocolVersion: "0.1",
+          requestId: "startup-protected-read-request",
+          contractVersion: "0.1",
+          tool: "mac_task_run",
+          arguments: protectedArguments,
+          principal: {
+            principalId: "principal-1",
+            sessionId: "startup-protected-read-session",
+            issuer: "test-issuer",
+            audience: "mac-operator-broker",
+            scopes: ["mac.control.read", "mac.task.run"],
+            issuedAtMs: now - 1_000,
+            expiresAtMs: now + 60_000,
+            edgeId: "edge-1"
+          },
+          timestampMs: now,
+          nonce: "startup-protected-read-nonce",
+          policyAudience: "mac-operator-broker",
+          policyVersion: "policy-1",
+          authenticationKeyId: "edge-key-1"
+        }, requestKey);
+        const protectedEnvelope = await sendNativeBrokerRequest(config.brokerSocketPath, protectedRequest);
+        assert.equal(verifyBrokerResponse(protectedRequest, protectedEnvelope, requestKey), true);
+        assert.equal(protectedEnvelope.response.ok, false);
+        assert.equal(protectedEnvelope.response.result_class, "VERIFICATION_FAILED");
+        const protectedJobId = taskAssembly.store.requestRecord("startup-protected-read-request")?.jobId;
+        assert.ok(protectedJobId);
+        assert.equal(taskAssembly.store.ownedJob(protectedJobId, "principal-1")?.state, "failed");
+      } finally {
+        requestKey.fill(0);
       }
-      const jobId = taskAssembly.store.requestRecord("startup-task-request")?.jobId;
-      assert.ok(jobId);
-      assert.equal(taskAssembly.store.ownedJob(jobId, "principal-1")?.state, "completed");
-    } finally {
-      requestKey.fill(0);
-    }
     }
   } finally {
     if (assembly) await assembly.close();
@@ -362,7 +411,10 @@ function policyDocument(now: number, options: { taskEnabled?: boolean } = {}): P
     principal_grants: [{ principal_id: "principal-1", issuer: "test-issuer", scopes, enabled: true }],
     target_rules: [
       { rule_id: "allow-host", effect: "allow", principal_id: "principal-1", scope: "mac.control.read", target: { kind: "host", reference: "broker" } },
-      ...(taskEnabled ? [{ rule_id: "allow-startup-task", effect: "allow" as const, principal_id: "principal-1", scope: "mac.task.run" as const, target: { kind: "task_profile" as const, reference: "tests.startup" } }] : [])
+      ...(taskEnabled ? [
+        { rule_id: "allow-startup-task", effect: "allow" as const, principal_id: "principal-1", scope: "mac.task.run" as const, target: { kind: "task_profile" as const, reference: "tests.startup" } },
+        { rule_id: "allow-protected-read-task", effect: "allow" as const, principal_id: "principal-1", scope: "mac.task.run" as const, target: { kind: "task_profile" as const, reference: "tests.protected-read" } }
+      ] : [])
     ],
     filesystem_roots: [],
     tool_enablement: [
@@ -381,6 +433,29 @@ function startupTaskProfile(root: string): TaskProfile {
     profile: "tests.startup",
     executable: "/usr/bin/printf",
     fixedArgs: ["startup-sandbox\\n"],
+    allowedCwdRoots: [root],
+    allowedArgumentPattern: "^$",
+    maxArguments: 0,
+    environment: {},
+    filesystemRoots: [root],
+    networkPolicy: "none",
+    networkAllowlist: [],
+    credentialPolicy: "none",
+    processTreePolicy: "single_process",
+    sandboxProfile: "deny-default-v0.1",
+    timeoutMs: 5_000,
+    outputCapBytes: 1_024,
+    verificationStrategy: "exit_status_and_declared_task_verification",
+    enabled: true
+  };
+}
+
+function startupProtectedReadProfile(root: string, protectedPath: string): TaskProfile {
+  return {
+    schemaVersion: "0.1",
+    profile: "tests.protected-read",
+    executable: "/bin/cat",
+    fixedArgs: [protectedPath],
     allowedCwdRoots: [root],
     allowedArgumentPattern: "^$",
     maxArguments: 0,
