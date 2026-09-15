@@ -381,7 +381,7 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
     if (tool) tools.set(setting.tool, { ...tool, enabled: setting.enabled });
   }
 
-  return {
+  const policy = {
     revision: document.revision,
     version: `policy-${document.revision}`,
     audience: document.audience,
@@ -393,6 +393,8 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
     killSwitches: { ...document.kill_switches },
     tools
   };
+  validateBrokerPolicy(policy);
+  return policy;
 }
 
 async function readProtectedPolicyFile(path: string): Promise<Buffer> {

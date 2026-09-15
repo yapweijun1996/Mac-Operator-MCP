@@ -106,7 +106,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["kind", "reference"],
       "properties": {
-        "kind": { "enum": ["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "log_source", "package", "power"] },
+        "kind": { "enum": ["host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element", "service", "log_source", "docker_runtime", "docker_object", "package", "power"] },
         "reference": { "type": "string", "minLength": 1, "maxLength": 4096 }
       },
       "allOf": [
@@ -121,6 +121,54 @@
         {
           "if": { "properties": { "kind": { "const": "app_window" } }, "required": ["kind"] },
           "then": { "properties": { "reference": { "type": "string", "pattern": "^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "host" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "enum": ["broker", "local"] } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "path" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "$ref": "#/$defs/id" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "process" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^(all|pid:[1-9][0-9]{0,7})$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "job" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "const": "owned" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task_profile" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "$ref": "#/$defs/id" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "ui_element" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^element:[a-f0-9]{48}$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "service" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^system/[A-Za-z0-9._:@+\\-]{1,240}$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "log_source" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^(system|process/[A-Za-z0-9._+\\-]{1,120})$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "docker_runtime" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "const": "local" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "docker_object" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^[A-Za-z0-9._:/\\-]{1,256}$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "package" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^[A-Za-z0-9._:@/+\\-]{1,255}$" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "power" } }, "required": ["kind"] },
+          "then": { "properties": { "reference": { "type": "string", "const": "local" } } }
         }
       ]
     }

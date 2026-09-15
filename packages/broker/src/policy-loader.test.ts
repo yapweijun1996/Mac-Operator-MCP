@@ -212,6 +212,31 @@ test("policy verification rejects tampering, unknown fields, and unimplemented e
   assert.throws(() => instance.verify(signedBundle(invalidAppWindow, keys.privateKey)), /schema validation failed/u);
 });
 
+test("policy verifier accepts Docker runtime targets and rejects malformed resource rules", async () => {
+  const { instance, keys } = await verifier();
+  const valid = policyDocument();
+  valid.principal_grants[0]!.scopes.push("mac.docker.read");
+  valid.target_rules.push({
+    rule_id: "allow-local-docker",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.docker.read",
+    target: { kind: "docker_runtime", reference: "local" }
+  });
+  assert.deepEqual(instance.verify(signedBundle(valid, keys.privateKey)).policy.targetRules.at(-1)?.target, { kind: "docker_runtime", reference: "local" });
+
+  const invalid = policyDocument();
+  invalid.principal_grants[0]!.scopes.push("mac.docker.read");
+  invalid.target_rules.push({
+    rule_id: "invalid-docker-object",
+    effect: "allow",
+    principal_id: "principal-1",
+    scope: "mac.docker.read",
+    target: { kind: "docker_object", reference: "../image" }
+  });
+  assert.throws(() => instance.verify(signedBundle(invalid, keys.privateKey)), /malformed target authority/u);
+});
+
 test("policy verifier supports bounded signing-key rotation and revocation", async () => {
   const first = generateKeyPairSync("ed25519");
   const second = generateKeyPairSync("ed25519");
