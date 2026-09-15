@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Capability lifecycle-state addendum: source revision `e22f025` adds required
+`planned`, `implemented`, and `enabled` fields to each `mac_capabilities` item.
+The Broker emits the full state and the Edge rejects an enabled item with an
+inconsistent state before tool registration. Focused Broker/Edge tests pass;
+44 contracts validate; build, typecheck, lint, and diff checks pass. This does
+not enable disabled capabilities or prove production host, VM, credential, or
+privileged-helper evidence. Evidence:
+`evidence/2026-09-15-capability-lifecycle-states.md`.
+
 Worker startup-failure addendum: `BoundedWorkerExecutor.run` catches a
 synchronous worker-factory exception, returns stable `EXECUTION_FAILED`, and
 does not consume active capacity. Worker-executor tests pass 8/8; the

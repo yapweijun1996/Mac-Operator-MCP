@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Capability lifecycle-state addendum: source revision `e22f025` carries
+`planned`, `implemented`, and `enabled` for every `mac_capabilities` item,
+requires those fields in the versioned output schema, and makes the Edge reject
+an enabled item with an inconsistent lifecycle state. Broker capability and
+kill-switch tests plus Edge MCP/HTTPS tests pass; 44 contracts validate, and
+build, typecheck, lint, and diff checks pass. This changes representation and
+fail-closed admission only; it does not enable disabled capabilities or close
+production host/VM/credential/privileged evidence gates. Evidence:
+`evidence/2026-09-15-capability-lifecycle-states.md`.
+
 Worker startup-failure addendum: `BoundedWorkerExecutor` now maps synchronous
 worker-factory exceptions to stable `EXECUTION_FAILED` without incrementing
 active capacity or exposing raw startup text. Worker-executor tests pass 8/8;

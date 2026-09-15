@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Capability lifecycle-state addendum: source revision `e22f025` exposes the
+Broker-owned `planned`, `implemented`, and `enabled` fields in every
+`mac_capabilities` item, requires them in the versioned contract, and makes
+the Edge reject an enabled item unless all three authority states are true.
+Focused Broker/Edge tests, contract validation, build, typecheck, lint, and
+diff checks pass. This does not change enablement and leaves production host,
+VM, credential-isolation, and privileged-helper evidence gates open. Evidence:
+`evidence/2026-09-15-capability-lifecycle-states.md`.
+
 Worker startup-failure addendum: `BoundedWorkerExecutor` catches synchronous
 worker-factory failures and returns the stable `EXECUTION_FAILED` class while
 leaving capacity unchanged. Worker-executor tests pass 8/8; the non-overlapping
