@@ -6,6 +6,7 @@ import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-
 import {
   DOCKER_EXECUTABLE_CANDIDATES,
   DockerInspectorImpl,
+  dockerObjectIdentityMatches,
   parseDockerContainerRecord,
   parseDockerImageRecord,
   validateDockerLogsRequest,
@@ -89,6 +90,28 @@ test("Docker inspect rejects conflicting native object identities", async () => 
     inspector.inspect("container", "abc123", { timeoutMs: 10_000, shouldCancel: () => false }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
   );
+});
+
+test("Docker inspect rejects a different object when the requested target is an ID", async () => {
+  const supervisor = new FakeSupervisor([result(JSON.stringify([{
+    Id: "def4567890abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    Name: "/web"
+  }]))]);
+  const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+  await assert.rejects(
+    inspector.inspect("container", "abc123", { timeoutMs: 10_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+  );
+});
+
+test("Docker inspect accepts bounded ID prefixes and exact name readback", () => {
+  const fullId = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  assert.equal(dockerObjectIdentityMatches("container", fullId.slice(0, 12), fullId, "/web"), true);
+  assert.equal(dockerObjectIdentityMatches("container", "web", fullId, "/web"), true);
+  assert.equal(dockerObjectIdentityMatches("container", "web", fullId, "/other"), false);
+  assert.equal(dockerObjectIdentityMatches("container", "abcdef", "fedcba0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "/abcdef"), false);
+  assert.equal(dockerObjectIdentityMatches("container", fullId, fullId.slice(0, 12), "/web"), false);
+  assert.equal(dockerObjectIdentityMatches("image", "sha256:" + fullId, "sha256:" + fullId, ""), true);
 });
 
 test("Docker logs redact secrets and preserve bounded timestamped lines", async () => {

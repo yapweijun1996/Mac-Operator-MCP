@@ -303,8 +303,11 @@ function parseInspection(objectType: DockerObjectType, requestedId: string, outp
   if ((value.ID !== undefined || value.Id !== undefined) && !reportedId) {
     throw new BrokerError("EXECUTION_FAILED", "Docker inspection returned an ambiguous object identity");
   }
-  const id = reportedId ?? requestedId;
   const name = boundedValue(value.Name, 256);
+  if (!dockerObjectIdentityMatches(objectType, requestedId, reportedId, name)) {
+    throw new BrokerError("CONFLICT", "Docker object identity changed during inspection");
+  }
+  const id = reportedId ?? requestedId;
   const stateValue = isPlainDataRecord(value.State) ? boundedValue(value.State.Status, 128) : "";
   const imageValue = isPlainDataRecord(value.Config) ? boundedValue(value.Config.Image, 256) : "";
   const ports = objectType === "container" ? parsePorts(isPlainDataRecord(value.NetworkSettings) ? value.NetworkSettings.Ports : undefined, warnings) : [];
@@ -321,6 +324,49 @@ function parseInspection(objectType: DockerObjectType, requestedId: string, outp
     warnings: uniqueWarnings(warnings),
     truncated
   };
+}
+
+const DOCKER_HEX_ID_PATTERN = /^(?:sha256:)?[0-9a-f]{6,64}$/iu;
+
+/**
+ * Bind a Docker inspect response to the target selected by the caller.
+ *
+ * Docker accepts mutable object names and abbreviated hexadecimal IDs. Names
+ * are therefore accepted only when the response reads back the exact name;
+ * ID targets require an exact ID or a bounded hexadecimal prefix match. A
+ * name that looks like an ID is treated as an ID target so a same-name object
+ * replacement cannot be silently accepted.
+ */
+export function dockerObjectIdentityMatches(
+  objectType: DockerObjectType,
+  requestedId: string,
+  reportedId: string | undefined,
+  reportedName: string
+): boolean {
+  if (!isDockerObjectType(objectType) || requestedId.length === 0) return false;
+  const requestedName = normalizeDockerName(requestedId);
+  const responseName = normalizeDockerName(reportedName);
+  const requestedLooksLikeId = DOCKER_HEX_ID_PATTERN.test(requestedId);
+  if (reportedId && dockerIdsEquivalent(requestedId, reportedId)) return true;
+  if (requestedLooksLikeId) return false;
+  return responseName.length > 0 && responseName === requestedName;
+}
+
+function dockerIdsEquivalent(requestedId: string, reportedId: string): boolean {
+  if (requestedId === reportedId) return true;
+  const requestedHex = dockerHexId(requestedId);
+  const reportedHex = dockerHexId(reportedId);
+  if (!requestedHex || !reportedHex) return false;
+  return reportedHex.length >= requestedHex.length && reportedHex.startsWith(requestedHex);
+}
+
+function dockerHexId(value: string): string | undefined {
+  if (!DOCKER_HEX_ID_PATTERN.test(value)) return undefined;
+  return value.startsWith("sha256:") ? value.slice("sha256:".length).toLowerCase() : value.toLowerCase();
+}
+
+function normalizeDockerName(value: string): string {
+  return value.startsWith("/") ? value.slice(1) : value;
 }
 
 function parseLogs(containerId: string, tail: number, result: ProcessExecutionResult): SafeDockerLogs {
