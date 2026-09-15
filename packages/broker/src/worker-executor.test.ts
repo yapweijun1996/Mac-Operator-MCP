@@ -22,6 +22,17 @@ test("bounded worker executor rejects excess concurrency", async () => {
   assert.equal(await first, "done");
 });
 
+test("bounded worker executor maps synchronous worker startup failures", async () => {
+  const executor = new BoundedWorkerExecutor<Record<string, never>, never>(() => {
+    throw new Error("test-only worker factory failure");
+  }, 1);
+  await assert.rejects(
+    executor.run({}, 1_000, () => false),
+    (error: unknown) => hasErrorClass(error, "EXECUTION_FAILED")
+  );
+  assert.equal(executor.activeCount(), 0);
+});
+
 test("bounded worker executor enforces deadline and active cancellation", async () => {
   const timeoutExecutor = slowExecutor(1);
   await assert.rejects(timeoutExecutor.run({ delayMs: 1_000 }, 20, () => false), (error: unknown) =>

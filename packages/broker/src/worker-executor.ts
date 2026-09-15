@@ -36,7 +36,12 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
       return Promise.reject(new BrokerError("CONFLICT", "Worker capacity is exhausted", true));
     }
 
-    const worker = this.workerFactory(command);
+    let worker: Worker;
+    try {
+      worker = this.workerFactory(command);
+    } catch {
+      return Promise.reject(new BrokerError("EXECUTION_FAILED", "Worker could not be started"));
+    }
     this.activeWorkers += 1;
     this.workers.add(worker);
     return new Promise<TResult>((resolve, reject) => {
