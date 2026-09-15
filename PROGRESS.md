@@ -2884,3 +2884,11 @@ pass 22/22; Developer ID provenance, persistent installed lifecycle,
 production upgrade/rollback, helper execution, and final capability
 enablement remain open. Evidence:
 `evidence/2026-09-15-install-readback-boundary.md`.
+
+Edge IPC response hardening (source revision `adddedd`) now validates a plain
+exact response envelope plus stable Broker success/failure fields before MCP
+publication. Unknown fields, invalid error classes, oversized warnings or
+duration, and accessor-shaped observations fail closed. Focused Edge IPC tests
+pass 4/4; production key lifecycle, remote deployment, installed provenance,
+and capability enablement remain open. Evidence:
+`evidence/2026-09-15-edge-ipc-response-boundary.md`.

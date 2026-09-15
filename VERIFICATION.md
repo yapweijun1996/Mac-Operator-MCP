@@ -2541,3 +2541,11 @@ inherited/accessor fixtures rejected. This remains local representation
 evidence and does not close Developer ID, persistent install, production
 upgrade/rollback, helper, or capability gates. Evidence:
 `evidence/2026-09-15-install-readback-boundary.md`.
+
+Edge IPC response verification at source revision `adddedd` adds exact
+data-only envelope/result validation before MCP publication. The focused Edge
+IPC suite passes 4/4, including valid signed round-trip and hostile
+unknown/accessor fixtures. This is Edge representation evidence only and does
+not close Broker correctness, remote deployment, production key lifecycle,
+installed provenance, or capability gates. Evidence:
+`evidence/2026-09-15-edge-ipc-response-boundary.md`.
