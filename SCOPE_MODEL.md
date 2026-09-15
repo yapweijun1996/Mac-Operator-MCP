@@ -34,7 +34,7 @@ A session binds principal ID, session ID, audience, issued-at, expiry, projected
 
 Target constraints belong in signed grants or Broker policy, not in model-editable scope strings. A parameterized grant should bind a scope to typed constraints such as canonical root ID, app bundle ID, service ID, volume identity, task profile, or allowed host set. The serialization and matching algorithm remain open pending ADR approval.
 
-The current Broker implements exact `(principal, scope, target kind, target reference)` rules with deny-over-allow and default deny. Introspection handlers use the Broker-owned normalized target `host:broker`; model-editable arguments cannot replace their execution target. Path-root containment, volume identity, app/window identity, and other parameterized matching remain unimplemented and must not be inferred from exact opaque-reference support.
+The current Broker implements exact `(principal, scope, target kind, target reference)` rules with deny-over-allow and default deny. Introspection handlers use the Broker-owned normalized target `host:broker`; model-editable arguments cannot replace their execution target. Filesystem path-root and volume identity checks, plus app/window identity checks for the implemented GUI boundaries, are enforced by Broker-owned planners and adapters. Policy-query input now has kind-specific canonical reference validation, but signed parameterized-grant serialization, broader resource matching, and physical target readback remain open and must not be inferred from syntax validation alone.
 
 ## Revocation
 
