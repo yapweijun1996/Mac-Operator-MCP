@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Backup-cleanup verification at source revision `f25c900` applies one protected
+same-directory quarantine primitive to retention, stale temporary, restore,
+publication, and decrypt-failure removals. Expected file identity is checked
+before and after quarantine; failures restore without overwriting a newcomer.
+Build, lint, typecheck, diff checks, and a physical encrypted-backup prune
+probe pass. Fresh full persistence and orphan-quarantine recovery evidence
+remain open. Evidence:
+`evidence/2026-09-15-backup-cleanup-target-fence.md`.
+
 Filesystem unlink target-swap verification at source revision `a6971fc` uses
 exclusive same-directory quarantine rename plus post-rename device/inode/type/
 link-count validation; mismatches restore by non-overwriting `linkat`. Build,

@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Backup-cleanup target-fence addendum: source revision `f25c900` routes backup
+retention, stale temporary, restore, publication, and decrypt-failure cleanup
+through a same-directory quarantine and identity recheck before deletion.
+Non-overwriting hard-link restoration is attempted on failure. Build, lint,
+typecheck, diff checks, and a physical encrypted-backup prune probe pass; fresh
+full persistence and orphan-quarantine recovery evidence remain open. Evidence:
+`evidence/2026-09-15-backup-cleanup-target-fence.md`.
+
 Filesystem unlink target-swap addendum: source revision `a6971fc` changes
 descriptor-relative deletion to quarantine the pathname with an exclusive
 same-directory rename, recheck device/inode/type/link-count identity, and

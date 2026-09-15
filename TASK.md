@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Backup-cleanup target-fence addendum: commit `f25c900` removes Broker backup
+and temporary files through identity-checked same-directory quarantine with
+non-overwriting restoration on failure. Build, lint, typecheck, diff checks,
+and a physical prune probe pass. Fresh persistence regression and orphan
+quarantine recovery remain open. Evidence:
+`evidence/2026-09-15-backup-cleanup-target-fence.md`.
+
 Filesystem unlink target-swap addendum: commit `a6971fc` atomically quarantines
 the selected pathname before verifying and deleting its exact inode, and uses
 non-overwriting restoration on mismatch. Focused filesystem tests and the
