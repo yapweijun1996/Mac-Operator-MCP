@@ -1,5 +1,6 @@
 import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 export interface SafeNetworkInterface {
   name: string;
@@ -56,25 +57,25 @@ export function inspectNetwork(includeListeners: boolean): SafeNetworkStatus {
   };
 }
 
-function parseNativeNetwork(value: unknown): {
+export function parseNativeNetwork(value: unknown): {
   interfaces: SafeNetworkInterface[];
   listeners: SafeNetworkListener[];
   listenerQueryFailed: boolean;
   listenersTruncated: boolean;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw malformed();
+  if (!isPlainDataRecord(value) || !hasExactFields(value, ["interfaces", "listeners", "listenerQueryFailed", "listenersTruncated"])) throw malformed();
   const record = value as Record<string, unknown>;
-  if (!Array.isArray(record.interfaces) || record.interfaces.length > 64 ||
-      !Array.isArray(record.listeners) || record.listeners.length > 256 ||
+  if (!isDenseArray(record.interfaces, 64) ||
+      !isDenseArray(record.listeners, 256) ||
       typeof record.listenerQueryFailed !== "boolean" || typeof record.listenersTruncated !== "boolean") throw malformed();
   const interfaces: SafeNetworkInterface[] = [];
   for (const item of record.interfaces) {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) throw malformed();
+    if (!isPlainDataRecord(item) || !hasExactFields(item, ["name", "state", "addresses"])) throw malformed();
     const entry = item as Record<string, unknown>;
     if (typeof entry.name !== "string" || entry.name.length < 1 || entry.name.length > 128 ||
         !/^[A-Za-z0-9._:@/+-]+$/u.test(entry.name) ||
         (entry.state !== "up" && entry.state !== "down" && entry.state !== "unknown") ||
-        !Array.isArray(entry.addresses) || entry.addresses.length > 32) throw malformed();
+        !isDenseArray(entry.addresses, 32)) throw malformed();
     const addresses = entry.addresses.map((address) => {
       if (typeof address !== "string" || address.length < 1 || address.length > 128 || address.includes("\0")) throw malformed();
       return address;
@@ -83,7 +84,7 @@ function parseNativeNetwork(value: unknown): {
   }
   const listeners: SafeNetworkListener[] = [];
   for (const item of record.listeners) {
-    if (item === null || typeof item !== "object" || Array.isArray(item)) throw malformed();
+    if (!isPlainDataRecord(item) || !hasExactFields(item, ["protocol", "address", "port"])) throw malformed();
     const entry = item as Record<string, unknown>;
     if ((entry.protocol !== "tcp" && entry.protocol !== "udp") ||
         typeof entry.address !== "string" || entry.address.length < 1 || entry.address.length > 128 || entry.address.includes("\0") ||
@@ -96,6 +97,22 @@ function parseNativeNetwork(value: unknown): {
     listenerQueryFailed: record.listenerQueryFailed,
     listenersTruncated: record.listenersTruncated
   };
+}
+
+function hasExactFields(value: Record<string, unknown>, required: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === required.length && required.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== value.length + 1 || Object.keys(value).length !== value.length) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor === undefined || !("value" in descriptor)) return false;
+  }
+  return true;
 }
 
 function inferConnectivity(interfaces: readonly SafeNetworkInterface[]): SafeNetworkStatus["connectivity"] {
