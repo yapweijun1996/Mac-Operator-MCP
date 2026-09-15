@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Task-profile authority-shape addendum: commit `956e95f` makes named
+TaskProfile documents and task-run requests accept only plain records with
+known fields. Path, argument, and network arrays must be dense bounded string
+arrays; environment data rejects accessors/inherited fields; resolved
+arguments are copied before execution. The focused task-profile/task-runner
+suite passes 18/18; the non-overlapping package regression passes 513 total
+(507 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks pass.
+This proves local task-profile representation integrity only; sandbox,
+credential, VM, and `mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-task-profile-authority-shape.md`.
+
 Task-runner result-boundary addendum: commit `0c486c9` applies plain-data and
 exact-field validation to host isolation proofs and runner results. Inherited,
 accessor, symbolic, and unknown fields are rejected; result verification keeps

@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-profile authority-shape addendum: source revision `956e95f` makes named
+TaskProfile documents and task-run requests accept only plain data records with
+known fields. Path, argument, and network arrays must be dense bounded string
+arrays; environment data rejects accessors and inherited fields; resolved
+arguments are copied before execution. The focused task-profile/task-runner
+suite passes 18/18; the non-overlapping package regression passes 513 total
+(507 pass, 6 skipped, 0 fail). Build, typecheck, lint, and diff checks pass.
+This closes local task-profile representation integrity only; sandbox,
+credential, VM, and `mac_task_run` enablement evidence remains open.
+Evidence: `evidence/2026-09-15-task-profile-authority-shape.md`.
+
 Task-runner result-boundary addendum: source revision `0c486c9` applies the
 plain-data boundary to host isolation proofs and runner results. Both records
 reject inherited/accessor/symbolic fields and unknown keys; result verification

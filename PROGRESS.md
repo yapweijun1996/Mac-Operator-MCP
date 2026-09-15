@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-profile authority-shape addendum: commit `956e95f` makes named
+TaskProfile documents and task-run requests accept only plain records with
+known fields. Path, argument, and network arrays are dense bounded string
+arrays; environment values cannot be accessor/inherited authority; resolved
+arguments are copied before execution. The focused task-profile/task-runner
+suite passes 18/18; the non-overlapping package regression passes 513 total
+(507 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff checks pass.
+This closes local task-profile representation integrity only; sandbox,
+credential, VM, and `mac_task_run` evidence remains open.
+Evidence: `evidence/2026-09-15-task-profile-authority-shape.md`.
+
 Task-runner result-boundary addendum: commit `0c486c9` applies the shared
 plain-data check and exact field set to host isolation proofs and runner
 results. Accessors, inherited/symbolic fields, unknown keys, oversized UTF-8
