@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError, CAPABILITY_FAMILIES, canonicalJson, parseJsonStrict, sha256, type CapabilityFamily } from "@mac-operator/contracts";
-import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, redactLogText } from "./secret-policy.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { AuditAnchorManager, type AuditAnchorOptions } from "./audit-anchor.js";
 import {
@@ -4827,6 +4827,7 @@ export function redactEvidence(value: unknown): unknown {
     ]));
   }
   if (value !== null && typeof value === "object") return "[REDACTED: NON_DATA]";
+  if (typeof value === "string") return redactLogText(value).text;
   return value;
 }
 

@@ -22,3 +22,10 @@ test("audit evidence redacts common credential field aliases", () => {
     }
   );
 });
+
+test("audit evidence redacts secret-shaped string values under ordinary fields", () => {
+  assert.deepEqual(
+    redactEvidence({ note: "api_key=secret-value", summary: "ordinary status", nested: ["Bearer abcdefghijklmnop-secret"] }),
+    { note: "[REDACTED]", summary: "ordinary status", nested: ["[REDACTED]"] }
+  );
+});
