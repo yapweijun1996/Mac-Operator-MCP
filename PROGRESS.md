@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Native artifact signing-readiness addendum: source revision `54d4590` performs
+a read-only probe of all three Broker native extensions. Strict `codesign`
+verification passes for each, while the host reports `0 valid identities` and
+each artifact remains `Signature=adhoc` with `TeamIdentifier=not set`. The
+production package/helper gates therefore remain fail-closed; this is complete
+artifact coverage, not Developer ID or notarization evidence. Evidence:
+`evidence/2026-09-15-native-artifact-signing-readiness.md`.
+
 Serial physical regression addendum: source revision `54d4590` passes 637/637
 non-overlapping tests with 0 skipped and 0 failed under install, sandbox, and
 Keychain opt-ins with serial execution. The run includes exact native Node

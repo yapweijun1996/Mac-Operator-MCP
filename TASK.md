@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+MOP-061/MOP-081 signing-readiness addendum: source revision `54d4590` probes
+all three Broker native extensions with strict `codesign` verification. The
+host has `0 valid identities`; every artifact is `Signature=adhoc` with
+`TeamIdentifier=not set`, so production Developer ID/notarization and
+installed readback remain fail-closed release gates. Evidence:
+`evidence/2026-09-15-native-artifact-signing-readiness.md`.
+
 MOP-007 physical regression addendum: source revision `54d4590` passes 637/637
 non-overlapping tests with 0 skipped and 0 failed under the install, sandbox,
 and Keychain opt-ins with serial execution. Exact native Node runtime binding,

@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Native artifact signing-readiness verification at source revision `54d4590`
+covers all three Broker native extensions. Strict `/usr/bin/codesign`
+verification passes for each, but `security find-identity -v -p codesigning`
+reports `0 valid identities found`; all artifacts are ad-hoc with no
+TeamIdentifier. Production Developer ID/notarization and installed readback
+remain release gates. Evidence:
+`evidence/2026-09-15-native-artifact-signing-readiness.md`.
+
 Serial physical-Darwin regression at source revision `54d4590` passes 637/637
 non-overlapping tests with 0 skips and 0 failures under the install, sandbox,
 and Keychain opt-ins, serializing execution. The run includes the exact native
