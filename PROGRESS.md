@@ -3017,3 +3017,11 @@ pass 2/2; the non-overlapping package regression passes 542 total (536 passed,
 6 skipped, 0 failed). Broker handler completeness, remote deployment, and
 capability enablement remain open. Evidence:
 `evidence/2026-09-15-mcp-capability-boundary.md`.
+
+Edge principal projection now rejects non-data identity metadata and
+accessor/sparse/symbolic scope arrays before governed identity creation (source
+revision `ce198e1`). Focused projection tests pass 3/3; the non-overlapping
+package regression passes 543 total (537 passed, 6 skipped, 0 failed). OAuth
+provider behavior, key rotation, remote deployment, and capability enablement
+remain open. Evidence:
+`evidence/2026-09-15-principal-projection-boundary.md`.

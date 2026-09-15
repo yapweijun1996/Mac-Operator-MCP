@@ -1791,3 +1791,11 @@ Edge tests pass 2/2; the non-overlapping package regression passes 542 total
 (536 passed, 6 skipped, 0 failed). Broker handler completeness, remote
 deployment, and capability gates remain open. Evidence:
 `evidence/2026-09-15-mcp-capability-boundary.md`.
+
+Principal-projection boundary addendum: commit `ce198e1` rejects non-data
+identity metadata and accessor/sparse/symbolic scope arrays before governed
+principal creation. Focused projection tests pass 3/3; the non-overlapping
+package regression passes 543 total (537 passed, 6 skipped, 0 failed). OAuth
+provider correctness, key rotation, remote deployment, and capability gates
+remain open. Evidence:
+`evidence/2026-09-15-principal-projection-boundary.md`.

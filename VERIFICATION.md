@@ -2687,3 +2687,11 @@ tests pass 2/2; the non-overlapping package regression passes 542 total (536
 passed, 6 skipped, 0 failed). This does not close Broker handler completeness,
 remote deployment, or capability enablement. Evidence:
 `evidence/2026-09-15-mcp-capability-boundary.md`.
+
+Principal-projection verification at source revision `ce198e1` confirms Edge
+rejects inherited/accessor identity metadata and accessor/sparse/symbolic scope
+arrays before scope filtering or request creation. The focused projection suite
+passes 3/3; the non-overlapping package regression passes 543 total (537
+passed, 6 skipped, 0 failed). This does not close OAuth provider correctness,
+key rotation, remote deployment, or capability enablement. Evidence:
+`evidence/2026-09-15-principal-projection-boundary.md`.
