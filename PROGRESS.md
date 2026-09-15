@@ -14,6 +14,16 @@ non-overlapping package regression passes 521 total (515 pass, 6 skipped,
 and capability enablement evidence remains open.
 Evidence: `evidence/2026-09-15-filesystem-worker-result-boundary.md`.
 
+Read-only adapter result-boundary addendum: commits `a9d1b2a` and `e1ae276`
+apply plain-data, exact-field, and dense-array validation to native network,
+JSON app inventory, and Accessibility observation/action results. Unknown
+fields or unstable nested records fail closed before Broker consumers use
+identity or UI metadata. Focused app/UI/network tests pass 15/15; the
+non-overlapping package regression passes 523 total (517 pass, 6 skipped,
+0 fail). Native provenance, permission-granted GUI, sandbox, credential, VM,
+persistence, and capability enablement evidence remains open.
+Evidence: `evidence/2026-09-15-readonly-adapter-result-boundaries.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` applies plain-data
 and exact-field validation to native process inventory/detail results and
 worker envelopes. Owner identities and child PID arrays receive bounded,

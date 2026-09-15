@@ -15,6 +15,18 @@ native provenance, remount, sandbox/credential/VM isolation, persistence,
 and capability enablement remain unverified.
 Evidence: `evidence/2026-09-15-filesystem-worker-result-boundary.md`.
 
+Read-only adapter result-boundary addendum: commits `a9d1b2a` and `e1ae276`
+enforce exact public field sets and plain data across native network and
+Broker-owned JXA app/Accessibility outputs. Address/listener/node arrays are
+dense and bounded; unknown fields and malformed nested records are rejected
+before result projection, target identity, or sensitive-label handling.
+Focused app/UI/network tests pass 15/15; the non-overlapping package
+regression passes 523 total (517 pass, 6 skipped, 0 fail). This proves local
+result-shape integrity only; native provenance, permission-granted GUI,
+sandbox/credential/VM isolation, persistence, and capability enablement
+remain unverified.
+Evidence: `evidence/2026-09-15-readonly-adapter-result-boundaries.md`.
+
 Process-worker result boundary addendum: commit `a01b62e` requires native
 process inventory/detail results to be plain records with exact fields and
 bounded uid/child identities. The generic worker envelope accepts only its

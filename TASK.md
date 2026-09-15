@@ -16,6 +16,19 @@ result-shape integrity only; native provenance, remount, sandbox, credential,
 VM, persistence, and capability enablement evidence remain open.
 Evidence: `evidence/2026-09-15-filesystem-worker-result-boundary.md`.
 
+Read-only adapter result-boundary addendum: commits `a9d1b2a` and `e1ae276`
+close unstable result-shape paths for network, app inventory, and
+Accessibility adapters. Native network records now require plain exact
+fields and dense bounded address/listener arrays. JSON app and UI results now
+reject unknown fields, non-data records, sparse node arrays, and unstable
+nested node shapes before identity or sensitive-content handling. Focused
+app/UI/network tests pass 15/15; the non-overlapping package regression passes
+523 total (517 pass, 6 skipped, 0 fail). This closes local read-only adapter
+result-shape integrity only; native provenance, permission-granted GUI
+evidence, sandbox, credential, VM, persistence, and capability enablement
+evidence remain open.
+Evidence: `evidence/2026-09-15-readonly-adapter-result-boundaries.md`.
+
 Process-worker result boundary addendum: source revision `a01b62e` hardens
 native process metadata and worker-result parsers. Inventory/detail records
 now require plain data and exact fields; owners are bounded uid identities,
