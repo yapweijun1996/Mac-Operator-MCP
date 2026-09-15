@@ -116,6 +116,7 @@ test("task profile documents reject secret environments, unanchored arguments, a
     assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: "echo" })]), /anchored/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: "^(a+)+$" })]), /unsupported construct/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: "^a|b$" })]), /unsupported construct/u);
+    assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: "^a{1,}$" })]), /invalid/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: `^${"a".repeat(257)}$` })]), /invalid/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { networkPolicy: "none", networkAllowlist: ["example.com"] })]), /no-network/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { networkPolicy: "allowlist", networkAllowlist: ["https://example.com"] })]), /allowlist is malformed/u);

@@ -309,10 +309,13 @@ function validateArgumentPattern(pattern: string): void {
     }
     if (character === "{") {
       if (!canQuantify || quantified) throw new Error("Task profile argument pattern is invalid");
-      const quantifier = /^\{(\d{1,4})(?:,(\d{1,4})?)?\}/u.exec(pattern.slice(index));
+      const quantifier = /^\{(\d{1,4})(,(\d{1,4})?)?\}/u.exec(pattern.slice(index));
       if (!quantifier) throw new Error("Task profile argument pattern is invalid");
       const minimum = Number(quantifier[1]);
-      const maximum = quantifier[2] === undefined || quantifier[2] === "" ? minimum : Number(quantifier[2]);
+      if (quantifier[2] !== undefined && quantifier[3] === undefined) {
+        throw new Error("Task profile argument pattern is invalid");
+      }
+      const maximum = quantifier[3] === undefined ? minimum : Number(quantifier[3]);
       if (minimum > MAX_ARGUMENT_LENGTH || maximum > MAX_ARGUMENT_LENGTH || minimum > maximum) {
         throw new Error("Task profile argument pattern is invalid");
       }
