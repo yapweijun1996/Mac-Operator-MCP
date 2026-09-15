@@ -3051,3 +3051,11 @@ verification passes 16/16; the non-overlapping package regression passes 546
 total (540 passed, 6 skipped, 0 failed). Production policy distribution and
 capability enablement remain open. Evidence:
 `evidence/2026-09-15-target-grant-boundary.md`.
+
+Queued-job kill-switch reconciliation now preserves read-only Jobs when the
+`mutations` switch is disabled and cancels only the explicit mutation tool
+allowlist (source revision `6bf29d4`). The `global` switch remains an
+all-capability stop; process, GUI, destructive, and privileged mappings remain
+independent. Build and a temporary BrokerStore smoke pass; the non-overlapping
+package regression remains 546 total (540 passed, 6 skipped, 0 failed).
+Evidence: `evidence/2026-09-15-kill-switch-scope-isolation.md`.

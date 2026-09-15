@@ -1823,3 +1823,11 @@ Disabled grants fail with `POLICY_DENIED`; out-of-grant scopes fail with
 non-overlapping package regression passes 546 total (540 passed, 6 skipped, 0
 failed). Production policy distribution and capability gates remain open.
 Evidence: `evidence/2026-09-15-target-grant-boundary.md`.
+
+Kill-switch isolation addendum: commit `6bf29d4` narrows the `mutations`
+queued-Job reconciliation to an explicit mutation tool allowlist, preserving
+read-only queued work while retaining the global all-capability stop. Build and
+a temporary BrokerStore smoke pass; the non-overlapping package regression
+remains 546 total (540 passed, 6 skipped, 0 failed). Process ownership,
+physical resource limits, and production service evidence remain open.
+Evidence: `evidence/2026-09-15-kill-switch-scope-isolation.md`.

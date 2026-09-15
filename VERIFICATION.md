@@ -2719,3 +2719,11 @@ the enabled grant before rule matching. Focused policy/security-fuzz tests pass
 skipped, 0 failed). Production policy distribution and capability enablement
 remain open. Evidence:
 `evidence/2026-09-15-target-grant-boundary.md`.
+
+Kill-switch scope verification at source revision `6bf29d4` confirms the
+`mutations` switch cancels queued mutation Jobs without cancelling a queued
+`mac_health` read Job. A temporary BrokerStore smoke passes after build; the
+non-overlapping package regression remains 546 total (540 passed, 6 skipped,
+0 failed). This does not close physical process ownership or production
+service evidence. Evidence:
+`evidence/2026-09-15-kill-switch-scope-isolation.md`.
