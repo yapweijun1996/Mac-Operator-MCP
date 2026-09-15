@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { BrokerError, ERROR_CLASSES, type ErrorClass } from "@mac-operator/contracts";
+import { isPlainDataRecord } from "./plain-record.js";
 
 export type WorkerResult<T> =
   | { ok: true; value: T }
@@ -123,10 +124,16 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
 }
 
 function isWorkerResult<T>(value: unknown): value is WorkerResult<T> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  if (record.ok === true) return Object.hasOwn(record, "value");
-  return record.ok === false && typeof record.errorClass === "string" &&
+  if (!isPlainDataRecord(value)) return false;
+  const record = value;
+  if (record.ok === true) return hasExactKeys(record, ["ok", "value"]);
+  return record.ok === false && hasExactKeys(record, ["ok", "errorClass", "message"]) && typeof record.errorClass === "string" &&
     ERROR_CLASSES.includes(record.errorClass as ErrorClass) && typeof record.message === "string" &&
     record.message.length >= 1 && record.message.length <= 512;
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const expectedSet = new Set(expected);
+  const keys = Object.keys(value);
+  return keys.length === expectedSet.size && keys.every((key) => expectedSet.has(key));
 }

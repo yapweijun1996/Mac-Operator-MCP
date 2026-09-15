@@ -33,6 +33,18 @@ test("bounded worker executor maps synchronous worker startup failures", async (
   assert.equal(executor.activeCount(), 0);
 });
 
+test("bounded worker executor rejects result fields outside the worker contract", async () => {
+  const executor = new BoundedWorkerExecutor<Record<string, never>, string>(
+    () => new Worker(
+      `const { parentPort } = require("node:worker_threads"); parentPort.postMessage({ ok: true, value: "accepted", extra: "authority" });`,
+      { eval: true, env: {}, argv: [], execArgv: [] }
+    ),
+    1
+  );
+  await assert.rejects(executor.run({}, 1_000, () => false), (error: unknown) => hasErrorClass(error, "EXECUTION_FAILED"));
+  await executor.close();
+});
+
 test("bounded worker executor enforces deadline and active cancellation", async () => {
   const timeoutExecutor = slowExecutor(1);
   await assert.rejects(timeoutExecutor.run({ delayMs: 1_000 }, 20, () => false), (error: unknown) =>

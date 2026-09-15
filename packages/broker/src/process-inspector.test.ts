@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectProcess, inspectProcesses } from "./process-inspector.js";
+import { inspectProcess, inspectProcesses, parseProcessDetail, parseProcessInventory } from "./process-inspector.js";
 
 test("process inspector returns bounded redacted native metadata", () => {
   const inventory = inspectProcesses(20, "pid");
@@ -40,4 +40,36 @@ test("process inspector returns bounded detail without argv or environment", () 
 test("process inspector rejects malformed pid", () => {
   assert.throws(() => inspectProcess(0), /outside the supported range/u);
   assert.throws(() => inspectProcess(100_000_000), /outside the supported range/u);
+});
+
+test("process inspector result parsers reject non-data and unstable child identities", () => {
+  const inventory = { processes: [], truncated: false };
+  assert.deepEqual(parseProcessInventory(inventory), inventory);
+  assert.throws(() => parseProcessInventory(Object.create(inventory)), /Malformed native process inventory/u);
+  const accessorProcess = {
+    pid: 1,
+    name: "process",
+    executable: "/usr/bin/process",
+    cpuPercent: 0,
+    memoryBytes: 0,
+    owner: "uid:501"
+  } as Record<string, unknown>;
+  Object.defineProperty(accessorProcess, "name", { enumerable: true, get: () => "process" });
+  assert.throws(
+    () => parseProcessInventory({ processes: [accessorProcess], truncated: false }),
+    /Malformed native process record/u
+  );
+  assert.throws(
+    () => parseProcessDetail({
+      pid: 1, name: "process", executable: "/usr/bin/process", state: "running", cpuPercent: 0,
+      memoryBytes: 0, parentPid: null, childPids: [2, 2], owner: "uid:501"
+    }),
+    /Malformed native process child identity/u
+  );
+  const symbolicDetail = {
+    pid: 1, name: "process", executable: "/usr/bin/process", state: "running", cpuPercent: 0,
+    memoryBytes: 0, parentPid: null, childPids: [], owner: "uid:501"
+  } as Record<string, unknown>;
+  Object.defineProperty(symbolicDetail, Symbol("authority"), { value: true });
+  assert.throws(() => parseProcessDetail(symbolicDetail), /Malformed native process detail/u);
 });
