@@ -9,6 +9,14 @@ Latest regression addendum: the non-overlapping built suite passes 595 total
 secret-shaped-string redaction coverage; the existing Broker/persistence process was left
 undisturbed. Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 
+Persistence integrity rerun addendum: source revision `8077a6d` passes 33/33
+focused replay, Approval, authority, configuration, Request, Job,
+Request-to-Job, and complete schema-layout invariant tests with no skips or
+failures. The existing Broker/persistence process was left undisturbed;
+physical crash/remount durability, production Keychain, installed recovery,
+external rollback, and independent P0/P1 review remain open. Evidence:
+`evidence/2026-09-15-ledger-integrity-rerun.md`.
+
 Physical Darwin sandbox addendum: correctly exporting `MOPS_REAL_SANDBOX=1`
 to the test processes yields 595 total (593 pass, 2 skipped, 0 fail) on
 Darwin arm64/macOS 26.2. Real sandbox, protected-surface, fork/`setsid`,

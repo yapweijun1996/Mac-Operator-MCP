@@ -1785,6 +1785,15 @@ old-writer fencing evidence only; physical crash process ownership, credential
 rotation, remount durability, and production task enablement remain open.
 Evidence: `evidence/2026-09-15-job-ledger-startup-integrity.md`.
 
+Latest persistence integrity rerun: source revision `8077a6d` passes 33/33
+focused replay, Approval, authority, configuration, Request, Job,
+Request-to-Job, and all-table schema-layout invariants with no skips or
+failures. The existing `broker.test.js` and `persistence.test.js` process was
+left undisturbed. This strengthens local startup/readback evidence only;
+physical crash/remount durability, production Keychain, installed recovery,
+external rollback, and independent P0/P1 review remain open. Evidence:
+`evidence/2026-09-15-ledger-integrity-rerun.md`.
+
 Latest Broker restart-recovery addendum: source commit `a20fed7` persists
 bounded non-secret task-process PID/process-group/start-time identities for the
 root and observed descendants before task execution proceeds. A new

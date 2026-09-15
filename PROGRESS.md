@@ -10,6 +10,14 @@ audit credential-field and secret-shaped-string redaction tests. Broker/persiste
 restarted because their existing long-running process remained active.
 Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 
+Persistence integrity rerun addendum: source revision `8077a6d` passes 33/33
+focused replay, Approval, authority, configuration, Request, Job,
+Request-to-Job, and complete schema-layout invariants with no skips or
+failures. The existing Broker/persistence process remains undisturbed. This
+does not close physical crash/remount durability, production Keychain,
+installed recovery, external rollback, or independent P0/P1 review. Evidence:
+`evidence/2026-09-15-ledger-integrity-rerun.md`.
+
 Physical Darwin sandbox addendum: with `MOPS_REAL_SANDBOX=1` correctly
 exported to the test processes, the same non-overlapping built set passes 595
 total (593 pass, 2 explicit skips, 0 fail) on Darwin arm64/macOS 26.2. The
