@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest attestation key snapshot verification at source revision `3325376`:
+the protected loader and KeyManager copy and recursively freeze config
+documents, key entries, active arrays, and public-key material before exposing
+them to verifier creation. Negative coverage proves document and key-entry
+mutation attempts fail at runtime, while public-key bytes are no longer
+exposed as mutable Buffers. Focused keyring tests pass 4/4; the serial physical
+regression passes 667/672 with 0 failures and 5 explicit descriptor-capability
+skips. The three pre-existing long-running suites were excluded and left
+untouched. This closes in-process active-key object substitution only; private
+key distribution, signed installation provenance, native attestation
+production, VM isolation, and production enablement remain open. Evidence:
+`evidence/2026-09-16-guest-attestation-key-snapshot.md`.
+
 Signed Guest attestation snapshot verification at source revision `08770f3`:
 the verifier, `VirtualizationGuestTransportExecutor`, and
 `VirtualizationTaskRunner` copy and recursively freeze the complete signed

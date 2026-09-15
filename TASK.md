@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/012 Guest attestation key snapshot addendum at source revision
+`3325376`: the loader and KeyManager expose a copied, recursively frozen
+authority graph, converting protected public-key bytes to immutable PEM
+strings. Focused keyring tests pass 4/4; the serial physical regression passes
+667/672 with 0 failures and 5 explicit descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-attestation-key-snapshot.md`.
+
 MOP-086/012 Signed Guest attestation snapshot addendum at source revision
 `08770f3`: the verifier, Guest transport executor, and TaskRunner bind copied,
 recursively frozen signed attestation envelopes and verification results before
