@@ -1,7 +1,7 @@
 # Job Edge provenance evidence
 
 Date: 2026-09-15
-Source revisions: `e0b9db8`, `66688ec`, `9a52c59`, `8dbbd67`, `08c8100`
+Source revisions: `e0b9db8`, `66688ec`, `9a52c59`, `8dbbd67`, `08c8100`, `b31cf4c`
 
 ## Decision
 
@@ -20,8 +20,9 @@ readback.
 - Every Broker-owned mutation Job admission passes the authenticated request
   Edge and Edge-key identity. Atomic and ordinary idempotent reuse reject a
   different authority identity.
-- Restarted guest-task recovery rechecks the persisted Job Edge before making a
-  status lookup, so a revoked Edge cannot close an unknown Job as success.
+- Restarted guest-task recovery rechecks the persisted Job Edge and Edge-key
+  revocation before making a status lookup, so stale authority cannot close an
+  unknown Job as success.
 - Edge and Edge-key revocation cancel matching queued Jobs, plus legacy/null or
   malformed provenance; non-matching, valid identities remain queued.
 - Edge-key identities require the authenticated Edge prefix and a bounded key ID

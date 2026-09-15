@@ -98,4 +98,6 @@ malformed persisted provenance fails closed. Commit `8dbbd67` extends the
 same boundary with schema version `11` Edge-key provenance and precise
 Edge-key revocation; `08c8100` makes the key identity shape and Edge binding
 explicit at creation, readback, and revoke boundaries. These changes close a local authority-correlation gap but
-do not close production policy distribution or ADR acceptance.
+do not close production policy distribution or ADR acceptance. Commit `b31cf4c`
+also fences restarted guest status recovery on the persisted Edge-key
+revocation state.

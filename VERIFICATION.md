@@ -2737,13 +2737,13 @@ remain open. Evidence:
 `evidence/2026-09-15-kill-switch-fail-closed.md`.
 
 Job Edge-provenance verification at source revisions `e0b9db8`, `66688ec`,
-`9a52c59`, `8dbbd67`, and `08c8100` confirms schema versions `10` and `11` add nullable
+`9a52c59`, `8dbbd67`, `08c8100`, and `b31cf4c` confirms schema versions `10` and `11` add nullable
 `owner_edge_id` and `owner_edge_key_id` columns with forward-only migration for
 legacy ledgers. Broker-created mutation Jobs bind the authenticated Edge and
 Edge-key, idempotent reuse checks both identities, and Edge/Edge-key revocation
 cancels only matching queued Jobs; legacy/null and malformed provenance remain
 conservative or fail closed. Restarted guest recovery rechecks persisted Edge
-provenance before a status lookup. `npm run build`, typecheck,
+provenance and Edge-key revocation before a status lookup. `npm run build`, typecheck,
 lint, and a temporary SQLite schema/readback/revocation smoke pass. The
 non-overlapping package regression remains 546 total (540 passed, 6 skipped,
 0 failed). The new persistence tests are recorded but were not run separately
