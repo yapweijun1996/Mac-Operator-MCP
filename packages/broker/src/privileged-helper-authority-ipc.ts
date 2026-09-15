@@ -457,10 +457,12 @@ export function authenticatePrivilegedHelperAuthorityResponse(
     if (response.authorized !== true) throw new BrokerError("EXECUTION_FAILED", "Privileged helper authority success is malformed");
     return response as unknown as PrivilegedHelperAuthorityResponse;
   }
+  const errorRecord = response.error as Record<string, unknown>;
   if (response.ok !== false || typeof response.resultClass !== "string" || !isHelperErrorClass(response.resultClass) ||
-      !isPlainDataRecord(response.error) || typeof (response.error as Record<string, unknown>).message !== "string" ||
-      typeof (response.error as Record<string, unknown>).retryable !== "boolean" ||
-      boundedMessage((response.error as Record<string, unknown>).message as string) !== (response.error as Record<string, unknown>).message) {
+      !isPlainDataRecord(response.error) || Object.keys(errorRecord).length !== 2 ||
+      !Object.hasOwn(errorRecord, "message") || !Object.hasOwn(errorRecord, "retryable") ||
+      typeof errorRecord.message !== "string" || typeof errorRecord.retryable !== "boolean" ||
+      boundedMessage(errorRecord.message) !== errorRecord.message) {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper authority failure is malformed");
   }
   return response as unknown as PrivilegedHelperAuthorityResponse;
