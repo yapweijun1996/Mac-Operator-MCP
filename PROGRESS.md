@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-profile request snapshot addendum: commit `04f77eb` copies the validated
+TaskProfileRegistry request before asynchronous filesystem readback. All
+profile argument matching and process construction use that snapshot, so
+caller changes cannot substitute arguments or cwd after admission. Focused
+task-profile tests pass 6/6; the non-overlapping package regression passes 518
+total (512 pass, 6 skipped, 0 fail). Sandbox, credential, VM, persistence,
+and `mac_task_run` enablement evidence remains open.
+Evidence: `evidence/2026-09-15-task-profile-request-snapshot.md`.
+
 Guest-request snapshot addendum: commit `31dc880` copies the authenticated
 guest task request and nested identity before asynchronous profile target
 readback. All ledger, adapter, budget, cancellation, response, and recovery

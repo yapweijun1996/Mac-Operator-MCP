@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Task-profile request snapshot addendum: source revision `04f77eb` snapshots
+the validated TaskProfileRegistry request before asynchronous cwd, root, and
+executable readback. Profile selection, argument matching, environment and
+process construction now use the snapshot, preventing caller mutation during
+filesystem awaits from substituting task arguments or targets. The focused
+task-profile suite passes 6/6; the non-overlapping package regression passes
+518 total (512 pass, 6 skipped, 0 fail). This closes one local task-request
+TOCTOU window only; sandbox, credential isolation, VM, persistence, and
+`mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-task-profile-request-snapshot.md`.
+
 Guest-request snapshot addendum: source revision `31dc880` snapshots the
 authenticated guest task request, including its nested guest identity, before
 the registry's asynchronous executable/cwd readback. Ledger keys, adapter

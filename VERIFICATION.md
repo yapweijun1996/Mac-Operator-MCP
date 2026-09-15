@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Task-profile request snapshot addendum: commit `04f77eb` takes a synchronous
+copy of the validated TaskProfileRegistry request before cwd/root/executable
+readback awaits. Profile selection, argument validation, process arguments,
+and output of the resolved process request use only the copy. A hostile test
+mutates arguments immediately after `resolve()`; the result retains the
+authorized value. Focused task-profile tests pass 6/6; the non-overlapping
+package regression passes 518 total (512 pass, 6 skipped, 0 fail). This proves
+one local task-request TOCTOU control only; production sandbox, credential,
+VM, persistence, and task enablement remain unproven.
+Evidence: `evidence/2026-09-15-task-profile-request-snapshot.md`.
+
 Guest-request snapshot addendum: commit `31dc880` snapshots the authenticated
 guest task request and nested identity before asynchronous profile target
 readback. Adapter input, ledger identity, timeout/output budgets,
