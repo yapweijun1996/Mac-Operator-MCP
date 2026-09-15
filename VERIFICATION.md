@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Edge-to-Broker revocation propagation at source revision `8b3e8e2`: the MCP
+Edge now retains only a bounded, short-lived capability projection so a fresh
+per-request MCP server can still route a previously verified session after
+Broker revocation. The tool call itself always crosses Broker IPC and remains
+subject to current authority checks. The authenticated HTTPS integration
+revokes the Edge and receives a stable `REVOKED` result on the same MCP client
+session; focused MCP/revocation suites pass 10/10 and the complete Edge suite
+passes 66/66. Evidence:
+`evidence/2026-09-16-edge-broker-revocation.md`.
+
 Edge TLS hostname binding verification at source revision `9c647db`: the
 protected startup loader now checks the certificate SAN/CN against the
 configured resource hostname after public-key pairing and before listener
