@@ -280,6 +280,11 @@ Revision `0c21edb` extends that native before/after identity fence to include
 UID and mode, so ownership or permission changes during
 `SecTrustedApplicationCreateFromPath` are treated as a target change.
 
+Physical host evidence on 2026-09-15 found no available Developer ID signing
+identity and an ad-hoc-only native artifact. The helper package therefore
+remains an implementation candidate: strict ad-hoc verification is not
+substituted for Developer ID provenance, and no root LaunchDaemon is installed.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

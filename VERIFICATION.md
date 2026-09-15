@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Production signing readiness verification: a read-only physical-host probe on
+2026-09-15 found `0 valid identities` from `security find-identity -v -p
+codesigning`. The rebuilt native adapter passes strict ad-hoc verification but
+reports an ad-hoc/linker-signed CodeDirectory with no TeamIdentifier or
+Developer ID provenance. This keeps MOP-061 root installation and all
+privileged enablement fail-closed; no root LaunchDaemon mutation was attempted.
+Evidence: `evidence/2026-09-15-production-signing-readiness.md`.
+
 Keychain trusted-executable ownership verification: source revisions
 `7f725bf` and `0c21edb`
 binds the ACL executable to the current process owner in both the TypeScript

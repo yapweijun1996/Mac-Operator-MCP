@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Production signing readiness addendum: a read-only physical-host probe found
+`0 valid identities` from `security find-identity -v -p codesigning`. The
+rebuilt native adapter passes strict ad-hoc verification but has no
+TeamIdentifier or Developer ID provenance. MOP-061 root installation and
+privileged enablement therefore remain fail-closed; no root LaunchDaemon
+mutation was attempted. Evidence:
+`evidence/2026-09-15-production-signing-readiness.md`.
+
 Keychain trusted-executable ownership addendum: source revisions `7f725bf`
 and `0c21edb`
 binds the ACL executable to the current process owner in both TypeScript and
