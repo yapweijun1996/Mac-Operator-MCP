@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Descriptor-launch capability probe at source revision `81a67b1`: the native
+peer addon now returns a versioned, host-owned capability record instead of
+leaving launcher presence implicit. The physical Mac mini reports
+`available=false`, `executableCoverage=unproven`, `immutableSelection=unproven`,
+and `closeOnExec=unproven`; descriptor-required execution remains fail-closed
+with `POLICY_DENIED`, and older/partial native addons are rejected by the
+required-export check. This is an explicit unavailable result, not evidence of
+descriptor execution or physical sandbox enforcement. Evidence:
+`evidence/2026-09-16-descriptor-launch-capability-probe.md`.
+
 Task sandbox Docker-socket denial verification at source revision `314189c`:
 the Broker-owned Seatbelt renderer emits explicit read/write denies for both
 `/var/run/docker.sock` and `/private/var/run/docker.sock`, regardless of task
