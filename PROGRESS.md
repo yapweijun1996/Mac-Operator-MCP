@@ -10,8 +10,10 @@ task execution is configured, injects that registry into the Broker, and
 rejects a registry without an isolated runner or a malformed registry. This
 keeps the packaged empty-registry/fail-closed default unchanged. Service-startup
 tests pass 7/7, and a gated physical-Darwin smoke executes one fixed profile
-through startup, native UDS, approval, sandbox, and Job readback. Production
-profile enablement still requires independent host evidence. Evidence:
+through startup, native UDS, approval, sandbox, and Job readback. The same
+startup path denies an approved read of the protected Broker database with
+`VERIFICATION_FAILED` and a failed Job. Production profile enablement still
+requires independent host evidence. Evidence:
 `evidence/2026-09-15-task-profile-startup-wiring.md`.
 
 Sandbox startup-wiring addendum: source revision `2e605ea` connects the

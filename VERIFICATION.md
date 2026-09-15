@@ -10,8 +10,9 @@ runnerless or malformed registry fails closed before startup state is touched;
 the packaged default remains an empty registry with the fail-closed runner.
 Service-startup tests pass 7/7; a gated physical-Darwin smoke also verifies
 one fixed profile through startup, native UDS, approval, sandbox, and Job
-readback. Credential/process isolation and production `mac_task_run`
-enablement remain open. Evidence:
+readback, while an approved read of the protected Broker database is denied
+with `VERIFICATION_FAILED` and a failed Job. Credential/process isolation and
+production `mac_task_run` enablement remain open. Evidence:
 `evidence/2026-09-15-task-profile-startup-wiring.md`.
 
 Sandbox startup-wiring addendum: source revision `2e605ea` gives service

@@ -10,7 +10,9 @@ is configured, injects it into the Broker, and rejects malformed or runnerless
 registry configuration. The default packaged assembly keeps an empty registry
 and fail-closed task runner. A gated physical-Darwin smoke now executes one
 fixed profile through startup, native UDS, approval, sandbox, and Job readback;
-production profile enablement remains evidence-gated. Evidence:
+an approved read of the protected Broker database is denied with
+`VERIFICATION_FAILED` and a failed Job. Production profile enablement remains
+evidence-gated. Evidence:
 `evidence/2026-09-15-task-profile-startup-wiring.md`.
 
 Sandbox startup-wiring addendum: source revision `2e605ea` adds an explicit
