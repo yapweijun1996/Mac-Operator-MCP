@@ -37,6 +37,13 @@ test("Broker service startup config is strict, canonical, and root-bound", () =>
   const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
   assert.deepEqual(validateBrokerServiceStartupConfig(config), config);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, unexpected: true } as never), /unknown field/u);
+  const accessor = { ...config } as Record<string, unknown>;
+  Object.defineProperty(accessor, "packageRoot", { enumerable: true, get: () => config.packageRoot });
+  assert.throws(() => validateBrokerServiceStartupConfig(accessor as never), /malformed/u);
+  const inherited = Object.create({ packageRoot: config.packageRoot }) as Record<string, unknown>;
+  Object.assign(inherited, config);
+  delete inherited.packageRoot;
+  assert.throws(() => validateBrokerServiceStartupConfig(inherited as never), /malformed/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, brokerSocketPath: "/Users/operator/runtime/../escape.sock" }), /canonical/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, policyBundlePath: "/Users/operator/other/policy.json" }), /configured roots/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, edgeServiceId: "system/com.mac-operator.edge" }), /launchd identity/u);

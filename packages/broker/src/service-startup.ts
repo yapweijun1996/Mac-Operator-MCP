@@ -26,6 +26,7 @@ import {
 import { BrokerStoreVirtualizationGuestReplayGuard } from "./virtualization-guest-transport.js";
 import { SandboxExecTaskRunner, type SandboxExecTaskRunnerOptions } from "./task-runner.js";
 import { validateTaskProfileRegistry, type TaskProfileRegistry } from "./task-profile.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
@@ -110,7 +111,7 @@ export async function loadBrokerServiceStartupConfig(path: string): Promise<Brok
 }
 
 export function validateBrokerServiceStartupConfig(value: unknown): BrokerServiceStartupConfig {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new Error("Broker service startup config is malformed");
   }
   const record = value as Record<string, unknown>;
