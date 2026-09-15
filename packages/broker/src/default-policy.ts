@@ -12,7 +12,7 @@ const tools: ToolPolicy[] = [
     mutation: false,
     approvalPolicy: "trusted_read",
     outputCapBytes: 65_536,
-    timeoutMs: 5_000,
+    timeoutMs: 3_000,
     implemented: true,
     enabled: true
   },
@@ -24,8 +24,8 @@ const tools: ToolPolicy[] = [
     targetType: "broker",
     mutation: false,
     approvalPolicy: "trusted_read",
-    outputCapBytes: 262_144,
-    timeoutMs: 5_000,
+    outputCapBytes: 65_536,
+    timeoutMs: 3_000,
     implemented: true,
     enabled: true
   },
@@ -194,7 +194,7 @@ const tools: ToolPolicy[] = [
     mutation: false,
     approvalPolicy: "trusted_read",
     outputCapBytes: 131_072,
-    timeoutMs: 5_000,
+    timeoutMs: 3_000,
     implemented: true,
     enabled: true
   },
@@ -219,7 +219,7 @@ const tools: ToolPolicy[] = [
     targetType: "path",
     mutation: false,
     approvalPolicy: "trusted_read",
-    outputCapBytes: 1_200_000,
+    outputCapBytes: 1_048_576,
     timeoutMs: 10_000,
     implemented: true,
     enabled: true
@@ -557,7 +557,7 @@ const tools: ToolPolicy[] = [
     targetType: "job",
     mutation: false,
     approvalPolicy: "trusted_read",
-    outputCapBytes: 600_000,
+    outputCapBytes: 524_288,
     timeoutMs: 5_000,
     implemented: true,
     enabled: true
