@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/012 Guest status-lookup validation addendum at source revision
+`6ad2046`: `VirtualizationGuestProfileExecutor.lookup()` snapshots and
+validates the complete status envelope before bounded-ledger access and
+readback publication. Direct status callers cannot bypass the transport
+contract. Focused Guest executor/agent/transport tests pass 32/32; the serial
+physical regression passes 663/668 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-status-lookup-validation.md`.
+
 MOP-086/012 Guest request-envelope validation addendum at source revision
 `19099e4`: the virtualization guest executor snapshot and profile registry
 both invoke the strict transport validator, so direct callers cannot bypass

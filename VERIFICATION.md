@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest status-lookup validation verification at source revision `6ad2046`:
+`VirtualizationGuestProfileExecutor.lookup()` now snapshots and invokes
+`validateUnsignedVirtualizationGuestStatusRequest` before bounded-ledger access
+or status readback publication. Negative coverage proves a malformed status
+operation is rejected at the executor boundary. Focused Guest
+executor/agent/transport tests pass 32/32; the serial physical regression
+passes 663/668 with 0 failures and 5 explicit descriptor-capability skips.
+The three pre-existing long-running suites were excluded and left untouched.
+This closes direct in-process status-envelope bypass only; authenticated
+transport admission, native VM isolation, immutable executable selection, and
+production enablement remain open. Evidence:
+`evidence/2026-09-16-guest-status-lookup-validation.md`.
+
 Guest request-envelope validation verification at source revision `19099e4`:
 the executor snapshot and profile registry both call
 `validateUnsignedVirtualizationGuestRequest`, closing the direct-invocation
