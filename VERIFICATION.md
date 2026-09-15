@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Authenticated IPC data-shape addendum: commit `27e102b` applies a shared
+plain-data-record check to Authority Control, Broker Status, Privileged Helper,
+and Virtualization Guest authenticated parsers. Accessor, hidden, symbolic,
+and prototype-bearing envelopes fail closed before proof verification or
+dispatch. Focused IPC tests pass 32/32; the non-overlapping package regression
+passes 502 total (496 pass, 6 skipped, 0 fail); build, typecheck, lint, and
+diff checks pass. This covers parser integrity only and does not close OS peer,
+production packaging, VM, credential, helper, or capability gates.
+Evidence: `evidence/2026-09-15-authenticated-ipc-data-shapes.md`.
+
 Signed request data-shape addendum: commit `14d3cc0` validates every request
 value before authentication, requiring data-only ordinary/null-prototype
 records and dense bounded arrays. Inherited, hidden, accessor, sparse,

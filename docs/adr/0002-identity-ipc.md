@@ -141,6 +141,13 @@ values are rejected before authentication, preventing representation gaps
 between object reads and canonical signed bytes. This remains local parser
 evidence and does not close production packaging or cross-process acceptance.
 
+Revision `27e102b` applies the same data-only record rule to the separate
+Authority Control, Broker Status, Privileged Helper, and Virtualization Guest
+authenticated IPC parsers. Their proof and response paths now reject
+accessors, hidden fields, symbols, and custom prototypes before replay
+admission or dispatch. This is parser integrity evidence; OS peer identity,
+production packaging, and guest isolation remain separate acceptance gates.
+
 ## Acceptance evidence
 
 Forged peer, copied envelope, changed payload, expired timestamp, repeated nonce, revoked session, concurrent session, restart replay, version mismatch, and replaced-Edge tests must fail safely.

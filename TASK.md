@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Authenticated IPC data-shape addendum: source revision `27e102b` makes the
+Authority Control, Broker Status, Privileged Helper, and guest transport
+parsers accept only plain data records at their authenticated boundaries.
+Focused IPC tests pass 32/32; the non-overlapping package regression passes
+502 total (496 pass, 6 skipped, 0 fail); build, typecheck, lint, and diff
+checks pass. This local hardening does not close OS peer identity, production
+packaging, VM, credential, helper, or enablement gates.
+Evidence: `evidence/2026-09-15-authenticated-ipc-data-shapes.md`.
+
 Signed request data-shape addendum: source revision `14d3cc0` validates the
 complete request as a bounded JSON-shaped tree of ordinary or null-prototype
 data records and dense arrays. Hidden/accessor/inherited fields, cycles, and

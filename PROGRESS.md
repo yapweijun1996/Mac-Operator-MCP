@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Authenticated IPC data-shape addendum: source revision `27e102b` applies the
+shared plain-data-record guard to Authority Control, Broker Status, Privileged
+Helper, and Virtualization Guest transport parsers. Accessors, hidden fields,
+symbols, and prototype-bearing envelopes fail closed before proof verification
+or dispatch. Focused IPC tests pass 32/32; the non-overlapping package
+regression passes 502 total (496 pass, 6 skipped, 0 fail); build, typecheck,
+lint, and diff checks pass. This closes local parser integrity only; OS peer,
+production packaging, VM, credential, helper, and enablement evidence remain
+open. Evidence: `evidence/2026-09-15-authenticated-ipc-data-shapes.md`.
+
 Signed request data-shape addendum: source revision `14d3cc0` applies a shared
 plain-data-record check and bounded recursive validation to the complete Broker
 request value. Inherited, hidden, accessor, sparse-array, cyclic, symbolic, and
