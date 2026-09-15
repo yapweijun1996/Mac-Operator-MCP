@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, parseJsonUtf8Strict, PROTOCOL_VERSION, sha256 } from "@mac-operator/contracts";
 import type { BrokerStore } from "./persistence.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import type { VirtualizationGuestIdentity } from "./task-runner.js";
+import { parseVirtualizationGuestIdentity, type VirtualizationGuestIdentity } from "./virtualization-guest-attestation.js";
 
 const REQUEST_DOMAIN = "mac-operator-virtualization-guest-request-v0.1\0";
 const RESPONSE_DOMAIN = "mac-operator-virtualization-guest-response-v0.1\0";
@@ -537,7 +537,9 @@ export class VirtualizationGuestTransportClient {
     this.replayGuard = options.replayGuard;
     this.channel = options.channel;
     this.now = options.now ?? Date.now;
-    this.expectedGuestIdentity = options.expectedGuestIdentity;
+    this.expectedGuestIdentity = options.expectedGuestIdentity === undefined
+      ? undefined
+      : Object.freeze(parseVirtualizationGuestIdentity(options.expectedGuestIdentity));
     this.expectedSandboxProfile = options.expectedSandboxProfile;
     this.expectedProfileDigest = options.expectedProfileDigest;
     this.maxResponseBytes = maxResponseBytes;

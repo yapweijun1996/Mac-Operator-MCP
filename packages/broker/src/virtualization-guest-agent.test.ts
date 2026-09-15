@@ -58,10 +58,11 @@ function taskResponse(request: UnsignedVirtualizationGuestRequest): UnsignedVirt
 
 test("guest agent verifies, replays, and signs one bounded task exchange", async () => {
   let callbackRequest: UnsignedVirtualizationGuestRequest | undefined;
+  const expectedIdentity: { imageSha256: string; runtimeVersion: string } = { ...guestIdentity };
   const agent = new VirtualizationGuestAgent({
     authenticationKey: key,
     replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
-    expectedGuestIdentity: guestIdentity,
+    expectedGuestIdentity: expectedIdentity,
     expectedSandboxProfile: "guest-task-v1",
     expectedProfileDigest: "b".repeat(64),
     now: () => now,
@@ -70,6 +71,14 @@ test("guest agent verifies, replays, and signs one bounded task exchange", async
       return taskResponse(request);
     }
   });
+  const boundIdentity = (agent as unknown as { expectedGuestIdentity: { imageSha256: string; runtimeVersion: string } }).expectedGuestIdentity;
+  assert.equal(Object.isFrozen(boundIdentity), true);
+  assert.throws(
+    () => { boundIdentity.imageSha256 = "b".repeat(64); },
+    TypeError
+  );
+  expectedIdentity.runtimeVersion = "replacement";
+  assert.equal(boundIdentity.runtimeVersion, guestIdentity.runtimeVersion);
   const client = new VirtualizationGuestTransportClient({
     authenticationKey: key,
     replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),

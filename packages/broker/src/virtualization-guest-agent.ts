@@ -119,7 +119,7 @@ export class VirtualizationGuestAgent {
     }
     this.authenticationKey = Buffer.from(options.authenticationKey);
     this.replayGuard = options.replayGuard;
-    this.expectedGuestIdentity = parseVirtualizationGuestIdentity(options.expectedGuestIdentity);
+    this.expectedGuestIdentity = Object.freeze(parseVirtualizationGuestIdentity(options.expectedGuestIdentity));
     this.expectedSandboxProfile = options.expectedSandboxProfile;
     this.expectedProfileDigest = options.expectedProfileDigest;
     this.executeRequest = options.execute;

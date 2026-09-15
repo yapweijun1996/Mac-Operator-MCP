@@ -233,7 +233,7 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
     connectionSource: VirtualizationGuestConnectionSource | undefined;
   }) {
     this.lifecycle = options.lifecycle;
-    this.guestIdentity = { ...options.guestIdentity };
+    this.guestIdentity = Object.freeze(parseVirtualizationGuestIdentity(options.guestIdentity));
     this.available = options.lifecycle.available;
     this.taskRunner = options.taskRunner;
     this.connectionSource = options.connectionSource;

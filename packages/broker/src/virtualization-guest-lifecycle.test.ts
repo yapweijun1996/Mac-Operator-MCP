@@ -38,6 +38,23 @@ function enabledLifecycle(adapter: VirtualizationGuestVmAdapter = adapterFixture
   });
 }
 
+test("VM lifecycle freezes its expected guest identity authority", () => {
+  const source = { ...guestIdentity };
+  const lifecycle = new VirtualizationGuestVmLifecycle({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    expectedGuestIdentity: source,
+    adapter: adapterFixture()
+  });
+  assert.equal(Object.isFrozen(lifecycle.expectedGuestIdentity), true);
+  assert.throws(
+    () => { (lifecycle.expectedGuestIdentity as { imageSha256: string }).imageSha256 = "b".repeat(64); },
+    TypeError
+  );
+  source.imageSha256 = "b".repeat(64);
+  assert.equal(lifecycle.expectedGuestIdentity.imageSha256, "a".repeat(64));
+});
+
 test("VM lifecycle is disabled unless explicit host gates and identity match", async () => {
   const lifecycle = new VirtualizationGuestVmLifecycle({
     expectedGuestIdentity: guestIdentity,

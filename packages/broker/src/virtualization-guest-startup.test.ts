@@ -148,6 +148,11 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
   });
   try {
     assert.equal(runtime.available, true);
+    assert.equal(Object.isFrozen(runtime.guestIdentity), true);
+    assert.throws(
+      () => { (runtime.guestIdentity as { runtimeVersion: string }).runtimeVersion = "replacement"; },
+      TypeError
+    );
     assert.equal(channelPort, DEFAULT_VIRTUALIZATION_GUEST_PORT);
     assert.equal(listenerPort, 38_766);
     assert.ok(runtime.connectionSource);

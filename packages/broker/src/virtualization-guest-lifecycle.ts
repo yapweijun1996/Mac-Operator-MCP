@@ -91,7 +91,7 @@ export class VirtualizationGuestVmLifecycle {
         !Number.isSafeInteger(stopTimeoutMs) || stopTimeoutMs < 1 || stopTimeoutMs > 120_000) {
       throw new Error("Virtualization guest VM lifecycle timeouts are invalid");
     }
-    this.expectedGuestIdentity = parseVirtualizationGuestIdentity(options.expectedGuestIdentity);
+    this.expectedGuestIdentity = Object.freeze(parseVirtualizationGuestIdentity(options.expectedGuestIdentity));
     this.adapter = options.adapter;
     this.startTimeoutMs = startTimeoutMs;
     this.stopTimeoutMs = stopTimeoutMs;

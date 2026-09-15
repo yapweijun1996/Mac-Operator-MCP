@@ -22,6 +22,7 @@ import {
   type UnsignedVirtualizationGuestStatusResponse
 } from "./virtualization-guest-transport.js";
 import { BrokerStore } from "./persistence.js";
+import type { VirtualizationGuestIdentity } from "./virtualization-guest-attestation.js";
 
 const key = Buffer.alloc(32, 0x42);
 const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "macos-virtualization-1.0" } as const;
@@ -276,6 +277,26 @@ test("bounded transport client admits before exchange and verifies the signed re
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(sentRequestId, "request:guest-abcdef0123456789");
   assert.equal(admittedRequestId, sentRequestId);
+  client.close();
+});
+
+test("bounded transport client freezes its expected guest identity authority", () => {
+  const source: { imageSha256: string; runtimeVersion: string } = { ...guestIdentity };
+  const client = new VirtualizationGuestTransportClient({
+    authenticationKey: key,
+    replayGuard: new InMemoryVirtualizationGuestReplayGuard({ now: () => now }),
+    now: () => now,
+    expectedGuestIdentity: source,
+    channel: { async exchange(): Promise<Uint8Array> { throw new Error("must not send"); } }
+  });
+  const bound = (client as unknown as { expectedGuestIdentity: VirtualizationGuestIdentity }).expectedGuestIdentity;
+  assert.equal(Object.isFrozen(bound), true);
+  assert.throws(
+    () => { (bound as { runtimeVersion: string }).runtimeVersion = "replacement"; },
+    TypeError
+  );
+  source.runtimeVersion = "replacement";
+  assert.equal(bound.runtimeVersion, guestIdentity.runtimeVersion);
   client.close();
 });
 
