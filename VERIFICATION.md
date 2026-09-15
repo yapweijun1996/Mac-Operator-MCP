@@ -1794,6 +1794,15 @@ physical crash/remount durability, production Keychain, installed recovery,
 external rollback, and independent P0/P1 review remain open. Evidence:
 `evidence/2026-09-15-ledger-integrity-rerun.md`.
 
+Latest physical-Darwin full regression: after rebuilding source revision
+`cd62bbc`, the serial non-overlapping package set passes 595/595 with zero
+skips and zero failures under the explicit sandbox, Keychain, and temporary
+install gates. The pre-existing Broker/Persistence process was left
+undisturbed. This is current host regression evidence only; persistent
+production installation, Developer ID provenance, real isolation, VM
+isolation, remote issuer/deployment, and independent P0/P1 review remain
+open. Evidence: `evidence/2026-09-15-real-full-regression-rerun.md`.
+
 Latest Broker restart-recovery addendum: source commit `a20fed7` persists
 bounded non-secret task-process PID/process-group/start-time identities for the
 root and observed descendants before task execution proceeds. A new

@@ -17,6 +17,14 @@ physical crash/remount durability, production Keychain, installed recovery,
 external rollback, and independent P0/P1 review remain open. Evidence:
 `evidence/2026-09-15-ledger-integrity-rerun.md`.
 
+Physical Darwin full-regression addendum: after rebuilding source revision
+`cd62bbc`, the serial non-overlapping package set passes 595/595 with zero
+skips and zero failures under all three explicit physical gates. The old
+Broker/persistence process was left undisturbed. Persistent production
+installation, Developer ID provenance, real isolation, VM isolation, remote
+issuer/deployment, and independent P0/P1 review remain open. Evidence:
+`evidence/2026-09-15-real-full-regression-rerun.md`.
+
 Physical Darwin sandbox addendum: correctly exporting `MOPS_REAL_SANDBOX=1`
 to the test processes yields 595 total (593 pass, 2 skipped, 0 fail) on
 Darwin arm64/macOS 26.2. Real sandbox, protected-surface, fork/`setsid`,
