@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-request snapshot addendum: source revision `31dc880` snapshots the
+authenticated guest task request, including its nested guest identity, before
+the registry's asynchronous executable/cwd readback. Ledger keys, adapter
+input, budgets, cancellation, response binding, and terminal recovery now use
+the snapshot, so caller mutation during target checks cannot change the
+admitted task or published result. The focused guest executor suite passes
+11/11; the non-overlapping package regression passes 517 total (511 pass,
+6 skipped, 0 fail). This closes one local guest-request TOCTOU window only;
+native attestation production, VM isolation, credentials, persistence, and
+`mac_task_run` enablement remain open.
+Evidence: `evidence/2026-09-15-guest-request-snapshot.md`.
+
 Guest-profile boundary addendum: source revision `5f67e18` hardens the
 startup-owned Virtualization guest profile registry and task request parser.
 Profiles and requests must be plain records with known fields; executable,

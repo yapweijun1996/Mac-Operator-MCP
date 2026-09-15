@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest-request snapshot addendum: commit `31dc880` snapshots the authenticated
+guest task request and nested identity before asynchronous profile target
+readback. Adapter input, ledger identity, timeout/output budgets,
+cancellation, response digest, and terminal recovery are derived only from
+that snapshot. A hostile test mutates request identity, digest, budget, and
+nested guest identity immediately after `execute()`; the adapter and response
+retain the original values. Focused guest executor tests pass 11/11; the
+non-overlapping package regression passes 517 total (511 pass, 6 skipped,
+0 fail). This proves one local guest-request TOCTOU control only; it does not
+prove native attestation production, VM/credential/persistence isolation, or
+task enablement.
+Evidence: `evidence/2026-09-15-guest-request-snapshot.md`.
+
 Guest-profile boundary addendum: commit `5f67e18` validates startup-owned
 Virtualization guest profiles and unsigned digest-bound requests as plain
 records with exact known fields. Dense bounded arrays and plain environment

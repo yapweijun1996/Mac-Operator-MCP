@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Guest-request snapshot addendum: commit `31dc880` copies the authenticated
+guest task request and nested identity before asynchronous profile target
+readback. All ledger, adapter, budget, cancellation, response, and recovery
+paths use the snapshot; a caller mutation cannot substitute task identity or
+execution limits after admission. Focused guest executor tests pass 11/11;
+the non-overlapping package regression passes 517 total (511 pass, 6 skipped,
+0 fail). This closes one local guest-request TOCTOU window only; native
+attestation, VM, credential, persistence, and `mac_task_run` evidence remains
+open.
+Evidence: `evidence/2026-09-15-guest-request-snapshot.md`.
+
 Guest-profile boundary addendum: commit `5f67e18` applies strict plain-record,
 known-field, dense-array, and bounded-collection checks to startup-owned guest
 profiles and digest-bound guest task requests. Inherited/accessor/symbolic,
