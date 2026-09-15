@@ -1,4 +1,4 @@
-import { BrokerError, CONTRACT_VERSION, PROTOCOL_VERSION, type BrokerFailure, type BrokerResult, type BrokerSuccess, type PrincipalContext } from "@mac-operator/contracts";
+import { BrokerError, CONTRACT_VERSION, PROTOCOL_VERSION, SCOPES, type BrokerFailure, type BrokerResult, type BrokerSuccess, type PrincipalContext } from "@mac-operator/contracts";
 import {
   McpServer,
   fromJsonSchema,
@@ -149,11 +149,15 @@ function parseCapability(value: unknown): CapabilityState {
   }
   const record = value;
   const keys = Object.keys(record).sort();
-  if (keys.length !== 5 || keys.join(",") !== "contract_version,enabled,implemented,name,planned" ||
+  const allowedKeys = new Set(["contract_version", "enabled", "implemented", "name", "planned", "reason", "scopes"]);
+  if (keys.length < 5 || keys.length > allowedKeys.size || keys.some((key) => !allowedKeys.has(key)) ||
       typeof record.name !== "string" || record.name.length < 1 || record.name.length > 128 ||
       !/^mac_[a-z0-9_]+$/u.test(record.name) || typeof record.planned !== "boolean" ||
       typeof record.implemented !== "boolean" || typeof record.enabled !== "boolean" ||
-      (record.contract_version !== null && (typeof record.contract_version !== "string" || record.contract_version.length > 64))) {
+      (record.contract_version !== null && (typeof record.contract_version !== "string" || record.contract_version.length > 64)) ||
+      (record.scopes !== undefined && (!isPlainDataArray(record.scopes, SCOPES.length) ||
+        record.scopes.some((scope) => typeof scope !== "string" || !SCOPES.includes(scope as typeof SCOPES[number])))) ||
+      (record.reason !== undefined && (typeof record.reason !== "string" || record.reason.length > 128))) {
     throw new Error("Broker capability item is malformed");
   }
   return {
