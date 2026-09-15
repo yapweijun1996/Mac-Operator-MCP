@@ -1671,6 +1671,33 @@ test("Edge revocation cancels matching and unknown-provenance queued Jobs only",
   }
 });
 
+test("malformed persisted Job Edge provenance fails closed on readback", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-edge-provenance-corruption-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.createJob({ ...jobInput("job:edge-corrupt", "idem-edge-corrupt"), edgeId: "edge-1" });
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE jobs SET owner_edge_id = ? WHERE job_id = ?").run("edge with spaces", "job:edge-corrupt");
+    } finally {
+      database.close();
+    }
+    const reloaded = new BrokerStore(databasePath);
+    try {
+      assert.throws(
+        () => reloaded.ownedJob("job:edge-corrupt", "principal-1"),
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+      );
+    } finally {
+      reloaded.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("authority switches and revocations append redacted intent and completion evidence", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-authority-audit-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
