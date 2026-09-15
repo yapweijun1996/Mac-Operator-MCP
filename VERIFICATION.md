@@ -9,12 +9,12 @@ explicitly skipped, 0 failed). The run includes normalized failure-target and
 credential-field redaction coverage. Evidence:
 `evidence/2026-09-15-latest-local-regression.md`.
 
-Audit-evidence redaction verification: the persistence redactor now covers
-common API/access/refresh token, client/HMAC/signing/SSH key, bearer/JWT,
-password/passphrase, cookie, credential, and private/secret field aliases.
-The dedicated alias corpus test passes with canonical evidence unchanged for
-safe fields. This defense-in-depth check does not close VT-SEC-01/02 or prove
-physical credential isolation. Evidence:
+Audit-evidence redaction verification: the persistence and privileged-helper
+response boundaries cover common API/access/refresh token, client/HMAC/
+signing/SSH key, bearer/JWT, password/passphrase, cookie, credential, and
+private/secret field aliases. Focused alias and helper tests pass with safe
+fields unchanged. This defense-in-depth check does not close VT-SEC-01/02 or
+prove physical credential isolation. Evidence:
 `evidence/2026-09-15-audit-evidence-redaction.md`.
 
 Failure-audit target verification at source revision `3ed2e02` confirms that

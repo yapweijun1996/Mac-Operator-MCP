@@ -9,10 +9,11 @@ Latest regression addendum: the non-overlapping built suite passes 594 total
 redaction coverage; the existing Broker/persistence process was left
 undisturbed. Evidence: `evidence/2026-09-15-latest-local-regression.md`.
 
-Audit-evidence redaction addendum: the persistence boundary now redacts
-common credential and key field aliases before canonicalization; the focused
-alias corpus passes. This is defense-in-depth only and leaves the broader
-secret-corpus, physical isolation, and release gates open. Evidence:
+Audit-evidence redaction addendum: the persistence and privileged-helper
+response boundaries now redact common credential and key field aliases before
+canonicalization or response publication; focused alias/helper tests pass.
+This is defense-in-depth only and leaves the broader secret-corpus, physical
+isolation, and release gates open. Evidence:
 `evidence/2026-09-15-audit-evidence-redaction.md`.
 
 Failure-audit target addendum: commit `3ed2e02` records the normalized target
