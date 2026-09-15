@@ -2727,3 +2727,11 @@ non-overlapping package regression remains 546 total (540 passed, 6 skipped,
 0 failed). This does not close physical process ownership or production
 service evidence. Evidence:
 `evidence/2026-09-15-kill-switch-scope-isolation.md`.
+
+Fail-closed kill-switch verification at source revision `fe6a187` confirms
+`mutations` preserves only known read-only queued Jobs and cancels both known
+mutation and unknown future-tool Jobs. Build and a temporary BrokerStore smoke
+pass; the non-overlapping package regression remains 546 total (540 passed, 6
+skipped, 0 failed). Physical process ownership and production service evidence
+remain open. Evidence:
+`evidence/2026-09-15-kill-switch-fail-closed.md`.

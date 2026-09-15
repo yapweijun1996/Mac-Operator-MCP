@@ -71,6 +71,11 @@ while read-only queued work remains queued and the `global` switch remains the
 universal stop. This is local policy/persistence evidence and does not close
 production installation or ADR acceptance.
 
+Commit `fe6a187` strengthens the independent `mutations` switch with a
+fail-closed classification: only known read-only queued Jobs are preserved;
+unknown or future tools are cancelled until explicitly classified. This avoids
+silently weakening a kill switch as the tool catalog evolves.
+
 Commit `cb704af` applies the same bounded, dense, known,
 and unique scope-list semantics to parsed request principals and direct
 `authorizeTool` callers. This prevents a representation mismatch where an

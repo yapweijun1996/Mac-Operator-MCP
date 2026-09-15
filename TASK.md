@@ -1831,3 +1831,11 @@ a temporary BrokerStore smoke pass; the non-overlapping package regression
 remains 546 total (540 passed, 6 skipped, 0 failed). Process ownership,
 physical resource limits, and production service evidence remain open.
 Evidence: `evidence/2026-09-15-kill-switch-scope-isolation.md`.
+
+Fail-closed kill-switch addendum: commit `fe6a187` preserves only a bounded
+known-read-only tool set when `mutations` is disabled; unknown or future tools
+are cancelled until explicitly classified. Build and a temporary BrokerStore
+smoke pass; the non-overlapping package regression remains 546 total (540
+passed, 6 skipped, 0 failed). Process ownership, physical resource limits, and
+production service evidence remain open. Evidence:
+`evidence/2026-09-15-kill-switch-fail-closed.md`.

@@ -3059,3 +3059,10 @@ all-capability stop; process, GUI, destructive, and privileged mappings remain
 independent. Build and a temporary BrokerStore smoke pass; the non-overlapping
 package regression remains 546 total (540 passed, 6 skipped, 0 failed).
 Evidence: `evidence/2026-09-15-kill-switch-scope-isolation.md`.
+
+The mutation kill-switch mapping is now fail-closed for future tools (source
+revision `fe6a187`): known read-only tools are the only queued Jobs preserved;
+unknown or newly introduced tools are cancelled until explicitly classified as
+read-only. Build and a temporary BrokerStore smoke pass; the non-overlapping
+package regression remains 546 total (540 passed, 6 skipped, 0 failed).
+Evidence: `evidence/2026-09-15-kill-switch-fail-closed.md`.
