@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC socket orphan-recovery addendum: source revision `49b575a` adds
+timestamped UUID/basename-fingerprint quarantine names and explicit recovery
+requiring canonical owner-only parent identity, matching socket device/inode,
+inactive liveness, bounded age, and a unique stale candidate. Recent, active,
+mixed-age, and ambiguous entries remain untouched; removal has absence
+readback. Build, lint, diff checks, and the dedicated 11-test Darwin IPC suite
+pass. Production crash/remount evidence and persisted Job integration remain
+open. Evidence:
+`evidence/2026-09-15-ipc-socket-orphan-recovery.md`.
+
 Filesystem unlink orphan-recovery addendum: the native unlink boundary now
 records a timestamped, nonce-bearing basename fingerprint in its private
 quarantine name and exposes explicit recovery that requires the original

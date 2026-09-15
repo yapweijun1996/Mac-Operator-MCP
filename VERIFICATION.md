@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+IPC socket orphan-recovery verification covers timestamped UUID/basename-
+fingerprint quarantine names and explicit stale recovery. The recovery path
+checks canonical owner-only parent identity before and after scanning, exact
+socket device/inode, inactive endpoint state (including macOS detached-socket
+`EINVAL`), bounded age, unique selection, and absence readback. Build, lint,
+diff checks, and the dedicated Darwin IPC suite pass 11/11. Production
+crash/remount evidence and persisted Job integration remain open. Evidence:
+`evidence/2026-09-15-ipc-socket-orphan-recovery.md`.
+
 Filesystem unlink orphan-recovery verification covers the native quarantine
 timestamp/basename fingerprint and explicit stale-artifact recovery. Recovery
 reopens the same local root and canonical parent, requires a unique regular

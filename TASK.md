@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+IPC socket orphan-recovery addendum: source revision `49b575a`
+adds explicit identity/age-gated recovery for crash leftovers, with strict
+basename fingerprints, owner-only parent checks, inactive-liveness checks,
+ambiguity preservation, and post-removal readback. Build, lint, diff checks,
+and the 11-test Darwin IPC suite pass. Production crash/remount evidence and
+persisted Job integration remain open. Evidence:
+`evidence/2026-09-15-ipc-socket-orphan-recovery.md`.
+
 Filesystem unlink orphan-recovery addendum: the native adapter now uses
 timestamped quarantine names with a basename fingerprint and provides an
 explicit identity/age-gated recovery operation. The Broker boundary rejects
