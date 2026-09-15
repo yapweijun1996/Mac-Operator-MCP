@@ -8,7 +8,7 @@ Persisted Job-output integrity addendum: commit `1cfc62c` revalidates Job
 stdout/stderr bounds and secret policy at startup, along with exit-code,
 cancellation-reason, and metadata-column types. Job-row/state tests pass 7/7;
 Request-link tests pass 3/3; the non-overlapping package regression passes 591
-total (585 pass, 6 skipped, 0 fail). Build, lint, and diff checks pass.
+total (585 pass, 6 skipped, 0 fail). Build, lint (599 tracked files), and diff checks pass.
 Physical crash/old-worker ownership, credential rotation, remount durability,
 installed recovery, and independent review remain open. Evidence:
 `evidence/2026-09-15-job-output-integrity.md`.

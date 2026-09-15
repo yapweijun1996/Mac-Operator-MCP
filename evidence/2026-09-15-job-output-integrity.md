@@ -19,7 +19,7 @@ again at startup.
 - Request-link focused tests: 3 passed, 0 failed.
 - Non-overlapping package regression: 591 total, 585 passed, 6 skipped, 0 failed.
 - `npm run build`: passed.
-- `npm run lint`: passed for 598 tracked files.
+- `npm run lint`: passed for 599 tracked files.
 - `git diff --check`: passed.
 
 The long-running `broker.test.js` and `persistence.test.js` suites were already
