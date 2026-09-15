@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox startup-wiring addendum: source revision `2e605ea` connects the
+explicit host sandbox runner seam to Broker service assembly and always merges
+validated package/data/runtime roots into its protected set. Competing
+virtualization and sandbox runners fail closed; the default service remains
+unchanged and disabled. Service-startup tests pass 5/5 and sandbox tests pass
+16/16. Evidence:
+`evidence/2026-09-15-sandbox-startup-wiring.md`.
+
 Sandbox UDP addendum: source revision `02fec55` verifies the existing
 loopback-UDP allowlist on physical Darwin using a fixed Perl Socket task. The
 listed destination receives a datagram; an unlisted port fails and receives

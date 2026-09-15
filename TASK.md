@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox startup-wiring addendum: source revision `2e605ea` adds an explicit
+host-only `sandboxTaskRunner` startup seam. It automatically protects the
+validated package, data, and runtime roots, rejects simultaneous sandbox and
+virtualization runner configuration, and injects the selected runner into the
+Broker without accepting MCP or ambient-environment authority. Service-startup
+tests pass 5/5 and sandbox tests pass 16/16. The packaged default still uses
+the fail-closed runner; production evidence and `mac_task_run` enablement
+remain blocked. Evidence:
+`evidence/2026-09-15-sandbox-startup-wiring.md`.
+
 Sandbox UDP addendum: source revision `02fec55` adds a physical-Darwin
 loopback UDP regression. A Broker-rendered `udp://localhost:port` allowlist
 delivers a datagram only to the listed port; an unlisted loopback port fails

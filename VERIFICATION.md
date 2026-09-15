@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Sandbox startup-wiring addendum: source revision `2e605ea` gives service
+startup an explicit host-only sandbox runner seam, derives protected
+package/data/runtime roots, and rejects competing virtualization and sandbox
+runner configuration. Service-startup passes 5/5 and sandbox-profile passes
+16/16. Build, lint, contract, native canonical, and diff checks pass. The
+packaged default remains fail-closed and `mac_task_run` remains disabled until
+real startup, credential, process-tree, and remount evidence exists. Evidence:
+`evidence/2026-09-15-sandbox-startup-wiring.md`.
+
 Sandbox UDP addendum: source revision `02fec55` verifies a physical-Darwin
 loopback UDP allowlist: the listed port receives the task datagram, while an
 unlisted port fails without delivery. Sandbox-profile passes 16/16 and the
