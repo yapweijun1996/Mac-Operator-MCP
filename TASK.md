@@ -1674,11 +1674,12 @@ non-cooperating-process lock evidence remain open.
   client; missing authority configuration fails closed. Focused runtime tests
   pass 5/5 and the latest physical non-overlapping regression passes 615/615.
   Evidence: `evidence/2026-09-15-privileged-helper-poller-construction.md`.
-- MOP-060 runtime disposal clarification: source revision `2ce0945` makes
-  authority-poller disposal idempotent across startup failure, failed cleanup,
-  close-before-start, and ordinary close. A runtime whose separately
-  authenticated poller has been disposed cannot restart with wiped key
-  material. Focused runtime tests pass 6/6 and the latest physical
+- MOP-060 runtime disposal clarification: source revision `2ce0945` (with
+  failed-cleanup coverage in test revision `ccb248b`) makes authority-poller
+  disposal idempotent across startup failure, failed cleanup, close-before-
+  start, and ordinary close. A runtime whose separately authenticated poller
+  has been disposed cannot restart with wiped key material. Focused runtime
+  tests pass 6/6 and the latest physical
   non-overlapping regression passes 616/616; the existing Broker/Persistence
   process remained undisturbed. Evidence:
   `evidence/2026-09-15-privileged-helper-runtime-disposal.md`.

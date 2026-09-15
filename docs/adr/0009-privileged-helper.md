@@ -251,10 +251,11 @@ factory retains injection only for Broker-side compatibility and test seams.
 
 Revision `2ce0945` makes helper runtime authority-poller cleanup idempotent
 across listener startup failure, failed listener cleanup, close-before-start,
-and ordinary close. Once the separately authenticated poller is disposed, the
-runtime refuses restart so wiped key material cannot be reused. This preserves
-fail-closed lifecycle semantics without changing the helper's disabled default
-or enabling any privileged operation.
+and ordinary close. Test revision `ccb248b` covers the failed-cleanup path.
+Once the separately authenticated poller is disposed, the runtime refuses
+restart so wiped key material cannot be reused. This preserves fail-closed
+lifecycle semantics without changing the helper's disabled default or
+enabling any privileged operation.
 
 ## Consequences and rollback
 
