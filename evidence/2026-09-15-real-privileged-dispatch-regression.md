@@ -1,8 +1,8 @@
 # Physical regression after privileged Broker dispatch
 
-- Source revision: `9e76a9c`
+- Source revision: `1f7451b`
 - Command: `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 MOPS_REAL_SANDBOX=1 node --test --test-timeout=120000 <all built tests except broker.test.js and persistence.test.js>`
-- Result: 601 tests passed, 0 failed, 0 skipped.
+- Result: 602 tests passed, 0 failed, 0 skipped.
 - Native fault-injection build completed before the run.
 
 The run exercised the existing physical sandbox, credential-canary,

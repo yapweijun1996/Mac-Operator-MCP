@@ -3,17 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Privileged Broker dispatch verification: source revision `24c704e` connects all
+Privileged Broker dispatch verification: source revision `1f7451b` connects all
 three L5 contracts to normalized payload planning, explicit approval intent,
 Broker-owned Job lease transitions, and the separately authenticated helper
 executor. The default helper and policy remain disabled; a focused fake-helper
-integration suite passes 2/2 and confirms no Job is created when the helper
+integration suite passes 3/3 and confirms no Job is created when the helper
 boundary is unavailable. This does not claim helper signing, root-domain
 installation, real privileged adapters, or privileged enablement. Evidence:
 `evidence/2026-09-15-privileged-broker-dispatch.md`.
 
-Post-dispatch physical regression verification: source revision `9e76a9c`
-passes 601/601 non-overlapping built tests with zero skips and zero failures
+Post-dispatch physical regression verification: source revision `1f7451b`
+passes 602/602 non-overlapping built tests with zero skips and zero failures
 under all three physical gates. This is a regression checkpoint for existing
 host boundaries, not real privileged-action, Developer ID, root-domain, or
 production-enablement evidence; the long-running Broker/Persistence suites

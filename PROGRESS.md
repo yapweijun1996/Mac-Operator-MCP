@@ -4,21 +4,21 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Privileged Broker dispatch addendum: source revision `24c704e` wires all three
+Privileged Broker dispatch addendum: source revision `1f7451b` wires all three
 L5 contracts through Broker planning, normalized payload validation, approval
 intent, Broker-owned Job creation/lease, and the separately authenticated
 `PrivilegedHelperJobExecutor`. The helper boundary remains explicitly
 disabled by default, while the default policy now records the tools as
 `implemented=true` and `enabled=false`; no root operation is enabled by this
-change. A fake authenticated helper integration test passes 2/2, including a
+change. A fake authenticated helper integration test passes 3/3, including a
 fail-closed no-helper admission check. The helper factory now keeps the signed
 Edge-envelope digest separate from the normalized privileged-argument digest.
 Physical helper signing, root-domain installation, real adapters, and
 production enablement remain open. Evidence:
 `evidence/2026-09-15-privileged-broker-dispatch.md`.
 
-Post-dispatch physical regression addendum: source revision `9e76a9c` runs the
-non-overlapping built suite at 601/601 with zero skips and zero failures under
+Post-dispatch physical regression addendum: source revision `1f7451b` runs the
+non-overlapping built suite at 602/602 with zero skips and zero failures under
 `MOPS_REAL_INSTALL=1`, `MOPS_REAL_KEYCHAIN=1`, and `MOPS_REAL_SANDBOX=1`.
 This confirms the privileged dispatch wiring did not regress the existing
 physical sandbox, Keychain ACL, install, IPC, filesystem, Edge, guest, or
@@ -2829,8 +2829,8 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
   independent root-domain signing, installation, live readback, and real
   adapter evidence is accepted.
 - Enabled tools: 0 of 44 planned.
-- Automated tests: the latest non-overlapping built regression passes 601
-  total (595 passed, 6 explicit opt-in skips, 0 failed); the existing
+- Automated tests: the latest non-overlapping built regression passes 602
+  total (596 passed, 6 explicit opt-in skips, 0 failed); the existing
   Broker/Persistence test process remains separately undisturbed.
 - Real-Mac execution evidence: bounded local foundation, a synthetic temporary-repository Git staging/commit run, a real-host running-app inventory query, a real-host Finder Accessibility probe that failed closed without permission, and partial sandbox research records on Mac mini M4/macOS 26.2; UI action remains fixed-command/fake-adapter prototype evidence with no real app mutation or permission-granted release evidence.
 - Remote MCP deployment: none.
