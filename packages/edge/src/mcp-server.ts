@@ -120,13 +120,21 @@ function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry
   }
   const parsed = capabilities.map(parseCapability);
   const enabled: string[] = [];
+  const seen = new Set<string>();
   for (const item of parsed) {
+    if (seen.has(item.name)) {
+      throw new Error(`Broker capability list contains a duplicate: ${item.name}`);
+    }
+    seen.add(item.name);
+    const contract = contracts.get(item.name);
+    if (!contract) {
+      throw new Error(`Broker capability is not registered: ${item.name}`);
+    }
     if (!item.enabled) continue;
     if (!item.planned || !item.implemented) {
       throw new Error(`Broker capability state is inconsistent for ${item.name}`);
     }
-    const contract = contracts.get(item.name);
-    if (!contract || item.contractVersion !== contract.schemaVersion || item.contractVersion !== CONTRACT_VERSION) {
+    if (item.contractVersion !== contract.schemaVersion || item.contractVersion !== CONTRACT_VERSION) {
       throw new Error(`Broker capability contract version is incompatible for ${item.name}`);
     }
     enabled.push(item.name);
@@ -139,9 +147,10 @@ function parseCapability(value: unknown): CapabilityState {
     throw new Error("Broker capability item is malformed");
   }
   const record = value as Record<string, unknown>;
-  if (typeof record.name !== "string" || typeof record.planned !== "boolean" ||
+  if (typeof record.name !== "string" || record.name.length < 1 || record.name.length > 128 ||
+      !/^mac_[a-z0-9_]+$/u.test(record.name) || typeof record.planned !== "boolean" ||
       typeof record.implemented !== "boolean" || typeof record.enabled !== "boolean" ||
-      (record.contract_version !== null && typeof record.contract_version !== "string")) {
+      (record.contract_version !== null && (typeof record.contract_version !== "string" || record.contract_version.length > 64))) {
     throw new Error("Broker capability item is malformed");
   }
   return {
