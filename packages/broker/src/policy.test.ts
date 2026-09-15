@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Scope } from "@mac-operator/contracts";
 import { createDefaultPolicy } from "./default-policy.js";
-import { authorizeTarget, cloneBrokerPolicy, validateBrokerPolicy } from "./policy.js";
+import { authorizePrincipalProjection, authorizeTarget, cloneBrokerPolicy, validateBrokerPolicy } from "./policy.js";
 import { PolicyManager } from "./policy-loader.js";
 
 test("runtime Broker policy accepts the default tool contract shape", () => {
@@ -100,6 +100,23 @@ test("runtime Broker policy rejects accessor and sparse authority arrays", () =>
   assert.throws(
     () => validateBrokerPolicy({ ...base, targetRules: sparseRules }),
     (error: unknown) => error instanceof Error && error.message === "Active Broker policy is malformed"
+  );
+});
+
+test("policy authorization rejects non-data projected scopes and targets", () => {
+  const policy = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const accessorScopes = ["mac.control.read"] as Scope[];
+  Object.defineProperty(accessorScopes, "0", { enumerable: true, get: () => "mac.control.read" });
+  assert.throws(
+    () => authorizePrincipalProjection(policy, "principal-1", "issuer-1", accessorScopes),
+    (error: unknown) => error instanceof Error && error.message === "Principal authority projection is malformed"
+  );
+
+  const accessorTarget = { kind: "host", reference: "broker" } as Record<string, string>;
+  Object.defineProperty(accessorTarget, "reference", { enumerable: true, get: () => "broker" });
+  assert.throws(
+    () => authorizeTarget(policy, "principal-1", ["mac.control.read"], accessorTarget as never),
+    (error: unknown) => error instanceof Error && error.message === "Target authority is malformed"
   );
 });
 

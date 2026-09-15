@@ -206,6 +206,11 @@ function isDenseArray(value: unknown, maxLength: number): value is readonly unkn
   }
 }
 
+function isKnownScopeList(value: unknown): value is readonly Scope[] {
+  return isDenseArray(value, SCOPES.length) &&
+    value.every((scope) => typeof scope === "string" && SCOPES.includes(scope as Scope));
+}
+
 function isPolicyId(value: unknown): value is string {
   return typeof value === "string" && POLICY_ID_PATTERN.test(value);
 }
@@ -246,6 +251,9 @@ export function authorizePrincipalProjection(
   projectedScopes: readonly Scope[]
 ): void {
   validateBrokerPolicy(policy);
+  if (!isPolicyId(principalId) || !isPolicyId(issuer) || !isKnownScopeList(projectedScopes)) {
+    throw new BrokerError("AUTH_INVALID", "Principal authority projection is malformed");
+  }
   const grant = policy.principalGrants.get(principalId);
   if (!grant || !grant.enabled || grant.issuer !== issuer) {
     throw new BrokerError("AUTH_INVALID", "Principal authority is invalid");
@@ -309,6 +317,10 @@ export function authorizeTarget(
   target: NormalizedTarget
 ): void {
   validateBrokerPolicy(policy);
+  if (!isPolicyId(principalId) || !isKnownScopeList(scopes) ||
+      !isPolicyTarget(target, new Set(policy.filesystemRoots.map((root) => root.rootId)))) {
+    throw new BrokerError("POLICY_DENIED", "Target authority is malformed");
+  }
   const matchingRules = policy.targetRules.filter((rule) =>
     rule.principalId === principalId &&
     scopes.includes(rule.scope) &&
