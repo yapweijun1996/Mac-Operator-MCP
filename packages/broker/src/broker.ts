@@ -4362,9 +4362,9 @@ function privilegedToolResultData(
   result: PrivilegedHelperExecutionResult
 ): Record<string, unknown> {
   const evidence = result.evidence;
-  const boundedString = (name: string): string => {
+  const boundedString = (name: string, maxLength = 512): string => {
     const value = evidence[name];
-    if (typeof value !== "string" || value.length < 1 || value.length > 512) {
+    if (typeof value !== "string" || value.length < 1 || value.length > maxLength) {
       throw new BrokerError("VERIFICATION_FAILED", `Privileged helper evidence is missing ${name}`);
     }
     return value;
@@ -4373,14 +4373,14 @@ function privilegedToolResultData(
     return {
       service_id: payload.service_id,
       action: payload.action,
-      pre_state: boundedString("pre_state"),
-      post_state: boundedString("post_state"),
+      pre_state: boundedString("pre_state", 128),
+      post_state: boundedString("post_state", 128),
       verification_status: "verified"
     };
   }
   if (payload.operation === "package_install") {
-    const installedVersion = boundedString("installed_version");
-    const artifactId = boundedString("artifact_id");
+    const installedVersion = boundedString("installed_version", 128);
+    const artifactId = boundedString("artifact_id", 256);
     const alreadyInstalled = evidence.already_installed;
     const matchedVersion = evidence.matched_version;
     if (typeof alreadyInstalled !== "boolean" || typeof matchedVersion !== "boolean") {
@@ -4404,11 +4404,11 @@ function privilegedToolResultData(
     throw new BrokerError("VERIFICATION_FAILED", "Privileged helper power state is malformed");
   }
   const scheduledFor = evidence.scheduled_for;
-  if (scheduledFor !== null && typeof scheduledFor !== "string") {
+  if (scheduledFor !== null && (typeof scheduledFor !== "string" || scheduledFor.length < 1 || scheduledFor.length > 64 || Number.isNaN(Date.parse(scheduledFor)))) {
     throw new BrokerError("VERIFICATION_FAILED", "Privileged helper power schedule is malformed");
   }
-  const handoffId = boundedString("handoff_id");
-  if (evidence.connection_loss_expected !== true) {
+  const handoffId = boundedString("handoff_id", 256);
+  if (!/^[A-Za-z0-9._:/-]+$/u.test(handoffId) || evidence.connection_loss_expected !== true) {
     throw new BrokerError("VERIFICATION_FAILED", "Privileged helper power handoff evidence is malformed");
   }
   return {
