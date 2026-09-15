@@ -4245,6 +4245,82 @@ test("Broker marks a filesystem mutation UNKNOWN when the mutations kill switch 
   }
 });
 
+test("Broker cancels an active filesystem mutation after approval revocation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-active-approval-revoke-"));
+  const path = join(directory, "approval-revoke.txt");
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  const content = "after-approval-revocation";
+  const argumentsValue = { path, content, idempotency_key: "active-approval-revoke", encoding: "utf8", create_only: true };
+  const executor: FilesystemExecutor = {
+    stat: async () => { throw new Error("Unexpected stat"); },
+    read: async () => { throw new Error("Unexpected read"); },
+    write: async (_plan, _content, _expectedSha256, _createOnly, control) => {
+      store.revokeApproval("approval:active-approval-revoke", "OPERATOR_REVOKED", NOW);
+      assert.equal(control.shouldCancel(), true);
+      return {
+        operation: "write",
+        path,
+        bytesWritten: content.length,
+        sha256: sha256(content),
+        created: true,
+        expectedSha256: null,
+        expectedMatched: true,
+        rootId: "test-root",
+        device: "1",
+        inode: "1"
+      };
+    }
+  };
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), filesystemExecutor: executor, now: () => NOW });
+  try {
+    store.issueApproval({
+      approvalId: "approval:active-approval-revoke",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const request = unsigned({
+      requestId: "active-approval-revoke-request",
+      nonce: "active-approval-revoke-nonce",
+      tool: "mac_write_file_atomic",
+      arguments: argumentsValue
+    }, ["mac.files.write", "mac.job.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "CANCELLED");
+    const jobId = store.requestRecord(request.requestId)?.jobId;
+    assert.ok(jobId);
+    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === request.requestId).map((row) => [row.event_type, row.result_class]), [
+      ["decision", "AUTHORIZED"],
+      ["intent", "INTENT_RECORDED"],
+      ["completion", "CANCELLED"]
+    ]);
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Broker discards a filesystem result when session authority is revoked during execution", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-active-revoke-"));
   const path = join(directory, "sample.txt");

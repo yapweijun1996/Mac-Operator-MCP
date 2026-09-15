@@ -3680,6 +3680,9 @@ export class Broker {
         request.contractVersion,
         request.principal.scopes
       );
+      if (tool.mutation) {
+        this.options.store.assertRequestApprovalActive(request.requestId, request.principal.principalId, this.now());
+      }
       if (request.tool === "mac_ui_action") {
         const execution = this.planExecution(request, currentPolicy, tool);
         if (!execution.uiAction) throw new Error("UI action plan unavailable");

@@ -1169,7 +1169,7 @@ export class BrokerStore {
       current.targetRef,
       nowMs,
       (transitioning) => {
-        if (transitioning.mutation) this.assertRequestApprovalActive(transitioning, nowMs);
+        if (transitioning.mutation) this.assertRequestApprovalActiveRecord(transitioning, nowMs);
       }
     );
   }
@@ -2782,7 +2782,20 @@ export class BrokerStore {
     }
   }
 
-  private assertRequestApprovalActive(request: RequestRecord, nowMs: number): void {
+  /**
+   * Revalidate the approval consumed by an admitted mutation before dispatch
+   * and completion. The principal binding prevents one caller from probing
+   * another owner's request state.
+   */
+  assertRequestApprovalActive(requestId: string, principalId: string, nowMs: number): void {
+    const request = this.requestRecord(requestId);
+    if (!request || request.principalId !== principalId) {
+      throw new BrokerError("POLICY_DENIED", "Mutation approval is not active");
+    }
+    this.assertRequestApprovalActiveRecord(request, nowMs);
+  }
+
+  private assertRequestApprovalActiveRecord(request: RequestRecord, nowMs: number): void {
     if (!request.mutation || !request.approvalId || !Number.isSafeInteger(nowMs) || nowMs < request.updatedAtMs) {
       throw new BrokerError("POLICY_DENIED", "Mutation approval is not active");
     }
