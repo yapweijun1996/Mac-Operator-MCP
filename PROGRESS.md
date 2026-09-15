@@ -4,16 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-Process executable permission addendum: source revision `3dc9219` rejects
-group- or other-writable executable files before child admission, while
-retaining canonical path, non-symlink, descriptor-backed digest, and
-post-spawn identity checks. Build, lint, and the focused ProcessSupervisor
-suite pass 35/35 on the physical Darwin host. This hardens fixed adapter
-preflight but does not provide kernel-held descriptor execution or remount
-resistance; those remain open with production task enablement. Evidence:
+Process executable permission addendum: source revision `339d932` rejects
+group- or other-writable executable files before child admission and lets the
+Broker's fixed-adapter supervisor require root ownership. Owner UID/GID now
+participate in identity readback; canonical path, non-symlink, descriptor-backed
+digest, and post-spawn checks remain. Build, lint, and the focused
+ProcessSupervisor suite pass 36/36 on the physical Darwin host. This hardens
+fixed adapter preflight but does not provide kernel-held descriptor execution or
+remount resistance; those remain open with production task enablement. Evidence:
 `evidence/2026-09-15-process-executable-permissions.md`.
 
-Packaged-service host addendum: source revision `42992e1` passes the physical
+Packaged-service host addendum: source revision `339d932` passes the physical
 Darwin `MOPS_REAL_INSTALL=1 node --test
 packages/broker/dist/packaged-service-smoke.test.js` smoke (1/1). The test
 bootstraps temporary-user Edge and Broker LaunchAgents, verifies executable and

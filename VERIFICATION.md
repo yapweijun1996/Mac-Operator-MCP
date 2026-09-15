@@ -3,17 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Process executable permission verification at source revision `3dc9219`
-rejects group- or other-writable executable paths before spawning. The
+Process executable permission verification at source revision `339d932`
+rejects group- or other-writable executable paths before spawning, and the
+Broker's fixed-adapter supervisor additionally requires root ownership. The
 physical Darwin build and lint checks pass, and the focused
-`process-supervisor.test.js` suite passes 35/35, including a temporary
-group-writable executable denied with `POLICY_DENIED`. Existing canonical
-path, descriptor digest, and post-spawn identity checks remain in force. This
-does not close kernel-held descriptor execution, remount resistance, or
-production task enablement. Evidence:
+`process-supervisor.test.js` suite passes 36/36, including temporary writable
+and current-user-owned executables denied with `POLICY_DENIED`. Owner UID/GID,
+canonical path, descriptor digest, and post-spawn identity checks remain in
+force. This does not close kernel-held descriptor execution, remount
+resistance, or production task enablement. Evidence:
 `evidence/2026-09-15-process-executable-permissions.md`.
 
-Packaged-service lifecycle verification at source revision `42992e1` passes
+Packaged-service lifecycle verification at source revision `339d932` passes
 1/1 on the physical Darwin host with
 `MOPS_REAL_INSTALL=1 node --test
 packages/broker/dist/packaged-service-smoke.test.js`. The isolated smoke

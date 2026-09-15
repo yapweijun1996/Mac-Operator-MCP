@@ -1,6 +1,6 @@
 # Packaged Service LaunchAgent Smoke Evidence
 
-- Source revision: `42992e1`
+- Source revision: `339d932`
 - Date: 2026-09-15
 - Host: physical macOS host used by the repository test harness
 - Scope: temporary-user LaunchAgent lifecycle for packaged Edge and Broker
@@ -23,7 +23,8 @@ Command:
 MOPS_REAL_INSTALL=1 node --test packages/broker/dist/packaged-service-smoke.test.js
 ```
 
-Result: 1 test passed, 0 failed, 0 skipped. The physical host run:
+Result: 1 test passed, 0 failed, 0 skipped. The physical host run was repeated
+after the Broker fixed-adapter root-owner gate at `339d932`:
 
 - created temporary Edge and Broker LaunchAgent plists and package roots;
 - bootstrapped both services in the current user's `gui/<uid>` launchd domain;
