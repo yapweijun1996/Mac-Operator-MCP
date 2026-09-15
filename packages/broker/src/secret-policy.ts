@@ -80,8 +80,10 @@ export function assertArgumentsDoNotContainSecrets(argumentsValue: readonly stri
     if (typeof argument !== "string") {
       throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret signature");
     }
-    const option = argument.replace(/^(?:--?|\/)/u, "").split("=", 1)[0] ?? "";
-    if (SECRET_ARGUMENT_NAME_PATTERN.test(option)) {
+    const option = /^(?:--?)[A-Za-z][A-Za-z0-9_-]*(?:=|$)/u.test(argument)
+      ? argument.replace(/^--?/u, "").split("=", 1)[0] ?? ""
+      : "";
+    if (option !== "" && SECRET_ARGUMENT_NAME_PATTERN.test(option)) {
       throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret option");
     }
     if (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(argument))) {

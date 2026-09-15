@@ -50,6 +50,7 @@ test("argument policy denies credential options and token-shaped values", () => 
     assert.throws(() => assertArgumentsDoNotContainSecrets(argumentsValue), /protected secret/u, argumentsValue.join(" "));
   }
   assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--format", "json", "ordinary-file"]));
+  assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["-c", 'printf "${MOP_CONTROLLER_SECRET-unset}"']));
 });
 
 test("log redaction removes secret-shaped values and bounds messages", () => {
