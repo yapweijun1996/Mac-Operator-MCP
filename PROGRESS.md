@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-worker result boundary addendum: commit `a01b62e` applies plain-data
+and exact-field validation to native process inventory/detail results and
+worker envelopes. Owner identities and child PID arrays receive bounded,
+ordered checks; extra worker fields cannot turn a malformed result into a
+success. Focused process-inspector/worker tests pass 14/14; the
+non-overlapping package regression passes 520 total (514 pass, 6 skipped,
+0 fail). Native provenance, sandbox, credential, VM, persistence, and
+capability enablement evidence remains open.
+Evidence: `evidence/2026-09-15-process-worker-result-boundary.md`.
+
 Task-profile request snapshot addendum: commit `04f77eb` copies the validated
 TaskProfileRegistry request before asynchronous filesystem readback. All
 profile argument matching and process construction use that snapshot, so

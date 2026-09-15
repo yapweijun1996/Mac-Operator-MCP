@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-worker result boundary addendum: source revision `a01b62e` hardens
+native process metadata and worker-result parsers. Inventory/detail records
+now require plain data and exact fields; owners are bounded uid identities,
+child PID arrays are dense and strictly increasing, and worker envelopes
+reject unknown fields before consumers can treat a result as successful. The
+focused process-inspector/worker suite passes 14/14; the non-overlapping
+package regression passes 520 total (514 pass, 6 skipped, 0 fail). This
+closes local result-shape integrity only; native identity provenance,
+sandbox, credential, VM, persistence, and capability enablement evidence
+remain open.
+Evidence: `evidence/2026-09-15-process-worker-result-boundary.md`.
+
 Task-profile request snapshot addendum: source revision `04f77eb` snapshots
 the validated TaskProfileRegistry request before asynchronous cwd, root, and
 executable readback. Profile selection, argument matching, environment and

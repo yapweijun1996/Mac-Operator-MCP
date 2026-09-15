@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process-worker result boundary addendum: commit `a01b62e` requires native
+process inventory/detail results to be plain records with exact fields and
+bounded uid/child identities. The generic worker envelope accepts only its
+declared success or failure fields, rejecting extra result data before it can
+be consumed. Focused process-inspector/worker tests pass 14/14; the
+non-overlapping package regression passes 520 total (514 pass, 6 skipped,
+0 fail). This proves local result-shape integrity only; production native
+provenance, sandbox/credential/VM isolation, persistence, and enablement
+remain unverified.
+Evidence: `evidence/2026-09-15-process-worker-result-boundary.md`.
+
 Task-profile request snapshot addendum: commit `04f77eb` takes a synchronous
 copy of the validated TaskProfileRegistry request before cwd/root/executable
 readback awaits. Profile selection, argument validation, process arguments,
