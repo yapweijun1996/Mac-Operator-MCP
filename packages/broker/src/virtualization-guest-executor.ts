@@ -175,6 +175,7 @@ export class VirtualizationGuestProfileExecutor {
   private active = 0;
   private inFlight = 0;
   private closed = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(
     private readonly registry: VirtualizationGuestTaskProfileRegistry,
@@ -287,11 +288,22 @@ export class VirtualizationGuestProfileExecutor {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closePromise !== undefined) return this.closePromise;
     this.closed = true;
-    for (const controller of this.activeControllers) controller.abort();
-    await this.adapter.close?.();
-    await Promise.allSettled([...this.activeExecutions]);
+    this.closePromise = (async () => {
+      for (const controller of this.activeControllers) controller.abort();
+      let firstError: unknown;
+      try { await this.adapter.close?.(); }
+      catch (error) { firstError = error; }
+      await Promise.allSettled([...this.activeExecutions]);
+      if (firstError !== undefined) {
+        // The executor remains fenced, but a host lifecycle retry must be able
+        // to repeat a failed adapter cleanup after active work has drained.
+        this.closePromise = undefined;
+        throw firstError;
+      }
+    })();
+    return this.closePromise;
   }
 
   private cancelled(request: UnsignedVirtualizationGuestRequest): UnsignedVirtualizationGuestResponse {

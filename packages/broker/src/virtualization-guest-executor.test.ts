@@ -261,6 +261,43 @@ test("guest profile executor cancels active work before close can publish succes
   }
 });
 
+test("guest profile executor drains active work and retries adapter cleanup after failure", async () => {
+  const fixture = await profileFixture();
+  try {
+    let resolveRun!: (result: VirtualizationGuestExecutionResult) => void;
+    const run = new Promise<VirtualizationGuestExecutionResult>((resolve) => { resolveRun = resolve; });
+    let started!: () => void;
+    const startedSignal = new Promise<void>((resolve) => { started = resolve; });
+    let closeCalls = 0;
+    const executor = new VirtualizationGuestProfileExecutor(
+      new VirtualizationGuestTaskProfileRegistry([fixture.profile]),
+      {
+        available: true,
+        async run() {
+          started();
+          return run;
+        },
+        async close() {
+          closeCalls += 1;
+          if (closeCalls === 1) throw new Error("synthetic guest adapter close failure");
+        }
+      }
+    );
+    const execution = executor.execute(fixture.request);
+    await startedSignal;
+    const closing = executor.close();
+    resolveRun(successfulResult());
+    await assert.rejects(closing, /synthetic guest adapter close failure/u);
+    const result = await execution;
+    assert.equal(result.resultClass, "CANCELLED");
+    assert.equal(closeCalls, 1);
+    await executor.close();
+    assert.equal(closeCalls, 2);
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("profile agent factory exposes only the authenticated digest-bound service", async () => {
   const fixture = await profileFixture();
   try {
