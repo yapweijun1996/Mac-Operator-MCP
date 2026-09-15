@@ -208,9 +208,9 @@ an explicit implementation boundary; the default helper and policy remain
 disabled until production helper provenance, signing, installation, and
 adapter evidence are accepted.
 
-Revision `2660bdf`, hardened in `becea16` and `1eea5cb`, adds the independent
-helper-to-Broker authority-polling socket, wipes copied keys on setup failure,
-and strictly validates failure bodies. Both peers require explicit
+Revision `2660bdf`, hardened in `becea16` and `1eea5cb`, and wired in
+`d717525`, adds the independent helper-to-Broker authority-polling socket,
+wipes copied keys on setup failure, and strictly validates failure bodies. Both peers require explicit
 OS-peer authentication, request and
 response proofs use direction-separated HMAC domains, and request IDs/nonces
 are durably admitted without treating a repeated authority poll as a repeated

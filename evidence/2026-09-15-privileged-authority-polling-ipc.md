@@ -1,7 +1,7 @@
 # Privileged helper authority-polling IPC evidence
 
 Date: 2026-09-15
-Source revision: `1eea5cb` (authority polling implementation: `2660bdf`)
+Source revision: `d717525` (authority polling implementation: `2660bdf`)
 Status: implemented boundary; disabled by default and not a privileged-release acceptance
 
 ## Scope
@@ -27,13 +27,20 @@ binding as the command server. Key expiry, revocation, and activation changes
 are checked for every poll. Runtime construction rejects an enabled adapter
 when no separately authenticated authority poller is supplied.
 
+The native Broker startup assembly restores the active helper-key configuration,
+constructs the Broker-owned authority listener, appends it to the native
+runtime channel set, and closes it on startup rollback. The helper authority
+socket is required to be distinct from the MCP Broker socket and to carry an
+explicit native helper process identity.
+
 ## Verification
 
 - `npx tsc -b packages/broker/tsconfig.json --pretty false` — passed.
 - `npm run lint -- --quiet` — passed for 628 tracked files.
 - `node --test packages/broker/dist/privileged-helper-authority-ipc.test.js packages/broker/dist/privileged-helper.test.js` — 18/18 passed.
 - `node --test packages/broker/dist/privileged-helper-runtime.test.js packages/broker/dist/privileged-helper-keyring.test.js` — 6/6 passed in the combined focused run.
-- Physical non-overlapping built suite with `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 MOPS_REAL_SANDBOX=1` — 611/611 passed, zero failures and zero skips.
+- `node --test packages/broker/dist/native-runtime-startup.test.js` — 8/8 passed.
+- Physical non-overlapping built suite with `MOPS_REAL_INSTALL=1 MOPS_REAL_KEYCHAIN=1 MOPS_REAL_SANDBOX=1` — 612/612 passed, zero failures and zero skips.
 - Existing long-running `broker.test.js` / `persistence.test.js` process was observed and left undisturbed.
 
 ## Boundary cases covered
@@ -45,6 +52,8 @@ when no separately authenticated authority poller is supplied.
 - Durable replay-adapter timestamp mapping.
 - Helper initial and final polls around an active adapter call.
 - Post-dispatch authority loss maps to retryable `UNKNOWN_OUTCOME`.
+- Native Broker startup restores the helper key, owns the authority listener,
+  and rolls the listener back when runtime construction fails.
 - Disabled-by-default policy and helper operation state remain unchanged.
 
 ## Open evidence

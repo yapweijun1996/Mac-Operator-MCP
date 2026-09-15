@@ -78,7 +78,9 @@ install-plan, and Broker-dispatch tests pass on the physical macOS host. The
 default policy and executor remain disabled. The helper runtime now requires a
 separately authenticated Broker authority poller whenever an adapter is
 enabled; polls occur before dispatch, during execution, and before success,
-with post-dispatch authority loss mapped to `UNKNOWN_OUTCOME`. Finalize Developer ID provenance,
+with post-dispatch authority loss mapped to `UNKNOWN_OUTCOME`. Native Broker
+startup now restores the active helper key and owns this authority listener
+with rollback on partial startup. Finalize Developer ID provenance,
 protected production Keychain material, root-domain lifecycle readback,
 operation-specific rollback and recovery, compatibility, real adapters, and
 independent review before enabling any privileged adapter.

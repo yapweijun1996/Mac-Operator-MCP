@@ -1631,15 +1631,16 @@ non-cooperating-process lock evidence remain open.
   identity substitution. The combined helper/executor/dispatch suite passes
   26/26 and the latest physical non-overlapping regression passes 607/607.
   Evidence: `evidence/2026-09-15-privileged-authority-gate.md`.
-- MOP-060 authority-polling clarification: source revision `1eea5cb` (building
-  on `2660bdf` and `becea16`) adds an
+- MOP-060 authority-polling clarification: source revision `d717525` (building
+  on `2660bdf`, `becea16`, and `1eea5cb`) adds an
   independent helper-to-Broker Unix socket with mandatory peer authentication
   on both directions, direction-separated HMAC domains, durable replay
   admission, and the Broker-backed Request/Approval/Job authority callback.
   The helper polls before dispatch, during execution, and before success;
   post-dispatch authority loss is retryable `UNKNOWN_OUTCOME`. Runtime startup
   rejects enabled adapters without this poller. Focused helper/authority tests
-  pass 18/18 and the latest physical non-overlapping regression passes 611/611.
+  pass 18/18, native startup assembly tests pass 8/8, and the latest physical
+  non-overlapping regression passes 612/612.
   Evidence: `evidence/2026-09-15-privileged-authority-polling-ipc.md`.
 - `MOP-061` — `BLOCKED` — Added a non-executing root-domain helper package plan with native-only argv, exact code-signature identity, root-owned plist actions, protected helper-root/key/socket paths, Broker peer UID/GID binding, and exact upgrade/rollback/uninstall commands plus readback rejection for enabled capabilities. Helper startup now derives the Broker caller from the exact per-user `gui/<uid>/com.mac-operator.broker` LaunchAgent readback and binds PID/start-time identity before constructing the helper. A real macOS temporary bundle smoke test executes the fixed ad-hoc `codesign` verification command and reads back the exact helper identifier; the package also has a double-`lstat` root-owned preflight and a host-only, explicitly confirmed descriptor-relative plist apply/upgrade/rollback/uninstall primitive with identity-bound restoration. A real cross-process native IPC test now proves the bound Broker caller is accepted while a second spawned caller is dropped before parsing, and plist apply verifies the real current process UID before any filesystem access. A host-only dry-run execution contract and gated executor now bind exact service-revision preconditions, fixed command/file order, final readback, and operation-specific recovery steps; non-root callers fail before command or readback access. These do not prove Developer ID provenance, successful root-owned execution, or real root-domain readback. `blocked_by: MOP-003, MOP-081, ADR-0007`; `unblock_condition: runtime, IPC identity, package/signing, launch ownership, and credential-cleanup decisions are accepted`; `expected_evidence: Developer ID signature and provenance, install/upgrade/rollback, helper mismatch, uninstall, caller identity, caller-spoof, and real root-domain readback tests (VT-PRIV-01, VT-OPS-01)`.
 - `MOP-062` — `BLOCKED` — Implement approved service control with preconditions and postconditions. `blocked_by: MOP-060, MOP-061`; `unblock_condition: authenticated helper protocol and service allowlist are released`; `expected_evidence: allowlist, precondition, service-state readback, audit, rollback, and bypass tests (VT-PRIV-01)`.
