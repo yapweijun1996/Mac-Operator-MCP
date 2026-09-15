@@ -3,7 +3,7 @@
 Status: PARTIAL release evidence; full production gates remain open
 
 Date: 2026-09-15
-Source revision: `43ec306`
+Source revision: `8c7b505`
 
 ## Verification
 
@@ -12,7 +12,7 @@ Source revision: `43ec306`
   ledger-record schema validated.
 - `npm run typecheck`: passed.
 - `npm audit --audit-level=high`: 0 vulnerabilities.
-- `npm run lint`: passed for 606 tracked files.
+- `npm run lint`: passed for 607 tracked files.
 - `git diff --check`: passed.
 - Non-overlapping package regression: 595 total, 589 passed, 6 skipped, 0 failed.
 - Audit evidence redaction covers credential aliases and secret-shaped strings
