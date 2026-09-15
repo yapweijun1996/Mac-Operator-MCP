@@ -129,21 +129,7 @@ export class VirtualizationGuestAttestationVerifier {
   }
 
   verify(raw: unknown): VerifiedVirtualizationGuestAttestation {
-    if (!isPlainDataRecord(raw)) {
-      throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation envelope is unavailable");
-    }
-    const envelope = raw as Partial<SignedVirtualizationGuestAttestation>;
-    const allowedKeys = new Set([
-      "algorithm", "expiresAtMs", "issuedAtMs", "keyId", "payload", "payloadDigest", "schemaVersion", "signature"
-    ]);
-    if (Object.keys(raw).some((key) => !allowedKeys.has(key)) ||
-        envelope.schemaVersion !== "0.1" || envelope.algorithm !== "Ed25519" ||
-        typeof envelope.keyId !== "string" || !KEY_ID_PATTERN.test(envelope.keyId) ||
-        typeof envelope.issuedAtMs !== "number" || typeof envelope.expiresAtMs !== "number" ||
-        typeof envelope.payloadDigest !== "string" || !SHA256_PATTERN.test(envelope.payloadDigest) ||
-        typeof envelope.signature !== "string" || !BASE64_PATTERN.test(envelope.signature) || envelope.signature.length === 0) {
-      throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation envelope is malformed");
-    }
+    const envelope = snapshotSignedVirtualizationGuestAttestation(raw);
     const keyId = envelope.keyId;
     const issuedAtMs = envelope.issuedAtMs;
     const expiresAtMs = envelope.expiresAtMs;
@@ -155,7 +141,7 @@ export class VirtualizationGuestAttestationVerifier {
         signatureText.length % 4 !== 0) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation signature encoding is malformed");
     }
-    const payload = validateVirtualizationGuestAttestation(envelope.payload);
+    const payload = envelope.payload;
     const payloadBytes = Buffer.from(canonicalJson(payload), "utf8");
     if (sha256(payloadBytes) !== payloadDigest) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation payload digest is invalid");
@@ -185,14 +171,70 @@ export class VirtualizationGuestAttestationVerifier {
     if (signature.length < 1 || !verify(null, virtualizationGuestAttestationSigningPayload(unsigned), key.publicKey, signature)) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation signature is invalid");
     }
-    return {
+    return freezeAttestationSnapshot({
       attestation: payload,
       keyId,
       payloadDigest,
       issuedAtMs,
       expiresAtMs
-    };
+    });
   }
+}
+
+/**
+ * Copy and freeze a signed envelope before a long-lived Broker component
+ * retains it. Structural validation is intentionally separate from signature
+ * verification so callers without a configured trust key still cannot retain
+ * accessor, inherited, or mutable authority data.
+ */
+export function snapshotSignedVirtualizationGuestAttestation(
+  value: unknown
+): SignedVirtualizationGuestAttestation {
+  if (!isPlainDataRecord(value)) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation envelope is unavailable");
+  }
+  const envelope = value as Partial<SignedVirtualizationGuestAttestation>;
+  const allowedKeys = new Set([
+    "algorithm", "expiresAtMs", "issuedAtMs", "keyId", "payload", "payloadDigest", "schemaVersion", "signature"
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key)) ||
+      envelope.schemaVersion !== "0.1" || envelope.algorithm !== "Ed25519" ||
+      typeof envelope.keyId !== "string" || !KEY_ID_PATTERN.test(envelope.keyId) ||
+      typeof envelope.issuedAtMs !== "number" || typeof envelope.expiresAtMs !== "number" ||
+      typeof envelope.payloadDigest !== "string" || !SHA256_PATTERN.test(envelope.payloadDigest) ||
+      typeof envelope.signature !== "string" || !BASE64_PATTERN.test(envelope.signature) || envelope.signature.length === 0 ||
+      !Number.isSafeInteger(envelope.issuedAtMs) || envelope.issuedAtMs < 0 ||
+      !Number.isSafeInteger(envelope.expiresAtMs) || envelope.expiresAtMs <= envelope.issuedAtMs ||
+      envelope.signature.length % 4 !== 0) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation envelope is malformed");
+  }
+  const payload = validateVirtualizationGuestAttestation(envelope.payload);
+  return freezeAttestationSnapshot({
+    schemaVersion: "0.1",
+    keyId: envelope.keyId,
+    algorithm: "Ed25519",
+    issuedAtMs: envelope.issuedAtMs,
+    expiresAtMs: envelope.expiresAtMs,
+    payloadDigest: envelope.payloadDigest,
+    payload,
+    signature: envelope.signature
+  });
+}
+
+function freezeAttestationSnapshot<T>(value: T): T {
+  const seen = new Set<object>();
+  const freeze = (candidate: unknown): void => {
+    if (candidate === null || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) freeze(item);
+    } else {
+      for (const child of Object.values(candidate)) freeze(child);
+    }
+    Object.freeze(candidate);
+  };
+  freeze(value);
+  return value;
 }
 
 /** Refuse private key material even when Node could derive a public key from it. */

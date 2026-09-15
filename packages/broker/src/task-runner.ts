@@ -17,6 +17,7 @@ import type { ResolvedTaskProfile } from "./task-profile.js";
 import {
   isVirtualizationGuestIdentity,
   parseVirtualizationGuestIdentity,
+  snapshotSignedVirtualizationGuestAttestation,
   sameVirtualizationGuestIdentity,
   validateVirtualizationGuestAttestation,
   type SignedVirtualizationGuestAttestation,
@@ -383,7 +384,9 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
     this.transport = options.transport;
     this.guestIdentity = freezeRuntimeSnapshot(guestIdentity);
     this.attestation = freezeRuntimeSnapshot(attestation);
-    if (options.signedAttestation !== undefined) this.signedAttestation = options.signedAttestation;
+    if (options.signedAttestation !== undefined) {
+      this.signedAttestation = snapshotSignedVirtualizationGuestAttestation(options.signedAttestation);
+    }
   }
 
   async run(request: VirtualizationTaskExecutionRequest): Promise<TaskExecutionResult> {
@@ -471,6 +474,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
   private readonly executor: VirtualizationTaskExecutor | undefined;
   private readonly guestImage: LoadedVirtualizationGuestImage | undefined;
   private readonly attestationVerifier: VirtualizationGuestAttestationVerifier | undefined;
+  private readonly signedAttestation: SignedVirtualizationGuestAttestation | undefined;
 
   constructor(options: VirtualizationTaskRunnerOptions = {}) {
     const proof = options.isolationProof === null || options.isolationProof === undefined
@@ -482,6 +486,9 @@ export class VirtualizationTaskRunner implements TaskRunner {
       ? undefined
       : snapshotLoadedGuestImage(options.guestImage);
     this.attestationVerifier = options.attestationVerifier;
+    this.signedAttestation = options.executor?.signedAttestation === undefined
+      ? undefined
+      : snapshotSignedVirtualizationGuestAttestation(options.executor.signedAttestation);
     const guest = proof?.virtualizationGuest;
     this.available = process.platform === "darwin" &&
       options.enabled === true &&
@@ -495,7 +502,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
       options.executor.attestation !== null &&
       virtualizationAttestationMatchesProof(options.executor.attestation, proof) &&
       (this.attestationVerifier === undefined || signedAttestationMatches(
-        options.executor.signedAttestation,
+        this.signedAttestation,
         options.executor.attestation,
         this.attestationVerifier
       ));
@@ -563,7 +570,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
 
   private assertGuestAttestationStable(): void {
     if (this.attestationVerifier === undefined) return;
-    if (!signedAttestationMatches(this.executor?.signedAttestation, this.executor?.attestation, this.attestationVerifier)) {
+    if (!signedAttestationMatches(this.signedAttestation, this.executor?.attestation, this.attestationVerifier)) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation is unavailable, revoked, or changed");
     }
   }

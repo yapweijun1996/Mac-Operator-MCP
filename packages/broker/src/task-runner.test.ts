@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { virtualizationGuestAttestationSigningPayload, type SignedVirtualizationGuestAttestation } from "./virtualization-guest-attestation.js";
 import { FailClosedTaskRunner, VirtualizationGuestTransportExecutor, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, virtualizationProfileDigest, virtualizationTaskDigest, type TaskExecutionResult, type VirtualizationGuestTransport, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
 import type { LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
@@ -22,6 +23,23 @@ function guestAttestation(guestIdentity: VirtualizationGuestIdentity, evidenceRe
     evidenceRef
   };
   return { ...unsigned, attestationDigest: sha256(canonicalJson(unsigned)) };
+}
+
+function signedGuestAttestation(payload: VirtualizationGuestAttestation): SignedVirtualizationGuestAttestation {
+  const keyPair = generateKeyPairSync("ed25519");
+  const unsigned = {
+    schemaVersion: "0.1" as const,
+    keyId: "guest-key-1",
+    algorithm: "Ed25519" as const,
+    issuedAtMs: 1,
+    expiresAtMs: 2,
+    payloadDigest: sha256(canonicalJson(payload)),
+    payload
+  };
+  return {
+    ...unsigned,
+    signature: sign(null, virtualizationGuestAttestationSigningPayload(unsigned), keyPair.privateKey).toString("base64")
+  };
 }
 
 function resolvedGuestProfile(): ResolvedTaskProfile {
@@ -493,6 +511,7 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
   let sent: Record<string, unknown> | undefined;
   let admitted: Record<string, unknown> | undefined;
   let closed = false;
+  const signedAttestation = signedGuestAttestation(guestAttestation(guest));
   const transport: VirtualizationGuestTransport = {
     async execute(input, options) {
       sent = input as unknown as Record<string, unknown>;
@@ -540,11 +559,21 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
     available: true,
     transport,
     guestIdentity: guest,
-    attestation: guestAttestation(guest)
+    attestation: guestAttestation(guest),
+    signedAttestation
   });
   assert.equal(Object.isFrozen(executor.guestIdentity), true);
   assert.equal(Object.isFrozen(executor.attestation), true);
   assert.equal(Object.isFrozen(executor.attestation.guestIdentity), true);
+  assert.equal(Object.isFrozen(executor.signedAttestation), true);
+  assert.equal(Object.isFrozen(executor.signedAttestation?.payload), true);
+  assert.equal(Object.isFrozen(executor.signedAttestation?.payload.guestIdentity), true);
+  assert.throws(
+    () => { (executor.signedAttestation as SignedVirtualizationGuestAttestation).keyId = "guest-key-replacement"; },
+    TypeError
+  );
+  signedAttestation.keyId = "guest-key-replacement";
+  assert.equal(executor.signedAttestation?.keyId, "guest-key-1");
   assert.throws(
     () => { (executor.guestIdentity as unknown as { imageSha256: string }).imageSha256 = "0".repeat(64); },
     TypeError

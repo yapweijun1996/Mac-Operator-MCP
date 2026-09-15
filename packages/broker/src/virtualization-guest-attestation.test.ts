@@ -4,6 +4,7 @@ import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import {
+  snapshotSignedVirtualizationGuestAttestation,
   VirtualizationGuestAttestationVerifier,
   virtualizationGuestAttestationSigningPayload,
   type SignedVirtualizationGuestAttestation,
@@ -69,6 +70,13 @@ test("signed guest attestation binds claims, key, freshness, and payload digest"
   const payload = guestAttestation({ imageSha256: "a".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
   const signed = signedAttestation(payload, "guest-key-1", keys.privateKey);
   const verified = verifier(keys.publicKey).verify(signed);
+  assert.equal(Object.isFrozen(verified), true);
+  assert.equal(Object.isFrozen(verified.attestation), true);
+  assert.equal(Object.isFrozen(verified.attestation.guestIdentity), true);
+  assert.throws(
+    () => { (verified.attestation as unknown as { evidenceRef: string }).evidenceRef = "evidence://replacement"; },
+    TypeError
+  );
   assert.deepEqual(verified, {
     attestation: payload,
     keyId: "guest-key-1",
@@ -76,6 +84,28 @@ test("signed guest attestation binds claims, key, freshness, and payload digest"
     issuedAtMs: NOW,
     expiresAtMs: NOW + 60_000
   });
+});
+
+test("signed guest attestation snapshots reject mutation of retained envelope data", () => {
+  const keys = generateKeyPairSync("ed25519");
+  const payload = guestAttestation({ imageSha256: "e".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const signed = signedAttestation(payload, "guest-key-1", keys.privateKey);
+  const snapshot = snapshotSignedVirtualizationGuestAttestation(signed);
+  assert.notEqual(snapshot, signed);
+  assert.notEqual(snapshot.payload, signed.payload);
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(Object.isFrozen(snapshot.payload), true);
+  assert.equal(Object.isFrozen(snapshot.payload.guestIdentity), true);
+  assert.throws(
+    () => { (snapshot as unknown as { keyId: string }).keyId = "guest-key-replacement"; },
+    TypeError
+  );
+  assert.throws(
+    () => { (snapshot.payload.guestIdentity as unknown as { imageSha256: string }).imageSha256 = "0".repeat(64); },
+    TypeError
+  );
+  (signed.payload.guestIdentity as { imageSha256: string }).imageSha256 = "f".repeat(64);
+  assert.equal(snapshot.payload.guestIdentity.imageSha256, "e".repeat(64));
 });
 
 test("signed guest attestation rejects envelope mutation, expiry, unknown keys, and revocation", () => {
@@ -197,6 +227,15 @@ test("VirtualizationTaskRunner revalidates signed guest provenance before dispat
     guestImage: image,
     attestationVerifier: guestVerifier
   });
+  const boundSigned = (runner as unknown as { signedAttestation: SignedVirtualizationGuestAttestation }).signedAttestation;
+  assert.equal(Object.isFrozen(boundSigned), true);
+  assert.equal(Object.isFrozen(boundSigned.payload), true);
+  assert.equal(Object.isFrozen(boundSigned.payload.guestIdentity), true);
+  assert.throws(
+    () => { (boundSigned.payload as unknown as { evidenceRef: string }).evidenceRef = "evidence://replacement"; },
+    TypeError
+  );
+  signed.keyId = "guest-key-replacement";
   try {
     assert.equal(runner.available, true);
     await runner.run({
