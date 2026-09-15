@@ -123,8 +123,9 @@ export interface DescriptorProcessSpawnRequest {
    * before returning.
    */
   readonly executableFd: number;
+  /** Broker-opened working-directory descriptor; adapters must not reopen a pathname. */
+  readonly cwdFd: number;
   readonly args: readonly string[];
-  readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
   readonly stdin?: string;
 }
@@ -314,6 +315,7 @@ export class ProcessSupervisor {
     let child: ChildProcess;
     try {
       let executableDescriptor: Awaited<ReturnType<typeof open>> | undefined;
+      let cwdDescriptor: Awaited<ReturnType<typeof open>> | undefined;
       try {
         if (this.descriptorSpawnAdapter === undefined) {
           child = spawn(safeRequest.executable, [...safeRequest.args], {
@@ -332,10 +334,18 @@ export class ProcessSupervisor {
           if (!sameProcessPathMetadata(descriptorIdentity, validatedPaths.executable)) {
             throw new BrokerError("POLICY_DENIED", "Executable changed while opening descriptor");
           }
+          cwdDescriptor = await open(
+            safeRequest.cwd,
+            constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
+          );
+          const cwdIdentity = await cwdDescriptor.stat();
+          if (!sameProcessPathMetadata(cwdIdentity, validatedPaths.cwd)) {
+            throw new BrokerError("POLICY_DENIED", "Process cwd changed while opening descriptor");
+          }
           child = this.descriptorSpawnAdapter.spawn({
             executableFd: executableDescriptor.fd,
+            cwdFd: cwdDescriptor.fd,
             args: safeRequest.args,
-            cwd: safeRequest.cwd,
             environment,
             ...(safeRequest.stdin === undefined ? {} : { stdin: safeRequest.stdin })
           });
@@ -350,6 +360,7 @@ export class ProcessSupervisor {
         throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
       } finally {
         if (executableDescriptor !== undefined) await executableDescriptor.close().catch(() => undefined);
+        if (cwdDescriptor !== undefined) await cwdDescriptor.close().catch(() => undefined);
       }
       const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes);
       if (safeRequest.stdin !== undefined && child.stdin !== null) {
