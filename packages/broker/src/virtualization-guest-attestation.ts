@@ -167,6 +167,7 @@ export class VirtualizationGuestAttestationVerifier {
     const nowMs = this.now();
     if (!Number.isSafeInteger(nowMs) || nowMs < 0 ||
         nowMs + this.allowedClockSkewMs < key.notBeforeMs || nowMs >= key.expiresAtMs ||
+        issuedAtMs < key.notBeforeMs || expiresAtMs > key.expiresAtMs ||
         issuedAtMs > nowMs + this.allowedClockSkewMs || nowMs >= expiresAtMs) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation is outside its validity window");
     }

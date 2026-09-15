@@ -91,6 +91,23 @@ test("signed guest attestation rejects envelope mutation, expiry, unknown keys, 
   expectDenied(() => check.verify({ ...signed, algorithm: "RSA" } as unknown as SignedVirtualizationGuestAttestation));
 });
 
+test("signed guest attestation lifetime must fit the trusted key validity window", () => {
+  const keys = generateKeyPairSync("ed25519");
+  const payload = guestAttestation({ imageSha256: "c".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const signed = signedAttestation(payload, "guest-key-1", keys.privateKey, NOW, NOW + 60_000);
+  const keyPem = keys.publicKey.export({ type: "spki", format: "pem" });
+  const notBeforeVerifier = VirtualizationGuestAttestationVerifier.create({
+    trustedKeys: [{ keyId: "guest-key-1", publicKeyPem: keyPem, notBeforeMs: NOW + 1_000, expiresAtMs: NOW + 120_000 }],
+    now: () => NOW
+  });
+  expectDenied(() => notBeforeVerifier.verify(signed));
+  const expiresAtVerifier = VirtualizationGuestAttestationVerifier.create({
+    trustedKeys: [{ keyId: "guest-key-1", publicKeyPem: keyPem, notBeforeMs: NOW - 1_000, expiresAtMs: NOW + 30_000 }],
+    now: () => NOW
+  });
+  expectDenied(() => expiresAtVerifier.verify(signed));
+});
+
 test("guest attestation verifier rejects private-key material", () => {
   const keyPair = generateKeyPairSync("ed25519");
   assert.throws(
