@@ -4,9 +4,9 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
-System-published guest-image addendum: commit `e00554c` makes image
+System-published guest-image addendum: commits `e00554c` and `f74e485` make image
 publication explicit and requires the enabled native VM path to consume only
-root-owned, canonical, non-symlink images and parent directories without
+root-owned, canonical, non-symlink images and every canonical ancestor without
 group/other write bits. The native C++ boundary repeats the check before
 `initWithURL:` because Virtualization.framework accepts a pathname, while
 descriptor/inode/digest readback remains in place. Focused image/native tests

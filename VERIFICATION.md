@@ -3,11 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-System-published guest-image addendum: commit `e00554c` adds a startup-owned
+System-published guest-image addendum: commits `e00554c` and `f74e485` add a
+startup-owned
 publication mode and requires the native Virtualization.framework path to
 accept only root-owned, canonical, non-symlink images with a non-writable
 unprivileged publication boundary. The native C++ preflight repeats the
-policy before pathname attachment. Focused image/native suites pass 12/12;
+policy before pathname attachment; every canonical ancestor is checked to
+prevent writable-grandparent renames. Focused image/native suites pass 12/12;
 the non-overlapping package regression passes 508 total (502 pass, 6 skipped,
 0 fail); build, typecheck, lint, and diff checks pass. This mitigates
 unprivileged pathname target replacement but does not close root rotation,
