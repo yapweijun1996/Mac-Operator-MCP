@@ -264,6 +264,12 @@ Keychain access to the Broker executable. Root-helper Keychain access therefore
 cannot silently fall back to the generic Node executable identity; omission is
 rejected before Keychain access or key loading.
 
+Revision `666a978` verifies the Keychain item's non-secret protection metadata
+(file-based ACL, non-synchronizable state, and trusted-application match)
+before loading helper key bytes. Revision `711f3e4` normalizes missing or
+non-canonical trusted executable paths to stable fail-closed errors. These
+checks do not expose Keychain contents and do not enable the helper.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
