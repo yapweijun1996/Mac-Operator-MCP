@@ -2892,3 +2892,15 @@ duration, and accessor-shaped observations fail closed. Focused Edge IPC tests
 pass 4/4; production key lifecycle, remote deployment, installed provenance,
 and capability enablement remain open. Evidence:
 `evidence/2026-09-15-edge-ipc-response-boundary.md`.
+
+Persisted process ownership recovery hardening (source revision `7ad478c`)
+now validates exact plain root identities, dense bounded descendants, and the
+Broker-owned no-fork marker before native signalling. Focused supervisor tests
+pass 33/33; descendant escape resistance, kernel termination, credential
+isolation, production task enablement, and installed recovery remain open.
+Evidence: `evidence/2026-09-15-process-ownership-readback.md`.
+
+The post-hardening non-overlapping package regression passes 536 total tests
+(530 passed, 6 skipped, 0 failed). Release-style typecheck, style, contract,
+canonical-JSON, and diff checks also pass; the two pre-existing long-lived
+Broker/persistence test processes remain intentionally excluded and untouched.

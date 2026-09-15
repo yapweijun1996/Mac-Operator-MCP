@@ -2549,3 +2549,17 @@ unknown/accessor fixtures. This is Edge representation evidence only and does
 not close Broker correctness, remote deployment, production key lifecycle,
 installed provenance, or capability gates. Evidence:
 `evidence/2026-09-15-edge-ipc-response-boundary.md`.
+
+Persisted process ownership verification at source revision `7ad478c` adds
+exact data-only identity/snapshot checks and dense descendant validation before
+native recovery. The focused supervisor suite passes 33/33 with hostile
+accessor/inherited/unknown fixtures rejected. This remains representation
+evidence only and does not close descendant escape, kernel termination,
+credential isolation, production task, or installed recovery gates. Evidence:
+`evidence/2026-09-15-process-ownership-readback.md`.
+
+Post-hardening release verification reran the non-overlapping package suite:
+536 total, 530 passed, 6 skipped, 0 failed. Typecheck, style, versioned
+contract validation, native canonical-JSON vectors, and `git diff --check`
+passed. The two pre-existing long-lived Broker/persistence test processes
+were excluded and left untouched.
