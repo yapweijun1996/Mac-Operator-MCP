@@ -17,6 +17,9 @@ const MAX_SUMMARY_LENGTH = 2_048;
 const MAX_SOURCE_TEXT_LENGTH = 16_384;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_FUNCTIONAL_SCHEMA_NODES = 4_096;
+const MAX_FUNCTIONAL_SCHEMA_DEPTH = 32;
+const MAX_FUNCTIONAL_SCHEMA_PROPERTIES = 256;
 const CONTRACT_KEYS = new Set([
   "$schema", "schema_version", "tool_name", "capability_level", "safety_class", "required_scopes",
   "normalized_target_type", "timeout_ms", "output_cap_bytes", "network_policy", "filesystem_policy",
@@ -187,6 +190,7 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
   }
   validateFunctionalSchema(record.input_schema, "input_schema", file);
   validateFunctionalSchema(record.output_schema, "output_schema", file);
+  validateInputSchemaAuthorityFields(record.input_schema, file);
   validateSource(record.source, file);
   return {
     schemaVersion,
@@ -223,6 +227,44 @@ function validateFunctionalSchema(value: unknown, key: string, file: string): vo
         value.required.some((entry) => typeof entry !== "string" || entry.length === 0 || entry.length > MAX_TARGET_TYPE_LENGTH)))) {
     throw new Error(`${file}: ${key} is invalid`);
   }
+}
+
+/**
+ * Keep the runtime Edge admission in parity with the build-time contract
+ * verifier. Input schemas are model-editable, so nested authority-shaped
+ * property names must be rejected before they reach the MCP SDK.
+ */
+function validateInputSchemaAuthorityFields(value: unknown, file: string): void {
+  const forbidden = /^(?:approval|authentication|command|credential|env|environment|password|policy|principal|scope|scopes|script|secret|shell|sudo|token)$/iu;
+  let nodes = 0;
+  const visit = (candidate: unknown, depth: number): void => {
+    if (candidate === null || typeof candidate !== "object") return;
+    nodes += 1;
+    if (nodes > MAX_FUNCTIONAL_SCHEMA_NODES || depth > MAX_FUNCTIONAL_SCHEMA_DEPTH) {
+      throw new Error(`${file}: input_schema exceeds the supported structure`);
+    }
+    if (Array.isArray(candidate)) {
+      if (candidate.length > MAX_FUNCTIONAL_SCHEMA_PROPERTIES) {
+        throw new Error(`${file}: input_schema exceeds the supported structure`);
+      }
+      for (const item of candidate) visit(item, depth + 1);
+      return;
+    }
+    if (!isPlainDataRecord(candidate)) throw new Error(`${file}: input_schema is invalid`);
+    const properties = candidate.properties;
+    if (properties !== undefined) {
+      if (!isPlainDataRecord(properties) || Object.keys(properties).length > MAX_FUNCTIONAL_SCHEMA_PROPERTIES) {
+        throw new Error(`${file}: input_schema exceeds the supported structure`);
+      }
+      for (const propertyName of Object.keys(properties)) {
+        if (forbidden.test(propertyName)) {
+          throw new Error(`${file}: input_schema contains a forbidden authority field`);
+        }
+      }
+    }
+    for (const child of Object.values(candidate)) visit(child, depth + 1);
+  };
+  visit(value, 0);
 }
 
 function validateSource(value: unknown, file: string): void {

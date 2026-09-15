@@ -147,6 +147,28 @@ test("contract registry rejects unknown scopes and malformed postconditions", as
   });
 });
 
+test("contract registry rejects nested authority fields in model-editable schemas", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, {
+      ...validContract,
+      input_schema: {
+        ...validContract.input_schema,
+        properties: {
+          options: {
+            type: "object",
+            properties: { token: { type: "string" } },
+            additionalProperties: false
+          }
+        }
+      }
+    });
+    await assert.rejects(
+      () => ToolContractRegistry.load(directory),
+      /forbidden authority field/u
+    );
+  });
+});
+
 test("contract registry rejects writable contract directories and files", async () => {
   await withTempDirectory(async (directory) => {
     await chmod(directory, 0o770);
