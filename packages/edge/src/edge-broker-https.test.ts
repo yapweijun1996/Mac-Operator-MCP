@@ -10,8 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { Client, StreamableHTTPClientTransport, type FetchLike } from "@modelcontextprotocol/client";
-import { sha256, type PrincipalContext } from "@mac-operator/contracts";
-import { BrokerIpcServer, BrokerStore, Broker, createDefaultPolicy, EdgeKeyring, MacOsNativeBrokerIpcServer, MacOsPeerCredentialVerifier, capturePeerProcessIdentity } from "@mac-operator/broker";
+import { canonicalJson, sha256, type PrincipalContext } from "@mac-operator/contracts";
+import { BrokerIpcServer, BrokerStore, Broker, createDefaultPolicy, EdgeKeyring, MacOsNativeBrokerIpcServer, MacOsPeerCredentialVerifier, capturePeerProcessIdentity, type FilesystemExecutor } from "@mac-operator/broker";
 import { AuthenticatedIpcBrokerGateway, BrokerIpcClient, EdgeRequestFactory, createHttpsMcpEdge } from "./index.js";
 import { ToolContractRegistry } from "./contract-registry.js";
 import { createJwtAccessTokenVerifier } from "./jwt-verifier.js";
@@ -28,9 +28,40 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = Buffer.alloc(32, 0x41);
   const now = Date.now();
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
+  const policyBase = createDefaultPolicy("edge-1", true, ["mac.control.read", "mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = policyBase.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = {
+    ...policyBase,
+    tools: new Map(policyBase.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true })
+  };
+  const mutationPath = join(directory, "https-mutation.txt");
+  const mutationContent = "https-kill-switch";
+  const mutationArguments = { path: mutationPath, content: mutationContent, idempotency_key: "https-active-kill-switch", encoding: "utf8", create_only: true };
+  const filesystemExecutor: FilesystemExecutor = {
+    stat: async () => { throw new Error("Unexpected stat"); },
+    read: async () => { throw new Error("Unexpected read"); },
+    write: async (_plan, _content, _expectedSha256, _createOnly, control) => {
+      store.setSwitch("mutations", true, "https-active-kill-switch", now);
+      assert.equal(control.shouldCancel(), true);
+      return {
+        operation: "write",
+        path: mutationPath,
+        bytesWritten: mutationContent.length,
+        sha256: sha256(mutationContent),
+        created: true,
+        expectedSha256: null,
+        expectedMatched: true,
+        rootId: "test-root",
+        device: "1",
+        inode: "1"
+      };
+    }
+  };
   const broker = new Broker({
     store,
-    policy: createDefaultPolicy("edge-1", true, ["mac.control.read"]),
+    policy,
     edgeAuthenticationKeys: new EdgeKeyring([{
       edgeId: "edge-1",
       keyId: "edge-key-1",
@@ -38,7 +69,8 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
       notBeforeMs: now - 60_000,
       expiresAtMs: now + 300_000
     }]),
-    now: () => now
+    now: () => now,
+    filesystemExecutor
   });
   const brokerServer = process.platform === "darwin"
     ? new MacOsNativeBrokerIpcServer({
@@ -87,7 +119,7 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
   const accessToken = await new SignJWT({
     sid: "session-1",
     azp: "client-1",
-    scope: "mac.control.read"
+    scope: "mac.control.read mac.files.write mac.job.read"
   })
     .setProtectedHeader({ alg: "RS256", kid: "e2e-key", typ: "at+jwt" })
     .setIssuer(issuer.href)
@@ -144,7 +176,7 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
     );
     await client.connect(transport);
     const listed = await client.listTools();
-    assert.deepEqual(listed.tools.map((tool) => tool.name), ["mac_capabilities", "mac_health"]);
+    assert.deepEqual(listed.tools.map((tool) => tool.name), ["mac_capabilities", "mac_health", "mac_job_status", "mac_write_file_atomic"]);
     const result = await client.callTool({ name: "mac_health", arguments: {} });
     const text = result.content?.find((item): item is { type: "text"; text: string } => item.type === "text");
     assert.ok(text);
@@ -153,12 +185,80 @@ test("authenticated HTTPS Edge reaches the Broker through signed local IPC", asy
     assert.equal(payload.tool, "mac_health");
     assert.equal(payload.result_class, "SUCCEEDED");
     assert.equal(JSON.stringify(store.auditRows()).includes(accessToken), false);
+
+    store.issueApproval({
+      approvalId: "approval:https-active-kill-switch",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(mutationArguments)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: now - 1_000,
+      expiresAtMs: now + 1_000
+    });
+    const activeMutation = await client.callTool({ name: "mac_write_file_atomic", arguments: mutationArguments });
+    const activeMutationText = activeMutation.content?.find((item): item is { type: "text"; text: string } => item.type === "text");
+    assert.ok(activeMutationText);
+    const activeMutationPayload = JSON.parse(activeMutationText.text) as { ok: boolean; result_class: string };
+    assert.equal(activeMutationPayload.ok, false);
+    assert.equal(activeMutationPayload.result_class, "CANCELLED");
+    const activeMutationJob = store.ownedJobByIdempotencyKey("https-active-kill-switch", "principal-1");
+    assert.ok(activeMutationJob);
+    assert.equal(activeMutationJob.state, "unknown");
+    assert.equal(await readFile(mutationPath).catch(() => undefined), undefined);
+    store.setSwitch("mutations", false, "https-active-kill-switch-reset", now);
+
+    const queuedArguments = { path: join(directory, "https-queued.txt"), content: "queued", idempotency_key: "https-queued-mutation", encoding: "utf8", create_only: true };
+    const queuedJobId = "job:https-queued-mutation";
+    store.createJob({
+      jobId: queuedJobId,
+      edgeId: "edge-1",
+      edgeKeyId: "edge-1:edge-key-1",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_write_file_atomic",
+      targetRef: "path:test-root",
+      policyVersion: "policy-0.1",
+      payloadDigest: sha256(canonicalJson(queuedArguments)),
+      idempotencyKey: queuedArguments.idempotency_key,
+      createdAtMs: now
+    });
+    store.setSwitch("mutations", true, "https-queued-kill-switch", now);
+    const queuedStatus = await client.callTool({ name: "mac_job_status", arguments: { job_id: queuedJobId, tail_bytes: 128 } });
+    const queuedStatusText = queuedStatus.content?.find((item): item is { type: "text"; text: string } => item.type === "text");
+    assert.ok(queuedStatusText);
+    const queuedStatusPayload = JSON.parse(queuedStatusText.text) as { ok: boolean; data?: { state?: string } };
+    assert.equal(queuedStatusPayload.ok, true);
+    assert.equal(queuedStatusPayload.data?.state, "cancelled");
+    store.setSwitch("mutations", false, "https-queued-kill-switch-reset", now);
+
     const replayRequest = requestFactory.create("mac_health", {}, replayPrincipal);
     assert.equal((await brokerClient.call(replayRequest)).ok, true);
     const replayed = await brokerClient.call(replayRequest);
     assert.equal(replayed.ok, false);
     if (!replayed.ok) assert.equal(replayed.result_class, "REPLAY_DENIED");
-    store.revoke("edge", "edge-1", "integration-edge-revocation", now);
+
+    const edgeRevokedQueuedJobId = "job:https-edge-revoked-queued";
+    store.createJob({
+      jobId: edgeRevokedQueuedJobId,
+      edgeId: "edge-1",
+      edgeKeyId: "edge-1:edge-key-1",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_write_file_atomic",
+      targetRef: "path:test-root",
+      policyVersion: "policy-0.1",
+      payloadDigest: sha256(canonicalJson({ idempotency_key: "https-edge-revoked-queued" })),
+      idempotencyKey: "https-edge-revoked-queued",
+      createdAtMs: now
+    });
+    broker.revokeEdge("edge-1", "https-edge-revocation", now);
+    assert.equal(store.ownedJob(edgeRevokedQueuedJobId, "principal-1")?.state, "cancelled");
     const revokedResult = await client.callTool({ name: "mac_health", arguments: {} });
     const revokedText = revokedResult.content?.find((item): item is { type: "text"; text: string } => item.type === "text");
     assert.ok(revokedText);

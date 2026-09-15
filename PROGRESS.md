@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+HTTPS Edge mutation-authority addendum at the current working revision:
+the authenticated MCP path now covers a Broker-enabled atomic write, active
+`mutations` kill-switch cancellation, queued mutation cancellation with
+HTTPS status readback, provenance-bound queued-job cancellation on Edge
+revocation, and stable `REVOKED` plus replay-denial responses after revocation.
+The controlled executor proves Broker revalidation keeps the active write Job
+`UNKNOWN` and prevents success publication. Focused HTTPS tests pass 2/2 and
+the complete Edge suite passes 66/66; physical durability, production startup,
+and OS-level worker termination remain open. Evidence:
+`evidence/2026-09-16-edge-https-mutation-authority.md`.
+
 Task sandbox Docker-socket denial addendum at source revision `314189c`:
 the Broker-owned Seatbelt renderer now emits explicit read/write denies for
 both `/var/run/docker.sock` and `/private/var/run/docker.sock`, independent of

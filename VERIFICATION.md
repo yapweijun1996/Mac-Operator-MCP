@@ -3,6 +3,20 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+HTTPS Edge mutation-authority verification at the current working revision:
+the authenticated MCP client now exercises a Broker-enabled atomic write over
+HTTPS -> signed local IPC. A controlled executor flips the `mutations`
+kill-switch during execution; Broker authority revalidation returns
+`CANCELLED`, keeps the write Job `UNKNOWN`, and publishes no file. A queued
+write Job is cancelled transactionally by the same kill-switch and its
+`cancelled` state is read back through HTTPS. Edge revocation cancels a second
+provenance-bound queued Job, and a subsequent request on the same MCP session
+returns stable `REVOKED` while duplicate signed requests remain
+`REPLAY_DENIED`. Focused HTTPS tests pass 2/2 and the complete Edge suite
+passes 66/66. This is controlled boundary evidence, not physical durability,
+production launchd, or OS-level worker-termination evidence. Evidence:
+`evidence/2026-09-16-edge-https-mutation-authority.md`.
+
 Edge-to-Broker revocation propagation at source revision `8b3e8e2`: the MCP
 Edge now retains only a bounded, short-lived capability projection so a fresh
 per-request MCP server can still route a previously verified session after
