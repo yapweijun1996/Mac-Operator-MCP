@@ -2849,3 +2849,12 @@ The local CI-equivalent native canonical-JSON check passes 5/5 vectors and
 Actions execution is claimed, and packaging, signing, runtime isolation, and
 release review remain open. Evidence:
 `evidence/2026-09-15-ci-local-equivalent.md`.
+
+Approval readback verification at source revision `28b26db` enforces bounded
+identity/target/digest fields, expiry and timestamp ordering, single-use
+consumption state, revocation pairing, and revision monotonicity before a
+persisted Approval can influence authority. Focused approval authority and
+corruption tests pass 14/14 with stable `AUDIT_UNAVAILABLE` on malformed rows.
+Protected production Keychain/cross-process storage, human approval UI,
+unattended ownership, and ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-approval-row-invariants.md`.

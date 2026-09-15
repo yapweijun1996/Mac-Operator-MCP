@@ -1638,6 +1638,15 @@ non-root rejection, and recovery ordering. It does not prove Developer ID
 provenance, protected production Keychain material, or root-domain lifecycle;
 those gates remain blocked.
 
+Approval persistence boundary addendum: source revision `28b26db` validates
+persisted Approval rows before they influence intent admission, consumption,
+status readback, or revocation. Single-use counters, timestamp/expiry order,
+consumption and revocation pairing, bounded identity/target/digest fields, and
+revision values fail closed as `AUDIT_UNAVAILABLE`; focused approval authority
+and corruption tests pass 14/14. Protected production Keychain/cross-process
+storage, human approval UI, unattended ownership, and ADR acceptance remain
+open.
+
 Source revision `a1bd63c` additionally verifies that an already-created
 key-manager server rejects status reads immediately after helper-key revocation;
 the latest default suite is 400 tests with 397 passed and 3 sandbox tests

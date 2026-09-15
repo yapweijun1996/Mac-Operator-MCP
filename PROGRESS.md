@@ -3186,3 +3186,12 @@ The local CI-equivalent canonical-JSON native check passes all 5/5 vectors and
 `48d5b12`. This is local, point-in-time evidence; it does not claim a remote
 GitHub Actions run or close packaging, signing, runtime-isolation, or release
 review gates. Evidence: `evidence/2026-09-15-ci-local-equivalent.md`.
+
+BrokerStore Approval readback now enforces single-use lifecycle invariants at
+source revision `28b26db`. Corrupted consumption counters, expiry ordering,
+revocation pairing, identity/target/digest fields, and revision values fail
+closed as `AUDIT_UNAVAILABLE` before approval authority is used. Focused
+approval authority and corruption tests pass 14/14; protected production
+Keychain/cross-process storage, human approval UI, unattended ownership, and
+ADR acceptance remain open. Evidence:
+`evidence/2026-09-15-approval-row-invariants.md`.
