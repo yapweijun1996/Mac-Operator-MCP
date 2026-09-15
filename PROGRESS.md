@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Sandbox Keychain-canary addendum: source revision `bc5ee74` adds an opt-in
+physical-Darwin canary that provisions a synthetic Broker-owned Keychain item
+bound to the task executable, then runs `/usr/bin/security` through the
+experimental sandbox runner. The child cannot read the item and returns no
+secret stdout; digest-bound retirement removes the canary after the test.
+Focused sandbox checks pass 17/17, and the serial physical regression passes
+639/639 with 0 skips or failures under install, sandbox, and Keychain opt-ins.
+This closes one ACL-bound credential path only; other Keychain APIs, controller
+credential surfaces, Docker/persistence, remount/process escape, deprecated
+`sandbox-exec` production selection, and `mac_task_run` enablement remain
+blocked. Evidence: `evidence/2026-09-16-sandbox-keychain-canary.md`.
+
 Verification-matrix enforcement addendum: source revision `64ee61c` adds
 `npm run verify:matrix` and runs it in the macOS CI workflow. The check parses
 the seven-column Requirement-to-release matrix, rejects duplicate or malformed

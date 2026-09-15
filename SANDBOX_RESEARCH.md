@@ -150,3 +150,27 @@ skips. This confirms the current checkout still enforces the tested temporary
 root, protected-surface, environment, TCP/UDP, fork/setsid, and cancellation
 boundaries; it does not change the production gate or prove credential-content,
 remount, crash/restart, Docker/persistence, or packaging isolation.
+
+## 2026-09-16 Keychain ACL canary readback
+
+Source revision `bc5ee74` adds an opt-in physical-Darwin credential canary. The
+test provisions a synthetic Broker-owned Keychain generic-password item using
+the native Keychain path and binds it to `process.execPath`; the sandboxed task
+then invokes `/usr/bin/security find-generic-password` for that exact service
+and account. The lookup is denied and the task result has empty stdout. The
+canary is retired with its returned digest in a `finally` path, so no secret
+value is recorded or retained by the test.
+
+Focused `MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 node --test
+packages/broker/dist/sandbox-profile.test.js` passes 17/17. The serial
+physical regression with `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1
+MOPS_REAL_KEYCHAIN=1` passes 639/639 with zero skips and failures; build,
+typecheck, lint, and diff checks also pass. Existing long-running Broker,
+persistence, and privileged-helper IPC suites were excluded and left
+undisturbed.
+
+This is one real ACL-bound credential path, not complete credential-surface
+isolation. Other Keychain APIs and controller stores, Docker/persistence,
+remount resistance, post-snapshot process escape, crash/restart cleanup,
+deprecated `sandbox-exec` production selection, and `mac_task_run` enablement
+remain blocked. Evidence: `evidence/2026-09-16-sandbox-keychain-canary.md`.

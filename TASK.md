@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+MOP-086 Keychain-canary addendum: source revision `bc5ee74` adds an opt-in
+physical-Darwin regression using a synthetic Broker-owned Keychain item bound
+to the task executable. A sandboxed `/usr/bin/security` lookup is denied with
+empty stdout, and digest-bound cleanup retires the canary. Focused checks pass
+17/17; the serial physical regression passes 639/639 with no skips or
+failures. This is partial credential-surface evidence only and does not close
+MOP-045, Docker/persistence/remount/process escape, deprecated
+`sandbox-exec` production support, or `mac_task_run` enablement. Evidence:
+`evidence/2026-09-16-sandbox-keychain-canary.md`.
+
 MOP-007/MOP-085 traceability addendum: source revision `64ee61c` adds
 `npm run verify:matrix` to the local commands and macOS CI workflow. It
 machine-checks matrix row shape, unique verification IDs, allowed statuses and
