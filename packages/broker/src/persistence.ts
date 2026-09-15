@@ -3959,6 +3959,14 @@ function mapJob(row: JobRow): BrokerJob {
 function validateStoredJobState(row: JobRow): void {
   const fail = (): never => { throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job state invariants are malformed"); };
   const timestamp = (value: number | null): boolean => value === null || (Number.isSafeInteger(value) && value >= 0);
+  if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(row.job_id) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_principal_id) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_session_id) ||
+      !/^mac_[a-z0-9_]{1,123}$/u.test(row.tool) ||
+      typeof row.target_ref !== "string" || row.target_ref.length < 1 || row.target_ref.length > 4096 || row.target_ref.includes("\0") ||
+      !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(row.policy_version) ||
+      !/^[a-f0-9]{64}$/u.test(row.payload_digest) ||
+      !/^[A-Za-z0-9._:-]{1,128}$/u.test(row.idempotency_key)) fail();
   if (!Number.isSafeInteger(row.revision) || row.revision < 0 || !timestamp(row.created_at_ms) || !timestamp(row.started_at_ms) ||
       !timestamp(row.finished_at_ms) || !timestamp(row.lease_acquired_at_ms) || !timestamp(row.lease_heartbeat_at_ms) ||
       !timestamp(row.lease_expires_at_ms) || row.cancel_requested !== 0 && row.cancel_requested !== 1 ||

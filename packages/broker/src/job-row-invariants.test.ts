@@ -138,3 +138,31 @@ test("BrokerStore rejects a Job carrying both local-process and guest recovery o
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("BrokerStore rejects a persisted Job with malformed authority identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-identity-row-"));
+  const databasePath = join(directory, "broker.sqlite");
+  let store: BrokerStore | undefined = new BrokerStore(databasePath);
+  let reopenedStore: BrokerStore | undefined;
+  try {
+    store.createJob(jobInput("job:identity-row"));
+    store.close();
+    store = undefined;
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE jobs SET payload_digest = ? WHERE job_id = ?")
+        .run("not-a-sha256", "job:identity-row");
+    } finally {
+      database.close();
+    }
+
+    assert.throws(
+      () => { reopenedStore = new BrokerStore(databasePath); },
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+  } finally {
+    reopenedStore?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
