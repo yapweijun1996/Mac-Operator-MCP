@@ -18,7 +18,10 @@ import {
 } from "./privileged-helper.js";
 import {
   PrivilegedHelperAuthorityClient,
-  type PrivilegedHelperAuthorityClientOptions
+  PrivilegedHelperAuthorityIpcServer,
+  BrokerStorePrivilegedHelperAuthorityReplayGuard,
+  type PrivilegedHelperAuthorityClientOptions,
+  type PrivilegedHelperAuthorityIpcServerOptions
 } from "./privileged-helper-authority-ipc.js";
 
 const MAX_CONFIG_BYTES = 128 * 1024;
@@ -185,6 +188,32 @@ export class PrivilegedHelperKeyManager {
         ...options,
         authenticationKey: key,
         keyAuthorityCheck: () => this.assertBindingUsable(binding)
+      });
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  /**
+   * Creates the Broker-side authority endpoint from the active helper key.
+   * Key validity, revocation, and activation identity remain checked for each
+   * request even after the manager releases its retained key snapshot.
+   */
+  createAuthorityServer(
+    options: Omit<PrivilegedHelperAuthorityIpcServerOptions, "authenticationKey" | "keyAuthorityCheck" | "replayGuard">
+  ): PrivilegedHelperAuthorityIpcServer {
+    const key = this.assertUsable();
+    const binding = this.captureBinding();
+    try {
+      return new PrivilegedHelperAuthorityIpcServer({
+        ...options,
+        authenticationKey: key,
+        replayGuard: new BrokerStorePrivilegedHelperAuthorityReplayGuard(this.store),
+        keyAuthorityCheck: () => this.assertBindingUsable(binding),
+        authorizeCommand: (command) => {
+          this.assertBindingUsable(binding);
+          options.authorizeCommand(command);
+        }
       });
     } finally {
       key.fill(0);

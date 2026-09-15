@@ -12,6 +12,7 @@ import {
   captureLaunchdEdgeProcessIdentity,
   createMacOsNativeBrokerRuntimeForLaunchdEdge,
   createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndAuthority,
+  createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndPrivilegedHelperAuthority,
   createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig,
   NativeRuntimeStartupError,
   parseLaunchdEdgeProcessReadback
@@ -22,6 +23,7 @@ import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-
 import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials.js";
 import { EdgeAuthenticationKeyManager, writeEdgeAuthenticationKeyConfig, type EdgeAuthenticationKeyConfig } from "./edge-keyring-config.js";
 import { AuthorityControlKeyManager, writeAuthorityControlKeyConfig, type AuthorityControlKeyConfig } from "./authority-control-keyring.js";
+import { PrivilegedHelperKeyManager, writePrivilegedHelperKeyConfig, type PrivilegedHelperKeyConfig } from "./privileged-helper-keyring.js";
 
 test("launchd Edge identity capture binds a running per-user service to native process identity", async () => {
   const uid = process.getuid?.();
@@ -307,6 +309,73 @@ test("launchd startup assembles the protected Authority Control channel separate
   } finally {
     await runtime?.close().catch(() => undefined);
     authorityManager?.dispose();
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("launchd startup assembles the helper-to-Broker authority channel separately", async () => {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  const root = await mkdtemp(join(tmpdir(), "mops-ha-"));
+  const store = new BrokerStore(join(root, "broker.sqlite"));
+  const now = Date.now();
+  const edgeKeyPath = join(root, "edge.key");
+  const edgeConfigPath = join(root, "edge-keys.json");
+  const helperKeyPath = join(root, "helper.key");
+  const helperConfigPath = join(root, "helper-keys.json");
+  const serviceId = `gui/${uid}/com.mac-operator.edge`;
+  let helperManager: PrivilegedHelperKeyManager | undefined;
+  let assembled: Awaited<ReturnType<typeof createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndPrivilegedHelperAuthority>> | undefined;
+  try {
+    const edgeDigest = (await provisionAuthenticationKey(edgeKeyPath)).digest;
+    const edgeKey = await loadAuthenticationKey(edgeKeyPath);
+    await writeEdgeAuthenticationKeyConfig(edgeConfigPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        edgeId: "edge-1", keyId: "edge-key-1", keySource: "file", path: edgeKeyPath,
+        keyDigest: edgeDigest, notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+      }]
+    });
+    await new EdgeAuthenticationKeyManager(edgeConfigPath, store, () => now).activate();
+
+    const helperDigest = (await provisionAuthenticationKey(helperKeyPath)).digest;
+    const helperConfig: PrivilegedHelperKeyConfig = {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        keyId: "helper-key-1", keySource: "file", path: helperKeyPath,
+        keyDigest: helperDigest, notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+      }]
+    };
+    await writePrivilegedHelperKeyConfig(helperConfigPath, helperConfig);
+    helperManager = new PrivilegedHelperKeyManager(helperConfigPath, store, () => now);
+    await helperManager.activate();
+
+    assembled = await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndPrivilegedHelperAuthority({
+      socketPath: join(root, "broker.sock"),
+      edgeId: "edge-1",
+      edgeServiceId: serviceId,
+      expectedEdgeUid: uid,
+      edgeKeyConfigPath: edgeConfigPath,
+      edgeKeyStore: store,
+      helperKeyConfigPath: helperConfigPath,
+      helperAuthoritySocketPath: join(root, "helper-authority.sock"),
+      helperAuthorityPeerPolicy: { expectedUid: uid, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) },
+      commandExecutor: new FakeLaunchdExecutor(success(`${serviceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`)),
+      createBroker: (edgeAuthenticationKeys) => new Broker({
+        store, policy: createDefaultPolicy("edge-1"), edgeAuthenticationKeys, now: () => now
+      })
+    });
+    assert.equal(assembled.runtime.state, "stopped");
+    await assembled.runtime.start();
+    assert.equal(assembled.runtime.state, "running");
+    await assembled.runtime.close();
+    assert.equal(assembled.runtime.state, "stopped");
+  } finally {
+    await assembled?.runtime.close().catch(() => undefined);
+    helperManager?.dispose();
     store.close();
     await rm(root, { recursive: true, force: true });
   }

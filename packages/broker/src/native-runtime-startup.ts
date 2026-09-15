@@ -5,6 +5,8 @@ import { EdgeAuthenticationKeyManager } from "./edge-keyring-config.js";
 import { AuthorityControlKeyManager } from "./authority-control-keyring.js";
 import { AuthorityControlIpcServer } from "./authority-control-ipc.js";
 import { KeychainDeliveryServer } from "./keychain-delivery.js";
+import { assertPrivilegedHelperCommandAuthority } from "./privileged-helper.js";
+import { PrivilegedHelperKeyManager } from "./privileged-helper-keyring.js";
 import type { EdgeKeyring } from "./edge-keyring.js";
 import type { Broker } from "./broker.js";
 import type { BrokerStore } from "./persistence.js";
@@ -23,7 +25,8 @@ export type NativeRuntimeStartupErrorCode =
   | "EDGE_PROCESS_NOT_RUNNING"
   | "EDGE_PROCESS_IDENTITY_UNAVAILABLE"
   | "EDGE_KEY_CONFIG_UNAVAILABLE"
-  | "AUTHORITY_KEY_CONFIG_UNAVAILABLE";
+  | "AUTHORITY_KEY_CONFIG_UNAVAILABLE"
+  | "HELPER_AUTHORITY_CONFIG_UNAVAILABLE";
 
 export class NativeRuntimeStartupError extends Error {
   readonly code: NativeRuntimeStartupErrorCode;
@@ -297,6 +300,82 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
   // The server owns a defensive key copy and wipes it on close. The manager
   // must not retain a second live copy after startup assembly succeeds.
   manager.dispose();
+  try {
+    return await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig({
+      ...baseOptions,
+      socketPath,
+      edgeKeyStore,
+      operatorChannels: [...(baseOptions.operatorChannels ?? []), authorityChannel]
+    });
+  } catch (error) {
+    await authorityChannel.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Production startup assembly for the helper-to-Broker authority poll
+ * channel. The Broker owns this listener and the final persisted authority
+ * callback; the root helper receives only a separately authenticated client
+ * endpoint and never reads BrokerStore directly.
+ */
+export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndPrivilegedHelperAuthority(
+  options: Omit<MacOsNativeBrokerRuntimeOptions, "peerPolicy" | "broker"> & {
+    edgeServiceId: string;
+    expectedEdgeUid: number;
+    expectedEdgeGid?: number;
+    commandExecutor?: LaunchdIdentityCommandExecutor;
+    edgeKeyConfigPath: string;
+    edgeKeyStore: BrokerStore;
+    createBroker: (edgeAuthenticationKeys: EdgeKeyring) => Broker;
+    keychainDelivery?: {
+      socketPath: string;
+      keyId: string;
+    };
+    helperKeyConfigPath: string;
+    helperAuthoritySocketPath: string;
+    helperAuthorityPeerPolicy: NativePeerPolicy;
+  }
+): Promise<ReturnType<typeof createMacOsNativeBrokerRuntime>> {
+  const {
+    helperKeyConfigPath,
+    helperAuthoritySocketPath,
+    helperAuthorityPeerPolicy,
+    edgeKeyStore,
+    socketPath,
+    ...baseOptions
+  } = options;
+  if (helperAuthoritySocketPath === socketPath) {
+    throw new NativeRuntimeStartupError(
+      "HELPER_AUTHORITY_CONFIG_UNAVAILABLE",
+      "Privileged helper authority socket must be separate from the Broker IPC socket"
+    );
+  }
+  if (helperAuthorityPeerPolicy.allowedProcessIdentity === undefined) {
+    throw new NativeRuntimeStartupError(
+      "HELPER_AUTHORITY_CONFIG_UNAVAILABLE",
+      "Privileged helper authority startup requires an explicit native helper process identity"
+    );
+  }
+  const helperKeyManager = new PrivilegedHelperKeyManager(helperKeyConfigPath, edgeKeyStore);
+  let authorityChannel: import("./privileged-helper-authority-ipc.js").PrivilegedHelperAuthorityIpcServer;
+  try {
+    await helperKeyManager.restore();
+    authorityChannel = helperKeyManager.createAuthorityServer({
+      socketPath: helperAuthoritySocketPath,
+      peerPolicy: helperAuthorityPeerPolicy,
+      authorizeCommand: (command) => assertPrivilegedHelperCommandAuthority(edgeKeyStore, command)
+    });
+  } catch (error) {
+    helperKeyManager.dispose();
+    throw new NativeRuntimeStartupError(
+      "HELPER_AUTHORITY_CONFIG_UNAVAILABLE",
+      error instanceof Error ? error.message : "Active helper key configuration could not be restored"
+    );
+  }
+  // The endpoint owns a defensive key copy and keeps only its activation
+  // binding for revocation/rotation checks after the manager is disposed.
+  helperKeyManager.dispose();
   try {
     return await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig({
       ...baseOptions,

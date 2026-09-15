@@ -94,6 +94,8 @@ export interface PrivilegedHelperAuthorityIpcServerOptions {
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
   peerCredentialVerifier?: { verify(socket: Socket): unknown };
   peerPolicy?: NativePeerPolicy;
+  /** Optional active-key/revocation check owned by the key manager. */
+  keyAuthorityCheck?: () => void;
   maxRequestBytes?: number;
   maxResponseBytes?: number;
   maxRequestAgeMs?: number;
@@ -268,6 +270,7 @@ export class PrivilegedHelperAuthorityIpcServer {
         if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
           throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority request contained trailing data");
         }
+        this.options.keyAuthorityCheck?.();
         this.options.replayGuard.admit(request);
         const command = authenticatePrivilegedHelperCommand(request.command, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
         this.options.authorizeCommand(command);
