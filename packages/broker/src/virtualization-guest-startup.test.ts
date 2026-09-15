@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { canonicalJson, sha256 } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,6 +102,7 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
   let channelPort: number | undefined;
   let listenerPort: number | undefined;
   let listenerClosed = false;
+  let failCloseOnce = false;
   const adapter: VirtualizationGuestVmAdapter & {
     createChannel(options: { port: number }): { exchange: (frame: Uint8Array, signal: AbortSignal) => Promise<Uint8Array> };
     createConnectionSource(options: { port: number }): { accept(signal: AbortSignal): Promise<null>; close(): Promise<void> };
@@ -122,7 +123,13 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
         close: async () => { listenerClosed = true; }
       };
     },
-    async close() { state = "stopped"; }
+    async close() {
+      state = "stopped";
+      if (failCloseOnce) {
+        failCloseOnce = false;
+        throw new Error("synthetic close failure");
+      }
+    }
   };
   const vmFactory: VirtualizationGuestVmFactory = async (options) => {
     assert.equal(options.image.guestIdentity.imageSha256, guestIdentity.imageSha256);
@@ -149,6 +156,13 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
     assert.equal((await runtime.recover()).state, "running");
     await runtime.stop();
     assert.equal(runtime.readback().state, "stopped");
+    failCloseOnce = true;
+    await assert.rejects(
+      runtime.close(),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME"
+    );
+    assert.equal(runtime.readback().state, "stopped");
+    await runtime.close();
   } finally {
     await runtime.close();
     assert.equal(listenerClosed, true);

@@ -273,8 +273,13 @@ class VirtualizationGuestRuntimeImpl implements VirtualizationGuestRuntime {
       try { await this.connectionSource?.close(); } catch (error) { firstError ??= error; }
       try { await this.taskRunner.close?.(); } catch (error) { firstError ??= error; }
       try { await this.lifecycle.close(); } catch (error) { firstError ??= error; }
-      this.closed = firstError !== undefined;
-      if (firstError !== undefined) throw firstError;
+      if (firstError !== undefined) {
+        // A failed stop/transport drain may be recoverable after a fresh
+        // lifecycle status readback. Keep the runtime open and allow an
+        // explicit retry instead of permanently fencing recovery.
+        this.closePromise = undefined;
+        throw firstError;
+      }
       this.closed = true;
     })();
     return this.closePromise;
