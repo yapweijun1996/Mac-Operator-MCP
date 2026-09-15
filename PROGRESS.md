@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Write-recovery root-identity addendum: source revision `cd649e6` persists the
+canonical policy-root path/device/inode with each new write Job. Restart
+cleanup and unresolved-write postcondition checks compare that identity before
+probing or unlinking; legacy metadata without the proof is preserved and
+skipped. A cross-restart root rename/replacement regression passes 1/1, the
+write-recovery journal suite passes 3/3, and the serial physical regression
+passes 644/644 with no skips or failures. This closes the persisted write
+recovery target-swap gap only; remount durability, kernel-held descriptors,
+external actor attribution, production enablement, and installed evidence
+remain open. Evidence:
+`evidence/2026-09-16-write-recovery-root-identity.md`.
+
 Filesystem-root identity addendum: source revision `bed6a75` binds each
 filesystem plan to the authorized policy-root directory's native device/inode
 as well as its storage-volume identity. Planned operations recheck both before
