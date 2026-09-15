@@ -25,12 +25,13 @@ remain in force.
 
 ## Verification
 
-- JWT verifier tests pass 5/5, including oversized and non-JSON responses that
-  fail closed as invalid tokens.
-- All Edge tests pass 38/38 with 0 skipped tests, covering HTTPS, MCP, IPC,
+- JWT verifier tests pass 6/6, including oversized, non-JSON, malformed
+  `Content-Length`, and declared-over-limit responses that fail closed as
+  invalid tokens.
+- All Edge tests pass 39/39 with 0 skipped tests, covering HTTPS, MCP, IPC,
   JWT, rate limiting, startup, contracts, and TLS boundaries.
 - The physical-Darwin regression over all non-overlapping test files passes
-  487/487 with 0 skipped tests. The repository already had a separate
+  488/488 with 0 skipped tests. The repository already had a separate
   long-running `broker.test.js`/`persistence.test.js` process, so those two
   files were excluded rather than duplicated.
 - `npm run build`, `npm run typecheck`, `npm run lint`, `npm run verify:contracts`,

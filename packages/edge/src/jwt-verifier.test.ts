@@ -148,6 +148,41 @@ test("JWT verifier bounds remote JWKS response bytes and content type", async ()
   await assertInvalid(wrongType, token);
 });
 
+test("JWT verifier rejects malformed and oversized remote JWKS content lengths", async () => {
+  const { privateKey } = await generateKeyPair("RS256");
+  const token = await createToken(privateKey);
+  const baseOptions = {
+    issuer,
+    issuerId: "issuer-prod",
+    resourceServerUrl,
+    jwksUri: new URL("https://issuer.example.test/.well-known/jwks.json")
+  };
+
+  const malformedLength = createJwtAccessTokenVerifier({
+    ...baseOptions,
+    jwksFetch: async () => new Response("{}", {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "content-length": "not-a-number"
+      }
+    })
+  });
+  await assertInvalid(malformedLength, token);
+
+  const oversizedLength = createJwtAccessTokenVerifier({
+    ...baseOptions,
+    jwksFetch: async () => new Response("{}", {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(256 * 1024 + 1)
+      }
+    })
+  });
+  await assertInvalid(oversizedLength, token);
+});
+
 async function createJwks(publicKey: CryptoKey, keyId = "key-1"): Promise<JSONWebKeySet> {
   const jwk = await exportJWK(publicKey);
   return {

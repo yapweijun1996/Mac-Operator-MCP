@@ -7,8 +7,8 @@ Last verified: 2026-09-15
 Edge remote-JWKS response addendum: source revision `3cca22c` wraps every
 remote JWKS fetch with an Edge-owned 256 KiB streaming body cap and strict JSON
 MIME check before `jose` parses key material; invalid or oversized responses
-fail closed as invalid tokens. JWT tests pass 5/5, all Edge tests pass 38/38,
-and the non-overlapping physical-Darwin regression passes 487/487 with 0
+fail closed as invalid tokens. JWT tests pass 6/6, all Edge tests pass 39/39,
+and the non-overlapping physical-Darwin regression passes 488/488 with 0
 skipped tests. Build, typecheck, lint, contract, canonical-JSON, audit, and
 diff checks pass. External issuer deployment, certificate-chain proof,
 rotation/revocation propagation, and remote production hosting remain open.
