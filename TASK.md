@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/012 Guest transport provenance-snapshot addendum at source revision
+`6241e24`: `VirtualizationGuestTransportExecutor` recursively freezes its
+validated Guest identity and attestation snapshots, including nested identity,
+before exchanges and recovery. Focused Guest/Runner/Agent tests pass 33/33; the
+serial physical regression passes 666/671 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-transport-provenance-snapshot.md`.
+
 MOP-045/080/081 Filesystem authorization-snapshot addendum at source revision
 `29abdd0`: normalized root policies and filesystem plans are recursively frozen
 before asynchronous worker execution, preventing target, deny-zone, or volume

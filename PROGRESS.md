@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Guest transport provenance-snapshot addendum at source revision `6241e24`:
+`VirtualizationGuestTransportExecutor` now recursively freezes validated Guest
+identity and attestation snapshots, including nested identity, before any
+exchange or recovery. Focused Guest/Runner/Agent tests pass 33/33; the serial
+physical regression passes 666/671 with 0 failures and 5 explicit
+descriptor-capability skips. Evidence:
+`evidence/2026-09-16-guest-transport-provenance-snapshot.md`.
+
 Filesystem authorization-snapshot addendum at source revision `29abdd0`:
 `FilesystemInspector` now recursively freezes normalized root policies and
 planned targets, including deny zones and captured volume/device/inode

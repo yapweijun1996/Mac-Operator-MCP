@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Guest transport provenance-snapshot verification at source revision `6241e24`:
+`VirtualizationGuestTransportExecutor` recursively freezes the validated Guest
+identity and attestation graph retained for later exchange and recovery.
+Negative coverage proves top-level and nested provenance mutation attempts fail
+at runtime. Focused Guest/Runner/Agent tests pass 33/33; the serial physical
+regression passes 666/671 with 0 failures and 5 explicit descriptor-capability
+skips. The three pre-existing long-running suites were excluded and left
+untouched. This closes in-process provenance-object mutation only; native VM
+isolation, signed-attestation enablement, and production virtualization remain
+open. Evidence:
+`evidence/2026-09-16-guest-transport-provenance-snapshot.md`.
+
 Filesystem authorization-snapshot verification at source revision `29abdd0`:
 normalized root policies and complete filesystem plans are recursively frozen
 before asynchronous worker execution. Negative coverage proves target, root
