@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Sandbox protected-root addendum: source revision `5fb0f3a` adds host-provided
+canonical Broker-owned protected roots to the Seatbelt profile and places
+read/write deny rules after task allows. The real-Darwin smoke verifies a
+synthetic persistence root is denied despite being listed as an allowed task
+root; sandbox-profile passes 15/15 and the complete serial physical-Darwin
+suite passes 606/606 with 0 skipped tests. Build, lint, contract, native
+canonical, and diff checks pass. This is not production persistence or
+credential isolation evidence until startup wiring, real Broker paths, and
+remount/descriptor claims are verified. Evidence:
+`evidence/2026-09-15-sandbox-protected-roots.md`.
+
 Executable-content identity addendum: source revision `a0e62e2` binds the
 Broker executable target to device/inode/mode, ordinary file metadata, and a
 bounded SHA-256 digest read through an `O_NOFOLLOW` descriptor across
