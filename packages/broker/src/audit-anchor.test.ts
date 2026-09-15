@@ -52,6 +52,29 @@ test("AuditAnchorManager rejects a forged sidecar even when the SQLite tail is u
   }
 });
 
+test("AuditAnchorManager rejects unknown sidecar authority fields", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-shape-"));
+  const path = join(directory, "audit.anchor");
+  const manager = new AuditAnchorManager({
+    path,
+    keySource: { keyId: "audit-key-1", loadKey: () => key }
+  });
+  try {
+    manager.publish(1, firstHash);
+    const forged = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    forged.extra = "authority";
+    await writeFile(path, `${JSON.stringify(forged)}\n`, { mode: 0o600 });
+    await chmod(path, 0o600);
+    assert.throws(
+      () => manager.verify({ sequence: 1, eventHash: firstHash }),
+      /anchor is malformed/u
+    );
+  } finally {
+    manager.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("AuditAnchorManager refuses a missing anchor for non-empty audit state", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-audit-anchor-missing-"));
   const manager = new AuditAnchorManager({

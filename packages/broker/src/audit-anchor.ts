@@ -3,6 +3,7 @@ import { constants, chmodSync, closeSync, fsyncSync, lstatSync, openSync, readFi
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalJson, parseJsonUtf8Strict } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const ANCHOR_FORMAT = "MOPS-AUDIT-ANCHOR-1" as const;
 const ANCHOR_KEY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -204,7 +205,7 @@ function readAnchorIfPresent(path: string): AuditAnchorRecord | undefined {
   } catch {
     throw new Error("Audit anchor is not valid JSON");
   }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Audit anchor is malformed");
+  if (!isPlainDataRecord(value) || !hasExactKeys(value, ["format", "keyId", "sequence", "eventHash", "mac"])) throw new Error("Audit anchor is malformed");
   const record = value as Record<string, unknown>;
   if (record.format !== ANCHOR_FORMAT || typeof record.keyId !== "string" ||
       !ANCHOR_KEY_ID_PATTERN.test(record.keyId) || typeof record.sequence !== "number" ||
@@ -353,9 +354,14 @@ function isNativeLockRecoveryResult(value: unknown): value is {
   device: string;
   inode: string;
 } {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!isPlainDataRecord(value) || !hasExactKeys(value, ["rootPath", "path", "removed", "device", "inode"])) return false;
   const record = value as Record<string, unknown>;
   return typeof record.rootPath === "string" && typeof record.path === "string" &&
     typeof record.removed === "boolean" && typeof record.device === "string" &&
     typeof record.inode === "string";
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
