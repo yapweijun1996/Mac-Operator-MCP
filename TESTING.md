@@ -23,6 +23,7 @@ The local baseline is:
 
 ```text
 npm run lint
+npm run verify:docs
 npm run typecheck
 npm test
 npm run verify:contracts

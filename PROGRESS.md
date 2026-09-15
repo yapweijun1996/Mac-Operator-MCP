@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Documentation navigation addendum: `npm run verify:docs` now rejects README
+local-link escapes/unavailable targets and requires the eight named operator
+runbooks. The physical host check passed for 29 README local links and all 8
+runbooks; runbook content remains draft where production signing, installed
+launchd ownership, remote deployment, or operator approval evidence is absent.
+Evidence: `evidence/2026-09-15-documentation-link-check.md`.
+
 Production signing readiness addendum: a read-only physical-host probe found
 `0 valid identities` from `security find-identity -v -p codesigning`. The
 rebuilt native adapter passes strict ad-hoc verification but has no

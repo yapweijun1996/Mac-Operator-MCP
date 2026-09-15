@@ -63,6 +63,7 @@ The Edge/Broker baseline uses TypeScript on Node.js 24 or newer with npm workspa
 npm install
 npm run lint
 npm run typecheck
+npm run verify:docs
 npm test
 npm run verify:contracts
 ```

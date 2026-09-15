@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Documentation navigation verification: the new dependency-free
+`npm run verify:docs` check rejects README local-link escapes or unavailable
+targets and requires eight named testing/configuration/deployment/operations/
+incident/rollback/kill-switch/persistence runbooks. The physical host check
+passed for 29 local links and all 8 runbooks; this does not promote draft
+runbooks to production procedures. Evidence:
+`evidence/2026-09-15-documentation-link-check.md`.
+
 Production signing readiness verification: a read-only physical-host probe on
 2026-09-15 found `0 valid identities` from `security find-identity -v -p
 codesigning`. The rebuilt native adapter passes strict ad-hoc verification but
