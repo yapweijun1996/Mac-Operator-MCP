@@ -35,3 +35,11 @@ Cross-principal reuse, replay, expiry, target substitution, payload mutation, po
 The Broker-owned SQLite prototype persists the proposed binding fields and accepts only single-use approvals. A separate `ApprovalAuthority` verifies an issuer/key identity, signed canonical payload, bounded preview digest, validity window, unattended-profile policy, and durable issuance nonce before atomically recording approval decision/completion provenance. `mac_job_cancel` now requires the fixed `trusted_write` approval class; the request cannot submit an approval ID or grant itself consent. Exact approval selection and consumption occur in the same transaction as request intent and audit evidence. Bounded tests cover issuer tampering, preview substitution, issuance replay, missing approval, principal/contract/target/payload/policy/attended-mode substitution, expiry, revocation, exhaustion, competing consumers, and revocation before dispatch.
 
 This does not accept the ADR. The issuer channel is a disabled prototype with injected HMAC keys and a separate owner-only local IPC socket. Issuer-key files now use protected owner-only loading/provisioning and durable `approval_key` revocation before retirement. A versioned owner-only metadata config atomically rotates and reloads non-secret key paths with canonical revision/digest readback; BrokerStore activation history and audited intent/completion reject revision rollback and make startup restore exact. This remains an activation guard rather than Keychain-backed secret distribution or installed-service identity. Keychain storage, human UI/preview delivery, unattended-profile authority, batch approvals, privileged-helper integration, and active-work revocation semantics beyond the pre-dispatch gate remain open. Its versioned envelope is materialized in `schemas/approval-issuance.schema.json`.
+
+The disabled-by-default `mac_ui_type` implementation now uses the same
+single-use `trusted_gui` approval binding as `mac_ui_action`. Its bounded text
+payload is delivered over a Broker-owned stdin channel rather than argv and is
+never persisted in Job output; exact snapshot ownership, parent-window
+authorization, sensitive-target policy, and focused input postconditions remain
+required. Real Accessibility permission and human approval-channel evidence
+remain open, so this ADR stays Proposed.

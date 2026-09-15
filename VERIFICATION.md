@@ -2771,3 +2771,13 @@ subject validation. The non-overlapping package regression passes 549 total
 (543 passed, 6 skipped, 0 failed). This does not close production key
 distribution, signing provenance, or installed-service evidence. Evidence:
 `evidence/2026-09-15-edge-key-identity-length.md`.
+
+`mac_ui_type` boundary verification confirms bounded text and nine allowlisted
+keys stay off argv through ProcessSupervisor stdin, secret-like text is denied,
+secure/redacted snapshots and non-text controls fail closed, and the exact
+snapshot is reobserved with focus and input postconditions before success.
+Focused UI, policy-loader, and ProcessSupervisor tests pass; the
+non-overlapping package regression passes 553 total (547 passed, 6 skipped,
+0 failed). The feature remains disabled by default and real permission-granted
+Accessibility evidence is still required. Evidence:
+`evidence/2026-09-15-ui-type-boundary.md`.

@@ -3099,3 +3099,15 @@ regression passes 549 total (543 passed, 6 skipped, 0 failed). This remains
 local bounded-identity evidence; production key distribution and installation
 evidence remain open. Evidence:
 `evidence/2026-09-15-edge-key-identity-length.md`.
+
+The disabled-by-default `mac_ui_type` slice is now implemented behind the same
+snapshot, approval, Job, revocation, and readback boundary as `mac_ui_action`.
+(source revision `adf9fd8`).
+Bounded text and nine allowlisted keys are delivered through a bounded
+ProcessSupervisor stdin channel, so input never appears in argv or persisted
+Job output; secret-like input, secure or redacted snapshots, non-text controls,
+stale targets, and focus/readback drift fail closed. Focused UI, policy-loader,
+and process-supervisor tests pass; the non-overlapping package regression
+passes 553 total (547 passed, 6 skipped, 0 failed). Real Accessibility-
+permission, focus-race, and adversarial application evidence remains open.
+Evidence: `evidence/2026-09-15-ui-type-boundary.md`.
