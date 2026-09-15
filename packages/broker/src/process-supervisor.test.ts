@@ -88,6 +88,29 @@ test("process supervisor uses an explicit environment and bounded output", async
   assert.equal(supervisor.activeCount(), 0);
 });
 
+test("process supervisor delivers bounded stdin without exposing it in argv", async () => {
+  const supervisor = new ProcessSupervisor();
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: ["-c", "import sys; print(sys.stdin.read(), end='')"],
+    stdin: "opaque-input",
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 1_024
+  });
+  assert.equal(result.state, "completed");
+  assert.equal(result.stdout, "opaque-input");
+  assert.equal(supervisor.activeCount(), 0);
+  await assert.rejects(supervisor.run({
+    executable: "/usr/bin/printf",
+    args: ["ok"],
+    stdin: "x".repeat(65_537),
+    cwd: CWD,
+    timeoutMs: 1_000,
+    outputCapBytes: 100
+  }), /stdin exceeds/u);
+});
+
 test("process supervisor captures output from a child that exits during startup checks", async () => {
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   try {

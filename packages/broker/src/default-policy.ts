@@ -95,6 +95,19 @@ const tools: ToolPolicy[] = [
     enabled: false
   },
   {
+    tool: "mac_ui_type",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.ui.control"],
+    capabilityFamilies: ["gui", "write"],
+    targetType: "ui_element",
+    mutation: true,
+    approvalPolicy: "trusted_gui",
+    outputCapBytes: 262_144,
+    timeoutMs: 15_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_system_summary",
     contractVersion: "0.1",
     requiredScopes: ["mac.system.read"],

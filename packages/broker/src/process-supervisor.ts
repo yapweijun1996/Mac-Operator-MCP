@@ -87,6 +87,8 @@ export interface ProcessExecutionRequest {
   cwd: string;
   /** Explicit profile environment. Omitted means an empty environment. */
   environment?: Readonly<Record<string, string>>;
+  /** Bounded, non-persisted stdin payload. Never appears in argv or audit metadata. */
+  stdin?: string;
   timeoutMs: number;
   outputCapBytes: number;
   /**
@@ -250,12 +252,20 @@ export class ProcessSupervisor {
           env: environment,
           shell: false,
           detached: true,
-          stdio: ["ignore", "pipe", "pipe"]
+          stdio: [safeRequest.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
         });
       } catch {
         throw new BrokerError("EXECUTION_FAILED", "Child process could not be started");
       }
       const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes);
+      if (safeRequest.stdin !== undefined && child.stdin !== null) {
+        try {
+          child.stdin.end(safeRequest.stdin, "utf8");
+        } catch {
+          child.kill("SIGKILL");
+          throw new BrokerError("EXECUTION_FAILED", "Process stdin could not be delivered");
+        }
+      }
       const childPid = child.pid;
       if (typeof childPid !== "number" || !Number.isSafeInteger(childPid) || childPid <= 0) {
         child.kill("SIGKILL");
@@ -910,12 +920,15 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number):
 
 async function validateRequest(request: ProcessExecutionRequest, allowedEnvironmentKeys: ReadonlySet<string>): Promise<ValidatedProcessPaths> {
   if (!isPlainDataRecord(request) ||
-      !hasAllowedKeys(request, ["executable", "args", "cwd", "environment", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
+      !hasAllowedKeys(request, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
       !isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
       !isDenseStringArray(request.args, MAX_ARGUMENTS) ||
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
       !Number.isSafeInteger(request.outputCapBytes) || request.outputCapBytes < 1 || request.outputCapBytes > MAX_OUTPUT_BYTES) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
+  }
+  if (request.stdin !== undefined && (typeof request.stdin !== "string" || request.stdin.includes("\0") || Buffer.byteLength(request.stdin, "utf8") > MAX_ARGUMENT_BYTES)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process stdin exceeds the supported size");
   }
   if (request.environment !== undefined && !isPlainDataRecord(request.environment)) {
     throw new BrokerError("PRECONDITION_FAILED", "Process environment is malformed");
@@ -978,7 +991,7 @@ function isCanonicalAbsolutePath(value: string): boolean {
 
 function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (!isPlainDataRecord(value) ||
-      !hasAllowedKeys(value, ["executable", "args", "cwd", "environment", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
+      !hasAllowedKeys(value, ["executable", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
   }
   if (!isDenseStringArray(value.args, MAX_ARGUMENTS)) {
@@ -990,6 +1003,9 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   }
   if (environment !== undefined && Object.keys(environment).length > MAX_ENVIRONMENT_KEYS) {
     throw new BrokerError("PRECONDITION_FAILED", "Process environment exceeds the supported size");
+  }
+  if (value.stdin !== undefined && (typeof value.stdin !== "string" || value.stdin.includes("\0") || Buffer.byteLength(value.stdin, "utf8") > MAX_ARGUMENT_BYTES)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process stdin exceeds the supported size");
   }
   if (value.requireCleanExitProof !== undefined && typeof value.requireCleanExitProof !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process exit-proof policy is malformed");
@@ -1007,6 +1023,7 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
     outputCapBytes: value.outputCapBytes as number
   };
   if (environment !== undefined) snapshot.environment = Object.fromEntries(Object.entries(environment)) as Record<string, string>;
+  if (value.stdin !== undefined) snapshot.stdin = value.stdin as string;
   if (value.requireCleanExitProof !== undefined) snapshot.requireCleanExitProof = value.requireCleanExitProof as boolean;
   if (value.shouldCancel !== undefined) snapshot.shouldCancel = value.shouldCancel as () => boolean;
   if (value.onStarted !== undefined) {

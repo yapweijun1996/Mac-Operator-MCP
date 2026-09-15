@@ -1,7 +1,7 @@
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { redactLogText } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, redactLogText } from "./secret-policy.js";
 
 const OSASCRIPT = "/usr/bin/osascript";
 const UI_OBSERVE_CWD = "/";
@@ -146,6 +146,20 @@ if (!/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/.test(appId) || windowTitle.
 JSON.stringify(emitted);
 `.replace(/\s+/gu, " ").trim();
 
+/** Broker-owned JXA for bounded non-secure text/key input. Text arrives on
+ * stdin so it never appears in argv, process listings, or persisted audit data. */
+const UI_TYPE_SCRIPT = String.raw`
+ObjC.import("Foundation"); ObjC.import("ApplicationServices");
+const supplied = (() => { try { const a = ObjC.unwrap($.NSProcessInfo.processInfo.arguments).map((v) => String(ObjC.unwrap(v))); return a.slice(a.lastIndexOf("--") + 1); } catch (_) { return []; } })();
+const appId = String(supplied[0] || ""); const windowTitle = String(supplied[1] || ""); const windowIndex = Number(supplied[2]); const elementIndex = Number(supplied[3]); const expectedRole = String(supplied[4] || ""); const expectedLabel = String(supplied[5] || "");
+let input = null; try { const data = $.NSFileHandle.fileHandleWithStandardInput().readDataToEndOfFile(); input = JSON.parse($.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding).js); } catch (_) { input = null; }
+let emitted = null; const result = (value) => { emitted = value; }; const text = (call, fallback = "") => { try { const value = call(); return value == null ? fallback : String(value); } catch (_) { return fallback; } }; const safe = (call, fallback) => { try { return call() ?? fallback; } catch (_) { return fallback; } }; const secureRole = (role, subrole) => /secure|password|credential|protected|security/iu.test(role + " " + subrole); const keyCodes = { ENTER: 36, TAB: 48, ESCAPE: 53, ARROW_UP: 126, ARROW_DOWN: 125, ARROW_LEFT: 123, ARROW_RIGHT: 124, HOME: 115, END: 119 }; const textRole = (role) => /AX(TextField|TextArea|SearchField|ComboBox)/u.test(role);
+const findTarget = () => { const se = Application("System Events"); let process = null; const bundleId = appId.slice(7); for (const candidate of se.processes()) { if (text(() => candidate.bundleIdentifier()) === bundleId) { process = candidate; break; } } if (!process) return { error: "app_not_running" }; const windows = safe(() => process.windows(), []); const selected = windows[windowIndex]; if (!selected || text(() => selected.name()) !== windowTitle) return { error: "stale_target" }; let found = null; let index = 0; const visit = (element) => { if (found !== null) return; const role = text(() => element.role(), "AXUnknown"); const subrole = text(() => element.subrole(), ""); const secure = secureRole(role, subrole); const label = secure ? "" : text(() => element.description(), text(() => element.name())); if (index === elementIndex && role === expectedRole && label === expectedLabel && !secure) found = { element, role, index, focused: Boolean(safe(() => element.focused(), false)) }; index += 1; }; visit(selected); for (const element of safe(() => selected.entireContents(), [])) { if (index > elementIndex || found !== null) break; visit(element); } return found === null ? { error: "stale_target" } : { windowIndex, target: found }; };
+const validKeys = ["ENTER", "TAB", "ESCAPE", "ARROW_UP", "ARROW_DOWN", "ARROW_LEFT", "ARROW_RIGHT", "HOME", "END"];
+if (!/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/.test(appId) || windowTitle.length === 0 || !Number.isSafeInteger(windowIndex) || windowIndex < 0 || !Number.isSafeInteger(elementIndex) || elementIndex < 0 || input === null || typeof input.text !== "string" || input.text.length > 10000 || input.text.includes("\0") || !Array.isArray(input.keys) || input.keys.length > 32 || input.keys.some((key) => !validKeys.includes(key)) || typeof input.submit !== "boolean") result({ status: "error", error: "invalid_input" }); else if (!$.AXIsProcessTrusted()) result({ status: "error", error: "accessibility_permission" }); else { try { const before = findTarget(); if (before.error) result({ status: "error", error: before.error }); else if (!textRole(before.target.role)) result({ status: "error", error: "target_unsupported" }); else { before.target.element.focused = true; const se = Application("System Events"); if (input.text.length > 0) se.keystroke(input.text); for (const key of input.keys) se.keyCode(keyCodes[key]); if (input.submit) se.keyCode(keyCodes.ENTER); const after = findTarget(); if (after.error) result({ status: "error", error: after.error }); else result({ status: "ok", app_id: appId, window_index: windowIndex, window_title: windowTitle, element_index: elementIndex, role: after.target.role, characters_accepted: input.text.length, keys_accepted: input.keys, submitted: input.submit, focus_confirmed: after.target.focused === true, secure: false }); } } catch (error) { const message = text(() => error && error.message); result({ status: "error", error: /not authorized|not permitted|assistive|accessibility|-1743/iu.test(message) ? "accessibility_permission" : "execution_failed" }); } }
+JSON.stringify(emitted);
+`.replace(/\s+/gu, " ").trim();
+
 export interface UiExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
@@ -172,6 +186,7 @@ export interface SafeUiObservation {
 }
 
 export type UiActionName = "press" | "select" | "increment" | "decrement" | "show_menu" | "focus";
+export type UiInputKey = "ENTER" | "TAB" | "ESCAPE" | "ARROW_UP" | "ARROW_DOWN" | "ARROW_LEFT" | "ARROW_RIGHT" | "HOME" | "END";
 
 export interface UiSnapshotRecord {
   elementRef: string;
@@ -213,9 +228,31 @@ export interface SafeUiAction {
   verified: true;
 }
 
+export interface UiTypeExecution {
+  snapshot: UiSnapshotRecord;
+  text: string;
+  keys: readonly UiInputKey[];
+  submit: boolean;
+}
+
+export interface SafeUiType {
+  elementRef: string;
+  charactersAccepted: number;
+  keysAccepted: readonly UiInputKey[];
+  submitted: boolean;
+  focusConfirmed: true;
+  appId: string;
+  windowId: string;
+  reobserved: { role: string; focused: true; secure: false; state?: string };
+  warnings: readonly string[];
+  truncated: false;
+  verified: true;
+}
+
 export interface UiInspector {
   observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl): Promise<SafeUiObservation>;
   action?(execution: UiActionExecution, control: UiExecutionControl): Promise<SafeUiAction>;
+  type?(execution: UiTypeExecution, control: UiExecutionControl): Promise<SafeUiType>;
 }
 
 export class MacUiInspectorImpl implements UiInspector {
@@ -266,6 +303,27 @@ export class MacUiInspectorImpl implements UiInspector {
       shouldCancel: control.shouldCancel
     });
     return parseUiActionResult(result, snapshot, action);
+  }
+
+  async type(execution: UiTypeExecution, control: UiExecutionControl): Promise<SafeUiType> {
+    const { snapshot, text: inputText, keys, submit } = execution;
+    validateUiTypeRequest(snapshot.elementRef, inputText, keys, submit);
+    validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
+    if (snapshot.secure || snapshot.label?.includes("[REDACTED]")) {
+      throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure or redacted UI elements cannot receive input");
+    }
+    const result = await this.supervisor.run({
+      executable: OSASCRIPT,
+      args: ["-l", "JavaScript", "-e", UI_TYPE_SCRIPT, "--", snapshot.appId, snapshot.windowTitle,
+        String(snapshot.windowIndex), String(snapshot.elementIndex), snapshot.role, snapshot.label ?? ""],
+      stdin: canonicalJson({ text: inputText, keys: [...keys], submit }),
+      cwd: UI_OBSERVE_CWD,
+      environment: {},
+      timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
+      outputCapBytes: 262_144,
+      shouldCancel: control.shouldCancel
+    });
+    return parseUiTypeResult(result, execution);
   }
 }
 
@@ -358,6 +416,87 @@ export function validateUiActionRequest(elementRef: unknown, action: unknown): a
   if (typeof action !== "string" || !["press", "select", "increment", "decrement", "show_menu", "focus"].includes(action)) {
     throw new BrokerError("PRECONDITION_FAILED", "action is not an allowlisted Accessibility action");
   }
+}
+
+export function validateUiTypeRequest(
+  elementRef: unknown,
+  text: unknown,
+  keys: unknown = [],
+  submit: unknown = false
+): asserts text is string {
+  if (typeof elementRef !== "string" || !/^element:[a-f0-9]{48}$/u.test(elementRef)) {
+    throw new BrokerError("PRECONDITION_FAILED", "element_ref must be an opaque Accessibility snapshot identity");
+  }
+  if (typeof text !== "string" || text.length > 10_000 || text.includes("\0")) {
+    throw new BrokerError("PRECONDITION_FAILED", "text must be a bounded string of at most 10000 characters");
+  }
+  assertContentDoesNotContainSecrets(Buffer.from(text, "utf8"));
+  if (!Array.isArray(keys) || keys.length > 32 || keys.some((key) => typeof key !== "string" ||
+      !["ENTER", "TAB", "ESCAPE", "ARROW_UP", "ARROW_DOWN", "ARROW_LEFT", "ARROW_RIGHT", "HOME", "END"].includes(key))) {
+    throw new BrokerError("PRECONDITION_FAILED", "keys must contain at most 32 allowlisted key names");
+  }
+  if (typeof submit !== "boolean") throw new BrokerError("PRECONDITION_FAILED", "submit must be a boolean");
+}
+
+export function parseUiTypeResult(result: ProcessExecutionResult, execution: UiTypeExecution): SafeUiType {
+  const { snapshot, text: inputText, keys, submit } = execution;
+  validateUiTypeRequest(snapshot.elementRef, inputText, keys, submit);
+  validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
+  if (snapshot.secure || snapshot.label?.includes("[REDACTED]")) {
+    throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure or redacted UI elements cannot receive input");
+  }
+  if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Accessibility input was cancelled");
+  if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Accessibility input timed out");
+  if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Accessibility input exceeded its output limit");
+  if (result.resultClass !== "SUCCEEDED") {
+    if (/not authorized|not permitted|assistive|accessibility|-1743/iu.test(result.stderr)) {
+      throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
+    }
+    throw new BrokerError("EXECUTION_FAILED", "Accessibility input failed");
+  }
+  let parsed: unknown;
+  try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata"); }
+  if (!isPlainDataRecord(parsed)) throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata");
+  const record = parsed as Record<string, unknown>;
+  if (record.status === "error") {
+    if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata");
+    switch (record.error) {
+      case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
+      case "app_not_running":
+      case "window_not_found":
+      case "stale_target": throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
+      case "target_unsupported": throw new BrokerError("UNSUPPORTED_CAPABILITY", "Accessibility input target is not a text control");
+      case "invalid_input": throw new BrokerError("PRECONDITION_FAILED", "Accessibility input metadata is malformed");
+      default: throw new BrokerError("EXECUTION_FAILED", "Accessibility input failed");
+    }
+  }
+  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "element_index", "role", "characters_accepted", "keys_accepted", "submitted", "focus_confirmed", "secure"])) {
+    throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata");
+  }
+  if (record.status !== "ok" || record.app_id !== snapshot.appId || record.window_index !== snapshot.windowIndex ||
+      record.window_title !== snapshot.windowTitle || record.element_index !== snapshot.elementIndex || record.role !== snapshot.role ||
+      record.characters_accepted !== inputText.length || !Array.isArray(record.keys_accepted) ||
+      record.keys_accepted.length !== keys.length || record.keys_accepted.some((key, index) => key !== keys[index]) ||
+      record.submitted !== submit || record.focus_confirmed !== true || record.secure !== false) {
+    throw new BrokerError("VERIFICATION_FAILED", "Accessibility input postcondition did not match the approved snapshot");
+  }
+  const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle);
+  if (windowId !== snapshot.windowId || opaqueElementId(windowId, snapshot.elementIndex, snapshot.role, snapshot.label ?? "", false) !== snapshot.elementRef) {
+    throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
+  }
+  return {
+    elementRef: snapshot.elementRef,
+    charactersAccepted: inputText.length,
+    keysAccepted: [...keys],
+    submitted: submit,
+    focusConfirmed: true,
+    appId: snapshot.appId,
+    windowId,
+    reobserved: { role: snapshot.role, focused: true, secure: false },
+    warnings: [],
+    truncated: false,
+    verified: true
+  };
 }
 
 export function parseUiActionResult(
@@ -528,6 +667,8 @@ export const uiObserveExecutableForTesting = OSASCRIPT;
 export const uiObserveScriptForTesting = UI_OBSERVE_SCRIPT;
 export const uiActionExecutableForTesting = OSASCRIPT;
 export const uiActionScriptForTesting = UI_ACTION_SCRIPT;
+export const uiTypeExecutableForTesting = OSASCRIPT;
+export const uiTypeScriptForTesting = UI_TYPE_SCRIPT;
 
 function hasExactFields(value: Record<string, unknown>, required: readonly string[]): boolean {
   const keys = Object.keys(value);

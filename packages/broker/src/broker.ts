@@ -51,7 +51,7 @@ import { FailClosedTaskRunner, requireTaskIsolationProof, validateTaskExecutionR
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
-import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, type UiActionName, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
+import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, type UiActionName, type UiInputKey, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
 import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
 
 export interface BrokerOptions {
@@ -721,10 +721,11 @@ export class Broker {
       );
       const execution = this.planExecution(request, policy, toolPolicy);
       const target = execution.target;
-      if (request.tool === "mac_ui_action") {
-        if (!execution.uiAction) throw new BrokerError("EXECUTION_FAILED", "UI action execution plan is unavailable");
+      if (request.tool === "mac_ui_action" || request.tool === "mac_ui_type") {
+        const elementRef = request.tool === "mac_ui_action" ? execution.uiAction?.elementRef : execution.uiType?.elementRef;
+        if (!elementRef) throw new BrokerError("EXECUTION_FAILED", "UI execution plan is unavailable");
         const snapshot = this.uiSnapshotRegistry.resolve(
-          execution.uiAction.elementRef,
+          elementRef,
           request.principal.principalId,
           request.principal.sessionId,
           this.now()
@@ -734,7 +735,8 @@ export class Broker {
           reference: `window:${snapshot.appId}`
         });
         validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
-        execution.uiAction.snapshot = snapshot;
+        if (request.tool === "mac_ui_action") execution.uiAction!.snapshot = snapshot;
+        else execution.uiType!.snapshot = snapshot;
       } else {
         authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, target);
       }
@@ -950,6 +952,25 @@ export class Broker {
             execution.uiActionJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
+          if (request.tool === "mac_ui_type") {
+            const jobInput = {
+              jobId: `job:ui-type-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: `ui-type:${request.requestId}`,
+              createdAtMs: this.now()
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.uiTypeJob = created.job;
+            execution.uiTypeJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
         }
       }
       this.options.store.markRequestRunning(request.requestId, this.now());
@@ -969,6 +990,8 @@ export class Broker {
                   ? { kind: "app_focus" as const, job: execution.appFocusJob }
                   : execution.uiActionJob && execution.uiActionJobNew
                     ? { kind: "ui_action" as const, job: execution.uiActionJob }
+                    : execution.uiTypeJob && execution.uiTypeJobNew
+                      ? { kind: "ui_type" as const, job: execution.uiTypeJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
         const leaseStartedAtMs = this.now();
@@ -1006,7 +1029,8 @@ export class Broker {
         else if (pendingJob.kind === "git_commit") execution.gitCommitJob = started;
         else if (pendingJob.kind === "app_open") execution.appOpenJob = started;
         else if (pendingJob.kind === "app_focus") execution.appFocusJob = started;
-        else execution.uiActionJob = started;
+        else if (pendingJob.kind === "ui_action") execution.uiActionJob = started;
+        else execution.uiTypeJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       this.ensureActiveAuthority(request, execution.target);
@@ -1206,6 +1230,12 @@ export class Broker {
           throw new BrokerError("EXECUTION_FAILED", "UI action job execution plan is unavailable");
         }
         return this.dispatchUiAction(request, execution, toolPolicy.timeoutMs);
+      }
+      case "mac_ui_type": {
+        if (!execution.uiType || !execution.uiType.snapshot || !execution.uiTypeJob) {
+          throw new BrokerError("EXECUTION_FAILED", "UI type job execution plan is unavailable");
+        }
+        return this.dispatchUiType(request, execution, toolPolicy.timeoutMs);
       }
       case "mac_app_list": {
         if (!execution.appList) throw new BrokerError("EXECUTION_FAILED", "App inventory execution plan is unavailable");
@@ -2685,6 +2715,66 @@ export class Broker {
     }
   }
 
+  private async dispatchUiType(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    if (!execution.uiType?.snapshot || !execution.uiTypeJob) {
+      throw new BrokerError("EXECUTION_FAILED", "UI type job execution plan is unavailable");
+    }
+    const job = execution.uiTypeJob;
+    if (job.state === "queued") throw new BrokerError("CONFLICT", "UI type is already queued", true);
+    if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", "UI type outcome is unresolved; inspect its Broker job", true);
+    if (job.state === "cancelled") throw new BrokerError("CANCELLED", "UI type was cancelled before execution");
+    if (job.state === "completed") return uiTypeDispatchResult(job, parseStoredUiTypeResult(job.stdout), true);
+    if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "UI type job is not running");
+    if (!this.uiInspector.type) throw new BrokerError("UNSUPPORTED_CAPABILITY", "UI type adapter is not enabled");
+    try {
+      const typed = await this.uiInspector.type(
+        { snapshot: execution.uiType.snapshot, text: execution.uiType.text, keys: execution.uiType.keys, submit: execution.uiType.submit },
+        this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
+      );
+      this.ensureActiveAuthority(request, execution.target);
+      if (typed.elementRef !== execution.uiType.snapshot.elementRef || typed.appId !== execution.uiType.snapshot.appId ||
+          typed.windowId !== execution.uiType.snapshot.windowId || typed.charactersAccepted !== execution.uiType.text.length ||
+          typed.keysAccepted.length !== execution.uiType.keys.length || typed.keysAccepted.some((key, index) => key !== execution.uiType!.keys[index]) ||
+          typed.submitted !== execution.uiType.submit || typed.focusConfirmed !== true || typed.verified !== true || typed.reobserved.secure !== false) {
+        throw new BrokerError("VERIFICATION_FAILED", "UI type readback did not match the approved snapshot");
+      }
+      const data = {
+        element_ref: typed.elementRef,
+        characters_accepted: typed.charactersAccepted,
+        keys_accepted: [...typed.keysAccepted],
+        submitted: typed.submitted,
+        focus_confirmed: typed.focusConfirmed,
+        reobserved: { role: typed.reobserved.role, focused: typed.reobserved.focused, secure: typed.reobserved.secure }
+      };
+      execution.uiTypeJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
+        state: "completed", resultClass: "success", finishedAtMs: this.now(), stdout: canonicalJson(data)
+      }, execution.jobLease, this.now());
+      return {
+        data: { ...data, job_id: job.jobId },
+        verification: {
+          required: true, status: "verified", strategy: "focused_target_and_input_postcondition",
+          evidence: { summary: "Bounded input was delivered through stdin and the approved Accessibility target was reobserved", readback_hash: sha256(canonicalJson(data)), observed_at: new Date(this.now()).toISOString() }
+        },
+        warnings: [...typed.warnings],
+        truncated: typed.truncated,
+        auditTarget: `ui_element:${typed.elementRef}`,
+        auditEvidence: { jobId: job.jobId, elementRef: typed.elementRef, charactersAccepted: typed.charactersAccepted, keyCount: typed.keysAccepted.length, submitted: typed.submitted, focusConfirmed: typed.focusConfirmed }
+      };
+    } catch (error) {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Accessibility input failed");
+      try {
+        execution.uiTypeJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, { state: "unknown", resultClass: "unknown", finishedAtMs: this.now() }, execution.jobLease, this.now());
+      } catch {
+        // Preserve the original error; input may have been delivered without trusted readback.
+      }
+      throw brokerError;
+    }
+  }
+
   private async dispatchGitStage(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -3104,6 +3194,19 @@ export class Broker {
         target: { kind: "ui_element", reference: elementRef as string },
         auditTarget: `ui_element:${elementRef as string}`,
         uiAction: { elementRef: elementRef as string, action }
+      };
+    }
+    if (request.tool === "mac_ui_type") {
+      assertExactArguments(request.arguments, ["element_ref", "text", "keys", "submit"]);
+      const elementRef = request.arguments.element_ref;
+      const inputText = request.arguments.text;
+      const keys = request.arguments.keys ?? [];
+      const submit = request.arguments.submit ?? false;
+      validateUiTypeRequest(elementRef, inputText, keys, submit);
+      return {
+        target: { kind: "ui_element", reference: elementRef as string },
+        auditTarget: `ui_element:${elementRef as string}`,
+        uiType: { elementRef: elementRef as string, text: inputText as string, keys: [...keys as UiInputKey[]], submit: submit as boolean }
       };
     }
     if (request.tool === "mac_app_list") {
@@ -3702,11 +3805,12 @@ export class Broker {
       if (tool.mutation) {
         this.options.store.assertRequestApprovalActive(request.requestId, request.principal.principalId, this.now());
       }
-      if (request.tool === "mac_ui_action") {
+      if (request.tool === "mac_ui_action" || request.tool === "mac_ui_type") {
         const execution = this.planExecution(request, currentPolicy, tool);
-        if (!execution.uiAction) throw new Error("UI action plan unavailable");
+        const elementRef = request.tool === "mac_ui_action" ? execution.uiAction?.elementRef : execution.uiType?.elementRef;
+        if (!elementRef) throw new Error("UI execution plan unavailable");
         const snapshot = this.uiSnapshotRegistry.resolve(
-          execution.uiAction.elementRef,
+          elementRef,
           request.principal.principalId,
           request.principal.sessionId,
           this.now()
@@ -3883,6 +3987,13 @@ interface ExecutionPlan {
     action: UiActionName;
     snapshot?: UiSnapshotRecord;
   };
+  uiType?: {
+    elementRef: string;
+    text: string;
+    keys: readonly UiInputKey[];
+    submit: boolean;
+    snapshot?: UiSnapshotRecord;
+  };
   taskRun?: {
     profile: string;
     cwd: string;
@@ -3916,6 +4027,8 @@ interface ExecutionPlan {
   appFocusJobNew?: boolean;
   uiActionJob?: BrokerJob;
   uiActionJobNew?: boolean;
+  uiTypeJob?: BrokerJob;
+  uiTypeJobNew?: boolean;
   jobLease?: JobLease;
 }
 
@@ -4063,6 +4176,36 @@ interface UiActionResultData {
   };
 }
 
+interface UiTypeResultData {
+  element_ref: string;
+  characters_accepted: number;
+  keys_accepted: readonly UiInputKey[];
+  submitted: boolean;
+  focus_confirmed: true;
+  reobserved: { role: string; focused: true; secure: false };
+}
+
+function uiTypeDispatchResult(job: BrokerJob, data: UiTypeResultData, reused: boolean): DispatchResult {
+  if (data.element_ref.length === 0 || data.focus_confirmed !== true || data.reobserved.secure !== false) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI type result is inconsistent");
+  }
+  return {
+    data: { ...data, job_id: job.jobId },
+    verification: {
+      required: true,
+      status: "verified",
+      strategy: "focused_target_and_input_postcondition",
+      evidence: {
+        summary: reused ? "Reused a completed UI type Job readback" : "Bounded input was delivered through stdin and the approved target was reobserved",
+        readback_hash: sha256(canonicalJson(data)),
+        observed_at: new Date().toISOString()
+      }
+    },
+    auditTarget: `ui_element:${data.element_ref}`,
+    auditEvidence: { jobId: job.jobId, jobRevision: job.revision, reused, elementRef: data.element_ref, charactersAccepted: data.characters_accepted, keyCount: data.keys_accepted.length, submitted: data.submitted }
+  };
+}
+
 function uiActionDispatchResult(job: BrokerJob, data: UiActionResultData, reused: boolean): DispatchResult {
   if (data.job_id !== job.jobId) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action Job identity is inconsistent");
   return {
@@ -4180,6 +4323,37 @@ export function parseStoredUiActionResult(value: string): UiActionResultData {
       secure: false,
       ...(state.state !== undefined ? { state: state.state } : {})
     }
+  };
+}
+
+export function parseStoredUiTypeResult(value: string): UiTypeResultData {
+  let parsed: unknown;
+  try { parsed = parseJsonStrict(value); } catch { throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI type result is malformed"); }
+  if (!isPlainDataRecord(parsed) || !hasExactStoredFields(parsed, ["element_ref", "characters_accepted", "keys_accepted", "submitted", "focus_confirmed", "reobserved"])) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI type result is malformed");
+  }
+  const record = parsed as Record<string, unknown>;
+  const keys = record.keys_accepted;
+  const reobserved = record.reobserved;
+  const validKeys = ["ENTER", "TAB", "ESCAPE", "ARROW_UP", "ARROW_DOWN", "ARROW_LEFT", "ARROW_RIGHT", "HOME", "END"];
+  if (typeof record.element_ref !== "string" || !/^element:[a-f0-9]{48}$/u.test(record.element_ref) ||
+      !Number.isSafeInteger(record.characters_accepted) || (record.characters_accepted as number) < 0 || (record.characters_accepted as number) > 10_000 ||
+      !Array.isArray(keys) || keys.length > 32 || keys.some((key) => !validKeys.includes(key as string)) ||
+      typeof record.submitted !== "boolean" || record.focus_confirmed !== true || !isPlainDataRecord(reobserved) ||
+      !hasExactStoredFields(reobserved, ["role", "focused", "secure"])) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI type result is malformed");
+  }
+  const state = reobserved as Record<string, unknown>;
+  if (typeof state.role !== "string" || state.role.length < 1 || state.role.length > 128 || state.focused !== true || state.secure !== false) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI type result is malformed");
+  }
+  return {
+    element_ref: record.element_ref,
+    characters_accepted: record.characters_accepted as number,
+    keys_accepted: keys as UiInputKey[],
+    submitted: record.submitted,
+    focus_confirmed: true,
+    reobserved: { role: state.role, focused: true, secure: false }
   };
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MacUiInspectorImpl, UiSnapshotRegistry, opaqueElementId, opaqueWindowId, parseUiActionResult, parseUiObserveResult, uiActionExecutableForTesting, uiActionScriptForTesting, uiObserveExecutableForTesting, uiObserveScriptForTesting, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest } from "./ui-inspector.js";
+import { MacUiInspectorImpl, UiSnapshotRegistry, opaqueElementId, opaqueWindowId, parseUiActionResult, parseUiObserveResult, parseUiTypeResult, uiActionExecutableForTesting, uiActionScriptForTesting, uiObserveExecutableForTesting, uiObserveScriptForTesting, uiTypeExecutableForTesting, uiTypeScriptForTesting, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest } from "./ui-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 const appId = "bundle:com.example.Accessible";
@@ -224,4 +224,44 @@ test("Accessibility action rejects stale, secure, and malformed targets", () => 
   assert.throws(() => registry.resolve(elementRef, "principal-1", "session-1", 1_000), /Secure or redacted/u);
   assert.throws(() => registry.resolve(elementRef, "other", "session-1", 1_000), /not available/u);
   assert.throws(() => registry.resolve(elementRef, "principal-1", "session-1", 31_001), /stale/u);
+});
+
+test("Accessibility type keeps bounded input off argv and verifies the focused postcondition", async () => {
+  const windowId = opaqueWindowId(appId, 0, "Example");
+  const elementRef = opaqueElementId(windowId, 0, "AXTextField", "Name", false);
+  const snapshot = {
+    elementRef, appId, windowId, windowIndex: 0, windowTitle: "Example", elementIndex: 0,
+    role: "AXTextField", label: "Name", enabled: true, focused: false, secure: false,
+    ownerPrincipalId: "principal-1", ownerSessionId: "session-1", observedAtMs: 1_000
+  } as const;
+  let observed: { executable: string; args: readonly string[]; stdin?: string; cwd: string } | undefined;
+  const inspector = new MacUiInspectorImpl({
+    run: async (request) => {
+      observed = { executable: request.executable, args: request.args, ...(request.stdin !== undefined ? { stdin: request.stdin } : {}), cwd: request.cwd };
+      return success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0, window_title: "Example", element_index: 0, role: "AXTextField", characters_accepted: 5, keys_accepted: ["TAB"], submitted: false, focus_confirmed: true, secure: false }));
+    }
+  });
+  const result = await inspector.type!({ snapshot, text: "Alice", keys: ["TAB"], submit: false }, { timeoutMs: 20_000, shouldCancel: () => false });
+  assert.equal(result.verified, true);
+  assert.equal(result.charactersAccepted, 5);
+  assert.deepEqual(result.keysAccepted, ["TAB"]);
+  assert.equal(observed?.executable, uiTypeExecutableForTesting);
+  assert.deepEqual(observed?.args.slice(-6), [appId, "Example", "0", "0", "AXTextField", "Name"]);
+  assert.equal(observed?.args.includes("Alice"), false);
+  assert.equal(observed?.stdin, '{"keys":["TAB"],"submit":false,"text":"Alice"}');
+  assert.equal(observed?.cwd, "/");
+  assert.ok(Buffer.byteLength(uiTypeScriptForTesting, "utf8") <= 8_192);
+});
+
+test("Accessibility type rejects secret-like text, secure snapshots, and postcondition drift", () => {
+  const elementRef = "element:0123456789abcdef0123456789abcdef0123456789abcdef";
+  assert.throws(() => validateUiTypeRequest(elementRef, "password: hunter22"), /protected secret signature/u);
+  assert.throws(() => validateUiTypeRequest(elementRef, "x", ["NOPE"]), /allowlisted key names/u);
+  const windowId = opaqueWindowId(appId, 0, "Example");
+  const snapshot = {
+    elementRef: opaqueElementId(windowId, 0, "AXTextField", "Name", false), appId, windowId, windowIndex: 0, windowTitle: "Example", elementIndex: 0,
+    role: "AXTextField", label: "Name", enabled: true, focused: false, secure: false,
+    ownerPrincipalId: "principal-1", ownerSessionId: "session-1", observedAtMs: 1_000
+  } as const;
+  assert.throws(() => parseUiTypeResult(success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0, window_title: "Example", element_index: 0, role: "AXTextField", characters_accepted: 4, keys_accepted: [], submitted: false, focus_confirmed: true, secure: false })), { snapshot, text: "Alice", keys: [], submit: false }), /postcondition/u);
 });

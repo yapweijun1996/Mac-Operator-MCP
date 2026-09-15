@@ -166,7 +166,7 @@ test("policy verification rejects tampering, unknown fields, and unimplemented e
 
   const document = policyDocument();
   document.tool_enablement.push({ tool: "mac_ui_type", enabled: true });
-  assert.throws(() => instance.verify(signedBundle(document, keys.privateKey)), /cannot enable an unimplemented tool/u);
+  assert.equal(instance.verify(signedBundle(document, keys.privateKey)).policy.tools.get("mac_ui_type")?.enabled, true);
 
   const invalidRoot = policyDocument();
   invalidRoot.filesystem_roots.push({
