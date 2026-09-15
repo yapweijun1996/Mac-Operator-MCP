@@ -2711,3 +2711,11 @@ suite passes 15/15. This remains local representation evidence and does not
 close production token issuance, cross-process identity packaging, or
 capability enablement. Evidence:
 `evidence/2026-09-15-scope-boundary.md`.
+
+Target-grant verification at source revision `d785eb0` confirms direct target
+authorization rejects disabled principal grants and requested scopes outside
+the enabled grant before rule matching. Focused policy/security-fuzz tests pass
+16/16; the non-overlapping package regression passes 546 total (540 passed, 6
+skipped, 0 failed). Production policy distribution and capability enablement
+remain open. Evidence:
+`evidence/2026-09-15-target-grant-boundary.md`.

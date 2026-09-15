@@ -1815,3 +1815,11 @@ package regression passes 545 total (539 passed, 6 skipped, 0 failed).
 Production token issuance, cross-process identity packaging, and capability
 gates remain open.
 Evidence: `evidence/2026-09-15-scope-boundary.md`.
+
+Target-grant boundary addendum: commit `d785eb0` requires an enabled principal
+grant and in-grant scopes inside `authorizeTarget` before target-rule matching.
+Disabled grants fail with `POLICY_DENIED`; out-of-grant scopes fail with
+`SCOPE_DENIED`. Focused policy/security-fuzz verification passes 16/16; the
+non-overlapping package regression passes 546 total (540 passed, 6 skipped, 0
+failed). Production policy distribution and capability gates remain open.
+Evidence: `evidence/2026-09-15-target-grant-boundary.md`.

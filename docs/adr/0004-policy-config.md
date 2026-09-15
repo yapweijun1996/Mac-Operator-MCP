@@ -72,3 +72,9 @@ unbounded or duplicate caller list could reach a separate authorization helper;
 malformed lists fail with `AUTH_INVALID` before policy lookup. The change is
 local parser/authority evidence and does not close production token issuance or
 ADR acceptance.
+
+Commit `d785eb0` closes a local target-authority consistency gap: direct target
+authorization now rejects disabled principal grants and scopes outside the
+enabled grant before matching allow/deny rules. This preserves default deny
+under direct helper calls and policy reloads, but does not close production
+policy distribution or ADR acceptance.
