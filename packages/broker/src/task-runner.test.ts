@@ -398,6 +398,17 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
       }
     }
     });
+    const boundImage = (runner as unknown as { guestImage: LoadedVirtualizationGuestImage }).guestImage;
+    assert.equal(Object.isFrozen(boundImage), true);
+    assert.equal(Object.isFrozen(boundImage.guestIdentity), true);
+    assert.throws(
+      () => { (boundImage as unknown as { path: string }).path = "/tmp/escape"; },
+      TypeError
+    );
+    assert.throws(
+      () => { (boundImage.guestIdentity as unknown as { imageSha256: string }).imageSha256 = "0".repeat(64); },
+      TypeError
+    );
     if (process.platform !== "darwin") {
       assert.equal(runner.available, false);
       return;

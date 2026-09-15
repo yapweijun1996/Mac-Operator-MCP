@@ -1,4 +1,5 @@
 import { BrokerError, canonicalJson } from "@mac-operator/contracts";
+import { isAbsolute, resolve } from "node:path";
 import type { GuestTaskJobMetadata } from "./persistence.js";
 import {
   assertProcessPathIdentityStable,
@@ -477,7 +478,9 @@ export class VirtualizationTaskRunner implements TaskRunner {
       : validateTaskIsolationProof(options.isolationProof);
     this.isolationProof = proof;
     this.executor = options.executor;
-    this.guestImage = options.guestImage === null ? undefined : options.guestImage;
+    this.guestImage = options.guestImage === null || options.guestImage === undefined
+      ? undefined
+      : snapshotLoadedGuestImage(options.guestImage);
     this.attestationVerifier = options.attestationVerifier;
     const guest = proof?.virtualizationGuest;
     this.available = process.platform === "darwin" &&
@@ -764,6 +767,40 @@ function freezeRuntimeSnapshot<T>(value: T): T {
   };
   freeze(value);
   return value;
+}
+
+/**
+ * The startup image binding is retained across asynchronous VM dispatches.
+ * Copy and freeze it so a caller cannot swap its path, digest, or captured
+ * filesystem identity after the constructor's admission checks.
+ */
+function snapshotLoadedGuestImage(value: LoadedVirtualizationGuestImage): LoadedVirtualizationGuestImage {
+  const candidate = value as unknown;
+  if (!isPlainDataRecord(candidate) || !hasRequiredKeys(
+    candidate,
+    ["path", "guestIdentity", "device", "inode", "sizeBytes"],
+    ["path", "guestIdentity", "device", "inode", "sizeBytes", "publication"]
+  ) ||
+      typeof candidate.path !== "string" || !isAbsolute(candidate.path) || resolve(candidate.path) !== candidate.path || candidate.path.length > 4_096 || candidate.path.includes("\0") ||
+      typeof candidate.device !== "string" || !/^\d+$/u.test(candidate.device) ||
+      typeof candidate.inode !== "string" || !/^\d+$/u.test(candidate.inode) ||
+      !Number.isSafeInteger(candidate.sizeBytes) || (candidate.sizeBytes as number) < 1 ||
+      (candidate.publication !== undefined && candidate.publication !== "broker-owned" && candidate.publication !== "system-published")) {
+    throw new Error("Virtualization guest image binding is malformed");
+  }
+  const guestIdentity = parseVirtualizationGuestIdentity(candidate.guestIdentity);
+  const path = candidate.path as string;
+  const device = candidate.device as string;
+  const inode = candidate.inode as string;
+  const sizeBytes = candidate.sizeBytes as number;
+  return freezeRuntimeSnapshot({
+    path,
+    guestIdentity,
+    device,
+    inode,
+    sizeBytes,
+    ...(candidate.publication === undefined ? {} : { publication: candidate.publication })
+  });
 }
 
 function virtualizationAttestationMatchesProof(
