@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+Serial physical regression addendum at source revision `d3ebdf3`: the
+installation, sandbox, and Keychain opt-in run passes 648/653 tests with 0
+failures and 5 explicit descriptor-capability skips. The three pre-existing
+long-running suites were excluded and left untouched. This evidence is a
+regression readback only and does not enable any capability or close native
+descriptor, remount, production isolation, signing, or installation gates.
+Evidence: `evidence/2026-09-16-serial-physical-regression.md`.
+
 MOP-022 Edge capability-scope binding addendum: source revision `d4c9bbf`
 retains required scopes in the immutable contract view and rejects any
 Broker capability envelope whose non-empty scope list differs from the

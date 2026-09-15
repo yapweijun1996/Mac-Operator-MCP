@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Serial physical regression addendum at source revision `d3ebdf3`: with
+installation, sandbox, and Keychain opt-ins enabled, the bounded serial run
+passes 648/653 tests with 0 failures and 5 explicit descriptor-capability
+skips. The three pre-existing long-running suites were excluded and left
+untouched. This is a host regression readback only; native immutable
+descriptor execution, remount resistance, production isolation, installed
+helper/signing, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-serial-physical-regression.md`.
+
 Edge capability-scope binding addendum: source revision `d4c9bbf` keeps the
 contract registry's required scopes and requires every authenticated Broker
 capability item to carry a non-empty, unique scope list that exactly matches

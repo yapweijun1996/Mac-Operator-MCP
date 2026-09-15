@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Serial physical regression verification at source revision `d3ebdf3`: the
+installation, sandbox, and Keychain opt-in suite ran serially on Darwin
+25.2.0 arm64 and passed 648/653 tests with 0 failures and 5 explicit
+descriptor-capability skips. The three existing long-running suites were
+excluded and left untouched. This confirms current implemented-boundary
+regression behavior only; native immutable descriptor execution, remount
+resistance, production credential/process isolation, installed signing/helper
+state, and capability enablement remain open. Evidence:
+`evidence/2026-09-16-serial-physical-regression.md`.
+
 Edge capability-scope binding verification at source revision `d4c9bbf`: the
 contract registry retains each tool's required scopes, and the authenticated
 MCP factory requires Broker capability items to provide a non-empty unique
