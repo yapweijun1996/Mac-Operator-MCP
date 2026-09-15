@@ -86,7 +86,9 @@ and use the root-helper key-material startup path that does not open
 `BrokerStore`; revocation and active authority remain Broker-owned through the
 authenticated poll channel. The older BrokerStore-backed runtime factory is
 retained only for Broker-side activation and compatibility paths. Also finalize
-protected production Keychain material, root-domain lifecycle readback,
+the root-domain package plan's explicit Broker-owned authority socket and
+exact three-socket runtime readback, then finalize
+ protected production Keychain material, root-domain lifecycle readback,
 operation-specific rollback and recovery, compatibility, real adapters, and
 independent review before enabling any privileged adapter.
 

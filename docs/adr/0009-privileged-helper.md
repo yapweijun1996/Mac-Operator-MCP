@@ -231,6 +231,12 @@ activation/compatibility path and is not the root-helper boundary. The root
 helper still cannot decide revocation, rotation, Request, Approval, Job, or
 kill-switch authority locally; those decisions remain on the Broker channel.
 
+Revision `ee2c934` binds the root-domain package plan and helper status
+readback to the Broker-owned authority socket. Package validation rejects
+socket reuse and rejects placing this endpoint inside the root-owned helper
+package; final readback must match the helper, Broker, and authority socket
+identities exactly.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

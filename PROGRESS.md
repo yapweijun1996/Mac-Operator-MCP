@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Privileged helper package authority-socket addendum: source revision
+`ee2c934` binds the root-domain package plan and helper status readback to the
+Broker-owned `helperAuthoritySocketPath`. The plan rejects reuse with the
+helper or Broker sockets and rejects an authority endpoint inside the
+root-owned helper package; readback checks the exact path. Focused
+helper/package/status tests pass 31/31, and the latest physical
+non-overlapping suite passes 614/614 with zero skips and zero failures.
+Evidence: `evidence/2026-09-15-privileged-helper-package-authority-socket.md`.
+
 Privileged helper key-material isolation addendum: source revision
 `e786002` adds `createPrivilegedHelperRuntimeFromKeyMaterial`, a root-helper
 startup path with no `BrokerStore` dependency. It reads only protected local
