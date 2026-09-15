@@ -317,7 +317,7 @@ export function validateUnsignedBrokerStatusRequest(request: UnsignedBrokerStatu
 }
 
 export function validateBrokerStatusReadback(status: BrokerServiceReadback): BrokerServiceReadback {
-  if (status === null || typeof status !== "object" || Array.isArray(status) ||
+  if (!isPlainDataRecord(status) ||
       status.component !== "mac-operator-broker" ||
       !["stopped", "starting", "running", "stopping", "failed"].includes(status.state) ||
       !["stopped", "starting", "running", "stopping", "failed"].includes(status.runtimeState) ||
@@ -356,7 +356,7 @@ export function authenticateBrokerStatusResponse(
   }
   const expected = ["ok", "kind", "requestId", "resultClass", "error", "responseProof"];
   if (response.ok !== false || !sameKeys(response, expected) || typeof response.resultClass !== "string" ||
-      response.error === null || typeof response.error !== "object" || typeof (response.error as Record<string, unknown>).message !== "string" ||
+      !isPlainDataRecord(response.error) || typeof (response.error as Record<string, unknown>).message !== "string" ||
       typeof (response.error as Record<string, unknown>).retryable !== "boolean") {
     throw new BrokerError("EXECUTION_FAILED", "Broker status failure is malformed");
   }

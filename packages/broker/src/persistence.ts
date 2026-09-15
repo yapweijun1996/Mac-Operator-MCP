@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import { BrokerError, CAPABILITY_FAMILIES, canonicalJson, parseJsonStrict, sha256, type CapabilityFamily } from "@mac-operator/contracts";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
+import { isPlainDataRecord } from "./plain-record.js";
 import { AuditAnchorManager, type AuditAnchorOptions } from "./audit-anchor.js";
 import {
   createBrokerBackup,
@@ -3409,7 +3410,7 @@ function parsePrivilegedHelperPayload(value: string): PrivilegedHelperPayload {
 }
 
 export function validatePrivilegedHelperPayload(payload: PrivilegedHelperPayload): void {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) throw malformedJob();
+  if (!isPlainDataRecord(payload)) throw malformedJob();
   const record = payload as unknown as Record<string, unknown>;
   const keys = Object.keys(record).sort().join(",");
   const isBoundedToken = (value: unknown, pattern: RegExp, maxLength = 255): value is string =>

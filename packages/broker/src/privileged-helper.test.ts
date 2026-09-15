@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
-import { BrokerStore } from "./persistence.js";
+import { BrokerStore, validatePrivilegedHelperPayload } from "./persistence.js";
 import {
   AllowlistedPrivilegedHelper,
   BrokerPrivilegedHelperCommandFactory,
@@ -166,6 +166,26 @@ test("privileged helper parser rejects accessor command fields", () => {
       (error as { errorClass: string }).errorClass === "PRECONDITION_FAILED"
   );
   key.fill(0);
+});
+
+test("privileged helper nested result and payload records reject non-data fields", () => {
+  const verification = { status: "verified", strategy: "allowlisted_postcondition" } as Record<string, unknown>;
+  Object.defineProperty(verification, "summary", { enumerable: true, get: () => "injected" });
+  assert.throws(
+    () => validatePrivilegedHelperExecutionResult({
+      operation: "service_control", targetRef: "service:system/com.example.test", state: "completed", resultClass: "SUCCEEDED",
+      evidence: {}, warnings: [], truncated: false, verification: verification as never
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+
+  const payload = Object.create({ action: "start" }) as Record<string, unknown>;
+  payload.operation = "service_control";
+  payload.service_id = "system/com.example.test";
+  assert.throws(
+    () => validatePrivilegedHelperPayload(payload as never),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
 });
 
 test("privileged helper IPC authenticates the peer and command, rejects replay, and dispatches only allowlisted operations", async () => {

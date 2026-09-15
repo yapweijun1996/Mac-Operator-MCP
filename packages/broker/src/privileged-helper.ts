@@ -734,7 +734,7 @@ export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedP
 export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperStatusReadback): PrivilegedHelperStatusReadback {
   const keys = status !== null && typeof status === "object" && !Array.isArray(status) ? Object.keys(status) : [];
   const allowed = ["component", "state", "runtimeState", "nativeTransportRequired", "adapterAvailable", "helperSocketPath", "brokerSocketPath", "brokerPeerUid", "brokerPeerGid", "sourceRevision", "contractVersion", "policyVersion", "enabledCapabilities"];
-  if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
+  if (!isPlainDataRecord(status) || keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
       status === null || typeof status !== "object" || Array.isArray(status) ||
       status.component !== "mac-operator-privileged-helper" || status.state !== "running" ||
       status.runtimeState !== "running" || status.nativeTransportRequired !== true ||
@@ -783,7 +783,7 @@ export function authenticatePrivilegedHelperStatusResponse(
     };
   }
   if (response.ok !== false || typeof response.resultClass !== "string" || !isHelperErrorClass(response.resultClass) ||
-      response.error === null || typeof response.error !== "object" ||
+      !isPlainDataRecord(response.error) ||
       typeof (response.error as Record<string, unknown>).message !== "string" ||
       typeof (response.error as Record<string, unknown>).retryable !== "boolean" ||
       !boundedStatusMessage((response.error as Record<string, unknown>).message as string)) {
@@ -1009,13 +1009,13 @@ export function validatePrivilegedHelperExecutionResult(
   result: PrivilegedHelperExecutionResult,
   command?: Pick<UnsignedPrivilegedHelperCommand, "operation" | "targetRef">
 ): PrivilegedHelperExecutionResult {
-  if (result === null || typeof result !== "object" || Array.isArray(result) ||
+  if (!isPlainDataRecord(result) ||
       !["service_control", "package_install", "power"].includes(result.operation) ||
       !["accepted", "completed", "failed", "cancelled", "unknown"].includes(result.state) ||
       !["SUCCEEDED", "EXECUTION_FAILED", "CANCELLED", "TIMEOUT", "VERIFICATION_FAILED", "UNKNOWN_OUTCOME"].includes(result.resultClass) ||
       !validTarget(result.operation, result.targetRef) || !isEvidenceRecord(result.evidence) ||
       !Array.isArray(result.warnings) || result.warnings.length > MAX_WARNINGS || result.warnings.some((warning) => typeof warning !== "string" || warning.length < 1 || warning.length > 512 || warning.includes("\0")) ||
-      typeof result.truncated !== "boolean" || result.verification === null || typeof result.verification !== "object" || Array.isArray(result.verification) ||
+      typeof result.truncated !== "boolean" || !isPlainDataRecord(result.verification) ||
       !["verified", "failed", "unknown"].includes(result.verification.status) || result.verification.strategy !== "allowlisted_postcondition") {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper returned a malformed result");
   }
@@ -1062,11 +1062,11 @@ export function authenticatePrivilegedHelperResponse(
     throw new BrokerError("AUTH_INVALID", "Privileged helper response authentication failed");
   }
   if (response.ok === true) {
-    if (response.result === null || typeof response.result !== "object" || Array.isArray(response.result)) throw new BrokerError("EXECUTION_FAILED", "Privileged helper result is malformed");
-    const result = validatePrivilegedHelperExecutionResult(response.result as PrivilegedHelperExecutionResult, command);
+    if (!isPlainDataRecord(response.result)) throw new BrokerError("EXECUTION_FAILED", "Privileged helper result is malformed");
+    const result = validatePrivilegedHelperExecutionResult(response.result as unknown as PrivilegedHelperExecutionResult, command);
     return { ...(response as unknown as PrivilegedHelperSuccessResponse), result };
   }
-  if (response.ok !== false || typeof response.resultClass !== "string" || !response.error || typeof response.error !== "object" ||
+  if (response.ok !== false || typeof response.resultClass !== "string" || !isPlainDataRecord(response.error) ||
       typeof (response.error as Record<string, unknown>).message !== "string" || typeof (response.error as Record<string, unknown>).retryable !== "boolean") {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper failure is malformed");
   }
@@ -1328,7 +1328,7 @@ function validTarget(operation: PrivilegedHelperOperation, targetRef: string): b
 }
 
 function isEvidenceRecord(value: unknown): value is Readonly<Record<string, string | number | boolean | null>> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!isPlainDataRecord(value)) return false;
   const entries = Object.entries(value);
   if (entries.length > MAX_EVIDENCE_FIELDS) return false;
   return entries.every(([key, entry]) => /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/u.test(key) &&

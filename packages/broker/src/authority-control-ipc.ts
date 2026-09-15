@@ -339,8 +339,8 @@ export function authenticateAuthorityControlResponse(
     }
     return record as unknown as AuthorityControlIpcResponse;
   }
-  if (record.ok !== false || typeof record.result_class !== "string" || record.error === null ||
-      typeof record.error !== "object" || typeof (record.error as Record<string, unknown>).message !== "string" ||
+  if (record.ok !== false || typeof record.result_class !== "string" || !isPlainDataRecord(record.error) ||
+      typeof (record.error as Record<string, unknown>).message !== "string" ||
       typeof (record.error as Record<string, unknown>).retryable !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Authority control response is malformed");
   }
