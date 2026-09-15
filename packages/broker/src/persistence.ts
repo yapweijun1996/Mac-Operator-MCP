@@ -4813,7 +4813,7 @@ function malformedApproval(): BrokerError {
   return new BrokerError("PRECONDITION_FAILED", "Approval record is malformed");
 }
 
-const SECRET_KEY_PATTERN = /(?:authorization|cookie|credential|password|private[_-]?key|secret|token)/iu;
+const SECRET_KEY_PATTERN = /(?:access[_-]?token|api[_-]?key|authorization|bearer|client[_-]?secret|cookie|credential|hmac[_-]?key|jwt|password|passphrase|private[_-]?key|refresh[_-]?token|secret|signing[_-]?key|ssh[_-]?key|token)/iu;
 
 export function redactEvidence(value: unknown): unknown {
   if (Array.isArray(value)) {
