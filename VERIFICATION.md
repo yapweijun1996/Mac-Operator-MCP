@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Latest secret-boundary regression verification: source revision `f921714`
+passes 598 non-overlapping built tests (592 passed, 6 explicit opt-in skips,
+0 failed) after shared local-process and virtualization guest secret checks.
+The existing Broker/Persistence process remained undisturbed; production
+signing, installation, isolation, and helper release gates remain open.
+Evidence: `evidence/2026-09-15-secret-boundary-full-regression.md`.
+
 Process environment secret-value verification: source revision `98b36ac`
 rejects known token/credential/authorization signatures in explicitly
 allowlisted environment values before local process or virtualization guest

@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest secret-boundary regression addendum: source revision `f921714` passes
+598 non-overlapping built tests (592 pass, 6 explicit opt-in skips, 0 fail)
+after shared local-process and virtualization guest secret checks. The old
+Broker/Persistence process was left undisturbed; production signing,
+installation, isolation, and helper gates remain open. Evidence:
+`evidence/2026-09-15-secret-boundary-full-regression.md`.
+
 Process environment secret-value addendum: source revision `98b36ac` extends
 the shared ProcessSupervisor, TaskProfile, and virtualization guest boundary
 to reject known token, credential, and authorization signatures in explicitly

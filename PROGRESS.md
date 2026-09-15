@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Latest secret-boundary regression addendum: after source revision `f921714`,
+the non-overlapping built suite passes 598 total (592 passed, 6 explicit
+opt-in skips, 0 failed) after the shared process, TaskProfile, and guest
+argument/environment secret checks. The existing Broker/Persistence process
+was left undisturbed. Evidence:
+`evidence/2026-09-15-secret-boundary-full-regression.md`.
+
 Process environment secret-value addendum: source revision `98b36ac` extends
 the shared policy across ProcessSupervisor, TaskProfile, and virtualization
 guest validation so explicitly allowlisted environment values are rejected
