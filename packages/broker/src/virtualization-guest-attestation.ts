@@ -1,5 +1,6 @@
 import { createPrivateKey, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const EVIDENCE_REFERENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
 const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
@@ -128,7 +129,7 @@ export class VirtualizationGuestAttestationVerifier {
   }
 
   verify(raw: unknown): VerifiedVirtualizationGuestAttestation {
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    if (!isPlainDataRecord(raw)) {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation envelope is unavailable");
     }
     const envelope = raw as Partial<SignedVirtualizationGuestAttestation>;
@@ -205,7 +206,7 @@ function assertPublicKeyMaterial(value: string | Buffer): void {
 }
 
 export function isVirtualizationGuestIdentity(value: unknown): value is VirtualizationGuestIdentity {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!isPlainDataRecord(value)) return false;
   const record = value as Record<string, unknown>;
   return Object.keys(record).every((key) => key === "imageSha256" || key === "runtimeVersion") &&
     typeof record.imageSha256 === "string" && SHA256_PATTERN.test(record.imageSha256) &&
@@ -230,7 +231,7 @@ export function sameVirtualizationGuestIdentity(
 }
 
 export function validateVirtualizationGuestAttestation(value: unknown): VirtualizationGuestAttestation {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainDataRecord(value)) {
     throw new BrokerError("POLICY_DENIED", "Virtualization guest attestation is unavailable");
   }
   const attestation = value as Partial<VirtualizationGuestAttestation>;

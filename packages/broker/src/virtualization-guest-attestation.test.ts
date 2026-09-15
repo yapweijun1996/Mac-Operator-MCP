@@ -91,6 +91,26 @@ test("signed guest attestation rejects envelope mutation, expiry, unknown keys, 
   expectDenied(() => check.verify({ ...signed, algorithm: "RSA" } as unknown as SignedVirtualizationGuestAttestation));
 });
 
+test("signed guest attestation rejects inherited and accessor authority fields", () => {
+  const keys = generateKeyPairSync("ed25519");
+  const payload = guestAttestation({ imageSha256: "d".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const signed = signedAttestation(payload, "guest-key-1", keys.privateKey);
+  const check = verifier(keys.publicKey);
+
+  const inherited = Object.create({ signature: signed.signature }) as Record<string, unknown>;
+  for (const [field, value] of Object.entries(signed)) {
+    if (field !== "signature") inherited[field] = value;
+  }
+  expectDenied(() => check.verify(inherited));
+
+  const accessorPayload = { ...payload } as Record<string, unknown>;
+  Object.defineProperty(accessorPayload, "evidenceRef", {
+    enumerable: true,
+    get: () => "evidence://injected"
+  });
+  expectDenied(() => check.verify({ ...signed, payload: accessorPayload }));
+});
+
 test("signed guest attestation lifetime must fit the trusted key validity window", () => {
   const keys = generateKeyPairSync("ed25519");
   const payload = guestAttestation({ imageSha256: "c".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
