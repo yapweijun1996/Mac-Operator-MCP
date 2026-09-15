@@ -3163,3 +3163,10 @@ npm advisories with `npm audit --omit=dev --audit-level=high`. This is
 point-in-time dependency evidence only and does not close native signing,
 runtime isolation, or release review gates. Evidence:
 `evidence/2026-09-15-dependency-audit.md`.
+
+The L5 privileged-helper boundary suite passes 38/38, covering independent
+peer/HMAC authentication, replay rejection, fixed operation allowlists, typed
+payloads, helper-owned status, trailing frames, denied peers, Job binding, and
+active revocation. No root command or real privileged mutation was executed;
+production signing, installation, Keychain, approval UI, and enablement remain
+gated. Evidence: `evidence/2026-09-15-helper-boundary-38-tests.md`.

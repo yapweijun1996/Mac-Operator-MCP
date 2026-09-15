@@ -2825,3 +2825,10 @@ from `npm audit --omit=dev --audit-level=high`. This point-in-time check does
 not replace native artifact provenance, macOS signing, runtime isolation, or
 independent release review. Evidence:
 `evidence/2026-09-15-dependency-audit.md`.
+
+Privileged-helper verification passes 38/38 boundary tests for independent
+peer/HMAC authentication, replay denial, allowlists, typed payloads,
+helper-owned status, trailing-frame rejection, denied peers, Job binding, and
+active revocation. No real privileged mutation was performed. Production
+installation, signing, Keychain, and enablement remain open. Evidence:
+`evidence/2026-09-15-helper-boundary-38-tests.md`.
