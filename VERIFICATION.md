@@ -3,6 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process-path identity addendum: source revision `5efe002` captures canonical
+executable and cwd device/inode/mode identities before child creation and
+rechecks them after spawn and after startup ownership callbacks. A changed or
+missing target aborts the process group and only returns the stable denial
+after cleanup is verified; uncertain cleanup maps to `UNKNOWN_OUTCOME`. The
+target-swap regression and complete physical-Darwin suite pass 602/602 with
+0 skipped tests. Build, typecheck, lint, contract verification, native
+canonical probe, and diff checks pass. This closes the observed startup
+target-swap boundary, not a kernel-held descriptor/fexec race proof.
+Evidence: `evidence/2026-09-15-process-path-identity.md`.
+
 Policy-helper gate addendum: source revision `21559e7` applies full
 `BrokerPolicy` validation to every policy authorization/discovery helper, not
 only the main ToolPolicy authorization path. The updated 256-iteration policy

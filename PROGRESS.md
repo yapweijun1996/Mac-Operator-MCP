@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-path identity addendum: source revision `5efe002` makes
+`ProcessSupervisor` retain the device/inode/mode identity of the canonical
+executable and cwd during request validation, recheck both immediately after
+spawn and after the startup ownership callback, and abort with a stable
+fail-closed error when either target changes. A real physical-Darwin test
+replaces the executable after authorization and proves the swap is rejected;
+the complete physical-Darwin regression passes 602/602 with 0 skipped tests.
+This detects startup target swaps but does not yet provide a kernel-held
+descriptor/fexec guarantee for all post-check filesystem changes. Evidence:
+`evidence/2026-09-15-process-path-identity.md`.
+
 Policy-helper gate addendum: source revision `21559e7` makes principal
 projection, target authorization, capability-family kill-switch evaluation,
 and capability discovery invoke the same complete Broker policy validator

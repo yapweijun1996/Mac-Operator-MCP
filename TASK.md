@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-15
 
+Process-path identity addendum: source revision `5efe002` binds process
+execution to canonical executable/cwd device, inode, and mode readback before
+spawn, after spawn, and after startup ownership capture. The physical-Darwin
+target-swap regression rejects a replaced executable and verifies cleanup;
+the complete physical-Darwin regression passes 602/602 with 0 skipped tests.
+This closes the implemented startup swap-detection boundary only; an atomic
+kernel descriptor/fexec proof remains a later hardening item. Evidence:
+`evidence/2026-09-15-process-path-identity.md`.
+
 Policy-helper gate addendum: source revision `21559e7` routes principal
 projection, target authorization, family kill-switch checks, and capability
 discovery through the complete Broker policy validator before use. Security
