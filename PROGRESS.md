@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Cross-process Edge revocation addendum at source revision `37ab0fc`: a
+separately spawned Edge process now has an authenticated HTTPS/native-IPC
+regression that receives stable `REVOKED` on the same MCP session after the
+parent Broker revokes its Edge identity. Focused HTTPS tests pass 2/2 and the
+complete Edge suite passes 66/66; launchd lifecycle, remote distribution, and
+physical worker-termination evidence remain open. Evidence:
+`evidence/2026-09-16-edge-cross-process-revocation.md`.
+
 HTTPS Edge mutation-authority addendum at the current working revision:
 the authenticated MCP path now covers a Broker-enabled atomic write, active
 `mutations` kill-switch cancellation, queued mutation cancellation with
