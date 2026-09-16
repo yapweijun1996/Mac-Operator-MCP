@@ -126,6 +126,8 @@ test("task profile documents reject secret environments, unanchored arguments, a
     assert.throws(() => new TaskProfileRegistry([profile(root, { environment: { PATH: "/tmp/untrusted" } })]), /unsafe entry/u);
   assert.throws(() => new TaskProfileRegistry([profile(root, { environment: { NODE_OPTIONS: "--require=/tmp/untrusted.js" } })]), /unsafe entry/u);
   assert.throws(() => new TaskProfileRegistry([profile(root, { environment: { PROFILE_DATA: "Bearer opaque-token-value-123456" } })]), /unsafe entry/u);
+  const encoded = Buffer.from("token=ghp_123456789012345678901234", "utf8").toString("base64");
+  assert.throws(() => new TaskProfileRegistry([profile(root, { environment: { PROFILE_DATA: encoded } })]), /unsafe entry/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { schemaVersion: "0.2" as never })]), /malformed/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: "echo" })]), /anchored/u);
     assert.throws(() => new TaskProfileRegistry([profile(root, { allowedArgumentPattern: "^(a+)+$" })]), /unsupported construct/u);

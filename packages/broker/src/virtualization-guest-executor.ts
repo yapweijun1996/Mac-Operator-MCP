@@ -4,7 +4,7 @@ import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessSupervisorOptions } from "./process-supervisor.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
-import { assertArgumentsDoNotContainSecrets, containsKnownSecretSignature } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, containsSecretRepresentation } from "./secret-policy.js";
 import { parseTaskNetworkDestination } from "./task-profile.js";
 import { redactBoundedText } from "./secret-policy.js";
 import {
@@ -631,7 +631,7 @@ function validateEnvironment(environment: Readonly<Record<string, string>>): voi
   if (entries.length > MAX_ENVIRONMENT_KEYS) throw new Error("Guest task environment is too large");
   let bytes = 0;
   for (const [key, value] of entries) {
-    if (!isSafeProcessEnvironmentKey(key) || typeof value !== "string" || value.includes("\0") || value.includes("\n") || value.length > 4_096 || containsKnownSecretSignature(value)) {
+    if (!isSafeProcessEnvironmentKey(key) || typeof value !== "string" || value.includes("\0") || value.includes("\n") || value.length > 4_096 || containsSecretRepresentation(value)) {
       throw new Error("Guest task environment contains an unsafe entry");
     }
     bytes += Buffer.byteLength(key, "utf8") + Buffer.byteLength(value, "utf8") + 2;

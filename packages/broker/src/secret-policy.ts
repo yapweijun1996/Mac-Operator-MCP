@@ -211,7 +211,7 @@ function containsEncodedSecretRepresentation(content: Buffer, text: string): boo
   return containsSecretRepresentation(text);
 }
 
-function containsSecretRepresentation(value: string): boolean {
+export function containsSecretRepresentation(value: string): boolean {
   return containsKnownSecretSignature(value) || containsBase64EncodedSecret(value);
 }
 
