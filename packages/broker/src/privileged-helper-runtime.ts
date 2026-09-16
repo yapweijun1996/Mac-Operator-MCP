@@ -198,8 +198,8 @@ export class PrivilegedHelperRuntime {
 
 /**
  * Captures the exact per-user Broker identity that the root helper is allowed
- * to call. launchd contributes only the PID; native readback binds PID and
- * start-time before helper construction.
+ * to call. launchd contributes only the requested service domain/type and PID;
+ * native readback binds PID and start-time before helper construction.
  */
 export async function captureLaunchdBrokerProcessIdentity(
   options: LaunchdBrokerIdentityCaptureOptions

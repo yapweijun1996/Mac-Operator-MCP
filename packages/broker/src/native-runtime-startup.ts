@@ -59,9 +59,9 @@ export interface LaunchdEdgeIdentityCaptureOptions {
 
 /**
  * Captures the current Edge process identity from its user LaunchAgent.
- * launchd output is only used to obtain a PID; the native process readback is
- * the authority for PID/start-time binding and the Broker rechecks it after
- * the listener starts.
+ * launchd output is used only to bind the requested service domain/type and
+ * obtain a PID; the native process readback is the authority for PID/start-time
+ * binding and the Broker rechecks it after the listener starts.
  */
 export async function captureLaunchdEdgeProcessIdentity(
   options: LaunchdEdgeIdentityCaptureOptions
