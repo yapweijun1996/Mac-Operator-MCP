@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-037 secret-corpus addendum at source revision `2e5d08b`: expanded
+synthetic AWS/Google/GitHub/GitLab/npm/PyPI/Stripe/OpenAI/Cloudflare/Heroku
+signatures are denied before result construction or child spawn and redacted
+from bounded logs. Credential labels split across argv entries are rejected
+as a sequence. Secret-policy tests pass 6/6; related
+ProcessSupervisor/task-profile tests pass 47/47; typecheck, lint,
+documentation, and matrix checks pass. Binary/base64,
+opaque-secret, complete credential-store, false-positive, and production
+isolation evidence remain open. Evidence:
+`evidence/2026-09-16-secret-corpus-expansion.md`.
+
 MOP-016/046 new-session revocation addendum at source revision `c0fa6f0`:
 the authenticated HTTPS Edge probes Broker capability authority before
 session-less MCP `initialize`/`server/discover` requests enter the SDK factory.

@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Secret-corpus and split-argv addendum at source revision `2e5d08b`: expanded
+known credential signatures are denied/redacted consistently across content,
+environment, argv, and logs, and split credential labels such as `Bearer`
+followed by a separate value are rejected before child spawn. Secret-policy
+tests pass 6/6 with synthetic values; related ProcessSupervisor/task-profile
+tests pass 47/47; typecheck, lint, documentation, and matrix checks pass.
+Binary/base64 encodings, opaque
+secrets, complete credential-store coverage, false-positive analysis, and
+production isolation remain open. Evidence:
+`evidence/2026-09-16-secret-corpus-expansion.md`.
+
 HTTPS Edge new-session revocation addendum at source revision `c0fa6f0`: the
 session-less `initialize`/`server/discover` boundary now probes Broker
 capability authority and returns stable HTTP 403 `REVOKED` when that authority
