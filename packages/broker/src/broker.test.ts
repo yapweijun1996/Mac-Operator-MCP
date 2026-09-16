@@ -1330,6 +1330,64 @@ test("capability discovery separates planned, implemented, and enabled", async (
   } finally { await context.close(); }
 });
 
+test("capability discovery does not advertise unavailable task or helper runtimes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-capability-runtime-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const basePolicy = createDefaultPolicy(
+    "edge-1",
+    true,
+    ["mac.control.read", "mac.task.run", "mac.priv.service"],
+    ["edge-key-1"],
+    [],
+    ["system/com.example.service"],
+    [],
+    [],
+    [],
+    ["tests.echo"]
+  );
+  const enabledTools = new Map([...basePolicy.tools].map(([name, tool]) =>
+    name === "mac_task_run" || name === "mac_priv_service_control"
+      ? [name, { ...tool, enabled: true }]
+      : [name, tool]
+  ));
+  const policy = {
+    ...basePolicy,
+    targetRules: [...basePolicy.targetRules, {
+      ruleId: "test-priv-service",
+      effect: "allow" as const,
+      principalId: "principal-1",
+      scope: "mac.priv.service" as const,
+      target: { kind: "service" as const, reference: "system/com.example.service" }
+    }],
+    tools: enabledTools
+  };
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  try {
+    const result = await broker.handle(signRequest(unsigned({
+      requestId: "capabilities-runtime-unavailable",
+      nonce: "capabilities-runtime-unavailable-nonce",
+      tool: "mac_capabilities"
+    }, ["mac.control.read", "mac.task.run", "mac.priv.service"]), key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (result.ok) {
+      const capabilities = (result.data as { capabilities: Array<{ name: string; planned: boolean; implemented: boolean; enabled: boolean; scopes: readonly string[]; contract_version: string; reason: string }> }).capabilities;
+      assert.deepEqual(capabilities.find((capability) => capability.name === "mac_task_run"), {
+        name: "mac_task_run", planned: true, implemented: true, enabled: false, scopes: ["mac.task.run"], contract_version: "0.1", reason: "runtime_unavailable"
+      });
+      assert.deepEqual(capabilities.find((capability) => capability.name === "mac_priv_service_control"), {
+        name: "mac_priv_service_control", planned: true, implemented: true, enabled: false, scopes: ["mac.priv.service"], contract_version: "0.1", reason: "runtime_unavailable"
+      });
+    }
+    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_task_run"), false);
+    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_priv_service_control"), false);
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("capability discovery reflects persisted and policy kill switches", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-capability-kill-switch-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));

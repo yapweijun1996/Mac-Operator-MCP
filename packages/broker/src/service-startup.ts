@@ -6,7 +6,6 @@ import { Broker } from "./broker.js";
 import { BrokerStore } from "./persistence.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { PolicyBundleVerifier, PolicyManager } from "./policy-loader.js";
-import { runtimeToolStates } from "./policy.js";
 import {
   createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig,
   type LaunchdIdentityCommandExecutor
@@ -391,9 +390,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
       contractVersion: config.contractVersion,
       policyVersion: verifiedPolicy.policy.version
     };
-    const enabledCapabilities = runtimeToolStates(policyManager.current())
-      .filter((capability) => capability.enabled)
-      .map((capability) => capability.tool);
+    const enabledCapabilities = broker.enabledRuntimeCapabilityNames();
     service = new BrokerServiceEntrypoint(assembled.runtime, metadata, enabledCapabilities);
     return {
       service,

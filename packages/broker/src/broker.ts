@@ -219,6 +219,28 @@ export class Broker {
   }
 
   /**
+   * Returns the policy-enabled capabilities whose concrete runtime boundary
+   * is also available. Service metadata must not advertise a capability that
+   * the Broker will reject at execution planning time.
+   */
+  enabledRuntimeCapabilityNames(): readonly string[] {
+    const policy = this.currentPolicy();
+    return runtimeToolStates(policy)
+      .filter((state) => state.enabled && this.runtimeCapabilityDisabledReason(state.tool) === undefined)
+      .map((state) => state.tool);
+  }
+
+  private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
+    if (toolName === "mac_task_run" && !this.taskRunner.available) return "runtime_unavailable";
+    if ((toolName === "mac_priv_service_control" ||
+         toolName === "mac_priv_package_install" ||
+         toolName === "mac_priv_power") && !this.privilegedHelperExecutor.available) {
+      return "runtime_unavailable";
+    }
+    return undefined;
+  }
+
+  /**
    * Close Broker-owned execution resources after transport shutdown. Active
    * worker-backed mutations fail through their existing UNKNOWN Job path and
    * task-runner processes are terminated and drained; callers must await this
@@ -1370,6 +1392,10 @@ export class Broker {
           }
           try {
             this.authorizeCapabilityTarget(policy, request.principal.principalId, candidate);
+            const runtimeDisabledReason = this.runtimeCapabilityDisabledReason(state.tool);
+            if (runtimeDisabledReason !== undefined) {
+              return { ...state, enabled: false, disabledReason: runtimeDisabledReason };
+            }
             return state;
           } catch {
             return { ...state, enabled: false, disabledReason: "target_denied" };

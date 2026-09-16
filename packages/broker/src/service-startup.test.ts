@@ -161,7 +161,7 @@ test("Broker service startup restores signed authority before native runtime sta
     await writeEdgeAuthenticationKeyConfig(edgeConfigPath, edgeConfig);
     const keyPair = generateKeyPairSync("ed25519");
     await writeFile(policyKeyPath, keyPair.publicKey.export({ type: "spki", format: "pem" }), { mode: 0o600 });
-    const document = policyDocument(now, { taskEnabled: process.env.MOPS_REAL_SANDBOX === "1" });
+    const document = policyDocument(now, { taskEnabled: true });
     const bundle = signedBundle(document, keyPair.privateKey);
     await writeFile(policyBundlePath, `${JSON.stringify(bundle)}\n`, { mode: 0o600 });
     const guestKeys = generateKeyPairSync("ed25519");
@@ -221,6 +221,7 @@ test("Broker service startup restores signed authority before native runtime sta
     });
     assert.equal(assembly.service.readback().policyVersion, "policy-1");
     assert.ok(assembly.service.readback().enabledCapabilities.includes("mac_health"));
+    assert.equal(assembly.service.readback().enabledCapabilities.includes("mac_task_run"), false);
     assert.equal(assembly.guestAttestationKeyManager?.current().document.revision, 1);
     assert.equal(assembly.virtualizationGuestRuntime?.available, false);
     await assembly.service.start();
@@ -258,6 +259,7 @@ test("Broker service startup restores signed authority before native runtime sta
         ])
       });
       assert.equal(taskAssembly.sandboxTaskRunner?.available, true);
+      assert.ok(taskAssembly.service.readback().enabledCapabilities.includes("mac_task_run"));
       await taskAssembly.service.start();
 
       const argumentsValue = { profile: "tests.startup", cwd: taskRoot, args: [], async: false };
