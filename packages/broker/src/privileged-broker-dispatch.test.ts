@@ -154,6 +154,7 @@ test("Broker dispatches an approved privileged Job through the helper boundary",
   const executor = new PrivilegedHelperJobExecutor({
     store,
     enabled: true,
+    enabledOperations: ["service_control"],
     commandFactory,
     commandClient: async (command) => ({
       ok: true as const,
@@ -292,6 +293,7 @@ test("Broker maps package-install and power helper readbacks to their tool contr
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: [testCase.payload.operation],
       commandFactory,
       commandClient: async (command) => ({
         ok: true as const,

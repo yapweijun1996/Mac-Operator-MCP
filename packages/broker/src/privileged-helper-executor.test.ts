@@ -38,6 +38,36 @@ test("privileged helper Job executor is disabled by default without changing the
   }
 });
 
+test("privileged helper Job executor requires and enforces an explicit operation allowlist", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-allowlist-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    assert.throws(
+      () => new PrivilegedHelperJobExecutor({
+        store,
+        enabled: true,
+        commandFactory: { issue: () => signedCommand("service:system/com.example.test", SERVICE_PAYLOAD_DIGEST) },
+        commandClient: async () => { throw new Error("helper IPC must not be reached"); }
+      }),
+      /operation allowlist/u
+    );
+    const executor = new PrivilegedHelperJobExecutor({
+      store,
+      enabled: true,
+      enabledOperations: ["service_control"],
+      commandFactory: { issue: () => signedCommand("service:system/com.example.test", SERVICE_PAYLOAD_DIGEST) },
+      commandClient: async () => { throw new Error("helper IPC must not be reached"); }
+    });
+    assert.equal(executor.available, true);
+    assert.equal(executor.supportsOperation("service_control"), true);
+    assert.equal(executor.supportsOperation("package_install"), false);
+    assert.equal(executor.supportsOperation("power"), false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("privileged helper Job executor rejects malformed operation and lease input before dispatch", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-executor-input-boundary-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -48,6 +78,7 @@ test("privileged helper Job executor rejects malformed operation and lease input
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => NOW + 10,
       commandFactory: { issue: () => { factoryCalls += 1; return signedCommand(setup.job.targetRef, setup.job.payloadDigest); } },
       commandClient: async () => { clientCalls += 1; throw new Error("helper IPC must not be reached"); }
@@ -59,6 +90,10 @@ test("privileged helper Job executor rejects malformed operation and lease input
     await assert.rejects(
       () => executor.execute({ ...executionInput(setup.job, setup.lease), lease: { ...setup.lease, token: "spoofed" } } as never),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+    );
+    await assert.rejects(
+      () => executor.execute({ ...executionInput(setup.job, setup.lease), operation: "package_install" } as never),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "PRIVILEGE_DENIED"
     );
     assert.equal(factoryCalls, 0);
     assert.equal(clientCalls, 0);
@@ -95,6 +130,7 @@ test("enabled privileged helper Job executor commits only a verified completed r
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => NOW + 10,
       commandFactory: { issue: () => command },
       commandClient: async (received, timeoutMs) => {
@@ -124,6 +160,7 @@ test("long helper execution renews the Broker Job lease before completion", asyn
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => nowMs,
       leaseDurationMs: 3_000,
       commandFactory: { issue: () => command },
@@ -166,6 +203,7 @@ test("transport loss after command issuance records UNKNOWN_OUTCOME", async () =
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => NOW + 10,
       commandFactory: { issue: () => signedCommand(setup.job.targetRef, setup.job.payloadDigest) },
       commandClient: async () => {
@@ -194,6 +232,7 @@ test("helper acceptance without completion stays UNKNOWN_OUTCOME", async () => {
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => NOW + 10,
       commandFactory: { issue: () => command },
       commandClient: async () => ({
@@ -231,6 +270,7 @@ test("active cancellation after helper dispatch stays UNKNOWN_OUTCOME", async ()
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => NOW + 10,
       commandFactory: { issue: () => command },
       commandClient: async () => {
@@ -282,6 +322,7 @@ test("cancellation during command signing closes the Job before helper IPC", asy
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => NOW + 10,
       commandFactory: {
         issue: () => {
@@ -319,6 +360,7 @@ test("a pre-dispatch cancellation is terminalized without issuing a helper comma
     const executor = new PrivilegedHelperJobExecutor({
       store,
       enabled: true,
+      enabledOperations: ["service_control"],
       now: () => NOW + 10,
       commandFactory: {
         issue: () => {

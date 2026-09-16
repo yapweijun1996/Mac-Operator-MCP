@@ -15,6 +15,8 @@ import { FilesystemInspector } from "./filesystem-inspector.js";
 import { BrokerStore, redactEvidence, type BrokerJob, type GuestTaskJobMetadata, type JobLease } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
+import { BrokerPrivilegedHelperCommandFactory } from "./privileged-helper.js";
+import { PrivilegedHelperJobExecutor } from "./privileged-helper-executor.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import { SandboxExecTaskRunner } from "./task-runner.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
@@ -1330,14 +1332,14 @@ test("capability discovery separates planned, implemented, and enabled", async (
   } finally { await context.close(); }
 });
 
-test("capability discovery does not advertise unavailable task or helper runtimes", async () => {
+test("capability discovery does not advertise unavailable task or helper operations", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-capability-runtime-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
   const basePolicy = createDefaultPolicy(
     "edge-1",
     true,
-    ["mac.control.read", "mac.task.run", "mac.priv.service"],
+    ["mac.control.read", "mac.task.run", "mac.priv.service", "mac.priv.package", "mac.priv.power"],
     ["edge-key-1"],
     [],
     ["system/com.example.service"],
@@ -1347,7 +1349,7 @@ test("capability discovery does not advertise unavailable task or helper runtime
     ["tests.echo"]
   );
   const enabledTools = new Map([...basePolicy.tools].map(([name, tool]) =>
-    name === "mac_task_run" || name === "mac_priv_service_control"
+    name === "mac_task_run" || name === "mac_priv_service_control" || name === "mac_priv_package_install" || name === "mac_priv_power"
       ? [name, { ...tool, enabled: true }]
       : [name, tool]
   ));
@@ -1359,16 +1361,42 @@ test("capability discovery does not advertise unavailable task or helper runtime
       principalId: "principal-1",
       scope: "mac.priv.service" as const,
       target: { kind: "service" as const, reference: "system/com.example.service" }
+    }, {
+      ruleId: "test-priv-package",
+      effect: "allow" as const,
+      principalId: "principal-1",
+      scope: "mac.priv.package" as const,
+      target: { kind: "package" as const, reference: "example" }
+    }, {
+      ruleId: "test-priv-power",
+      effect: "allow" as const,
+      principalId: "principal-1",
+      scope: "mac.priv.power" as const,
+      target: { kind: "host" as const, reference: "local" }
     }],
     tools: enabledTools
   };
-  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  const helperCommandFactory = new BrokerPrivilegedHelperCommandFactory({
+    store,
+    authenticationKey: randomBytes(32),
+    authorizeCommand: () => undefined,
+    now: () => NOW
+  });
+  const helperExecutor = new PrivilegedHelperJobExecutor({
+    store,
+    enabled: true,
+    enabledOperations: ["service_control"],
+    commandFactory: helperCommandFactory,
+    commandClient: async () => { throw new Error("helper IPC must not be reached during capability discovery"); },
+    now: () => NOW
+  });
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), privilegedHelperExecutor: helperExecutor, now: () => NOW });
   try {
     const result = await broker.handle(signRequest(unsigned({
       requestId: "capabilities-runtime-unavailable",
       nonce: "capabilities-runtime-unavailable-nonce",
       tool: "mac_capabilities"
-    }, ["mac.control.read", "mac.task.run", "mac.priv.service"]), key));
+    }, ["mac.control.read", "mac.task.run", "mac.priv.service", "mac.priv.package", "mac.priv.power"]), key));
     assert.equal(result.ok, true, JSON.stringify(result));
     if (result.ok) {
       const capabilities = (result.data as { capabilities: Array<{ name: string; planned: boolean; implemented: boolean; enabled: boolean; scopes: readonly string[]; contract_version: string; reason: string }> }).capabilities;
@@ -1376,13 +1404,22 @@ test("capability discovery does not advertise unavailable task or helper runtime
         name: "mac_task_run", planned: true, implemented: true, enabled: false, scopes: ["mac.task.run"], contract_version: "0.1", reason: "runtime_unavailable"
       });
       assert.deepEqual(capabilities.find((capability) => capability.name === "mac_priv_service_control"), {
-        name: "mac_priv_service_control", planned: true, implemented: true, enabled: false, scopes: ["mac.priv.service"], contract_version: "0.1", reason: "runtime_unavailable"
+        name: "mac_priv_service_control", planned: true, implemented: true, enabled: true, scopes: ["mac.priv.service"], contract_version: "0.1", reason: "enabled"
+      });
+      assert.deepEqual(capabilities.find((capability) => capability.name === "mac_priv_package_install"), {
+        name: "mac_priv_package_install", planned: true, implemented: true, enabled: false, scopes: ["mac.priv.package"], contract_version: "0.1", reason: "runtime_unavailable"
+      });
+      assert.deepEqual(capabilities.find((capability) => capability.name === "mac_priv_power"), {
+        name: "mac_priv_power", planned: true, implemented: true, enabled: false, scopes: ["mac.priv.power"], contract_version: "0.1", reason: "runtime_unavailable"
       });
     }
     assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_task_run"), false);
-    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_priv_service_control"), false);
+    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_priv_service_control"), true);
+    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_priv_package_install"), false);
+    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_priv_power"), false);
   } finally {
     await broker.close();
+    helperCommandFactory.dispose();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }

@@ -32,6 +32,17 @@ export type PrivilegedHelperCommandClient = (
 ) => Promise<PrivilegedHelperResponse>;
 
 /**
+ * Operation names that the Broker may project from an authenticated helper.
+ * The executor keeps this allowlist separate from the transport toggle so a
+ * helper that supports one operation cannot accidentally advertise all three.
+ */
+export const SUPPORTED_PRIVILEGED_HELPER_OPERATIONS: readonly PrivilegedHelperOperation[] = [
+  "service_control",
+  "package_install",
+  "power"
+] as const;
+
+/**
  * Binds the executor to the bounded authenticated command client while
  * keeping the short-lived key buffer outside the executor's long-lived state.
  */
@@ -56,6 +67,8 @@ export interface PrivilegedHelperJobExecutorOptions {
   store: BrokerStore;
   /** Explicit opt-in. The default is fail-closed and performs no Job writes. */
   enabled?: boolean;
+  /** Explicit operation allowlist projected from the authenticated helper. */
+  enabledOperations?: readonly PrivilegedHelperOperation[];
   commandFactory?: PrivilegedHelperCommandIssuer;
   commandClient?: PrivilegedHelperCommandClient;
   now?: () => number;
@@ -89,6 +102,7 @@ export interface PrivilegedHelperJobExecutionOutcome {
  */
 export class PrivilegedHelperJobExecutor {
   private readonly enabled: boolean;
+  private readonly enabledOperations: ReadonlySet<PrivilegedHelperOperation>;
   private readonly now: () => number;
   private readonly leaseDurationMs: number;
   private readonly commandFactory: PrivilegedHelperCommandIssuer | undefined;
@@ -97,6 +111,13 @@ export class PrivilegedHelperJobExecutor {
   constructor(private readonly options: PrivilegedHelperJobExecutorOptions) {
     if (!options.store) throw new Error("Privileged helper Job executor requires a BrokerStore");
     this.enabled = options.enabled ?? false;
+    const configuredOperations = options.enabledOperations ?? [];
+    if (!Array.isArray(configuredOperations) ||
+        configuredOperations.some((operation) => !SUPPORTED_PRIVILEGED_HELPER_OPERATIONS.includes(operation)) ||
+        new Set(configuredOperations).size !== configuredOperations.length) {
+      throw new Error("Privileged helper operation allowlist is invalid");
+    }
+    this.enabledOperations = new Set(configuredOperations);
     this.now = options.now ?? Date.now;
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS;
     if (!Number.isSafeInteger(this.leaseDurationMs) || this.leaseDurationMs < 1_000 || this.leaseDurationMs > MAX_LEASE_DURATION_MS) {
@@ -104,14 +125,19 @@ export class PrivilegedHelperJobExecutor {
     }
     this.commandFactory = options.commandFactory;
     this.commandClient = options.commandClient;
-    if (this.enabled && (!this.commandFactory || !this.commandClient)) {
-      throw new Error("Enabled privileged helper Job executor requires command authority and transport");
+    if (this.enabled && (this.enabledOperations.size === 0 || !this.commandFactory || !this.commandClient)) {
+      throw new Error("Enabled privileged helper Job executor requires command authority, transport, and operation allowlist");
     }
   }
 
   /** Whether this executor has an explicitly configured helper transport. */
   get available(): boolean {
-    return this.enabled;
+    return this.enabled && this.enabledOperations.size > 0;
+  }
+
+  /** Whether a specific helper operation is enabled at this runtime boundary. */
+  supportsOperation(operation: PrivilegedHelperOperation): boolean {
+    return this.available && this.enabledOperations.has(operation);
   }
 
   async execute(input: PrivilegedHelperJobExecutionInput): Promise<PrivilegedHelperJobExecutionOutcome> {
@@ -119,6 +145,9 @@ export class PrivilegedHelperJobExecutor {
       throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper Job executor is disabled");
     }
     validateInput(input);
+    if (!this.enabledOperations.has(input.operation)) {
+      throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not allowlisted");
+    }
     let current: BrokerJob;
     try {
       current = this.requireRunningJob(input);

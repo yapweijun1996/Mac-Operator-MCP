@@ -232,11 +232,9 @@ export class Broker {
 
   private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
     if (toolName === "mac_task_run" && !this.taskRunner.available) return "runtime_unavailable";
-    if ((toolName === "mac_priv_service_control" ||
-         toolName === "mac_priv_package_install" ||
-         toolName === "mac_priv_power") && !this.privilegedHelperExecutor.available) {
-      return "runtime_unavailable";
-    }
+    if (toolName === "mac_priv_service_control" && !this.privilegedHelperExecutor.supportsOperation("service_control")) return "runtime_unavailable";
+    if (toolName === "mac_priv_package_install" && !this.privilegedHelperExecutor.supportsOperation("package_install")) return "runtime_unavailable";
+    if (toolName === "mac_priv_power" && !this.privilegedHelperExecutor.supportsOperation("power")) return "runtime_unavailable";
     return undefined;
   }
 
@@ -3456,8 +3454,8 @@ export class Broker {
         ...(expectedState === undefined ? {} : { expected_state: expectedState as "running" | "stopped" | "enabled" | "disabled" })
       } satisfies PrivilegedHelperPayload;
       validatePrivilegedHelperPayload(payload);
-      if (!this.privilegedHelperExecutor.available) {
-        throw new BrokerError("POLICY_DENIED", "Privileged helper execution boundary is not enabled");
+      if (!this.privilegedHelperExecutor.supportsOperation("service_control")) {
+        throw new BrokerError("POLICY_DENIED", "Privileged helper operation is not enabled");
       }
       return {
         target: { kind: "service", reference: serviceId },
@@ -3491,8 +3489,8 @@ export class Broker {
         ...(sourceProfile === undefined ? {} : { source_profile: sourceProfile })
       } satisfies PrivilegedHelperPayload;
       validatePrivilegedHelperPayload(payload);
-      if (!this.privilegedHelperExecutor.available) {
-        throw new BrokerError("POLICY_DENIED", "Privileged helper execution boundary is not enabled");
+      if (!this.privilegedHelperExecutor.supportsOperation("package_install")) {
+        throw new BrokerError("POLICY_DENIED", "Privileged helper operation is not enabled");
       }
       return {
         target: { kind: "package", reference: packageId },
@@ -3521,8 +3519,8 @@ export class Broker {
         ...(notBefore === undefined ? {} : { not_before: notBefore })
       } satisfies PrivilegedHelperPayload;
       validatePrivilegedHelperPayload(payload);
-      if (!this.privilegedHelperExecutor.available) {
-        throw new BrokerError("POLICY_DENIED", "Privileged helper execution boundary is not enabled");
+      if (!this.privilegedHelperExecutor.supportsOperation("power")) {
+        throw new BrokerError("POLICY_DENIED", "Privileged helper operation is not enabled");
       }
       return {
         target: { kind: "host", reference: "local" },
