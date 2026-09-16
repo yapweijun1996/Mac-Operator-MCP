@@ -97,6 +97,17 @@ test("privileged helper Job executor requires and enforces an explicit operation
       }),
       /operation allowlist/u
     );
+
+    const accessorOptions = { store } as Record<string, unknown>;
+    Object.defineProperty(accessorOptions, "enabled", {
+      configurable: true,
+      enumerable: true,
+      get: () => true
+    });
+    assert.throws(
+      () => new PrivilegedHelperJobExecutor(accessorOptions as never),
+      /options must be plain data/u
+    );
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

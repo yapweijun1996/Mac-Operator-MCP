@@ -109,6 +109,7 @@ export class PrivilegedHelperJobExecutor {
   private readonly commandClient: PrivilegedHelperCommandClient | undefined;
 
   constructor(private readonly options: PrivilegedHelperJobExecutorOptions) {
+    if (!isPlainDataRecord(options)) throw new Error("Privileged helper Job executor options must be plain data");
     if (!options.store) throw new Error("Privileged helper Job executor requires a BrokerStore");
     if (options.enabled !== undefined && typeof options.enabled !== "boolean") {
       throw new Error("Privileged helper enabled flag is invalid");
