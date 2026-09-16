@@ -104,6 +104,7 @@ Likelihood and impact are rated 1-5. Risk is `likelihood × impact`: Low 1-4, Me
 | T-022 Incomplete uninstall or stale authority | Operations | 15 High | Credential revocation, service removal and readback runbook | VT-OPS-01 | Open |
 | T-023 Guest identity or result substitution | TB-09 | 20 Critical | Domain-separated HMAC; durable nonce/request admission; request-digest, guest-identity, profile, and attestation binding; reject transport loss as unknown | VT-VZ-01 | Open |
 | T-024 Guest boundary falsely claims isolation | TB-09/TB-04 | 25 Critical | Independently verified VM boot, image/runtime identity, guest filesystem/network/credential/process evidence, cancellation, and postcondition readback | VT-VZ-02 | Blocked pending native guest evidence |
+| T-025 Release artifact substitution or false provenance | TB-03/TB-06 | 20 Critical | Owner-only manifest; bounded descriptor hashing; exact Developer ID identifier/Team ID/CDHash; fixed codesign and Gatekeeper assessment; immutable distribution and signing-key custody | VT-PKG-01 | Open |
 
 ## Attack-path priorities
 
