@@ -16,6 +16,16 @@ typecheck/build pass. No real LaunchAgent installation or mutation was
 performed. Evidence:
 `evidence/2026-09-16-launchagent-precondition-readback.md`.
 
+Keychain delivery replay verification: the Edge-to-Broker secret channel now
+uses an independent durable `keychain_delivery_nonces` ledger in BrokerStore.
+The fixed key ID is validated before admission; replay identities survive
+restart, exact-expiry rows are reclaimed, and live-capacity overflow returns a
+fail-closed audit error. Migration, schema-shape, persisted-row corruption,
+restart/replay, and expiry tests pass 72/72; the latest full regression passes
+868/868 with 14 explicit skips. No real Keychain item or service was changed.
+Evidence:
+`evidence/2026-09-16-keychain-delivery-replay-ledger.md`.
+
 Helper package precondition addendum: package execution now requires a
 host-owned existing-service reader and double-samples the precondition before
 any command or plist write. Caller-provided state is checked only for

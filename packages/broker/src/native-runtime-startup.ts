@@ -4,7 +4,7 @@ import { createMacOsNativeBrokerRuntime, type MacOsNativeBrokerRuntimeOptions } 
 import { EdgeAuthenticationKeyManager } from "./edge-keyring-config.js";
 import { AuthorityControlKeyManager } from "./authority-control-keyring.js";
 import { AuthorityControlIpcServer } from "./authority-control-ipc.js";
-import { KeychainDeliveryServer } from "./keychain-delivery.js";
+import { BrokerStoreKeychainDeliveryReplayGuard, KeychainDeliveryServer } from "./keychain-delivery.js";
 import { assertPrivilegedHelperCommandAuthority } from "./privileged-helper.js";
 import { PrivilegedHelperKeyManager } from "./privileged-helper-keyring.js";
 import { LaunchdReadbackError, parseLaunchdJobReadback } from "./launchd-readback.js";
@@ -212,6 +212,7 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
     const delivery = new KeychainDeliveryServer({
       socketPath: keychainDelivery.socketPath,
       peerPolicy,
+      replayGuard: new BrokerStoreKeychainDeliveryReplayGuard(edgeKeyStore),
       service: selected.service,
       account: selected.account,
       keyId: selected.keyId,

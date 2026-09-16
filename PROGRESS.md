@@ -18,6 +18,17 @@ with 14 explicit skips, and typecheck/build pass.
 No real service mutation was performed. Evidence:
 `evidence/2026-09-16-launchagent-precondition-readback.md`.
 
+Keychain delivery replay addendum: the Edge-to-Broker secret delivery channel
+now requires a Broker-owned durable replay guard backed by an independent
+`keychain_delivery_nonces` ledger. Admission occurs only after the fixed key ID
+is checked, uses a bounded five-minute retention window, prunes exact-expiry
+rows, and fails closed at capacity without evicting live identities. Schema
+migration 12, restart/replay/expiry and corruption checks pass; focused
+persistence/replay/schema/keychain tests pass 72/72. No real Keychain item or service was
+mutated. The latest full regression passes 868/868 with 14 explicit skips.
+Evidence:
+`evidence/2026-09-16-keychain-delivery-replay-ledger.md`.
+
 Helper package precondition addendum: host-only package execution now samples
 the existing-service status twice before any signature command, plist write,
 or launchd transition. Caller-supplied snapshots are optional consistency

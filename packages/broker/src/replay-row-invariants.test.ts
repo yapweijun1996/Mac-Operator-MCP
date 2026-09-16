@@ -62,6 +62,13 @@ const cases: readonly ReplayCorruptionCase[] = [
       "INSERT INTO virtualization_guest_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
     ).run("guest-nonce-123456", "request:guest-123456", 1, 100),
     corrupt: (database) => database.prepare("UPDATE virtualization_guest_nonces SET request_id = ?").run("bad")
+  },
+  {
+    name: "Keychain delivery",
+    insert: (database) => database.prepare(
+      "INSERT INTO keychain_delivery_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
+    ).run("keychain-nonce-123456", "keychain-request-1", 1, 100),
+    corrupt: (database) => database.prepare("UPDATE keychain_delivery_nonces SET nonce = ?").run("bad nonce")
   }
 ];
 

@@ -133,3 +133,11 @@ the precondition source from the same bounded Launchd and authenticated
 component status channels used for final readback. No new real service
 mutation is claimed. Evidence:
 `evidence/2026-09-16-launchagent-precondition-readback.md`.
+
+The Edge-to-Broker Keychain delivery channel now has a separate durable
+replay ledger in BrokerStore. The fixed key identity is checked before replay
+admission, which survives a Broker restart and reclaims only expired entries;
+live capacity exhaustion fails closed. This closes a protocol replay/DoS gap in
+the host-only candidate but does not accept production Keychain rotation,
+signing, or installed lifecycle evidence. Evidence:
+`evidence/2026-09-16-keychain-delivery-replay-ledger.md`.

@@ -16,6 +16,16 @@ pass 24/24 and the full regression passes 863/863 with 14 explicit skips. Real
 LaunchAgent mutation remains unperformed.
 Evidence: `evidence/2026-09-16-launchagent-precondition-readback.md`.
 
+MOP-081 Keychain replay addendum: Edge-to-Broker Keychain delivery now
+requires a durable BrokerStore-backed replay guard and its own bounded
+`keychain_delivery_nonces` ledger. Requests are admitted only after the fixed
+key ID check, survive Broker restart, reclaim exact-expiry rows, and fail
+closed at capacity. Schema migration, corruption, restart, replay, and expiry
+tests pass 72/72; the latest full regression passes 868/868 with 14 explicit
+skips. Production Keychain rotation and installed lifecycle remain gated.
+Evidence:
+`evidence/2026-09-16-keychain-delivery-replay-ledger.md`.
+
 MOP-072 helper package precondition addendum: the host-only executor now owns
 the existing-service readback, samples it twice before mutation, and treats a
 caller snapshot only as a checked hint. A changed or malformed precondition

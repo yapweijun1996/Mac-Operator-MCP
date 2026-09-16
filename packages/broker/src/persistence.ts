@@ -98,7 +98,7 @@ const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 11;
+export const BROKER_SCHEMA_VERSION = 12;
 const MAX_REPLAY_LEDGER_ROWS = 4096;
 type ReplayLedgerTable =
   | "nonces"
@@ -107,7 +107,8 @@ type ReplayLedgerTable =
   | "authority_control_nonces"
   | "privileged_helper_nonces"
   | "broker_status_nonces"
-  | "virtualization_guest_nonces";
+  | "virtualization_guest_nonces"
+  | "keychain_delivery_nonces";
 
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
@@ -499,6 +500,12 @@ export class BrokerStore {
         accepted_at_ms INTEGER NOT NULL,
         expires_at_ms INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS keychain_delivery_nonces (
+        nonce TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE,
+        accepted_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      ) STRICT;
       CREATE TABLE IF NOT EXISTS revocations (
         kind TEXT NOT NULL CHECK (kind IN ('principal', 'session', 'edge', 'edge_key', 'approval_key', 'policy_signer', 'authority_key', 'helper_key', 'guest_attestation_key')),
         subject_id TEXT NOT NULL,
@@ -741,6 +748,7 @@ export class BrokerStore {
       privileged_helper_nonces: ["nonce", "request_id", "accepted_at_ms", "expires_at_ms"],
       broker_status_nonces: ["nonce", "request_id", "accepted_at_ms", "expires_at_ms"],
       virtualization_guest_nonces: ["nonce", "request_id", "accepted_at_ms", "expires_at_ms"],
+      keychain_delivery_nonces: ["nonce", "request_id", "accepted_at_ms", "expires_at_ms"],
       policy_history: ["revision", "version", "payload_digest", "key_id", "activated_at_ms"],
       active_policy: ["singleton", "revision", "version", "payload_digest", "key_id", "activated_at_ms"],
       approval_key_config_history: ["revision", "payload_digest", "activated_at_ms"],
@@ -804,7 +812,8 @@ export class BrokerStore {
     try {
       const replayTables: readonly ReplayLedgerTable[] = [
         "nonces", "approval_nonces", "policy_signer_nonces", "authority_control_nonces",
-        "privileged_helper_nonces", "broker_status_nonces", "virtualization_guest_nonces"
+        "privileged_helper_nonces", "broker_status_nonces", "virtualization_guest_nonces",
+        "keychain_delivery_nonces"
       ];
       for (const table of replayTables) assertReplayLedgerIntegrityCapacity(this.database, table);
       const requestRows = this.database.prepare(
@@ -841,6 +850,11 @@ export class BrokerStore {
         "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM virtualization_guest_nonces"
       ).all() as unknown[];
       for (const row of guestRows) validateStoredReplayRow("virtualization_guest", row);
+
+      const keychainRows = this.database.prepare(
+        "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM keychain_delivery_nonces"
+      ).all() as unknown[];
+      for (const row of keychainRows) validateStoredReplayRow("keychain_delivery", row);
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Replay ledger integrity could not be verified");
@@ -1748,6 +1762,40 @@ export class BrokerStore {
       }
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest request admission could not be persisted");
+    }
+  }
+
+  /**
+   * Persist one authenticated Edge-to-Broker Keychain delivery identity.
+   * This ledger is independent from MCP request replay because the delivery
+   * channel carries a secret and can outlive either process across restart.
+   */
+  admitKeychainDeliveryRequest(input: {
+    requestId: string;
+    nonce: string;
+    acceptedAtMs: number;
+    expiresAtMs: number;
+  }): void {
+    if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(input.requestId) ||
+        !/^[A-Za-z0-9._:-]{1,128}$/u.test(input.nonce) ||
+        !Number.isSafeInteger(input.acceptedAtMs) || input.acceptedAtMs < 0 ||
+        !Number.isSafeInteger(input.expiresAtMs) || input.expiresAtMs <= input.acceptedAtMs) {
+      throw new BrokerError("PRECONDITION_FAILED", "Keychain delivery request admission is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        this.database.prepare("DELETE FROM keychain_delivery_nonces WHERE expires_at_ms <= ?").run(input.acceptedAtMs);
+        assertReplayLedgerCapacity(this.database, "keychain_delivery_nonces");
+        this.database.prepare(
+          "INSERT INTO keychain_delivery_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
+        ).run(input.nonce, input.requestId, input.acceptedAtMs, input.expiresAtMs);
+      });
+    } catch (error) {
+      if (String(error).includes("UNIQUE constraint failed")) {
+        throw new BrokerError("REPLAY_DENIED", "Keychain delivery request nonce or request ID was already accepted");
+      }
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Keychain delivery request admission could not be persisted");
     }
   }
 
@@ -3379,7 +3427,8 @@ export class BrokerStore {
         { version: 8, name: "virtualization-guest-attestation-key-config", apply: () => this.migrateVirtualizationGuestAttestationKeyConfigSchema() },
         { version: 9, name: "request-capability-family-capacity", apply: () => this.migrateRequestCapabilityFamilySchema() },
         { version: 10, name: "job-edge-provenance", apply: () => this.migrateJobEdgeProvenanceSchema() },
-        { version: 11, name: "job-edge-key-provenance", apply: () => this.migrateJobEdgeKeyProvenanceSchema() }
+        { version: 11, name: "job-edge-key-provenance", apply: () => this.migrateJobEdgeKeyProvenanceSchema() },
+        { version: 12, name: "keychain-delivery-replay-ledger", apply: () => this.migrateKeychainDeliveryReplaySchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -3524,6 +3573,21 @@ export class BrokerStore {
     const names = new Set(columns.map((column) => column.name));
     if (names.size !== 4 || !names.has("nonce") || !names.has("request_id") || !names.has("accepted_at_ms") || !names.has("expires_at_ms")) {
       throw new BrokerError("AUDIT_UNAVAILABLE", "Virtualization guest replay schema is malformed");
+    }
+  }
+
+  private migrateKeychainDeliveryReplaySchema(): void {
+    const table = this.database.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'keychain_delivery_nonces'"
+    ).get() as { sql?: unknown } | undefined;
+    if (typeof table?.sql !== "string" || !table.sql.includes("nonce") || !table.sql.includes("request_id") ||
+        !table.sql.includes("accepted_at_ms") || !table.sql.includes("expires_at_ms") || !table.sql.includes("STRICT")) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Keychain delivery replay schema is unavailable");
+    }
+    const columns = this.database.prepare("PRAGMA table_info(keychain_delivery_nonces)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (names.size !== 4 || !names.has("nonce") || !names.has("request_id") || !names.has("accepted_at_ms") || !names.has("expires_at_ms")) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Keychain delivery replay schema is malformed");
     }
   }
 
@@ -3913,7 +3977,8 @@ type ReplayLedgerKind =
   | "authority_control"
   | "privileged_helper"
   | "broker_status"
-  | "virtualization_guest";
+  | "virtualization_guest"
+  | "keychain_delivery";
 
 /** Keep every replay ledger bounded before a new authority decision is stored. */
 function assertReplayLedgerCapacity(database: DatabaseSync, table: ReplayLedgerTable): void {
@@ -3975,6 +4040,10 @@ function validateStoredReplayRow(kind: ReplayLedgerKind, value: unknown): void {
     case "virtualization_guest":
       if (!stringField("nonce", /^guest-nonce-[A-Za-z0-9._:-]{16,128}$/u) ||
           !stringField("request_id", /^request:guest-[A-Za-z0-9._:-]{16,128}$/u)) fail();
+      return;
+    case "keychain_delivery":
+      if (!stringField("nonce", /^[A-Za-z0-9._:-]{1,128}$/u) ||
+          !stringField("request_id", /^[A-Za-z0-9._:-]{1,128}$/u)) fail();
       return;
     default:
       fail();

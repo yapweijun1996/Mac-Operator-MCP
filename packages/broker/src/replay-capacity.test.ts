@@ -80,3 +80,37 @@ test("privileged-helper replay ledger reclaims rows exactly at expiry before cap
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("Keychain delivery replay ledger is bounded and reclaims exact expiry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-keychain-replay-capacity-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    for (let index = 0; index < REPLAY_CAPACITY; index += 1) {
+      const suffix = String(index).padStart(16, "0");
+      store.admitKeychainDeliveryRequest({
+        requestId: `delivery-request-${suffix}`,
+        nonce: `delivery-nonce-${suffix}`,
+        acceptedAtMs: 1,
+        expiresAtMs: 100_001
+      });
+    }
+    assert.throws(
+      () => store.admitKeychainDeliveryRequest({
+        requestId: `delivery-request-${String(REPLAY_CAPACITY).padStart(16, "0")}`,
+        nonce: `delivery-nonce-${String(REPLAY_CAPACITY).padStart(16, "0")}`,
+        acceptedAtMs: 2,
+        expiresAtMs: 100_002
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    store.admitKeychainDeliveryRequest({
+      requestId: `delivery-request-${String(REPLAY_CAPACITY + 1).padStart(16, "0")}`,
+      nonce: `delivery-nonce-${String(REPLAY_CAPACITY + 1).padStart(16, "0")}`,
+      acceptedAtMs: 100_001,
+      expiresAtMs: 200_001
+    });
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

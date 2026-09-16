@@ -35,7 +35,8 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 8, name: "virtualization-guest-attestation-key-config" },
         { version: 9, name: "request-capability-family-capacity" },
         { version: 10, name: "job-edge-provenance" },
-        { version: 11, name: "job-edge-key-provenance" }
+        { version: 11, name: "job-edge-key-provenance" },
+        { version: 12, name: "keychain-delivery-replay-ledger" }
       ]);
     } finally {
       database.close();
@@ -97,6 +98,52 @@ test("BrokerStore bounds virtualization guest replay ledger capacity", async () 
     });
   } finally {
     store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore persists Keychain delivery replay identities across restart and reclaims exact expiry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-keychain-replay-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    store.admitKeychainDeliveryRequest({
+      requestId: "keychain-request-1",
+      nonce: "keychain-nonce-1",
+      acceptedAtMs: 100,
+      expiresAtMs: 200
+    });
+    assert.throws(
+      () => store.admitKeychainDeliveryRequest({
+        requestId: "keychain-request-1",
+        nonce: "keychain-nonce-2",
+        acceptedAtMs: 101,
+        expiresAtMs: 201
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED"
+    );
+  } finally {
+    store.close();
+  }
+  const reopened = new BrokerStore(databasePath);
+  try {
+    assert.throws(
+      () => reopened.admitKeychainDeliveryRequest({
+        requestId: "keychain-request-2",
+        nonce: "keychain-nonce-1",
+        acceptedAtMs: 150,
+        expiresAtMs: 250
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED"
+    );
+    reopened.admitKeychainDeliveryRequest({
+      requestId: "keychain-request-2",
+      nonce: "keychain-nonce-2",
+      acceptedAtMs: 200,
+      expiresAtMs: 300
+    });
+  } finally {
+    reopened.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
