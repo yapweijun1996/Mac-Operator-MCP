@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Signature provenance addendum: `codesign -dv --verbose=4` readback now
+classifies artifacts as `developer-id` or `development-ad-hoc`. Developer ID
+readback requires a bounded `Developer ID Application` authority whose Team ID
+matches `TeamIdentifier` plus a CDHash; ad-hoc readback is accepted only for
+explicit development policy. Ambiguous provenance fails closed and raw command
+output is never returned. Broker/Edge and privileged-helper package observers
+share this parser. Focused install/helper tests pass 45/45 and the full
+regression passes 870/870 with 14 explicit skips. No signed release, service,
+helper, or capability was installed. Evidence:
+`evidence/2026-09-16-signature-provenance-readback.md`.
+
 LaunchAgent precondition addendum: Broker and Edge install executors now
 derive the existing-service precondition from a host-owned LaunchAgent
 observer and sample it twice before signature verification, plist writes, or

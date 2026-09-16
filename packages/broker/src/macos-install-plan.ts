@@ -19,6 +19,7 @@ const MAX_CAPABILITIES = 128;
 
 export type MacOsInstallOperation = "install" | "upgrade" | "rollback" | "uninstall";
 export type MacOsSignaturePolicy = "developer-id" | "development-ad-hoc";
+export type CodeSignatureType = "developer-id" | "development-ad-hoc";
 
 export type MacOsInstallPlanErrorCode =
   | "INVALID_ARGUMENT"
@@ -61,6 +62,17 @@ export interface CodeSignatureReadback {
   identifier: string | null;
   teamIdentifier: string | null;
   cdHash: string | null;
+  signatureType: CodeSignatureType;
+  /** First bounded Developer ID Authority entry, or null for ad-hoc artifacts. */
+  authority: string | null;
+}
+
+export interface ParsedCodeSignatureDetails {
+  identifier: string | null;
+  teamIdentifier: string | null;
+  cdHash: string | null;
+  signatureType: CodeSignatureType;
+  authority: string | null;
 }
 
 export interface LaunchdCommandSpec {
@@ -603,11 +615,17 @@ export function validateCodeSignatureReadback(
     candidate?.teamIdentifier === undefined || candidate.cdHash === undefined ? "development-ad-hoc" : "developer-id",
     typeof candidate?.identifier === "string" ? candidate.identifier : ""
   );
+  const expectedType: CodeSignatureType = normalizedExpected.teamIdentifier !== undefined && normalizedExpected.cdHash !== undefined
+    ? "developer-id"
+    : "development-ad-hoc";
   if (actual === null || typeof actual !== "object" || actual.valid !== true ||
       actual.artifactPath !== expectedArtifactPath ||
       typeof actual.identifier !== "string" || actual.identifier !== normalizedExpected.identifier ||
       (normalizedExpected.teamIdentifier !== undefined && actual.teamIdentifier !== normalizedExpected.teamIdentifier) ||
-      (normalizedExpected.cdHash !== undefined && actual.cdHash !== normalizedExpected.cdHash)) {
+      (normalizedExpected.cdHash !== undefined && actual.cdHash !== normalizedExpected.cdHash) ||
+      actual.signatureType !== expectedType ||
+      (expectedType === "developer-id" && !isDeveloperIdAuthority(actual.authority, actual.teamIdentifier)) ||
+      (expectedType === "development-ad-hoc" && actual.authority !== null)) {
     fail("SIGNATURE_MISMATCH", "code signature readback does not match the expected package identity");
   }
 }
@@ -1014,12 +1032,11 @@ export async function readMacOsCodeSignature(
     fail("SIGNATURE_MISMATCH", "code signature details failed");
   }
   const output = `${details.stdout}\n${details.stderr}`;
+  const parsed = parseCodeSignatureDetails(output);
   const readback: CodeSignatureReadback = {
     artifactPath: plan.signedArtifactPath,
     valid: true,
-    identifier: readCodeSignatureField(output, "Identifier", /^[A-Za-z0-9._:-]{1,128}$/u),
-    teamIdentifier: readCodeSignatureField(output, "TeamIdentifier", /^[A-Z0-9]{5,32}$/u),
-    cdHash: readCodeSignatureField(output, "CDHash", /^[a-f0-9]{20,64}$/u)
+    ...parsed
   };
   validateCodeSignatureReadback(plan.signature, readback, plan.signedArtifactPath);
   return readback;
@@ -1652,6 +1669,38 @@ function readCodeSignatureField(output: string, fieldName: string, pattern: RegE
   if (value === "not set" && fieldName === "TeamIdentifier") return null;
   if (value === undefined || !pattern.test(value)) fail("SIGNATURE_MISMATCH", `code signature returned malformed ${fieldName}`);
   return value;
+}
+
+/** Parse only the bounded provenance fields needed by the install gate. */
+export function parseCodeSignatureDetails(output: string): ParsedCodeSignatureDetails {
+  if (typeof output !== "string" || output.length > SERVICE_OUTPUT_CAP_BYTES * 2) {
+    fail("SIGNATURE_MISMATCH", "code signature details are oversized");
+  }
+  const identifier = readCodeSignatureField(output, "Identifier", /^[A-Za-z0-9._:-]{1,128}$/u);
+  const teamIdentifier = readCodeSignatureField(output, "TeamIdentifier", /^[A-Z0-9]{5,32}$/u);
+  const cdHash = readCodeSignatureField(output, "CDHash", /^[a-f0-9]{20,64}$/u);
+  const signatureMarker = readCodeSignatureField(output, "Signature", /^[A-Za-z0-9._:-]{1,64}$/u);
+  const authorityMatches = [...output.matchAll(/^Authority=([^\r\n]+)$/gmu)];
+  if (authorityMatches.length > 4) fail("SIGNATURE_MISMATCH", "code signature returned too many Authority fields");
+  const authority = authorityMatches.length === 0 ? null : authorityMatches[0]?.[1]?.trim() ?? null;
+  if (authority !== null && (authority.length < 1 || authority.length > 256)) {
+    fail("SIGNATURE_MISMATCH", "code signature returned a malformed Authority field");
+  }
+  let signatureType: CodeSignatureType;
+  if (signatureMarker === "adhoc" && teamIdentifier === null && authority === null) {
+    signatureType = "development-ad-hoc";
+  } else if (isDeveloperIdAuthority(authority, teamIdentifier) && cdHash !== null) {
+    signatureType = "developer-id";
+  } else {
+    fail("SIGNATURE_MISMATCH", "code signature provenance is not recognized");
+  }
+  return { identifier, teamIdentifier, cdHash, signatureType, authority };
+}
+
+function isDeveloperIdAuthority(authority: unknown, teamIdentifier: string | null): boolean {
+  if (typeof authority !== "string" || typeof teamIdentifier !== "string") return false;
+  const match = /^Developer ID Application: .+ \(([A-Z0-9]{10})\)$/u.exec(authority);
+  return match?.[1] === teamIdentifier;
 }
 
 function fail(code: MacOsInstallPlanErrorCode, message: string): never {

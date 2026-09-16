@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-061/072 signature provenance addendum: package readback now distinguishes
+Developer ID authority from development ad-hoc signatures. The first bounded
+`Developer ID Application` authority must bind the exact Team ID and a CDHash;
+missing or conflicting provenance is a stable `SIGNATURE_MISMATCH`. The same
+parser is used by Broker/Edge and privileged-helper observers. Focused tests
+pass 45/45; the full regression passes 870/870 with 14 explicit skips. Real
+Developer ID/notarization and installed lifecycle evidence remain open.
+Evidence: `evidence/2026-09-16-signature-provenance-readback.md`.
+
 MOP-061/072 LaunchAgent precondition addendum: Broker and Edge package
 executors now require a host-owned, double-sampled existing-service reader.
 Launchd presence and reviewed target identity are checked before any command,

@@ -242,7 +242,9 @@ test("privileged helper package readback binds root service, Broker peer, and di
       valid: true,
       identifier: plan.signature.identifier,
       teamIdentifier: plan.signature.teamIdentifier ?? null,
-      cdHash: plan.signature.cdHash ?? null
+      cdHash: plan.signature.cdHash ?? null,
+      signatureType: "developer-id" as const,
+      authority: "Developer ID Application: Mac Operator (ABCDE12345)"
     }
   };
   validatePrivilegedHelperPackageReadback(plan, readback);
@@ -449,7 +451,9 @@ test("privileged helper host observer wires bounded launchd and native readback 
     valid: true,
     identifier: plan.signature.identifier,
     teamIdentifier: plan.signature.teamIdentifier ?? null,
-    cdHash: plan.signature.cdHash ?? null
+    cdHash: plan.signature.cdHash ?? null,
+    signatureType: "developer-id" as const,
+    authority: "Developer ID Application: Mac Operator (ABCDE12345)"
   };
   const plist = {
     path: plan.plistPath,
@@ -630,7 +634,9 @@ test("released helper package readback binds authenticated capability status", a
       valid: true,
       identifier: plan.signature.identifier,
       teamIdentifier: plan.signature.teamIdentifier ?? null,
-      cdHash: plan.signature.cdHash ?? null
+      cdHash: plan.signature.cdHash ?? null,
+      signatureType: "developer-id" as const,
+      authority: "Developer ID Application: Mac Operator (ABCDE12345)"
     })
   };
   try {
@@ -683,6 +689,7 @@ test("privileged helper codesign observer parses only bounded identity fields", 
       else assert.deepEqual(command.args, ["-dv", "--verbose=4", plan.signedArtifactPath]);
       return successfulProcessResult(calls === 1 ? "" : [
         "Identifier=com.mac-operator.privileged-helper",
+        "Authority=Developer ID Application: Mac Operator (ABCDE12345)",
         "TeamIdentifier=ABCDE12345",
         "CDHash=0123456789abcdef0123"
       ].join("\n"), "");
@@ -694,7 +701,9 @@ test("privileged helper codesign observer parses only bounded identity fields", 
     valid: true,
     identifier: "com.mac-operator.privileged-helper",
     teamIdentifier: "ABCDE12345",
-    cdHash: "0123456789abcdef0123"
+    cdHash: "0123456789abcdef0123",
+    signatureType: "developer-id" as const,
+    authority: "Developer ID Application: Mac Operator (ABCDE12345)"
   });
   assert.equal(calls, 2);
   await assert.rejects(

@@ -149,3 +149,14 @@ exposing native operations. This is a runtime packaging guard, not release
 provenance: Developer ID signing, notarization, and immutable distribution
 remain open. Evidence:
 `evidence/2026-09-16-native-host-compatibility.md`.
+
+The package signature readback boundary now classifies `codesign` provenance
+instead of treating Team ID and CDHash as sufficient. Developer ID artifacts
+must expose a bounded `Developer ID Application` authority whose Team ID
+matches the readback TeamIdentifier; ad-hoc artifacts are accepted only under
+the explicit development policy. Broker/Edge and helper observers share the
+parser and reject ambiguous provenance before service readiness. This is an
+implementation guard, not Developer ID/notarization evidence: the physical
+host currently has only an ad-hoc development artifact and no persistent
+service was installed. Evidence:
+`evidence/2026-09-16-signature-provenance-readback.md`.

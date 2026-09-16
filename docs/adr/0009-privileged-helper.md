@@ -334,6 +334,14 @@ identity and an ad-hoc-only native artifact. The helper package therefore
 remains an implementation candidate: strict ad-hoc verification is not
 substituted for Developer ID provenance, and no root LaunchDaemon is installed.
 
+The helper package readback now shares the bounded signature provenance parser
+with the unprivileged package path. A Developer ID authority must bind the
+expected Team ID and include a CDHash; an ad-hoc result is development-only;
+ambiguous or authority-less production readback fails closed. This strengthens
+the release gate but does not create a certificate, notarize an artifact, or
+enable the helper. Evidence:
+`evidence/2026-09-16-signature-provenance-readback.md`.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.

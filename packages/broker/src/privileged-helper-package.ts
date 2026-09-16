@@ -2,7 +2,7 @@ import { lstat } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec, MacOsPlistReadback } from "./macos-install-plan.js";
-import { validateCodeSignatureReadback } from "./macos-install-plan.js";
+import { parseCodeSignatureDetails, validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import { LaunchdReadbackError, readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
@@ -1241,15 +1241,16 @@ export async function readPrivilegedHelperCodeSignature(
     fail("SIGNATURE_MISMATCH", "privileged helper code signature details failed");
   }
   const output = `${details.stdout}\n${details.stderr}`;
-  const identifier = readCodeSignatureField(output, "Identifier", /^[A-Za-z0-9._:-]{1,128}$/u);
-  const teamIdentifier = readCodeSignatureField(output, "TeamIdentifier", /^[A-Z0-9]{5,32}$/u);
-  const cdHash = readCodeSignatureField(output, "CDHash", /^[a-f0-9]{20,64}$/u);
+  let parsed: ReturnType<typeof parseCodeSignatureDetails>;
+  try {
+    parsed = parseCodeSignatureDetails(output);
+  } catch {
+    fail("SIGNATURE_MISMATCH", "privileged helper code signature provenance is not recognized");
+  }
   const readback: CodeSignatureReadback = {
     artifactPath: plan.signedArtifactPath,
     valid: true,
-    identifier,
-    teamIdentifier,
-    cdHash
+    ...parsed
   };
   try {
     validateCodeSignatureReadback(plan.signature, readback, plan.signedArtifactPath);
@@ -1395,15 +1396,6 @@ function sameProcessIdentity(left: PeerProcessIdentity, right: PeerProcessIdenti
 function samePlistIdentity(left: MacOsPlistReadback, right: MacOsPlistReadback): boolean {
   return left.path === right.path && left.bytes === right.bytes && left.sha256 === right.sha256 &&
     left.device === right.device && left.inode === right.inode;
-}
-
-function readCodeSignatureField(output: string, fieldName: string, pattern: RegExp): string | null {
-  const matches = [...output.matchAll(new RegExp(`^${fieldName}=([^\\r\\n]+)$`, "gmu"))];
-  if (matches.length === 0) return null;
-  if (matches.length !== 1) fail("SIGNATURE_MISMATCH", `privileged helper code signature returned duplicate ${fieldName}`);
-  const value = matches[0]?.[1]?.trim();
-  if (value === undefined || !pattern.test(value)) fail("SIGNATURE_MISMATCH", `privileged helper code signature returned malformed ${fieldName}`);
-  return value;
 }
 
 function isPrivilegedHelperPlistReadback(value: unknown, plan: PrivilegedHelperPackagePlan): value is MacOsPlistReadback {

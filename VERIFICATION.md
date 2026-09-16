@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Signature provenance verification: package observers parse bounded `codesign`
+details and require either an exact Developer ID Application authority/Team ID
+pair with CDHash or an explicitly development-only ad-hoc result. A production
+Team ID/CDHash without Developer ID authority is rejected before readiness;
+ambiguous output never crosses the readback boundary. Focused install/helper
+tests pass 45/45 and the full regression passes 870/870 with 14 explicit
+skips. No Developer ID artifact, root helper, or service was installed.
+Evidence: `evidence/2026-09-16-signature-provenance-readback.md`.
+
 LaunchAgent precondition addendum: Broker and Edge install execution now
 requires a host-owned existing-service reader sampled twice before any
 signature command, plist write, or launchd transition. The observer binds the

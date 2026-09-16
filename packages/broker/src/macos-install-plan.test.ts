@@ -25,6 +25,7 @@ import {
   observeMacOsEdgeInstallReadback,
   readMacOsExistingServiceSnapshot,
   readMacOsCodeSignature,
+  parseCodeSignatureDetails,
   readMacOsPlistReadback,
   MacOsInstallPlanError,
   validateCodeSignatureReadback,
@@ -157,6 +158,50 @@ test("production install plans require Developer ID identity and isolate ad-hoc 
   );
 });
 
+test("code signature details classify Developer ID provenance and reject ambiguous identities", () => {
+  const developerId = parseCodeSignatureDetails([
+    "Identifier=com.mac-operator.broker",
+    "Authority=Developer ID Application: Mac Operator (ABCDE12345)",
+    "Authority=Developer ID Certification Authority",
+    "TeamIdentifier=ABCDE12345",
+    "CDHash=0123456789abcdef0123456789abcdef01234567"
+  ].join("\n"));
+  assert.deepEqual(developerId, {
+    identifier: "com.mac-operator.broker",
+    teamIdentifier: "ABCDE12345",
+    cdHash: "0123456789abcdef0123456789abcdef01234567",
+    signatureType: "developer-id",
+    authority: "Developer ID Application: Mac Operator (ABCDE12345)"
+  });
+
+  const adHoc = parseCodeSignatureDetails([
+    "Identifier=com.mac-operator.broker",
+    "Signature=adhoc",
+    "TeamIdentifier=not set",
+    "CDHash=0123456789abcdef0123"
+  ].join("\n"));
+  assert.equal(adHoc.signatureType, "development-ad-hoc");
+  assert.equal(adHoc.authority, null);
+
+  assert.throws(
+    () => parseCodeSignatureDetails([
+      "Identifier=com.mac-operator.broker",
+      "TeamIdentifier=ABCDE12345",
+      "CDHash=0123456789abcdef0123"
+    ].join("\n")),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SIGNATURE_MISMATCH"
+  );
+  assert.throws(
+    () => parseCodeSignatureDetails([
+      "Identifier=com.mac-operator.broker",
+      "Authority=Developer ID Application: Other Team (ZZZZZ99999)",
+      "TeamIdentifier=ABCDE12345",
+      "CDHash=0123456789abcdef0123"
+    ].join("\n")),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SIGNATURE_MISMATCH"
+  );
+});
+
 test("Edge install plan binds the reviewed LaunchAgent to the Edge listener", async () => {
   const plan = buildMacOsEdgeInstallPlan(edgeBase);
   assert.equal(plan.component, "mac-operator-edge");
@@ -194,7 +239,9 @@ test("Edge install plan binds the reviewed LaunchAgent to the Edge listener", as
       valid: true,
       identifier: plan.signature.identifier,
       teamIdentifier: plan.signature.teamIdentifier ?? null,
-      cdHash: plan.signature.cdHash ?? null
+      cdHash: plan.signature.cdHash ?? null,
+      signatureType: "developer-id" as const,
+      authority: "Developer ID Application: Mac Operator (ABCDE12345)"
     }
   };
   const composed = composeMacOsEdgeInstallReadback(plan, source);
@@ -366,7 +413,9 @@ test("readback requires matching signature, launchd identity, native transport, 
       valid: true,
       identifier: base.signature.identifier,
       teamIdentifier: base.signature.teamIdentifier ?? null,
-      cdHash: base.signature.cdHash ?? null
+      cdHash: base.signature.cdHash ?? null,
+      signatureType: "developer-id" as const,
+      authority: "Developer ID Application: Mac Operator (ABCDE12345)"
     }
   };
   validateMacOsInstallReadback(plan, readback);
@@ -383,6 +432,11 @@ test("readback requires matching signature, launchd identity, native transport, 
   }), /launchd configuration/u);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, broker: { ...readback.broker, nativeTransportRequired: false as never } }), /Broker service readback/u);
   assert.throws(() => validateCodeSignatureReadback(base.signature, { ...readback.signature, identifier: "com.attacker.broker" }, base.signedArtifactPath), /code signature readback/u);
+  assert.throws(() => validateCodeSignatureReadback(base.signature, {
+    ...readback.signature,
+    signatureType: "development-ad-hoc",
+    authority: null
+  }, base.signedArtifactPath), /code signature readback/u);
 });
 
 test("readback composition binds launchd service identity to native process and Broker sources", () => {
@@ -415,7 +469,9 @@ test("readback composition binds launchd service identity to native process and 
       valid: true,
       identifier: base.signature.identifier,
       teamIdentifier: base.signature.teamIdentifier ?? null,
-      cdHash: base.signature.cdHash ?? null
+      cdHash: base.signature.cdHash ?? null,
+      signatureType: "developer-id" as const,
+      authority: "Developer ID Application: Mac Operator (ABCDE12345)"
     }
   });
   assert.equal(composed.pid, 1234);
@@ -707,6 +763,8 @@ test("signature verification plan accepts a real temporary ad-hoc signed artifac
     const signatureReadback = await readMacOsCodeSignature(plan, supervisor);
     assert.equal(signatureReadback.identifier, "com.mac-operator.broker");
     assert.equal(signatureReadback.teamIdentifier, null);
+    assert.equal(signatureReadback.signatureType, "development-ad-hoc");
+    assert.equal(signatureReadback.authority, null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1068,7 +1126,7 @@ function readbackSources(plan: MacOsInstallPlan) {
     processIdentity: { pid: 1234, startTimeMicros: 987654321 },
     plist: plistReadback(plan),
     broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
-    signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null }
+    signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null, signatureType: "developer-id" as const, authority: "Developer ID Application: Mac Operator (ABCDE12345)" }
   };
 }
 
