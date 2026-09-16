@@ -518,7 +518,7 @@ class FakeLaunchdExecutor {
       resultClass: "SUCCEEDED",
       exitCode: 0,
       signal: null,
-      stdout: `${this.serviceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`,
+      stdout: `${this.serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tpid = ${process.pid}\n}`,
       stderr: "",
       truncated: false,
       durationMs: 1,
