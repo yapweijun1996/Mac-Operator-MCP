@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-070 HTTPS body-boundary addendum at source revision `f7669d2`: the Edge
+JSON parser remains bounded at 1 MiB and now returns stable HTTP 400
+`invalid_json` or HTTP 413 `request_too_large` responses for malformed or
+oversized requests, without leaking parser diagnostics. The physical-Darwin
+HTTPS test passes 3/3 and the complete Edge suite passes 66/66; typecheck,
+lint, and build pass. Durable distributed rate limits and deployment-scale
+ingress evidence remain open. Evidence:
+`evidence/2026-09-16-https-body-boundary.md`.
+
 MOP-037 encoded-secret addendum at source revisions `b1732bd`, `b83d043`:
 content policy
 now detects UTF-16LE/BE and bounded Base64 representations only when decoded

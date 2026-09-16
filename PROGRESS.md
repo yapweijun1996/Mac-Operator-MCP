@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+HTTPS request-body addendum at source revision `f7669d2`: the Edge's bounded
+1 MiB JSON parser now maps malformed bodies to HTTP 400 `invalid_json` and
+oversized bodies to HTTP 413 `request_too_large`, without exposing parser
+details. The physical-Darwin HTTPS test passes 3/3 and the full Edge suite
+passes 66/66; typecheck, lint, and build pass. Durable distributed rate
+limits and deployment-scale ingress evidence remain open. Evidence:
+`evidence/2026-09-16-https-body-boundary.md`.
+
 Encoded-secret representation addendum at source revisions `b1732bd`,
 `b83d043`: the
 Broker secret policy conservatively detects UTF-16LE/BE content and bounded
