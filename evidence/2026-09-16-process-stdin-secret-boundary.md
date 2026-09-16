@@ -7,8 +7,8 @@ Host: Darwin `25.2.0`, arm64; macOS `26.2`; Node.js `25.5.0`
 ## Boundary exercised
 
 `ProcessSupervisor` now applies the Broker secret-content policy to bounded
-stdin before creating a child process. Plain and encoded known credential
-signatures are rejected with stable `POLICY_DENIED`; non-secret stdin remains
+stdin before creating a child process. Plain and Base64-encoded known
+credential signatures are rejected with stable `POLICY_DENIED`; non-secret stdin remains
 bounded, non-persisted, and available to fixed adapters that need public input.
 
 ## Verification

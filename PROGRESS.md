@@ -5,8 +5,8 @@ Version: 0.1
 Last verified: 2026-09-16
 
 Process-stdin secret addendum at source revision `dddbdbc`: the shared
-`ProcessSupervisor` now rejects known credential signatures and their bounded
-UTF-16/Base64 representations in stdin before child creation, while retaining
+`ProcessSupervisor` now rejects known credential signatures and bounded Base64
+representations in stdin before child creation, while retaining
 bounded non-secret input. Process-supervisor and secret-policy tests pass
 51/51; typecheck, lint, and build pass. Opaque-secret detection, complete
 credential-store isolation, and production sandbox evidence remain open.
