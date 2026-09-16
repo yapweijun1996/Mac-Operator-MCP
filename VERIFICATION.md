@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Launchd startup parser reuse addendum at source revision `3fa25e1`: Edge
+startup identity capture and privileged-helper Broker-caller capture now reuse
+the strict launchd parser, rejecting duplicate/nested fields and malformed PID
+readback before native process-identity capture. Stable component error classes
+and exact top-level `xpcproxy` retry behavior remain intact. The combined
+launchd/startup suite passes 23/23; typecheck and build pass. Persistent
+launchd ownership, Developer ID provenance, descriptor execution, root-domain
+installation, and remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-startup-parser-reuse.md`.
+
 Launchd conflicting-field rejection addendum at source revision `1b09cfa`:
 the bounded `launchctl print` parser now rejects duplicate service headers,
 duplicate top-level singleton fields, and duplicate argument blocks as

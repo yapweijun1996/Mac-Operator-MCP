@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-081/087 launchd startup-parser reuse addendum at source revision `3fa25e1`:
+Edge startup and privileged-helper Broker-caller capture now reuse the strict
+launchd readback parser, rejecting duplicate/nested fields and malformed PID
+values before native process-identity capture while preserving stable
+component error classes and exact top-level `xpcproxy` retry behavior. The
+combined launchd/startup suite passes 23/23; typecheck, build, lint, matrix,
+and documentation checks pass. Persistent launchd ownership, Developer ID
+provenance, descriptor execution, root-domain installation, and remote issuer
+deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-startup-parser-reuse.md`.
+
 MOP-081/087 launchd parser-hardening addendum at source revision `1b09cfa`:
 bounded `launchctl print` parsing now rejects duplicate service headers,
 duplicate top-level singleton fields, and duplicate program-argument blocks as

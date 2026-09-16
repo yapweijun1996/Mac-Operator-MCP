@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Launchd startup-parser reuse addendum at source revision `3fa25e1`: Edge and
+privileged-helper startup identity capture now share the strict launchd parser,
+rejecting duplicate/nested fields and malformed PID readback before native
+identity capture. The combined launchd/startup suite passes 23/23; typecheck
+and build pass. Persistent launchd ownership, Developer ID provenance,
+descriptor execution, root-domain installation, and remote issuer deployment
+remain open. Evidence:
+`evidence/2026-09-16-launchd-startup-parser-reuse.md`.
+
 Launchd conflicting-field addendum at source revision `1b09cfa`: the bounded
 `launchctl print` parser now rejects duplicate service headers, duplicate
 top-level singleton fields, and duplicate argument blocks, while ignoring
