@@ -17,7 +17,7 @@ reporting `adapterAvailable: false` with an empty list is rejected with stable
 - `npm run typecheck --silent` passed.
 - `npm run build --silent` passed.
 - Focused package suite passed 17/17.
-- Full `npm test --silent` passed: 873 tests, 859 passed, 14 explicit skips,
+- Full `npm test --silent` passed: 874 tests, 860 passed, 14 explicit skips,
   0 failures.
 - The test uses a temporary authenticated IPC socket and clears the key before
   cleanup; no host helper or credential store is changed.

@@ -12,6 +12,7 @@ import {
   buildPrivilegedHelperPackagePlan,
   composePrivilegedHelperPackageReadback,
   createPrivilegedHelperCapabilityRelease,
+  createPrivilegedHelperExistingServiceReader,
   createPrivilegedHelperPackageHostObserver,
   executePrivilegedHelperPackagePlan,
   observePrivilegedHelperPackageReadback,
@@ -23,9 +24,10 @@ import {
   validatePrivilegedHelperFilesystemReadback,
   validatePrivilegedHelperPackageReadback,
   type PrivilegedHelperPackagePlanInput,
-  type PrivilegedHelperPackageReadbackObserver
+  type PrivilegedHelperPackageReadbackObserver,
+  type PrivilegedHelperRuntimeReadback
 } from "./privileged-helper-package.js";
-import type { LaunchdJobReadback } from "./launchd-readback.js";
+import { LaunchdReadbackError, type LaunchdJobReadback } from "./launchd-readback.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 import { AllowlistedPrivilegedHelper, InMemoryPrivilegedHelperReplayGuard, PrivilegedHelperIpcServer } from "./privileged-helper.js";
 
@@ -763,6 +765,80 @@ test("privileged helper existing-service precondition is sampled twice and fails
   await assert.rejects(
     readPrivilegedHelperExistingServiceSnapshot(undefined as never),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_ARGUMENT"
+  );
+});
+
+test("privileged helper existing-service reader binds launchd presence and prior runtime revision", async () => {
+  const plan = buildPrivilegedHelperPackagePlan(base);
+  const launchd: LaunchdJobReadback = {
+    serviceId: "system/com.mac-operator.privileged-helper",
+    domain: "system",
+    label: plan.label,
+    state: "stopped",
+    pid: null,
+    program: plan.launchd.program,
+    arguments: plan.launchd.programArguments,
+    plistPath: plan.plistPath,
+    type: "LaunchDaemon",
+    lastExitCode: 0,
+    truncated: false
+  };
+  let runtimeCalls = 0;
+  const installReader = createPrivilegedHelperExistingServiceReader(plan, {
+    readLaunchd: async () => launchd,
+    readRuntime: async () => {
+      runtimeCalls += 1;
+      throw new Error("install should not require a runtime revision");
+    }
+  });
+  assert.deepEqual(await installReader(), { present: true, sourceRevision: null });
+  assert.equal(runtimeCalls, 0);
+
+  const absentReader = createPrivilegedHelperExistingServiceReader(plan, {
+    readLaunchd: async () => { throw new LaunchdReadbackError("UNAVAILABLE", "missing"); },
+    readRuntime: async () => { throw new Error("absent service should not read runtime"); }
+  });
+  assert.deepEqual(await absentReader(), { present: false, sourceRevision: null });
+
+  const previous = base.sourceRevision;
+  const upgradePlan = buildPrivilegedHelperPackagePlan({ ...base, operation: "upgrade", expectedPreviousSourceRevision: previous });
+  const runtime: PrivilegedHelperRuntimeReadback = {
+    component: "mac-operator-privileged-helper",
+    state: "running",
+    runtimeState: "running",
+    nativeTransportRequired: true,
+    adapterAvailable: false,
+    helperSocketPath: upgradePlan.helperSocketPath,
+    brokerSocketPath: upgradePlan.brokerSocketPath,
+    helperAuthoritySocketPath: upgradePlan.helperAuthoritySocketPath,
+    brokerPeerUid: upgradePlan.brokerPeer.uid,
+    brokerPeerGid: upgradePlan.brokerPeer.gid ?? null,
+    sourceRevision: previous,
+    contractVersion: upgradePlan.contractVersion,
+    policyVersion: upgradePlan.policyVersion,
+    enabledCapabilities: []
+  };
+  const upgradeReader = createPrivilegedHelperExistingServiceReader(upgradePlan, {
+    readLaunchd: async () => ({ ...launchd, state: "running" }),
+    readRuntime: async () => runtime
+  });
+  assert.deepEqual(await upgradeReader(), { present: true, sourceRevision: previous });
+
+  const invalidReader = createPrivilegedHelperExistingServiceReader(plan, {
+    readLaunchd: async () => ({ ...launchd, type: "LaunchAgent" as never }),
+    readRuntime: async () => runtime
+  });
+  await assert.rejects(
+    invalidReader(),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+  const failedReader = createPrivilegedHelperExistingServiceReader(plan, {
+    readLaunchd: async () => { throw new Error("launchd failed"); },
+    readRuntime: async () => runtime
+  });
+  await assert.rejects(
+    failedReader(),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "READBACK_FAILED"
   );
 });
 

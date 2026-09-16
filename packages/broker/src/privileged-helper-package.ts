@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec, MacOsPlistReadback } from "./macos-install-plan.js";
 import { validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
-import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
+import { LaunchdReadbackError, readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 import { readPrivilegedHelperStatus, type PrivilegedHelperAdapter, type PrivilegedHelperStatusClientOptions } from "./privileged-helper.js";
@@ -1135,6 +1135,55 @@ export function createPrivilegedHelperPackageHostObserver(
     readSignature: options.readSignature === undefined
       ? async () => readPrivilegedHelperCodeSignature(plan, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor })
       : async () => options.readSignature!(plan)
+  };
+}
+
+/**
+ * Creates the host-owned existing-service reader consumed by package
+ * execution. Launchd presence is authoritative for install absence/presence;
+ * non-install operations additionally bind the prior source revision to the
+ * authenticated helper runtime status. The reader never accepts a service
+ * identity or revision from MCP arguments.
+ */
+export function createPrivilegedHelperExistingServiceReader(
+  plan: PrivilegedHelperPackagePlan,
+  observer: Pick<PrivilegedHelperPackageReadbackObserver, "readLaunchd" | "readRuntime">
+): () => Promise<PrivilegedHelperExistingServiceReadback> {
+  if (observer === null || typeof observer !== "object" ||
+      typeof observer.readLaunchd !== "function" || typeof observer.readRuntime !== "function") {
+    fail("INVALID_ARGUMENT", "privileged helper existing-service observer is malformed");
+  }
+  const serviceId = `${plan.domain}/${plan.label}`;
+  return async () => {
+    let launchd: LaunchdJobReadback;
+    try {
+      launchd = await observer.readLaunchd(serviceId);
+    } catch (error) {
+      if (error instanceof LaunchdReadbackError && error.code === "UNAVAILABLE") {
+        return { present: false, sourceRevision: null };
+      }
+      if (error instanceof PrivilegedHelperPackageError) throw error;
+      fail("READBACK_FAILED", "privileged helper existing-service launchd readback failed");
+    }
+    if (launchd.serviceId !== serviceId || launchd.domain !== "system" || launchd.label !== plan.label ||
+        launchd.type !== "LaunchDaemon" || launchd.truncated !== false) {
+      fail("SERVICE_MISMATCH", "privileged helper existing-service launchd identity does not match the plan");
+    }
+    if (plan.operation === "install") {
+      return { present: true, sourceRevision: null };
+    }
+    let runtime: PrivilegedHelperRuntimeReadback;
+    try {
+      runtime = await observer.readRuntime();
+    } catch (error) {
+      if (error instanceof PrivilegedHelperPackageError) throw error;
+      fail("READBACK_FAILED", "privileged helper existing-service runtime readback failed");
+    }
+    if (runtime.component !== "mac-operator-privileged-helper" || runtime.nativeTransportRequired !== true ||
+        typeof runtime.sourceRevision !== "string" || !REVISION_PATTERN.test(runtime.sourceRevision)) {
+      fail("SERVICE_MISMATCH", "privileged helper existing-service runtime revision is malformed");
+    }
+    return { present: true, sourceRevision: runtime.sourceRevision };
   };
 }
 
