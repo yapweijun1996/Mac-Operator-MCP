@@ -172,3 +172,13 @@ omit the gate. Physical probes confirm that Apple System artifacts are not
 accepted as Developer ID releases; no notarized artifact or production
 capability is enabled. Evidence:
 `evidence/2026-09-16-notarization-assessment-boundary.md`.
+
+Revision `9541b6b` adds the read-only release-artifact preflight. An owner-only
+manifest binds one canonical artifact path, deterministic bounded tree digest,
+byte count, owner UID, and exact Developer ID identifier/Team ID/CDHash. The
+preflight rejects symlink/special-file entries, unsafe owners/modes, identity
+swaps, digest/size mismatches, and resource overruns before running the fixed
+codesign and Gatekeeper commands. Its CLI emits only bounded evidence. This
+closes the implementation gate but not certificate custody, a successful
+notarized artifact, immutable distribution, or persistent installation.
+Evidence: `evidence/2026-09-16-release-artifact-preflight.md`.

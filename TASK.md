@@ -4,6 +4,19 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-061/072 release-artifact preflight addendum at source revision `9541b6b`:
+the Broker now exposes a manifest-only, read-only release gate that binds a
+canonical artifact's deterministic tree digest/byte count and owner UID to
+Developer ID identifier, Team ID, CDHash, fixed `codesign` verification, and
+fixed Gatekeeper notarization assessment. Bounded descriptor hashing rejects
+symlink/special-file entries, unsafe owners/modes, target swaps, digest
+mismatches, and resource overruns; the CLI emits only redacted evidence.
+Focused tests pass 2/2; the full regression passes 874/874 with 14 explicit
+skips (888 total), and typecheck/build/lint pass. No production signed
+artifact is available, so release assessment, installation, and enablement
+remain open. Evidence:
+`evidence/2026-09-16-release-artifact-preflight.md`.
+
 MOP-061/072 notarization assessment addendum at source revision `93a9850`:
 the fixed `/usr/sbin/spctl` Gatekeeper boundary is enforced by production
 Developer ID Broker/Edge LaunchAgent plans and the root helper package. The

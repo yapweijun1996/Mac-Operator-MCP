@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Release artifact preflight verification: the manifest-only read-only gate
+binds a canonical artifact path, deterministic bounded tree SHA-256/byte
+summary, owner UID, exact Developer ID identifier/Team ID/CDHash, fixed
+`codesign` verification, and fixed `spctl` notarization assessment. The
+descriptor-backed walker rejects symlink/special-file entries, unsafe
+owner/mode, identity changes, digest mismatches, and entry/byte overruns; CLI
+and Broker return no raw command output. Focused release-preflight tests pass
+2/2; the full regression passes 874/874 with 14 explicit skips (888 total),
+and typecheck/build/lint pass. No production Developer ID artifact exists,
+so successful release assessment remains an open Release gate. Evidence:
+`evidence/2026-09-16-release-artifact-preflight.md`.
+
 Notarization assessment verification: the fixed host-only contract invokes
 `/usr/sbin/spctl` with empty environment, canonical artifact validation, a
 five-second timeout, and a 131072-byte output cap. It accepts only one

@@ -24,8 +24,9 @@ remain release gates.
 The production packaging boundary now enforces a fixed Gatekeeper
 `Notarized Developer ID` assessment for Broker, Edge, and root-helper plans,
 including final identity-bound readback. This closes the implementation gate;
-real signed/notarized release-artifact evidence and persistent lifecycle proof
-remain open.
+the release preflight now also binds a manifest digest/byte summary and exact
+Developer ID identity before assessment. Real signed/notarized release-artifact
+evidence and persistent lifecycle proof remain open.
 
 ## Phase 0 — Foundation and contracts
 

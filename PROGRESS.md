@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Release artifact preflight addendum at source revision `9541b6b`: a read-only
+manifest CLI now binds a canonical artifact's bounded deterministic tree
+SHA-256/byte summary, owner UID, Developer ID identifier/Team ID/CDHash, fixed
+`codesign` verification, and fixed `spctl` notarization assessment. Descriptor
+hashing rejects symlinks, special files, unsafe modes/owners, target identity
+changes, and entry/byte budget overruns; raw command output is discarded.
+Focused release-preflight tests pass 2/2; the full regression passes 874/874
+with 14 explicit skips (888 total), and typecheck/build/lint pass.
+No production Developer ID artifact exists on the host, so successful release
+assessment and enablement remain open. Evidence:
+`evidence/2026-09-16-release-artifact-preflight.md`.
+
 Notarization assessment addendum at source revision `93a9850`: the fixed
 Gatekeeper contract is now enforced by production Developer ID Broker/Edge
 LaunchAgent plans and the root helper package. Execution assesses the exact
