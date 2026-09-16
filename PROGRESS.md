@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Launchd startup type-binding addendum at source revision `bd14cba`: Edge and
+privileged-helper Broker-caller identity capture now requires the strict
+readback to explicitly report `type = LaunchAgent` after domain and field
+validation. Missing or substituted startup type fails closed as the stable
+service-unavailable class; focused launchd/startup/helper tests pass 20/20,
+with typecheck and build passing. Persistent launchd ownership, Developer ID
+provenance, descriptor execution, root-domain installation, and remote issuer
+deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-startup-type-binding.md`.
+
 Launchd service-inspector parser addendum at source revision `917d479`: the
 read-only service status adapter now reuses strict launchd parsing and rejects
 forged headers, duplicate/nested fields, malformed PIDs, and unsupported states

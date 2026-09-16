@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Launchd startup type-binding addendum at source revision `bd14cba`: Edge and
+privileged-helper Broker-caller capture now requires an explicit
+`type = LaunchAgent` in the strict readback after GUI-domain validation.
+Missing type readback is rejected as a stable service-unavailable error;
+focused launchd/startup/helper tests pass 20/20, with typecheck and build
+passing. This narrows startup identity ambiguity only; persistent launchd
+ownership, signing provenance, descriptor execution, root-domain installation,
+and remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-startup-type-binding.md`.
+
 Launchd service-inspector parser addendum at source revision `917d479`: the
 read-only service-status adapter now reuses the strict launchd readback parser,
 rejecting forged headers, duplicate singleton fields, nested-field shadowing,

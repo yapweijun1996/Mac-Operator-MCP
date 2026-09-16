@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-081/087 launchd startup type-binding addendum at source revision
+`bd14cba`: Edge startup and privileged-helper Broker-caller capture require an
+explicit `LaunchAgent` type in the validated GUI-domain readback; missing type
+is rejected before PID identity is accepted. Focused launchd/startup/helper
+tests pass 20/20; typecheck, build, lint, matrix, and documentation checks are
+passing. Persistent launchd ownership, signing provenance, descriptor
+execution, helper installation, and remote deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-startup-type-binding.md`.
+
 MOP-030/081/087 launchd service-inspector addendum at source revision `917d479`:
 the read-only launchd status adapter now consumes the shared strict parser,
 rejecting forged headers, duplicate/nested fields, malformed PIDs, and
