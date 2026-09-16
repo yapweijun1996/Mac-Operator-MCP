@@ -125,6 +125,29 @@ test("runtime Broker policy rejects accessor and sparse authority arrays", () =>
   );
 });
 
+test("runtime Broker policy rejects authority arrays with custom prototypes", () => {
+  const base = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
+  const principal = base.principalGrants.get("principal-1");
+  assert.ok(principal);
+
+  const hostileScopes = [...principal.scopes] as Scope[];
+  Object.setPrototypeOf(hostileScopes, { every: () => true });
+  assert.throws(
+    () => validateBrokerPolicy({
+      ...base,
+      principalGrants: new Map(base.principalGrants).set("principal-1", { ...principal, scopes: hostileScopes })
+    }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy contains malformed principal authority"
+  );
+
+  const hostileRules = [...base.targetRules] as typeof base.targetRules;
+  Object.setPrototypeOf(hostileRules, { filter: () => [] });
+  assert.throws(
+    () => validateBrokerPolicy({ ...base, targetRules: hostileRules }),
+    (error: unknown) => error instanceof Error && error.message === "Active Broker policy is malformed"
+  );
+});
+
 test("policy authorization rejects non-data projected scopes and targets", () => {
   const policy = createDefaultPolicy("edge-1", true, ["mac.control.read"]);
   const accessorScopes = ["mac.control.read"] as Scope[];

@@ -209,7 +209,8 @@ function hasOnlyKeys(value: unknown, keys: readonly string[]): boolean {
 
 function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
   try {
-    if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
+        value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
     const names = Object.getOwnPropertyNames(value);
     if (names.length !== value.length + 1 || Object.keys(value).length !== value.length) return false;
     for (let index = 0; index < value.length; index += 1) {
