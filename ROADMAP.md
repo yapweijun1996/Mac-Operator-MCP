@@ -2,7 +2,7 @@
 
 Status: Active implementation with gated release
 Version: 0.1
-Last verified: 2026-09-15
+Last verified: 2026-09-16
 
 ## Current position
 
@@ -14,6 +14,12 @@ prototypes, and the separately authenticated privileged-helper/package
 candidate. Production enablement remains closed where host identity,
 signing, installation, permission, or independent review evidence is still
 missing.
+
+The latest physical-host evidence includes a temporary Edge-first/Broker-second
+LaunchAgent lifecycle smoke and a digest-bound Keychain ACL/retirement rerun.
+Both are disposable, zero-capability checks; persistent production install,
+Developer ID/notarization, descriptor execution, and privileged enablement
+remain release gates.
 
 ## Phase 0 — Foundation and contracts
 
