@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process cwd permission addendum at source revision `5feda4c`:
+`ProcessSupervisor` now rejects group/other-writable working directories in
+the final Broker-owned validation, while preserving canonical/no-follow and
+pre/post identity checks. The physical-Darwin ProcessSupervisor suite passes
+42/42; typecheck, lint, and build pass. Atomic descriptor execution,
+remount resistance, and production sandbox/process-tree isolation remain
+open. Evidence: `evidence/2026-09-16-process-cwd-permission-boundary.md`.
+
 Launchd readback identity addendum at source revision `cd9f0bf`: bounded
 `launchctl print` parsing now binds `gui/<uid>` to `LaunchAgent` and `system`
 to `LaunchDaemon`, and requires the first program argument to equal the

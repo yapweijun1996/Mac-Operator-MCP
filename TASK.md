@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 process cwd permission addendum at source revision `5feda4c`:
+`ProcessSupervisor` rejects group/other-writable working directories before
+child start and repeats the existing canonical/no-follow identity checks.
+The physical-Darwin ProcessSupervisor suite passes 42/42; typecheck, lint,
+and build pass. Atomic descriptor execution, remount resistance, and
+production sandbox/process-tree isolation remain open. Evidence:
+`evidence/2026-09-16-process-cwd-permission-boundary.md`.
+
 MOP-081/087 launchd readback addendum at source revision `cd9f0bf`: bounded
 `launchctl print` parsing binds GUI domains to `LaunchAgent`, system domains to
 `LaunchDaemon`, and requires the first program argument to match the declared
