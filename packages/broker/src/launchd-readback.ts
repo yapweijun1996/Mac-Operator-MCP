@@ -91,8 +91,9 @@ export function parseLaunchdJobReadback(
   if (typeof output !== "string" || Buffer.byteLength(output, "utf8") > LAUNCHCTL_OUTPUT_CAP_BYTES) {
     throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd readback output is outside its bounded format");
   }
-  const header = new RegExp(`^${escapeRegExp(serviceId)}\\s*=\\s*\\{`, "mu");
-  if (!header.test(output)) {
+  const header = new RegExp(`^${escapeRegExp(serviceId)}\\s*=\\s*\\{`, "gmu");
+  const headers = [...output.matchAll(header)];
+  if (headers.length !== 1) {
     throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd readback service identity does not match the request");
   }
   const stateValue = field(output, "state");
@@ -129,7 +130,14 @@ export function parseLaunchdJobReadback(
 
 function parseArguments(output: string): readonly string[] | null {
   const lines = output.split(/\r?\n/u);
-  const start = lines.findIndex((line) => /^\s*arguments\s*=\s*\{\s*$/u.test(line));
+  const starts = lines.reduce<number[]>((indices, line, index) => {
+    if (/^\targuments\s*=\s*\{\s*$/u.test(line)) indices.push(index);
+    return indices;
+  }, []);
+  if (starts.length > 1) {
+    throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd returned duplicate program argument lists");
+  }
+  const start = starts[0] ?? -1;
   if (start < 0) return null;
   const values: string[] = [];
   let closed = false;
@@ -170,7 +178,15 @@ function parseServiceId(serviceId: string): { domain: "system" | `gui/${number}`
 }
 
 function field(output: string, name: string): string | undefined {
-  return new RegExp(`(?:^|\\n)\\s*${escapeRegExp(name)}\\s*=\\s*([^\\r\\n]+)`, "mu").exec(output)?.[1]?.trim();
+  // launchctl nests additional state dictionaries below the one-tab service
+  // fields. Restrict singleton extraction to that exact top-level indent so a
+  // nested `state = active` cannot shadow the service's `state = running`.
+  const pattern = new RegExp(`(?:^|\\n)\\t${escapeRegExp(name)}\\s*=\\s*([^\\r\\n]+)`, "gmu");
+  const matches = [...output.matchAll(pattern)];
+  if (matches.length > 1) {
+    throw new LaunchdReadbackError("MALFORMED_READBACK", `launchd returned duplicate ${name} fields`);
+  }
+  return matches[0]?.[1]?.trim();
 }
 
 function parseState(value: string | undefined): LaunchdJobReadback["state"] {

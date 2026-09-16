@@ -86,6 +86,25 @@ test("launchd readback rejects identity, traversal, path, and state substitution
   );
 });
 
+test("launchd readback rejects duplicate singleton fields and argument blocks", () => {
+  const serviceId = "gui/501/com.mac-operator.broker";
+  const duplicateState = `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tstate = stopped\n}`;
+  assert.throws(
+    () => parseLaunchdJobReadback(serviceId, duplicateState),
+    (error: unknown) => error instanceof LaunchdReadbackError && error.code === "MALFORMED_READBACK"
+  );
+  const duplicateProgram = `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tprogram = /bin/node\n\tprogram = /bin/sh\n}`;
+  assert.throws(
+    () => parseLaunchdJobReadback(serviceId, duplicateProgram),
+    (error: unknown) => error instanceof LaunchdReadbackError && error.code === "MALFORMED_READBACK"
+  );
+  const duplicateArguments = `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\targuments = {\n\t/bin/node\n\t}\n\targuments = {\n\t/bin/node\n\t}\n}`;
+  assert.throws(
+    () => parseLaunchdJobReadback(serviceId, duplicateArguments),
+    (error: unknown) => error instanceof LaunchdReadbackError && error.code === "MALFORMED_READBACK"
+  );
+});
+
 test("launchd readback normalizes macOS xpcproxy bootstrap state without claiming running", () => {
   const serviceId = "gui/501/com.mac-operator.broker";
   const readback = parseLaunchdJobReadback(serviceId, `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = xpcproxy\n\tprogram = /bin/sleep\n\targuments = {\n\t/bin/sleep\n\t30\n\t}\n\tpid = 4123\n}`);
