@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-013/030 process-detail PID-binding addendum at source revision `a8cec0e`:
+the native process adapter rejects a detail result for a different PID after
+the before/after identity fence, preventing direct adapter callers from
+receiving a target-swapped success. The focused Broker tests pass 2/2 and the
+adapter suite passes 7/7; typecheck, build, lint, matrix, and documentation
+checks pass. Continuous identity, descriptor execution, and production
+sandbox evidence remain open. Evidence:
+`evidence/2026-09-16-process-detail-pid-binding.md`.
+
 MOP-030/081 launchd service-id bound addendum at source revision `c5d48fd`:
 the system-domain service-status adapter now rejects labels longer than the
 strict launchd readback contract before invoking `launchctl`; the injected

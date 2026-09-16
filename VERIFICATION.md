@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process-detail PID-binding addendum at source revision `a8cec0e`: native
+process inspection now binds `detail.pid` to the requested PID after the
+native before/after start-time fence, while the Broker retains its own result
+check. Focused Broker process-inspection tests pass 2/2 and the adapter suite
+passes 7/7; typecheck and build pass. This closes adapter-result mismatch only;
+continuous post-read identity, descriptor execution, and production sandbox
+evidence remain open. Evidence:
+`evidence/2026-09-16-process-detail-pid-binding.md`.
+
 Launchd service-id bound addendum at source revision `c5d48fd`: the
 system-domain service-status adapter now uses the strict parser's bounded
 128-character service-label grammar and rejects an overlong label before any

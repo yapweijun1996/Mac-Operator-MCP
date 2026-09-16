@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process-detail PID-binding addendum at source revision `a8cec0e`: the native
+process-inspection adapter now rejects a parsed detail payload whose `pid`
+differs from the requested target after the before/after identity fence. The
+Broker-layer check remains in place as defense in depth. The focused Broker
+process-inspection tests pass 2/2 and the adapter suite passes 7/7; typecheck
+and build pass. Continuous post-read identity, descriptor execution, and
+production sandbox evidence remain open. Evidence:
+`evidence/2026-09-16-process-detail-pid-binding.md`.
+
 Launchd service-id bound addendum at source revision `c5d48fd`: the
 system-domain service-status adapter now shares the strict parser's 128-character
 label grammar and rejects a 129-character label before invoking `launchctl`.
