@@ -4,6 +4,16 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-061/072 LaunchAgent precondition addendum: Broker and Edge package
+executors now require a host-owned, double-sampled existing-service reader.
+Launchd presence and reviewed target identity are checked before any command,
+plist mutation, or service transition; non-install operations additionally
+bind the prior source revision from the authenticated runtime channel. A
+caller snapshot cannot authorize the operation and is retained only as a
+checked hint. Focused install tests pass 23/23 and the full regression passes
+861/861 with 14 explicit skips. Real LaunchAgent mutation remains unperformed.
+Evidence: `evidence/2026-09-16-launchagent-precondition-readback.md`.
+
 MOP-072 helper package precondition addendum: the host-only executor now owns
 the existing-service readback, samples it twice before mutation, and treats a
 caller snapshot only as a checked hint. A changed or malformed precondition

@@ -120,3 +120,14 @@ launchd recovery flow and rejects mismatched host confirmation before any
 mutation. Edge readback has no Broker-status fallback. These are still
 host-only APIs; production installer authorization and signed release
 provenance remain open.
+
+The LaunchAgent precondition boundary now follows the same host-authority
+rule as the privileged helper package: `executeMacOsInstallPlan` and
+`executeMacOsEdgeInstallPlan` require a host-owned reader sampled twice before
+any signature command, plist write, or launchd transition. The reader binds
+the exact GUI-domain service identity, LaunchAgent type, reviewed program,
+arguments, and plist path; non-install operations also bind the prior runtime
+source revision. Caller-provided state is only a consistency hint. Focused
+tests and the full regression are green, but no new real service mutation is
+claimed. Evidence:
+`evidence/2026-09-16-launchagent-precondition-readback.md`.

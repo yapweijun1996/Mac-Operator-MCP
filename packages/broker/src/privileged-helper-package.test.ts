@@ -832,6 +832,14 @@ test("privileged helper existing-service reader binds launchd presence and prior
     invalidReader(),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
   );
+  const targetSwapReader = createPrivilegedHelperExistingServiceReader(plan, {
+    readLaunchd: async () => ({ ...launchd, program: "/usr/local/bin/other-helper" }),
+    readRuntime: async () => runtime
+  });
+  await assert.rejects(
+    targetSwapReader(),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
   const failedReader = createPrivilegedHelperExistingServiceReader(plan, {
     readLaunchd: async () => { throw new Error("launchd failed"); },
     readRuntime: async () => runtime

@@ -1165,8 +1165,14 @@ export function createPrivilegedHelperExistingServiceReader(
       if (error instanceof PrivilegedHelperPackageError) throw error;
       fail("READBACK_FAILED", "privileged helper existing-service launchd readback failed");
     }
+    if (!isPlainDataRecord(launchd)) {
+      fail("INVALID_READBACK", "privileged helper existing-service launchd readback is malformed");
+    }
     if (launchd.serviceId !== serviceId || launchd.domain !== "system" || launchd.label !== plan.label ||
-        launchd.type !== "LaunchDaemon" || launchd.truncated !== false) {
+        launchd.type !== "LaunchDaemon" || launchd.truncated !== false ||
+        launchd.program !== plan.launchd.program ||
+        !sameStrings(launchd.arguments, plan.launchd.programArguments) ||
+        launchd.plistPath !== plan.plistPath) {
       fail("SERVICE_MISMATCH", "privileged helper existing-service launchd identity does not match the plan");
     }
     if (plan.operation === "install") {

@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { BrokerServiceMetadata, BrokerServiceReadback } from "./service-entrypoint.js";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
-import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
+import { LaunchdReadbackError, readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
 import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceConfig, type LaunchdServiceReadback } from "./launchd.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { readBrokerStatus, type BrokerStatusClientOptions } from "./broker-status-ipc.js";
@@ -290,6 +290,94 @@ export interface ExistingServiceReadback {
   sourceRevision: string | null;
 }
 
+export interface MacOsExistingServiceReadbackObserver {
+  readLaunchd(serviceId: string): Promise<LaunchdJobReadback>;
+  /** Required for upgrade, rollback, and uninstall; omitted for install probes. */
+  readSourceRevision?: () => Promise<string> | string;
+}
+
+/**
+ * Creates the host-owned existing-service source used before a LaunchAgent
+ * mutation. Launchd presence is authoritative; a prior source revision is
+ * read from the same authenticated Broker/Edge status channel for non-install
+ * operations. MCP arguments are never consulted.
+ */
+export function createMacOsExistingServiceReader(
+  plan: MacOsServiceInstallPlanBase,
+  observer: MacOsExistingServiceReadbackObserver
+): () => Promise<ExistingServiceReadback> {
+  if (observer === null || typeof observer !== "object" || typeof observer.readLaunchd !== "function") {
+    fail("INVALID_ARGUMENT", "existing-service observer is malformed");
+  }
+  if (plan.operation !== "install" && typeof observer.readSourceRevision !== "function") {
+    fail("INVALID_ARGUMENT", "non-install existing-service observer requires a source revision reader");
+  }
+  const serviceId = `${plan.domain}/${plan.label}`;
+  return async () => {
+    let launchd: LaunchdJobReadback;
+    try {
+      launchd = await observer.readLaunchd(serviceId);
+    } catch (error) {
+      if (error instanceof LaunchdReadbackError && error.code === "UNAVAILABLE") {
+        return { present: false, sourceRevision: null };
+      }
+      if (error instanceof MacOsInstallPlanError) throw error;
+      fail("READBACK_FAILED", "existing-service launchd readback failed");
+    }
+    if (!isRecord(launchd)) {
+      fail("INVALID_READBACK", "existing-service launchd readback is malformed");
+    }
+    const launchdArguments: unknown = launchd.arguments;
+    const validArguments = launchdArguments === null ||
+      (Array.isArray(launchdArguments) && launchdArguments.every((value) => typeof value === "string"));
+    if (!validArguments) {
+      fail("INVALID_READBACK", "existing-service launchd readback is malformed");
+    }
+    if (launchd.serviceId !== serviceId || launchd.domain !== plan.domain || launchd.label !== plan.label ||
+        launchd.type !== "LaunchAgent" || launchd.truncated !== false ||
+        launchd.program !== plan.launchd.program ||
+        !sameStrings((launchd.arguments ?? []) as readonly string[], plan.launchd.programArguments) ||
+        launchd.plistPath !== plan.plistPath) {
+      fail("SERVICE_MISMATCH", "existing-service launchd identity does not match the plan");
+    }
+    if (plan.operation === "install") return { present: true, sourceRevision: null };
+    let sourceRevision: string;
+    try {
+      sourceRevision = await observer.readSourceRevision!();
+    } catch (error) {
+      if (error instanceof MacOsInstallPlanError) throw error;
+      fail("READBACK_FAILED", "existing-service runtime revision readback failed");
+    }
+    if (typeof sourceRevision !== "string" || !/^[0-9a-f]{7,64}$/u.test(sourceRevision)) {
+      fail("SERVICE_MISMATCH", "existing-service source revision is malformed");
+    }
+    return { present: true, sourceRevision };
+  };
+}
+
+/** Samples a host precondition twice so a service replacement cannot race an
+ * install, upgrade, rollback, or uninstall decision. */
+export async function readMacOsExistingServiceSnapshot(
+  reader: () => Promise<ExistingServiceReadback> | ExistingServiceReadback
+): Promise<ExistingServiceReadback> {
+  if (typeof reader !== "function") fail("INVALID_ARGUMENT", "existing-service reader is required");
+  let first: ExistingServiceReadback;
+  let second: ExistingServiceReadback;
+  try {
+    first = await reader();
+    second = await reader();
+  } catch (error) {
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("READBACK_FAILED", "existing-service readback failed");
+  }
+  validateExistingServiceSnapshot(first);
+  validateExistingServiceSnapshot(second);
+  if (!sameExistingService(first, second)) {
+    fail("SERVICE_MISMATCH", "existing-service identity changed during preflight");
+  }
+  return first;
+}
+
 export interface InstallFilesystemOptions {
   ownerUid: number;
   requirePlist?: boolean;
@@ -341,7 +429,10 @@ export interface MacOsInstallCommandExecutor {
 export interface MacOsInstallExecutionOptions extends MacOsPlistApplyOptions {
   /** Host-only confirmation; it must exactly match the planned operation. */
   confirmOperation: MacOsInstallOperation;
-  existingService: ExistingServiceReadback;
+  /** Optional caller snapshot retained only as a consistency hint. */
+  existingService?: ExistingServiceReadback;
+  /** Host-owned, read-only precondition source. It is sampled twice before mutation. */
+  readExistingService: () => Promise<ExistingServiceReadback> | ExistingServiceReadback;
   commandExecutor?: MacOsInstallCommandExecutor;
   /** Returns only independently observed sources; execution composes them. */
   readback: () => Promise<MacOsInstallReadbackSources | null>;
@@ -355,7 +446,10 @@ export interface MacOsInstallExecutionResult {
 
 export interface MacOsEdgeInstallExecutionOptions extends MacOsPlistApplyOptions {
   confirmOperation: MacOsInstallOperation;
-  existingService: ExistingServiceReadback;
+  /** Optional caller snapshot retained only as a consistency hint. */
+  existingService?: ExistingServiceReadback;
+  /** Host-owned, read-only precondition source. It is sampled twice before mutation. */
+  readExistingService: () => Promise<ExistingServiceReadback> | ExistingServiceReadback;
   commandExecutor?: MacOsInstallCommandExecutor;
   readback: () => Promise<MacOsEdgeInstallReadbackSources | null>;
 }
@@ -903,10 +997,7 @@ export async function readMacOsCodeSignature(
 }
 
 export function validateExistingServicePrecondition(plan: MacOsServiceInstallPlanBase, readback: ExistingServiceReadback): void {
-  if (!isRecord(readback) || typeof readback.present !== "boolean" ||
-      (readback.sourceRevision !== null && typeof readback.sourceRevision !== "string")) {
-    fail("INVALID_READBACK", "existing service readback is malformed");
-  }
+  validateExistingServiceSnapshot(readback);
   if (plan.operation === "install") {
     if (readback.present || readback.sourceRevision !== null) fail("SERVICE_MISMATCH", "install requires an absent existing service");
     return;
@@ -914,6 +1005,17 @@ export function validateExistingServicePrecondition(plan: MacOsServiceInstallPla
   if (!readback.present || readback.sourceRevision !== plan.expectedPreviousSourceRevision) {
     fail("SERVICE_MISMATCH", "existing service does not match the approved operation precondition");
   }
+}
+
+function validateExistingServiceSnapshot(value: ExistingServiceReadback): void {
+  if (!isRecord(value) || typeof value.present !== "boolean" ||
+      (value.sourceRevision !== null && (typeof value.sourceRevision !== "string" || !/^[0-9a-f]{7,64}$/u.test(value.sourceRevision)))) {
+    fail("INVALID_READBACK", "existing service readback is malformed");
+  }
+}
+
+function sameExistingService(left: ExistingServiceReadback, right: ExistingServiceReadback): boolean {
+  return left.present === right.present && left.sourceRevision === right.sourceRevision;
 }
 
 /**
@@ -1093,10 +1195,20 @@ export async function executeMacOsInstallPlan(
   plan: MacOsInstallPlan,
   options: MacOsInstallExecutionOptions
 ): Promise<MacOsInstallExecutionResult> {
+  if (options === null || typeof options !== "object") {
+    fail("INVALID_ARGUMENT", "install execution options are malformed");
+  }
   if (options.confirmOperation !== plan.operation) {
     fail("CONFIRMATION_REQUIRED", "installation requires an explicit matching host operation confirmation");
   }
-  validateExistingServicePrecondition(plan, options.existingService);
+  const existingService = await readMacOsExistingServiceSnapshot(options.readExistingService);
+  if (options.existingService !== undefined) {
+    validateExistingServiceSnapshot(options.existingService);
+    if (!sameExistingService(options.existingService, existingService)) {
+      fail("SERVICE_MISMATCH", "caller existing-service hint does not match the host precondition readback");
+    }
+  }
+  validateExistingServicePrecondition(plan, existingService);
   const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
   if (plan.operation !== "uninstall") {
     await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
@@ -1158,8 +1270,18 @@ export async function executeMacOsEdgeInstallPlan(
   plan: MacOsEdgeInstallPlan,
   options: MacOsEdgeInstallExecutionOptions
 ): Promise<MacOsEdgeInstallExecutionResult> {
+  if (options === null || typeof options !== "object") {
+    fail("INVALID_ARGUMENT", "Edge install execution options are malformed");
+  }
   if (options.confirmOperation !== plan.operation) fail("CONFIRMATION_REQUIRED", "installation requires an explicit matching host operation confirmation");
-  validateExistingServicePrecondition(plan, options.existingService);
+  const existingService = await readMacOsExistingServiceSnapshot(options.readExistingService);
+  if (options.existingService !== undefined) {
+    validateExistingServiceSnapshot(options.existingService);
+    if (!sameExistingService(options.existingService, existingService)) {
+      fail("SERVICE_MISMATCH", "caller existing-service hint does not match the host precondition readback");
+    }
+  }
+  validateExistingServicePrecondition(plan, existingService);
   const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
   if (plan.operation !== "uninstall") await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
   let bootedOut = false;

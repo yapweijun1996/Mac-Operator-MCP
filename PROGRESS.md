@@ -4,6 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+LaunchAgent precondition addendum: Broker and Edge install executors now
+derive the existing-service precondition from a host-owned LaunchAgent
+observer and sample it twice before signature verification, plist writes, or
+launchd transitions. The observer binds the exact per-user service ID,
+LaunchAgent type, reviewed program/arguments, and plist path; upgrades,
+rollbacks, and uninstalls also require the prior source revision from the
+authenticated runtime channel. Caller-supplied state is optional and checked
+only as a consistency hint. Focused macOS install tests pass 23/23; the full
+regression passes 861/861 with 14 explicit skips, and typecheck/build pass.
+No real service mutation was performed. Evidence:
+`evidence/2026-09-16-launchagent-precondition-readback.md`.
+
 Helper package precondition addendum: host-only package execution now samples
 the existing-service status twice before any signature command, plist write,
 or launchd transition. Caller-supplied snapshots are optional consistency
@@ -30,7 +42,7 @@ descriptor execution, and live privileged enablement remain open. Evidence:
 Process descendant fixture addendum: the Darwin persisted-descendant test now
 keeps its child alive until native PID/start-time observation is recorded, then
 terminates the test-owned child explicitly. Three isolated runs and the latest
-874-test regression pass; production process-control behavior is unchanged.
+875-test regression pass; production process-control behavior is unchanged.
 Evidence: `evidence/2026-09-16-process-descendant-fixture-stability.md`.
 
 Helper runtime service-control addendum: the key-material helper runtime now
@@ -58,7 +70,7 @@ arguments with empty environment and bounded budgets, and verifies a final
 LaunchDaemon state readback. Idempotent requests still perform postcondition
 readback; unsupported enable/disable actions and unresolved readbacks fail
 closed. The production adapter also requires a root helper process and host
-descriptor-exec evidence. Focused adapter tests pass 6/6, latest full regression passes 860/860 with
+descriptor-exec evidence. Focused adapter tests pass 6/6, latest full regression passes 861/861 with
 14 explicit skips, and typecheck passes. Production availability remains
 gated by descriptor-exec evidence. Evidence:
 `evidence/2026-09-16-privileged-service-control-adapter.md`.

@@ -13,6 +13,7 @@ import {
   collectMacOsEdgeInstallReadbackSources,
   composeMacOsInstallReadback,
   composeMacOsEdgeInstallReadback,
+  createMacOsExistingServiceReader,
   createMacOsInstallHostObserver,
   createMacOsEdgeInstallHostObserver,
   executeMacOsInstallPlan,
@@ -20,6 +21,7 @@ import {
   inspectMacOsInstallFilesystem,
   observeMacOsInstallReadback,
   observeMacOsEdgeInstallReadback,
+  readMacOsExistingServiceSnapshot,
   readMacOsCodeSignature,
   readMacOsPlistReadback,
   MacOsInstallPlanError,
@@ -36,6 +38,7 @@ import {
 import { createAuthorityControlUninstallActions, executeMacOsUninstallPlan } from "./macos-uninstall-plan.js";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { BrokerStatusIpcServer } from "./broker-status-ipc.js";
+import { LaunchdReadbackError, type LaunchdJobReadback } from "./launchd-readback.js";
 
 const base: MacOsInstallPlanInput = {
   uid: 501,
@@ -243,12 +246,98 @@ test("Edge install plan rejects component or listener substitution", () => {
   assert.throws(() => buildMacOsEdgeInstallPlan({ ...edgeBase, metadata: { ...edgeBase.metadata, component: "mac-operator-broker" as never } }), /metadata/u);
 });
 
+test("LaunchAgent existing-service reader binds launchd presence and prior source revision", async () => {
+  const plan = buildMacOsInstallPlan(base);
+  const launchd: LaunchdJobReadback = {
+    serviceId: `${plan.domain}/${plan.label}`,
+    domain: plan.domain as `gui/${number}`,
+    label: plan.label,
+    state: "stopped",
+    pid: null,
+    program: plan.launchd.program,
+    arguments: plan.launchd.programArguments,
+    plistPath: plan.plistPath,
+    type: "LaunchAgent",
+    lastExitCode: 0,
+    truncated: false
+  };
+  let runtimeReads = 0;
+  const installReader = createMacOsExistingServiceReader(plan, {
+    readLaunchd: async () => launchd,
+    readSourceRevision: async () => { runtimeReads += 1; return "bad"; }
+  });
+  assert.deepEqual(await installReader(), { present: true, sourceRevision: null });
+  assert.equal(runtimeReads, 0);
+
+  const absentReader = createMacOsExistingServiceReader(plan, {
+    readLaunchd: async () => { throw new LaunchdReadbackError("UNAVAILABLE", "missing"); }
+  });
+  assert.deepEqual(await absentReader(), { present: false, sourceRevision: null });
+
+  const previous = base.metadata.sourceRevision;
+  const upgradePlan = buildMacOsInstallPlan({ ...base, operation: "upgrade", expectedPreviousSourceRevision: previous });
+  const upgradeReader = createMacOsExistingServiceReader(upgradePlan, {
+    readLaunchd: async () => ({ ...launchd, serviceId: `${upgradePlan.domain}/${upgradePlan.label}`, domain: upgradePlan.domain as `gui/${number}`, label: upgradePlan.label }),
+    readSourceRevision: async () => previous
+  });
+  assert.deepEqual(await upgradeReader(), { present: true, sourceRevision: previous });
+
+  assert.throws(
+    () => createMacOsExistingServiceReader(upgradePlan, { readLaunchd: async () => launchd }),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_ARGUMENT"
+  );
+  const driftReader = createMacOsExistingServiceReader(plan, {
+    readLaunchd: async () => ({ ...launchd, type: "LaunchDaemon" as never })
+  });
+  await assert.rejects(
+    driftReader(),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SERVICE_MISMATCH"
+  );
+  const targetSwapReader = createMacOsExistingServiceReader(plan, {
+    readLaunchd: async () => ({ ...launchd, program: "/Users/operator/Library/Application Support/Other/bin/node" })
+  });
+  await assert.rejects(
+    targetSwapReader(),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SERVICE_MISMATCH"
+  );
+  const malformedReader = createMacOsExistingServiceReader(plan, {
+    readLaunchd: async () => ({ ...launchd, arguments: { forged: true } as never })
+  });
+  await assert.rejects(
+    malformedReader(),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_READBACK"
+  );
+  const failedReader = createMacOsExistingServiceReader(plan, {
+    readLaunchd: async () => { throw new Error("launchd failed"); }
+  });
+  await assert.rejects(
+    failedReader(),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "READBACK_FAILED"
+  );
+
+  let samples = 0;
+  assert.deepEqual(await readMacOsExistingServiceSnapshot(() => {
+    samples += 1;
+    return { present: false, sourceRevision: null };
+  }), { present: false, sourceRevision: null });
+  assert.equal(samples, 2);
+  let changingSamples = 0;
+  await assert.rejects(
+    readMacOsExistingServiceSnapshot(() => {
+      changingSamples += 1;
+      return changingSamples === 1 ? { present: false, sourceRevision: null } : { present: true, sourceRevision: previous };
+    }),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SERVICE_MISMATCH"
+  );
+});
+
 test("Edge executor requires explicit host confirmation before any mutation", async () => {
   const plan = buildMacOsEdgeInstallPlan(edgeBase);
   await assert.rejects(executeMacOsEdgeInstallPlan(plan, {
     ownerUid: 501,
     confirmOperation: "upgrade",
     existingService: { present: false, sourceRevision: null },
+    readExistingService: async () => ({ present: false, sourceRevision: null }),
     readback: async () => null
   }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "CONFIRMATION_REQUIRED");
 });
@@ -720,6 +809,7 @@ test("install executor requires explicit confirmation and verifies final Broker 
       executeMacOsInstallPlan(plan, {
         confirmOperation: "upgrade",
         existingService: { present: false, sourceRevision: null },
+        readExistingService: async () => ({ present: false, sourceRevision: null }),
         ownerUid: uid,
         commandExecutor: executor,
         readback: async () => null
@@ -731,6 +821,7 @@ test("install executor requires explicit confirmation and verifies final Broker 
     const result = await executeMacOsInstallPlan(plan, {
       confirmOperation: "install",
       existingService: { present: false, sourceRevision: null },
+      readExistingService: async () => ({ present: false, sourceRevision: null }),
       ownerUid: uid,
       commandExecutor: executor,
       readback: async () => readbackSources(plan)
@@ -762,6 +853,7 @@ test("install executor requires explicit confirmation and verifies final Broker 
     const removed = await executeMacOsUninstallPlan(uninstallPlan, {
       confirmOperation: "uninstall",
       existingService: { present: true, sourceRevision: base.metadata.sourceRevision },
+      readExistingService: async () => ({ present: true, sourceRevision: base.metadata.sourceRevision }),
       ownerUid: uid,
       commandExecutor: executor,
       readback: async () => null,
@@ -793,6 +885,7 @@ test("uninstall authority gate fails closed before filesystem mutation", async (
     executeMacOsUninstallPlan(plan, {
       confirmOperation: "uninstall",
       existingService: { present: true, sourceRevision: base.metadata.sourceRevision },
+      readExistingService: async () => ({ present: true, sourceRevision: base.metadata.sourceRevision }),
       ownerUid: base.uid,
       commandExecutor: executor,
       readback: async () => null,
@@ -875,6 +968,7 @@ test("install executor stops a mismatched service and leaves an explicit recover
       executeMacOsInstallPlan(plan, {
         confirmOperation: "upgrade",
         existingService: { present: true, sourceRevision: base.metadata.sourceRevision },
+        readExistingService: async () => ({ present: true, sourceRevision: base.metadata.sourceRevision }),
         ownerUid: uid,
         commandExecutor: executor,
         readback: async () => null
