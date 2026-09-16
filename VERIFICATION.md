@@ -1827,6 +1827,13 @@ a host capability limitation; no pathname shim is treated as atomic descriptor
 execution. `VT-FS-02` and production task enablement remain open. Evidence:
 `evidence/2026-09-15-darwin-descriptor-exec-boundary.md`.
 
+Descriptor-exec SDK follow-up: a compiled macOS 26.2 probe confirmed that
+`posix_spawn_file_actions_addfchdir` and descriptor inheritance are available,
+but executable selection through `/dev/fd/<fd>` still returns `Permission
+denied` for both `posix_spawn` and direct `execve`. Cwd-descriptor support is
+therefore not executable-descriptor proof, and the production gate remains
+closed. Evidence: `evidence/2026-09-16-descriptor-exec-sdk-probe.md`.
+
 Process argv false-positive addendum: source revision `7231964` restricts
 sensitive option-name matching to explicit Unix options and preserves
 full-argument concrete token-signature scanning. Real-Darwin sandbox tests pass

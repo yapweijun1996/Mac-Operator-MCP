@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Descriptor-exec SDK probe addendum: a physical Darwin 25.2.0 / macOS 26.2
+probe confirmed that descriptor-relative cwd actions exist, but both
+`posix_spawn("/dev/fd/<fd>")` and a direct `execve("/dev/fd/<fd>")` return
+`Permission denied`. The Broker keeps executable descriptor launch disabled;
+cwd-descriptor support is not treated as an atomic executable-selection proof.
+Evidence: `evidence/2026-09-16-descriptor-exec-sdk-probe.md`.
+
 Process-supervisor regression addendum at source revision `a04f628`: the
 detached-descendant recovery test now accepts `UNKNOWN` when concurrent Edge
 fixtures make the native PID observer uncertain, while asserting that only a
