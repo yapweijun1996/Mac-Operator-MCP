@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+ProcessSupervisor argument-array addendum at source revision `6e3a4dc`: child
+launch now rejects custom-prototype argument vectors before executable checks or
+spawn. The ProcessSupervisor suite passes 44/44 and the full default
+regression passes 880/880 with 14 explicit skips (894 total). Descriptor-only
+execution remains unavailable and task capabilities remain disabled. Evidence:
+`evidence/2026-09-16-process-array-prototype-boundary.md`.
+
 Task-profile array prototype addendum at source revision `a3625e1`: profile
 fixed arguments, cwd/filesystem roots, network allowlists, and task request
 args now require native arrays with descriptor-backed elements. Hostile custom

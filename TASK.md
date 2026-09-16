@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045/086 ProcessSupervisor argument-array addendum at source revision
+`6e3a4dc`: process launch rejects custom-prototype argument vectors before
+executable validation or child spawn. ProcessSupervisor tests pass 44/44 and
+the full default regression passes 880/880 with 14 explicit skips (894 total).
+Descriptor-backed execution and task capability enablement remain blocked.
+Evidence: `evidence/2026-09-16-process-array-prototype-boundary.md`.
+
 MOP-043/086 task-profile array prototype addendum at source revision
 `a3625e1`: profile-owned roots, fixed arguments, network allowlists, and task
 request args require native arrays with descriptor-backed elements; hostile

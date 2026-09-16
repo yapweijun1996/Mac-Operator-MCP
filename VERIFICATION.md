@@ -3,6 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+ProcessSupervisor argument-array verification at source revision `6e3a4dc`:
+argument vectors require a native dense string array before executable checks
+or child spawn. ProcessSupervisor tests pass 44/44; the full default regression
+passes 880/880 with 14 explicit skips (894 total), with 0 failures. Evidence:
+`evidence/2026-09-16-process-array-prototype-boundary.md`.
+
 Task-profile array prototype verification at source revision `a3625e1`:
 profile-owned and request argument arrays require native prototypes and
 descriptor-backed elements before executable/cwd/network authority is used.
