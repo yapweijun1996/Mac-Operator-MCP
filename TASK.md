@@ -4,6 +4,20 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-016/046 Edge mutation-authority regression addendum at source revisions
+`7207b72` and `17793f2`: the authenticated HTTPS -> signed IPC path now
+exercises a Broker-enabled atomic write with a single-use approval, active
+`mutations` kill-switch cancellation, queued-write cancellation with HTTPS
+status readback, Edge-provenance queued cancellation, and stable
+post-revocation `REVOKED` plus replay denial. A separately spawned Edge
+process also receives `REVOKED` on the same MCP session after parent Broker
+revocation over native peer-checked IPC. Focused HTTPS tests pass 2/2 and the
+complete Edge suite passes 66/66. This remains controlled boundary evidence;
+physical durability, installed launchd lifecycle, remote revocation
+distribution, and OS-level worker-termination evidence remain open. Evidence:
+`evidence/2026-09-16-edge-https-mutation-authority.md` and
+`evidence/2026-09-16-edge-cross-process-revocation.md`.
+
 MOP-042 task-sandbox Docker-socket denial addendum at source revision
 `314189c`: the Broker-owned Seatbelt renderer emits explicit read/write deny
 rules for `/var/run/docker.sock` and `/private/var/run/docker.sock`, even when
