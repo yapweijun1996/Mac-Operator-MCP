@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-011/080 request-array prototype addendum at source revision `8ba9e67`:
+the signed request parser rejects arrays with custom prototypes and checks
+principal scopes through descriptor-backed indexed reads plus a local duplicate
+set. Request/policy tests pass 13/13; the full default regression passes
+880/880 with 14 explicit skips (894 total). No authentication, scope, target,
+or kill-switch semantics changed. Evidence:
+`evidence/2026-09-16-request-array-prototype-boundary.md`.
+
 MOP-080 policy-array prototype addendum at source revision `dac0cb8`: policy
 authority arrays must use the native `Array.prototype`; custom-prototype
 principal scopes and target-rule arrays fail closed before scope/target

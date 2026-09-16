@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Request-array prototype verification at source revision `8ba9e67`: signed
+request parsing requires native array prototypes and uses descriptor-backed
+principal-scope validation, rejecting custom iterators/methods before authority
+projection. Request/policy tests pass 13/13; the full default regression passes
+880/880 with 14 explicit skips (894 total), with 0 failures. Evidence:
+`evidence/2026-09-16-request-array-prototype-boundary.md`.
+
 Policy-array prototype verification at source revision `dac0cb8`: the Broker
 rejects custom-prototype authority arrays before invoking array methods used by
 scope, target, and capability validation. Focused policy/target tests pass

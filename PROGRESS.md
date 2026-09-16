@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Request-array prototype addendum at source revision `8ba9e67`: signed request
+parsing now rejects custom-prototype arrays and validates principal scopes using
+descriptor-backed indexed reads, preventing custom iterators/methods from
+projecting authority. Request/policy tests pass 13/13 and the full default
+regression passes 880/880 with 14 explicit skips (894 total). Authentication,
+scope, target, and kill-switch semantics are unchanged. Evidence:
+`evidence/2026-09-16-request-array-prototype-boundary.md`.
+
 Policy-array prototype addendum at source revision `dac0cb8`: Broker policy
 validation now rejects authority arrays with a custom prototype before any
 scope, target, or capability checks invoke array methods. Principal scopes and
