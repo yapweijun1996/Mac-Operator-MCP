@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged-helper capability binding addendum: the allowlisted helper now
+snapshots and derives `adapterAvailable` and exact `mac_priv_*` capability
+names from its own handler map. Authenticated status readback rejects unsorted, duplicate,
+unknown, or handler/status-drifted projections before signing a response;
+the fail-closed adapter still advertises none. Focused helper tests pass
+17/17 and typecheck passes. This closes capability/status drift only; root
+LaunchDaemon installation, Developer ID provenance, and real privileged
+adapter enablement remain open. Evidence:
+`evidence/2026-09-16-helper-capability-status-binding.md`.
+
 Immutable-snapshot probe addendum: on the physical Darwin 25.2.0 / macOS 26.2
 host, the unprivileged user can clear `uchg` after setting it, while setting
 `schg` returns `Operation not permitted`. Immutable file flags therefore do

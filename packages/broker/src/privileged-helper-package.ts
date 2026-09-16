@@ -122,7 +122,7 @@ export interface PrivilegedHelperRuntimeReadback {
   state: "running";
   runtimeState: "running";
   nativeTransportRequired: true;
-  adapterAvailable: false;
+  adapterAvailable: boolean;
   helperSocketPath: string;
   brokerSocketPath: string;
   helperAuthoritySocketPath: string;
@@ -131,7 +131,7 @@ export interface PrivilegedHelperRuntimeReadback {
   sourceRevision: string;
   contractVersion: string;
   policyVersion: string;
-  enabledCapabilities: readonly [];
+  enabledCapabilities: readonly string[];
 }
 
 export interface PrivilegedHelperPackageReadback {

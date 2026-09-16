@@ -114,7 +114,7 @@ export interface PrivilegedHelperStatusReadback {
   state: "running";
   runtimeState: "running";
   nativeTransportRequired: true;
-  adapterAvailable: false;
+  adapterAvailable: boolean;
   helperSocketPath: string;
   brokerSocketPath: string;
   /** Broker-owned authority socket polled by the root helper during work. */
@@ -124,7 +124,8 @@ export interface PrivilegedHelperStatusReadback {
   sourceRevision: string;
   contractVersion: string;
   policyVersion: string;
-  enabledCapabilities: readonly [];
+  /** Exact MCP capability names exposed by the helper's handler registry. */
+  enabledCapabilities: readonly string[];
 }
 
 export interface UnsignedPrivilegedHelperStatusRequest {
@@ -465,12 +466,18 @@ export class BrokerPrivilegedHelperCommandFactory {
 
 export interface PrivilegedHelperAdapter {
   readonly available: boolean;
+  /**
+   * Host-owned capability projection. This is derived from the handler map,
+   * never from a request argument or a status payload supplied by a caller.
+   */
+  readonly enabledCapabilities: readonly string[];
   execute(command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperExecutionResult>;
 }
 
 /** Default helper adapter. No privileged operation is available implicitly. */
 export class FailClosedPrivilegedHelper implements PrivilegedHelperAdapter {
   readonly available = false;
+  readonly enabledCapabilities = [] as const;
 
   async execute(_command: UnsignedPrivilegedHelperCommand, _control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperExecutionResult> {
     throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not enabled");
@@ -484,17 +491,35 @@ export class FailClosedPrivilegedHelper implements PrivilegedHelperAdapter {
  */
 export class AllowlistedPrivilegedHelper implements PrivilegedHelperAdapter {
   readonly available: boolean;
+  readonly enabledCapabilities: readonly string[];
+  private readonly handlers: Readonly<{
+    service_control?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
+    package_install?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
+    power?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
+  }>;
 
-  constructor(private readonly handlers: Readonly<{
+  constructor(handlers: Readonly<{
     service_control?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
     package_install?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
     power?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
   }>) {
+    if (!isPlainDataRecord(handlers)) throw new Error("Privileged helper handler map must be a plain data record");
     const allowed = new Set(["service_control", "package_install", "power"]);
-    if (Object.keys(handlers).some((key) => !allowed.has(key))) {
+    const entries = Object.entries(handlers);
+    if (entries.some(([key, handler]) => !allowed.has(key) || (handler !== undefined && typeof handler !== "function"))) {
       throw new Error("Privileged helper handler map contains an unsupported operation");
     }
-    this.available = Object.keys(handlers).some((key) => typeof handlers[key as keyof typeof handlers] === "function");
+    this.handlers = Object.freeze({
+      ...(typeof handlers.service_control === "function" ? { service_control: handlers.service_control } : {}),
+      ...(typeof handlers.package_install === "function" ? { package_install: handlers.package_install } : {}),
+      ...(typeof handlers.power === "function" ? { power: handlers.power } : {})
+    });
+    const operations = Object.entries(this.handlers)
+      .filter(([, handler]) => typeof handler === "function")
+      .map(([key]) => key as PrivilegedHelperOperation)
+      .sort();
+    this.enabledCapabilities = operations.map((operation) => `mac_priv_${operation}`);
+    this.available = operations.length > 0;
   }
 
   async execute(command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperExecutionResult> {
@@ -698,7 +723,9 @@ export class PrivilegedHelperIpcServer {
             throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper status readback is not enabled");
           }
           this.options.authorizeStatus();
-          statusResponse = statusSuccess(statusRequest, validatePrivilegedHelperStatusReadback(this.options.readStatus()), this.authenticationKey);
+          const status = validatePrivilegedHelperStatusReadback(this.options.readStatus());
+          assertPrivilegedHelperStatusMatchesAdapter(status, this.options.adapter);
+          statusResponse = statusSuccess(statusRequest, status, this.authenticationKey);
         } catch (error) {
           const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper status request is invalid");
           const fallback = statusRequest ?? fallbackStatusRequest();
@@ -871,7 +898,7 @@ export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperS
   if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
       status.component !== "mac-operator-privileged-helper" || status.state !== "running" ||
       status.runtimeState !== "running" || status.nativeTransportRequired !== true ||
-      status.adapterAvailable !== false || !canonicalStatusPath(status.helperSocketPath) ||
+      typeof status.adapterAvailable !== "boolean" || !canonicalStatusPath(status.helperSocketPath) ||
       !canonicalStatusPath(status.brokerSocketPath) || !canonicalStatusPath(status.helperAuthoritySocketPath) ||
       status.helperSocketPath === status.brokerSocketPath ||
       status.helperSocketPath === status.helperAuthoritySocketPath ||
@@ -881,10 +908,35 @@ export function validatePrivilegedHelperStatusReadback(status: PrivilegedHelperS
       !/^[a-f0-9]{40}$/u.test(status.sourceRevision) ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/u.test(status.contractVersion) ||
       !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(status.policyVersion) ||
-      !isDenseArray(status.enabledCapabilities, 0) || status.enabledCapabilities.length !== 0) {
+      !isDenseArray(status.enabledCapabilities, 3) ||
+      status.enabledCapabilities.some((capability) => typeof capability !== "string" ||
+        !/^mac_priv_(?:service_control|package_install|power)$/u.test(capability)) ||
+      [...status.enabledCapabilities].sort().some((capability, index, values) => index > 0 && capability === values[index - 1])) {
     throw new BrokerError("EXECUTION_FAILED", "Privileged helper status readback is malformed");
   }
+  const sortedCapabilities = [...status.enabledCapabilities].sort();
+  if (status.enabledCapabilities.some((capability, index) => capability !== sortedCapabilities[index])) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper status capabilities are not canonical");
+  }
   return status;
+}
+
+/**
+ * Status is a readback of the running helper, not an independent capability
+ * declaration. Rejecting drift here prevents a handler from being enabled
+ * without an authenticated status projection (or a stale capability from
+ * being advertised after the handler is removed).
+ */
+function assertPrivilegedHelperStatusMatchesAdapter(
+  status: PrivilegedHelperStatusReadback,
+  adapter: PrivilegedHelperAdapter
+): void {
+  const expected = [...adapter.enabledCapabilities].sort();
+  const actual = [...status.enabledCapabilities].sort();
+  if (status.adapterAvailable !== adapter.available || expected.length !== actual.length ||
+      expected.some((capability, index) => capability !== actual[index])) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper status does not match its allowlisted handlers");
+  }
 }
 
 export function authenticatePrivilegedHelperStatusResponse(

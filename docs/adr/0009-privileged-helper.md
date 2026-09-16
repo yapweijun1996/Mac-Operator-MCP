@@ -286,6 +286,15 @@ Revision `0c21edb` extends that native before/after identity fence to include
 UID and mode, so ownership or permission changes during
 `SecTrustedApplicationCreateFromPath` are treated as a target change.
 
+The capability/status binding revision follows with a capability/status guard. The
+allowlisted handler map is snapshotted before deriving the helper's
+`adapterAvailable` state and exact `mac_priv_*` capability projection.
+Authenticated status readback
+validates canonical names and rejects drift between the handler registry and
+the published status as `EXECUTION_FAILED`; the fail-closed default remains
+empty. This closes a status-consistency gap only and does not enable a root
+process or any privileged operation.
+
 Physical host evidence on 2026-09-15 found no available Developer ID signing
 identity and an ad-hoc-only native artifact. The helper package therefore
 remains an implementation candidate: strict ad-hoc verification is not

@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged-helper capability binding addendum: `AllowlistedPrivilegedHelper`
+now snapshots and derives its capability projection from the own-handler map, while the
+authenticated status endpoint validates canonical capability names and rejects
+any adapter/status mismatch as `EXECUTION_FAILED`. Focused helper tests pass
+17/17 and typecheck passes. This proves projection consistency only; it does
+not prove root-domain installation, signing provenance, or enabled privileged
+execution. Evidence:
+`evidence/2026-09-16-helper-capability-status-binding.md`.
+
 Immutable-snapshot probe addendum: the physical Darwin 25.2.0 / macOS 26.2
 host allows the unprivileged file owner to clear `uchg`, while `chflags schg`
 returns `Operation not permitted`. These flags therefore do not provide an

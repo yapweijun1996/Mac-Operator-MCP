@@ -296,6 +296,44 @@ test("allowlisted helper validates the command before invoking an operation hand
   assert.equal(handlerCalls, 0);
 });
 
+test("allowlisted helper snapshots its handler map before capability projection", async () => {
+  const valid = command(21);
+  let handlerCalls = 0;
+  const handlers: {
+    service_control: (command: UnsignedPrivilegedHelperCommand, control: { timeoutMs: number; shouldCancel: () => boolean }) => Promise<{
+      operation: "service_control";
+      targetRef: string;
+      state: "completed";
+      resultClass: "SUCCEEDED";
+      evidence: Record<string, string>;
+      warnings: string[];
+      truncated: false;
+      verification: { status: "verified"; strategy: "allowlisted_postcondition" };
+    }>;
+  } = {
+    service_control: async () => {
+      handlerCalls += 1;
+      return {
+        operation: "service_control",
+        targetRef: valid.targetRef,
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        evidence: {},
+        warnings: [],
+        truncated: false,
+        verification: { status: "verified", strategy: "allowlisted_postcondition" }
+      };
+    }
+  };
+  const helper = new AllowlistedPrivilegedHelper(handlers);
+  Object.defineProperty(handlers, "service_control", { value: undefined, writable: true, enumerable: true, configurable: true });
+  assert.equal(helper.available, true);
+  assert.deepEqual(helper.enabledCapabilities, ["mac_priv_service_control"]);
+  const result = await helper.execute(valid, { timeoutMs: 5_000, shouldCancel: () => false });
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(handlerCalls, 1);
+});
+
 test("privileged helper IPC authenticates the peer and command, rejects replay, and dispatches only allowlisted operations", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-"));
   const socketPath = join(directory, "helper.sock");
@@ -462,6 +500,18 @@ test("privileged helper status readback is separately authenticated, replay-prot
     const clientStatus = await readPrivilegedHelperStatus({ socketPath, authenticationKey: key, now: () => NOW });
     assert.deepEqual(clientStatus, status);
     assert.equal(statusCalls, 2);
+
+    status.adapterAvailable = true;
+    const driftRequest = {
+      ...request,
+      requestId: "request:status-drift-1",
+      nonce: "status-nonce-drift-0001"
+    };
+    const driftResponse = await sendStatus(socketPath, signPrivilegedHelperStatusRequest(driftRequest, key));
+    const drift = authenticatePrivilegedHelperStatusResponse(driftResponse, driftRequest, key);
+    assert.equal(drift.ok, false);
+    if (!drift.ok) assert.equal(drift.resultClass, "EXECUTION_FAILED");
+    assert.equal(statusCalls, 3);
   } finally {
     await server.close();
     store.close();
@@ -477,7 +527,11 @@ test("privileged helper rejects trailing frames before replay admission or dispa
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   let commandCalls = 0;
   let statusCalls = 0;
-  const status = statusReadback(socketPath, brokerSocketPath);
+  const status = {
+    ...statusReadback(socketPath, brokerSocketPath),
+    adapterAvailable: true,
+    enabledCapabilities: ["mac_priv_service_control"]
+  } satisfies PrivilegedHelperStatusReadback;
   const server = new PrivilegedHelperIpcServer({
     socketPath,
     authenticationKey: key,
