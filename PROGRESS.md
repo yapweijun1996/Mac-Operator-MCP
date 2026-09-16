@@ -4,12 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Encoded-secret representation addendum at source revision `b1732bd`: the
+Encoded-secret representation addendum at source revisions `b1732bd`,
+`b83d043`: the
 Broker secret policy conservatively detects UTF-16LE/BE content and bounded
 Base64 candidates when decoded bytes match an existing credential signature.
 The same guard covers argv and allowlisted environment values, while bounded
 log redaction removes matching encoded candidates. The focused secret,
-security-fuzz, ProcessSupervisor, and task-profile suites pass 63/63; typecheck,
+security-fuzz, ProcessSupervisor, task-profile, and guest-profile suites pass
+63/63; typecheck,
 lint, and build pass. Opaque secrets, binary key formats, complete
 credential-store coverage, production-corpus false-positive analysis, and
 production isolation remain open. Evidence:

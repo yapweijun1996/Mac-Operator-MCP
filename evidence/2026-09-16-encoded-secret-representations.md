@@ -1,7 +1,7 @@
 # Encoded secret representation guard evidence
 
 Date: 2026-09-16
-Source revision: `b1732bd`
+Source revisions: `b1732bd`, `b83d043`
 Host: Darwin arm64, Node.js 25.5.0
 
 ## Boundary exercised
@@ -17,7 +17,8 @@ candidates with `[REDACTED]`.
 ## Verification
 
 The focused synthetic suite covers Base64, UTF-16LE, UTF-16BE, argv,
-environment, log redaction, and a safe Base64 false-positive case:
+environment (including task and guest profile admission), log redaction, and
+a safe Base64 false-positive case:
 
 ```text
 npm run typecheck -- --pretty false

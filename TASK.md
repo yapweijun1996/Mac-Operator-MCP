@@ -4,12 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-037 encoded-secret addendum at source revision `b1732bd`: content policy
+MOP-037 encoded-secret addendum at source revisions `b1732bd`, `b83d043`:
+content policy
 now detects UTF-16LE/BE and bounded Base64 representations only when decoded
 bytes match an existing credential signature. The same conservative check is
 applied to argv and allowlisted environment values, and bounded log
 redaction removes matching encoded candidates. Focused secret,
-security-fuzz, ProcessSupervisor, and task-profile suites pass 63/63 with
+security-fuzz, ProcessSupervisor, task-profile, and guest-profile suites pass
+63/63 with
 typecheck, lint, and build passing. Opaque values, binary key formats,
 complete credential-store coverage, production-corpus false-positive
 analysis, and child-process isolation remain open. Evidence:
