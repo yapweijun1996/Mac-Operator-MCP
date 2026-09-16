@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged Helper operation-capability verification at source revision
+`39cb147`: an enabled Helper Job executor must declare an explicit
+duplicate-free operation allowlist. Broker planning and capability discovery
+use the same operation-level runtime check, so service-only Helper state keeps
+package-install and power disabled with `runtime_unavailable`; direct executor
+requests outside the allowlist fail before command dispatch. Focused
+Broker/Helper tests pass 96/96 with 6 skips; the full regression passes
+878/878 with 14 explicit skips (892 total), and typecheck/build/lint pass. The
+executor is injected for tests only; no privileged Helper or capability is
+enabled on the physical host. Evidence:
+`evidence/2026-09-16-helper-operation-capability-state.md`.
+
 Capability runtime-state verification at source revision `08c54d6`: Broker
 capability discovery and launch readback now require signed policy enablement
 plus a matching available runtime boundary. Task execution is gated on the

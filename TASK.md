@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-090 Helper operation-capability addendum at source revision `39cb147`:
+Helper transport enablement is now separate from its explicit operation
+allowlist. Enabled executors require a duplicate-free list of supported
+operations; Broker planning and capability discovery gate each privileged tool
+against that list, and direct executor calls reject non-allowlisted operations
+before dispatch. Focused Broker/Helper tests pass 96/96 with 6 skips; full
+regression passes 878/878 with 14 explicit skips (892 total). This is a
+boundary/test milestone only: production Helper installation, signed
+artifacts, real task isolation, and capability enablement remain open.
+Evidence: `evidence/2026-09-16-helper-operation-capability-state.md`.
+
 MOP-089 capability runtime-state addendum at source revision `08c54d6`: the
 Broker now projects `enabled` only when signed tool policy and its concrete
 runtime agree. Task execution requires an available isolated runner; all three

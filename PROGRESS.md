@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged Helper operation-capability addendum at source revision `39cb147`:
+the Broker now requires an explicit duplicate-free Helper operation allowlist
+when transport is enabled. Planning and capability discovery use the same
+operation-level check, so a Helper that exposes only `service_control` cannot
+advertise or admit package-install or power work; unsupported operations fail
+closed before command dispatch. Focused Broker/Helper tests pass 96/96 with 6
+skips; the full regression passes 878/878 with 14 explicit skips (892 total),
+and typecheck/build/lint pass. The executor is test-only on this host; no
+privileged capability is enabled. Evidence:
+`evidence/2026-09-16-helper-operation-capability-state.md`.
+
 Capability runtime-state addendum at source revision `08c54d6`: Broker
 capability discovery and service readback now require both signed policy
 enablement and the concrete runtime boundary. `mac_task_run` is advertised only
