@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-034 package-inspection host addendum at source revision `0260dde`: a
+physical Darwin read-only run against the canonical repository root selected
+`npm`, reported four bounded dependencies and `package-lock.json`, and
+returned no warnings or truncation without running a package manager. The
+focused package-inspector suite passes 5/5. Installation, registry trust,
+mutation, and broader filesystem evidence remain open. Evidence:
+`evidence/2026-09-16-package-inspection-host-readback.md`.
+
 MOP-070 HTTPS body-boundary addendum at source revision `f7669d2`: the Edge
 JSON parser remains bounded at 1 MiB and now returns stable HTTP 400
 `invalid_json` or HTTP 413 `request_too_large` responses for malformed or

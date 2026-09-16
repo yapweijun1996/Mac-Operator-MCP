@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Package-inspection host addendum at source revision `0260dde`: the physical
+Darwin repository-root readback selected `npm`, reported four bounded
+dependencies and `package-lock.json`, and returned no warnings or truncation
+without executing a package manager. The focused package-inspector suite
+passes 5/5. Installation, registry trust, mutation, and broader filesystem
+evidence remain open. Evidence:
+`evidence/2026-09-16-package-inspection-host-readback.md`.
+
 HTTPS request-body addendum at source revision `f7669d2`: the Edge's bounded
 1 MiB JSON parser now maps malformed bodies to HTTP 400 `invalid_json` and
 oversized bodies to HTTP 413 `request_too_large`, without exposing parser
