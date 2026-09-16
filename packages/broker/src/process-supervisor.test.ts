@@ -371,6 +371,22 @@ test("process supervisor rejects symlink executables and non-canonical cwd", asy
   }
 });
 
+test("process supervisor rejects group- or other-writable cwd directories", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-writable-cwd-"));
+  const canonicalDirectory = await realpath(directory);
+  try {
+    await chmod(canonicalDirectory, 0o777);
+    const supervisor = new ProcessSupervisor();
+    await assert.rejects(
+      supervisor.run({ executable: "/usr/bin/true", args: [], cwd: canonicalDirectory, timeoutMs: 1_000, outputCapBytes: 100 }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED" && /cwd permissions/u.test(error.message)
+    );
+  } finally {
+    await chmod(canonicalDirectory, 0o700).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("process supervisor rejects group- or other-writable executables", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-permissions-"));
   const executable = join(await realpath(directory), "runner");

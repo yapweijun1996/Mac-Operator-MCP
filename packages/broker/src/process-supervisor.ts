@@ -1284,6 +1284,7 @@ async function validateExecutable(path: string): Promise<ProcessPathIdentity> {
 async function validateDirectory(path: string): Promise<ProcessPathIdentity> {
   const stat = await lstat(path);
   if (!stat.isDirectory() || (await realpath(path)) !== path) throw new BrokerError("POLICY_DENIED", "Process cwd must be a canonical directory");
+  if ((stat.mode & 0o022) !== 0) throw new BrokerError("POLICY_DENIED", "Process cwd permissions are not owner-only");
   return {
     device: stat.dev,
     inode: stat.ino,
