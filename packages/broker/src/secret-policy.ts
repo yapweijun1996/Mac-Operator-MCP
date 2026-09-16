@@ -18,9 +18,21 @@ const DENIED_PATH_FRAGMENTS = [
 const SECRET_CONTENT_PATTERNS = [
   /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/u,
   /\bAKIA[0-9A-Z]{16}\b/u,
+  /\b(?:ASIA|AIDA|AROA|AGPA|ANPA|ANVA)[0-9A-Z]{16}\b/u,
+  /\b(?:aws[_-]?secret[_-]?access[_-]?key|secret[_-]?access[_-]?key)\s*[:=]\s*["']?[A-Za-z0-9/+=]{20,}/iu,
   /\bAIza[0-9A-Za-z_-]{30,}\b/u,
+  /\bya29\.[0-9A-Za-z_-]{20,}\b/u,
+  /\bGOCSPX-[0-9A-Za-z_-]{16,}\b/u,
   /\bgh[pousr]_[0-9A-Za-z]{20,}\b/u,
+  /\bgithub_pat_[0-9A-Za-z_]{20,}\b/u,
+  /\bglpat-[0-9A-Za-z_-]{16,}\b/u,
+  /\bnpm_[0-9A-Za-z]{16,}\b/u,
+  /\bpypi-[0-9A-Za-z_-]{16,}\b/u,
   /\bsk-proj-[0-9A-Za-z_-]{16,}\b/u,
+  /\bsk-(?!proj-)[0-9A-Za-z]{24,}\b/u,
+  /\bsk_(?:live|test)_[0-9A-Za-z]{16,}\b/u,
+  /\bcfp_[0-9A-Za-z_-]{16,}\b/u,
+  /\b(?:cf[_-](?:pat|token)|heroku[_-]?api[_-]?key)[=:_-]?[0-9A-Za-z._-]{16,}\b/iu,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}\b/iu,
   /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/iu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/u,
@@ -36,12 +48,33 @@ const SECRET_CONTENT_PATTERNS = [
  */
 const SECRET_ARGUMENT_NAME_PATTERN = /(?:^|[-_])(?:api[_-]?key|auth(?:entication)?|client[_-]?secret|credential|password|passwd|passphrase|private[_-]?key|secret|token|bearer|cookie)(?:[-_]|$)/iu;
 
+/**
+ * Values can be split across argv entries (for example `Bearer`, then the
+ * token). Treat protocol/credential labels as sensitive when a following
+ * value exists, because the complete value is observable in the process
+ * table even when no single entry matches a token signature.
+ */
+const SPLIT_SECRET_LABEL_PATTERN = /^(?:authorization|proxy-authorization|cookie|set-cookie|bearer|basic|token|password|passwd|passphrase|secret|api[_-]?key|client[_-]?secret|credential):?$/iu;
+const HEADER_OPTION_PATTERN = /^(?:--header|-H)$/u;
+
 const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/gu,
   /\bAKIA[0-9A-Z]{16}\b/gu,
+  /\b(?:ASIA|AIDA|AROA|AGPA|ANPA|ANVA)[0-9A-Z]{16}\b/gu,
+  /\b(?:aws[_-]?secret[_-]?access[_-]?key|secret[_-]?access[_-]?key)\s*[:=]\s*["']?[A-Za-z0-9/+=]{20,}/giu,
   /\bAIza[0-9A-Za-z_-]{30,}\b/gu,
+  /\bya29\.[0-9A-Za-z_-]{20,}\b/gu,
+  /\bGOCSPX-[0-9A-Za-z_-]{16,}\b/gu,
   /\bgh[pousr]_[0-9A-Za-z]{20,}\b/gu,
+  /\bgithub_pat_[0-9A-Za-z_]{20,}\b/gu,
+  /\bglpat-[0-9A-Za-z_-]{16,}\b/gu,
+  /\bnpm_[0-9A-Za-z]{16,}\b/gu,
+  /\bpypi-[0-9A-Za-z_-]{16,}\b/gu,
   /\bsk-proj-[0-9A-Za-z_-]{16,}\b/gu,
+  /\bsk-(?!proj-)[0-9A-Za-z]{24,}\b/gu,
+  /\bsk_(?:live|test)_[0-9A-Za-z]{16,}\b/gu,
+  /\bcfp_[0-9A-Za-z_-]{16,}\b/gu,
+  /\b(?:cf[_-](?:pat|token)|heroku[_-]?api[_-]?key)[=:_-]?[0-9A-Za-z._-]{16,}\b/giu,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}\b/giu,
   /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/giu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
@@ -88,6 +121,14 @@ export function assertArgumentsDoNotContainSecrets(argumentsValue: readonly stri
     }
     if (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(argument))) {
       throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret signature");
+    }
+  }
+  for (let index = 0; index < argumentsValue.length - 1; index += 1) {
+    const argument = argumentsValue[index]!;
+    const next = argumentsValue[index + 1]!;
+    if (SPLIT_SECRET_LABEL_PATTERN.test(argument) ||
+        (HEADER_OPTION_PATTERN.test(argument) && SPLIT_SECRET_LABEL_PATTERN.test(next.split(":", 1)[0] ?? ""))) {
+      throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret sequence");
     }
   }
 }

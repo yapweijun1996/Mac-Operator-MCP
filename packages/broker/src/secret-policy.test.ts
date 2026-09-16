@@ -27,7 +27,15 @@ test("content policy denies representative private keys and access tokens", () =
   const denied = [
     "-----BEGIN PRIVATE KEY-----\nnot-a-real-key",
     "aws=AKIA1234567890ABCDEF",
+    "aws_secret_access_key=QWERTYUIOPASDFGHJKLZXCVBNM1234567890",
+    "oauth=ya29.aVeryLongSyntheticGoogleAccessTokenValue",
+    "client_secret=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ntSecret",
     "api_key=supersecretvalue",
+    "gitlab=glpat-aVeryLongSyntheticGitLabToken",
+    "npm=npm_aVeryLongSyntheticNpmTokenValue",
+    "pypi=pypi-aVeryLongSyntheticPyPiToken",
+    "stripe=sk_live_aVeryLongSyntheticStripeToken",
+    "openai=sk-aVeryLongSyntheticLegacyOpenAITokenValue",
     "token: xoxb-1234567890-abcdefghijklmnop",
     "Authorization: Bearer abcdefghijklmnop-secret",
     "Authorization: Basic YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4",
@@ -44,13 +52,34 @@ test("argument policy denies credential options and token-shaped values", () => 
     ["--token", "value"],
     ["--api-key=opaque-value"],
     ["--private_key", "/tmp/key"],
-    ["Authorization: Bearer abcdefghijklmnop-secret"]
+    ["Authorization: Bearer abcdefghijklmnop-secret"],
+    ["Bearer", "split-secret-value"],
+    ["--header", "Authorization:", "split-secret-value"],
+    ["-H", "Cookie:", "session=split-secret-value"]
   ];
   for (const argumentsValue of denied) {
     assert.throws(() => assertArgumentsDoNotContainSecrets(argumentsValue), /protected secret/u, argumentsValue.join(" "));
   }
   assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--format", "json", "ordinary-file"]));
   assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["-c", 'printf "${MOP_CONTROLLER_SECRET-unset}"']));
+});
+
+test("secret policy covers expanded token corpus and preserves safe arguments", () => {
+  const corpus = [
+    "ASIA1234567890ABCDEF",
+    "github_pat_aVeryLongSyntheticGitHubFineGrainedToken",
+    "cfp_aVeryLongSyntheticCloudflareToken",
+    "cf_pat-aVeryLongSyntheticCloudflareToken",
+    "heroku_api_key=aVeryLongSyntheticHerokuToken"
+  ];
+  for (const value of corpus) {
+    assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(value)), /protected secret signature/u, value);
+    const redacted = redactLogText(`value=${value}`);
+    assert.equal(redacted.redacted, true, value);
+    assert.equal(redacted.text.includes(value), false, value);
+  }
+  assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--format", "json", "ordinary-file"]));
+  assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--secretary", "notes"]));
 });
 
 test("log redaction removes secret-shaped values and bounds messages", () => {
