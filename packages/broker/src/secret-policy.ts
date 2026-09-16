@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { createPrivateKey } from "node:crypto";
 import { BrokerError } from "@mac-operator/contracts";
 
 const DENIED_BASENAMES = new Set([
@@ -48,6 +49,7 @@ const SECRET_CONTENT_PATTERNS = [
  */
 const BASE64_CANDIDATE_PATTERN = /(?:^|[\s"'=,:;()[\]{}])([A-Za-z0-9+/]{24,}={0,2})(?=$|[\s"'=,:;()[\]{}])/gu;
 const MAX_ENCODED_CANDIDATES = 512;
+const MAX_BINARY_KEY_PARSE_BYTES = 128 * 1024;
 
 /**
  * Command-line option names are observable through process listings. A task
@@ -201,6 +203,7 @@ export function redactBoundedText(value: string, maxBytes: number): { text: stri
 }
 
 function containsEncodedSecretRepresentation(content: Buffer, text: string): boolean {
+  if (containsBinarySecretRepresentation(content)) return true;
   // UTF-16 is common in exported plist/credential material. Decode only when
   // the byte pattern strongly indicates text; arbitrary binary is not treated
   // as a secret merely because it contains NUL bytes.
@@ -228,7 +231,7 @@ function containsBase64EncodedSecret(text: string): boolean {
     try { decoded = Buffer.from(encoded, "base64"); }
     catch { continue; }
     if (decoded.byteLength === 0) continue;
-    if (containsKnownSecretSignature(decoded.toString("utf8"))) return true;
+    if (containsKnownSecretSignature(decoded.toString("utf8")) || containsBinarySecretRepresentation(decoded)) return true;
   }
   return false;
 }
@@ -240,11 +243,37 @@ function redactEncodedSecretRepresentations(text: string): { text: string; redac
     let decoded: Buffer;
     try { decoded = Buffer.from(encoded, "base64"); }
     catch { return whole; }
-    if (!containsKnownSecretSignature(decoded.toString("utf8"))) return whole;
+    if (!containsKnownSecretSignature(decoded.toString("utf8")) && !containsBinarySecretRepresentation(decoded)) return whole;
     redacted = true;
     return whole.replace(encoded, "[REDACTED]");
   });
   return { text: next, redacted };
+}
+
+/**
+ * Detect private-key containers without treating arbitrary binary data as a
+ * credential. Node's DER parser validates the private-key structure for the
+ * supported PKCS#8, PKCS#1, and SEC1 encodings; public SPKI material is not
+ * accepted by these type-specific parsers. OpenSSH's binary envelope has a
+ * separate fixed magic prefix.
+ */
+function containsBinarySecretRepresentation(content: Buffer): boolean {
+  const opensshMagic = Buffer.from("openssh-key-v1\0", "utf8");
+  if (content.byteLength >= opensshMagic.byteLength && content.subarray(0, opensshMagic.byteLength).equals(opensshMagic)) return true;
+  if (content.byteLength < 16 || content.byteLength > MAX_BINARY_KEY_PARSE_BYTES || content[0] !== 0x30) return false;
+  // EncryptedPrivateKeyInfo cannot be parsed without a passphrase. PBES2 is
+  // the standard encrypted PKCS#8 algorithm identifier, so treat the exact
+  // DER OID as a private-key container rather than attempting decryption.
+  if (content.indexOf(Buffer.from("06092a864886f70d01050d", "hex")) >= 0) return true;
+  for (const type of ["pkcs8", "pkcs1", "sec1"] as const) {
+    try {
+      createPrivateKey({ key: content, format: "der", type });
+      return true;
+    } catch {
+      // A non-private DER value or another binary format is not a match.
+    }
+  }
+  return false;
 }
 
 function looksLikeUtf16Le(content: Buffer): boolean {

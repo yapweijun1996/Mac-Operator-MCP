@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+Binary-private-key secret addendum: bounded private-key parsers now deny DER
+PKCS#8/PKCS#1/SEC1 and OpenSSH binary private-key material, including Base64
+representations, while public DER remains permitted. Secret-policy 9/9 and
+focused security-fuzz 8/8 pass; broader opaque-secret and production
+isolation work remains open. Evidence:
+`evidence/2026-09-16-binary-private-key-secret-boundary.md`.
+
 Private-root secret-zone addendum: arbitrary content paths under
 `/private/var/root/` and `/var/root/` are now denied and generic private-root
 paths are redacted from logs. Secret-policy and focused security-fuzz tests

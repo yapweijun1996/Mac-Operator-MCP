@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertContentPathAllowed, assertEnvironmentValuesDoNotContainSecrets, redactBoundedText, redactLogText } from "./secret-policy.js";
 
@@ -102,6 +103,24 @@ test("content policy detects conservative encoded credential representations", (
   assert.doesNotThrow(() => assertContentDoesNotContainSecrets(Buffer.from("payload:VGhpcyBpcyBub3QgYSBjcmVkZW50aWFs", "utf8")));
   assert.throws(() => assertArgumentsDoNotContainSecrets([base64]), /protected secret/u);
   assert.throws(() => assertEnvironmentValuesDoNotContainSecrets({ PROFILE_DATA: base64 }), /protected secret/u);
+});
+
+test("content policy denies binary private-key formats but preserves public DER", () => {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const privateDer = privateKey.export({ format: "der", type: "pkcs8" });
+  const encryptedPrivateDer = privateKey.export({ format: "der", type: "pkcs8", cipher: "aes-256-cbc", passphrase: "synthetic-passphrase" });
+  const publicDer = publicKey.export({ format: "der", type: "spki" });
+  assert.throws(() => assertContentDoesNotContainSecrets(privateDer), /protected secret signature/u);
+  assert.throws(() => assertContentDoesNotContainSecrets(encryptedPrivateDer), /protected secret signature/u);
+  assert.doesNotThrow(() => assertContentDoesNotContainSecrets(publicDer));
+
+  const encoded = privateDer.toString("base64");
+  assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(`payload:${encoded}`, "utf8")), /protected secret signature/u);
+  const redacted = redactLogText(`payload=${encoded}`);
+  assert.equal(redacted.redacted, true);
+  assert.equal(redacted.text.includes(encoded), false);
+
+  assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from("openssh-key-v1\0synthetic", "binary")), /protected secret signature/u);
 });
 
 test("log redaction removes secret-shaped values and bounds messages", () => {

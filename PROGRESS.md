@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Binary-private-key secret addendum: bounded DER PKCS#8/PKCS#1/SEC1 private
+keys and the OpenSSH binary envelope are now denied, including matching
+Base64 representations; public DER remains allowed. Secret-policy tests pass
+9/9, focused security-fuzz passes 8/8, and the related Broker/ProcessSupervisor/
+task-profile/guest/Edge regression passes 209/209 with six explicit skips.
+Evidence: `evidence/2026-09-16-binary-private-key-secret-boundary.md`.
+
 Private-root secret-zone addendum: content authorization now denies both
 `/private/var/root/` and `/var/root/` for arbitrary filenames, and bounded log
 redaction removes unrecognized paths under those roots. Secret-policy tests

@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Binary-private-key secret addendum: content and bounded Base64 scanning now
+rejects validated DER PKCS#8/PKCS#1/SEC1 private keys and the OpenSSH binary
+private-key envelope while preserving public DER. Secret-policy tests pass
+9/9, focused security-fuzz passes 8/8, and the related Broker/ProcessSupervisor/
+task-profile/guest/Edge regression passes 209/209 with six explicit skips.
+This closes known binary private-key formats only; opaque credentials and
+production isolation remain open. Evidence:
+`evidence/2026-09-16-binary-private-key-secret-boundary.md`.
+
 Private-root secret-zone addendum: content-path authorization now rejects
 arbitrary paths under both `/private/var/root/` and `/var/root/`, while log
 redaction removes generic private-root paths. Secret-policy tests pass 8/8 and
