@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertContentPathAllowed, redactBoundedText, redactLogText } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertContentPathAllowed, assertEnvironmentValuesDoNotContainSecrets, redactBoundedText, redactLogText } from "./secret-policy.js";
 
 test("fixed secret-zone policy denies credential and private-data paths", () => {
   const denied = [
@@ -82,6 +82,26 @@ test("secret policy covers expanded token corpus and preserves safe arguments", 
   assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--secretary", "notes"]));
 });
 
+test("content policy detects conservative encoded credential representations", () => {
+  const plain = "token=ghp_123456789012345678901234";
+  const base64 = Buffer.from(plain, "utf8").toString("base64");
+  assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(`payload:${base64}`, "utf8")), /protected secret signature/u);
+
+  const utf16le = Buffer.from(plain, "utf16le");
+  assert.throws(() => assertContentDoesNotContainSecrets(utf16le), /protected secret signature/u);
+
+  const utf16be = Buffer.alloc(utf16le.byteLength);
+  for (let index = 0; index < utf16le.byteLength; index += 2) {
+    utf16be[index] = utf16le[index + 1]!;
+    utf16be[index + 1] = utf16le[index]!;
+  }
+  assert.throws(() => assertContentDoesNotContainSecrets(utf16be), /protected secret signature/u);
+
+  assert.doesNotThrow(() => assertContentDoesNotContainSecrets(Buffer.from("payload:VGhpcyBpcyBub3QgYSBjcmVkZW50aWFs", "utf8")));
+  assert.throws(() => assertArgumentsDoNotContainSecrets([base64]), /protected secret/u);
+  assert.throws(() => assertEnvironmentValuesDoNotContainSecrets({ PROFILE_DATA: base64 }), /protected secret/u);
+});
+
 test("log redaction removes secret-shaped values and bounds messages", () => {
   const redacted = redactLogText("token=supersecretvalue AKIA1234567890ABCDEF /Users/test/.ssh/id_ed25519");
   assert.equal(redacted.redacted, true);
@@ -98,6 +118,14 @@ test("log redaction removes secret-shaped values and bounds messages", () => {
   const bounded = redactLogText("x".repeat(20_000));
   assert.equal(bounded.redacted, true);
   assert.ok(bounded.text.length <= 8192);
+});
+
+test("log redaction removes encoded credential representations", () => {
+  const encoded = Buffer.from("token=ghp_123456789012345678901234", "utf8").toString("base64");
+  const redacted = redactLogText(`payload=${encoded}`);
+  assert.equal(redacted.redacted, true);
+  assert.equal(redacted.text.includes(encoded), false);
+  assert.equal(redacted.text.includes("[REDACTED]"), true);
 });
 
 test("bounded redaction never exceeds the requested UTF-8 byte budget", () => {

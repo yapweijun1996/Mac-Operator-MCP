@@ -41,6 +41,14 @@ const SECRET_CONTENT_PATTERNS = [
 ];
 
 /**
+ * Encoded credential values are accepted only when their decoded bytes match
+ * an already-known signature. This avoids entropy heuristics and keeps the
+ * additional scan bounded and explainable.
+ */
+const BASE64_CANDIDATE_PATTERN = /(?:^|[\s"'=,:;()[\]{}])([A-Za-z0-9+/]{24,}={0,2})(?=$|[\s"'=,:;()[\]{}])/gu;
+const MAX_ENCODED_CANDIDATES = 512;
+
+/**
  * Command-line option names are observable through process listings. A task
  * cannot safely pass credentials in argv even when the value itself does not
  * match one of the known token formats, so sensitive option names are denied
@@ -94,7 +102,7 @@ export function assertContentPathAllowed(path: string): void {
 
 export function assertContentDoesNotContainSecrets(content: Buffer): void {
   const text = content.toString("utf8");
-  if (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(text))) {
+  if (containsEncodedSecretRepresentation(content, text)) {
     throw new BrokerError("POLICY_DENIED", "Filesystem content matched a protected secret signature");
   }
 }
@@ -119,7 +127,7 @@ export function assertArgumentsDoNotContainSecrets(argumentsValue: readonly stri
     if (option !== "" && SECRET_ARGUMENT_NAME_PATTERN.test(option)) {
       throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret option");
     }
-    if (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(argument))) {
+    if (containsSecretRepresentation(argument)) {
       throw new BrokerError("POLICY_DENIED", "Process arguments matched a protected secret signature");
     }
   }
@@ -144,7 +152,7 @@ export function assertEnvironmentValuesDoNotContainSecrets(environment: Readonly
     throw new BrokerError("PRECONDITION_FAILED", "Process environment is malformed");
   }
   for (const value of Object.values(environment)) {
-    if (typeof value !== "string" || containsKnownSecretSignature(value)) {
+    if (typeof value !== "string" || containsSecretRepresentation(value)) {
       throw new BrokerError("POLICY_DENIED", "Process environment value matched a protected secret signature");
     }
   }
@@ -168,6 +176,9 @@ export function redactBoundedText(value: string, maxBytes: number): { text: stri
     redacted ||= next !== text;
     text = next;
   }
+  const encodedResult = redactEncodedSecretRepresentations(text);
+  text = encodedResult.text;
+  redacted ||= encodedResult.redacted;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new BrokerError("PRECONDITION_FAILED", "Redaction output budget is invalid");
   }
@@ -185,6 +196,91 @@ export function redactBoundedText(value: string, maxBytes: number): { text: stri
     truncated = true;
   }
   return { text, redacted, truncated };
+}
+
+function containsEncodedSecretRepresentation(content: Buffer, text: string): boolean {
+  // UTF-16 is common in exported plist/credential material. Decode only when
+  // the byte pattern strongly indicates text; arbitrary binary is not treated
+  // as a secret merely because it contains NUL bytes.
+  if (looksLikeUtf16Le(content)) {
+    if (containsKnownSecretSignature(stripTrailingNuls(content.toString("utf16le")))) return true;
+  }
+  if (looksLikeUtf16Be(content)) {
+    if (containsKnownSecretSignature(stripTrailingNuls(decodeUtf16Be(content)))) return true;
+  }
+  return containsSecretRepresentation(text);
+}
+
+function containsSecretRepresentation(value: string): boolean {
+  return containsKnownSecretSignature(value) || containsBase64EncodedSecret(value);
+}
+
+function containsBase64EncodedSecret(text: string): boolean {
+  let inspected = 0;
+  for (const match of text.matchAll(BASE64_CANDIDATE_PATTERN)) {
+    if (inspected >= MAX_ENCODED_CANDIDATES) break;
+    inspected += 1;
+    const encoded = match[1];
+    if (encoded === undefined || encoded.length % 4 === 1) continue;
+    let decoded: Buffer;
+    try { decoded = Buffer.from(encoded, "base64"); }
+    catch { continue; }
+    if (decoded.byteLength === 0) continue;
+    if (containsKnownSecretSignature(decoded.toString("utf8"))) return true;
+  }
+  return false;
+}
+
+function redactEncodedSecretRepresentations(text: string): { text: string; redacted: boolean } {
+  let redacted = false;
+  const next = text.replace(BASE64_CANDIDATE_PATTERN, (whole, encoded: string) => {
+    if (encoded.length % 4 === 1) return whole;
+    let decoded: Buffer;
+    try { decoded = Buffer.from(encoded, "base64"); }
+    catch { return whole; }
+    if (!containsKnownSecretSignature(decoded.toString("utf8"))) return whole;
+    redacted = true;
+    return whole.replace(encoded, "[REDACTED]");
+  });
+  return { text: next, redacted };
+}
+
+function looksLikeUtf16Le(content: Buffer): boolean {
+  if (content.byteLength < 16 || content.byteLength % 2 !== 0) return false;
+  if (content[0] === 0xff && content[1] === 0xfe) return true;
+  let zeroOdd = 0;
+  let pairs = 0;
+  for (let index = 1; index < content.byteLength; index += 2) {
+    pairs += 1;
+    if (content[index] === 0) zeroOdd += 1;
+  }
+  return pairs > 0 && zeroOdd / pairs >= 0.6;
+}
+
+function looksLikeUtf16Be(content: Buffer): boolean {
+  if (content.byteLength < 16 || content.byteLength % 2 !== 0) return false;
+  if (content[0] === 0xfe && content[1] === 0xff) return true;
+  let zeroEven = 0;
+  let pairs = 0;
+  for (let index = 0; index < content.byteLength; index += 2) {
+    pairs += 1;
+    if (content[index] === 0) zeroEven += 1;
+  }
+  return pairs > 0 && zeroEven / pairs >= 0.6;
+}
+
+function decodeUtf16Be(content: Buffer): string {
+  const start = content[0] === 0xfe && content[1] === 0xff ? 2 : 0;
+  const swapped = Buffer.allocUnsafe(content.byteLength - start);
+  for (let source = start, target = 0; source + 1 < content.byteLength; source += 2, target += 2) {
+    swapped[target] = content[source + 1]!;
+    swapped[target + 1] = content[source]!;
+  }
+  return swapped.toString("utf16le");
+}
+
+function stripTrailingNuls(value: string): string {
+  return value.replace(/\u0000+$/gu, "");
 }
 
 function utf8Prefix(value: Buffer, maxBytes: number): string {
