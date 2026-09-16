@@ -311,6 +311,12 @@ availability boolean and exact ordered capability list. The default package
 plan remains capability-empty; this contract does not itself install or
 enable a root helper.
 
+The runtime integration revision exercises the concrete service-control
+handler through the key-material helper runtime and its separately
+authenticated authority channel. This confirms wiring only; production
+enablement still requires descriptor execution, root-domain installation,
+signing provenance, and physical readback evidence.
+
 Physical host evidence on 2026-09-15 found no available Developer ID signing
 identity and an ad-hoc-only native artifact. The helper package therefore
 remains an implementation candidate: strict ad-hoc verification is not

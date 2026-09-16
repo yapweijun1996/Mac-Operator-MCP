@@ -45,7 +45,7 @@ probe, not evidence that launchd mutation is available.
 ## Verification
 
 The focused adapter suite passes 6/6 and repository typecheck passes. The
-full repository regression passes 869 tests: 855 passed, 14 explicit skips,
+full repository regression passes 870 tests: 856 passed, 14 explicit skips,
 and 0 failures. No real launchd mutation was performed; current physical-host
 descriptor-exec evidence keeps the production adapter unavailable.
 

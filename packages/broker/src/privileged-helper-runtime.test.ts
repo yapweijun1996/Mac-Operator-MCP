@@ -21,6 +21,8 @@ import {
   type PrivilegedHelperIpcServer,
   type UnsignedPrivilegedHelperCommand
 } from "./privileged-helper.js";
+import { createPrivilegedServiceControlHelper } from "./privileged-service-control.js";
+import type { SafeServiceStatus, ServiceInspector } from "./service-inspector.js";
 import { loadAuthenticationKey, provisionAuthenticationKey } from "./credentials.js";
 import { BrokerStore } from "./persistence.js";
 import { PrivilegedHelperKeyManager, writePrivilegedHelperKeyConfig, type PrivilegedHelperKeyConfig } from "./privileged-helper-keyring.js";
@@ -337,6 +339,125 @@ test("root-helper key-material startup does not require BrokerStore access", asy
   } finally {
     await runtime?.close().catch(() => undefined);
     await authority?.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("root-helper runtime dispatches the fixed service-control adapter through authenticated IPC", async () => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || uid < 1 || gid === undefined) throw new Error("POSIX non-root identity is unavailable");
+  const root = await mkdtemp(join(tmpdir(), "mops-root-helper-service-control-"));
+  const keyPath = join(root, "helper.key");
+  const configPath = join(root, "helper-keys.json");
+  const helperSocketPath = join(root, "helper.sock");
+  const brokerSocketPath = join(root, "broker.sock");
+  const authoritySocketPath = join(root, "authority.sock");
+  const now = Date.now();
+  const peerPolicy = { expectedUid: uid, expectedGid: gid, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) };
+  const commandRequests: ProcessExecutionRequest[] = [];
+  const states: SafeServiceStatus["state"][] = ["stopped", "running"];
+  const inspector: ServiceInspector = {
+    inspect: async () => {
+      const state = states.shift();
+      if (state === undefined) throw new Error("service-control readback fixture exhausted");
+      return {
+        serviceId: "system/com.example.test",
+        loaded: state !== "unknown",
+        running: state === "running",
+        state,
+        lastExitCode: null,
+        pid: state === "running" ? 1234 : null,
+        warnings: [],
+        truncated: false
+      };
+    }
+  };
+  const helperAdapter = createPrivilegedServiceControlHelper({
+    enabled: true,
+    commandRunner: {
+      run: async (request) => {
+        commandRequests.push(request);
+        return success("");
+      }
+    },
+    inspector,
+    now: () => now
+  });
+  assert.equal(helperAdapter.available, true);
+  assert.deepEqual(helperAdapter.enabledCapabilities, ["mac_priv_service_control"]);
+  let key: Buffer | undefined;
+  let authority: PrivilegedHelperAuthorityIpcServer | undefined;
+  let runtime: Awaited<ReturnType<typeof createPrivilegedHelperRuntimeFromKeyMaterial>> | undefined;
+  try {
+    const provisioned = await provisionAuthenticationKey(keyPath);
+    key = await loadAuthenticationKey(keyPath);
+    await writePrivilegedHelperKeyConfig(configPath, {
+      schemaVersion: "0.1",
+      revision: 1,
+      keys: [{
+        keyId: "helper-key-service-control", keySource: "file", path: keyPath,
+        keyDigest: provisioned.digest, notBeforeMs: now - 1_000, expiresAtMs: now + 60_000
+      }]
+    });
+    authority = new PrivilegedHelperAuthorityIpcServer({
+      socketPath: authoritySocketPath,
+      authenticationKey: key,
+      replayGuard: { admit: () => undefined },
+      authorizeCommand: () => undefined,
+      peerPolicy,
+      now: () => now
+    });
+    await authority.listen();
+    runtime = await createPrivilegedHelperRuntimeFromKeyMaterial({
+      helperKeyConfigPath: configPath,
+      socketPath: helperSocketPath,
+      brokerSocketPath,
+      authoritySocketPath,
+      peerPolicy,
+      replayGuard: { admit: () => undefined },
+      adapter: helperAdapter,
+      authorizeCommand: () => undefined,
+      serverOptions: { now: () => now }
+    });
+    await runtime.start();
+    const payload = {
+      operation: "service_control" as const,
+      service_id: "system/com.example.test",
+      action: "start" as const,
+      expected_state: "running" as const
+    };
+    const unsigned: UnsignedPrivilegedHelperCommand = {
+      protocolVersion: "0.1",
+      contractVersion: CONTRACT_VERSION,
+      commandId: "priv-command:runtime-service-control-0001",
+      requestId: "request:runtime-service-control-0001",
+      nonce: "helper-nonce-runtime-service-control-0001",
+      nonceExpiresAtMs: now + 30_000,
+      timestampMs: now,
+      expiresAtMs: now + 30_000,
+      operation: "service_control",
+      targetRef: "service:system/com.example.test",
+      payload,
+      payloadDigest: sha256(canonicalJson(payload)),
+      policyVersion: "policy-test-1",
+      approvalId: "approval:runtime-service-control-0001",
+      intentId: "intent:runtime-service-control-0001"
+    };
+    const response = await sendHelperCommand(helperSocketPath, signPrivilegedHelperCommand(unsigned, key));
+    const verified = authenticatePrivilegedHelperResponse(response, unsigned, key);
+    assert.equal(verified.ok, true);
+    if (verified.ok) {
+      assert.equal(verified.result.resultClass, "SUCCEEDED");
+      assert.deepEqual(verified.result.evidence, { pre_state: "stopped", post_state: "running", idempotent: false });
+    }
+    assert.equal(commandRequests.length, 1);
+    assert.deepEqual(commandRequests[0]?.args, ["kickstart", "system/com.example.test"]);
+    assert.deepEqual(commandRequests[0]?.environment, {});
+  } finally {
+    await runtime?.close().catch(() => undefined);
+    await authority?.close().catch(() => undefined);
+    key?.fill(0);
     await rm(root, { recursive: true, force: true });
   }
 });

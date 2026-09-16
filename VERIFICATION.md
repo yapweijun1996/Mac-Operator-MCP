@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Helper runtime service-control addendum: authenticated helper runtime dispatch
+now reaches the concrete service-control adapter and verifies fixed launchctl
+argv, empty environment, state readback, and response proof. The runtime suite
+passes 8/8 using host-only command/readback seams; descriptor execution, root
+installation, signing, and live mutation remain unproven. Evidence:
+`evidence/2026-09-16-helper-service-control-runtime-ipc.md`.
+
 Privileged helper capability-release addendum: root package plans now require
 an explicit host-verified capability projection before any non-empty helper
 capability list can be represented. Only the implemented
@@ -17,7 +24,7 @@ Privileged service-control adapter addendum: the new allowlisted adapter
 accepts only `start`, `stop`, and `restart`, sends fixed `/bin/launchctl`
 argv with empty environment and bounded timeout/output, and requires a final
 LaunchDaemon readback before success. Focused adapter tests pass 6/6, the full
-regression passes 855/855 with 14 explicit skips, and typecheck passes. This
+regression passes 856/856 with 14 explicit skips, and typecheck passes. This
 proves the bounded adapter contract only; descriptor-exec availability,
 root-helper identity, root-domain installation, signing provenance, and live privileged enablement
 remain open. Evidence:

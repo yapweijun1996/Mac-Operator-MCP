@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Helper runtime service-control addendum: the key-material helper runtime now
+dispatches an authenticated command through the concrete
+`createPrivilegedServiceControlHelper` handler map. The test verifies the
+fixed launchctl argv, empty environment, service-state pre/postcondition, and
+authenticated response proof while using only host-test command/readback
+seams. Runtime tests pass 8/8; no production capability is enabled. Evidence:
+`evidence/2026-09-16-helper-service-control-runtime-ipc.md`.
+
 Privileged helper capability-release addendum: root package plans now accept
 only an explicit host-verified capability projection. The plan derives
 `adapterAvailable` and exact enabled capability names from that release, and
@@ -20,7 +28,7 @@ arguments with empty environment and bounded budgets, and verifies a final
 LaunchDaemon state readback. Idempotent requests still perform postcondition
 readback; unsupported enable/disable actions and unresolved readbacks fail
 closed. The production adapter also requires a root helper process and host
-descriptor-exec evidence. Focused adapter tests pass 6/6, full regression passes 855/855 with
+descriptor-exec evidence. Focused adapter tests pass 6/6, full regression passes 856/856 with
 14 explicit skips, and typecheck passes. Production availability remains
 gated by descriptor-exec evidence. Evidence:
 `evidence/2026-09-16-privileged-service-control-adapter.md`.
