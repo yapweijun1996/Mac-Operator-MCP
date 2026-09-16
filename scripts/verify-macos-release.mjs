@@ -1,14 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { lstatSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const MAX_MANIFEST_BYTES = 64 * 1024;
-const manifestPath = parseManifestPath(process.argv.slice(2));
-const manifest = await readManifest(manifestPath);
 
 try {
+  const manifestPath = parseManifestPath(process.argv.slice(2));
+  const manifest = await readManifest(manifestPath);
   const { runMacOsReleasePreflight } = await import("../packages/broker/dist/index.js");
   const evidence = await runMacOsReleasePreflight(manifest);
   process.stdout.write(`${JSON.stringify(evidence)}\n`);
