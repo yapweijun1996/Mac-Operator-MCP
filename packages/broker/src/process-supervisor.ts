@@ -8,7 +8,7 @@ import { requireProcessDescriptorExecution } from "./process-launch-capability.j
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertEnvironmentValuesDoNotContainSecrets } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertEnvironmentValuesDoNotContainSecrets, redactBoundedText } from "./secret-policy.js";
 
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
@@ -834,13 +834,15 @@ export class ProcessSupervisor {
           terminationReason === "orphaned" ? "UNKNOWN_OUTCOME" :
           terminationReason === "output_limit" ? "OUTPUT_LIMIT" :
           abnormalExit ? "EXECUTION_FAILED" : "SUCCEEDED";
+        const redactedStdout = redactProcessOutput(stdout, request.outputCapBytes);
+        const redactedStderr = redactProcessOutput(stderr, request.outputCapBytes);
         resolveResult({
           state,
           resultClass,
           exitCode: code,
           signal,
-          stdout: stdout.toString("utf8"),
-          stderr: stderr.toString("utf8"),
+          stdout: redactedStdout,
+          stderr: redactedStderr,
           truncated: terminationReason === "output_limit",
           durationMs,
           processId,
@@ -870,13 +872,15 @@ export class ProcessSupervisor {
           }, this.pollIntervalMs);
           orphanReaperTimer.unref();
         }
+        const redactedStdout = redactProcessOutput(stdout, request.outputCapBytes);
+        const redactedStderr = redactProcessOutput(stderr, request.outputCapBytes);
         resolveResult({
           state: "unknown",
           resultClass: "UNKNOWN_OUTCOME",
           exitCode: null,
           signal: null,
-          stdout: stdout.toString("utf8"),
-          stderr: stderr.toString("utf8"),
+          stdout: redactedStdout,
+          stderr: redactedStderr,
           truncated: terminationReason === "output_limit",
           durationMs: Math.max(0, Date.now() - startedAtMs),
           processId,
@@ -995,6 +999,13 @@ function isChildProcessLike(value: unknown): value is ChildProcess {
   return typeof candidate.kill === "function" &&
     typeof candidate.on === "function" &&
     typeof candidate.once === "function";
+}
+
+function redactProcessOutput(value: Buffer, maxBytes: number): string {
+  // Output is observable by the caller even when it is not persisted. Apply
+  // the Broker redaction policy at the shared process boundary so an adapter
+  // cannot accidentally return a known credential before its own parser runs.
+  return redactBoundedText(value.toString("utf8"), maxBytes).text;
 }
 
 function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number): ChildProcessCapture {

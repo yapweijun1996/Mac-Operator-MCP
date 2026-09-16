@@ -207,6 +207,20 @@ test("process supervisor captures output from a child that exits during startup 
   }
 });
 
+test("process supervisor redacts known credentials from child output", async () => {
+  const supervisor = new ProcessSupervisor();
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: ["-c", "print('ghp_' + '1234567890abcdefghijklmnop')"],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 1_024
+  });
+  assert.equal(result.resultClass, "SUCCEEDED");
+  assert.equal(result.stdout.trim(), "[REDACTED]");
+  assert.equal(result.stderr, "");
+});
+
 test("process supervisor requires a final native descendant readback for strict task exits", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Strict task exit proof uses the macOS native process observer");
