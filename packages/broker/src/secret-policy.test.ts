@@ -17,6 +17,10 @@ test("fixed secret-zone policy denies credential and private-data paths", () => 
     "/Users/test/Library/Application Support/BraveSoftware/Brave-Browser/Default/Login Data",
     "/Users/test/Library/Containers/com.apple.mail/Data/Library/Mail/V10/Envelope Index",
     "/Users/test/project/.git-credentials",
+    "/Users/test/project/apns-auth-key.p8",
+    "/Users/test/project/team-signing.p12",
+    "/Users/test/project/client-certificate.ppk",
+    "/Users/test/project/enterprise.keystore",
     "/private/var/root/Library/Preferences/com.apple.loginwindow.plist",
     "/var/root/opaque-private-data"
   ];
@@ -139,6 +143,9 @@ test("log redaction removes secret-shaped values and bounds messages", () => {
   const privateRootGenericPath = redactLogText("path=/private/var/root/opaque-private-data");
   assert.equal(privateRootGenericPath.redacted, true);
   assert.equal(privateRootGenericPath.text.includes("opaque-private-data"), false);
+  const signingContainerPath = redactLogText("open failed: /tmp/team-signing.p12");
+  assert.equal(signingContainerPath.redacted, true);
+  assert.equal(signingContainerPath.text.includes("team-signing.p12"), false);
   const bounded = redactLogText("x".repeat(20_000));
   assert.equal(bounded.redacted, true);
   assert.ok(bounded.text.length <= 8192);

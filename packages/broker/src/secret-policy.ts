@@ -7,6 +7,15 @@ const DENIED_BASENAMES = new Set([
   "credentials", "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa"
 ]);
 
+/**
+ * Private signing and credential containers are denied by name before any
+ * content read. Some formats are encrypted or opaque binary values and cannot
+ * be identified reliably by the bounded content scanner alone.
+ */
+const DENIED_NAME_SUFFIXES = [
+  ".key", ".p8", ".p12", ".pfx", ".ppk", ".jks", ".keystore", ".mobileprovision", ".provisionprofile"
+];
+
 const DENIED_PATH_FRAGMENTS = [
   "/.ssh/", "/.gnupg/", "/.aws/", "/.azure/", "/.config/gcloud/", "/.config/gh/", "/.kube/", "/.docker/",
   "/private/var/root/", "/var/root/",
@@ -91,6 +100,7 @@ const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
   /\bxox[baprs]-[0-9A-Za-z-]{16,}\b/gu,
   /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/giu,
+  /(?:\/(?:[^\r\n,;)]{1,512})\.(?:key|p8|p12|pfx|ppk|jks|keystore|mobileprovision|provisionprofile))(?=$|[\s,;)'"])/giu,
   /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.config\/(?:gcloud|gh)|\.kube|\.docker|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/(?:Google\/Chrome|BraveSoftware\/Brave-Browser|Microsoft Edge)|Containers\/com\.apple\.(?:mail|messages|safari))|Photos Library\.photoslibrary)(?:[^\r\n,;)]*)/giu,
   /(?:\/(?:private\/)?var\/root)(?:[^\r\n,;)]*)/giu
 ];
@@ -99,6 +109,7 @@ export function assertContentPathAllowed(path: string): void {
   const normalized = path.normalize("NFKC").toLocaleLowerCase("en-US");
   const name = basename(normalized);
   if (name === ".env" || name.startsWith(".env.") || DENIED_BASENAMES.has(name) ||
+      DENIED_NAME_SUFFIXES.some((suffix) => name.endsWith(suffix)) ||
       DENIED_PATH_FRAGMENTS.some((fragment) => `${normalized}/`.includes(fragment))) {
     throw new BrokerError("POLICY_DENIED", "Filesystem content is inside a protected secret zone");
   }
