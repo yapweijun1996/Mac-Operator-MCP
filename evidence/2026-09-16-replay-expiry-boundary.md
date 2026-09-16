@@ -19,7 +19,7 @@ future.
 ## Verification
 
 - `node --test packages/broker/dist/replay-capacity.test.js packages/broker/dist/replay-row-invariants.test.js` passed 9/9.
-- Latest full `npm test --silent` passed: 872 tests, 858 passed, 14 explicit
+- Latest full `npm test --silent` passed: 873 tests, 859 passed, 14 explicit
   skips, 0 failures.
 - The request and privileged-helper capacity tests fill the 4,096-row bound,
   verify a live-row denial, then admit a new row exactly at the prior expiry.

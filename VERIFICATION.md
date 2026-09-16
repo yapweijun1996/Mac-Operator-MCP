@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Helper package precondition addendum: package execution now requires a
+host-owned existing-service reader and double-samples the precondition before
+any command or plist write. Caller-provided state is checked only for
+consistency; host readback drift fails closed. The focused helper package suite
+passes 18/18 and typecheck/build pass. Root installation and live LaunchDaemon
+readback remain open. Evidence:
+`evidence/2026-09-16-helper-package-precondition-readback.md`.
+
 Released helper readback addendum: an explicit host-verified
 `mac_priv_service_control` package release is now checked through the
 authenticated helper status observer, and a false/empty status projection is
@@ -14,7 +22,7 @@ remain open. Evidence:
 
 Process descendant fixture addendum: the Darwin persisted-descendant recovery
 test no longer relies on a 50ms child lifetime; it records identity first and
-then terminates the fixture child. Three isolated runs and the latest 872-test
+then terminates the fixture child. Three isolated runs and the latest 873-test
 regression pass with zero failures. Evidence:
 `evidence/2026-09-16-process-descendant-fixture-stability.md`.
 
@@ -40,7 +48,7 @@ Privileged service-control adapter addendum: the new allowlisted adapter
 accepts only `start`, `stop`, and `restart`, sends fixed `/bin/launchctl`
 argv with empty environment and bounded timeout/output, and requires a final
 LaunchDaemon readback before success. Focused adapter tests pass 6/6, the latest
-full regression passes 858/858 with 14 explicit skips, and typecheck passes. This
+full regression passes 859/859 with 14 explicit skips, and typecheck passes. This
 proves the bounded adapter contract only; descriptor-exec availability,
 root-helper identity, root-domain installation, signing provenance, and live privileged enablement
 remain open. Evidence:

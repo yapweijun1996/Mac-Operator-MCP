@@ -15,6 +15,7 @@ import {
   createPrivilegedHelperPackageHostObserver,
   executePrivilegedHelperPackagePlan,
   observePrivilegedHelperPackageReadback,
+  readPrivilegedHelperExistingServiceSnapshot,
   readPrivilegedHelperCodeSignature,
   readPrivilegedHelperAuthoritySocketReadback,
   requiredPrivilegedHelperFilesystemPaths,
@@ -734,6 +735,37 @@ test("privileged helper execution contract fixes preconditions, command order, a
   assert.deepEqual(uninstallExecution.recoverySteps.map((step) => step.kind), ["readback"]);
 });
 
+test("privileged helper existing-service precondition is sampled twice and fails closed on drift", async () => {
+  let reads = 0;
+  const snapshot = await readPrivilegedHelperExistingServiceSnapshot(() => {
+    reads += 1;
+    return { present: true, sourceRevision: base.sourceRevision };
+  });
+  assert.deepEqual(snapshot, { present: true, sourceRevision: base.sourceRevision });
+  assert.equal(reads, 2);
+
+  let driftingReads = 0;
+  await assert.rejects(
+    readPrivilegedHelperExistingServiceSnapshot(() => {
+      driftingReads += 1;
+      return driftingReads === 1
+        ? { present: false, sourceRevision: null }
+        : { present: true, sourceRevision: base.sourceRevision };
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+  assert.equal(driftingReads, 2);
+
+  await assert.rejects(
+    readPrivilegedHelperExistingServiceSnapshot(() => { throw new Error("synthetic readback failure"); }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "READBACK_FAILED"
+  );
+  await assert.rejects(
+    readPrivilegedHelperExistingServiceSnapshot(undefined as never),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_ARGUMENT"
+  );
+});
+
 test("privileged helper executor rejects non-root callers before commands or readback", async (t) => {
   if (process.getuid?.() === 0) {
     t.skip("The test host is already root");
@@ -747,6 +779,7 @@ test("privileged helper executor rejects non-root callers before commands or rea
       confirmOperation: "install",
       ownerUid: 0,
       existingService: { present: false, sourceRevision: null },
+      readExistingService: async () => ({ present: false, sourceRevision: null }),
       commandExecutor: { run: async () => { commands += 1; throw new Error("must not run"); } },
       readback: async () => { readbacks += 1; return null; }
     }),

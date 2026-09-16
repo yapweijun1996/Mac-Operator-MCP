@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Helper package precondition addendum: host-only package execution now samples
+the existing-service status twice before any signature command, plist write,
+or launchd transition. Caller-supplied snapshots are optional consistency
+hints only; drift or malformed host readback fails closed as
+`SERVICE_MISMATCH`/`READBACK_FAILED`. Focused helper package tests pass 18/18;
+root installation remains gated. Evidence:
+`evidence/2026-09-16-helper-package-precondition-readback.md`.
+
 Replay-expiry boundary addendum: all durable replay ledgers now reclaim rows
 when `expires_at_ms` is exactly the current admission time, matching the
 strict `expires_at_ms > now` validity rule. Request and privileged-helper
@@ -22,7 +30,7 @@ descriptor execution, and live privileged enablement remain open. Evidence:
 Process descendant fixture addendum: the Darwin persisted-descendant test now
 keeps its child alive until native PID/start-time observation is recorded, then
 terminates the test-owned child explicitly. Three isolated runs and the latest
-872-test regression pass; production process-control behavior is unchanged.
+873-test regression pass; production process-control behavior is unchanged.
 Evidence: `evidence/2026-09-16-process-descendant-fixture-stability.md`.
 
 Helper runtime service-control addendum: the key-material helper runtime now
@@ -50,7 +58,7 @@ arguments with empty environment and bounded budgets, and verifies a final
 LaunchDaemon state readback. Idempotent requests still perform postcondition
 readback; unsupported enable/disable actions and unresolved readbacks fail
 closed. The production adapter also requires a root helper process and host
-descriptor-exec evidence. Focused adapter tests pass 6/6, latest full regression passes 858/858 with
+descriptor-exec evidence. Focused adapter tests pass 6/6, latest full regression passes 859/859 with
 14 explicit skips, and typecheck passes. Production availability remains
 gated by descriptor-exec evidence. Evidence:
 `evidence/2026-09-16-privileged-service-control-adapter.md`.

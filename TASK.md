@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-072 helper package precondition addendum: the host-only executor now owns
+the existing-service readback, samples it twice before mutation, and treats a
+caller snapshot only as a checked hint. A changed or malformed precondition
+cannot authorize a root-domain package operation. Evidence:
+`evidence/2026-09-16-helper-package-precondition-readback.md`.
+
 MOP-012 replay-retention addendum: durable request, approval, signer,
 authority, helper, Broker-status, and guest replay ledgers now prune rows at
 `expires_at_ms <= admission_now`, preventing exact-boundary capacity denial

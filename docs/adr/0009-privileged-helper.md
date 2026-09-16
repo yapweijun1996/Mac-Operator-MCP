@@ -317,6 +317,12 @@ false availability state or an empty/different capability list for a released
 plan is rejected as `SERVICE_MISMATCH`; the observer test uses only temporary
 key material and sockets.
 
+The package-precondition revision makes the host-owned existing-service reader
+mandatory for package execution and samples it twice before mutation. Any
+caller snapshot is a consistency hint rather than authority, and a changing
+or malformed precondition fails closed before signature verification, plist
+write, or launchd transition.
+
 The runtime integration revision exercises the concrete service-control
 handler through the key-material helper runtime and its separately
 authenticated authority channel. This confirms wiring only; production

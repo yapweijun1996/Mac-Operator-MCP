@@ -334,7 +334,10 @@ export interface PrivilegedHelperPackageExecutionOptions {
   confirmOperation: PrivilegedHelperPackageOperation;
   /** Must be the root UID and is checked against the actual current process. */
   ownerUid: number;
-  existingService: PrivilegedHelperExistingServiceReadback;
+  /** Optional caller snapshot retained only as a consistency hint. */
+  existingService?: PrivilegedHelperExistingServiceReadback;
+  /** Host-owned, read-only precondition source. It is sampled twice before mutation. */
+  readExistingService: () => Promise<PrivilegedHelperExistingServiceReadback> | PrivilegedHelperExistingServiceReadback;
   /** Returns only independently observed sources; execution composes and validates them. */
   readback: () => Promise<PrivilegedHelperPackageReadbackSources | null>;
   /** Injectable only for host tests; production defaults to ProcessSupervisor. */
@@ -511,6 +514,32 @@ export function buildPrivilegedHelperPackageExecutionPlan(
 }
 
 /**
+ * Reads the host-owned existing-service precondition twice before a package
+ * mutation. A caller-provided snapshot is never authoritative; a change
+ * between samples fails closed before any command or filesystem write.
+ */
+export async function readPrivilegedHelperExistingServiceSnapshot(
+  reader: () => Promise<PrivilegedHelperExistingServiceReadback> | PrivilegedHelperExistingServiceReadback
+): Promise<PrivilegedHelperExistingServiceReadback> {
+  if (typeof reader !== "function") fail("INVALID_ARGUMENT", "privileged helper existing-service reader is required");
+  let first: PrivilegedHelperExistingServiceReadback;
+  let second: PrivilegedHelperExistingServiceReadback;
+  try {
+    first = await reader();
+    second = await reader();
+  } catch (error) {
+    if (error instanceof PrivilegedHelperPackageError) throw error;
+    fail("READBACK_FAILED", "privileged helper existing-service readback failed");
+  }
+  validatePrivilegedHelperExistingServiceSnapshot(first);
+  validatePrivilegedHelperExistingServiceSnapshot(second);
+  if (!sameExistingService(first, second)) {
+    fail("SERVICE_MISMATCH", "privileged helper existing-service identity changed during preflight");
+  }
+  return first;
+}
+
+/**
  * Executes the host-only helper package lifecycle after an explicit root
  * confirmation. This wrapper is not an MCP tool: it accepts only the fixed
  * plan, uses bounded Broker-owned command specs, and requires final launchd/
@@ -521,11 +550,21 @@ export async function executePrivilegedHelperPackagePlan(
   plan: PrivilegedHelperPackagePlan,
   options: PrivilegedHelperPackageExecutionOptions
 ): Promise<PrivilegedHelperPackageExecutionResult> {
+  if (options === null || typeof options !== "object") {
+    fail("INVALID_ARGUMENT", "privileged helper execution options are malformed");
+  }
   if (options.confirmOperation !== plan.operation) {
     fail("CONFIRMATION_REQUIRED", "privileged helper execution requires an explicit matching operation");
   }
   assertPrivilegedHelperRootOwner(options.ownerUid);
-  buildPrivilegedHelperPackageExecutionPlan(plan, options.existingService);
+  const existingService = await readPrivilegedHelperExistingServiceSnapshot(options.readExistingService);
+  if (options.existingService !== undefined) {
+    validatePrivilegedHelperExistingServiceSnapshot(options.existingService);
+    if (!sameExistingService(options.existingService, existingService)) {
+      fail("SERVICE_MISMATCH", "caller existing-service hint does not match the host precondition readback");
+    }
+  }
+  buildPrivilegedHelperPackageExecutionPlan(plan, existingService);
   const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
   let bootoutSucceeded = false;
   let plistApplied = false;
@@ -1379,10 +1418,7 @@ function validatePrivilegedHelperExistingService(
   plan: PrivilegedHelperPackagePlan,
   existingService: PrivilegedHelperExistingServiceReadback
 ): void {
-  if (existingService === null || typeof existingService !== "object" || typeof existingService.present !== "boolean" ||
-      (existingService.sourceRevision !== null && !REVISION_PATTERN.test(existingService.sourceRevision))) {
-    fail("SERVICE_MISMATCH", "privileged helper existing-service readback is malformed");
-  }
+  validatePrivilegedHelperExistingServiceSnapshot(existingService);
   if (plan.operation === "install") {
     if (existingService.present || existingService.sourceRevision !== null) {
       fail("SERVICE_MISMATCH", "privileged helper install requires an absent existing service");
@@ -1392,6 +1428,17 @@ function validatePrivilegedHelperExistingService(
   if (!existingService.present || existingService.sourceRevision !== plan.expectedPreviousSourceRevision) {
     fail("SERVICE_MISMATCH", "privileged helper operation requires the exact previous source revision");
   }
+}
+
+function validatePrivilegedHelperExistingServiceSnapshot(value: PrivilegedHelperExistingServiceReadback): void {
+  if (value === null || typeof value !== "object" || typeof value.present !== "boolean" ||
+      (value.sourceRevision !== null && (typeof value.sourceRevision !== "string" || !REVISION_PATTERN.test(value.sourceRevision)))) {
+    fail("SERVICE_MISMATCH", "privileged helper existing-service readback is malformed");
+  }
+}
+
+function sameExistingService(left: PrivilegedHelperExistingServiceReadback, right: PrivilegedHelperExistingServiceReadback): boolean {
+  return left.present === right.present && left.sourceRevision === right.sourceRevision;
 }
 
 function fail(code: PrivilegedHelperPackageErrorCode, message: string): never {
