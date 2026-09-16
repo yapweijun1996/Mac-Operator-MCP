@@ -25,6 +25,13 @@ test("fixed secret-zone policy denies credential and private-data paths", () => 
     "/Users/test/.config/fish/fish_history",
     "/Users/test/.local/share/python_history",
     "/Users/test/bash_history",
+    "/Users/test/Library/Application Support/com.apple.TCC/TCC.db",
+    "/Library/Application Support/com.apple.TCC/TCC.db",
+    "/private/var/db/TCC/TCC.db",
+    "/private/var/db/dslocal/nodes/Default/users/test.plist",
+    "/private/var/db/ConfigurationProfiles/Store/CloudConfigurationDetails.plist",
+    "/private/var/db/keychains/system.keychain",
+    "/private/var/db/lockdown/escrow_records.plist",
     "/private/var/root/Library/Preferences/com.apple.loginwindow.plist",
     "/var/root/opaque-private-data"
   ];
@@ -153,6 +160,12 @@ test("log redaction removes secret-shaped values and bounds messages", () => {
   const historyPath = redactLogText("open failed: /Users/test/.zsh_history");
   assert.equal(historyPath.redacted, true);
   assert.equal(historyPath.text.includes(".zsh_history"), false);
+  const tccPath = redactLogText("open failed: /Users/test/Library/Application Support/com.apple.TCC/TCC.db");
+  assert.equal(tccPath.redacted, true);
+  assert.equal(tccPath.text.includes("com.apple.TCC"), false);
+  const dslocalPath = redactLogText("open failed: /private/var/db/dslocal/nodes/Default/users/test.plist");
+  assert.equal(dslocalPath.redacted, true);
+  assert.equal(dslocalPath.text.includes("dslocal"), false);
   const bounded = redactLogText("x".repeat(20_000));
   assert.equal(bounded.redacted, true);
   assert.ok(bounded.text.length <= 8192);

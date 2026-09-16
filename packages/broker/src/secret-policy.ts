@@ -23,9 +23,14 @@ const DENIED_NAME_SUFFIXES = [
 const DENIED_PATH_FRAGMENTS = [
   "/.ssh/", "/.gnupg/", "/.aws/", "/.azure/", "/.config/gcloud/", "/.config/gh/", "/.kube/", "/.docker/",
   "/private/var/root/", "/var/root/",
+  "/private/var/db/tcc/", "/var/db/tcc/", "/private/var/db/dslocal/", "/var/db/dslocal/",
+  "/private/var/db/configurationprofiles/", "/var/db/configurationprofiles/",
+  "/private/var/db/keychains/", "/var/db/keychains/", "/private/var/db/authd/", "/var/db/authd/",
+  "/private/var/db/lockdown/", "/var/db/lockdown/",
   "/library/keychains/", "/library/mail/", "/library/messages/", "/library/safari/",
   "/library/application support/google/chrome/", "/library/application support/bravesoftware/brave-browser/",
-  "/library/application support/microsoft edge/", "/library/containers/com.apple.mail/",
+  "/library/application support/microsoft edge/", "/library/application support/com.apple.tcc/",
+  "/library/containers/com.apple.mail/",
   "/library/containers/com.apple.messages/", "/library/containers/com.apple.safari/",
   "/photos library.photoslibrary/"
 ];
@@ -107,6 +112,8 @@ const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /(?:\/(?:[^\r\n,;)]{1,512})\.(?:key|p8|p12|pfx|ppk|jks|keystore|mobileprovision|provisionprofile))(?=$|[\s,;)'"])/giu,
   /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.config\/(?:gcloud|gh)|\.kube|\.docker|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/(?:Google\/Chrome|BraveSoftware\/Brave-Browser|Microsoft Edge)|Containers\/com\.apple\.(?:mail|messages|safari))|Photos Library\.photoslibrary)(?:[^\r\n,;)]*)/giu,
   /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/\.?(?:bash_history|zsh_history|fish_history|node_repl_history|python_history|irb_history|psql_history|sqlite_history|lesshst|wget-hsts)(?=$|[\s,;)'"])/giu,
+  /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/Library\/Application Support\/com\.apple\.tcc(?:[^\r\n,;)]*)/giu,
+  /(?:\/(?:private\/)?Library\/Application Support\/com\.apple\.tcc|\/(?:private\/)?var\/db\/(?:tcc|dslocal|configurationprofiles|keychains|authd|lockdown))(?:[^\r\n,;)]*)/giu,
   /(?:\/(?:private\/)?var\/root)(?:[^\r\n,;)]*)/giu
 ];
 
