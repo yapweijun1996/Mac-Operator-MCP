@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Launchd conflicting-field rejection addendum at source revision `f69090a`:
+the bounded `launchctl print` parser now rejects duplicate service headers,
+duplicate top-level singleton fields, and duplicate argument blocks as
+`MALFORMED_READBACK`. Nested dictionaries are excluded from top-level field
+extraction, preventing a nested state value from shadowing the service state.
+The focused launchd suite passes 5/5; install-plan, privileged-helper,
+service-startup, and packaged-service suites pass 43/43 with one opt-in smoke
+skip. Typecheck and build pass. This closes parser ambiguity only; persistent
+launchd ownership, code-signing provenance, helper execution, and remote
+deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-conflicting-fields.md`.
+
 Packaged LaunchAgent smoke at source revision `2e5d08b`: the opt-in physical
 Darwin test bootstraps reviewed Edge and Broker entrypoints as temporary
 owner-domain LaunchAgents, verifies exact launchd program/argument/PID

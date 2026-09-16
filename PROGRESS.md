@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Launchd conflicting-field addendum at source revision `f69090a`: the bounded
+`launchctl print` parser now rejects duplicate service headers, duplicate
+top-level singleton fields, and duplicate argument blocks, while ignoring
+nested state dictionaries for top-level extraction. The focused launchd suite
+passes 5/5; install-plan, privileged-helper, service-startup, and packaged
+service suites pass 43/43 with one opt-in smoke skip. Typecheck and build pass.
+Persistent launchd ownership, code-signing provenance, helper execution, and
+remote deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-conflicting-fields.md`.
+
 Process-output redaction addendum at source revision `16cc28c`: the shared
 `ProcessSupervisor` now redacts known credential signatures from child stdout
 and stderr before returning results, adding defense in depth for fixed
