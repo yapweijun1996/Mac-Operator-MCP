@@ -15,7 +15,9 @@ authority-poll channel, and verifies the helper response proof.
 The adapter returned a verified transition from `stopped` to `running`. The
 captured command was exactly `kickstart system/com.example.test`, with `/bin/launchctl`
 and an empty environment; no shell or caller-supplied executable/argv was
-introduced.
+introduced. The same runtime's authenticated status request returned
+`adapterAvailable: true` and the exact `mac_priv_service_control` capability
+projection; the IPC server rejected status drift against the handler map.
 
 ## Verification
 

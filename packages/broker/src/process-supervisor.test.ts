@@ -1101,7 +1101,7 @@ test("process supervisor keeps a dead root unresolved after persisted descendant
   const descendantReady = new Promise<void>((resolve) => { resolveDescendant = resolve; });
   const running = supervisor.run({
     executable: "/usr/bin/python3",
-    args: ["-c", "import os,time; child=os.fork(); (time.sleep(0.05), os._exit(0)) if child == 0 else (os.waitpid(child, 0), time.sleep(30))"],
+    args: ["-c", "import os,time; child=os.fork(); (time.sleep(30), os._exit(0)) if child == 0 else (os.waitpid(child, 0), time.sleep(30))"],
     cwd: CWD,
     timeoutMs: 35_000,
     outputCapBytes: 100,
@@ -1118,7 +1118,11 @@ test("process supervisor keeps a dead root unresolved after persisted descendant
     ]);
     assert.ok(snapshot);
     assert.ok(snapshot!.descendants.length > 0);
-    // Let the observed child exit while the persisted root remains alive.
+    // End the observed fixture child only after its PID/start-time identity has
+    // been persisted; the root remains alive and waits for that child to exit.
+    for (const descendant of snapshot!.descendants) {
+      try { process.kill(descendant.pid, "SIGKILL"); } catch { /* already exited */ }
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
     process.kill(snapshot!.identity.pid, "SIGKILL");
     await running;

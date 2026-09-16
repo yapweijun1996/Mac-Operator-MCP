@@ -17,8 +17,10 @@ import {
   AllowlistedPrivilegedHelper,
   authenticatePrivilegedHelperResponse,
   FailClosedPrivilegedHelper,
+  readPrivilegedHelperStatus,
   signPrivilegedHelperCommand,
   type PrivilegedHelperIpcServer,
+  type PrivilegedHelperStatusReadback,
   type UnsignedPrivilegedHelperCommand
 } from "./privileged-helper.js";
 import { createPrivilegedServiceControlHelper } from "./privileged-service-control.js";
@@ -418,9 +420,29 @@ test("root-helper runtime dispatches the fixed service-control adapter through a
       replayGuard: { admit: () => undefined },
       adapter: helperAdapter,
       authorizeCommand: () => undefined,
+      authorizeStatus: () => undefined,
+      readStatus: (): PrivilegedHelperStatusReadback => ({
+        component: "mac-operator-privileged-helper",
+        state: "running",
+        runtimeState: "running",
+        nativeTransportRequired: true,
+        adapterAvailable: helperAdapter.available,
+        helperSocketPath,
+        brokerSocketPath,
+        helperAuthoritySocketPath: authoritySocketPath,
+        brokerPeerUid: uid,
+        brokerPeerGid: gid,
+        sourceRevision: "a".repeat(40),
+        contractVersion: CONTRACT_VERSION,
+        policyVersion: "policy-test-1",
+        enabledCapabilities: [...helperAdapter.enabledCapabilities]
+      }),
       serverOptions: { now: () => now }
     });
     await runtime.start();
+    const status = await readPrivilegedHelperStatus({ socketPath: helperSocketPath, authenticationKey: key, now: () => now });
+    assert.equal(status.adapterAvailable, true);
+    assert.deepEqual(status.enabledCapabilities, ["mac_priv_service_control"]);
     const payload = {
       operation: "service_control" as const,
       service_id: "system/com.example.test",

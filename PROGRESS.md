@@ -4,12 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process descendant fixture addendum: the Darwin persisted-descendant test now
+keeps its child alive until native PID/start-time observation is recorded, then
+terminates the test-owned child explicitly. Three isolated runs and the full
+870-test regression pass; production process-control behavior is unchanged.
+Evidence: `evidence/2026-09-16-process-descendant-fixture-stability.md`.
+
 Helper runtime service-control addendum: the key-material helper runtime now
 dispatches an authenticated command through the concrete
 `createPrivilegedServiceControlHelper` handler map. The test verifies the
 fixed launchctl argv, empty environment, service-state pre/postcondition, and
-authenticated response proof while using only host-test command/readback
-seams. Runtime tests pass 8/8; no production capability is enabled. Evidence:
+authenticated response proof. An authenticated status readback also matches
+the handler map's `mac_priv_service_control` projection. Runtime tests pass
+8/8; no production capability is enabled. Evidence:
 `evidence/2026-09-16-helper-service-control-runtime-ipc.md`.
 
 Privileged helper capability-release addendum: root package plans now accept

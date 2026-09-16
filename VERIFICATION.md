@@ -3,10 +3,17 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Process descendant fixture addendum: the Darwin persisted-descendant recovery
+test no longer relies on a 50ms child lifetime; it records identity first and
+then terminates the fixture child. Three isolated runs and the full 870-test
+regression pass with zero failures. Evidence:
+`evidence/2026-09-16-process-descendant-fixture-stability.md`.
+
 Helper runtime service-control addendum: authenticated helper runtime dispatch
 now reaches the concrete service-control adapter and verifies fixed launchctl
-argv, empty environment, state readback, and response proof. The runtime suite
-passes 8/8 using host-only command/readback seams; descriptor execution, root
+argv, empty environment, state readback, response proof, and matching status
+capability projection. The runtime suite passes 8/8 using host-only
+command/readback seams; descriptor execution, root
 installation, signing, and live mutation remain unproven. Evidence:
 `evidence/2026-09-16-helper-service-control-runtime-ipc.md`.
 
