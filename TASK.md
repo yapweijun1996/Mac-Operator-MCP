@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-043/086 task-profile array prototype addendum at source revision
+`a3625e1`: profile-owned roots, fixed arguments, network allowlists, and task
+request args require native arrays with descriptor-backed elements; hostile
+custom methods fail closed before task resolution. Task profile tests pass 6/6
+and the full default regression passes 880/880 with 14 explicit skips (894
+total). Isolation evidence and task enablement remain blocked. Evidence:
+`evidence/2026-09-16-task-profile-array-prototype-boundary.md`.
+
 MOP-011/080 request-array prototype addendum at source revision `8ba9e67`:
 the signed request parser rejects arrays with custom prototypes and checks
 principal scopes through descriptor-backed indexed reads plus a local duplicate

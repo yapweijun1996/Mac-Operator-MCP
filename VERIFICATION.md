@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Task-profile array prototype verification at source revision `a3625e1`:
+profile-owned and request argument arrays require native prototypes and
+descriptor-backed elements before executable/cwd/network authority is used.
+Task profile tests pass 6/6; the full default regression passes 880/880 with 14
+explicit skips (894 total), with 0 failures. Evidence:
+`evidence/2026-09-16-task-profile-array-prototype-boundary.md`.
+
 Request-array prototype verification at source revision `8ba9e67`: signed
 request parsing requires native array prototypes and uses descriptor-backed
 principal-scope validation, rejecting custom iterators/methods before authority

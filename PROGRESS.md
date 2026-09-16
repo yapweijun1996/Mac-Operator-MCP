@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Task-profile array prototype addendum at source revision `a3625e1`: profile
+fixed arguments, cwd/filesystem roots, network allowlists, and task request
+args now require native arrays with descriptor-backed elements. Hostile custom
+array methods cannot alter task authority before resolution. Task profile tests
+pass 6/6 and the full default regression passes 880/880 with 14 explicit
+skips (894 total). Task execution remains disabled pending isolation evidence.
+Evidence: `evidence/2026-09-16-task-profile-array-prototype-boundary.md`.
+
 Request-array prototype addendum at source revision `8ba9e67`: signed request
 parsing now rejects custom-prototype arrays and validates principal scopes using
 descriptor-backed indexed reads, preventing custom iterators/methods from
