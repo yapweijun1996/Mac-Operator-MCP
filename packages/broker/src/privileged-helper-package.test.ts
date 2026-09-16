@@ -13,6 +13,7 @@ import {
   composePrivilegedHelperPackageReadback,
   createPrivilegedHelperCapabilityRelease,
   createPrivilegedHelperExistingServiceReader,
+  createPrivilegedHelperPackageExistingServiceReader,
   createPrivilegedHelperPackageHostObserver,
   executePrivilegedHelperPackagePlan,
   observePrivilegedHelperPackageReadback,
@@ -848,6 +849,58 @@ test("privileged helper existing-service reader binds launchd presence and prior
     failedReader(),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "READBACK_FAILED"
   );
+});
+
+test("privileged helper host observer factory binds the authenticated runtime source", async () => {
+  const previous = base.sourceRevision;
+  const plan = buildPrivilegedHelperPackagePlan({ ...base, operation: "upgrade", expectedPreviousSourceRevision: previous });
+  const serviceId = `${plan.domain}/${plan.label}`;
+  const launchdOutput = [
+    `${serviceId} = {`,
+    "\tstate = running",
+    "\tpid = 1234",
+    `\tprogram = ${plan.launchd.program}`,
+    "\targuments = {",
+    ...plan.launchd.programArguments.map((argument) => `\t\t${argument}`),
+    "\t}",
+    `\tpath = ${plan.plistPath}`,
+    "\ttype = LaunchDaemon",
+    "\tlast exit code = (never exited)",
+    "}"
+  ].join("\n");
+  let launchdReads = 0;
+  let runtimeReads = 0;
+  const reader = createPrivilegedHelperPackageExistingServiceReader(plan, {
+    launchdExecutor: {
+      run: async (command) => {
+        launchdReads += 1;
+        assert.deepEqual(command.args, ["print", serviceId]);
+        return successfulProcessResult(launchdOutput);
+      }
+    },
+    readRuntime: async () => {
+      runtimeReads += 1;
+      return {
+        component: "mac-operator-privileged-helper",
+        state: "running",
+        runtimeState: "running",
+        nativeTransportRequired: true,
+        adapterAvailable: false,
+        helperSocketPath: plan.helperSocketPath,
+        brokerSocketPath: plan.brokerSocketPath,
+        helperAuthoritySocketPath: plan.helperAuthoritySocketPath,
+        brokerPeerUid: plan.brokerPeer.uid,
+        brokerPeerGid: plan.brokerPeer.gid ?? null,
+        sourceRevision: previous,
+        contractVersion: plan.contractVersion,
+        policyVersion: plan.policyVersion,
+        enabledCapabilities: []
+      };
+    }
+  });
+  assert.deepEqual(await reader(), { present: true, sourceRevision: previous });
+  assert.equal(launchdReads, 1);
+  assert.equal(runtimeReads, 1);
 });
 
 test("privileged helper executor rejects non-root callers before commands or readback", async (t) => {

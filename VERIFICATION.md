@@ -9,9 +9,11 @@ signature command, plist write, or launchd transition. The observer binds the
 exact per-user LaunchAgent identity and reviewed program/arguments/plist;
 upgrade, rollback, and uninstall operations also require the prior source
 revision from authenticated runtime readback. Caller state is a consistency
-hint only. Focused macOS install tests pass 23/23; the full regression passes
-861/861 with 14 explicit skips, and typecheck/build pass. No real LaunchAgent
-installation or mutation was performed. Evidence:
+hint only; host-observer factories assemble the source from bounded Launchd
+and authenticated Broker/Edge status channels. Focused macOS install tests
+pass 24/24; the full regression passes 863/863 with 14 explicit skips, and
+typecheck/build pass. No real LaunchAgent installation or mutation was
+performed. Evidence:
 `evidence/2026-09-16-launchagent-precondition-readback.md`.
 
 Helper package precondition addendum: package execution now requires a

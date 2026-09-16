@@ -128,6 +128,8 @@ any signature command, plist write, or launchd transition. The reader binds
 the exact GUI-domain service identity, LaunchAgent type, reviewed program,
 arguments, and plist path; non-install operations also bind the prior runtime
 source revision. Caller-provided state is only a consistency hint. Focused
-tests and the full regression are green, but no new real service mutation is
-claimed. Evidence:
+tests and the full regression are green; host-observer factories now assemble
+the precondition source from the same bounded Launchd and authenticated
+component status channels used for final readback. No new real service
+mutation is claimed. Evidence:
 `evidence/2026-09-16-launchagent-precondition-readback.md`.

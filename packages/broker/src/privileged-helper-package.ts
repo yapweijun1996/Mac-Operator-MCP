@@ -1139,6 +1139,21 @@ export function createPrivilegedHelperPackageHostObserver(
 }
 
 /**
+ * Assembles the helper precondition reader from the bounded Launchd source
+ * and authenticated helper status source used for final package readback.
+ * Test-only runtime seams remain subject to the same host-owned contract.
+ */
+export function createPrivilegedHelperPackageExistingServiceReader(
+  plan: PrivilegedHelperPackagePlan,
+  options: PrivilegedHelperPackageHostObserverOptions
+): () => Promise<PrivilegedHelperExistingServiceReadback> {
+  return createPrivilegedHelperExistingServiceReader(
+    plan,
+    createPrivilegedHelperPackageHostObserver(plan, options)
+  );
+}
+
+/**
  * Creates the host-owned existing-service reader consumed by package
  * execution. Launchd presence is authoritative for install absence/presence;
  * non-install operations additionally bind the prior source revision to the

@@ -10,8 +10,10 @@ Launchd presence and reviewed target identity are checked before any command,
 plist mutation, or service transition; non-install operations additionally
 bind the prior source revision from the authenticated runtime channel. A
 caller snapshot cannot authorize the operation and is retained only as a
-checked hint. Focused install tests pass 23/23 and the full regression passes
-861/861 with 14 explicit skips. Real LaunchAgent mutation remains unperformed.
+checked hint. Host-observer factories assemble the readers from bounded
+Launchd plus authenticated Broker/Edge status sources. Focused install tests
+pass 24/24 and the full regression passes 863/863 with 14 explicit skips. Real
+LaunchAgent mutation remains unperformed.
 Evidence: `evidence/2026-09-16-launchagent-precondition-readback.md`.
 
 MOP-072 helper package precondition addendum: the host-only executor now owns

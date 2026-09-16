@@ -14,7 +14,9 @@ import {
   composeMacOsInstallReadback,
   composeMacOsEdgeInstallReadback,
   createMacOsExistingServiceReader,
+  createMacOsInstallExistingServiceReader,
   createMacOsInstallHostObserver,
+  createMacOsEdgeInstallExistingServiceReader,
   createMacOsEdgeInstallHostObserver,
   executeMacOsInstallPlan,
   executeMacOsEdgeInstallPlan,
@@ -553,6 +555,58 @@ test("install host observer can read through the authenticated Broker status cli
   }
 });
 
+test("host precondition reader factories bind Launchd to authenticated component status", async () => {
+  const previous = base.metadata.sourceRevision;
+  const brokerPlan = buildMacOsInstallPlan({ ...base, operation: "upgrade", expectedPreviousSourceRevision: previous });
+  let brokerLaunchdReads = 0;
+  let brokerStatusReads = 0;
+  const brokerReader = createMacOsInstallExistingServiceReader(brokerPlan, {
+    readBroker: async () => {
+      brokerStatusReads += 1;
+      return readbackSources(brokerPlan).broker;
+    },
+    launchdExecutor: {
+      run: async (command) => {
+        brokerLaunchdReads += 1;
+        assert.deepEqual(command.args, ["print", `${brokerPlan.domain}/${brokerPlan.label}`]);
+        return successfulLaunchdResult(launchdPrintOutput(brokerPlan, "LaunchAgent"));
+      }
+    }
+  });
+  assert.deepEqual(await readMacOsExistingServiceSnapshot(brokerReader), { present: true, sourceRevision: previous });
+  assert.equal(brokerLaunchdReads, 2);
+  assert.equal(brokerStatusReads, 2);
+
+  const edgePlan = buildMacOsEdgeInstallPlan({ ...edgeBase, operation: "upgrade", expectedPreviousSourceRevision: previous });
+  let edgeLaunchdReads = 0;
+  let edgeStatusReads = 0;
+  const edgeReader = createMacOsEdgeInstallExistingServiceReader(edgePlan, {
+    readEdge: async () => {
+      edgeStatusReads += 1;
+      return {
+        component: "mac-operator-edge",
+        state: "running",
+        sourceRevision: previous,
+        contractVersion: edgePlan.metadata.contractVersion,
+        policyVersion: edgePlan.metadata.policyVersion,
+        bindHost: edgePlan.edgeListener!.bindHost,
+        bindPort: edgePlan.edgeListener!.bindPort,
+        listening: true
+      };
+    },
+    launchdExecutor: {
+      run: async (command) => {
+        edgeLaunchdReads += 1;
+        assert.deepEqual(command.args, ["print", `${edgePlan.domain}/${edgePlan.label}`]);
+        return successfulLaunchdResult(launchdPrintOutput(edgePlan, "LaunchAgent"));
+      }
+    }
+  });
+  assert.deepEqual(await readMacOsExistingServiceSnapshot(edgeReader), { present: true, sourceRevision: previous });
+  assert.equal(edgeLaunchdReads, 2);
+  assert.equal(edgeStatusReads, 2);
+});
+
 test("upgrade and uninstall plans bind an exact existing revision and fail closed on precondition mismatch", () => {
   const previous = "abcdef0123456789abcdef0123456789abcdef01";
   const plan = buildMacOsInstallPlan({ ...base, operation: "upgrade", expectedPreviousSourceRevision: previous });
@@ -1015,6 +1069,41 @@ function readbackSources(plan: MacOsInstallPlan) {
     plist: plistReadback(plan),
     broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
     signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null }
+  };
+}
+
+function launchdPrintOutput(
+  plan: Pick<MacOsInstallPlan, "domain" | "label" | "plistPath" | "launchd">,
+  type: "LaunchAgent" | "LaunchDaemon"
+): string {
+  return [
+    `${plan.domain}/${plan.label} = {`,
+    "\tstate = running",
+    "\tpid = 1234",
+    `\tprogram = ${plan.launchd.program}`,
+    "\targuments = {",
+    ...plan.launchd.programArguments.map((argument) => `\t\t${argument}`),
+    "\t}",
+    `\tpath = ${plan.plistPath}`,
+    `\ttype = ${type}`,
+    "\tlast exit code = (never exited)",
+    "}"
+  ].join("\n");
+}
+
+function successfulLaunchdResult(stdout: string): ProcessExecutionResult {
+  return {
+    state: "completed",
+    resultClass: "SUCCEEDED",
+    exitCode: 0,
+    signal: null,
+    stdout,
+    stderr: "",
+    truncated: false,
+    durationMs: 1,
+    processId: 1,
+    processGroupId: 1,
+    terminationObserved: true
   };
 }
 

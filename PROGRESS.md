@@ -11,8 +11,10 @@ launchd transitions. The observer binds the exact per-user service ID,
 LaunchAgent type, reviewed program/arguments, and plist path; upgrades,
 rollbacks, and uninstalls also require the prior source revision from the
 authenticated runtime channel. Caller-supplied state is optional and checked
-only as a consistency hint. Focused macOS install tests pass 23/23; the full
-regression passes 861/861 with 14 explicit skips, and typecheck/build pass.
+only as a consistency hint. The host-observer factory now assembles these
+readers from bounded Launchd plus authenticated Broker/Edge status sources.
+Focused macOS install tests pass 24/24; the full regression passes 863/863
+with 14 explicit skips, and typecheck/build pass.
 No real service mutation was performed. Evidence:
 `evidence/2026-09-16-launchagent-precondition-readback.md`.
 

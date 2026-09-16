@@ -904,6 +904,22 @@ export function createMacOsInstallHostObserver(
   };
 }
 
+/**
+ * Assembles the host-owned precondition reader from the same bounded Launchd
+ * and authenticated Broker status sources used for final install readback.
+ * Callers do not provide a service snapshot or an arbitrary revision source.
+ */
+export function createMacOsInstallExistingServiceReader(
+  plan: MacOsInstallPlan,
+  options: MacOsInstallHostObserverOptions
+): () => Promise<ExistingServiceReadback> {
+  const observer = createMacOsInstallHostObserver(plan, options);
+  return createMacOsExistingServiceReader(plan, {
+    readLaunchd: observer.readLaunchd,
+    readSourceRevision: async () => (await observer.readBroker()).sourceRevision
+  });
+}
+
 /** Creates a production-shaped Edge observer. Unlike Broker readback there is
  * no status IPC fallback: the caller must provide an authenticated, process-
  * owned Edge lifecycle source. */
@@ -924,6 +940,19 @@ export function createMacOsEdgeInstallHostObserver(
       ? async () => readMacOsCodeSignature(plan, options.signatureExecutor)
       : async () => options.readSignature!(plan)
   };
+}
+
+/** Assembles the Edge precondition reader from the same Launchd and
+ * authenticated Edge lifecycle source used for final readback. */
+export function createMacOsEdgeInstallExistingServiceReader(
+  plan: MacOsEdgeInstallPlan,
+  options: MacOsEdgeInstallHostObserverOptions
+): () => Promise<ExistingServiceReadback> {
+  const observer = createMacOsEdgeInstallHostObserver(plan, options);
+  return createMacOsExistingServiceReader(plan, {
+    readLaunchd: observer.readLaunchd,
+    readSourceRevision: async () => (await observer.readEdge()).sourceRevision
+  });
 }
 
 /**
