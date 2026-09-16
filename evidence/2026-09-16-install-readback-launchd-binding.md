@@ -1,7 +1,7 @@
 # macOS install readback LaunchAgent binding evidence
 
-Date: 2026-09-16  
-Source revision: `acc1924`  
+Date: 2026-09-16
+Source revision: `acc1924`
 Host: Darwin `25.2.0`, arm64; macOS `26.2`; Node.js `25.5.0`
 
 ## Boundary exercised
