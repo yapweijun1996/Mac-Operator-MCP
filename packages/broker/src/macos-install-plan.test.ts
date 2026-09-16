@@ -119,6 +119,14 @@ test("install plan uses a per-user domain, fixed argv, and explicit rollback act
     timeoutMs: 5_000,
     outputCapBytes: 131_072
   });
+  assert.deepEqual(plan.notarizationAssess, {
+    executable: "/usr/sbin/spctl",
+    args: ["--assess", "--type", "execute", "--verbose=4", base.signedArtifactPath],
+    cwd: "/",
+    environment: {},
+    timeoutMs: 5_000,
+    outputCapBytes: 131_072
+  });
   assert.equal(plan.rollback.file.kind, "restore-plist");
   assert.equal(plan.uninstall.file.kind, "remove-plist");
   assert.doesNotMatch(plan.renderedPlist, /EnvironmentVariables|UserName|Shell/u);
@@ -148,6 +156,7 @@ test("production install plans require Developer ID identity and isolate ad-hoc 
     signature: { identifier: "com.mac-operator.broker" }
   });
   assert.equal(development.signaturePolicy, "development-ad-hoc");
+  assert.equal(development.notarizationAssess, undefined);
   assert.throws(
     () => buildMacOsInstallPlan({
       ...base,
@@ -423,6 +432,19 @@ test("readback requires matching signature, launchd identity, native transport, 
     notarization: notarizationReadback(plan)
   };
   validateMacOsInstallReadback(plan, readback);
+  const { notarization: omittedNotarization, ...missingNotarization } = readback;
+  void omittedNotarization;
+  assert.throws(
+    () => validateMacOsInstallReadback(plan, missingNotarization),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SIGNATURE_MISMATCH"
+  );
+  assert.throws(
+    () => validateMacOsInstallReadback(plan, {
+      ...readback,
+      notarization: { ...readback.notarization!, teamIdentifier: "ZZZZZ99999" }
+    }),
+    (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "SIGNATURE_MISMATCH"
+  );
   validateCodeSignatureReadback(base.signature, readback.signature, base.signedArtifactPath);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, processIdentity: { pid: 4321, startTimeMicros: 987654321 } }), /launchd readback/u);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, pid: 1234, processIdentity: { pid: 1234, startTimeMicros: 0 } }), /launchd readback/u);

@@ -95,6 +95,14 @@ test("privileged helper package plan is a fixed root-domain native LaunchDaemon"
     timeoutMs: 5_000,
     outputCapBytes: 131_072
   });
+  assert.deepEqual(plan.notarizationAssess, {
+    executable: "/usr/sbin/spctl",
+    args: ["--assess", "--type", "execute", "--verbose=4", base.signedArtifactPath],
+    cwd: "/",
+    environment: {},
+    timeoutMs: 5_000,
+    outputCapBytes: 131_072
+  });
 });
 
 test("privileged helper package capability release is explicit and implementation-bound", () => {
@@ -250,6 +258,12 @@ test("privileged helper package readback binds root service, Broker peer, and di
     notarization: notarizationReadback(plan)
   };
   validatePrivilegedHelperPackageReadback(plan, readback);
+  const { notarization: omittedNotarization, ...missingNotarization } = readback;
+  void omittedNotarization;
+  assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, missingNotarization),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SIGNATURE_MISMATCH"
+  );
   const composed = composePrivilegedHelperPackageReadback(plan, {
     launchd: {
       serviceId: "system/com.mac-operator.privileged-helper",
