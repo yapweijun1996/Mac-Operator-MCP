@@ -108,6 +108,7 @@ export interface PrivilegedHelperLaunchdReadback {
   stdoutPath: string;
   stderrPath: string;
   domain: "system";
+  type: "LaunchDaemon";
   runsAsRoot: true;
   usesEnvironmentVariables: false;
   usesShell: false;
@@ -364,6 +365,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
     stdoutPath: service.stdoutPath,
     stderrPath: service.stderrPath,
     domain: "system",
+    type: "LaunchDaemon" as const,
     runsAsRoot: true,
     usesEnvironmentVariables: false,
     usesShell: false,
@@ -907,7 +909,7 @@ export function validatePrivilegedHelperPackageReadback(
       !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
       readback.launchd.workingDirectory !== plan.launchd.workingDirectory ||
       readback.launchd.stdoutPath !== plan.launchd.stdoutPath || readback.launchd.stderrPath !== plan.launchd.stderrPath ||
-      readback.launchd.domain !== "system" || readback.launchd.runsAsRoot !== true ||
+      readback.launchd.domain !== "system" || readback.launchd.type !== "LaunchDaemon" || readback.launchd.runsAsRoot !== true ||
       readback.launchd.usesEnvironmentVariables !== false || readback.launchd.usesShell !== false ||
       readback.launchd.runAtLoad !== plan.launchd.runAtLoad || readback.launchd.keepAlive !== plan.launchd.keepAlive ||
       readback.launchd.throttleIntervalSeconds !== plan.launchd.throttleIntervalSeconds) {

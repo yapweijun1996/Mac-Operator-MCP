@@ -250,6 +250,13 @@ test("privileged helper package readback binds root service, Broker peer, and di
   assert.throws(
     () => validatePrivilegedHelperPackageReadback(plan, {
       ...readback,
+      launchd: { ...readback.launchd, type: "LaunchAgent" as never }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+  assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, {
+      ...readback,
       plist: { ...readback.plist, sha256: "0".repeat(64) }
     }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_READBACK"
