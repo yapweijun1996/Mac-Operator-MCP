@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Launchd service-inspector parser addendum at source revision `917d479`: the
+read-only service-status adapter now reuses the strict launchd readback parser,
+rejecting forged headers, duplicate singleton fields, nested-field shadowing,
+malformed PIDs, and unsupported states before returning status. Public
+`xpcproxy -> loaded` mapping and stable Broker errors remain unchanged. The
+combined launchd/install/helper/startup suite passes 60/60; typecheck and build
+pass. Persistent launchd ownership, Developer ID provenance, descriptor
+execution, root-domain installation, and remote issuer deployment remain open.
+Evidence: `evidence/2026-09-16-launchd-service-inspector-parser.md`.
+
 Launchd startup parser reuse addendum at source revision `3fa25e1`: Edge
 startup identity capture and privileged-helper Broker-caller capture now reuse
 the strict launchd parser, rejecting duplicate/nested fields and malformed PID

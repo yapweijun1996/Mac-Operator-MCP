@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Launchd service-inspector parser addendum at source revision `917d479`: the
+read-only service status adapter now reuses strict launchd parsing and rejects
+forged headers, duplicate/nested fields, malformed PIDs, and unsupported states
+before returning status. The combined launchd/install/helper/startup suite
+passes 60/60; typecheck and build pass. Persistent launchd ownership,
+Developer ID provenance, descriptor execution, root-domain installation, and
+remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-service-inspector-parser.md`.
+
 Launchd startup-parser reuse addendum at source revision `3fa25e1`: Edge and
 privileged-helper startup identity capture now share the strict launchd parser,
 rejecting duplicate/nested fields and malformed PID readback before native

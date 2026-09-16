@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-030/081/087 launchd service-inspector addendum at source revision `917d479`:
+the read-only launchd status adapter now consumes the shared strict parser,
+rejecting forged headers, duplicate/nested fields, malformed PIDs, and
+unsupported states before status publication while preserving public
+`xpcproxy -> loaded` behavior and stable Broker errors. The combined
+launchd/install/helper/startup suite passes 60/60; typecheck, build, lint,
+matrix, and documentation checks pass. Persistent launchd ownership,
+Developer ID provenance, descriptor execution, root-domain installation, and
+remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-service-inspector-parser.md`.
+
 MOP-081/087 launchd startup-parser reuse addendum at source revision `3fa25e1`:
 Edge startup and privileged-helper Broker-caller capture now reuse the strict
 launchd readback parser, rejecting duplicate/nested fields and malformed PID
