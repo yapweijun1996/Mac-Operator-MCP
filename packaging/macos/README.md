@@ -87,8 +87,9 @@ and its manifest CLI (`npm run build && npm run verify:release:macos --
 one canonical artifact path, its expected deterministic tree SHA-256 and byte
 count, the release owner's UID, and the exact Developer ID identifier, Team ID,
 and CDHash. The gate re-hashes regular files through an `O_NOFOLLOW` descriptor,
-rejects symlinks/special files, writable entries, owner changes, identity swaps,
-entry/byte-budget overruns, and digest mismatches, then runs only fixed
+rejects symlinks/special files, writable entries, owner changes, identity/path
+swaps, 64-level depth and entry/byte-budget overruns, and digest mismatches,
+then runs only fixed
 `/usr/bin/codesign` and `/usr/sbin/spctl` commands with `/` cwd, empty
 environment, 5-second timeout, and 128 KiB output caps. It emits bounded
 artifact/signature/notarization evidence and never writes host state. Ad-hoc
