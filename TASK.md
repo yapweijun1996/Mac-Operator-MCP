@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-013 remote JWKS addendum at source revision `dc80e9f`: corrected the
+`content-length` digit grammar so normal numeric headers are accepted while
+malformed and oversized values remain fail-closed. The JWT verifier suite
+passes 8/8 with typecheck, lint, and build passing; issuer deployment,
+provenance, distributed rotation, and remote revocation remain open. Evidence:
+`evidence/2026-09-16-jwks-content-length-fix.md`.
+
 MOP-045 process cwd permission addendum at source revision `5feda4c`:
 `ProcessSupervisor` rejects group/other-writable working directories before
 child start and repeats the existing canonical/no-follow identity checks.

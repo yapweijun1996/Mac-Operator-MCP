@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Remote JWKS content-length addendum at source revision `dc80e9f`: corrected
+the digit grammar so valid numeric `content-length` headers are accepted while
+malformed and oversized lengths remain denied. The JWT verifier suite passes
+8/8 with typecheck, lint, and build passing; issuer deployment, provenance,
+distributed rotation, and remote revocation remain open. Evidence:
+`evidence/2026-09-16-jwks-content-length-fix.md`.
+
 Process cwd permission addendum at source revision `5feda4c`:
 `ProcessSupervisor` now rejects group/other-writable working directories in
 the final Broker-owned validation, while preserving canonical/no-follow and
