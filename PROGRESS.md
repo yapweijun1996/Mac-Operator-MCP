@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process-output redaction addendum at source revision `16cc28c`: the shared
+`ProcessSupervisor` now redacts known credential signatures from child stdout
+and stderr before returning results, adding defense in depth for fixed
+adapters. Process-supervisor, launchd, and service-inspector tests pass 51/51;
+typecheck, lint, and build pass. Opaque/binary secret formats and production
+sandbox isolation remain open. Evidence:
+`evidence/2026-09-16-process-output-redaction-boundary.md`.
+
 Privileged-helper readback addendum at source revision `866f4ee`: the final
 root-domain helper readback now retains and validates `type: "LaunchDaemon"`
 alongside `domain: "system"`; a type-substitution regression is covered.

@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-037/045 output addendum at source revision `16cc28c`:
+`ProcessSupervisor` centrally redacts known credential signatures from child
+stdout/stderr before adapter consumers receive them. Process-supervisor,
+launchd, and service-inspector tests pass 51/51; typecheck, lint, and build
+pass. Opaque/binary formats and production sandbox isolation remain open.
+Evidence: `evidence/2026-09-16-process-output-redaction-boundary.md`.
+
 MOP-060/061 helper readback addendum at source revision `866f4ee`: final
 root-domain helper readback retains the approved `system`/`LaunchDaemon`
 identity and rejects post-composition type substitution. Helper
