@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Keychain ACL rerun verification: `MOPS_REAL_KEYCHAIN=1 node --test
+--test-timeout=120000 packages/broker/dist/credentials.test.js` passes 11/11
+on the physical Darwin arm64 host. The test binds a random file-based ACL item
+to the current executable, rejects `/usr/bin/security`, enforces digest-bound
+retirement, and confirms final absence. No persistent production item or
+capability was enabled. Evidence:
+`evidence/2026-09-16-keychain-acl-rerun.md`.
+
 Signature provenance verification: package observers parse bounded `codesign`
 details and require either an exact Developer ID Application authority/Team ID
 pair with CDHash or an explicitly development-only ad-hoc result. A production

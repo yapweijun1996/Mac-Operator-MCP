@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-037/081 Keychain ACL rerun addendum at source revision `31a78c0`: the real
+Darwin credential suite passes 11/11 with a random ACL item, exact executable
+binding, foreign-executable denial, wrong-digest rejection, and cleanup
+readback. Production signed identity and installed rotation remain open.
+Evidence: `evidence/2026-09-16-keychain-acl-rerun.md`.
+
 MOP-061/072 signature provenance addendum: package readback now distinguishes
 Developer ID authority from development ad-hoc signatures. The first bounded
 `Developer ID Application` authority must bind the exact Team ID and a CDHash;

@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Keychain ACL rerun addendum at source revision `31a78c0`: the physical Darwin
+credential suite passes 11/11 with `MOPS_REAL_KEYCHAIN=1`. It provisions a
+random file-based ACL item bound to the current executable, rejects a foreign
+executable, enforces digest-bound retirement, and verifies post-retirement
+absence. The unique item is cleaned; no production credential or capability is
+enabled. Evidence: `evidence/2026-09-16-keychain-acl-rerun.md`.
+
 Signature provenance addendum: `codesign -dv --verbose=4` readback now
 classifies artifacts as `developer-id` or `development-ad-hoc`. Developer ID
 readback requires a bounded `Developer ID Application` authority whose Team ID
