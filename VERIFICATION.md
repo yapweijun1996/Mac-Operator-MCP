@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged service-control adapter addendum: the new allowlisted adapter
+accepts only `start`, `stop`, and `restart`, sends fixed `/bin/launchctl`
+argv with empty environment and bounded timeout/output, and requires a final
+LaunchDaemon readback before success. Focused adapter tests pass 6/6, the full
+regression passes 853/853 with 14 explicit skips, and typecheck passes. This
+proves the bounded adapter contract only; descriptor-exec availability,
+root-helper identity, root-domain installation, signing provenance, and live privileged enablement
+remain open. Evidence:
+`evidence/2026-09-16-privileged-service-control-adapter.md`.
+
 Privileged-helper capability binding addendum: `AllowlistedPrivilegedHelper`
 now snapshots and derives its capability projection from the own-handler map, while the
 authenticated status endpoint validates canonical capability names and rejects

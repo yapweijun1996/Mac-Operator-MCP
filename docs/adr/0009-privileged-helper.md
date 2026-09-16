@@ -295,6 +295,15 @@ the published status as `EXECUTION_FAILED`; the fail-closed default remains
 empty. This closes a status-consistency gap only and does not enable a root
 process or any privileged operation.
 
+The service-control adapter revision adds the first concrete allowlisted
+operation implementation. It accepts only `start`, `stop`, and `restart`,
+uses fixed `/bin/launchctl` argv with an empty environment and bounded
+ProcessSupervisor limits, and verifies a final LaunchDaemon state readback.
+Idempotent requests still perform postcondition verification, while
+post-dispatch readback loss is `UNKNOWN_OUTCOME`. `enable` and `disable`
+remain unsupported until enabled-state readback is separately governed, and
+the production adapter remains disabled without descriptor-exec evidence.
+
 Physical host evidence on 2026-09-15 found no available Developer ID signing
 identity and an ad-hoc-only native artifact. The helper package therefore
 remains an implementation candidate: strict ad-hoc verification is not

@@ -47,6 +47,7 @@ export * from "./privileged-helper-keyring.js";
 export * from "./privileged-helper-runtime.js";
 export * from "./privileged-helper-package.js";
 export * from "./privileged-helper-executor.js";
+export * from "./privileged-service-control.js";
 export * from "./system-inspector.js";
 export * from "./network-inspector.js";
 export * from "./process-inspector.js";

@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged service-control adapter addendum: a host-owned Helper adapter now
+accepts only `start`, `stop`, and `restart`, uses fixed `/bin/launchctl`
+arguments with empty environment and bounded budgets, and verifies a final
+LaunchDaemon state readback. Idempotent requests still perform postcondition
+readback; unsupported enable/disable actions and unresolved readbacks fail
+closed. The production adapter also requires a root helper process and host
+descriptor-exec evidence. Focused adapter tests pass 6/6, full regression passes 853/853 with
+14 explicit skips, and typecheck passes. Production availability remains
+gated by descriptor-exec evidence. Evidence:
+`evidence/2026-09-16-privileged-service-control-adapter.md`.
+
 Privileged-helper capability binding addendum: the allowlisted helper now
 snapshots and derives `adapterAvailable` and exact `mac_priv_*` capability
 names from its own handler map. Authenticated status readback rejects unsorted, duplicate,
