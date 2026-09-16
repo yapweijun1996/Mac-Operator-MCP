@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process-stdin secret addendum at source revision `dddbdbc`: the shared
+`ProcessSupervisor` now rejects known credential signatures and their bounded
+UTF-16/Base64 representations in stdin before child creation, while retaining
+bounded non-secret input. Process-supervisor and secret-policy tests pass
+51/51; typecheck, lint, and build pass. Opaque-secret detection, complete
+credential-store isolation, and production sandbox evidence remain open.
+Evidence: `evidence/2026-09-16-process-stdin-secret-boundary.md`.
+
 Install-readback identity addendum at source revision `acc1924`: composed
 Broker and Edge readbacks now retain and validate the reviewed `gui/<uid>`
 domain and `LaunchAgent` type, with negative substitution tests for both

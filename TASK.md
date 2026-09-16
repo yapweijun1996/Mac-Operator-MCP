@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-045 stdin addendum at source revision `dddbdbc`: `ProcessSupervisor`
+applies the known-secret corpus to bounded stdin before child creation,
+rejecting plaintext and Base64 credential representations while preserving
+public input. Process-supervisor and secret-policy tests pass 51/51;
+typecheck, lint, and build pass. Opaque-secret detection, credential-store
+isolation, and production sandbox evidence remain open. Evidence:
+`evidence/2026-09-16-process-stdin-secret-boundary.md`.
+
 MOP-081/087 install-readback addendum at source revision `acc1924`: final
 Broker and Edge readbacks retain the approved `gui/<uid>` LaunchAgent identity
 and reject domain/type substitutions during post-bootstrap validation. Focused
