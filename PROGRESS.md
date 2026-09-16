@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Virtualization native readback addendum at source revision `cb0e59e`: the
+physical Darwin host passes the focused native guest/configuration and VM
+lifecycle/channel suite 12/12. It verifies protected read-only image
+preflight, symlink/digest rejection, handle fencing, disabled startup gates,
+bounded lifecycle parsing, virtio frame/listener behavior, and cancellation
+cleanup. The complete regression passes 876/876 with 14 skips. This does not
+claim VM boot, guest isolation, attestation production, or task enablement.
+Evidence: `evidence/2026-09-16-virtualization-native-readback.md`.
+
 Task-sandbox privacy-zone addendum at source revision `0b2245e`: the
 Broker-rendered Seatbelt profile now denies user/system TCC, `dslocal`,
 ConfigurationProfiles, system keychain, `authd`, and `lockdown` database zones

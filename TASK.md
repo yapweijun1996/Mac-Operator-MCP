@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/081 Virtualization native readback addendum at source revision
+`cb0e59e`: the physical Darwin host passes the focused native guest
+configuration/lifecycle/channel suite 12/12. It verifies protected read-only
+image preflight, symlink/digest rejection, native artifact identity, retained
+handle fencing, disabled startup gates, bounded lifecycle result parsing,
+virtio frame/listener behavior, and cancellation cleanup. The complete
+regression passes 876/876 with 14 explicit skips. This is adapter evidence
+only; VM boot, guest isolation, signed attestation production, crash/restart
+recovery, and `mac_task_run` enablement remain open. Evidence:
+`evidence/2026-09-16-virtualization-native-readback.md`.
+
 MOP-086/037 task-sandbox privacy-zone addendum at source revision `0b2245e`:
 the Broker-rendered Seatbelt profile denies user/system TCC, `dslocal`,
 ConfigurationProfiles, system keychain, `authd`, and `lockdown` database zones

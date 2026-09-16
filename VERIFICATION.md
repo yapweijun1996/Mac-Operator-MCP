@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Virtualization native readback verification at source revision `cb0e59e`:
+physical Darwin arm64 passes the focused native guest/configuration and VM
+lifecycle/channel suite 12/12. The suite verifies protected read-only image
+preflight, symlink/digest rejection, native artifact identity, retained-handle
+close fencing, disabled startup gates, bounded lifecycle parsing, virtio
+frame/listener behavior, and cancellation cleanup. The complete regression
+passes 876/876 with 14 explicit skips (890 total). No VM boot, guest
+filesystem/process execution, or production capability was performed; guest
+isolation, attestation production, approved image, and task enablement remain
+open. Evidence:
+`evidence/2026-09-16-virtualization-native-readback.md`.
+
 Task-sandbox privacy-zone verification at source revision `0b2245e`: the
 Broker-rendered Seatbelt profile denies user/system TCC, `dslocal`,
 ConfigurationProfiles, system keychain, `authd`, and `lockdown` database zones
