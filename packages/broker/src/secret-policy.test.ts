@@ -15,7 +15,9 @@ test("fixed secret-zone policy denies credential and private-data paths", () => 
     "/Users/test/Library/Application Support/Google/Chrome/Default/Login Data",
     "/Users/test/Library/Application Support/BraveSoftware/Brave-Browser/Default/Login Data",
     "/Users/test/Library/Containers/com.apple.mail/Data/Library/Mail/V10/Envelope Index",
-    "/Users/test/project/.git-credentials"
+    "/Users/test/project/.git-credentials",
+    "/private/var/root/Library/Preferences/com.apple.loginwindow.plist",
+    "/var/root/opaque-private-data"
   ];
   for (const path of denied) {
     assert.throws(() => assertContentPathAllowed(path), /protected secret zone/u, path);
@@ -115,6 +117,9 @@ test("log redaction removes secret-shaped values and bounds messages", () => {
   const privateRootPath = redactLogText("path=/private/var/root/.docker/contexts/meta/abc/meta.json");
   assert.equal(privateRootPath.redacted, true);
   assert.equal(privateRootPath.text.includes("meta.json"), false);
+  const privateRootGenericPath = redactLogText("path=/private/var/root/opaque-private-data");
+  assert.equal(privateRootGenericPath.redacted, true);
+  assert.equal(privateRootGenericPath.text.includes("opaque-private-data"), false);
   const bounded = redactLogText("x".repeat(20_000));
   assert.equal(bounded.redacted, true);
   assert.ok(bounded.text.length <= 8192);

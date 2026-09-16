@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Private-root secret-zone addendum: content-path authorization now rejects
+arbitrary paths under both `/private/var/root/` and `/var/root/`, while log
+redaction removes generic private-root paths. Secret-policy tests pass 8/8 and
+the focused security-fuzz path/secret corpus passes 8/8. This closes the
+root-home path variant only; opaque credential formats and production
+isolation remain open. Evidence:
+`evidence/2026-09-16-private-root-secret-zone.md`.
+
 Write-recovery regression addendum: the restart cleanup tests now use a clock
 after the persisted Broker restart boundary and close the initial store only
 once. Rebuilt native fault fixture plus focused post-rename/recovery tests

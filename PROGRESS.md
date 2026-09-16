@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Private-root secret-zone addendum: content authorization now denies both
+`/private/var/root/` and `/var/root/` for arbitrary filenames, and bounded log
+redaction removes unrecognized paths under those roots. Secret-policy tests
+pass 8/8 and the focused path/secret security-fuzz corpus passes 8/8;
+broader opaque-secret and production isolation evidence remains open. Evidence:
+`evidence/2026-09-16-private-root-secret-zone.md`.
+
 Write-recovery regression addendum at the current test revision: restart
 cleanup fixtures now place Broker recovery timestamps after the host-recorded
 restart boundary, and the retry fixture avoids double-closing its initial

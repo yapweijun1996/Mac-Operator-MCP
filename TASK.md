@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+Private-root secret-zone addendum: arbitrary content paths under
+`/private/var/root/` and `/var/root/` are now denied and generic private-root
+paths are redacted from logs. Secret-policy and focused security-fuzz tests
+pass 8/8; opaque-secret and production-isolation work remains open. Evidence:
+`evidence/2026-09-16-private-root-secret-zone.md`.
+
 Write-recovery regression addendum: restart cleanup tests now model the real
 host restart clock and avoid double-closing the pre-restart store. The rebuilt
 fault-fixture and focused post-rename/recovery suite pass 3/3; no production

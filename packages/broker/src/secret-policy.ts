@@ -8,6 +8,7 @@ const DENIED_BASENAMES = new Set([
 
 const DENIED_PATH_FRAGMENTS = [
   "/.ssh/", "/.gnupg/", "/.aws/", "/.azure/", "/.config/gcloud/", "/.config/gh/", "/.kube/", "/.docker/",
+  "/private/var/root/", "/var/root/",
   "/library/keychains/", "/library/mail/", "/library/messages/", "/library/safari/",
   "/library/application support/google/chrome/", "/library/application support/bravesoftware/brave-browser/",
   "/library/application support/microsoft edge/", "/library/containers/com.apple.mail/",
@@ -88,7 +89,8 @@ const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
   /\bxox[baprs]-[0-9A-Za-z-]{16,}\b/gu,
   /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/giu,
-  /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.config\/(?:gcloud|gh)|\.kube|\.docker|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/(?:Google\/Chrome|BraveSoftware\/Brave-Browser|Microsoft Edge)|Containers\/com\.apple\.(?:mail|messages|safari))|Photos Library\.photoslibrary)(?:[^\r\n,;)]*)/giu
+  /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.config\/(?:gcloud|gh)|\.kube|\.docker|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/(?:Google\/Chrome|BraveSoftware\/Brave-Browser|Microsoft Edge)|Containers\/com\.apple\.(?:mail|messages|safari))|Photos Library\.photoslibrary)(?:[^\r\n,;)]*)/giu,
+  /(?:\/(?:private\/)?var\/root)(?:[^\r\n,;)]*)/giu
 ];
 
 export function assertContentPathAllowed(path: string): void {
