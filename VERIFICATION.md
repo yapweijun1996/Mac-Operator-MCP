@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Write-recovery regression addendum: the restart cleanup tests now use a clock
+after the persisted Broker restart boundary and close the initial store only
+once. Rebuilt native fault fixture plus focused post-rename/recovery tests
+pass 3/3. This validates the test fixtures and preserves the production
+timestamp and identity fail-closed guards. Evidence:
+`evidence/2026-09-16-write-recovery-regression-fix.md`.
+
 Process-detail PID-binding addendum at source revision `a8cec0e`: native
 process inspection now binds `detail.pid` to the requested PID after the
 native before/after start-time fence, while the Broker retains its own result

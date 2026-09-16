@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Write-recovery regression addendum at the current test revision: restart
+cleanup fixtures now place Broker recovery timestamps after the host-recorded
+restart boundary, and the retry fixture avoids double-closing its initial
+store. The focused post-rename and restart-recovery tests pass 3/3 after
+rebuilding the native fault fixture; production recovery ordering and exact
+artifact identity checks remain unchanged. Evidence:
+`evidence/2026-09-16-write-recovery-regression-fix.md`.
+
 Process-detail PID-binding addendum at source revision `a8cec0e`: the native
 process-inspection adapter now rejects a parsed detail payload whose `pid`
 differs from the requested target after the before/after identity fence. The

@@ -4308,13 +4308,17 @@ test("restart write recovery cleans only the recorded temporary artifact", async
   store.startJob("job:write-cleanup", "principal-1", 0, 2);
   store.close();
   store = new BrokerStore(databasePath);
+  // BrokerStore restart reconciliation records the restart boundary with the
+  // host wall clock. Keep the test Broker's recovery timestamp after that
+  // boundary instead of reusing the historical fixture clock.
+  const recoveryNow = Date.now() + 1_000;
   const key = randomBytes(32);
   const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
   const broker = new Broker({
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]),
     edgeAuthenticationKeys: testKeyring(key),
-    now: () => NOW
+    now: () => recoveryNow
   });
   try {
     assert.deepEqual(broker.reconcileRestartedWriteArtifacts(), { inspected: 1, removed: 1, absent: 0, skipped: 0 });
@@ -4343,6 +4347,7 @@ test("restart write recovery retries a previously skipped temporary cleanup", as
   const root = { rootId: "test-root", path: directory, metadata: true, contentRead: false, write: true, denyRelativePaths: [] } as const;
   let restartedStore: BrokerStore | undefined;
   let restartedBroker: Broker | undefined;
+  let initialStoreClosed = false;
   try {
     await writeFile(outside, "outside", { mode: 0o600 });
     await symlink(outside, temporaryPath);
@@ -4371,12 +4376,14 @@ test("restart write recovery retries a previously skipped temporary cleanup", as
     });
     store.startJob("job:write-recovery-retry", "principal-1", 0, NOW + 1);
     store.close();
+    initialStoreClosed = true;
+    const recoveryNow = Date.now() + 1_000;
     restartedStore = new BrokerStore(databasePath);
     restartedBroker = new Broker({
       store: restartedStore,
       policy: createDefaultPolicy("edge-1", true, ["mac.control.read"], ["edge-key-1"], [root]),
       edgeAuthenticationKeys: {} as EdgeKeyring,
-      now: () => NOW + 10
+      now: () => recoveryNow
     });
     assert.deepEqual(restartedBroker.reconcileRestartedWriteArtifacts(), { inspected: 1, removed: 0, absent: 0, skipped: 1 });
     assert.equal(restartedStore.auditEventResult("job-temp-cleanup-job:write-recovery-retry-2", "completion"), "TEMPORARY_CLEANUP_SKIPPED");
@@ -4389,7 +4396,7 @@ test("restart write recovery retries a previously skipped temporary cleanup", as
   } finally {
     await restartedBroker?.close().catch(() => undefined);
     restartedStore?.close();
-    store.close();
+    if (!initialStoreClosed) store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

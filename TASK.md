@@ -4,6 +4,12 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+Write-recovery regression addendum: restart cleanup tests now model the real
+host restart clock and avoid double-closing the pre-restart store. The rebuilt
+fault-fixture and focused post-rename/recovery suite pass 3/3; no production
+recovery guard was relaxed. Evidence:
+`evidence/2026-09-16-write-recovery-regression-fix.md`.
+
 MOP-013/030 process-detail PID-binding addendum at source revision `a8cec0e`:
 the native process adapter rejects a detail result for a different PID after
 the before/after identity fence, preventing direct adapter callers from
