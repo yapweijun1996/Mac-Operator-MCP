@@ -22,6 +22,10 @@ unavailable.
 - ProcessSupervisor suite: 44/44 passed, 0 skipped, 0 failed.
 - Full default repository regression: 894 total, 880 passed, 14 explicit
   skips, 0 failed.
+- Physical gated regression
+  (`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1`): 894
+  total, 882 passed, 12 explicit skips, 0 failed. The skips are the known
+  descriptor-backed task/sandbox and Docker Desktop gates.
 - Build, typecheck, lint, and `git diff --check` passed.
 - A hostile custom-prototype argument vector is rejected before any child
   process starts.

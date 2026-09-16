@@ -7,8 +7,9 @@ Last verified: 2026-09-16
 ProcessSupervisor argument-array addendum at source revision `6e3a4dc`: child
 launch now rejects custom-prototype argument vectors before executable checks or
 spawn. The ProcessSupervisor suite passes 44/44 and the full default
-regression passes 880/880 with 14 explicit skips (894 total). Descriptor-only
-execution remains unavailable and task capabilities remain disabled. Evidence:
+regression passes 880/880 with 14 explicit skips (894 total); the physical
+gated regression passes 882/882 with 12 explicit skips (894 total). Descriptor-
+only execution remains unavailable and task capabilities remain disabled. Evidence:
 `evidence/2026-09-16-process-array-prototype-boundary.md`.
 
 Task-profile array prototype addendum at source revision `a3625e1`: profile

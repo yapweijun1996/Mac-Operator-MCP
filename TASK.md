@@ -8,7 +8,8 @@ MOP-045/086 ProcessSupervisor argument-array addendum at source revision
 `6e3a4dc`: process launch rejects custom-prototype argument vectors before
 executable validation or child spawn. ProcessSupervisor tests pass 44/44 and
 the full default regression passes 880/880 with 14 explicit skips (894 total).
-Descriptor-backed execution and task capability enablement remain blocked.
+The physical gated regression passes 882/882 with 12 explicit skips (894
+total). Descriptor-backed execution and task capability enablement remain blocked.
 Evidence: `evidence/2026-09-16-process-array-prototype-boundary.md`.
 
 MOP-043/086 task-profile array prototype addendum at source revision

@@ -6,7 +6,9 @@ Version: 0.1
 ProcessSupervisor argument-array verification at source revision `6e3a4dc`:
 argument vectors require a native dense string array before executable checks
 or child spawn. ProcessSupervisor tests pass 44/44; the full default regression
-passes 880/880 with 14 explicit skips (894 total), with 0 failures. Evidence:
+passes 880/880 with 14 explicit skips (894 total), with 0 failures. The
+physical gated regression passes 882/882 with 12 explicit skips (894 total).
+Evidence:
 `evidence/2026-09-16-process-array-prototype-boundary.md`.
 
 Task-profile array prototype verification at source revision `a3625e1`:
