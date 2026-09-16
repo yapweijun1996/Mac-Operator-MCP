@@ -80,6 +80,7 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const publicJwk = await exportJWK(publicKey);
   const revokedTokenIds = new Set<string>();
+  let brokerRevoked = false;
   const accessToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read", "integration-token-1");
   edgeOptions.tokenVerifier = createJwtAccessTokenVerifier({
     issuer,
@@ -90,6 +91,16 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
   });
   edgeOptions.gateway = {
     async execute(tool): Promise<BrokerResult> {
+      if (tool === "mac_capabilities" && brokerRevoked) {
+        return {
+          ok: false,
+          request_id: "integration-capability-revoked",
+          tool,
+          result_class: "REVOKED",
+          error: { message: "Request authority has been revoked", retryable: false },
+          duration_ms: 1
+        };
+      }
       return {
         ok: true,
         request_id: `integration-${tool}`,
@@ -176,6 +187,27 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
       createMcpAuthRequest(accessToken)
     );
     assert.equal(revokedResponse.status, 401);
+
+    brokerRevoked = true;
+    const brokerRevokedToken = await new SignJWT({
+      sid: "session-2",
+      azp: "client-2",
+      scope: "mac.control.read"
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "integration-key", typ: "at+jwt" })
+      .setIssuer(issuer.href)
+      .setAudience(edgeOptions.resourceServerUrl.href)
+      .setSubject("principal-1")
+      .setIssuedAt()
+      .setExpirationTime("5 minutes")
+      .setJti("broker-revoked-session-2")
+      .sign(privateKey);
+    const brokerRevokedResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
+      createMcpAuthRequest(brokerRevokedToken)
+    );
+    assert.equal(brokerRevokedResponse.status, 403);
+    assert.deepEqual(await brokerRevokedResponse.json(), { error: "revoked", result_class: "REVOKED" });
   } finally {
     await client.close().catch(() => undefined);
     await transport?.close().catch(() => undefined);

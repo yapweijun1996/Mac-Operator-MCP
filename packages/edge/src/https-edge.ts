@@ -1,7 +1,7 @@
 import { createServer, type Server as HttpsServer } from "node:https";
 import type { NextFunction, Request, Response } from "express";
 import type { AuthInfo } from "@modelcontextprotocol/server";
-import { SCOPES } from "@mac-operator/contracts";
+import { BrokerError, SCOPES } from "@mac-operator/contracts";
 import {
   createMcpExpressApp,
   getOAuthProtectedResourceMetadataUrl,
@@ -17,8 +17,9 @@ import {
 } from "@modelcontextprotocol/server";
 import type { GovernedMcpServerOptions } from "./mcp-server.js";
 import { createGovernedMcpServerFactory } from "./mcp-server.js";
+import { projectPrincipal } from "./principal.js";
 import { FixedWindowRateLimiter, type RateLimitOptions } from "./rate-limiter.js";
-import { isPlainDataArray } from "./plain-record.js";
+import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 
 const EDGE_REQUEST_TIMEOUT_MS = 30_000;
 const EDGE_HEADERS_TIMEOUT_MS = 10_000;
@@ -83,7 +84,33 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
       response.status(429).json({ error: "rate_limit_exceeded" });
       return;
     }
-    void nodeHandler(request, response, request.body).catch(next);
+    void (async () => {
+      // The MCP SDK deliberately converts factory failures to an internal
+      // JSON-RPC error. Probe only a session-less session-start request so a
+      // Broker revocation remains a stable authorization response at the
+      // HTTPS boundary; all other requests still use the SDK handler.
+      if (isSessionStartRequest(request)) {
+        const auth = (request as Request & { auth?: AuthInfo }).auth;
+        if (auth) {
+          try {
+            const principal = projectPrincipal(auth, options);
+            const capabilities = await options.gateway.execute("mac_capabilities", {}, principal);
+            if (!capabilities.ok && capabilities.result_class === "REVOKED") {
+              response.status(403).json({ error: "revoked", result_class: "REVOKED" });
+              return;
+            }
+          } catch (error) {
+            if (error instanceof BrokerError && error.errorClass === "REVOKED") {
+              response.status(403).json({ error: "revoked", result_class: "REVOKED" });
+              return;
+            }
+            next(error);
+            return;
+          }
+        }
+      }
+      await nodeHandler(request, response, request.body);
+    })().catch(next);
   });
   app.use((_error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     if (response.headersSent) {
@@ -113,6 +140,17 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
       });
     }
   };
+}
+
+function hasMcpSessionId(request: Request): boolean {
+  const value = request.headers["mcp-session-id"];
+  return typeof value === "string" ? value.length > 0 : Array.isArray(value) && value.length > 0;
+}
+
+function isSessionStartRequest(request: Request): boolean {
+  if (request.method?.toUpperCase() !== "POST" || hasMcpSessionId(request) || !isPlainDataRecord(request.body)) return false;
+  const method = request.body.method;
+  return method === "initialize" || method === "server/discover";
 }
 
 function readPrincipalId(auth: AuthInfo | undefined): string | undefined {

@@ -62,6 +62,9 @@ export function createGovernedMcpServerFactory(options: GovernedMcpServerOptions
         // Broker authorization on the actual tool call remains authoritative.
         enabledTools = cached.enabledTools;
       } else {
+        if (capabilities.result_class === "REVOKED") {
+          throw new BrokerError("REVOKED", "Broker capability discovery was revoked");
+        }
         throw new Error(`Broker capability discovery failed: ${capabilities.result_class}`);
       }
     }
