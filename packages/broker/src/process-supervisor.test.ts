@@ -86,6 +86,9 @@ test("process supervisor rejects non-data request shapes before spawning", async
   await assert.rejects(supervisor.run({ ...base, extra: true } as never), /limits or paths are invalid/u);
   const sparseArgs = new Array<string>(1);
   await assert.rejects(supervisor.run({ ...base, args: sparseArgs } as never), /limits or paths are invalid/u);
+  const customPrototypeArgs = ["ok"] as string[];
+  Object.setPrototypeOf(customPrototypeArgs, { reduce: () => 0 });
+  await assert.rejects(supervisor.run({ ...base, args: customPrototypeArgs } as never), /limits or paths are invalid/u);
   await assert.rejects(
     supervisor.run({ ...base, environment: Object.create({ SAFE_PROFILE: "inherited" }) } as never),
     /environment is malformed/u

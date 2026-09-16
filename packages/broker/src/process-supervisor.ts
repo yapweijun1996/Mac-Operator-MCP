@@ -1224,7 +1224,7 @@ function hasAllowedKeys(value: Record<string, unknown>, allowed: readonly string
 }
 
 function isDenseStringArray(value: unknown, maxLength: number): value is readonly string[] {
-  if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0 ||
       Object.keys(value).length !== value.length || Object.getOwnPropertyNames(value).length !== value.length + 1) {
     return false;
   }
