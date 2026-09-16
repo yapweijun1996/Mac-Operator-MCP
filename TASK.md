@@ -21,10 +21,19 @@ requires a durable BrokerStore-backed replay guard and its own bounded
 `keychain_delivery_nonces` ledger. Requests are admitted only after the fixed
 key ID check, survive Broker restart, reclaim exact-expiry rows, and fail
 closed at capacity. Schema migration, corruption, restart, replay, and expiry
-tests pass 72/72; the latest full regression passes 868/868 with 14 explicit
+tests pass 72/72; the latest full regression passes 869/869 with 14 explicit
 skips. Production Keychain rotation and installed lifecycle remain gated.
 Evidence:
 `evidence/2026-09-16-keychain-delivery-replay-ledger.md`.
+
+MOP-081 native compatibility addendum: `peer_credentials.node`,
+`virtualization_guest.node`, and `virtualization_guest_lifecycle.node` now
+export compile-time `darwin` plus CPU-ABI metadata. Broker loaders require an
+exact platform/architecture match with the running Node host before native
+operations are exposed; mismatches remain unavailable with no pathname
+fallback. Focused native tests pass 24/24 on the physical Darwin arm64 host.
+Developer ID provenance and notarization remain open. Evidence:
+`evidence/2026-09-16-native-host-compatibility.md`.
 
 MOP-072 helper package precondition addendum: the host-only executor now owns
 the existing-service readback, samples it twice before mutation, and treats a

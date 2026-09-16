@@ -25,9 +25,18 @@ is checked, uses a bounded five-minute retention window, prunes exact-expiry
 rows, and fails closed at capacity without evicting live identities. Schema
 migration 12, restart/replay/expiry and corruption checks pass; focused
 persistence/replay/schema/keychain tests pass 72/72. No real Keychain item or service was
-mutated. The latest full regression passes 868/868 with 14 explicit skips.
+mutated. The latest full regression passes 869/869 with 14 explicit skips.
 Evidence:
 `evidence/2026-09-16-keychain-delivery-replay-ledger.md`.
+
+Native host-compatibility addendum: all three macOS native N-API artifacts now
+export their compile-time platform and CPU architecture, and Broker loaders
+require an exact match with the running Node host before use. The check is in
+addition to protected artifact identity, N-API, and exact Node-runtime
+validation; mismatch remains unavailable with no pathname fallback. Focused
+peer/Virtualization native tests pass 24/24 on the physical Darwin arm64 host.
+No capability or service was enabled. Evidence:
+`evidence/2026-09-16-native-host-compatibility.md`.
 
 Helper package precondition addendum: host-only package execution now samples
 the existing-service status twice before any signature command, plist write,

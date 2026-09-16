@@ -111,6 +111,15 @@ struct GuestConnectionHandle {
 
 namespace {
 
+#if defined(__arm64__) || defined(__aarch64__)
+constexpr const char* kNativeArch = "arm64";
+#elif defined(__x86_64__)
+constexpr const char* kNativeArch = "x64";
+#else
+constexpr const char* kNativeArch = "unknown";
+#endif
+constexpr const char* kNativePlatform = "darwin";
+
 constexpr uint64_t kMaxImageBytes = 512ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr size_t kDigestChunkBytes = 1024 * 1024;
 constexpr uint64_t kHandleMagic = 0x4d4f50565a4c4946ULL;
@@ -1764,6 +1773,12 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value node_version;
   napi_create_string_utf8(env, NODE_VERSION_STRING, NAPI_AUTO_LENGTH, &node_version);
   napi_set_named_property(env, exports, "nativeNodeVersion", node_version);
+  napi_value native_platform;
+  napi_create_string_utf8(env, kNativePlatform, NAPI_AUTO_LENGTH, &native_platform);
+  napi_set_named_property(env, exports, "nativePlatform", native_platform);
+  napi_value native_arch;
+  napi_create_string_utf8(env, kNativeArch, NAPI_AUTO_LENGTH, &native_arch);
+  napi_set_named_property(env, exports, "nativeArch", native_arch);
   SetFunction(env, exports, "createGuestVm", CreateGuestVm);
   SetFunction(env, exports, "startGuestVm", StartGuestVm);
   SetFunction(env, exports, "stopGuestVm", StopGuestVm);

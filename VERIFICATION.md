@@ -22,9 +22,18 @@ The fixed key ID is validated before admission; replay identities survive
 restart, exact-expiry rows are reclaimed, and live-capacity overflow returns a
 fail-closed audit error. Migration, schema-shape, persisted-row corruption,
 restart/replay, and expiry tests pass 72/72; the latest full regression passes
-868/868 with 14 explicit skips. No real Keychain item or service was changed.
+869/869 with 14 explicit skips. No real Keychain item or service was changed.
 Evidence:
 `evidence/2026-09-16-keychain-delivery-replay-ledger.md`.
+
+Native host-compatibility verification: `peer_credentials.node`,
+`virtualization_guest.node`, and `virtualization_guest_lifecycle.node` now
+declare compile-time platform/architecture metadata. Their loaders reject a
+platform or CPU-ABI mismatch before exposing native operations, while the
+existing protected artifact, N-API, and exact Node-runtime checks remain in
+force. Focused native tests pass 24/24 on the physical Darwin arm64 host. No
+capability or service was enabled. Evidence:
+`evidence/2026-09-16-native-host-compatibility.md`.
 
 Helper package precondition addendum: package execution now requires a
 host-owned existing-service reader and double-samples the precondition before

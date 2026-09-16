@@ -36,6 +36,15 @@
 
 namespace {
 
+#if defined(__arm64__) || defined(__aarch64__)
+constexpr const char* kNativeArch = "arm64";
+#elif defined(__x86_64__)
+constexpr const char* kNativeArch = "x64";
+#else
+constexpr const char* kNativeArch = "unknown";
+#endif
+constexpr const char* kNativePlatform = "darwin";
+
 void ThrowSystemError(napi_env env, const char* message) {
   napi_throw_error(env, nullptr, message);
 }
@@ -3012,6 +3021,12 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value node_version;
   napi_create_string_utf8(env, NODE_VERSION_STRING, NAPI_AUTO_LENGTH, &node_version);
   napi_set_named_property(env, exports, "nativeNodeVersion", node_version);
+  napi_value native_platform;
+  napi_create_string_utf8(env, kNativePlatform, NAPI_AUTO_LENGTH, &native_platform);
+  napi_set_named_property(env, exports, "nativePlatform", native_platform);
+  napi_value native_arch;
+  napi_create_string_utf8(env, kNativeArch, NAPI_AUTO_LENGTH, &native_arch);
+  napi_set_named_property(env, exports, "nativeArch", native_arch);
   napi_create_function(env, "sha256Utf8", NAPI_AUTO_LENGTH, Sha256Utf8, nullptr, &function);
   napi_set_named_property(env, exports, "sha256Utf8", function);
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);

@@ -24,6 +24,8 @@ const require = createRequire(import.meta.url);
 test("native Virtualization guest lifecycle artifact exposes handle-bound operations", () => {
   const native = loadNativeVirtualizationGuestVmBinding();
   assert.equal(native.nativeNodeVersion, process.versions.node);
+  assert.equal(native.nativePlatform, process.platform);
+  assert.equal(native.nativeArch, process.arch);
   assert.equal(typeof native.createGuestVm, "function");
   assert.equal(typeof native.startGuestVm, "function");
   assert.equal(typeof native.stopGuestVm, "function");

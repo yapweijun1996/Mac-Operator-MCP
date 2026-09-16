@@ -26,6 +26,8 @@ test("native Virtualization.framework guest artifact performs read-only image/co
     const native = loadNativeVirtualizationGuestAdapter();
     assert.equal(typeof native.inspectGuestConfiguration, "function");
     assert.equal(native.nativeNodeVersion, process.versions.node);
+    assert.equal(native.nativePlatform, process.platform);
+    assert.equal(native.nativeArch, process.arch);
     const result = inspectVirtualizationGuestConfiguration(
       canonicalPath,
       String(stat.dev),

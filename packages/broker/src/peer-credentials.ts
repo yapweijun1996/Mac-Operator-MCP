@@ -41,6 +41,8 @@ export interface PeerCredentialPolicy {
 interface NativePeerCredentials {
   nativeNapiVersion: number;
   nativeNodeVersion: string;
+  nativePlatform: string;
+  nativeArch: string;
   sha256Utf8(value: string): unknown;
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
@@ -92,6 +94,13 @@ export function assertNativeNodeRuntimeVersion(nativeNodeVersion: unknown): void
   }
 }
 
+/** Require the native artifact to declare the exact host platform and CPU ABI. */
+export function assertNativeHostCompatibility(nativePlatform: unknown, nativeArch: unknown): void {
+  if (nativePlatform !== process.platform || nativeArch !== process.arch) {
+    throw new Error("Native adapter host platform or architecture is incompatible");
+  }
+}
+
 export class MacOsPeerCredentialVerifier implements PeerCredentialVerifier {
   private readonly native: NativePeerCredentials;
 
@@ -138,6 +147,7 @@ export function loadNativePeerAdapter(): NativePeerCredentials {
         nativeNapiVersion > runtimeNapiVersion) {
       throw new Error("Native peer adapter N-API version is incompatible");
     }
+    assertNativeHostCompatibility(native.nativePlatform, native.nativeArch);
     assertNativeNodeRuntimeVersion(nativeNodeVersion);
     loadedNativeArtifact = after;
     return native as NativePeerCredentials;

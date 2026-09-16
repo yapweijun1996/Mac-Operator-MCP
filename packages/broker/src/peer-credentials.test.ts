@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   assertNativeNodeRuntimeVersion,
+  assertNativeHostCompatibility,
   capturePeerProcessIdentity,
   loadNativePeerAdapter,
   MacOsPeerCredentialVerifier,
@@ -142,6 +143,8 @@ test("native adapter binds its compiled N-API version to the runtime", () => {
   assert.ok(native.nativeNapiVersion >= 8);
   assert.ok(native.nativeNapiVersion <= runtimeNapiVersion);
   assert.equal(native.nativeNodeVersion, process.versions.node);
+  assert.equal(native.nativePlatform, process.platform);
+  assert.equal(native.nativeArch, process.arch);
 });
 
 test("native process-group observer returns bounded start-time identities", () => {
@@ -175,6 +178,18 @@ test("native adapter runtime binding rejects malformed or mismatched versions", 
   assert.throws(
     () => assertNativeNodeRuntimeVersion("24.0.0"),
     /runtime version is incompatible/u
+  );
+});
+
+test("native adapter host compatibility rejects platform and architecture drift", () => {
+  assert.doesNotThrow(() => assertNativeHostCompatibility(process.platform, process.arch));
+  assert.throws(
+    () => assertNativeHostCompatibility("linux", process.arch),
+    /platform or architecture is incompatible/u
+  );
+  assert.throws(
+    () => assertNativeHostCompatibility(process.platform, "mips"),
+    /platform or architecture is incompatible/u
   );
 });
 

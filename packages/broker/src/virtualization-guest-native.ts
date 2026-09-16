@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { assertNativeNodeRuntimeVersion, validateNativeAdapterPath } from "./peer-credentials.js";
+import { assertNativeHostCompatibility, assertNativeNodeRuntimeVersion, validateNativeAdapterPath } from "./peer-credentials.js";
 import { isPlainDataRecord } from "./plain-record.js";
 
 const require = createRequire(import.meta.url);
@@ -25,6 +25,8 @@ export interface VirtualizationGuestConfigurationReadback {
 interface NativeVirtualizationGuestAdapter {
   nativeNapiVersion: number;
   nativeNodeVersion: string;
+  nativePlatform: string;
+  nativeArch: string;
   inspectGuestConfiguration(
     path: string,
     device: string,
@@ -64,6 +66,7 @@ export function loadNativeVirtualizationGuestAdapter(): NativeVirtualizationGues
         native.nativeNapiVersion < MIN_SUPPORTED_NAPI_VERSION || native.nativeNapiVersion > runtimeNapiVersion) {
       throw new Error("Virtualization guest adapter exports are incompatible");
     }
+    assertNativeHostCompatibility(native.nativePlatform, native.nativeArch);
     assertNativeNodeRuntimeVersion(native.nativeNodeVersion);
     loadedArtifact = after;
     return native as NativeVirtualizationGuestAdapter;

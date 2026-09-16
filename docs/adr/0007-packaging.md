@@ -141,3 +141,11 @@ live capacity exhaustion fails closed. This closes a protocol replay/DoS gap in
 the host-only candidate but does not accept production Keychain rotation,
 signing, or installed lifecycle evidence. Evidence:
 `evidence/2026-09-16-keychain-delivery-replay-ledger.md`.
+
+Native package compatibility now binds every macOS N-API artifact to a
+compile-time `darwin` platform and `arm64`/`x64` architecture declaration;
+Broker loaders require an exact match with the running Node host before
+exposing native operations. This is a runtime packaging guard, not release
+provenance: Developer ID signing, notarization, and immutable distribution
+remain open. Evidence:
+`evidence/2026-09-16-native-host-compatibility.md`.
