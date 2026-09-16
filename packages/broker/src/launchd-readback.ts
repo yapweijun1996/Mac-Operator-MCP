@@ -102,6 +102,15 @@ export function parseLaunchdJobReadback(
   const argumentsValue = parseArguments(output);
   const plistPath = parseOptionalPath(field(output, "path"), "path");
   const type = parseType(field(output, "type"));
+  if (type !== null) {
+    const expectedType = expected.domain === "system" ? "LaunchDaemon" : "LaunchAgent";
+    if (type !== expectedType) {
+      throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd service type does not match the requested domain");
+    }
+  }
+  if (program !== null && argumentsValue !== null && argumentsValue[0] !== program) {
+    throw new LaunchdReadbackError("MALFORMED_READBACK", "launchd program and first argument do not match");
+  }
   const lastExitCode = parseExitCode(field(output, "last exit code"));
   return {
     serviceId,

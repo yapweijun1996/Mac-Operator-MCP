@@ -75,6 +75,15 @@ test("launchd readback rejects identity, traversal, path, and state substitution
     () => parseLaunchdJobReadback(serviceId, `${serviceId} = {\n\tstate = attacker-controlled\n}`),
     (error: unknown) => error instanceof LaunchdReadbackError && error.code === "MALFORMED_READBACK"
   );
+  assert.throws(
+    () => parseLaunchdJobReadback(serviceId, `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n}`),
+    (error: unknown) => error instanceof LaunchdReadbackError && error.code === "MALFORMED_READBACK"
+  );
+  const guiServiceId = "gui/501/com.mac-operator.broker";
+  assert.throws(
+    () => parseLaunchdJobReadback(guiServiceId, `${guiServiceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tprogram = /bin/node\n\targuments = {\n\t/bin/sh\n\t}\n}`),
+    (error: unknown) => error instanceof LaunchdReadbackError && error.code === "MALFORMED_READBACK"
+  );
 });
 
 test("launchd readback normalizes macOS xpcproxy bootstrap state without claiming running", () => {
