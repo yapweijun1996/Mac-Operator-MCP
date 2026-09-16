@@ -9,6 +9,13 @@ import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-cre
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 import { readPrivilegedHelperStatus, type PrivilegedHelperAdapter, type PrivilegedHelperStatusClientOptions } from "./privileged-helper.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import {
+  buildMacOsNotarizationAssessmentCommand,
+  readMacOsNotarizationAssessment,
+  validateMacOsNotarizationReadback,
+  type MacOsNotarizationAssessmentCommand,
+  type MacOsNotarizationReadback
+} from "./macos-notarization.js";
 
 const HELPER_LABEL = "com.mac-operator.privileged-helper" as const;
 const HELPER_PLIST_PATH = "/Library/LaunchDaemons/com.mac-operator.privileged-helper.plist" as const;
@@ -184,6 +191,7 @@ export interface PrivilegedHelperPackageReadback {
   authoritySocket: PrivilegedHelperAuthoritySocketReadback;
   helper: PrivilegedHelperRuntimeReadback;
   signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
 }
 
 export interface PrivilegedHelperAuthoritySocketReadback {
@@ -202,6 +210,7 @@ export interface PrivilegedHelperPackageReadbackSources {
   helper: PrivilegedHelperRuntimeReadback;
   authoritySocket: PrivilegedHelperAuthoritySocketReadback;
   signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
 }
 
 export interface PrivilegedHelperPackageReadbackObserver {
@@ -211,6 +220,7 @@ export interface PrivilegedHelperPackageReadbackObserver {
   readRuntime(): Promise<PrivilegedHelperRuntimeReadback>;
   readAuthoritySocket(plan: PrivilegedHelperPackagePlan): Promise<PrivilegedHelperAuthoritySocketReadback>;
   readSignature(): Promise<CodeSignatureReadback>;
+  readNotarization?: () => Promise<MacOsNotarizationReadback>;
 }
 
 export interface PrivilegedHelperPackageHostObserverOptions {
@@ -223,6 +233,7 @@ export interface PrivilegedHelperPackageHostObserverOptions {
   readPlist?: (plan: PrivilegedHelperPackagePlan) => Promise<MacOsPlistReadback>;
   readAuthoritySocket?: (plan: PrivilegedHelperPackagePlan) => Promise<PrivilegedHelperAuthoritySocketReadback>;
   readSignature?: (plan: PrivilegedHelperPackagePlan) => Promise<CodeSignatureReadback>;
+  notarizationExecutor?: PrivilegedHelperPackageCommandExecutor;
 }
 
 export interface PrivilegedHelperPackagePlan {
@@ -246,6 +257,7 @@ export interface PrivilegedHelperPackagePlan {
   launchd: PrivilegedHelperLaunchdReadback;
   renderedPlist: string;
   signatureVerify: CodeSignatureCommandSpec;
+  notarizationAssess: MacOsNotarizationAssessmentCommand;
   preflight: readonly string[];
   install: {
     file: PrivilegedHelperFileAction;
@@ -313,6 +325,7 @@ export interface PrivilegedHelperExistingServiceReadback {
 
 export type PrivilegedHelperPackageExecutionStep =
   | { kind: "verify-signature"; command: CodeSignatureCommandSpec }
+  | { kind: "verify-notarization"; command: MacOsNotarizationAssessmentCommand }
   | { kind: "bootout"; command: LaunchdCommandSpec }
   | { kind: "apply-plist"; action: PrivilegedHelperFileAction }
   | { kind: "bootstrap"; command: LaunchdCommandSpec }
@@ -326,7 +339,7 @@ export interface PrivilegedHelperPackageExecutionPlan {
 }
 
 export interface PrivilegedHelperPackageCommandExecutor {
-  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec): Promise<ProcessExecutionResult>;
+  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec | MacOsNotarizationAssessmentCommand): Promise<ProcessExecutionResult>;
 }
 
 export interface PrivilegedHelperPackageExecutionOptions {
@@ -420,6 +433,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
   const file: PrivilegedHelperFileAction = { kind: "write-plist", path: HELPER_PLIST_PATH, ownerUid: 0, mode: 0o600, content: renderedPlist };
   const restore: PrivilegedHelperFileAction = { kind: "restore-plist", path: HELPER_PLIST_PATH, ownerUid: 0, mode: 0o600, backupPath };
   const remove: PrivilegedHelperFileAction = { kind: "remove-plist", path: HELPER_PLIST_PATH, ownerUid: 0, mode: 0o600 };
+  const notarizationAssess = buildMacOsNotarizationAssessmentCommand(signedArtifactPath);
   const plan: PrivilegedHelperPackagePlan = {
     operation,
     domain: "system",
@@ -448,8 +462,10 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
       timeoutMs: COMMAND_TIMEOUT_MS,
       outputCapBytes: COMMAND_OUTPUT_CAP_BYTES
     },
+    notarizationAssess,
     preflight: [
       "verify the helper artifact is Developer ID signed with the exact helper identifier before any root-domain write",
+      "verify Gatekeeper accepts the helper artifact as notarized Developer ID code for the expected Team ID before any root-domain write",
       "verify helper root, key config, socket parent, executable, and logs are root-owned regular paths with no symlinks or group/other writes",
       "verify the Broker peer UID/GID and native PID/start-time identity are captured by helper startup before accepting a request",
       "verify the Broker-owned authority socket is distinct from the root helper socket and is authenticated before enabled dispatch",
@@ -490,7 +506,10 @@ export function buildPrivilegedHelperPackageExecutionPlan(
 ): PrivilegedHelperPackageExecutionPlan {
   validatePrivilegedHelperExistingService(plan, existingService);
   const steps: PrivilegedHelperPackageExecutionStep[] = [];
-  if (plan.operation !== "uninstall") steps.push({ kind: "verify-signature", command: plan.signatureVerify });
+  if (plan.operation !== "uninstall") {
+    steps.push({ kind: "verify-signature", command: plan.signatureVerify });
+    steps.push({ kind: "verify-notarization", command: plan.notarizationAssess });
+  }
   if (plan.operation !== "install") steps.push({ kind: "bootout", command: plan.rollback.bootout });
   const action = plan.operation === "install" ? plan.install.file : plan.operation === "uninstall" ? plan.uninstall.file : plan.rollback.file;
   steps.push({ kind: "apply-plist", action });
@@ -571,7 +590,10 @@ export async function executePrivilegedHelperPackagePlan(
   let bootstrapAttempted = false;
   let plist: PrivilegedHelperPlistApplyResult | undefined;
   try {
-    if (plan.operation !== "uninstall") await runPrivilegedHelperCommand(executor, plan.signatureVerify, "helper signature verification failed");
+    if (plan.operation !== "uninstall") {
+      await runPrivilegedHelperCommand(executor, plan.signatureVerify, "helper signature verification failed");
+      await readPrivilegedHelperNotarization(plan, executor);
+    }
     if (plan.operation !== "install") {
       await runPrivilegedHelperCommand(executor, plan.rollback.bootout, "existing helper service could not be stopped");
       bootoutSucceeded = true;
@@ -1013,6 +1035,7 @@ export function validatePrivilegedHelperPackageReadback(
   } catch {
     fail("SIGNATURE_MISMATCH", "privileged helper code signature readback does not match the plan");
   }
+  validatePrivilegedHelperNotarizationReadback(plan, readback.notarization);
 }
 
 /**
@@ -1056,7 +1079,8 @@ export function composePrivilegedHelperPackageReadback(
     launchd: plan.launchd,
     authoritySocket: sources.authoritySocket,
     helper: sources.helper,
-    signature: sources.signature
+    signature: sources.signature,
+    ...(sources.notarization === undefined ? {} : { notarization: sources.notarization })
   };
   validatePrivilegedHelperPackageReadback(plan, readback);
   return readback;
@@ -1084,6 +1108,7 @@ export async function observePrivilegedHelperPackageReadback(
     const helper = await observer.readRuntime();
     const authoritySocket = await observer.readAuthoritySocket(plan);
     const signature = await observer.readSignature();
+    const notarization = observer.readNotarization === undefined ? undefined : await observer.readNotarization();
     const launchdAfter = await observer.readLaunchd(serviceId);
     if (!sameLaunchdIdentity(launchdBefore, launchdAfter) || launchdAfter.pid === null) {
       fail("SERVICE_MISMATCH", "privileged helper launchd identity changed during readback");
@@ -1102,7 +1127,8 @@ export async function observePrivilegedHelperPackageReadback(
       plist: plistAfter,
       helper,
       authoritySocket,
-      signature
+      signature,
+      ...(notarization === undefined ? {} : { notarization })
     });
   } catch (error) {
     if (error instanceof PrivilegedHelperPackageError) throw error;
@@ -1134,7 +1160,8 @@ export function createPrivilegedHelperPackageHostObserver(
     readAuthoritySocket: options.readAuthoritySocket ?? (async (candidate) => readPrivilegedHelperAuthoritySocketReadback(candidate)),
     readSignature: options.readSignature === undefined
       ? async () => readPrivilegedHelperCodeSignature(plan, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor })
-      : async () => options.readSignature!(plan)
+      : async () => options.readSignature!(plan),
+    readNotarization: async () => readPrivilegedHelperNotarization(plan, options.notarizationExecutor ?? options.launchdExecutor)
   };
 }
 
@@ -1258,6 +1285,37 @@ export async function readPrivilegedHelperCodeSignature(
     fail("SIGNATURE_MISMATCH", "privileged helper code signature readback does not match the plan");
   }
   return readback;
+}
+
+function validatePrivilegedHelperNotarizationReadback(
+  plan: PrivilegedHelperPackagePlan,
+  readback: MacOsNotarizationReadback | undefined
+): void {
+  if (readback === undefined) fail("SIGNATURE_MISMATCH", "privileged helper readback is missing notarization evidence");
+  const teamIdentifier = plan.signature.teamIdentifier;
+  if (teamIdentifier === undefined) fail("SIGNATURE_MISMATCH", "privileged helper plan is missing a Team ID");
+  try {
+    validateMacOsNotarizationReadback(readback, plan.signedArtifactPath, teamIdentifier);
+  } catch {
+    fail("SIGNATURE_MISMATCH", "privileged helper notarization readback does not match the plan");
+  }
+}
+
+async function readPrivilegedHelperNotarization(
+  plan: PrivilegedHelperPackagePlan,
+  executor?: PrivilegedHelperPackageCommandExecutor | LaunchdReadbackExecutor
+): Promise<MacOsNotarizationReadback> {
+  const teamIdentifier = plan.signature.teamIdentifier;
+  if (teamIdentifier === undefined) fail("SIGNATURE_MISMATCH", "privileged helper plan is missing a Team ID");
+  try {
+    return await readMacOsNotarizationAssessment(
+      plan.signedArtifactPath,
+      teamIdentifier,
+      { run: async (command) => (executor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] })).run(command) }
+    );
+  } catch {
+    fail("SIGNATURE_MISMATCH", "privileged helper notarization assessment does not match the plan");
+  }
 }
 
 /**
@@ -1431,7 +1489,7 @@ function assertPrivilegedHelperRootOwner(ownerUid: number): void {
 
 async function runPrivilegedHelperCommand(
   executor: PrivilegedHelperPackageCommandExecutor,
-  command: LaunchdCommandSpec | CodeSignatureCommandSpec,
+  command: LaunchdCommandSpec | CodeSignatureCommandSpec | MacOsNotarizationAssessmentCommand,
   message: string
 ): Promise<void> {
   let result: ProcessExecutionResult;

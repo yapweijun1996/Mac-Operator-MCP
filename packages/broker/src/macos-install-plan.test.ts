@@ -42,6 +42,7 @@ import { createAuthorityControlUninstallActions, executeMacOsUninstallPlan } fro
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { BrokerStatusIpcServer } from "./broker-status-ipc.js";
 import { LaunchdReadbackError, type LaunchdJobReadback } from "./launchd-readback.js";
+import type { MacOsNotarizationAssessmentCommand } from "./macos-notarization.js";
 
 const base: MacOsInstallPlanInput = {
   uid: 501,
@@ -242,7 +243,8 @@ test("Edge install plan binds the reviewed LaunchAgent to the Edge listener", as
       cdHash: plan.signature.cdHash ?? null,
       signatureType: "developer-id" as const,
       authority: "Developer ID Application: Mac Operator (ABCDE12345)"
-    }
+    },
+    notarization: notarizationReadback(plan)
   };
   const composed = composeMacOsEdgeInstallReadback(plan, source);
   validateMacOsEdgeInstallReadback(plan, composed);
@@ -263,7 +265,8 @@ test("Edge install plan binds the reviewed LaunchAgent to the Edge listener", as
   const observer = createMacOsEdgeInstallHostObserver(plan, {
     readEdge: async () => { edgeReads += 1; return source.edge; },
     processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
-    readSignature: async () => source.signature
+    readSignature: async () => source.signature,
+    notarizationExecutor: { run: async () => successfulLaunchdResult(notarizationOutput(plan)) }
   });
   const collected = await collectMacOsEdgeInstallReadbackSources(plan, {
     ...observer,
@@ -416,7 +419,8 @@ test("readback requires matching signature, launchd identity, native transport, 
       cdHash: base.signature.cdHash ?? null,
       signatureType: "developer-id" as const,
       authority: "Developer ID Application: Mac Operator (ABCDE12345)"
-    }
+    },
+    notarization: notarizationReadback(plan)
   };
   validateMacOsInstallReadback(plan, readback);
   validateCodeSignatureReadback(base.signature, readback.signature, base.signedArtifactPath);
@@ -472,7 +476,8 @@ test("readback composition binds launchd service identity to native process and 
       cdHash: base.signature.cdHash ?? null,
       signatureType: "developer-id" as const,
       authority: "Developer ID Application: Mac Operator (ABCDE12345)"
-    }
+    },
+    notarization: notarizationReadback(plan)
   });
   assert.equal(composed.pid, 1234);
   assert.equal(composed.processIdentity.startTimeMicros, 987654321);
@@ -508,7 +513,8 @@ test("install readback collection double-reads mutable identities before composi
     readProcessIdentity: (pid: number) => { processReads += 1; return { pid, startTimeMicros: 987654321 }; },
     readPlist: async () => { plistReads += 1; return source.plist; },
     readBroker: async () => source.broker,
-    readSignature: async () => source.signature
+    readSignature: async () => source.signature,
+    readNotarization: async () => source.notarization!
   };
   const collected = await collectMacOsInstallReadbackSources(plan, observer);
   assert.equal(collected.launchd.pid, 1234);
@@ -531,7 +537,8 @@ test("install readback collection rejects a launchd target swap", async () => {
     readProcessIdentity: (pid: number) => ({ pid, startTimeMicros: 987654321 }),
     readPlist: async () => source.plist,
     readBroker: async () => source.broker,
-    readSignature: async () => source.signature
+    readSignature: async () => source.signature,
+    readNotarization: async () => source.notarization!
   };
   await assert.rejects(
     collectMacOsInstallReadbackSources(plan, observer),
@@ -574,7 +581,8 @@ test("install host observer binds real adapter sources without accepting a final
     },
     processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
     readPlist: async () => readbackSources(plan).plist,
-    readSignature: async () => readbackSources(plan).signature
+    readSignature: async () => readbackSources(plan).signature,
+    notarizationExecutor: { run: async () => successfulLaunchdResult(notarizationOutput(plan)) }
   });
   const sources = await collectMacOsInstallReadbackSources(plan, observer);
   assert.equal(sources.launchd.type, "LaunchAgent");
@@ -940,7 +948,7 @@ test("install executor requires explicit confirmation and verifies final Broker 
     });
     assert.equal(result.operation, "install");
     assert.equal(result.readback?.broker.nativeTransportRequired, true);
-    assert.deepEqual(executor.commands.map((command) => command.args[0]), ["--verify", "bootstrap"]);
+    assert.deepEqual(executor.commands.map((command) => command.args[0]), ["--verify", "--assess", "bootstrap"]);
     await assert.doesNotReject(readFile(plan.plistPath, "utf8"));
 
     const authorityEvents: string[] = [];
@@ -1087,7 +1095,7 @@ test("install executor stops a mismatched service and leaves an explicit recover
       }),
       (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "READBACK_FAILED"
     );
-    assert.deepEqual(executor.commands.map((command) => command.args[0]), ["--verify", "bootout", "bootstrap", "bootout"]);
+    assert.deepEqual(executor.commands.map((command) => command.args[0]), ["--verify", "--assess", "bootout", "bootstrap", "bootout"]);
     assert.notEqual(await readFile(plan.plistPath, "utf8"), "old plist");
     await assert.doesNotReject(readFile(plan.backupPath, "utf8"));
   } finally {
@@ -1126,7 +1134,26 @@ function readbackSources(plan: MacOsInstallPlan) {
     processIdentity: { pid: 1234, startTimeMicros: 987654321 },
     plist: plistReadback(plan),
     broker: { ...plan.metadata, state: "running" as const, runtimeState: "running" as const, nativeTransportRequired: true as const, enabledCapabilities: [] },
-    signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null, signatureType: "developer-id" as const, authority: "Developer ID Application: Mac Operator (ABCDE12345)" }
+    signature: { artifactPath: plan.signedArtifactPath, valid: true, identifier: plan.signature.identifier, teamIdentifier: plan.signature.teamIdentifier ?? null, cdHash: plan.signature.cdHash ?? null, signatureType: "developer-id" as const, authority: "Developer ID Application: Mac Operator (ABCDE12345)" },
+    notarization: notarizationReadback(plan)
+  };
+}
+
+function notarizationOutput(plan: Pick<MacOsInstallPlan, "signedArtifactPath">): string {
+  return [
+    `${plan.signedArtifactPath}: accepted`,
+    "source=Notarized Developer ID",
+    "origin=Developer ID Application: Mac Operator (ABCDE12345)"
+  ].join("\n");
+}
+
+function notarizationReadback(plan: Pick<MacOsInstallPlan, "signedArtifactPath">) {
+  return {
+    artifactPath: plan.signedArtifactPath,
+    assessed: true as const,
+    source: "Notarized Developer ID" as const,
+    teamIdentifier: "ABCDE12345",
+    origin: "Developer ID Application: Mac Operator (ABCDE12345)"
   };
 }
 
@@ -1166,16 +1193,19 @@ function successfulLaunchdResult(stdout: string): ProcessExecutionResult {
 }
 
 class RecordingInstallExecutor {
-  readonly commands: Array<LaunchdCommandSpec | CodeSignatureCommandSpec> = [];
+  readonly commands: Array<LaunchdCommandSpec | CodeSignatureCommandSpec | MacOsNotarizationAssessmentCommand> = [];
 
-  async run(command: LaunchdCommandSpec | CodeSignatureCommandSpec): Promise<ProcessExecutionResult> {
+  async run(command: LaunchdCommandSpec | CodeSignatureCommandSpec | MacOsNotarizationAssessmentCommand): Promise<ProcessExecutionResult> {
     this.commands.push(command);
+    const output = command.executable === "/usr/sbin/spctl"
+      ? `${command.args[4]}: accepted\nsource=Notarized Developer ID\norigin=Developer ID Application: Mac Operator (ABCDE12345)`
+      : "";
     return {
       state: "completed",
       resultClass: "SUCCEEDED",
       exitCode: 0,
       signal: null,
-      stdout: "",
+      stdout: output,
       stderr: "",
       truncated: false,
       durationMs: 1,

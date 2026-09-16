@@ -10,6 +10,13 @@ import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceC
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { readBrokerStatus, type BrokerStatusClientOptions } from "./broker-status-ipc.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import {
+  buildMacOsNotarizationAssessmentCommand,
+  readMacOsNotarizationAssessment,
+  validateMacOsNotarizationReadback,
+  type MacOsNotarizationAssessmentCommand,
+  type MacOsNotarizationReadback
+} from "./macos-notarization.js";
 
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const SERVICE_TIMEOUT_MS = 5_000;
@@ -169,6 +176,8 @@ export interface MacOsServiceInstallPlanBase {
   renderedPlist: string;
   preflight: readonly string[];
   signatureVerify: CodeSignatureCommandSpec;
+  /** Required for production Developer ID plans; omitted for explicit ad-hoc development plans. */
+  notarizationAssess?: MacOsNotarizationAssessmentCommand;
   install: {
     file: InstallFileAction;
     bootstrap: LaunchdCommandSpec;
@@ -215,6 +224,7 @@ export interface MacOsInstallReadback {
   launchd: MacOsLaunchdServiceReadback;
   broker: BrokerServiceReadback;
   signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
 }
 
 export interface MacOsInstallReadbackSources {
@@ -223,6 +233,7 @@ export interface MacOsInstallReadbackSources {
   plist: MacOsPlistReadback;
   broker: BrokerServiceReadback;
   signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
 }
 
 export interface MacOsInstallReadbackObserver {
@@ -231,6 +242,7 @@ export interface MacOsInstallReadbackObserver {
   readPlist(plan: MacOsInstallPlan): Promise<MacOsPlistReadback>;
   readBroker(): Promise<BrokerServiceReadback>;
   readSignature(): Promise<CodeSignatureReadback>;
+  readNotarization?: () => Promise<MacOsNotarizationReadback>;
 }
 
 export interface MacOsEdgeServiceReadback {
@@ -254,6 +266,7 @@ export interface MacOsEdgeInstallReadback {
   launchd: MacOsLaunchdServiceReadback;
   edge: MacOsEdgeServiceReadback;
   signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
 }
 
 export interface MacOsEdgeInstallReadbackSources {
@@ -262,6 +275,7 @@ export interface MacOsEdgeInstallReadbackSources {
   plist: MacOsPlistReadback;
   edge: MacOsEdgeServiceReadback;
   signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
 }
 
 export interface MacOsEdgeInstallReadbackObserver {
@@ -270,6 +284,7 @@ export interface MacOsEdgeInstallReadbackObserver {
   readPlist(plan: MacOsEdgeInstallPlan): Promise<MacOsPlistReadback>;
   readEdge(): Promise<MacOsEdgeServiceReadback>;
   readSignature(): Promise<CodeSignatureReadback>;
+  readNotarization?: () => Promise<MacOsNotarizationReadback>;
 }
 
 export interface MacOsInstallHostObserverOptions {
@@ -284,6 +299,7 @@ export interface MacOsInstallHostObserverOptions {
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
   readPlist?: (plan: MacOsInstallPlan) => Promise<MacOsPlistReadback>;
   readSignature?: (plan: MacOsInstallPlan) => Promise<CodeSignatureReadback>;
+  notarizationExecutor?: MacOsInstallCommandExecutor;
 }
 
 export interface MacOsEdgeInstallHostObserverOptions {
@@ -295,6 +311,7 @@ export interface MacOsEdgeInstallHostObserverOptions {
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
   readPlist?: (plan: MacOsEdgeInstallPlan) => Promise<MacOsPlistReadback>;
   readSignature?: (plan: MacOsEdgeInstallPlan) => Promise<CodeSignatureReadback>;
+  notarizationExecutor?: MacOsInstallCommandExecutor;
 }
 
 export interface ExistingServiceReadback {
@@ -435,7 +452,7 @@ export interface MacOsPlistReadback {
 }
 
 export interface MacOsInstallCommandExecutor {
-  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec | CodeSignatureDetailsCommandSpec): Promise<ProcessExecutionResult>;
+  run(command: LaunchdCommandSpec | CodeSignatureCommandSpec | CodeSignatureDetailsCommandSpec | MacOsNotarizationAssessmentCommand): Promise<ProcessExecutionResult>;
 }
 
 export interface MacOsInstallExecutionOptions extends MacOsPlistApplyOptions {
@@ -548,6 +565,9 @@ function buildMacOsServiceInstallPlan(
   const domain = `gui/${String(input.uid)}` as `gui/${number}`;
   const backupPath = `${plistPath}.previous`;
   const signatureVerify = codesignVerifyCommand(signedArtifactPath);
+  const notarizationAssess = signaturePolicy === "developer-id"
+    ? buildMacOsNotarizationAssessmentCommand(signedArtifactPath)
+    : undefined;
   const bootstrap = launchctlCommand(["bootstrap", domain, plistPath]);
   const bootout = launchctlCommand(["bootout", `${domain}/${service.label}`]);
   const file = { kind: "write-plist", path: plistPath, mode: 0o600, content: renderedPlist } as const;
@@ -589,8 +609,10 @@ function buildMacOsServiceInstallPlan(
     launchd,
     renderedPlist,
     signatureVerify,
+    ...(notarizationAssess === undefined ? {} : { notarizationAssess }),
     preflight: [
       "verify the signed artifact and native module code signatures before writing the plist",
+      ...(notarizationAssess === undefined ? [] : ["verify Gatekeeper accepts the artifact as notarized Developer ID code for the expected Team ID before writing the plist"]),
       "verify owner-only modes on package files, plist parent directories, and log directory",
       operation === "install" ? "verify existing service readback is absent before installation" :
         operation === "uninstall" ? "verify existing service readback matches the approved uninstall target" :
@@ -627,6 +649,24 @@ export function validateCodeSignatureReadback(
       (expectedType === "developer-id" && !isDeveloperIdAuthority(actual.authority, actual.teamIdentifier)) ||
       (expectedType === "development-ad-hoc" && actual.authority !== null)) {
     fail("SIGNATURE_MISMATCH", "code signature readback does not match the expected package identity");
+  }
+}
+
+function validateMacOsInstallNotarizationReadback(
+  plan: MacOsServiceInstallPlanBase,
+  readback: MacOsNotarizationReadback | undefined
+): void {
+  if (plan.notarizationAssess === undefined) {
+    if (readback !== undefined) fail("SIGNATURE_MISMATCH", "ad-hoc development plans must not publish notarization evidence");
+    return;
+  }
+  if (plan.signature.teamIdentifier === undefined || readback === undefined) {
+    fail("SIGNATURE_MISMATCH", "production package readback is missing notarization evidence");
+  }
+  try {
+    validateMacOsNotarizationReadback(readback, plan.signedArtifactPath, plan.signature.teamIdentifier);
+  } catch {
+    fail("SIGNATURE_MISMATCH", "notarization readback does not match the planned package identity");
   }
 }
 
@@ -673,6 +713,7 @@ export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: M
     fail("SERVICE_MISMATCH", "Broker service readback does not match the planned identity or capability set");
   }
   validateCodeSignatureReadback(plan.signature, readback.signature, plan.signedArtifactPath);
+  validateMacOsInstallNotarizationReadback(plan, readback.notarization);
 }
 
 /**
@@ -708,7 +749,8 @@ export function composeMacOsInstallReadback(
     plist: sources.plist,
     launchd: plan.launchd,
     broker: sources.broker,
-    signature: sources.signature
+    signature: sources.signature,
+    ...(sources.notarization === undefined ? {} : { notarization: sources.notarization })
   };
   validateMacOsInstallReadback(plan, readback);
   return readback;
@@ -755,7 +797,8 @@ export async function collectMacOsInstallReadbackSources(
       processIdentity: processAfter,
       plist: plistAfter,
       broker,
-      signature
+      signature,
+      ...(observer.readNotarization === undefined ? {} : { notarization: await observer.readNotarization() })
     };
   } catch (error) {
     if (error instanceof MacOsInstallPlanError) throw error;
@@ -826,6 +869,7 @@ export function validateMacOsEdgeInstallReadback(
     fail("SERVICE_MISMATCH", "Edge service readback does not match the planned identity or listener");
   }
   validateCodeSignatureReadback(plan.signature, readback.signature, plan.signedArtifactPath);
+  validateMacOsInstallNotarizationReadback(plan, readback.notarization);
 }
 
 export function composeMacOsEdgeInstallReadback(
@@ -854,7 +898,8 @@ export function composeMacOsEdgeInstallReadback(
     plist: sources.plist,
     launchd: plan.launchd,
     edge: sources.edge,
-    signature: sources.signature
+    signature: sources.signature,
+    ...(sources.notarization === undefined ? {} : { notarization: sources.notarization })
   };
   validateMacOsEdgeInstallReadback(plan, readback);
   return readback;
@@ -873,6 +918,7 @@ export async function collectMacOsEdgeInstallReadbackSources(
     const plistBefore = await observer.readPlist(plan);
     const edge = await observer.readEdge();
     const signature = await observer.readSignature();
+    const notarization = observer.readNotarization === undefined ? undefined : await observer.readNotarization();
     const launchdAfter = await readRunningLaunchd(observer.readLaunchd, serviceId);
     if (launchdAfter.pid === null || !sameLaunchdIdentity(launchdBefore, launchdAfter)) {
       fail("SERVICE_MISMATCH", "Edge launchd identity changed during readback");
@@ -881,7 +927,14 @@ export async function collectMacOsEdgeInstallReadbackSources(
     if (!sameProcessIdentity(processBefore, processAfter)) fail("SERVICE_MISMATCH", "Edge process identity changed during readback");
     const plistAfter = await observer.readPlist(plan);
     if (!samePlistIdentity(plistBefore, plistAfter)) fail("FILESYSTEM_MISMATCH", "Edge plist identity changed during readback");
-    return { launchd: launchdAfter, processIdentity: processAfter, plist: plistAfter, edge, signature };
+    return {
+      launchd: launchdAfter,
+      processIdentity: processAfter,
+      plist: plistAfter,
+      edge,
+      signature,
+      ...(notarization === undefined ? {} : { notarization })
+    };
   } catch (error) {
     if (error instanceof MacOsInstallPlanError) throw error;
     fail("READBACK_FAILED", "macOS Edge install host readback failed");
@@ -918,7 +971,10 @@ export function createMacOsInstallHostObserver(
     readBroker,
     readSignature: options.readSignature === undefined
       ? async () => readMacOsCodeSignature(plan, options.signatureExecutor)
-      : async () => options.readSignature!(plan)
+      : async () => options.readSignature!(plan),
+    ...(plan.notarizationAssess === undefined ? {} : {
+      readNotarization: async () => readMacOsInstallNotarization(plan, options.notarizationExecutor ?? options.signatureExecutor)
+    })
   };
 }
 
@@ -956,7 +1012,10 @@ export function createMacOsEdgeInstallHostObserver(
     readEdge: options.readEdge,
     readSignature: options.readSignature === undefined
       ? async () => readMacOsCodeSignature(plan, options.signatureExecutor)
-      : async () => options.readSignature!(plan)
+      : async () => options.readSignature!(plan),
+    ...(plan.notarizationAssess === undefined ? {} : {
+      readNotarization: async () => readMacOsInstallNotarization(plan, options.notarizationExecutor ?? options.signatureExecutor)
+    })
   };
 }
 
@@ -1040,6 +1099,24 @@ export async function readMacOsCodeSignature(
   };
   validateCodeSignatureReadback(plan.signature, readback, plan.signedArtifactPath);
   return readback;
+}
+
+async function readMacOsInstallNotarization(
+  plan: MacOsServiceInstallPlanBase,
+  executor?: MacOsInstallCommandExecutor
+): Promise<MacOsNotarizationReadback> {
+  if (plan.notarizationAssess === undefined || plan.signature.teamIdentifier === undefined) {
+    fail("SIGNATURE_MISMATCH", "production package notarization assessment is not configured");
+  }
+  try {
+    return await readMacOsNotarizationAssessment(
+      plan.signedArtifactPath,
+      plan.signature.teamIdentifier,
+      { run: async (command) => (executor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] })).run(command) }
+    );
+  } catch {
+    fail("SIGNATURE_MISMATCH", "notarization assessment does not match the planned package identity");
+  }
 }
 
 export function validateExistingServicePrecondition(plan: MacOsServiceInstallPlanBase, readback: ExistingServiceReadback): void {
@@ -1258,6 +1335,7 @@ export async function executeMacOsInstallPlan(
   const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
   if (plan.operation !== "uninstall") {
     await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
+    if (plan.notarizationAssess !== undefined) await readMacOsInstallNotarization(plan, executor);
   }
   let bootedOut = false;
   let plistApplied = false;
@@ -1329,7 +1407,10 @@ export async function executeMacOsEdgeInstallPlan(
   }
   validateExistingServicePrecondition(plan, existingService);
   const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
-  if (plan.operation !== "uninstall") await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
+  if (plan.operation !== "uninstall") {
+    await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
+    if (plan.notarizationAssess !== undefined) await readMacOsInstallNotarization(plan, executor);
+  }
   let bootedOut = false;
   let plistApplied = false;
   let bootstrapped = false;
@@ -1381,7 +1462,7 @@ export async function executeMacOsEdgeInstallPlan(
 
 async function runInstallCommand(
   executor: MacOsInstallCommandExecutor,
-  command: LaunchdCommandSpec | CodeSignatureCommandSpec,
+  command: LaunchdCommandSpec | CodeSignatureCommandSpec | MacOsNotarizationAssessmentCommand,
   failureMessage: string
 ): Promise<void> {
   let result: ProcessExecutionResult;

@@ -24,6 +24,7 @@ import {
   PrivilegedHelperPackageError,
   validatePrivilegedHelperFilesystemReadback,
   validatePrivilegedHelperPackageReadback,
+  type PrivilegedHelperPackagePlan,
   type PrivilegedHelperPackagePlanInput,
   type PrivilegedHelperPackageReadbackObserver,
   type PrivilegedHelperRuntimeReadback
@@ -245,7 +246,8 @@ test("privileged helper package readback binds root service, Broker peer, and di
       cdHash: plan.signature.cdHash ?? null,
       signatureType: "developer-id" as const,
       authority: "Developer ID Application: Mac Operator (ABCDE12345)"
-    }
+    },
+    notarization: notarizationReadback(plan)
   };
   validatePrivilegedHelperPackageReadback(plan, readback);
   const composed = composePrivilegedHelperPackageReadback(plan, {
@@ -266,7 +268,8 @@ test("privileged helper package readback binds root service, Broker peer, and di
     plist: readback.plist,
     authoritySocket: readback.authoritySocket,
     helper: readback.helper,
-    signature: readback.signature
+    signature: readback.signature,
+    notarization: readback.notarization
   });
   assert.deepEqual(composed, readback);
   assert.throws(
@@ -356,7 +359,8 @@ test("privileged helper package readback binds root service, Broker peer, and di
     readPlist: async () => { plistReads += 1; return readback.plist; },
     readRuntime: async () => readback.helper,
     readAuthoritySocket: async () => { authoritySocketReads += 1; return readback.authoritySocket; },
-    readSignature: async () => readback.signature
+    readSignature: async () => readback.signature,
+    readNotarization: async () => readback.notarization!
   };
   assert.deepEqual(await observePrivilegedHelperPackageReadback(plan, observer), readback);
   assert.equal(launchdReads, 2);
@@ -455,6 +459,7 @@ test("privileged helper host observer wires bounded launchd and native readback 
     signatureType: "developer-id" as const,
     authority: "Developer ID Application: Mac Operator (ABCDE12345)"
   };
+  const notarization = notarizationReadback(plan);
   const plist = {
     path: plan.plistPath,
     bytes: rendered.byteLength,
@@ -490,7 +495,8 @@ test("privileged helper host observer wires bounded launchd and native readback 
     processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
     readPlist: async () => plist,
     readAuthoritySocket: async () => ({ ...authoritySocketForPlan(plan) }),
-    readSignature: async () => signature
+    readSignature: async () => signature,
+    notarizationExecutor: { run: async () => successfulProcessResult(notarizationOutput(plan)) }
   });
   const readback = await observePrivilegedHelperPackageReadback(plan, observer);
   assert.equal(readback.pid, 1234);
@@ -637,7 +643,8 @@ test("released helper package readback binds authenticated capability status", a
       cdHash: plan.signature.cdHash ?? null,
       signatureType: "developer-id" as const,
       authority: "Developer ID Application: Mac Operator (ABCDE12345)"
-    })
+    }),
+    notarizationExecutor: { run: async () => successfulProcessResult(notarizationOutput(plan)) }
   };
   try {
     await server.listen();
@@ -720,11 +727,14 @@ test("privileged helper codesign observer parses only bounded identity fields", 
 test("privileged helper execution contract fixes preconditions, command order, and recovery", () => {
   const install = buildPrivilegedHelperPackagePlan(base);
   const installExecution = buildPrivilegedHelperPackageExecutionPlan(install, { present: false, sourceRevision: null });
-  assert.deepEqual(installExecution.steps.map((step) => step.kind), ["verify-signature", "apply-plist", "bootstrap", "readback"]);
+  assert.deepEqual(installExecution.steps.map((step) => step.kind), ["verify-signature", "verify-notarization", "apply-plist", "bootstrap", "readback"]);
   assert.deepEqual(installExecution.recoverySteps.map((step) => step.kind), ["bootout", "apply-plist", "readback"]);
   assert.equal(installExecution.steps[0]?.kind, "verify-signature");
   if (installExecution.steps[0]?.kind === "verify-signature") {
     assert.deepEqual(installExecution.steps[0].command.args, ["--verify", "--strict", "--deep", base.signedArtifactPath]);
+  }
+  if (installExecution.steps[1]?.kind === "verify-notarization") {
+    assert.deepEqual(installExecution.steps[1].command.args, ["--assess", "--type", "execute", "--verbose=4", base.signedArtifactPath]);
   }
   assert.throws(
     () => buildPrivilegedHelperPackageExecutionPlan(install, { present: true, sourceRevision: base.sourceRevision }),
@@ -734,7 +744,7 @@ test("privileged helper execution contract fixes preconditions, command order, a
   const previous = base.sourceRevision;
   const upgrade = buildPrivilegedHelperPackagePlan({ ...base, operation: "upgrade", expectedPreviousSourceRevision: previous });
   const upgradeExecution = buildPrivilegedHelperPackageExecutionPlan(upgrade, { present: true, sourceRevision: previous });
-  assert.deepEqual(upgradeExecution.steps.map((step) => step.kind), ["verify-signature", "bootout", "apply-plist", "bootstrap", "readback"]);
+  assert.deepEqual(upgradeExecution.steps.map((step) => step.kind), ["verify-signature", "verify-notarization", "bootout", "apply-plist", "bootstrap", "readback"]);
   assert.deepEqual(upgradeExecution.recoverySteps.map((step) => step.kind), ["bootout", "apply-plist", "bootstrap", "readback"]);
   assert.throws(
     () => buildPrivilegedHelperPackageExecutionPlan(upgrade, { present: true, sourceRevision: "abcdef0123456789abcdef0123456789abcdef01" }),
@@ -1056,5 +1066,23 @@ function successfulProcessResult(stdout: string, stderr = ""): ProcessExecutionR
     processId: 1,
     processGroupId: 1,
     terminationObserved: true
+  };
+}
+
+function notarizationOutput(plan: Pick<PrivilegedHelperPackagePlanInput, "signedArtifactPath">): string {
+  return [
+    `${plan.signedArtifactPath}: accepted`,
+    "source=Notarized Developer ID",
+    "origin=Developer ID Application: Mac Operator (ABCDE12345)"
+  ].join("\n");
+}
+
+function notarizationReadback(plan: Pick<PrivilegedHelperPackagePlan, "signedArtifactPath">) {
+  return {
+    artifactPath: plan.signedArtifactPath,
+    assessed: true as const,
+    source: "Notarized Developer ID" as const,
+    teamIdentifier: "ABCDE12345",
+    origin: "Developer ID Application: Mac Operator (ABCDE12345)"
   };
 }
