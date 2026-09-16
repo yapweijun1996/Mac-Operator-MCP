@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Physical regression verification at source revision `39cb147`: running
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test` on
+the physical Darwin arm64 host passes 880/880 with 12 explicit skips and 0
+failures (892 total). Six real Broker task and five real sandbox tests remain
+skipped for the missing descriptor-backed launcher, and Docker Desktop
+readback is unavailable. Install and temporary Keychain gates pass; no
+production Helper, privileged operation, or capability was enabled. Evidence:
+`evidence/2026-09-16-physical-regression-helper-allowlist.md`.
+
 Privileged Helper operation-capability verification at source revision
 `39cb147`: an enabled Helper Job executor must declare an explicit
 duplicate-free operation allowlist. Broker planning and capability discovery

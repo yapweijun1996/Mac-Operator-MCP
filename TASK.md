@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+Physical regression addendum at source revision `39cb147`: the full test run
+with all available host gates (`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1
+MOPS_REAL_KEYCHAIN=1`) passes 880/880 with 12 explicit skips and 0 failures
+(892 total). The six Broker task and five sandbox skips require the missing
+descriptor-backed launcher; Docker Desktop readback is unavailable. No
+production Helper, privileged operation, task capability, or service mutation
+was enabled. Evidence:
+`evidence/2026-09-16-physical-regression-helper-allowlist.md`.
+
 MOP-090 Helper operation-capability addendum at source revision `39cb147`:
 Helper transport enablement is now separate from its explicit operation
 allowlist. Enabled executors require a duplicate-free list of supported

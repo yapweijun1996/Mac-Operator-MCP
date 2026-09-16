@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Physical regression addendum at source revision `39cb147`: with
+`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1`, the complete
+repository run passes 880/880 with 12 explicit skips and 0 failures (892
+total). Six Broker task and five sandbox tests remain skipped because this
+host lacks the descriptor-backed launcher; Docker Desktop readback is also
+skipped. Install and temporary Keychain gates pass; no production Helper,
+privileged operation, task capability, or service mutation was enabled.
+Evidence: `evidence/2026-09-16-physical-regression-helper-allowlist.md`.
+
 Privileged Helper operation-capability addendum at source revision `39cb147`:
 the Broker now requires an explicit duplicate-free Helper operation allowlist
 when transport is enabled. Planning and capability discovery use the same
