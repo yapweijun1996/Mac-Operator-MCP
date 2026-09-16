@@ -1723,15 +1723,10 @@ test("malformed persisted Job Edge provenance fails closed on readback", async (
     } finally {
       database.close();
     }
-    const reloaded = new BrokerStore(databasePath);
-    try {
-      assert.throws(
-        () => reloaded.ownedJob("job:edge-corrupt", "principal-1"),
-        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
-      );
-    } finally {
-      reloaded.close();
-    }
+    assert.throws(
+      () => new BrokerStore(databasePath),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
