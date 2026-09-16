@@ -22,6 +22,11 @@ and at least one explicitly allowlisted operation.
 ## Verification
 
 - Helper executor suite: 11/11 passed, 0 skipped, 0 failed.
+- Physical gated repository regression
+  (`MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1`): 892
+  total, 880 passed, 12 explicit skips, 0 failed. The skips remain the
+  descriptor-backed task/sandbox and Docker Desktop gates; no privileged
+  operation was enabled.
 - Added negatives cover a non-boolean enable flag, a sparse allowlist, and an
   accessor-backed allowlist element; all fail during construction.
 - `npm run build`, `npm run typecheck`, and `npm run lint` passed.

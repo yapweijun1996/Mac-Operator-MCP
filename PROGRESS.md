@@ -9,7 +9,8 @@ Helper allowlist configuration-boundary addendum at source revision
 operation arrays (symbols, hidden fields, sparse slots, accessors, unsupported
 values, or duplicates) before storing runtime capability state. The exported
 supported-operation set is frozen. Helper executor tests pass 11/11, and
-build/typecheck/lint pass. This is startup-boundary hardening only; no
+build/typecheck/lint pass. The physical gated regression passes 880/880 with
+12 explicit skips and 0 failures. This is startup-boundary hardening only; no
 production Helper or privileged capability is enabled. Evidence:
 `evidence/2026-09-16-helper-allowlist-config-boundary.md`.
 

@@ -9,8 +9,9 @@ Helper startup now fails closed on a non-boolean enable flag or a malformed
 operation allowlist. The list is bounded and dense, rejects symbols, hidden
 fields, sparse slots, accessors, unsupported values, and duplicates, and the
 fixed supported-operation set is frozen. Helper executor tests pass 11/11;
-build/typecheck/lint pass. This does not enable a production Helper or close
-signing, installation, task-isolation, or privileged-capability gates.
+build/typecheck/lint pass; the physical gated regression passes 880/880 with
+12 explicit skips and 0 failures. This does not enable a production Helper or
+close signing, installation, task-isolation, or privileged-capability gates.
 Evidence: `evidence/2026-09-16-helper-allowlist-config-boundary.md`.
 
 Physical regression addendum at source revision `39cb147`: the full test run
