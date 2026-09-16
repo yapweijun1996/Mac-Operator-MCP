@@ -69,6 +69,7 @@ export * from "./service-startup.js";
 export * from "./broker-status-ipc.js";
 export * from "./macos-install-plan.js";
 export * from "./macos-notarization.js";
+export * from "./macos-release-preflight.js";
 export * from "./macos-uninstall-plan.js";
 export * from "./app-inspector.js";
 export * from "./app-control.js";

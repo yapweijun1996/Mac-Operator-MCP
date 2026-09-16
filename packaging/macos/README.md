@@ -80,3 +80,16 @@ fixed label is already loaded and copies dependencies into a temporary package
 root so workspace symlinks are not part of the evidence.
 
 The test suite includes a real macOS smoke check that creates a synthetic app bundle in a temporary directory, signs it ad hoc with `/usr/bin/codesign`, and verifies it through the plan's fixed `--verify --strict --deep` command. This proves command wiring and basic host compatibility only; it is not production Developer ID signing, notarization, certificate/key protection, or installed-service evidence.
+
+The release candidate gate is the read-only `runMacOsReleasePreflight` boundary
+and its manifest CLI (`npm run build && npm run verify:release:macos --
+--manifest /absolute/path/release-manifest.json`). The owner-only manifest binds
+one canonical artifact path, its expected deterministic tree SHA-256 and byte
+count, the release owner's UID, and the exact Developer ID identifier, Team ID,
+and CDHash. The gate re-hashes regular files through an `O_NOFOLLOW` descriptor,
+rejects symlinks/special files, writable entries, owner changes, identity swaps,
+entry/byte-budget overruns, and digest mismatches, then runs only fixed
+`/usr/bin/codesign` and `/usr/sbin/spctl` commands with `/` cwd, empty
+environment, 5-second timeout, and 128 KiB output caps. It emits bounded
+artifact/signature/notarization evidence and never writes host state. Ad-hoc
+signatures and Apple System Gatekeeper provenance fail closed.
