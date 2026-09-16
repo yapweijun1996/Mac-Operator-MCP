@@ -4,7 +4,7 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Shell-history secret-zone addendum at source revision `bbc1649`: Broker
+Shell-history secret-zone addendum at source revision `8974dcc`: Broker
 content authorization now denies common Bash/Zsh/Fish/Node/Python/IRB/
 PostgreSQL/SQLite/less/wget history files before content reads, including
 dotted and undotted platform variants. Bounded diagnostics redact the same

@@ -4,7 +4,7 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-037 shell-history secret-zone addendum at source revision `bbc1649`:
+MOP-037 shell-history secret-zone addendum at source revision `8974dcc`:
 Broker content authorization denies common dotted and undotted Bash, Zsh,
 Fish, Node, Python, IRB, PostgreSQL, SQLite, less, and wget history files
 before reads, while bounded log redaction removes their user/root path forms.

@@ -165,7 +165,7 @@ root-home path variant only; opaque credential formats and production
 isolation remain open. Evidence:
 `evidence/2026-09-16-private-root-secret-zone.md`.
 
-Shell-history secret-zone addendum at source revision `bbc1649`: content-path
+Shell-history secret-zone addendum at source revision `8974dcc`: content-path
 authorization denies common dotted and undotted Bash, Zsh, Fish, Node, Python,
 IRB, PostgreSQL, SQLite, less, and wget history files before reads, and bounded
 diagnostics redact the corresponding user/root path forms. Focused

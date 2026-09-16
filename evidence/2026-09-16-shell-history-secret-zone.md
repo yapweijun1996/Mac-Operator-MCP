@@ -1,7 +1,7 @@
 # Shell-history secret-zone boundary
 
 - Date: 2026-09-16
-- Source revision: `bbc1649`
+- Source revision: `8974dcc`
 - Scope: Broker filesystem content authorization and bounded log redaction
 
 ## Change
