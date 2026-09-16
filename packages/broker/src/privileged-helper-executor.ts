@@ -36,11 +36,11 @@ export type PrivilegedHelperCommandClient = (
  * The executor keeps this allowlist separate from the transport toggle so a
  * helper that supports one operation cannot accidentally advertise all three.
  */
-export const SUPPORTED_PRIVILEGED_HELPER_OPERATIONS: readonly PrivilegedHelperOperation[] = [
+export const SUPPORTED_PRIVILEGED_HELPER_OPERATIONS: readonly PrivilegedHelperOperation[] = Object.freeze([
   "service_control",
   "package_install",
   "power"
-] as const;
+] as const);
 
 /**
  * Binds the executor to the bounded authenticated command client while
@@ -110,14 +110,23 @@ export class PrivilegedHelperJobExecutor {
 
   constructor(private readonly options: PrivilegedHelperJobExecutorOptions) {
     if (!options.store) throw new Error("Privileged helper Job executor requires a BrokerStore");
+    if (options.enabled !== undefined && typeof options.enabled !== "boolean") {
+      throw new Error("Privileged helper enabled flag is invalid");
+    }
     this.enabled = options.enabled ?? false;
     const configuredOperations = options.enabledOperations ?? [];
-    if (!Array.isArray(configuredOperations) ||
-        configuredOperations.some((operation) => !SUPPORTED_PRIVILEGED_HELPER_OPERATIONS.includes(operation)) ||
-        new Set(configuredOperations).size !== configuredOperations.length) {
+    if (!isDenseDataArray(configuredOperations, SUPPORTED_PRIVILEGED_HELPER_OPERATIONS.length)) {
       throw new Error("Privileged helper operation allowlist is invalid");
     }
-    this.enabledOperations = new Set(configuredOperations);
+    const operationSet = new Set<PrivilegedHelperOperation>();
+    for (let index = 0; index < configuredOperations.length; index += 1) {
+      const operation = configuredOperations[index];
+      if (!isSupportedPrivilegedHelperOperation(operation) || operationSet.has(operation)) {
+        throw new Error("Privileged helper operation allowlist is invalid");
+      }
+      operationSet.add(operation);
+    }
+    this.enabledOperations = operationSet;
     this.now = options.now ?? Date.now;
     this.leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS;
     if (!Number.isSafeInteger(this.leaseDurationMs) || this.leaseDurationMs < 1_000 || this.leaseDurationMs > MAX_LEASE_DURATION_MS) {
@@ -319,6 +328,30 @@ export class PrivilegedHelperJobExecutor {
       return undefined;
     }
   }
+}
+
+/**
+ * Validate host configuration arrays without invoking accessors or inheriting
+ * authority from custom properties. This is intentionally local because the
+ * executor receives startup configuration rather than request payload data.
+ */
+function isDenseDataArray(value: unknown, maxLength: number): value is readonly unknown[] {
+  try {
+    if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
+    const names = Object.getOwnPropertyNames(value);
+    if (names.length !== value.length + 1 || Object.keys(value).length !== value.length) return false;
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (descriptor === undefined || !("value" in descriptor)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isSupportedPrivilegedHelperOperation(value: unknown): value is PrivilegedHelperOperation {
+  return value === "service_control" || value === "package_install" || value === "power";
 }
 
 function validateInput(input: PrivilegedHelperJobExecutionInput): void {

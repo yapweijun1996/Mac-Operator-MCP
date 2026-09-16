@@ -9,6 +9,7 @@ import { BrokerStore, type BrokerJob, type JobLease } from "./persistence.js";
 import {
   createPrivilegedHelperCommandClient,
   PrivilegedHelperJobExecutor,
+  type PrivilegedHelperJobExecutorOptions,
   type PrivilegedHelperJobExecutionInput
 } from "./privileged-helper-executor.js";
 import type {
@@ -62,6 +63,40 @@ test("privileged helper Job executor requires and enforces an explicit operation
     assert.equal(executor.supportsOperation("service_control"), true);
     assert.equal(executor.supportsOperation("package_install"), false);
     assert.equal(executor.supportsOperation("power"), false);
+
+    assert.throws(
+      () => new PrivilegedHelperJobExecutor({
+        store,
+        enabled: "true" as never,
+        enabledOperations: ["service_control"],
+        commandFactory: { issue: () => signedCommand("service:system/com.example.test", SERVICE_PAYLOAD_DIGEST) },
+        commandClient: async () => { throw new Error("helper IPC must not be reached"); }
+      }),
+      /enabled flag/u
+    );
+
+    const sparseOperations = new Array(1) as NonNullable<PrivilegedHelperJobExecutorOptions["enabledOperations"]>;
+    assert.throws(
+      () => new PrivilegedHelperJobExecutor({
+        store,
+        enabledOperations: sparseOperations
+      }),
+      /operation allowlist/u
+    );
+
+    const accessorOperations = ["service_control"] as NonNullable<PrivilegedHelperJobExecutorOptions["enabledOperations"]>;
+    Object.defineProperty(accessorOperations, "0", {
+      configurable: true,
+      enumerable: true,
+      get: () => { throw new Error("operation accessor must not run"); }
+    });
+    assert.throws(
+      () => new PrivilegedHelperJobExecutor({
+        store,
+        enabledOperations: accessorOperations
+      }),
+      /operation allowlist/u
+    );
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
