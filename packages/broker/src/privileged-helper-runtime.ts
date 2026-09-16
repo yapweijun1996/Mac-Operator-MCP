@@ -113,6 +113,8 @@ interface LaunchdBrokerProcessReadback {
 const LAUNCHCTL_PATH = "/bin/launchctl";
 const LAUNCHCTL_TIMEOUT_MS = 5_000;
 const LAUNCHCTL_OUTPUT_CAP_BYTES = 131_072;
+const LAUNCHD_STARTUP_DEADLINE_MS = 5_000;
+const LAUNCHD_XPCPROXY_RETRY_DELAY_MS = 50;
 const BROKER_SERVICE_PATTERN = /^gui\/([1-9][0-9]{0,9})\/(com\.mac-operator\.broker)$/u;
 
 /**
@@ -206,24 +208,42 @@ export async function captureLaunchdBrokerProcessIdentity(
 ): Promise<PeerProcessIdentity> {
   const service = parseLaunchdBrokerServiceId(options.brokerServiceId, options.expectedBrokerUid);
   const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
-  let result: ProcessExecutionResult;
-  try {
-    result = await executor.run({
-      executable: LAUNCHCTL_PATH,
-      args: ["print", service.serviceId],
-      cwd: "/",
-      environment: {},
-      timeoutMs: LAUNCHCTL_TIMEOUT_MS,
-      outputCapBytes: LAUNCHCTL_OUTPUT_CAP_BYTES
-    });
-  } catch {
-    throw new PrivilegedHelperStartupError("HELPER_SERVICE_UNAVAILABLE", "Broker launchd readback failed");
-  }
-  const readback = parseLaunchdBrokerProcessReadback(service.serviceId, result);
-  try {
-    return capturePeerProcessIdentity(readback.pid);
-  } catch {
-    throw new PrivilegedHelperStartupError("HELPER_PROCESS_IDENTITY_UNAVAILABLE", "Broker process identity readback failed");
+  const deadline = Date.now() + LAUNCHD_STARTUP_DEADLINE_MS;
+  for (;;) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service did not reach running state");
+    }
+    let result: ProcessExecutionResult;
+    try {
+      result = await executor.run({
+        executable: LAUNCHCTL_PATH,
+        args: ["print", service.serviceId],
+        cwd: "/",
+        environment: {},
+        timeoutMs: Math.min(LAUNCHCTL_TIMEOUT_MS, remainingMs),
+        outputCapBytes: LAUNCHCTL_OUTPUT_CAP_BYTES
+      });
+    } catch {
+      throw new PrivilegedHelperStartupError("HELPER_SERVICE_UNAVAILABLE", "Broker launchd readback failed");
+    }
+    try {
+      const readback = parseLaunchdBrokerProcessReadback(service.serviceId, result);
+      try {
+        return capturePeerProcessIdentity(readback.pid);
+      } catch {
+        throw new PrivilegedHelperStartupError("HELPER_PROCESS_IDENTITY_UNAVAILABLE", "Broker process identity readback failed");
+      }
+    } catch (error) {
+      if (error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PROCESS_NOT_RUNNING" && isXpcProxyState(result.stdout)) {
+        const delayMs = Math.min(LAUNCHD_XPCPROXY_RETRY_DELAY_MS, Math.max(0, deadline - Date.now()));
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+      }
+      throw error;
+    }
   }
 }
 
@@ -462,4 +482,8 @@ function parseLaunchdBrokerProcessReadback(serviceId: string, result: ProcessExe
   const pid = readback.pid;
   if (pid === null) throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service has no valid process identity");
   return { ...service, pid, state: "running" };
+}
+
+function isXpcProxyState(output: string): boolean {
+  return /(?:^|\n)\tstate\s*=\s*xpcproxy\s*(?:\r?\n|$)/u.test(output);
 }
