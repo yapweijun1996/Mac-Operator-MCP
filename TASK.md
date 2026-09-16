@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-081/087 install-readback addendum at source revision `acc1924`: final
+Broker and Edge readbacks retain the approved `gui/<uid>` LaunchAgent identity
+and reject domain/type substitutions during post-bootstrap validation. Focused
+install-plan, launchd-readback, and helper suites pass 40/40; typecheck, lint,
+and build pass. Persistent ownership, signing provenance, descriptor execution,
+and helper enablement remain open. Evidence:
+`evidence/2026-09-16-install-readback-launchd-binding.md`.
+
 MOP-013 remote JWKS addendum at source revision `dc80e9f`: corrected the
 `content-length` digit grammar so normal numeric headers are accepted while
 malformed and oversized values remain fail-closed. The JWT verifier suite

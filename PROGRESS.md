@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Install-readback identity addendum at source revision `acc1924`: composed
+Broker and Edge readbacks now retain and validate the reviewed `gui/<uid>`
+domain and `LaunchAgent` type, with negative substitution tests for both
+components. Focused install-plan, launchd-readback, and helper suites pass
+40/40; typecheck, lint, and build pass. Persistent launchd ownership, signing
+provenance, descriptor execution, and helper enablement remain open. Evidence:
+`evidence/2026-09-16-install-readback-launchd-binding.md`.
+
 Remote JWKS content-length addendum at source revision `dc80e9f`: corrected
 the digit grammar so valid numeric `content-length` headers are accepted while
 malformed and oversized lengths remain denied. The JWT verifier suite passes
