@@ -88,7 +88,7 @@ test("privileged helper startup restores an activated key and owns a separate na
       commandExecutor: {
         async run(command): Promise<ProcessExecutionResult> {
           assert.deepEqual(command.args, ["print", brokerServiceId]);
-          return success(`${brokerServiceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`);
+          return success(`${brokerServiceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tpid = ${process.pid}\n}`);
         }
       },
       replayGuard: { admit: () => undefined },
@@ -348,7 +348,7 @@ test("privileged helper caller capture binds the exact Broker LaunchAgent and re
   const identity = await captureLaunchdBrokerProcessIdentity({
     brokerServiceId: serviceId,
     expectedBrokerUid: uid,
-    commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = running\n\tpid = ${process.pid}\n}`); } }
+    commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tpid = ${process.pid}\n}`); } }
   });
   assert.equal(identity.pid, process.pid);
   assert.ok(identity.startTimeMicros > 0);
@@ -364,7 +364,7 @@ test("privileged helper caller capture binds the exact Broker LaunchAgent and re
     captureLaunchdBrokerProcessIdentity({
       brokerServiceId: serviceId,
       expectedBrokerUid: uid,
-      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = not running\n}`); } }
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\ttype = LaunchAgent\n\tstate = not running\n}`); } }
     }),
     (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PROCESS_NOT_RUNNING"
   );
@@ -372,7 +372,7 @@ test("privileged helper caller capture binds the exact Broker LaunchAgent and re
     captureLaunchdBrokerProcessIdentity({
       brokerServiceId: serviceId,
       expectedBrokerUid: uid,
-      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = running\n\tstate = stopped\n\tpid = ${process.pid}\n}`); } }
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = running\n\tpid = 1\n}`); } }
     }),
     (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_SERVICE_UNAVAILABLE"
   );
@@ -380,7 +380,15 @@ test("privileged helper caller capture binds the exact Broker LaunchAgent and re
     captureLaunchdBrokerProcessIdentity({
       brokerServiceId: serviceId,
       expectedBrokerUid: uid,
-      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = running\n\tpid = 0\n}`); } }
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tstate = stopped\n\tpid = ${process.pid}\n}`); } }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_SERVICE_UNAVAILABLE"
+  );
+  await assert.rejects(
+    captureLaunchdBrokerProcessIdentity({
+      brokerServiceId: serviceId,
+      expectedBrokerUid: uid,
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tpid = 0\n}`); } }
     }),
     (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PROCESS_NOT_RUNNING"
   );

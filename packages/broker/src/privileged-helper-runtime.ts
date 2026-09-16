@@ -455,6 +455,9 @@ function parseLaunchdBrokerProcessReadback(serviceId: string, result: ProcessExe
     }
     throw error;
   }
+  if (readback.type !== "LaunchAgent") {
+    throw new PrivilegedHelperStartupError("HELPER_SERVICE_UNAVAILABLE", "Broker launchd service type is not LaunchAgent");
+  }
   if (readback.state !== "running") throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service is not running");
   const pid = readback.pid;
   if (pid === null) throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service has no valid process identity");

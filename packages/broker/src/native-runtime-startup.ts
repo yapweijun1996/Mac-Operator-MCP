@@ -426,6 +426,9 @@ export function parseLaunchdEdgeProcessReadback(
     }
     throw error;
   }
+  if (readback.type !== "LaunchAgent") {
+    throw new NativeRuntimeStartupError("EDGE_SERVICE_UNAVAILABLE", "Edge launchd service type is not LaunchAgent");
+  }
   if (readback.state !== "running") throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service is not running");
   const pid = readback.pid;
   if (pid === null) throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service has no valid process identity");
