@@ -536,6 +536,139 @@ test("privileged helper host observer can read runtime metadata through authenti
   }
 });
 
+test("released helper package readback binds authenticated capability status", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-helper-release-readback-"));
+  const socketPath = join(directory, "helper.sock");
+  const key = randomBytes(32);
+  const plan = buildPrivilegedHelperPackagePlan({
+    ...base,
+    capabilityRelease: {
+      source: "host-verified",
+      adapterAvailable: true,
+      enabledCapabilities: ["mac_priv_service_control"],
+      evidenceRef: "evidence/2026-09-16-privileged-service-control-adapter.md"
+    }
+  });
+  const statusProjection = {
+    adapterAvailable: true,
+    enabledCapabilities: ["mac_priv_service_control"] as readonly string[]
+  };
+  const server = new PrivilegedHelperIpcServer({
+    socketPath,
+    authenticationKey: key,
+    replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+    authorizeCommand: () => undefined,
+    authorizeStatus: () => undefined,
+    readStatus: () => ({
+      component: "mac-operator-privileged-helper" as const,
+      state: "running" as const,
+      runtimeState: "running" as const,
+      nativeTransportRequired: true as const,
+      adapterAvailable: statusProjection.adapterAvailable,
+      helperSocketPath: plan.helperSocketPath,
+      brokerSocketPath: plan.brokerSocketPath,
+      helperAuthoritySocketPath: plan.helperAuthoritySocketPath,
+      brokerPeerUid: plan.brokerPeer.uid,
+      brokerPeerGid: plan.brokerPeer.gid ?? null,
+      sourceRevision: plan.sourceRevision,
+      contractVersion: plan.contractVersion,
+      policyVersion: plan.policyVersion,
+      enabledCapabilities: [...statusProjection.enabledCapabilities]
+    }),
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter: new AllowlistedPrivilegedHelper({
+      service_control: async (command) => ({
+        operation: command.operation,
+        targetRef: command.targetRef,
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        evidence: {},
+        warnings: [],
+        truncated: false,
+        verification: { status: "verified", strategy: "allowlisted_postcondition" }
+      })
+    }),
+    now: () => 1_700_000_000_000
+  });
+  const rendered = Buffer.from(plan.renderedPlist, "utf8");
+  const serviceId = "system/com.mac-operator.privileged-helper";
+  const launchdOutput = [
+    `${serviceId} = {`,
+    "\tstate = running",
+    "\tpid = 1234",
+    `\tprogram = ${plan.launchd.program}`,
+    "\targuments = {",
+    `\t\t${plan.launchd.program}`,
+    "\t}",
+    `\tpath = ${plan.plistPath}`,
+    "\ttype = LaunchDaemon",
+    "\tlast exit code = (never exited)",
+    "}"
+  ].join("\n");
+  const staticSources = {
+    launchdExecutor: {
+      run: async (command: ProcessExecutionRequest): Promise<ProcessExecutionResult> => {
+        assert.deepEqual(command.args, ["print", serviceId]);
+        return successfulProcessResult(launchdOutput);
+      }
+    },
+    processIdentityReader: (pid: number) => ({ pid, startTimeMicros: 987654321 }),
+    readPlist: async () => ({
+      path: plan.plistPath,
+      bytes: rendered.byteLength,
+      sha256: createHash("sha256").update(rendered).digest("hex"),
+      device: "1",
+      inode: "2"
+    }),
+    readAuthoritySocket: async () => ({ ...authoritySocketForPlan(plan) }),
+    readSignature: async () => ({
+      artifactPath: plan.signedArtifactPath,
+      valid: true,
+      identifier: plan.signature.identifier,
+      teamIdentifier: plan.signature.teamIdentifier ?? null,
+      cdHash: plan.signature.cdHash ?? null
+    })
+  };
+  try {
+    await server.listen();
+    const observer = createPrivilegedHelperPackageHostObserver(plan, {
+      helperStatusClient: { socketPath, authenticationKey: key, now: () => 1_700_000_000_000 },
+      ...staticSources
+    });
+    const readback = await observePrivilegedHelperPackageReadback(plan, observer);
+    assert.equal(readback.helper.adapterAvailable, true);
+    assert.deepEqual(readback.helper.enabledCapabilities, ["mac_priv_service_control"]);
+
+    const driftObserver = createPrivilegedHelperPackageHostObserver(plan, {
+      ...staticSources,
+      readRuntime: async () => ({
+        component: "mac-operator-privileged-helper" as const,
+        state: "running" as const,
+        runtimeState: "running" as const,
+        nativeTransportRequired: true as const,
+        adapterAvailable: false,
+        helperSocketPath: plan.helperSocketPath,
+        brokerSocketPath: plan.brokerSocketPath,
+        helperAuthoritySocketPath: plan.helperAuthoritySocketPath,
+        brokerPeerUid: plan.brokerPeer.uid,
+        brokerPeerGid: plan.brokerPeer.gid ?? null,
+        sourceRevision: plan.sourceRevision,
+        contractVersion: plan.contractVersion,
+        policyVersion: plan.policyVersion,
+        enabledCapabilities: []
+      })
+    });
+    await assert.rejects(
+      observePrivilegedHelperPackageReadback(plan, driftObserver),
+      (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+    );
+  } finally {
+    await server.close();
+    key.fill(0);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("privileged helper codesign observer parses only bounded identity fields", async () => {
   const plan = buildPrivilegedHelperPackagePlan(base);
   let calls = 0;

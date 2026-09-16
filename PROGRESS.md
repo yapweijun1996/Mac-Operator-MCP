@@ -4,10 +4,18 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Released helper readback addendum: the package observer now exercises an
+authenticated helper status readback for an explicit
+`mac_priv_service_control` release and rejects a false/empty capability drift
+with stable `SERVICE_MISMATCH`. Focused package tests pass 17/17 and typecheck
+passes. This verifies the package observer boundary only; root installation,
+descriptor execution, and live privileged enablement remain open. Evidence:
+`evidence/2026-09-16-helper-package-release-readback.md`.
+
 Process descendant fixture addendum: the Darwin persisted-descendant test now
 keeps its child alive until native PID/start-time observation is recorded, then
-terminates the test-owned child explicitly. Three isolated runs and the full
-870-test regression pass; production process-control behavior is unchanged.
+terminates the test-owned child explicitly. Three isolated runs and the latest
+871-test regression pass; production process-control behavior is unchanged.
 Evidence: `evidence/2026-09-16-process-descendant-fixture-stability.md`.
 
 Helper runtime service-control addendum: the key-material helper runtime now
@@ -25,7 +33,7 @@ only an explicit host-verified capability projection. The plan derives
 final helper readback compares both fields before accepting readiness. Only
 the implemented `mac_priv_service_control` capability is releasable; the
 default remains zero capabilities. Focused package/service-control tests pass
-22/22 and typecheck passes. This closes package projection drift but does not
+23/23 and typecheck passes. This closes package projection drift but does not
 claim root installation or live privileged enablement. Evidence:
 `evidence/2026-09-16-helper-capability-release.md`.
 
@@ -35,7 +43,7 @@ arguments with empty environment and bounded budgets, and verifies a final
 LaunchDaemon state readback. Idempotent requests still perform postcondition
 readback; unsupported enable/disable actions and unresolved readbacks fail
 closed. The production adapter also requires a root helper process and host
-descriptor-exec evidence. Focused adapter tests pass 6/6, full regression passes 856/856 with
+descriptor-exec evidence. Focused adapter tests pass 6/6, latest full regression passes 857/857 with
 14 explicit skips, and typecheck passes. Production availability remains
 gated by descriptor-exec evidence. Evidence:
 `evidence/2026-09-16-privileged-service-control-adapter.md`.

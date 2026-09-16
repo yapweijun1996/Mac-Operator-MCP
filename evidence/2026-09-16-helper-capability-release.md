@@ -24,12 +24,14 @@ removed, reordered, or otherwise different capability fails with stable
 ## Verification
 
 - `npm run typecheck --silent` passed.
-- Focused package and service-control suites passed 22/22.
+- Focused package and service-control suites passed 23/23.
 - Capability release tests reject unimplemented capabilities and inconsistent
   availability/list projections.
 - Existing disabled-helper readback tests remain green.
 
-This closes package-plan projection drift only. It does not prove root
+An additional host-observer integration test now binds a released plan to an
+authenticated helper status response and rejects a false/empty capability
+projection as `SERVICE_MISMATCH`. This closes package-plan projection drift only. It does not prove root
 installation, Developer ID signing, descriptor execution, or live privileged
 enablement on the physical Mac.
 

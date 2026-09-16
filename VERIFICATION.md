@@ -3,9 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Released helper readback addendum: an explicit host-verified
+`mac_priv_service_control` package release is now checked through the
+authenticated helper status observer, and a false/empty status projection is
+rejected as `SERVICE_MISMATCH`. The focused package suite passes 17/17 and
+typecheck passes. This proves the final observer binding only; root install,
+descriptor execution, signing provenance, and live privileged enablement
+remain open. Evidence:
+`evidence/2026-09-16-helper-package-release-readback.md`.
+
 Process descendant fixture addendum: the Darwin persisted-descendant recovery
 test no longer relies on a 50ms child lifetime; it records identity first and
-then terminates the fixture child. Three isolated runs and the full 870-test
+then terminates the fixture child. Three isolated runs and the latest 871-test
 regression pass with zero failures. Evidence:
 `evidence/2026-09-16-process-descendant-fixture-stability.md`.
 
@@ -22,7 +31,7 @@ an explicit host-verified capability projection before any non-empty helper
 capability list can be represented. Only the implemented
 `mac_priv_service_control` name is accepted; final package readback compares
 the exact availability boolean and capability list. Focused package and
-service-control tests pass 22/22 and typecheck passes. This closes projection
+service-control tests pass 23/23 and typecheck passes. This closes projection
 drift only; root installation, signing, descriptor execution, and live
 privileged enablement remain open. Evidence:
 `evidence/2026-09-16-helper-capability-release.md`.
@@ -30,8 +39,8 @@ privileged enablement remain open. Evidence:
 Privileged service-control adapter addendum: the new allowlisted adapter
 accepts only `start`, `stop`, and `restart`, sends fixed `/bin/launchctl`
 argv with empty environment and bounded timeout/output, and requires a final
-LaunchDaemon readback before success. Focused adapter tests pass 6/6, the full
-regression passes 856/856 with 14 explicit skips, and typecheck passes. This
+LaunchDaemon readback before success. Focused adapter tests pass 6/6, the latest
+full regression passes 857/857 with 14 explicit skips, and typecheck passes. This
 proves the bounded adapter contract only; descriptor-exec availability,
 root-helper identity, root-domain installation, signing provenance, and live privileged enablement
 remain open. Evidence:

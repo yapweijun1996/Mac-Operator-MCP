@@ -311,6 +311,12 @@ availability boolean and exact ordered capability list. The default package
 plan remains capability-empty; this contract does not itself install or
 enable a root helper.
 
+The package-readback revision verifies that released projections are obtained
+through the helper's authenticated status IPC observer. A helper reporting a
+false availability state or an empty/different capability list for a released
+plan is rejected as `SERVICE_MISMATCH`; the observer test uses only temporary
+key material and sockets.
+
 The runtime integration revision exercises the concrete service-control
 handler through the key-material helper runtime and its separately
 authenticated authority channel. This confirms wiring only; production
