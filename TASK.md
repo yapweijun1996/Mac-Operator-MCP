@@ -4,6 +4,19 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-086/037 task-sandbox privacy-zone addendum at source revision `0b2245e`:
+the Broker-rendered Seatbelt profile denies user/system TCC, `dslocal`,
+ConfigurationProfiles, system keychain, `authd`, and `lockdown` database zones
+with fixed `/var` and `/private/var` patterns; user TCC application-support
+variants are included in the project secret deny regex. The serialized profile
+budget is bounded at 8 KiB to accommodate the fixed deny set and valid
+multi-root profiles. Renderer/runner tests pass 13/13 with 5 skips and the
+complete regression passes 876/876 with 14 skips. Real-sandbox opt-in remains
+unavailable because descriptor-backed execution is unavailable; no task
+capability is enabled. Credential-content, remount, crash/restart,
+process-tree, packaging, and `mac_task_run` gates remain open. Evidence:
+`evidence/2026-09-16-task-sandbox-privacy-zones.md`.
+
 MOP-037/081 macOS privacy-database secret-zone addendum at source revision
 `94f7faf`: Broker content authorization denies user/system TCC, `dslocal`,
 ConfigurationProfiles, system keychain, `authd`, and `lockdown` database paths
