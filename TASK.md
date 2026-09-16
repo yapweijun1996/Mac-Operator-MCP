@@ -4,11 +4,11 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-081/087 launchd parser-hardening addendum at source revision `f69090a`:
+MOP-081/087 launchd parser-hardening addendum at source revision `1b09cfa`:
 bounded `launchctl print` parsing now rejects duplicate service headers,
 duplicate top-level singleton fields, and duplicate program-argument blocks as
-`MALFORMED_READBACK`; nested dictionaries cannot shadow top-level service
-state. The focused launchd suite passes 5/5, while install-plan,
+`MALFORMED_READBACK`; nested dictionaries and argument values cannot shadow
+top-level service state. The focused launchd suite passes 6/6, while install-plan,
 privileged-helper, service-startup, and packaged-service suites pass 43/43
 with one opt-in smoke skip. Typecheck, build, lint, matrix, and documentation
 checks pass. Persistent launchd ownership, signing provenance, descriptor

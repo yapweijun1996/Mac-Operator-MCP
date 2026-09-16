@@ -3,12 +3,12 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Launchd conflicting-field rejection addendum at source revision `f69090a`:
+Launchd conflicting-field rejection addendum at source revision `1b09cfa`:
 the bounded `launchctl print` parser now rejects duplicate service headers,
 duplicate top-level singleton fields, and duplicate argument blocks as
-`MALFORMED_READBACK`. Nested dictionaries are excluded from top-level field
-extraction, preventing a nested state value from shadowing the service state.
-The focused launchd suite passes 5/5; install-plan, privileged-helper,
+`MALFORMED_READBACK`. Nested dictionaries and argument values are excluded
+from top-level field extraction, preventing shadowed service state. The
+focused launchd suite passes 6/6; install-plan, privileged-helper,
 service-startup, and packaged-service suites pass 43/43 with one opt-in smoke
 skip. Typecheck and build pass. This closes parser ambiguity only; persistent
 launchd ownership, code-signing provenance, helper execution, and remote

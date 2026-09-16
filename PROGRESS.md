@@ -4,11 +4,11 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Launchd conflicting-field addendum at source revision `f69090a`: the bounded
+Launchd conflicting-field addendum at source revision `1b09cfa`: the bounded
 `launchctl print` parser now rejects duplicate service headers, duplicate
 top-level singleton fields, and duplicate argument blocks, while ignoring
-nested state dictionaries for top-level extraction. The focused launchd suite
-passes 5/5; install-plan, privileged-helper, service-startup, and packaged
+nested state dictionaries and argument values for top-level extraction. The
+focused launchd suite passes 6/6; install-plan, privileged-helper, service-startup, and packaged
 service suites pass 43/43 with one opt-in smoke skip. Typecheck and build pass.
 Persistent launchd ownership, code-signing provenance, helper execution, and
 remote deployment remain open. Evidence:
