@@ -3,6 +3,15 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Launchd service-id bound addendum at source revision `c5d48fd`: the
+system-domain service-status adapter now uses the strict parser's bounded
+128-character service-label grammar and rejects an overlong label before any
+`launchctl` invocation. The service-inspector suite passes 6/6; typecheck and
+build pass. This closes an input-bound mismatch only; persistent launchd
+ownership, signing provenance, descriptor execution, helper installation, and
+remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-service-id-bound.md`.
+
 Privileged-helper launchd bootstrap addendum at source revision `316e303`:
 Broker caller capture retries only an exact top-level `xpcproxy` readback while
 the service remains within a bounded five-second startup deadline. Missing or

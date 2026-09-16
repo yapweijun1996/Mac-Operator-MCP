@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Launchd service-id bound addendum at source revision `c5d48fd`: the
+system-domain service-status adapter now shares the strict parser's 128-character
+label grammar and rejects a 129-character label before invoking `launchctl`.
+The service-inspector suite passes 6/6; typecheck and build pass. Persistent
+launchd ownership, signing provenance, descriptor execution, helper installation,
+and remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-service-id-bound.md`.
+
 Privileged-helper launchd bootstrap addendum at source revision `316e303`:
 Broker LaunchAgent caller capture now retries only an exact top-level
 `xpcproxy` state within a five-second deadline, preserving strict service type,
