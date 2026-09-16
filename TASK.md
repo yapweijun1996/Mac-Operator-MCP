@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-081/087 launchd readback addendum at source revision `cd9f0bf`: bounded
+`launchctl print` parsing binds GUI domains to `LaunchAgent`, system domains to
+`LaunchDaemon`, and requires the first program argument to match the declared
+program path. Substitutions fail as `MALFORMED_READBACK`. Focused
+launchd/package/helper suites pass 43/43 on the physical Mac mini, including
+a read-only `system/com.apple.logd` probe. Live installation, signing
+provenance, and helper execution remain open. Evidence:
+`evidence/2026-09-16-launchd-readback-identity.md`.
+
 MOP-034 package-inspection host addendum at source revision `0260dde`: a
 physical Darwin read-only run against the canonical repository root selected
 `npm`, reported four bounded dependencies and `package-lock.json`, and

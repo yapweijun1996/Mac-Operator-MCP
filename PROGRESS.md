@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Launchd readback identity addendum at source revision `cd9f0bf`: bounded
+`launchctl print` parsing now binds `gui/<uid>` to `LaunchAgent` and `system`
+to `LaunchDaemon`, and requires the first program argument to equal the
+declared program path. Identity substitutions fail as
+`MALFORMED_READBACK`. Focused launchd/package/helper suites pass 43/43 on the
+physical Mac mini, including a read-only `system/com.apple.logd` probe. Live
+installation, code-signing provenance, and helper execution remain open.
+Evidence: `evidence/2026-09-16-launchd-readback-identity.md`.
+
 Package-inspection host addendum at source revision `0260dde`: the physical
 Darwin repository-root readback selected `npm`, reported four bounded
 dependencies and `package-lock.json`, and returned no warnings or truncation
