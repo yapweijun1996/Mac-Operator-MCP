@@ -50,6 +50,8 @@ Generic read, search, diff, and write tools deny secret content from:
 - Cloud-provider credentials and authentication caches.
 - Docker, Kubernetes, Git, package-manager, and network credential files.
 - Private keys, signing credentials, and provisioning secrets.
+- Opaque signing and credential containers by filename (`.key`, `.p8`, `.p12`,
+  `.pfx`, `.ppk`, `.jks`, `.keystore`, and provisioning-profile suffixes).
 - `.env`, `.env.*`, vault files, and policy-classified credential files.
 - Browser login, cookie, session, credential-vault, and token stores.
 - macOS account, authorization, TCC, and privacy databases.

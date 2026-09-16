@@ -4,6 +4,24 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Process-supervisor regression addendum at source revision `a04f628`: the
+detached-descendant recovery test now accepts `UNKNOWN` when concurrent Edge
+fixtures make the native PID observer uncertain, while asserting that only a
+verified `drained` result may claim termination. The cancellation test waits
+for active admission instead of a wall-clock guess, so full-suite scheduling
+cannot accidentally test pre-spawn revocation. The complete `npm test`
+regression passes 846/846 with 14 explicit skips and 0 failures. Evidence:
+`evidence/2026-09-16-process-supervisor-concurrency.md`.
+
+Opaque signing-container addendum at source revision `8dce667`: the F0 path
+boundary now denies private-key and credential containers by filename suffix
+(`.key`, `.p8`, `.p12`, `.pfx`, `.ppk`, `.jks`, `.keystore`, and provisioning
+profiles) before content reads or writes. Bounded log redaction removes those
+path forms as defense in depth. Secret-policy tests pass 9/9, and the related
+ProcessSupervisor/task-profile/guest/Edge regression passes 145/145. Encrypted
+or opaque containers remain unavailable by design rather than relying on
+content parsing. Evidence: `evidence/2026-09-16-opaque-signing-container-boundary.md`.
+
 Binary-private-key secret addendum: bounded DER PKCS#8/PKCS#1/SEC1 private
 keys and the OpenSSH binary envelope are now denied, including matching
 Base64 representations; public DER remains allowed. Secret-policy tests pass
