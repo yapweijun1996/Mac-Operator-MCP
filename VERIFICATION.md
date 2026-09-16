@@ -10,9 +10,10 @@ summary, owner UID, exact Developer ID identifier/Team ID/CDHash, fixed
 descriptor-backed walker rejects symlink/special-file entries, unsafe
 owner/mode, identity changes, digest mismatches, and entry/byte overruns; CLI
 and Broker return no raw command output. Focused release-preflight tests pass
-3/3, including a real Darwin ad-hoc codesign probe; the full regression passes
-875/875 with 14 explicit skips (889 total), and typecheck/build/lint pass. No
-production Developer ID artifact exists,
+4/4, including a real Darwin ad-hoc codesign probe and strict manifest-field
+negatives; the full regression passes 876/876 with 14 explicit skips (890
+total), and typecheck/build/lint pass. No production Developer ID artifact
+exists,
 so successful release assessment remains an open Release gate. Evidence:
 `evidence/2026-09-16-release-artifact-preflight.md`.
 

@@ -1,7 +1,7 @@
 # macOS release artifact preflight evidence
 
 Date: 2026-09-16
-Source revision: `5d4963c`
+Source revision: `9aca625`
 Host: physical Darwin arm64 Mac mini; macOS 26.2
 
 ## Change
@@ -24,9 +24,10 @@ Gatekeeper provenance are not release eligible.
 - `npm run typecheck --silent` passed.
 - `npm run build --silent` passed.
 - `node --test packages/broker/dist/macos-release-preflight.test.js` passed
-  3/3, including digest/identity binding, ad-hoc rejection, digest mismatch,
-  symlink denial, and a real Darwin `/usr/bin/codesign` ad-hoc probe.
-- `npm test --silent` passed 875/875 with 14 explicit skips (889 total).
+  4/4, including digest/identity binding, ad-hoc rejection, digest mismatch,
+  symlink denial, accessor/inherited-field denial, and a real Darwin
+  `/usr/bin/codesign` ad-hoc probe.
+- `npm test --silent` passed 876/876 with 14 explicit skips (890 total).
 - `npm run lint --silent` passed.
 - No production Developer ID artifact was available on the host; therefore a
   successful release preflight and production enablement remain intentionally
@@ -41,6 +42,6 @@ LaunchAgent/helper installation, or enabled capabilities.
 
 ## Rollback
 
-Revert commit `9541b6b` and test commit `5d4963c` to remove the release
+Revert commits `9541b6b`, `5d4963c`, `fc2908b`, and `9aca625` to remove the release
 preflight module, CLI, and documentation wiring. The change performs no
 host-side mutation.
