@@ -4,7 +4,7 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Notarization assessment addendum at source revision `14317d1`: the fixed
+Notarization assessment addendum at source revision `93a9850`: the fixed
 Gatekeeper contract is now enforced by production Developer ID Broker/Edge
 LaunchAgent plans and the root helper package. Execution assesses the exact
 canonical artifact after code-signature verification and before any plist or

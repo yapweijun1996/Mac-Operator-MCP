@@ -1,7 +1,7 @@
 # Notarization assessment boundary evidence
 
 Date: 2026-09-16
-Source revision: `14317d1`
+Source revision: `93a9850`
 Host: physical Darwin arm64 Mac mini; macOS 26.2
 
 ## Change

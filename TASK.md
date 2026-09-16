@@ -4,7 +4,7 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-061/072 notarization assessment addendum at source revision `14317d1`:
+MOP-061/072 notarization assessment addendum at source revision `93a9850`:
 the fixed `/usr/sbin/spctl` Gatekeeper boundary is enforced by production
 Developer ID Broker/Edge LaunchAgent plans and the root helper package. The
 assessment runs after code-signature verification and before mutation, and
