@@ -73,3 +73,15 @@ test("request snapshot keeps an own __proto__ field as inert data", () => {
   assert.equal((snapshotArguments["__proto__"] as Record<string, unknown>).path, "/private");
   assert.equal(Object.prototype.hasOwnProperty.call(snapshotArguments, "__proto__"), true);
 });
+
+test("request parser rejects authority arrays with custom prototypes", () => {
+  const signed = signRequest(requestFixture(), KEY);
+  Object.setPrototypeOf(signed.principal.scopes, {
+    every: () => true,
+    [Symbol.iterator]: function* () { yield "mac.priv.power"; }
+  });
+  assert.throws(
+    () => parseBrokerRequest(signed),
+    (error: unknown) => error instanceof Error && error.message === "Request envelope contains unsupported values"
+  );
+});

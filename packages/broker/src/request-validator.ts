@@ -92,7 +92,8 @@ function isSafeRequestValue(value: unknown): boolean {
 
 function isPlainDataArray(value: readonly unknown[]): boolean {
   try {
-    if (Object.getOwnPropertySymbols(value).length > 0 || Object.keys(value).length !== value.length) return false;
+    if (Object.getPrototypeOf(value) !== Array.prototype || Object.getOwnPropertySymbols(value).length > 0 ||
+        Object.keys(value).length !== value.length) return false;
     const names = Object.getOwnPropertyNames(value);
     if (names.length !== value.length + 1 || !names.includes("length")) return false;
     for (const name of names) {
@@ -107,8 +108,14 @@ function isPlainDataArray(value: readonly unknown[]): boolean {
 }
 
 function isKnownScopeList(value: unknown): value is readonly Scope[] {
-  if (!Array.isArray(value) || value.length > SCOPES.length || new Set(value).size !== value.length) return false;
-  return value.every((scope) => typeof scope === "string" && KNOWN_SCOPES.has(scope as Scope));
+  if (!Array.isArray(value) || !isPlainDataArray(value) || value.length > SCOPES.length) return false;
+  const seen = new Set<unknown>();
+  for (let index = 0; index < value.length; index += 1) {
+    const scope = value[index];
+    if (seen.has(scope) || typeof scope !== "string" || !KNOWN_SCOPES.has(scope as Scope)) return false;
+    seen.add(scope);
+  }
+  return true;
 }
 
 function freezeRequestSnapshot(value: unknown): unknown {
