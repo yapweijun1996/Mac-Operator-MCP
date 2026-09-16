@@ -4,7 +4,10 @@ import { BrokerError } from "@mac-operator/contracts";
 
 const DENIED_BASENAMES = new Set([
   ".git-credentials", ".netrc", ".npmrc", ".pypirc", "application_default_credentials.json",
-  "credentials", "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa"
+  "credentials", "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa",
+  ".bash_history", ".zsh_history", ".fish_history", ".node_repl_history", ".python_history",
+  ".irb_history", ".psql_history", ".sqlite_history", ".lesshst", ".wget-hsts",
+  "fish_history", "python_history"
 ]);
 
 /**
@@ -102,6 +105,7 @@ const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /\b(?:api[_-]?key|client[_-]?secret|password|passwd|secret|token)\s*[:=]\s*["']?[^\s"']{8,}/giu,
   /(?:\/(?:[^\r\n,;)]{1,512})\.(?:key|p8|p12|pfx|ppk|jks|keystore|mobileprovision|provisionprofile))(?=$|[\s,;)'"])/giu,
   /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/(?:\.ssh|\.gnupg|\.aws|\.azure|\.config\/(?:gcloud|gh)|\.kube|\.docker|Library\/(?:Keychains|Mail|Messages|Safari|Application Support\/(?:Google\/Chrome|BraveSoftware\/Brave-Browser|Microsoft Edge)|Containers\/com\.apple\.(?:mail|messages|safari))|Photos Library\.photoslibrary)(?:[^\r\n,;)]*)/giu,
+  /(?:\/(?:private\/)?Users\/[^/\s]+|\/(?:private\/)?var\/root)\/\.?(?:bash_history|zsh_history|fish_history|node_repl_history|python_history|irb_history|psql_history|sqlite_history|lesshst|wget-hsts)(?=$|[\s,;)'"])/giu,
   /(?:\/(?:private\/)?var\/root)(?:[^\r\n,;)]*)/giu
 ];
 

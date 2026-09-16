@@ -21,6 +21,9 @@ test("fixed secret-zone policy denies credential and private-data paths", () => 
     "/Users/test/project/team-signing.p12",
     "/Users/test/project/client-certificate.ppk",
     "/Users/test/project/enterprise.keystore",
+    "/Users/test/.zsh_history",
+    "/Users/test/.config/fish/fish_history",
+    "/Users/test/.local/share/python_history",
     "/private/var/root/Library/Preferences/com.apple.loginwindow.plist",
     "/var/root/opaque-private-data"
   ];
@@ -146,6 +149,9 @@ test("log redaction removes secret-shaped values and bounds messages", () => {
   const signingContainerPath = redactLogText("open failed: /tmp/team-signing.p12");
   assert.equal(signingContainerPath.redacted, true);
   assert.equal(signingContainerPath.text.includes("team-signing.p12"), false);
+  const historyPath = redactLogText("open failed: /Users/test/.zsh_history");
+  assert.equal(historyPath.redacted, true);
+  assert.equal(historyPath.text.includes(".zsh_history"), false);
   const bounded = redactLogText("x".repeat(20_000));
   assert.equal(bounded.redacted, true);
   assert.ok(bounded.text.length <= 8192);
