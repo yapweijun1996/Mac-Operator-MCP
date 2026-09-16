@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import { LaunchdServiceInspector, validateServiceId } from "./service-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -51,4 +52,36 @@ test("launchd service inspector treats xpcproxy as loaded, not running", async (
   assert.equal(status.state, "loaded");
   assert.equal(status.running, false);
   assert.equal(status.pid, 4123);
+});
+
+test("launchd service inspector rejects forged or conflicting readback fields", async () => {
+  const serviceId = "system/com.apple.logd";
+  const outputs = [
+    `${serviceId} = {\n\tstate = running\n\tstate = stopped\n\tpid = 4123\n}`,
+    `${serviceId} = {\n\tstate = running\n\tpid = 4123\n\t}\n\tstate = failed\n}`,
+    "system/com.apple.other = {\n\tstate = running\n\tpid = 4123\n}"
+  ];
+  for (const stdout of outputs) {
+    const executor = {
+      async run(): Promise<ProcessExecutionResult> {
+        return {
+          state: "completed",
+          resultClass: "SUCCEEDED",
+          exitCode: 0,
+          signal: null,
+          stdout,
+          stderr: "",
+          truncated: false,
+          durationMs: 1,
+          processId: 1,
+          processGroupId: 1,
+          terminationObserved: true
+        };
+      }
+    } as never;
+    await assert.rejects(
+      new LaunchdServiceInspector(executor).inspect(serviceId, { timeoutMs: 5_000, shouldCancel: () => false }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+    );
+  }
 });

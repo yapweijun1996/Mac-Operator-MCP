@@ -1,5 +1,6 @@
 import { BrokerError } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { LaunchdReadbackError, parseLaunchdJobReadback } from "./launchd-readback.js";
 
 const LAUNCHCTL = "/bin/launchctl";
 const LAUNCHCTL_CWD = "/";
@@ -65,18 +66,18 @@ function parseLaunchctlResult(serviceId: string, result: ProcessExecutionResult)
     }
     throw new BrokerError("EXECUTION_FAILED", "Launchd service inspection failed");
   }
-  const stateValue = /(?:^|\n)\s*state\s*=\s*([^\r\n]+)/u.exec(result.stdout)?.[1]?.trim() ?? "";
-  const state = normalizeState(stateValue);
-  const pidValue = /(?:^|\n)\s*pid\s*=\s*([0-9]+)/u.exec(result.stdout)?.[1];
-  const pid = pidValue === undefined ? null : Number(pidValue);
-  if (pid !== null && (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999)) {
-    throw new BrokerError("EXECUTION_FAILED", "Launchd returned a malformed process identity");
+  let readback;
+  try {
+    readback = parseLaunchdJobReadback(serviceId, result.stdout);
+  } catch (error) {
+    if (error instanceof LaunchdReadbackError) {
+      throw new BrokerError("EXECUTION_FAILED", "Launchd returned a malformed service readback");
+    }
+    throw error;
   }
-  const lastExitMatch = /(?:^|\n)\s*last exit code\s*=\s*([^\r\n]+)/u.exec(result.stdout)?.[1]?.trim();
-  const lastExitCode = parseExitCode(lastExitMatch);
-  if (state === "unknown" && stateValue.length > 0) {
-    throw new BrokerError("EXECUTION_FAILED", "Launchd returned an unsupported service state");
-  }
+  const state = normalizeState(readback.state);
+  const pid = readback.pid;
+  const lastExitCode = readback.lastExitCode;
   const warnings = result.truncated
     ? ["Launchd output was truncated by a fixed adapter budget"]
     : [];
@@ -92,7 +93,7 @@ function parseLaunchctlResult(serviceId: string, result: ProcessExecutionResult)
   };
 }
 
-function normalizeState(value: string): SafeServiceStatus["state"] {
+function normalizeState(value: ReturnType<typeof parseLaunchdJobReadback>["state"]): SafeServiceStatus["state"] {
   switch (value) {
     case "running": return "running";
     case "stopped": return "stopped";
@@ -102,17 +103,8 @@ function normalizeState(value: string): SafeServiceStatus["state"] {
     case "loaded":
     // A freshly bootstrapped macOS job can expose its XPC proxy before the
     // target program is running. Keep the public status conservative.
-    case "xpcproxy": return "loaded";
-    case "": return "unknown";
+      return "loaded";
+    case "unknown": return "unknown";
     default: return "unknown";
   }
-}
-
-function parseExitCode(value: string | undefined): number | null {
-  if (value === undefined || value === "(never exited)") return null;
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < -2_147_483_648 || parsed > 2_147_483_647) {
-    throw new BrokerError("EXECUTION_FAILED", "Launchd returned a malformed exit code");
-  }
-  return parsed;
 }
