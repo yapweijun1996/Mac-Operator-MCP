@@ -4,15 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Notarization assessment addendum at source revision `32f2c6c`: a host-only
-Gatekeeper contract now invokes fixed `/usr/sbin/spctl` arguments with empty
-environment, bounded timeout/output, canonical artifact validation, and
-stable fail-closed errors. Readback accepts only `Notarized Developer ID`
-source plus an authority matching the expected Team ID; Apple System,
-malformed, failed, oversized, or mismatched results are rejected. Typecheck,
-build, and focused tests pass 2/2. Package plans do not yet invoke this
-contract, and no notarized artifact, service, helper, or capability is
-enabled. Evidence: `evidence/2026-09-16-notarization-assessment-boundary.md`.
+Notarization assessment addendum at source revision `14317d1`: the fixed
+Gatekeeper contract is now enforced by production Developer ID Broker/Edge
+LaunchAgent plans and the root helper package. Execution assesses the exact
+canonical artifact after code-signature verification and before any plist or
+launchd mutation; final service readback requires matching notarization
+evidence. Explicit ad-hoc development plans omit this gate. Broker/Edge
+install tests pass 25/25, helper package tests pass 20/20, and the full
+regression passes 872/872 with 14 explicit skips. No notarized artifact,
+service, helper, or capability is enabled. Evidence:
+`evidence/2026-09-16-notarization-assessment-boundary.md`.
 
 Keychain ACL rerun addendum at source revision `31a78c0`: the physical Darwin
 credential suite passes 11/11 with `MOPS_REAL_KEYCHAIN=1`. It provisions a

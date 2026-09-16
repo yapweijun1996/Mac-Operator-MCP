@@ -21,6 +21,12 @@ Both are disposable, zero-capability checks; persistent production install,
 Developer ID/notarization, descriptor execution, and privileged enablement
 remain release gates.
 
+The production packaging boundary now enforces a fixed Gatekeeper
+`Notarized Developer ID` assessment for Broker, Edge, and root-helper plans,
+including final identity-bound readback. This closes the implementation gate;
+real signed/notarized release-artifact evidence and persistent lifecycle proof
+remain open.
+
 ## Phase 0 — Foundation and contracts
 
 Status: `IN_PROGRESS`

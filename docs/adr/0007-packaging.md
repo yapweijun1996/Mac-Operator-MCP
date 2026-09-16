@@ -165,7 +165,10 @@ The host-only notarization assessment boundary now uses fixed `/usr/sbin/spctl`
 arguments, an empty environment, bounded timeout/output, and canonical path
 validation. Its parser accepts only `Notarized Developer ID` provenance whose
 authority matches the expected Team ID, and returns no raw assessment output.
-Physical probes confirm that Apple System artifacts are not accepted as
-Developer ID releases. Package-plan wiring remains a separate implementation
-step; no notarized artifact or production capability is enabled. Evidence:
+Production Developer ID Broker/Edge LaunchAgent plans and the root helper
+package run this check after code-signature verification and before mutation;
+their final readback also requires matching evidence. Explicit ad-hoc plans
+omit the gate. Physical probes confirm that Apple System artifacts are not
+accepted as Developer ID releases; no notarized artifact or production
+capability is enabled. Evidence:
 `evidence/2026-09-16-notarization-assessment-boundary.md`.

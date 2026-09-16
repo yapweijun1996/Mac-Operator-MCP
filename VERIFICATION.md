@@ -3,15 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
-Notarization assessment verification: the host-only contract invokes fixed
+Notarization assessment verification: the fixed host-only contract invokes
 `/usr/sbin/spctl` with empty environment, canonical artifact validation, a
 five-second timeout, and a 131072-byte output cap. It accepts only one
 `accepted` result with `source=Notarized Developer ID` and an authority bound
 to the expected Team ID; Apple System, failed, malformed, mismatched, and
-oversized readbacks fail closed. Typecheck/build pass and focused tests pass
-2/2. Physical-host probes showed `/usr/bin/true` rejected and Archive Utility
-accepted only as Apple System. Package plans do not yet invoke this contract,
-and no notarized artifact or capability is enabled. Evidence:
+oversized readbacks fail closed. Production Developer ID Broker/Edge and root
+helper package plans run this check before mutation and require matching final
+readback evidence; ad-hoc development plans omit it. Typecheck/build pass,
+Broker/Edge install tests pass 25/25, helper package tests pass 20/20, and the
+full regression passes 872/872 with 14 explicit skips. Physical-host probes
+showed `/usr/bin/true` rejected and Archive Utility accepted only as Apple
+System. No notarized artifact or capability is enabled. Evidence:
 `evidence/2026-09-16-notarization-assessment-boundary.md`.
 
 Keychain ACL rerun verification: `MOPS_REAL_KEYCHAIN=1 node --test

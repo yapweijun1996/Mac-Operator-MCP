@@ -4,12 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-061/072 notarization assessment addendum at source revision `32f2c6c`:
-the host-only Gatekeeper boundary uses fixed `/usr/sbin/spctl` execution,
-empty environment, canonical-path checks, bounded limits, and a parser that
-accepts only `Notarized Developer ID` provenance bound to the expected Team
-ID. Focused tests pass 2/2; typecheck/build pass. Package execution wiring,
-real Developer ID/notarization evidence, and enablement remain open. Evidence:
+MOP-061/072 notarization assessment addendum at source revision `14317d1`:
+the fixed `/usr/sbin/spctl` Gatekeeper boundary is enforced by production
+Developer ID Broker/Edge LaunchAgent plans and the root helper package. The
+assessment runs after code-signature verification and before mutation, and
+matching evidence is required in final service readback; ad-hoc development
+plans omit it. Broker/Edge install tests pass 25/25, helper package tests pass
+20/20, and typecheck/build/full regression pass. Real Developer
+ID/notarization artifact evidence and enablement remain open. Evidence:
 `evidence/2026-09-16-notarization-assessment-boundary.md`.
 
 MOP-037/081 Keychain ACL rerun addendum at source revision `31a78c0`: the real
