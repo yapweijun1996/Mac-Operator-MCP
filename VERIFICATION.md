@@ -4,7 +4,7 @@ Status: Contract checks and bounded local Broker prototype evidence exist; no re
 Version: 0.1
 
 Helper allowlist configuration-boundary verification at source revision
-`a1acb3c`: executor construction rejects non-boolean enablement and operation
+`57cee04`: executor construction rejects non-boolean enablement and operation
 allowlists with symbols, hidden fields, sparse slots, accessors, unsupported
 values, or duplicates. The supported operation set is frozen before use.
 Helper executor tests pass 11/11 with 0 failures; build, typecheck, and lint

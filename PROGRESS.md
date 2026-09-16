@@ -5,7 +5,7 @@ Version: 0.1
 Last verified: 2026-09-16
 
 Helper allowlist configuration-boundary addendum at source revision
-`a1acb3c`: the executor now rejects non-boolean enablement and malformed
+`57cee04`: the executor now rejects non-boolean enablement and malformed
 operation arrays (symbols, hidden fields, sparse slots, accessors, unsupported
 values, or duplicates) before storing runtime capability state. The exported
 supported-operation set is frozen. Helper executor tests pass 11/11, and

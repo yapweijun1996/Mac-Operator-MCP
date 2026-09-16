@@ -1,7 +1,7 @@
 # Privileged Helper allowlist configuration boundary evidence
 
 Date: 2026-09-16
-Source revision: `a1acb3c`
+Source revision: `57cee04`
 Host: physical Darwin arm64 (`yaps-Mac-mini.local`, Darwin 25.2.0)
 Node: `v25.5.0`
 

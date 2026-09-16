@@ -4,7 +4,7 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-090 Helper configuration-boundary addendum at source revision `a1acb3c`:
+MOP-090 Helper configuration-boundary addendum at source revision `57cee04`:
 Helper startup now fails closed on a non-boolean enable flag or a malformed
 operation allowlist. The list is bounded and dense, rejects symbols, hidden
 fields, sparse slots, accessors, unsupported values, and duplicates, and the
