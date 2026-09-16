@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Launchd status type-binding addendum at source revision `583fa09`: the
+system-domain service inspector now requires `type = LaunchDaemon` after strict
+readback parsing, rejecting missing status identity as `EXECUTION_FAILED` while
+preserving the public `xpcproxy -> loaded` mapping. The focused launchd,
+service-inspector, startup, and helper suites pass 25/25; typecheck, build,
+lint, matrix, and documentation checks pass. Persistent launchd ownership,
+Developer ID provenance, descriptor execution, root-domain installation, and
+remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-status-type-binding.md`.
+
 Launchd startup type-binding addendum at source revision `bd14cba`: Edge and
 privileged-helper Broker-caller identity capture now requires the strict
 readback to explicitly report `type = LaunchAgent` after domain and field

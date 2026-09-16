@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Launchd status type-binding addendum at source revision `583fa09`: the
+system-domain `LaunchdServiceInspector` now requires an explicit
+`type = LaunchDaemon` in the strict readback before publishing status. Missing
+or conflicting status identity fails as the stable `EXECUTION_FAILED` class;
+the public `xpcproxy -> loaded` mapping remains unchanged. Focused launchd,
+service-inspector, startup, and helper tests pass 25/25; typecheck and build
+pass. Persistent launchd ownership, signing provenance, descriptor execution,
+root-domain installation, and remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-status-type-binding.md`.
+
 Launchd startup type-binding addendum at source revision `bd14cba`: Edge and
 privileged-helper Broker-caller capture now requires an explicit
 `type = LaunchAgent` in the strict readback after GUI-domain validation.

@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-030/081/087 launchd status type-binding addendum at source revision
+`583fa09`: the system-domain service inspector requires `LaunchDaemon` in the
+validated readback before status publication; missing type is a stable
+`EXECUTION_FAILED` denial. Focused launchd/service-inspector/startup/helper
+tests pass 25/25; typecheck, build, lint, matrix, and documentation checks
+pass. Persistent launchd ownership, signing provenance, descriptor execution,
+helper installation, and remote deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-status-type-binding.md`.
+
 MOP-081/087 launchd startup type-binding addendum at source revision
 `bd14cba`: Edge startup and privileged-helper Broker-caller capture require an
 explicit `LaunchAgent` type in the validated GUI-domain readback; missing type
