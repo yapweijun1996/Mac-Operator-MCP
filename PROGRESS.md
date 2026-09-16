@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged-helper readback addendum at source revision `866f4ee`: the final
+root-domain helper readback now retains and validates `type: "LaunchDaemon"`
+alongside `domain: "system"`; a type-substitution regression is covered.
+Helper package/runtime/dispatch tests pass 23/23; typecheck, lint, and build
+pass. Root-domain installation, signing provenance, adapter execution, and
+independent review remain open. Evidence:
+`evidence/2026-09-16-helper-readback-launchd-type.md`.
+
 Process-stdin secret addendum at source revision `dddbdbc`: the shared
 `ProcessSupervisor` now rejects known credential signatures and bounded Base64
 representations in stdin before child creation, while retaining

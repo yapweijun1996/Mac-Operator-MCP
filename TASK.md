@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-060/061 helper readback addendum at source revision `866f4ee`: final
+root-domain helper readback retains the approved `system`/`LaunchDaemon`
+identity and rejects post-composition type substitution. Helper
+package/runtime/dispatch tests pass 23/23; typecheck, lint, and build pass.
+Installation, signing provenance, adapter execution, and independent review
+remain open. Evidence:
+`evidence/2026-09-16-helper-readback-launchd-type.md`.
+
 MOP-045 stdin addendum at source revision `dddbdbc`: `ProcessSupervisor`
 applies the known-secret corpus to bounded stdin before child creation,
 rejecting plaintext and Base64 credential representations while preserving
