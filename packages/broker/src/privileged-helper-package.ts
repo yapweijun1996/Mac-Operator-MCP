@@ -7,7 +7,8 @@ import { FilesystemInspector, type FilesystemIdentityPrecondition, type Filesyst
 import { readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
-import { readPrivilegedHelperStatus, type PrivilegedHelperStatusClientOptions } from "./privileged-helper.js";
+import { readPrivilegedHelperStatus, type PrivilegedHelperAdapter, type PrivilegedHelperStatusClientOptions } from "./privileged-helper.js";
+import { isPlainDataRecord } from "./plain-record.js";
 
 const HELPER_LABEL = "com.mac-operator.privileged-helper" as const;
 const HELPER_PLIST_PATH = "/Library/LaunchDaemons/com.mac-operator.privileged-helper.plist" as const;
@@ -20,6 +21,9 @@ const MAX_ARGUMENT_TOTAL_BYTES = 64 * 1_024;
 const MAX_PLIST_BYTES = 512 * 1_024;
 const REVISION_PATTERN = /^[a-f0-9]{40}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/u;
+const CAPABILITY_PATTERN = /^mac_priv_[a-z][a-z0-9_]{0,63}$/u;
+const CAPABILITY_EVIDENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
+const IMPLEMENTED_HELPER_CAPABILITIES = new Set(["mac_priv_service_control"]);
 const INTERPRETER_NAMES = new Set([
   "bash",
   "csh",
@@ -45,6 +49,7 @@ export type PrivilegedHelperPackageErrorCode =
   | "INVALID_PEER_IDENTITY"
   | "INVALID_REVISION"
   | "INVALID_SIGNATURE"
+  | "INVALID_CAPABILITY_RELEASE"
   | "SERVICE_MISMATCH"
   | "SIGNATURE_MISMATCH"
   | "INVALID_READBACK"
@@ -98,6 +103,40 @@ export interface PrivilegedHelperPackagePlanInput {
   contractVersion: string;
   policyVersion: string;
   expectedPreviousSourceRevision?: string;
+  /** Host-owned release evidence for implemented helper capabilities. */
+  capabilityRelease?: PrivilegedHelperCapabilityRelease;
+}
+
+/**
+ * Explicit host release metadata for the root helper capability projection.
+ * This is not supplied by MCP callers and is never inferred from tool
+ * arguments. The package readback must still match the projection exactly.
+ */
+export interface PrivilegedHelperCapabilityRelease {
+  source: "host-verified";
+  adapterAvailable: boolean;
+  enabledCapabilities: readonly string[];
+  evidenceRef: string;
+}
+
+/**
+ * Derive a package release from the host-owned helper adapter projection.
+ * Callers cannot use this to add capabilities: normalization rejects any
+ * operation that has no implemented adapter contract.
+ */
+export function createPrivilegedHelperCapabilityRelease(
+  adapter: Pick<PrivilegedHelperAdapter, "available" | "enabledCapabilities">,
+  evidenceRef: string
+): PrivilegedHelperCapabilityRelease {
+  if (adapter === null || typeof adapter !== "object") {
+    fail("INVALID_CAPABILITY_RELEASE", "privileged helper adapter projection is unavailable");
+  }
+  return normalizeCapabilityRelease({
+    source: "host-verified",
+    adapterAvailable: adapter.available,
+    enabledCapabilities: adapter.enabledCapabilities,
+    evidenceRef
+  })!;
 }
 
 export interface PrivilegedHelperLaunchdReadback {
@@ -203,6 +242,7 @@ export interface PrivilegedHelperPackagePlan {
   contractVersion: string;
   policyVersion: string;
   expectedPreviousSourceRevision?: string;
+  capabilityRelease?: PrivilegedHelperCapabilityRelease;
   launchd: PrivilegedHelperLaunchdReadback;
   renderedPlist: string;
   signatureVerify: CodeSignatureCommandSpec;
@@ -220,8 +260,8 @@ export interface PrivilegedHelperPackagePlan {
     bootout: LaunchdCommandSpec;
     file: PrivilegedHelperFileAction;
   };
-  enabledCapabilities: readonly [];
-  adapterAvailable: false;
+  enabledCapabilities: readonly string[];
+  adapterAvailable: boolean;
 }
 
 export interface PrivilegedHelperFilesystemEntryReadback {
@@ -353,6 +393,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
   validateVersion(input.contractVersion, "contract version");
   validateVersion(input.policyVersion, "policy version");
   const expectedPreviousSourceRevision = normalizePreviousRevision(input.expectedPreviousSourceRevision, operation);
+  const capabilityRelease = normalizeCapabilityRelease(input.capabilityRelease);
   const signature = normalizeSignature(input.signature);
   if (signature.identifier !== HELPER_LABEL) fail("INVALID_SIGNATURE", "helper signature identifier is invalid");
   const renderedPlist = renderPrivilegedHelperLaunchdPlist(service);
@@ -393,6 +434,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
     contractVersion: input.contractVersion,
     policyVersion: input.policyVersion,
     ...(expectedPreviousSourceRevision === undefined ? {} : { expectedPreviousSourceRevision }),
+    ...(capabilityRelease === undefined ? {} : { capabilityRelease }),
     launchd,
     renderedPlist,
     signatureVerify: {
@@ -426,8 +468,8 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
       bootout: launchctlCommand(["bootout", `system/${HELPER_LABEL}`]),
       file: remove
     },
-    enabledCapabilities: [],
-    adapterAvailable: false
+    enabledCapabilities: capabilityRelease?.enabledCapabilities ?? [],
+    adapterAvailable: capabilityRelease?.adapterAvailable ?? false
   };
   return plan;
 }
@@ -918,14 +960,13 @@ export function validatePrivilegedHelperPackageReadback(
   if (readback.helper === null || typeof readback.helper !== "object" ||
       readback.helper.component !== "mac-operator-privileged-helper" || readback.helper.state !== "running" ||
       readback.helper.runtimeState !== "running" || readback.helper.nativeTransportRequired !== true ||
-      readback.helper.adapterAvailable !== false || readback.helper.helperSocketPath !== plan.helperSocketPath ||
+      readback.helper.adapterAvailable !== plan.adapterAvailable || readback.helper.helperSocketPath !== plan.helperSocketPath ||
       readback.helper.brokerSocketPath !== plan.brokerSocketPath ||
       readback.helper.helperAuthoritySocketPath !== plan.helperAuthoritySocketPath ||
       readback.helper.brokerPeerUid !== plan.brokerPeer.uid ||
       readback.helper.brokerPeerGid !== (plan.brokerPeer.gid ?? null) ||
       readback.helper.sourceRevision !== plan.sourceRevision || readback.helper.contractVersion !== plan.contractVersion ||
-      readback.helper.policyVersion !== plan.policyVersion || !Array.isArray(readback.helper.enabledCapabilities) ||
-      readback.helper.enabledCapabilities.length !== 0) {
+      readback.helper.policyVersion !== plan.policyVersion || !sameStrings(readback.helper.enabledCapabilities, plan.enabledCapabilities)) {
     fail("SERVICE_MISMATCH", "privileged helper runtime readback does not match the plan");
   }
   try {
@@ -1191,6 +1232,29 @@ function normalizePreviousRevision(value: string | undefined, operation: Privile
   }
   if (value === undefined || !REVISION_PATTERN.test(value)) fail("INVALID_REVISION", "upgrade, rollback, and uninstall require an exact previous source revision");
   return value;
+}
+
+function normalizeCapabilityRelease(value: PrivilegedHelperCapabilityRelease | undefined): PrivilegedHelperCapabilityRelease | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainDataRecord(value) || Object.keys(value).sort().join(",") !== "adapterAvailable,enabledCapabilities,evidenceRef,source" ||
+      value.source !== "host-verified" ||
+      typeof value.adapterAvailable !== "boolean" || !Array.isArray(value.enabledCapabilities) ||
+      typeof value.evidenceRef !== "string" || !CAPABILITY_EVIDENCE_PATTERN.test(value.evidenceRef)) {
+    fail("INVALID_CAPABILITY_RELEASE", "privileged helper capability release is malformed");
+  }
+  const capabilities = [...value.enabledCapabilities];
+  if (capabilities.length > 8 || capabilities.some((capability) => typeof capability !== "string" ||
+      !CAPABILITY_PATTERN.test(capability) || !IMPLEMENTED_HELPER_CAPABILITIES.has(capability)) ||
+      capabilities.some((capability, index) => index > 0 && capabilities[index - 1]! >= capability) ||
+      value.adapterAvailable !== (capabilities.length > 0)) {
+    fail("INVALID_CAPABILITY_RELEASE", "privileged helper capability release is not an implemented canonical projection");
+  }
+  return Object.freeze({
+    source: "host-verified" as const,
+    adapterAvailable: value.adapterAvailable,
+    enabledCapabilities: Object.freeze(capabilities),
+    evidenceRef: value.evidenceRef
+  });
 }
 
 function validateRevision(value: unknown, label: string): asserts value is string {

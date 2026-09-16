@@ -11,6 +11,7 @@ import {
   buildPrivilegedHelperPackageExecutionPlan,
   buildPrivilegedHelperPackagePlan,
   composePrivilegedHelperPackageReadback,
+  createPrivilegedHelperCapabilityRelease,
   createPrivilegedHelperPackageHostObserver,
   executePrivilegedHelperPackagePlan,
   observePrivilegedHelperPackageReadback,
@@ -89,6 +90,66 @@ test("privileged helper package plan is a fixed root-domain native LaunchDaemon"
     timeoutMs: 5_000,
     outputCapBytes: 131_072
   });
+});
+
+test("privileged helper package capability release is explicit and implementation-bound", () => {
+  const plan = buildPrivilegedHelperPackagePlan({
+    ...base,
+    capabilityRelease: {
+      source: "host-verified",
+      adapterAvailable: true,
+      enabledCapabilities: ["mac_priv_service_control"],
+      evidenceRef: "evidence/2026-09-16-privileged-service-control-adapter.md"
+    }
+  });
+  assert.equal(plan.adapterAvailable, true);
+  assert.deepEqual(plan.enabledCapabilities, ["mac_priv_service_control"]);
+  assert.deepEqual(plan.capabilityRelease?.enabledCapabilities, ["mac_priv_service_control"]);
+
+  assert.throws(
+    () => buildPrivilegedHelperPackagePlan({
+      ...base,
+      capabilityRelease: {
+        source: "host-verified",
+        adapterAvailable: true,
+        enabledCapabilities: ["mac_priv_package_install"],
+        evidenceRef: "evidence/helper.md"
+      }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_CAPABILITY_RELEASE"
+  );
+  assert.throws(
+    () => buildPrivilegedHelperPackagePlan({
+      ...base,
+      capabilityRelease: {
+        source: "host-verified",
+        adapterAvailable: false,
+        enabledCapabilities: ["mac_priv_service_control"],
+        evidenceRef: "evidence/helper.md"
+      }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_CAPABILITY_RELEASE"
+  );
+});
+
+test("privileged helper capability release derives only from the adapter projection", () => {
+  const release = createPrivilegedHelperCapabilityRelease({
+    available: true,
+    enabledCapabilities: ["mac_priv_service_control"]
+  }, "evidence/helper.md");
+  assert.deepEqual(release, {
+    source: "host-verified",
+    adapterAvailable: true,
+    enabledCapabilities: ["mac_priv_service_control"],
+    evidenceRef: "evidence/helper.md"
+  });
+  assert.throws(
+    () => createPrivilegedHelperCapabilityRelease({
+      available: true,
+      enabledCapabilities: ["mac_priv_package_install"]
+    }, "evidence/helper.md"),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_CAPABILITY_RELEASE"
+  );
 });
 
 test("privileged helper package plan rejects user-domain, interpreter, socket, and signature escapes", () => {

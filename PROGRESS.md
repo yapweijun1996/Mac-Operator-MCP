@@ -4,13 +4,23 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged helper capability-release addendum: root package plans now accept
+only an explicit host-verified capability projection. The plan derives
+`adapterAvailable` and exact enabled capability names from that release, and
+final helper readback compares both fields before accepting readiness. Only
+the implemented `mac_priv_service_control` capability is releasable; the
+default remains zero capabilities. Focused package/service-control tests pass
+22/22 and typecheck passes. This closes package projection drift but does not
+claim root installation or live privileged enablement. Evidence:
+`evidence/2026-09-16-helper-capability-release.md`.
+
 Privileged service-control adapter addendum: a host-owned Helper adapter now
 accepts only `start`, `stop`, and `restart`, uses fixed `/bin/launchctl`
 arguments with empty environment and bounded budgets, and verifies a final
 LaunchDaemon state readback. Idempotent requests still perform postcondition
 readback; unsupported enable/disable actions and unresolved readbacks fail
 closed. The production adapter also requires a root helper process and host
-descriptor-exec evidence. Focused adapter tests pass 6/6, full regression passes 853/853 with
+descriptor-exec evidence. Focused adapter tests pass 6/6, full regression passes 855/855 with
 14 explicit skips, and typecheck passes. Production availability remains
 gated by descriptor-exec evidence. Evidence:
 `evidence/2026-09-16-privileged-service-control-adapter.md`.

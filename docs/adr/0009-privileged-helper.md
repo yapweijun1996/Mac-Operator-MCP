@@ -304,6 +304,13 @@ post-dispatch readback loss is `UNKNOWN_OUTCOME`. `enable` and `disable`
 remain unsupported until enabled-state readback is separately governed, and
 the production adapter remains disabled without descriptor-exec evidence.
 
+The capability-release revision binds root package plans to an explicit
+host-verified projection. Non-empty capability lists are accepted only for
+implemented adapters, and final helper readback must match both the
+availability boolean and exact ordered capability list. The default package
+plan remains capability-empty; this contract does not itself install or
+enable a root helper.
+
 Physical host evidence on 2026-09-15 found no available Developer ID signing
 identity and an ad-hoc-only native artifact. The helper package therefore
 remains an implementation candidate: strict ad-hoc verification is not

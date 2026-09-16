@@ -3,11 +3,21 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged helper capability-release addendum: root package plans now require
+an explicit host-verified capability projection before any non-empty helper
+capability list can be represented. Only the implemented
+`mac_priv_service_control` name is accepted; final package readback compares
+the exact availability boolean and capability list. Focused package and
+service-control tests pass 22/22 and typecheck passes. This closes projection
+drift only; root installation, signing, descriptor execution, and live
+privileged enablement remain open. Evidence:
+`evidence/2026-09-16-helper-capability-release.md`.
+
 Privileged service-control adapter addendum: the new allowlisted adapter
 accepts only `start`, `stop`, and `restart`, sends fixed `/bin/launchctl`
 argv with empty environment and bounded timeout/output, and requires a final
 LaunchDaemon readback before success. Focused adapter tests pass 6/6, the full
-regression passes 853/853 with 14 explicit skips, and typecheck passes. This
+regression passes 855/855 with 14 explicit skips, and typecheck passes. This
 proves the bounded adapter contract only; descriptor-exec availability,
 root-helper identity, root-domain installation, signing provenance, and live privileged enablement
 remain open. Evidence:
