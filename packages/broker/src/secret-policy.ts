@@ -7,7 +7,8 @@ const DENIED_BASENAMES = new Set([
   "credentials", "credentials.json", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa",
   ".bash_history", ".zsh_history", ".fish_history", ".node_repl_history", ".python_history",
   ".irb_history", ".psql_history", ".sqlite_history", ".lesshst", ".wget-hsts",
-  "fish_history", "python_history"
+  "bash_history", "zsh_history", "fish_history", "node_repl_history", "python_history",
+  "irb_history", "psql_history", "sqlite_history", "lesshst", "wget-hsts"
 ]);
 
 /**

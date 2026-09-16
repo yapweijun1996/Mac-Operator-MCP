@@ -24,6 +24,7 @@ test("fixed secret-zone policy denies credential and private-data paths", () => 
     "/Users/test/.zsh_history",
     "/Users/test/.config/fish/fish_history",
     "/Users/test/.local/share/python_history",
+    "/Users/test/bash_history",
     "/private/var/root/Library/Preferences/com.apple.loginwindow.plist",
     "/var/root/opaque-private-data"
   ];
