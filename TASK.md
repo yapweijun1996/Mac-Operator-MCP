@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-081/087 launchd parser-hardening addendum at source revision `f69090a`:
+bounded `launchctl print` parsing now rejects duplicate service headers,
+duplicate top-level singleton fields, and duplicate program-argument blocks as
+`MALFORMED_READBACK`; nested dictionaries cannot shadow top-level service
+state. The focused launchd suite passes 5/5, while install-plan,
+privileged-helper, service-startup, and packaged-service suites pass 43/43
+with one opt-in smoke skip. Typecheck, build, lint, matrix, and documentation
+checks pass. Persistent launchd ownership, signing provenance, descriptor
+execution, helper installation, and remote deployment remain open. Evidence:
+`evidence/2026-09-16-launchd-conflicting-fields.md`.
+
 MOP-037/045 output addendum at source revision `16cc28c`:
 `ProcessSupervisor` centrally redacts known credential signatures from child
 stdout/stderr before adapter consumers receive them. Process-supervisor,
