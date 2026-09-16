@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Helper allowlist configuration-boundary addendum at source revision
+`a1acb3c`: the executor now rejects non-boolean enablement and malformed
+operation arrays (symbols, hidden fields, sparse slots, accessors, unsupported
+values, or duplicates) before storing runtime capability state. The exported
+supported-operation set is frozen. Helper executor tests pass 11/11, and
+build/typecheck/lint pass. This is startup-boundary hardening only; no
+production Helper or privileged capability is enabled. Evidence:
+`evidence/2026-09-16-helper-allowlist-config-boundary.md`.
+
 Physical regression addendum at source revision `39cb147`: with
 `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1`, the complete
 repository run passes 880/880 with 12 explicit skips and 0 failures (892

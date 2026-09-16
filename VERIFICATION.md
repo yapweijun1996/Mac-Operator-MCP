@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Helper allowlist configuration-boundary verification at source revision
+`a1acb3c`: executor construction rejects non-boolean enablement and operation
+allowlists with symbols, hidden fields, sparse slots, accessors, unsupported
+values, or duplicates. The supported operation set is frozen before use.
+Helper executor tests pass 11/11 with 0 failures; build, typecheck, and lint
+pass. No production Helper or privileged capability was enabled. Evidence:
+`evidence/2026-09-16-helper-allowlist-config-boundary.md`.
+
 Physical regression verification at source revision `39cb147`: running
 `MOPS_REAL_INSTALL=1 MOPS_REAL_SANDBOX=1 MOPS_REAL_KEYCHAIN=1 npm test` on
 the physical Darwin arm64 host passes 880/880 with 12 explicit skips and 0
