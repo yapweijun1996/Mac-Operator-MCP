@@ -368,6 +368,22 @@ test("privileged helper caller capture binds the exact Broker LaunchAgent and re
     }),
     (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PROCESS_NOT_RUNNING"
   );
+  await assert.rejects(
+    captureLaunchdBrokerProcessIdentity({
+      brokerServiceId: serviceId,
+      expectedBrokerUid: uid,
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = running\n\tstate = stopped\n\tpid = ${process.pid}\n}`); } }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_SERVICE_UNAVAILABLE"
+  );
+  await assert.rejects(
+    captureLaunchdBrokerProcessIdentity({
+      brokerServiceId: serviceId,
+      expectedBrokerUid: uid,
+      commandExecutor: { async run(): Promise<ProcessExecutionResult> { return success(`${serviceId} = {\n\tstate = running\n\tpid = 0\n}`); } }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_PROCESS_NOT_RUNNING"
+  );
 });
 
 test("privileged helper startup fails closed before key restore for invalid boundary inputs", async () => {

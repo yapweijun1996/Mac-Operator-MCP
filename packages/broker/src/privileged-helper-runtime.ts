@@ -14,6 +14,7 @@ import {
 import type { BrokerStore } from "./persistence.js";
 import type { NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { PrivilegedHelperAuthorityClient, type PrivilegedHelperAuthorityPoller } from "./privileged-helper-authority-ipc.js";
+import { LaunchdReadbackError, parseLaunchdJobReadback } from "./launchd-readback.js";
 
 export type PrivilegedHelperRuntimeState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
@@ -441,18 +442,21 @@ function parseLaunchdBrokerProcessReadback(serviceId: string, result: ProcessExe
     }
     throw new PrivilegedHelperStartupError("HELPER_SERVICE_UNAVAILABLE", "Broker launchd readback failed");
   }
-  const header = new RegExp(`^${escapeRegExp(service.serviceId)}\\s*=\\s*\\{`, "mu");
-  if (!header.test(result.stdout)) throw new PrivilegedHelperStartupError("HELPER_SERVICE_UNAVAILABLE", "Broker launchd readback identity is mismatched");
-  const state = /^\s*state\s*=\s*([^\r\n]+)/mu.exec(result.stdout)?.[1]?.trim();
-  if (state !== "running") throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service is not running");
-  const pidText = /^\s*pid\s*=\s*([0-9]+)/mu.exec(result.stdout)?.[1];
-  const pid = pidText === undefined ? NaN : Number(pidText);
-  if (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999) {
-    throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service has no valid process identity");
+  let readback;
+  try {
+    readback = parseLaunchdJobReadback(service.serviceId, result.stdout);
+  } catch (error) {
+    if (error instanceof LaunchdReadbackError) {
+      if (error.message === "launchd returned an unsupported service state" ||
+          error.message === "launchd returned a malformed process identity") {
+        throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service is not running");
+      }
+      throw new PrivilegedHelperStartupError("HELPER_SERVICE_UNAVAILABLE", "Broker launchd readback identity is malformed");
+    }
+    throw error;
   }
+  if (readback.state !== "running") throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service is not running");
+  const pid = readback.pid;
+  if (pid === null) throw new PrivilegedHelperStartupError("HELPER_PROCESS_NOT_RUNNING", "Broker launchd service has no valid process identity");
   return { ...service, pid, state: "running" };
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }

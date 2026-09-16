@@ -85,6 +85,14 @@ test("launchd Edge identity capture rejects wrong domains, stopped services, and
     () => parseLaunchdEdgeProcessReadback(serviceId, success(`gui/${uid}/com.mac-operator.other = {\n\tstate = running\n\tpid = 1\n}`)),
     (error: unknown) => error instanceof NativeRuntimeStartupError && error.code === "EDGE_SERVICE_UNAVAILABLE"
   );
+  assert.throws(
+    () => parseLaunchdEdgeProcessReadback(serviceId, success(`${serviceId} = {\n\tstate = running\n\tstate = stopped\n\tpid = 1\n}`)),
+    (error: unknown) => error instanceof NativeRuntimeStartupError && error.code === "EDGE_SERVICE_UNAVAILABLE"
+  );
+  assert.throws(
+    () => parseLaunchdEdgeProcessReadback(serviceId, success(`${serviceId} = {\n\tstate = running\n\tpid = 0\n}`)),
+    (error: unknown) => error instanceof NativeRuntimeStartupError && error.code === "EDGE_PROCESS_NOT_RUNNING"
+  );
 });
 
 test("launchd Edge startup assembly wires captured identity into the native runtime", async () => {

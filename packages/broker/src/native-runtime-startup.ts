@@ -7,6 +7,7 @@ import { AuthorityControlIpcServer } from "./authority-control-ipc.js";
 import { KeychainDeliveryServer } from "./keychain-delivery.js";
 import { assertPrivilegedHelperCommandAuthority } from "./privileged-helper.js";
 import { PrivilegedHelperKeyManager } from "./privileged-helper-keyring.js";
+import { LaunchdReadbackError, parseLaunchdJobReadback } from "./launchd-readback.js";
 import type { EdgeKeyring } from "./edge-keyring.js";
 import type { Broker } from "./broker.js";
 import type { BrokerStore } from "./persistence.js";
@@ -412,15 +413,22 @@ export function parseLaunchdEdgeProcessReadback(
     }
     throw new NativeRuntimeStartupError("EDGE_SERVICE_UNAVAILABLE", "Edge launchd readback failed");
   }
-  const header = new RegExp(`^${escapeRegExp(service.serviceId)}\\s*=\\s*\\{`, "mu");
-  if (!header.test(result.stdout)) throw new NativeRuntimeStartupError("EDGE_SERVICE_UNAVAILABLE", "Edge launchd readback identity is mismatched");
-  const state = /^\s*state\s*=\s*([^\r\n]+)/mu.exec(result.stdout)?.[1]?.trim();
-  if (state !== "running") throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service is not running");
-  const pidText = /^\s*pid\s*=\s*([0-9]+)/mu.exec(result.stdout)?.[1];
-  const pid = pidText === undefined ? NaN : Number(pidText);
-  if (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999) {
-    throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service has no valid process identity");
+  let readback;
+  try {
+    readback = parseLaunchdJobReadback(service.serviceId, result.stdout);
+  } catch (error) {
+    if (error instanceof LaunchdReadbackError) {
+      if (error.message === "launchd returned an unsupported service state" ||
+          error.message === "launchd returned a malformed process identity") {
+        throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service is not running");
+      }
+      throw new NativeRuntimeStartupError("EDGE_SERVICE_UNAVAILABLE", "Edge launchd readback identity is malformed");
+    }
+    throw error;
   }
+  if (readback.state !== "running") throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service is not running");
+  const pid = readback.pid;
+  if (pid === null) throw new NativeRuntimeStartupError("EDGE_PROCESS_NOT_RUNNING", "Edge launchd service has no valid process identity");
   return { ...service, pid, state: "running" };
 }
 
@@ -434,10 +442,6 @@ function parseEdgeServiceId(serviceId: string, expectedUid?: number): { serviceI
   return { serviceId, uid, label: match[2]! };
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
 function isXpcProxyState(output: string): boolean {
-  return /(?:^|\n)\s*state\s*=\s*xpcproxy\s*(?:\r?\n|$)/u.test(output);
+  return /(?:^|\n)\tstate\s*=\s*xpcproxy\s*(?:\r?\n|$)/u.test(output);
 }
