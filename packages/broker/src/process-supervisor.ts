@@ -8,7 +8,7 @@ import { requireProcessDescriptorExecution } from "./process-launch-capability.j
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { assertArgumentsDoNotContainSecrets, assertEnvironmentValuesDoNotContainSecrets } from "./secret-policy.js";
+import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertEnvironmentValuesDoNotContainSecrets } from "./secret-policy.js";
 
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
@@ -1065,6 +1065,12 @@ async function validateRequest(
   }
   if (request.stdin !== undefined && (typeof request.stdin !== "string" || request.stdin.includes("\0") || Buffer.byteLength(request.stdin, "utf8") > MAX_ARGUMENT_BYTES)) {
     throw new BrokerError("PRECONDITION_FAILED", "Process stdin exceeds the supported size");
+  }
+  if (request.stdin !== undefined) {
+    // Stdin is intentionally bounded and non-persisted, but it is still
+    // observable by the child. Apply the same known-secret corpus used for
+    // file content before any child receives the bytes.
+    assertContentDoesNotContainSecrets(Buffer.from(request.stdin, "utf8"));
   }
   if (request.environment !== undefined && !isPlainDataRecord(request.environment)) {
     throw new BrokerError("PRECONDITION_FAILED", "Process environment is malformed");

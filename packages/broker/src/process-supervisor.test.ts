@@ -163,6 +163,30 @@ test("process supervisor delivers bounded stdin without exposing it in argv", as
   }), /stdin exceeds/u);
 });
 
+test("process supervisor rejects known secret representations in stdin", async () => {
+  const supervisor = new ProcessSupervisor();
+  await assert.rejects(supervisor.run({
+    executable: "/usr/bin/printf",
+    args: ["ok"],
+    stdin: "token=ghp_1234567890abcdefghijklmnop",
+    cwd: CWD,
+    timeoutMs: 1_000,
+    outputCapBytes: 100
+  }), (error: unknown) => error instanceof BrokerError &&
+    error.errorClass === "POLICY_DENIED" &&
+    error.message === "Filesystem content matched a protected secret signature");
+  const encoded = Buffer.from("ghp_1234567890abcdefghijklmnop", "utf8").toString("base64");
+  await assert.rejects(supervisor.run({
+    executable: "/usr/bin/printf",
+    args: ["ok"],
+    stdin: encoded,
+    cwd: CWD,
+    timeoutMs: 1_000,
+    outputCapBytes: 100
+  }), /protected secret signature/u);
+  assert.equal(supervisor.activeCount(), 0);
+});
+
 test("process supervisor captures output from a child that exits during startup checks", async () => {
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
   try {
