@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readdir } from "node:fs/promises";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   parseCodeSignatureDetails,
@@ -23,6 +23,7 @@ import { isPlainDataRecord } from "./plain-record.js";
 const SERVICE_TIMEOUT_MS = 5_000 as const;
 const SERVICE_OUTPUT_CAP_BYTES = 131_072 as const;
 const MAX_ARTIFACT_ENTRIES = 16_384 as const;
+const MAX_ARTIFACT_DEPTH = 64 as const;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const READ_CHUNK_BYTES = 1024 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -244,12 +245,15 @@ async function summarizeArtifact(
     if (error instanceof MacOsReleasePreflightError) throw error;
     fail("ARTIFACT_UNAVAILABLE", "release artifact could not be inspected");
   }
-  await walkArtifact(artifactPath, "", root, ownerUid, digest, counts, () => {
+  const rootRealPath = await readArtifactRealPath(artifactPath, artifactPath);
+  await walkArtifact(artifactPath, "", root, rootRealPath, ownerUid, digest, counts, () => {
     entries += 1;
     if (entries > MAX_ARTIFACT_ENTRIES) fail("ARTIFACT_LIMIT", "release artifact entry budget exceeded");
   });
   const finalRoot = await readArtifactIdentity(artifactPath, ownerUid);
   assertIdentityStable(root, finalRoot);
+  const finalRootRealPath = await readArtifactRealPath(artifactPath, rootRealPath);
+  if (finalRootRealPath !== rootRealPath) fail("ARTIFACT_CHANGED", "release artifact root target changed during hashing");
   if (counts.files === 0 || counts.bytes < 1 || counts.bytes > MAX_ARTIFACT_BYTES) {
     fail("ARTIFACT_LIMIT", "release artifact has no bounded file payload");
   }
@@ -274,14 +278,17 @@ async function walkArtifact(
   path: string,
   relativePath: string,
   identity: ArtifactIdentity,
+  expectedRealPath: string,
   ownerUid: number,
   digest: ReturnType<typeof createHash>,
   counts: ArtifactCounts,
   countEntry: () => void
 ): Promise<void> {
+  const depth = relativePath.length === 0 ? 0 : relativePath.split("/").length;
+  if (depth > MAX_ARTIFACT_DEPTH) fail("ARTIFACT_LIMIT", "release artifact depth budget exceeded");
   countEntry();
   if (identity.isFile) {
-    const contentDigest = await hashRegularFile(path, identity, ownerUid, counts);
+    const contentDigest = await hashRegularFile(path, identity, expectedRealPath, ownerUid, counts);
     digest.update(`F\\0${relativePath}\\0${identity.mode & 0o777}\\0${identity.size}\\0${contentDigest}\\n`, "utf8");
     return;
   }
@@ -294,20 +301,27 @@ async function walkArtifact(
     fail("ARTIFACT_UNAVAILABLE", "release artifact directory could not be read");
   }
   for (const name of names) {
-    if (Buffer.byteLength(name, "utf8") > MAX_COMPONENT_NAME_BYTES || name === "." || name === ".." || name.includes("\\0") || name.includes("/")) {
+    if (Buffer.byteLength(name, "utf8") > MAX_COMPONENT_NAME_BYTES || name === "." || name === ".." || name.includes("\0") || name.includes("\r") || name.includes("\n") || name.includes("/")) {
       fail("ARTIFACT_UNSAFE", "release artifact contains an invalid entry name");
     }
     const childRelative = relativePath.length === 0 ? name : `${relativePath}/${name}`;
     const childPath = resolve(path, name);
     if (!isDescendantOrEqual(path, childPath)) fail("ARTIFACT_UNSAFE", "release artifact escaped its inspected root");
     const childIdentity = await readArtifactIdentity(childPath, ownerUid);
-    await walkArtifact(childPath, childRelative, childIdentity, ownerUid, digest, counts, countEntry);
+    const childRealPath = await readArtifactRealPath(childPath, expectedRealPath);
+    await walkArtifact(childPath, childRelative, childIdentity, childRealPath, ownerUid, digest, counts, countEntry);
   }
+  const finalIdentity = await readArtifactIdentity(path, ownerUid);
+  assertIdentityStable(identity, finalIdentity);
+  const finalRealPath = await readArtifactRealPath(path, expectedRealPath);
+  if (finalRealPath !== expectedRealPath) fail("ARTIFACT_CHANGED", "release artifact directory target changed during hashing");
 }
 
-async function hashRegularFile(path: string, expected: ArtifactIdentity, ownerUid: number, counts: ArtifactCounts): Promise<string> {
+async function hashRegularFile(path: string, expected: ArtifactIdentity, expectedRealPath: string, ownerUid: number, counts: ArtifactCounts): Promise<string> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
+    const realPathBeforeOpen = await readArtifactRealPath(path, expectedRealPath);
+    if (realPathBeforeOpen !== expectedRealPath) fail("ARTIFACT_CHANGED", "release artifact file target changed before hashing");
     handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = toArtifactIdentity(await handle.stat());
     assertIdentityStable(expected, opened);
@@ -324,6 +338,8 @@ async function hashRegularFile(path: string, expected: ArtifactIdentity, ownerUi
     }
     const after = toArtifactIdentity(await handle.stat());
     assertIdentityStable(expected, after);
+    const realPathAfterRead = await readArtifactRealPath(path, expectedRealPath);
+    if (realPathAfterRead !== expectedRealPath) fail("ARTIFACT_CHANGED", "release artifact file target changed during hashing");
     counts.files += 1;
     counts.bytes += opened.size;
     if (counts.bytes > MAX_ARTIFACT_BYTES) fail("ARTIFACT_LIMIT", "release artifact byte budget exceeded");
@@ -375,6 +391,18 @@ function assertIdentityStable(expected: ArtifactIdentity, actual: ArtifactIdenti
 
 function isCanonicalArtifactPath(path: string): boolean {
   return isAbsolute(path) && path !== "/" && !path.endsWith("/") && !path.includes("\0") && !path.includes("\r") && !path.includes("\n") && resolve(path) === path;
+}
+
+async function readArtifactRealPath(path: string, expectedRootOrPath: string): Promise<string> {
+  let resolvedPath: string;
+  try {
+    resolvedPath = await realpath(path);
+  } catch {
+    fail("ARTIFACT_UNAVAILABLE", "release artifact target could not be canonicalized");
+  }
+  const root = expectedRootOrPath === path ? resolvedPath : expectedRootOrPath;
+  if (!isDescendantOrEqual(root, resolvedPath)) fail("ARTIFACT_UNSAFE", "release artifact target escaped its inspected root");
+  return resolvedPath;
 }
 
 function isDescendantOrEqual(root: string, target: string): boolean {
