@@ -4,6 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-012 replay-retention addendum: durable request, approval, signer,
+authority, helper, Broker-status, and guest replay ledgers now prune rows at
+`expires_at_ms <= admission_now`, preventing exact-boundary capacity denial
+while preserving single-use replay rejection. Request and privileged-helper
+capacity tests cover the boundary. Evidence:
+`evidence/2026-09-16-replay-expiry-boundary.md`.
+
 Binary-private-key secret addendum: bounded private-key parsers now deny DER
 PKCS#8/PKCS#1/SEC1 and OpenSSH binary private-key material, including Base64
 representations, while public DER remains permitted. Secret-policy 9/9 and

@@ -38,6 +38,11 @@ An embedded transactional database owned by the Broker is the initial candidate 
 
 The Broker prototype owns a SQLite database with full synchronous WAL mode, atomic nonce-plus-request admission, revisioned request lifecycle records, single-use approvals, persisted jobs, revocations and kill switches, and append-oriented audit events linked by SHA-256 hashes. Exact approval consumption, request linkage, mutation intent, idempotency reservation and new-job creation commit together for the `admitApprovedJob` primitive; the `admitApprovedJobAfterDecision` primitive provides the same atomic boundary after an authorization decision for active task dispatch, binding owner, target, payload and timestamp preconditions. Decision and completion state changes also commit with their matching audit event. Generic switch and revocation changes now commit a redacted `intent`/`completion` audit pair in the same transaction as the authority update and queued-job cancellation. The separate Authority Control IPC durably admits its request/nonce before applying only allowlisted switch/revocation operations and reuses the command request ID for the audit pair. Startup reconciliation maps interrupted reads and pre-dispatch mutations to `FAILED`, and dispatched mutations with unproven outcomes to `UNKNOWN`; it never infers success. Audit evidence is recursively redacted before serialization and hashing, and authority reason text is reduced to a digest. Restart replay/reconciliation, approval competition/revocation, atomic new-job conflict rollback, injected failure rollback for both admission paths with restart readback, audit append, authority-audit ordering, revocation, switch persistence primitives, and redaction tests pass.
 
+Durable replay ledgers reclaim entries whose expiry is exactly the current
+admission time before enforcing capacity. This follows the strict validity
+rule `expires_at_ms > now`, avoids an avoidable boundary-denial condition, and
+does not weaken single-use replay checks for entries that remain valid.
+
 Broker shutdown now preserves the same fail-closed recovery rule at the
 resource boundary. Commit `505d28a` keeps the request admission fence active
 after cleanup starts, clears a rejected aggregate close Promise, and permits an

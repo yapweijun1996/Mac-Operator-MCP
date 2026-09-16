@@ -39,8 +39,42 @@ test("request replay ledger is bounded and expired rows are reclaimed transactio
     );
     assert.equal(store.requestRecord(requestInput(REPLAY_CAPACITY, 2).requestId), undefined);
 
-    const reclaimed = store.admitRequest(requestInput(REPLAY_CAPACITY + 1, 100_002));
+    const reclaimed = store.admitRequest(requestInput(REPLAY_CAPACITY + 1, 100_001));
     assert.equal(reclaimed.state, "RECEIVED");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("privileged-helper replay ledger reclaims rows exactly at expiry before capacity denial", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-helper-replay-capacity-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    for (let index = 0; index < REPLAY_CAPACITY; index += 1) {
+      const suffix = String(index).padStart(16, "0");
+      store.admitPrivilegedHelperCommand({
+        requestId: `request:helper-replay-capacity-${suffix}`,
+        nonce: `helper-nonce-replay-capacity-${suffix}`,
+        acceptedAtMs: 1,
+        expiresAtMs: 100_001
+      });
+    }
+    assert.throws(
+      () => store.admitPrivilegedHelperCommand({
+        requestId: `request:helper-replay-capacity-${String(REPLAY_CAPACITY).padStart(16, "0")}`,
+        nonce: `helper-nonce-replay-capacity-${String(REPLAY_CAPACITY).padStart(16, "0")}`,
+        acceptedAtMs: 2,
+        expiresAtMs: 100_002
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+    store.admitPrivilegedHelperCommand({
+      requestId: `request:helper-replay-capacity-${String(REPLAY_CAPACITY + 1).padStart(16, "0")}`,
+      nonce: `helper-nonce-replay-capacity-${String(REPLAY_CAPACITY + 1).padStart(16, "0")}`,
+      acceptedAtMs: 100_001,
+      expiresAtMs: 200_001
+    });
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

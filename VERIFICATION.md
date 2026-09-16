@@ -14,7 +14,7 @@ remain open. Evidence:
 
 Process descendant fixture addendum: the Darwin persisted-descendant recovery
 test no longer relies on a 50ms child lifetime; it records identity first and
-then terminates the fixture child. Three isolated runs and the latest 871-test
+then terminates the fixture child. Three isolated runs and the latest 872-test
 regression pass with zero failures. Evidence:
 `evidence/2026-09-16-process-descendant-fixture-stability.md`.
 
@@ -40,7 +40,7 @@ Privileged service-control adapter addendum: the new allowlisted adapter
 accepts only `start`, `stop`, and `restart`, sends fixed `/bin/launchctl`
 argv with empty environment and bounded timeout/output, and requires a final
 LaunchDaemon readback before success. Focused adapter tests pass 6/6, the latest
-full regression passes 857/857 with 14 explicit skips, and typecheck passes. This
+full regression passes 858/858 with 14 explicit skips, and typecheck passes. This
 proves the bounded adapter contract only; descriptor-exec availability,
 root-helper identity, root-domain installation, signing provenance, and live privileged enablement
 remain open. Evidence:

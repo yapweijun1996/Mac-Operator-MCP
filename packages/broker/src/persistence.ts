@@ -1009,7 +1009,7 @@ export class BrokerStore {
     validateRequestAdmissionLimits(limits);
     try {
       return this.runTransaction(() => {
-        this.database.prepare("DELETE FROM nonces WHERE expires_at_ms < ?").run(input.receivedAtMs);
+        this.database.prepare("DELETE FROM nonces WHERE expires_at_ms <= ?").run(input.receivedAtMs);
         assertReplayLedgerCapacity(this.database, "nonces");
         enforceRequestAdmissionLimits(this.database, input, limits);
         this.database.prepare(
@@ -1061,7 +1061,7 @@ export class BrokerStore {
     }
     try {
       return this.runTransaction(() => {
-        this.database.prepare("DELETE FROM nonces WHERE expires_at_ms < ?").run(input.request.receivedAtMs);
+        this.database.prepare("DELETE FROM nonces WHERE expires_at_ms <= ?").run(input.request.receivedAtMs);
         assertReplayLedgerCapacity(this.database, "nonces");
         this.database.prepare(
           "INSERT INTO nonces(edge_id, nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
@@ -1226,7 +1226,7 @@ export class BrokerStore {
     validateAuthenticatedApprovalIssuance(input);
     try {
       return this.runTransaction(() => {
-        this.database.prepare("DELETE FROM approval_nonces WHERE expires_at_ms < ?").run(input.timestampMs);
+        this.database.prepare("DELETE FROM approval_nonces WHERE expires_at_ms <= ?").run(input.timestampMs);
         assertReplayLedgerCapacity(this.database, "approval_nonces");
         this.database.prepare(`
           INSERT INTO approval_nonces(issuer_id, key_id, nonce, request_id, accepted_at_ms, expires_at_ms)
@@ -1620,7 +1620,7 @@ export class BrokerStore {
     }
     try {
       this.runTransaction(() => {
-        this.database.prepare("DELETE FROM policy_signer_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        this.database.prepare("DELETE FROM policy_signer_nonces WHERE expires_at_ms <= ?").run(input.acceptedAtMs);
         assertReplayLedgerCapacity(this.database, "policy_signer_nonces");
         this.database.prepare(
           "INSERT INTO policy_signer_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
@@ -1649,7 +1649,7 @@ export class BrokerStore {
     }
     try {
       this.runTransaction(() => {
-        this.database.prepare("DELETE FROM authority_control_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        this.database.prepare("DELETE FROM authority_control_nonces WHERE expires_at_ms <= ?").run(input.acceptedAtMs);
         assertReplayLedgerCapacity(this.database, "authority_control_nonces");
         this.database.prepare(
           "INSERT INTO authority_control_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
@@ -1678,7 +1678,7 @@ export class BrokerStore {
     }
     try {
       this.runTransaction(() => {
-        this.database.prepare("DELETE FROM privileged_helper_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        this.database.prepare("DELETE FROM privileged_helper_nonces WHERE expires_at_ms <= ?").run(input.acceptedAtMs);
         assertReplayLedgerCapacity(this.database, "privileged_helper_nonces");
         this.database.prepare(
           "INSERT INTO privileged_helper_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
@@ -1707,7 +1707,7 @@ export class BrokerStore {
     }
     try {
       this.runTransaction(() => {
-        this.database.prepare("DELETE FROM broker_status_nonces WHERE expires_at_ms < ?").run(input.timestampMs);
+        this.database.prepare("DELETE FROM broker_status_nonces WHERE expires_at_ms <= ?").run(input.timestampMs);
         assertReplayLedgerCapacity(this.database, "broker_status_nonces");
         this.database.prepare(
           "INSERT INTO broker_status_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
@@ -1736,7 +1736,7 @@ export class BrokerStore {
     }
     try {
       this.runTransaction(() => {
-        this.database.prepare("DELETE FROM virtualization_guest_nonces WHERE expires_at_ms < ?").run(input.acceptedAtMs);
+        this.database.prepare("DELETE FROM virtualization_guest_nonces WHERE expires_at_ms <= ?").run(input.acceptedAtMs);
         assertReplayLedgerCapacity(this.database, "virtualization_guest_nonces");
         this.database.prepare(
           "INSERT INTO virtualization_guest_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"

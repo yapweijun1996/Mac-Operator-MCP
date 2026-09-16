@@ -4,6 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Replay-expiry boundary addendum: all durable replay ledgers now reclaim rows
+when `expires_at_ms` is exactly the current admission time, matching the
+strict `expires_at_ms > now` validity rule. Request and privileged-helper
+capacity tests cover exact-expiry recovery without allowing an extra live row;
+the full regression remains fail-free. Evidence:
+`evidence/2026-09-16-replay-expiry-boundary.md`.
+
 Released helper readback addendum: the package observer now exercises an
 authenticated helper status readback for an explicit
 `mac_priv_service_control` release and rejects a false/empty capability drift
@@ -15,7 +22,7 @@ descriptor execution, and live privileged enablement remain open. Evidence:
 Process descendant fixture addendum: the Darwin persisted-descendant test now
 keeps its child alive until native PID/start-time observation is recorded, then
 terminates the test-owned child explicitly. Three isolated runs and the latest
-871-test regression pass; production process-control behavior is unchanged.
+872-test regression pass; production process-control behavior is unchanged.
 Evidence: `evidence/2026-09-16-process-descendant-fixture-stability.md`.
 
 Helper runtime service-control addendum: the key-material helper runtime now
@@ -43,7 +50,7 @@ arguments with empty environment and bounded budgets, and verifies a final
 LaunchDaemon state readback. Idempotent requests still perform postcondition
 readback; unsupported enable/disable actions and unresolved readbacks fail
 closed. The production adapter also requires a root helper process and host
-descriptor-exec evidence. Focused adapter tests pass 6/6, latest full regression passes 857/857 with
+descriptor-exec evidence. Focused adapter tests pass 6/6, latest full regression passes 858/858 with
 14 explicit skips, and typecheck passes. Production availability remains
 gated by descriptor-exec evidence. Evidence:
 `evidence/2026-09-16-privileged-service-control-adapter.md`.
