@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Shell-history secret-zone addendum at source revision `bbc1649`: Broker
+content authorization now denies common Bash/Zsh/Fish/Node/Python/IRB/
+PostgreSQL/SQLite/less/wget history files before content reads, including
+dotted and undotted platform variants. Bounded diagnostics redact the same
+history path forms. Focused secret-policy tests pass 9/9; the complete
+regression passes 876/876 with 14 explicit skips, and lint/build pass. This
+closes the fixed history-name gap only; opaque secret detection, production
+credential isolation, and task enablement remain open. Evidence:
+`evidence/2026-09-16-shell-history-secret-zone.md`.
+
 Release artifact preflight addendum at source revision `471632f`: a read-only
 manifest CLI now binds a canonical artifact's bounded deterministic tree
 SHA-256/byte summary, owner UID, Developer ID identifier/Team ID/CDHash, fixed

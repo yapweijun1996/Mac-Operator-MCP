@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-037 shell-history secret-zone addendum at source revision `bbc1649`:
+Broker content authorization denies common dotted and undotted Bash, Zsh,
+Fish, Node, Python, IRB, PostgreSQL, SQLite, less, and wget history files
+before reads, while bounded log redaction removes their user/root path forms.
+Focused secret-policy tests pass 9/9 and the complete regression passes
+876/876 with 14 explicit skips. Opaque secret detection, full credential
+isolation, and production task enablement remain open. Evidence:
+`evidence/2026-09-16-shell-history-secret-zone.md`.
+
 MOP-061/072 release-artifact preflight addendum at source revision `471632f`:
 the Broker now exposes a manifest-only, read-only release gate that binds a
 canonical artifact's deterministic tree digest/byte count and owner UID to
