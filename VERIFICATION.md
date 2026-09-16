@@ -8,7 +8,7 @@ binds a canonical artifact path, deterministic bounded tree SHA-256/byte
 summary, owner UID, exact Developer ID identifier/Team ID/CDHash, fixed
 `codesign` verification, and fixed `spctl` notarization assessment. The
 descriptor-backed walker rejects symlink/special-file entries, unsafe
-owner/mode, identity changes, digest mismatches, and entry/byte overruns; CLI
+owner/mode, identity/path changes, digest mismatches, and entry/depth/byte overruns; CLI
 and Broker return no raw command output. Focused release-preflight tests pass
 4/4, including a real Darwin ad-hoc codesign probe and strict manifest-field
 negatives; the full regression passes 876/876 with 14 explicit skips (890

@@ -1,7 +1,7 @@
 # macOS release artifact preflight evidence
 
 Date: 2026-09-16
-Source revision: `9aca625`
+Source revision: `471632f`
 Host: physical Darwin arm64 Mac mini; macOS 26.2
 
 ## Change
@@ -13,7 +13,8 @@ artifact path, deterministic tree SHA-256, byte count, owner UID, and exact
 Developer ID identifier, Team ID, and CDHash. The artifact walker is bounded
 to 16,384 entries and 512 MiB, rejects symlinks/special files, group/other
 writes, owner changes, and identity swaps, and hashes regular files through an
-`O_NOFOLLOW` descriptor with pre/post `fstat` checks. The gate then runs only
+`O_NOFOLLOW` descriptor with pre/post `fstat` checks; nested directories are
+realpath-contained and revalidated, with a 64-level depth cap. The gate then runs only
 the fixed `codesign --verify/--verbose` and `spctl --assess` commands already
 used by the package plans, returning bounded signature/notarization evidence
 without raw output or host mutation. Ad-hoc signatures and Apple System

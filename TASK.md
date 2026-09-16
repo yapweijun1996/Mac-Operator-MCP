@@ -4,13 +4,13 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
-MOP-061/072 release-artifact preflight addendum at source revision `9aca625`:
+MOP-061/072 release-artifact preflight addendum at source revision `471632f`:
 the Broker now exposes a manifest-only, read-only release gate that binds a
 canonical artifact's deterministic tree digest/byte count and owner UID to
 Developer ID identifier, Team ID, CDHash, fixed `codesign` verification, and
 fixed Gatekeeper notarization assessment. Bounded descriptor hashing rejects
-symlink/special-file entries, unsafe owners/modes, target swaps, digest
-mismatches, and resource overruns; the CLI emits only redacted evidence.
+symlink/special-file entries, unsafe owners/modes, target swaps/path escapes,
+digest mismatches, and resource overruns; the CLI emits only redacted evidence.
 Focused tests pass 4/4, including a real Darwin ad-hoc codesign probe and
 strict manifest-field negatives; the full regression passes 876/876 with 14
 explicit skips (890 total), and typecheck/build/lint pass. No production signed

@@ -4,12 +4,13 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
-Release artifact preflight addendum at source revision `9aca625`: a read-only
+Release artifact preflight addendum at source revision `471632f`: a read-only
 manifest CLI now binds a canonical artifact's bounded deterministic tree
 SHA-256/byte summary, owner UID, Developer ID identifier/Team ID/CDHash, fixed
 `codesign` verification, and fixed `spctl` notarization assessment. Descriptor
 hashing rejects symlinks, special files, unsafe modes/owners, target identity
-changes, and entry/byte budget overruns; raw command output is discarded.
+changes, path escapes, and entry/depth/byte budget overruns; raw command output
+is discarded.
 Focused release-preflight tests pass 4/4, including a real Darwin ad-hoc
 codesign probe and strict manifest-field negatives; the full regression passes
 876/876 with 14 explicit skips (890 total), and typecheck/build/lint pass.
