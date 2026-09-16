@@ -3,6 +3,18 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+macOS privacy-database secret-zone verification at source revision `94f7faf`:
+Broker content authorization denies user/system TCC, `dslocal`,
+ConfigurationProfiles, system keychains, `authd`, and `lockdown` database
+paths before reads, including `/var` and `/private/var` spellings; user TCC
+application-support paths are included. Bounded diagnostics redact these
+path families. Focused secret-policy tests pass 9/9; the complete regression
+passes 876/876 with 14 explicit skips (890 total), and build/lint/document/
+matrix checks pass. No database contents were read or returned. Fixed path
+coverage only; opaque-secret, production credential-isolation, and task
+enablement gates remain open. Evidence:
+`evidence/2026-09-16-macos-privacy-database-secret-zone.md`.
+
 Release artifact preflight verification: the manifest-only read-only gate
 binds a canonical artifact path, deterministic bounded tree SHA-256/byte
 summary, owner UID, exact Developer ID identifier/Team ID/CDHash, fixed

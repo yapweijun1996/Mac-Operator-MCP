@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+macOS privacy-database secret-zone addendum at source revision `94f7faf`:
+Broker content authorization now denies user/system TCC, `dslocal`,
+ConfigurationProfiles, system keychain, `authd`, and `lockdown` database paths
+before reads, including `/var` and `/private/var` forms; user TCC application-
+support paths are also covered. Bounded diagnostics redact the same path
+families. Focused secret-policy tests pass 9/9; the complete regression passes
+876/876 with 14 explicit skips, and build/lint/document/matrix checks pass.
+This closes fixed macOS database path variants only; opaque secret detection,
+full credential isolation, and task enablement remain open. Evidence:
+`evidence/2026-09-16-macos-privacy-database-secret-zone.md`.
+
 Shell-history secret-zone addendum at source revision `8974dcc`: Broker
 content authorization now denies common Bash/Zsh/Fish/Node/Python/IRB/
 PostgreSQL/SQLite/less/wget history files before content reads, including

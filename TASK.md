@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-037/081 macOS privacy-database secret-zone addendum at source revision
+`94f7faf`: Broker content authorization denies user/system TCC, `dslocal`,
+ConfigurationProfiles, system keychain, `authd`, and `lockdown` database paths
+before reads, including `/var` and `/private/var` forms; user TCC
+application-support paths are covered too. Bounded diagnostics redact the same
+path families. Focused secret-policy tests pass 9/9 and the complete
+regression passes 876/876 with 14 explicit skips; build/lint/document/matrix
+checks pass. Opaque secret detection, full credential isolation, and task
+enablement remain open. Evidence:
+`evidence/2026-09-16-macos-privacy-database-secret-zone.md`.
+
 MOP-037 shell-history secret-zone addendum at source revision `8974dcc`:
 Broker content authorization denies common dotted and undotted Bash, Zsh,
 Fish, Node, Python, IRB, PostgreSQL, SQLite, less, and wget history files
