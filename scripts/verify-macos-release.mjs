@@ -64,11 +64,10 @@ function validateManifestShape(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("release manifest root is malformed");
   const keys = Object.keys(value).sort();
   const allowed = ["artifactBytes", "artifactPath", "artifactSha256", "ownerUid", "signature"];
-  if (keys.some((key, index) => key !== allowed[index])) throw new Error("release manifest contains unsupported fields");
+  if (keys.length < 4 || keys.length > allowed.length || keys.some((key) => !allowed.includes(key))) throw new Error("release manifest contains unsupported fields");
   if (value.signature === null || typeof value.signature !== "object" || Array.isArray(value.signature)) throw new Error("release manifest signature is malformed");
   const signatureKeys = Object.keys(value.signature).sort();
   if (signatureKeys.length !== 3 || signatureKeys.some((key, index) => key !== ["cdHash", "identifier", "teamIdentifier"][index])) {
     throw new Error("release manifest signature fields are malformed");
   }
 }
-

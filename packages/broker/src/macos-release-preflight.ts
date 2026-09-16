@@ -141,6 +141,11 @@ export async function readMacOsReleaseArtifactSummary(
 
 function validateInput(input: MacOsReleasePreflightInput): void {
   if (!isPlainDataRecord(input)) fail("INVALID_ARGUMENT", "release preflight input is malformed");
+  const inputKeys = Object.keys(input).sort();
+  const allowedInputKeys = ["artifactBytes", "artifactPath", "artifactSha256", "ownerUid", "signature"];
+  if (inputKeys.length < 4 || inputKeys.length > allowedInputKeys.length || inputKeys.some((key) => !allowedInputKeys.includes(key))) {
+    fail("INVALID_ARGUMENT", "release preflight input contains unsupported fields");
+  }
   if (typeof input.artifactPath !== "string" || !isCanonicalArtifactPath(input.artifactPath)) {
     fail("INVALID_ARGUMENT", "release artifact path is not canonical");
   }
@@ -153,11 +158,15 @@ function validateInput(input: MacOsReleasePreflightInput): void {
   if (!Number.isSafeInteger(input.ownerUid) || input.ownerUid < 0) {
     fail("INVALID_ARGUMENT", "release artifact owner UID is invalid");
   }
-  if (input.signature === null || typeof input.signature !== "object" ||
+  if (!isPlainDataRecord(input.signature) ||
       typeof input.signature.identifier !== "string" ||
       typeof input.signature.teamIdentifier !== "string" ||
       typeof input.signature.cdHash !== "string") {
     fail("INVALID_RELEASE_POLICY", "release policy requires Developer ID identifier, Team ID, and CDHash");
+  }
+  const signatureKeys = Object.keys(input.signature).sort();
+  if (signatureKeys.length !== 3 || signatureKeys.some((key, index) => key !== ["cdHash", "identifier", "teamIdentifier"][index])) {
+    fail("INVALID_RELEASE_POLICY", "release policy contains unsupported signature fields");
   }
 }
 

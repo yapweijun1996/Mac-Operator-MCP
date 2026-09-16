@@ -134,6 +134,27 @@ test("release preflight uses the real macOS codesign boundary and rejects an ad-
   }
 });
 
+test("release preflight rejects inherited and accessor policy fields before touching the artifact", async () => {
+  const inheritedSignature = Object.create({ teamIdentifier, cdHash }) as Record<string, unknown>;
+  inheritedSignature.identifier = "com.mac-operator.broker";
+  const base = {
+    artifactPath: "/tmp/MacOperatorBroker.app",
+    artifactSha256: "a".repeat(64),
+    ownerUid,
+    signature: inheritedSignature
+  };
+  await assert.rejects(
+    runMacOsReleasePreflight(base as never),
+    (error: unknown) => error instanceof MacOsReleasePreflightError && error.code === "INVALID_RELEASE_POLICY"
+  );
+  const accessorSignature = { identifier: "com.mac-operator.broker", teamIdentifier, cdHash };
+  Object.defineProperty(accessorSignature, "cdHash", { enumerable: true, get: () => cdHash });
+  await assert.rejects(
+    runMacOsReleasePreflight({ ...base, signature: accessorSignature } as never),
+    (error: unknown) => error instanceof MacOsReleasePreflightError && error.code === "INVALID_RELEASE_POLICY"
+  );
+});
+
 function result(stdout: string, stderr: string): ProcessExecutionResult {
   return {
     state: "completed",
