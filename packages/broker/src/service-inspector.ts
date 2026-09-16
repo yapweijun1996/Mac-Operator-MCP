@@ -4,7 +4,11 @@ import { LaunchdReadbackError, parseLaunchdJobReadback } from "./launchd-readbac
 
 const LAUNCHCTL = "/bin/launchctl";
 const LAUNCHCTL_CWD = "/";
-const SERVICE_ID_PATTERN = /^system\/[A-Za-z0-9._:@+-]{1,240}$/u;
+// Keep the adapter input bound identical to the strict launchd readback
+// parser. A target that the parser cannot represent must be rejected before
+// launchctl is invoked, rather than discovered only after execution.
+const SERVICE_ID_PATTERN = /^system\/[A-Za-z0-9._:@+-]{1,128}$/u;
+const MAX_SERVICE_ID_LENGTH = 135;
 const MAX_OUTPUT_BYTES = 128 * 1024;
 
 export interface SafeServiceStatus {
@@ -50,7 +54,7 @@ export class LaunchdServiceInspector implements ServiceInspector {
 }
 
 export function validateServiceId(serviceId: string): void {
-  if (typeof serviceId !== "string" || serviceId.length > 256 || !SERVICE_ID_PATTERN.test(serviceId) ||
+  if (typeof serviceId !== "string" || serviceId.length > MAX_SERVICE_ID_LENGTH || !SERVICE_ID_PATTERN.test(serviceId) ||
       serviceId.includes("..") || serviceId.includes("//") || serviceId.includes("\\")) {
     throw new BrokerError("PRECONDITION_FAILED", "service_id must be a system launchd identifier");
   }

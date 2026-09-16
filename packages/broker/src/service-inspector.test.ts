@@ -26,6 +26,22 @@ test("launchd service identifiers reject traversal and non-system domains", () =
   }
 });
 
+test("launchd service identifiers reject labels longer than the readback contract before execution", async () => {
+  const serviceId = `system/${"a".repeat(129)}`;
+  let invocations = 0;
+  const executor = {
+    async run(): Promise<ProcessExecutionResult> {
+      invocations += 1;
+      throw new Error("unexpected launchctl invocation");
+    }
+  } as never;
+  await assert.rejects(
+    new LaunchdServiceInspector(executor).inspect(serviceId, { timeoutMs: 5_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED"
+  );
+  assert.equal(invocations, 0);
+});
+
 test("launchd service inspector treats xpcproxy as loaded, not running", async () => {
   const serviceId = "system/com.apple.logd";
   const executor = {
