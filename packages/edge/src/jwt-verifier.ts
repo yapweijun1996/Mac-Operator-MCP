@@ -214,7 +214,7 @@ function createBoundedJwksFetch(fetcher: FetchImplementation, expectedUrl: URL):
       throw new Error("JWT remote JWKS response content type is not JSON");
     }
     const contentLength = response.headers.get("content-length");
-    if (contentLength !== null && (!/^\\d+$/u.test(contentLength) || Number(contentLength) > MAX_JWKS_RESPONSE_BYTES)) {
+    if (contentLength !== null && (!/^\d+$/u.test(contentLength) || Number(contentLength) > MAX_JWKS_RESPONSE_BYTES)) {
       throw new Error("JWT remote JWKS response exceeds the byte limit");
     }
     if (response.body === null) {

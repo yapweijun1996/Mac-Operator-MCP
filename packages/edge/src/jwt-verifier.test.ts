@@ -67,6 +67,7 @@ test("JWT verifier fails closed for expiry, audience, missing token identity, an
 test("JWT verifier bounds and caches a remote JWKS fetch", async () => {
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const jwks = await createJwks(publicKey);
+  const jwksBytes = Buffer.byteLength(JSON.stringify(jwks), "utf8");
   let fetchCount = 0;
   const verifier = createJwtAccessTokenVerifier({
     issuer,
@@ -78,7 +79,7 @@ test("JWT verifier bounds and caches a remote JWKS fetch", async () => {
       fetchCount += 1;
       return new Response(JSON.stringify(jwks), {
         status: 200,
-        headers: { "content-type": "application/json" }
+        headers: { "content-type": "application/json", "content-length": String(jwksBytes) }
       });
     }
   });
