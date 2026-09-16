@@ -199,6 +199,14 @@ test("Edge install plan binds the reviewed LaunchAgent to the Edge listener", as
     ...composed,
     edge: { ...composed.edge, listening: false }
   }), /Edge service readback/u);
+  assert.throws(() => validateMacOsEdgeInstallReadback(plan, {
+    ...composed,
+    launchd: { ...composed.launchd, domain: "gui/502" as `gui/${number}` }
+  }), /Edge launchd configuration/u);
+  assert.throws(() => validateMacOsEdgeInstallReadback(plan, {
+    ...composed,
+    launchd: { ...composed.launchd, type: "LaunchDaemon" as never }
+  }), /Edge launchd configuration/u);
   let edgeReads = 0;
   const observer = createMacOsEdgeInstallHostObserver(plan, {
     readEdge: async () => { edgeReads += 1; return source.edge; },
@@ -274,6 +282,14 @@ test("readback requires matching signature, launchd identity, native transport, 
   validateCodeSignatureReadback(base.signature, readback.signature, base.signedArtifactPath);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, processIdentity: { pid: 4321, startTimeMicros: 987654321 } }), /launchd readback/u);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, pid: 1234, processIdentity: { pid: 1234, startTimeMicros: 0 } }), /launchd readback/u);
+  assert.throws(() => validateMacOsInstallReadback(plan, {
+    ...readback,
+    launchd: { ...readback.launchd, domain: "gui/502" as `gui/${number}` }
+  }), /launchd configuration/u);
+  assert.throws(() => validateMacOsInstallReadback(plan, {
+    ...readback,
+    launchd: { ...readback.launchd, type: "LaunchDaemon" as never }
+  }), /launchd configuration/u);
   assert.throws(() => validateMacOsInstallReadback(plan, { ...readback, broker: { ...readback.broker, nativeTransportRequired: false as never } }), /Broker service readback/u);
   assert.throws(() => validateCodeSignatureReadback(base.signature, { ...readback.signature, identifier: "com.attacker.broker" }, base.signedArtifactPath), /code signature readback/u);
 });

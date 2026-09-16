@@ -153,7 +153,7 @@ export interface MacOsServiceInstallPlanBase {
   signedArtifactPath: string;
   enabledCapabilities: readonly string[];
   expectedPreviousSourceRevision?: string;
-  launchd: LaunchdServiceReadback;
+  launchd: MacOsLaunchdServiceReadback;
   renderedPlist: string;
   preflight: readonly string[];
   signatureVerify: CodeSignatureCommandSpec;
@@ -170,6 +170,16 @@ export interface MacOsServiceInstallPlanBase {
     bootout: LaunchdCommandSpec;
     file: InstallFileAction;
   };
+}
+
+/**
+ * LaunchAgent configuration plus the identity fields that must survive into
+ * the composed install readback. Generic launchd configuration intentionally
+ * omits service-domain/type details; macOS install validation cannot.
+ */
+export interface MacOsLaunchdServiceReadback extends LaunchdServiceReadback {
+  domain: `gui/${number}`;
+  type: "LaunchAgent";
 }
 
 export interface MacOsInstallPlan extends MacOsServiceInstallPlanBase {
@@ -190,7 +200,7 @@ export interface MacOsInstallReadback {
   pid: number;
   processIdentity: PeerProcessIdentity;
   plist: MacOsPlistReadback;
-  launchd: LaunchdServiceReadback;
+  launchd: MacOsLaunchdServiceReadback;
   broker: BrokerServiceReadback;
   signature: CodeSignatureReadback;
 }
@@ -229,7 +239,7 @@ export interface MacOsEdgeInstallReadback {
   pid: number;
   processIdentity: PeerProcessIdentity;
   plist: MacOsPlistReadback;
-  launchd: LaunchdServiceReadback;
+  launchd: MacOsLaunchdServiceReadback;
   edge: MacOsEdgeServiceReadback;
   signature: CodeSignatureReadback;
 }
@@ -429,7 +439,7 @@ function buildMacOsServiceInstallPlan(
   if (Buffer.byteLength(renderedPlist, "utf8") > MAX_PLAN_BYTES) {
     fail("INVALID_ARGUMENT", "rendered launchd plist exceeds the plan budget");
   }
-  const domain = `gui/${String(input.uid)}`;
+  const domain = `gui/${String(input.uid)}` as `gui/${number}`;
   const backupPath = `${plistPath}.previous`;
   const signatureVerify = codesignVerifyCommand(signedArtifactPath);
   const bootstrap = launchctlCommand(["bootstrap", domain, plistPath]);
@@ -438,6 +448,8 @@ function buildMacOsServiceInstallPlan(
   const restore = { kind: "restore-plist", path: plistPath, mode: 0o600, backupPath } as const;
   const remove = { kind: "remove-plist", path: plistPath, mode: 0o600 } as const;
   const launchd = {
+    domain,
+    type: "LaunchAgent" as const,
     label: service.label,
     program: service.program,
     programArguments: [...service.programArguments],
@@ -450,7 +462,7 @@ function buildMacOsServiceInstallPlan(
     runAtLoad: service.runAtLoad,
     keepAlive: service.keepAlive,
     throttleIntervalSeconds: service.throttleIntervalSeconds
-  } satisfies LaunchdServiceReadback;
+  } satisfies MacOsLaunchdServiceReadback;
   return {
     operation,
     component,
@@ -529,7 +541,8 @@ export function validateMacOsInstallReadback(plan: MacOsInstallPlan, readback: M
       typeof readback.plist.inode !== "string" || !/^\d+$/u.test(readback.plist.inode)) {
     fail("SERVICE_MISMATCH", "launchd readback does not match the planned per-user service");
   }
-  if (readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
+  if (readback.launchd.domain !== plan.domain || readback.launchd.type !== "LaunchAgent" ||
+      readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
       !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
       readback.launchd.workingDirectory !== plan.launchd.workingDirectory ||
       readback.launchd.stdoutPath !== plan.launchd.stdoutPath || readback.launchd.stderrPath !== plan.launchd.stderrPath ||
@@ -681,7 +694,8 @@ export function validateMacOsEdgeInstallReadback(
       typeof readback.plist.inode !== "string" || !/^\d+$/u.test(readback.plist.inode)) {
     fail("SERVICE_MISMATCH", "Edge launchd readback does not match the planned per-user service");
   }
-  if (readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
+  if (readback.launchd.domain !== plan.domain || readback.launchd.type !== "LaunchAgent" ||
+      readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
       !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
       readback.launchd.workingDirectory !== plan.launchd.workingDirectory ||
       readback.launchd.stdoutPath !== plan.launchd.stdoutPath || readback.launchd.stderrPath !== plan.launchd.stderrPath ||
