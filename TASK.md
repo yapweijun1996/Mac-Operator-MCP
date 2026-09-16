@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-080 policy-array prototype addendum at source revision `dac0cb8`: policy
+authority arrays must use the native `Array.prototype`; custom-prototype
+principal scopes and target-rule arrays fail closed before scope/target
+matching. Policy/target tests pass 14/14 and the full default regression passes
+879/879 with 14 explicit skips (893 total). No target model or capability
+enablement changed; task isolation, production packaging, and independent
+review remain open. Evidence:
+`evidence/2026-09-16-policy-array-prototype-boundary.md`.
+
 MOP-090 Helper configuration-boundary addendum at source revision `57cee04`:
 Helper startup now fails closed on a non-boolean enable flag or a malformed
 operation allowlist. The list is bounded and dense, rejects symbols, hidden

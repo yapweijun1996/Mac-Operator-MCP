@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Policy-array prototype addendum at source revision `dac0cb8`: Broker policy
+validation now rejects authority arrays with a custom prototype before any
+scope, target, or capability checks invoke array methods. Principal scopes and
+target-rule regressions cover this path; the focused policy suite passes 14/14
+and the full default regression passes 879/879 with 14 explicit skips (893
+total). This preserves default deny and independent scope/target semantics.
+Evidence: `evidence/2026-09-16-policy-array-prototype-boundary.md`.
+
 Helper allowlist configuration-boundary addendum at source revision
 `57cee04`: the executor now rejects non-boolean enablement and malformed
 operation arrays (symbols, hidden fields, sparse slots, accessors, unsupported

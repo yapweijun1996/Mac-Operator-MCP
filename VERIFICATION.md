@@ -3,6 +3,13 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Policy-array prototype verification at source revision `dac0cb8`: the Broker
+rejects custom-prototype authority arrays before invoking array methods used by
+scope, target, and capability validation. Focused policy/target tests pass
+14/14; the full default regression passes 879/879 with 14 explicit skips (893
+total), with 0 failures. Build, typecheck, lint, and diff checks pass. Evidence:
+`evidence/2026-09-16-policy-array-prototype-boundary.md`.
+
 Helper allowlist configuration-boundary verification at source revision
 `57cee04`: executor construction rejects non-boolean enablement and operation
 allowlists with symbols, hidden fields, sparse slots, accessors, unsupported
