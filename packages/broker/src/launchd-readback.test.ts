@@ -105,6 +105,13 @@ test("launchd readback rejects duplicate singleton fields and argument blocks", 
   );
 });
 
+test("launchd readback does not treat an argument value as a service field", () => {
+  const serviceId = "gui/501/com.mac-operator.broker";
+  const readback = parseLaunchdJobReadback(serviceId, `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tprogram = /bin/node\n\targuments = {\n\t/bin/node\n\tstate = running\n\t}\n\tpid = 4123\n}`);
+  assert.equal(readback.state, "running");
+  assert.deepEqual(readback.arguments, ["/bin/node", "state = running"]);
+});
+
 test("launchd readback normalizes macOS xpcproxy bootstrap state without claiming running", () => {
   const serviceId = "gui/501/com.mac-operator.broker";
   const readback = parseLaunchdJobReadback(serviceId, `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = xpcproxy\n\tprogram = /bin/sleep\n\targuments = {\n\t/bin/sleep\n\t30\n\t}\n\tpid = 4123\n}`);

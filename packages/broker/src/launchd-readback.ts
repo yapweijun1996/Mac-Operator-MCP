@@ -181,12 +181,27 @@ function field(output: string, name: string): string | undefined {
   // launchctl nests additional state dictionaries below the one-tab service
   // fields. Restrict singleton extraction to that exact top-level indent so a
   // nested `state = active` cannot shadow the service's `state = running`.
-  const pattern = new RegExp(`(?:^|\\n)\\t${escapeRegExp(name)}\\s*=\\s*([^\\r\\n]+)`, "gmu");
-  const matches = [...output.matchAll(pattern)];
+  // Argument values use the same one-tab indentation, so skip the complete
+  // arguments block before interpreting singleton fields.
+  const pattern = new RegExp(`^\\t${escapeRegExp(name)}\\s*=\\s*([^\\r\\n]+)`, "u");
+  const matches: string[] = [];
+  let inArguments = false;
+  for (const line of output.split(/\r?\n/u)) {
+    if (inArguments) {
+      if (/^\t\}\s*$/u.test(line)) inArguments = false;
+      continue;
+    }
+    if (/^\targuments\s*=\s*\{\s*$/u.test(line)) {
+      inArguments = true;
+      continue;
+    }
+    const match = pattern.exec(line);
+    if (match?.[1] !== undefined) matches.push(match[1]);
+  }
   if (matches.length > 1) {
     throw new LaunchdReadbackError("MALFORMED_READBACK", `launchd returned duplicate ${name} fields`);
   }
-  return matches[0]?.[1]?.trim();
+  return matches[0]?.trim();
 }
 
 function parseState(value: string | undefined): LaunchdJobReadback["state"] {
