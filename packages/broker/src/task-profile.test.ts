@@ -175,6 +175,9 @@ test("task profile boundaries reject inherited, accessor, symbolic, and sparse a
     const accessorRoots = [canonicalRoot] as string[];
     Object.defineProperty(accessorRoots, "0", { enumerable: true, get: () => canonicalRoot });
     assert.throws(() => new TaskProfileRegistry([profile(canonicalRoot, { allowedCwdRoots: accessorRoots })]), /malformed/u);
+    const customPrototypeArgs = ["safe"] as string[];
+    Object.setPrototypeOf(customPrototypeArgs, { some: () => true });
+    assert.throws(() => new TaskProfileRegistry([profile(canonicalRoot, { fixedArgs: customPrototypeArgs })]), /malformed/u);
 
     assert.throws(
       () => validateTaskRunArguments(Object.create({ profile: "tests.echo", cwd: canonicalRoot })),
@@ -183,6 +186,12 @@ test("task profile boundaries reject inherited, accessor, symbolic, and sparse a
     const sparseRequestArgs = new Array<string>(1);
     assert.throws(
       () => validateTaskRunArguments({ profile: "tests.echo", cwd: canonicalRoot, args: sparseRequestArgs }),
+      /malformed/u
+    );
+    const customPrototypeRequestArgs = ["safe"] as string[];
+    Object.setPrototypeOf(customPrototypeRequestArgs, { some: () => true });
+    assert.throws(
+      () => validateTaskRunArguments({ profile: "tests.echo", cwd: canonicalRoot, args: customPrototypeRequestArgs }),
       /malformed/u
     );
     const registry = new TaskProfileRegistry([base]);
