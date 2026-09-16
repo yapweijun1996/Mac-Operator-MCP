@@ -35,7 +35,7 @@ test("launchd service inspector treats xpcproxy as loaded, not running", async (
         resultClass: "SUCCEEDED",
         exitCode: 0,
         signal: null,
-        stdout: `${serviceId} = {\n\tstate = xpcproxy\n\tpid = 4123\n\tlast exit code = (never exited)\n}`,
+        stdout: `${serviceId} = {\n\ttype = LaunchDaemon\n\tstate = xpcproxy\n\tpid = 4123\n\tlast exit code = (never exited)\n}`,
         stderr: "",
         truncated: false,
         durationMs: 1,
@@ -57,9 +57,9 @@ test("launchd service inspector treats xpcproxy as loaded, not running", async (
 test("launchd service inspector rejects forged or conflicting readback fields", async () => {
   const serviceId = "system/com.apple.logd";
   const outputs = [
-    `${serviceId} = {\n\tstate = running\n\tstate = stopped\n\tpid = 4123\n}`,
-    `${serviceId} = {\n\tstate = running\n\tpid = 4123\n\t}\n\tstate = failed\n}`,
-    "system/com.apple.other = {\n\tstate = running\n\tpid = 4123\n}"
+    `${serviceId} = {\n\ttype = LaunchDaemon\n\tstate = running\n\tstate = stopped\n\tpid = 4123\n}`,
+    `${serviceId} = {\n\ttype = LaunchDaemon\n\tstate = running\n\tpid = 4123\n\t}\n\tstate = failed\n}`,
+    "system/com.apple.other = {\n\ttype = LaunchDaemon\n\tstate = running\n\tpid = 4123\n}"
   ];
   for (const stdout of outputs) {
     const executor = {
@@ -84,4 +84,29 @@ test("launchd service inspector rejects forged or conflicting readback fields", 
       (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
     );
   }
+});
+
+test("launchd service inspector rejects a system readback without LaunchDaemon identity", async () => {
+  const serviceId = "system/com.apple.logd";
+  const executor = {
+    async run(): Promise<ProcessExecutionResult> {
+      return {
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        signal: null,
+        stdout: `${serviceId} = {\n\tstate = running\n\tpid = 4123\n}`,
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
+        processId: 1,
+        processGroupId: 1,
+        terminationObserved: true
+      };
+    }
+  } as never;
+  await assert.rejects(
+    new LaunchdServiceInspector(executor).inspect(serviceId, { timeoutMs: 5_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
 });

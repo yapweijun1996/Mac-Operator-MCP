@@ -75,6 +75,9 @@ function parseLaunchctlResult(serviceId: string, result: ProcessExecutionResult)
     }
     throw error;
   }
+  if (readback.type !== "LaunchDaemon") {
+    throw new BrokerError("EXECUTION_FAILED", "Launchd service type is not LaunchDaemon");
+  }
   const state = normalizeState(readback.state);
   const pid = readback.pid;
   const lastExitCode = readback.lastExitCode;
