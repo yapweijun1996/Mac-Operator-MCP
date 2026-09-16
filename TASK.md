@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-081/083 packaged-startup addendum at source revision `2e5d08b`: the
+physical Darwin smoke bootstraps temporary Edge and Broker LaunchAgents in
+the reviewed order, verifies exact PID/start-time/program readback, native
+socket ownership/mode, authenticated Broker status, and cleanup/absence.
+The smoke passes 1/1. Persistent installation, Developer ID/notarization,
+remote transport, privileged-helper installation, and release approval remain
+open. Evidence: `evidence/2026-09-16-packaged-launchagent-smoke.md`.
+
 MOP-037 secret-corpus addendum at source revision `2e5d08b`: expanded
 synthetic AWS/Google/GitHub/GitLab/npm/PyPI/Stripe/OpenAI/Cloudflare/Heroku
 signatures are denied before result construction or child spawn and redacted

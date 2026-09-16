@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Packaged LaunchAgent smoke addendum at source revision `2e5d08b`: a physical
+Darwin opt-in test bootstraps temporary Edge-first/Broker-second user agents,
+checks exact launchd PID/start-time and program readback, verifies owner-only
+native sockets and authenticated Broker status, then boots out and cleans up
+the disposable root and synthetic Keychain item. The smoke passes 1/1.
+Persistent production installation, Developer ID/notarization, remote OAuth,
+privileged-helper installation, and release approval remain open. Evidence:
+`evidence/2026-09-16-packaged-launchagent-smoke.md`.
+
 Secret-corpus and split-argv addendum at source revision `2e5d08b`: expanded
 known credential signatures are denied/redacted consistently across content,
 environment, argv, and logs, and split credential labels such as `Bearer`
