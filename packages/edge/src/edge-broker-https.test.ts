@@ -389,6 +389,14 @@ test("separate Edge process reaches the native Broker through authenticated HTTP
     assert.equal(payload.tool, "mac_health");
     assert.equal(payload.result_class, "SUCCEEDED");
     assert.equal(JSON.stringify(store.auditRows()).includes(accessToken), false);
+    broker.revokeEdge("edge-1", "cross-process-edge-revocation", now);
+    assert.equal(store.isRevoked("edge", "edge-1"), true);
+    const revokedResult = await client.callTool({ name: "mac_health", arguments: {} });
+    const revokedText = revokedResult.content?.find((item): item is { type: "text"; text: string } => item.type === "text");
+    assert.ok(revokedText);
+    const revokedPayload = JSON.parse(revokedText.text) as { ok: boolean; result_class: string };
+    assert.equal(revokedPayload.ok, false);
+    assert.equal(revokedPayload.result_class, "REVOKED");
   } catch (error) {
     const diagnostic = Buffer.concat(childStderr).toString("utf8").trim();
     const audit = JSON.stringify(store.auditRows());
