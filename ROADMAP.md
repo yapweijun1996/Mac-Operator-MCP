@@ -88,7 +88,9 @@ durable, only three operation names are representable, and a Broker-owned
 factory signs commands only for matching explicit-approval, intent-linked
 running Jobs after active authority checks. Focused helper/runtime/package,
 install-plan, and Broker-dispatch tests pass on the physical macOS host. The
-default policy and executor remain disabled. The helper runtime now requires a
+Broker executor now also requires an explicit operation allowlist, and
+capability discovery/planning gate each privileged tool against that allowlist.
+The default policy and executor remain disabled. The helper runtime now requires a
 separately authenticated Broker authority poller whenever an adapter is
 enabled; polls occur before dispatch, during execution, and before success,
 with post-dispatch authority loss mapped to `UNKNOWN_OUTCOME`. Native Broker

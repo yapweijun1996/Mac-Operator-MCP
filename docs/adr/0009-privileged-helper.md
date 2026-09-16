@@ -342,6 +342,14 @@ the release gate but does not create a certificate, notarize an artifact, or
 enable the helper. Evidence:
 `evidence/2026-09-16-signature-provenance-readback.md`.
 
+The Broker Job executor now requires an explicit duplicate-free operation
+allowlist when its authenticated Helper transport is enabled. Capability
+discovery and privileged planning check `service_control`, `package_install`,
+and `power` independently, and an operation outside the allowlist fails before
+command dispatch. This prevents a service-only Helper runtime from advertising
+or admitting package or power work; production Helper startup remains disabled
+until its authenticated status projection is wired to the Broker boundary.
+
 ## Consequences and rollback
 
 - A helper implementation cannot be enabled merely by supplying tool arguments; it must provide an explicit operation handler and an accepted isolation/packaging review.
