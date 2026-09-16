@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-016/046 new-session revocation addendum at source revision `c0fa6f0`:
+the authenticated HTTPS Edge probes Broker capability authority before
+session-less MCP `initialize`/`server/discover` requests enter the SDK factory.
+Broker `REVOKED` now yields stable HTTP 403 `{error: revoked,
+result_class: REVOKED}`; established sessions keep the normal Broker
+authorization path. Focused HTTPS/MCP tests pass 11/11 and the complete Edge
+suite passes 66/66; typecheck, lint, documentation, and matrix checks pass.
+Remote distribution, launchd lifecycle, physical worker termination, and
+production key rotation remain open. Evidence:
+`evidence/2026-09-16-edge-new-session-revocation.md`.
+
 MOP-016/046 Edge mutation-authority regression addendum at source revisions
 `7207b72` and `17793f2`: the authenticated HTTPS -> signed IPC path now
 exercises a Broker-enabled atomic write with a single-use approval, active

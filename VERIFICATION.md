@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+HTTPS Edge new-session revocation verification at source revision `c0fa6f0`:
+the Edge now probes Broker capability authority for session-less
+`initialize`/`server/discover` requests before the MCP SDK factory runs. A
+Broker `REVOKED` response is converted to a stable HTTP 403 envelope
+(`error=revoked`, `result_class=REVOKED`) rather than the SDK's generic 500
+internal JSON-RPC error; session-bound requests continue through normal
+Broker-authorized execution. Focused HTTPS/MCP tests pass 11/11 and the
+complete Edge suite passes 66/66; typecheck, lint, documentation, and matrix
+checks pass. This is local session-start evidence only, not remote
+revocation-distribution, launchd, physical worker-termination, or production
+key-rotation evidence. Evidence:
+`evidence/2026-09-16-edge-new-session-revocation.md`.
+
 Cross-process Edge revocation verification at source revision `37ab0fc`:
 the separately spawned Edge process completes an authenticated HTTPS -> native
 peer-checked IPC call, then the parent Broker persists `edge-1` revocation.

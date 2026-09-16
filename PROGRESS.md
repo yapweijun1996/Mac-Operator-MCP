@@ -4,6 +4,16 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+HTTPS Edge new-session revocation addendum at source revision `c0fa6f0`: the
+session-less `initialize`/`server/discover` boundary now probes Broker
+capability authority and returns stable HTTP 403 `REVOKED` when that authority
+is revoked, avoiding the MCP SDK's generic 500 fallback. Session-bound calls
+remain Broker-authorized. Focused HTTPS/MCP tests pass 11/11; complete Edge
+suite 66/66; typecheck, lint, documentation, and matrix checks pass. Remote
+revocation distribution, launchd lifecycle, physical worker termination, and
+production key rotation remain open. Evidence:
+`evidence/2026-09-16-edge-new-session-revocation.md`.
+
 Cross-process Edge revocation addendum at source revision `37ab0fc`: a
 separately spawned Edge process now has an authenticated HTTPS/native-IPC
 regression that receives stable `REVOKED` on the same MCP session after the
