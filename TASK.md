@@ -4,6 +4,18 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-089 capability runtime-state addendum at source revision `08c54d6`: the
+Broker now projects `enabled` only when signed tool policy and its concrete
+runtime agree. Task execution requires an available isolated runner; all three
+privileged tools require an available authenticated Helper. Missing runtime
+authority is reported as `runtime_unavailable`, without masking independent
+scope, kill-switch, or target decisions. Service startup readback uses the
+same Broker-owned gate. Focused Broker/startup tests pass 89/89 with 6 skips;
+the full regression passes 877/877 with 14 explicit skips (891 total). Missing
+descriptor execution, VM/guest isolation, production artifact, Helper
+installation, and capability enablement gates remain open. Evidence:
+`evidence/2026-09-16-capability-runtime-state.md`.
+
 MOP-086/081 Virtualization native readback addendum at source revision
 `cb0e59e`: the physical Darwin host passes the focused native guest
 configuration/lifecycle/channel suite 12/12. It verifies protected read-only

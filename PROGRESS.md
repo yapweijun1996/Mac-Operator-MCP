@@ -4,6 +4,19 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Capability runtime-state addendum at source revision `08c54d6`: Broker
+capability discovery and service readback now require both signed policy
+enablement and the concrete runtime boundary. `mac_task_run` is advertised only
+when an isolated task runner is available; privileged service/package/power
+tools are advertised only when the authenticated Helper is available. A policy-
+enabled but unavailable boundary returns the stable `runtime_unavailable`
+reason, while scope, kill-switch, and target checks remain independent. Broker
+and startup focused tests pass 89/89 with 6 skips; the full regression passes
+877/877 with 14 explicit skips (891 total). The descriptor-backed launcher,
+VM/guest isolation, production signing, Helper installation, and capability
+enablement gates remain open. Evidence:
+`evidence/2026-09-16-capability-runtime-state.md`.
+
 Virtualization native readback addendum at source revision `cb0e59e`: the
 physical Darwin host passes the focused native guest/configuration and VM
 lifecycle/channel suite 12/12. It verifies protected read-only image

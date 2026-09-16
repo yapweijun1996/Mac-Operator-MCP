@@ -3,6 +3,19 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Capability runtime-state verification at source revision `08c54d6`: Broker
+capability discovery and launch readback now require signed policy enablement
+plus a matching available runtime boundary. Task execution is gated on the
+isolated runner; privileged service/package/power tools are gated on the
+authenticated Helper. The stable unavailable reason is
+`runtime_unavailable`; principal scope, kill-switch, and target checks remain
+separate. Broker/startup tests pass 89/89 with 6 explicit skips, and the full
+regression passes 877/877 with 14 explicit skips (891 total). A signed startup
+policy with task enabled but no runner was verified to omit `mac_task_run` from
+service readback. The physical host still lacks the descriptor-backed launcher;
+no task, Helper, or capability was enabled. Evidence:
+`evidence/2026-09-16-capability-runtime-state.md`.
+
 Virtualization native readback verification at source revision `cb0e59e`:
 physical Darwin arm64 passes the focused native guest/configuration and VM
 lifecycle/channel suite 12/12. The suite verifies protected read-only image
