@@ -51,7 +51,19 @@ export function inspectProcess(pid: number): SafeProcessDetail {
   const detail = parseProcessDetail(native.inspectProcess(pid));
   const after = parsePeerProcessIdentity(native.getProcessIdentity(pid));
   assertStableProcessIdentity(pid, before, after);
+  assertProcessDetailIdentity(pid, detail);
   return detail;
+}
+
+/**
+ * The detail payload is an adapter result, not authority. Bind its PID to the
+ * requested target before any caller can serialize or otherwise consume it.
+ */
+export function assertProcessDetailIdentity(
+  requestedPid: number,
+  detail: Pick<SafeProcessDetail, "pid">
+): void {
+  if (detail.pid !== requestedPid) throw new Error("Process identity changed during inspection");
 }
 
 /** Reject a PID reuse or target swap observed across one native inspection. */

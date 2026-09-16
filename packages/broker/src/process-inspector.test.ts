@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertStableProcessIdentity, inspectProcess, inspectProcesses, parseProcessDetail, parseProcessInventory } from "./process-inspector.js";
+import { assertProcessDetailIdentity, assertStableProcessIdentity, inspectProcess, inspectProcesses, parseProcessDetail, parseProcessInventory } from "./process-inspector.js";
 
 test("process inspector returns bounded redacted native metadata", () => {
   const inventory = inspectProcesses(20, "pid");
@@ -54,6 +54,14 @@ test("process inspector rejects PID reuse across native identity readbacks", () 
   );
   assert.throws(
     () => assertStableProcessIdentity(42, { pid: 41, startTimeMicros: 100 }, { pid: 42, startTimeMicros: 100 }),
+    /identity changed during inspection/u
+  );
+});
+
+test("process inspector binds adapter detail to the requested PID", () => {
+  assert.doesNotThrow(() => assertProcessDetailIdentity(42, { pid: 42 }));
+  assert.throws(
+    () => assertProcessDetailIdentity(42, { pid: 41 }),
     /identity changed during inspection/u
   );
 });
