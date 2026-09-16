@@ -216,13 +216,14 @@ launchd ownership, code-signing provenance, helper execution, and remote
 deployment remain open. Evidence:
 `evidence/2026-09-16-launchd-conflicting-fields.md`.
 
-Packaged LaunchAgent smoke at source revision `2e5d08b`: the opt-in physical
+Packaged LaunchAgent smoke at source revision `e8a2ea8`: the opt-in physical
 Darwin test bootstraps reviewed Edge and Broker entrypoints as temporary
 owner-domain LaunchAgents, verifies exact launchd program/argument/PID
 readback, native socket creation and `0600` ownership, and an authenticated
 Broker status response showing `running` with zero enabled capabilities. The
 test boots out both jobs, verifies absence, retires its synthetic Keychain
-item, and removes the disposable root. The smoke passes 1/1. This is
+item, and removes the disposable root. The smoke passes 1/1 on the latest
+revision. This is
 temporary startup/status-channel evidence only; persistent installation,
 Developer ID/notarization, remote OAuth, privileged-helper installation, and
 release approval remain open. Evidence:

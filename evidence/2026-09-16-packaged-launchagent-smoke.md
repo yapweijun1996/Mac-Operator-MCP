@@ -4,6 +4,10 @@ Date: 2026-09-16
 Source revision: `2e5d08b`
 Host: physical Darwin arm64 Mac mini; macOS 26.2
 
+Rerun revision: `e8a2ea8` (2026-09-16); the same opt-in command passed 1/1
+after the signature-provenance readback change and cleaned up all temporary
+jobs and state.
+
 ## Boundary exercised
 
 The opt-in smoke copied the reviewed Edge and Broker service entrypoints into

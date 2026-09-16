@@ -332,11 +332,12 @@ credential-store coverage, production-corpus false-positive analysis, and
 production isolation remain open. Evidence:
 `evidence/2026-09-16-encoded-secret-representations.md`.
 
-Packaged LaunchAgent smoke addendum at source revision `2e5d08b`: a physical
+Packaged LaunchAgent smoke addendum at source revision `e8a2ea8`: a physical
 Darwin opt-in test bootstraps temporary Edge-first/Broker-second user agents,
 checks exact launchd PID/start-time and program readback, verifies owner-only
 native sockets and authenticated Broker status, then boots out and cleans up
-the disposable root and synthetic Keychain item. The smoke passes 1/1.
+the disposable root and synthetic Keychain item. The smoke passes 1/1 on the
+latest revision.
 Persistent production installation, Developer ID/notarization, remote OAuth,
 privileged-helper installation, and release approval remain open. Evidence:
 `evidence/2026-09-16-packaged-launchagent-smoke.md`.

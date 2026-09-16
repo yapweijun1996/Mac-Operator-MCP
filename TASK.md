@@ -239,11 +239,11 @@ complete credential-store coverage, production-corpus false-positive
 analysis, and child-process isolation remain open. Evidence:
 `evidence/2026-09-16-encoded-secret-representations.md`.
 
-MOP-081/083 packaged-startup addendum at source revision `2e5d08b`: the
+MOP-081/083 packaged-startup addendum at source revision `e8a2ea8`: the
 physical Darwin smoke bootstraps temporary Edge and Broker LaunchAgents in
 the reviewed order, verifies exact PID/start-time/program readback, native
 socket ownership/mode, authenticated Broker status, and cleanup/absence.
-The smoke passes 1/1. Persistent installation, Developer ID/notarization,
+The smoke passes 1/1 on the latest revision. Persistent installation, Developer ID/notarization,
 remote transport, privileged-helper installation, and release approval remain
 open. Evidence: `evidence/2026-09-16-packaged-launchagent-smoke.md`.
 
