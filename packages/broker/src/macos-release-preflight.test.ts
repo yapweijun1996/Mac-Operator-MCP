@@ -9,7 +9,7 @@ import {
   runMacOsReleasePreflight,
   type MacOsReleasePreflightInput
 } from "./macos-release-preflight.js";
-import type { ProcessExecutionResult } from "./process-supervisor.js";
+import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const teamIdentifier = "ABCDE12345";
 const cdHash = "a".repeat(40);
@@ -87,6 +87,47 @@ test("release preflight rejects ad-hoc provenance, digest mismatch, and symlink 
     await assert.rejects(
       readMacOsReleaseArtifactSummary(artifact, ownerUid),
       (error: unknown) => error instanceof MacOsReleasePreflightError && error.code === "ARTIFACT_UNSAFE"
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("release preflight uses the real macOS codesign boundary and rejects an ad-hoc bundle", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("The production release target is macOS");
+    return;
+  }
+  const root = await mkdtemp(join(tmpdir(), "mops-release-real-codesign-"));
+  try {
+    const artifact = join(root, "MacOperatorBroker.app");
+    await mkdir(join(artifact, "Contents", "MacOS"), { recursive: true, mode: 0o700 });
+    await writeFile(join(artifact, "Contents", "MacOS", "broker"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await writeFile(join(artifact, "Contents", "Info.plist"), [
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+      "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+      "<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.mac-operator.broker</string><key>CFBundleExecutable</key><string>broker</string></dict></plist>"
+    ].join("\n"), { mode: 0o600 });
+    const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+    const signed = await supervisor.run({
+      executable: "/usr/bin/codesign",
+      args: ["--force", "--deep", "--sign", "-", "--timestamp=none", artifact],
+      cwd: "/",
+      environment: {},
+      timeoutMs: 5_000,
+      outputCapBytes: 131_072
+    });
+    assert.equal(signed.resultClass, "SUCCEEDED");
+    const summary = await readMacOsReleaseArtifactSummary(artifact, ownerUid);
+    await assert.rejects(
+      runMacOsReleasePreflight({
+        artifactPath: artifact,
+        artifactSha256: summary.sha256,
+        artifactBytes: summary.bytes,
+        ownerUid,
+        signature: { identifier: "com.mac-operator.broker", teamIdentifier, cdHash }
+      }, supervisor),
+      (error: unknown) => error instanceof MacOsReleasePreflightError && error.code === "SIGNATURE_MISMATCH"
     );
   } finally {
     await rm(root, { recursive: true, force: true });
