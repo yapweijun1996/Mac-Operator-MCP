@@ -3,17 +3,24 @@ import { BrokerError } from "@mac-operator/contracts";
 import { parseTaskNetworkDestination, type ResolvedTaskProfile } from "./task-profile.js";
 
 const MAX_PROFILE_BYTES = 128 * 1024;
-const MAX_PROFILE_ARGUMENT_LENGTH = 4_096;
+// Keep the serialized SBPL argument bounded while leaving room for the fixed
+// secret-zone deny set and a bounded multi-root task profile.
+const MAX_PROFILE_ARGUMENT_LENGTH = 8_192;
 const PROTECTED_ROOTS = new Set(["/", "/System", "/Users", "/private"]);
 const GLOBAL_SECRET_ZONES = [
   "/private/etc/passwd", "/private/etc/master.passwd", "/private/etc/group", "/private/etc/sudoers", "/private/etc/sudoers.d",
   "/private/etc/pam.d", "/private/etc/security", "/private/etc/ssh", "/private/etc/krb5.keytab", "/private/etc/ssl/private",
   "/private/var/root", "/var/root"
 ] as const;
+const GLOBAL_SECRET_ZONE_PATTERNS = [
+  "^/(?:private/)?Library/Application Support/com\\.apple\\.TCC(?:/|$)",
+  "^/(?:private/)?var/db/(?:TCC|dslocal|ConfigurationProfiles|keychains|authd|lockdown)(?:/|$)"
+] as const;
 const DOCKER_SOCKET_PATHS = ["/var/run/docker.sock", "/private/var/run/docker.sock"] as const;
 const PROJECT_SECRET_DIRECTORIES = [
   ".aws", ".codex", ".config", ".docker", ".gnupg", ".kube", ".openai", ".ssh",
-  "Library/Keychains", "Library/Application Support/Google/Chrome", "Library/Safari", "Library/Mail", "Library/Messages"
+  "Library/Keychains", "Library/Application Support/Google/Chrome", "Library/Application Support/com.apple.TCC",
+  "Library/Application Support/com.apple.tcc", "Library/Safari", "Library/Mail", "Library/Messages"
 ] as const;
 const PROJECT_SECRET_FILES = [
   ".env", ".env.local", ".env.production", ".env.development", ".env.test", ".git-credentials", ".npmrc"
@@ -100,6 +107,10 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile, options: 
   for (const zone of secretZones(roots)) {
     lines.push(`(deny file-read* (subpath ${quote(zone)}))`);
     lines.push(`(deny file-write* (subpath ${quote(zone)}))`);
+  }
+  for (const pattern of GLOBAL_SECRET_ZONE_PATTERNS) {
+    lines.push(`(deny file-read* (regex #"${pattern}"))`);
+    lines.push(`(deny file-write* (regex #"${pattern}"))`);
   }
   for (const socketPath of DOCKER_SOCKET_PATHS) {
     lines.push(`(deny file-read* (literal ${quote(socketPath)}))`);
