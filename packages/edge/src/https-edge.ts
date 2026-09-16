@@ -112,9 +112,14 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
       await nodeHandler(request, response, request.body);
     })().catch(next);
   });
-  app.use((_error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     if (response.headersSent) {
       response.end();
+      return;
+    }
+    const bodyFailure = classifyJsonBodyFailure(error);
+    if (bodyFailure !== undefined) {
+      response.status(bodyFailure.status).json({ error: bodyFailure.error });
       return;
     }
     response.status(500).json({ error: "internal_server_error" });
@@ -236,4 +241,12 @@ function validateHostnameList(values: string[], label: string): string[] {
 
 function hasTlsMaterial(value: Buffer | string): boolean {
   return Buffer.isBuffer(value) ? value.byteLength > 0 : typeof value === "string" && value.length > 0;
+}
+
+function classifyJsonBodyFailure(error: unknown): { status: 400 | 413; error: "invalid_json" | "request_too_large" } | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const type = (error as { type?: unknown }).type;
+  if (type === "entity.too.large") return { status: 413, error: "request_too_large" };
+  if (type === "entity.parse.failed") return { status: 400, error: "invalid_json" };
+  return undefined;
 }

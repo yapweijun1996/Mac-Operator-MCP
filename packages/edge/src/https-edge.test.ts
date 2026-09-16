@@ -159,6 +159,26 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     assert.equal(metadata.resource, edgeOptions.resourceServerUrl.href);
     assert.deepEqual(metadata.authorization_servers, ["https://issuer.example.test"]);
 
+    const malformedJsonResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
+      {
+        ...createMcpAuthRequest(accessToken),
+        body: "{"
+      }
+    );
+    assert.equal(malformedJsonResponse.status, 400);
+    assert.deepEqual(await malformedJsonResponse.json(), { error: "invalid_json" });
+
+    const oversizedResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
+      {
+        ...createMcpAuthRequest(accessToken),
+        body: "x".repeat(1_048_577)
+      }
+    );
+    assert.equal(oversizedResponse.status, 413);
+    assert.deepEqual(await oversizedResponse.json(), { error: "request_too_large" });
+
     const invalidTokenResponse = await fetch(
       new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
       createMcpAuthRequest("not-a-jwt")
