@@ -3,6 +3,14 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Immutable-snapshot probe addendum: the physical Darwin 25.2.0 / macOS 26.2
+host allows the unprivileged file owner to clear `uchg`, while `chflags schg`
+returns `Operation not permitted`. These flags therefore do not provide an
+attacker-resistant executable snapshot for the unprivileged Broker. Together
+with the descriptor-exec SDK probe, this keeps descriptor-required execution
+fail-closed and rejects a pathname snapshot shim. Evidence:
+`evidence/2026-09-16-immutable-snapshot-probe.md`.
+
 Binary-private-key secret addendum: content and bounded Base64 scanning now
 rejects validated DER PKCS#8/PKCS#1/SEC1 private keys and the OpenSSH binary
 private-key envelope while preserving public DER. Secret-policy tests pass

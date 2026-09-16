@@ -4,6 +4,14 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Immutable-snapshot probe addendum: on the physical Darwin 25.2.0 / macOS 26.2
+host, the unprivileged user can clear `uchg` after setting it, while setting
+`schg` returns `Operation not permitted`. Immutable file flags therefore do
+not provide an attacker-resistant executable snapshot for the unprivileged
+Broker. Descriptor execution remains unavailable and no pathname snapshot
+shim was added. Evidence:
+`evidence/2026-09-16-immutable-snapshot-probe.md`.
+
 Descriptor-exec SDK probe addendum: a physical Darwin 25.2.0 / macOS 26.2
 probe confirmed that descriptor-relative cwd actions exist, but both
 `posix_spawn("/dev/fd/<fd>")` and a direct `execve("/dev/fd/<fd>")` return
