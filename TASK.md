@@ -4,6 +4,15 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-060/081/087 helper bootstrap addendum at source revision `316e303`:
+privileged-helper Broker-caller capture retries only exact top-level
+`xpcproxy` state within a bounded five-second deadline, then requires the
+validated LaunchAgent type and native PID/start-time identity. Focused
+launchd/startup/helper tests pass 26/26; typecheck, build, lint, matrix, and
+documentation checks pass. Persistent launchd ownership, signing provenance,
+descriptor execution, helper installation, and remote deployment remain open.
+Evidence: `evidence/2026-09-16-helper-launchd-bootstrap-retry.md`.
+
 MOP-030/081/087 launchd status type-binding addendum at source revision
 `583fa09`: the system-domain service inspector requires `LaunchDaemon` in the
 validated readback before status publication; missing type is a stable

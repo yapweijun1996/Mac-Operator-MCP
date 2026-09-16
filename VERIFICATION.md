@@ -3,6 +3,16 @@
 Status: Contract checks and bounded local Broker prototype evidence exist; no release gate is closed
 Version: 0.1
 
+Privileged-helper launchd bootstrap addendum at source revision `316e303`:
+Broker caller capture retries only an exact top-level `xpcproxy` readback while
+the service remains within a bounded five-second startup deadline. Missing or
+conflicting service type still fails closed before native PID/start-time
+binding. The focused launchd/startup/helper suite passes 26/26; typecheck and
+build pass. This covers transient bootstrap handling only; persistent launchd
+ownership, signing provenance, descriptor execution, root-domain installation,
+and remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-helper-launchd-bootstrap-retry.md`.
+
 Launchd status type-binding addendum at source revision `583fa09`: the
 system-domain `LaunchdServiceInspector` now requires an explicit
 `type = LaunchDaemon` in the strict readback before publishing status. Missing

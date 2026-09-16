@@ -4,6 +4,15 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Privileged-helper launchd bootstrap addendum at source revision `316e303`:
+Broker LaunchAgent caller capture now retries only an exact top-level
+`xpcproxy` state within a five-second deadline, preserving strict service type,
+PID, and native start-time checks. The focused launchd/startup/helper suite
+passes 26/26; typecheck, build, lint, matrix, and documentation checks pass.
+Persistent launchd ownership, Developer ID provenance, descriptor execution,
+root-domain installation, and remote issuer deployment remain open. Evidence:
+`evidence/2026-09-16-helper-launchd-bootstrap-retry.md`.
+
 Launchd status type-binding addendum at source revision `583fa09`: the
 system-domain service inspector now requires `type = LaunchDaemon` after strict
 readback parsing, rejecting missing status identity as `EXECUTION_FAILED` while
