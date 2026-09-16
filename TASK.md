@@ -4,6 +4,14 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-061/072 notarization assessment addendum at source revision `32f2c6c`:
+the host-only Gatekeeper boundary uses fixed `/usr/sbin/spctl` execution,
+empty environment, canonical-path checks, bounded limits, and a parser that
+accepts only `Notarized Developer ID` provenance bound to the expected Team
+ID. Focused tests pass 2/2; typecheck/build pass. Package execution wiring,
+real Developer ID/notarization evidence, and enablement remain open. Evidence:
+`evidence/2026-09-16-notarization-assessment-boundary.md`.
+
 MOP-037/081 Keychain ACL rerun addendum at source revision `31a78c0`: the real
 Darwin credential suite passes 11/11 with a random ACL item, exact executable
 binding, foreign-executable denial, wrong-digest rejection, and cleanup
