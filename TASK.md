@@ -4,6 +4,17 @@ Status: Active
 Version: 0.1
 Last verified: 2026-09-16
 
+MOP-037 encoded-secret addendum at source revision `b1732bd`: content policy
+now detects UTF-16LE/BE and bounded Base64 representations only when decoded
+bytes match an existing credential signature. The same conservative check is
+applied to argv and allowlisted environment values, and bounded log
+redaction removes matching encoded candidates. Focused secret,
+security-fuzz, ProcessSupervisor, and task-profile suites pass 63/63 with
+typecheck, lint, and build passing. Opaque values, binary key formats,
+complete credential-store coverage, production-corpus false-positive
+analysis, and child-process isolation remain open. Evidence:
+`evidence/2026-09-16-encoded-secret-representations.md`.
+
 MOP-081/083 packaged-startup addendum at source revision `2e5d08b`: the
 physical Darwin smoke bootstraps temporary Edge and Broker LaunchAgents in
 the reviewed order, verifies exact PID/start-time/program readback, native
@@ -18,9 +29,9 @@ signatures are denied before result construction or child spawn and redacted
 from bounded logs. Credential labels split across argv entries are rejected
 as a sequence. Secret-policy tests pass 6/6; related
 ProcessSupervisor/task-profile tests pass 47/47; typecheck, lint,
-documentation, and matrix checks pass. Binary/base64,
-opaque-secret, complete credential-store, false-positive, and production
-isolation evidence remain open. Evidence:
+documentation, and matrix checks pass. Opaque-secret, binary-key-format,
+complete credential-store, false-positive, and production-isolation evidence
+remain open. Evidence:
 `evidence/2026-09-16-secret-corpus-expansion.md`.
 
 MOP-016/046 new-session revocation addendum at source revision `c0fa6f0`:

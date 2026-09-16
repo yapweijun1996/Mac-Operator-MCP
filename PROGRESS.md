@@ -4,6 +4,17 @@ Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
 Version: 0.1
 Last verified: 2026-09-16
 
+Encoded-secret representation addendum at source revision `b1732bd`: the
+Broker secret policy conservatively detects UTF-16LE/BE content and bounded
+Base64 candidates when decoded bytes match an existing credential signature.
+The same guard covers argv and allowlisted environment values, while bounded
+log redaction removes matching encoded candidates. The focused secret,
+security-fuzz, ProcessSupervisor, and task-profile suites pass 63/63; typecheck,
+lint, and build pass. Opaque secrets, binary key formats, complete
+credential-store coverage, production-corpus false-positive analysis, and
+production isolation remain open. Evidence:
+`evidence/2026-09-16-encoded-secret-representations.md`.
+
 Packaged LaunchAgent smoke addendum at source revision `2e5d08b`: a physical
 Darwin opt-in test bootstraps temporary Edge-first/Broker-second user agents,
 checks exact launchd PID/start-time and program readback, verifies owner-only
@@ -19,9 +30,8 @@ environment, argv, and logs, and split credential labels such as `Bearer`
 followed by a separate value are rejected before child spawn. Secret-policy
 tests pass 6/6 with synthetic values; related ProcessSupervisor/task-profile
 tests pass 47/47; typecheck, lint, documentation, and matrix checks pass.
-Binary/base64 encodings, opaque
-secrets, complete credential-store coverage, false-positive analysis, and
-production isolation remain open. Evidence:
+Opaque secrets, binary key formats, complete credential-store coverage,
+false-positive analysis, and production isolation remain open. Evidence:
 `evidence/2026-09-16-secret-corpus-expansion.md`.
 
 HTTPS Edge new-session revocation addendum at source revision `c0fa6f0`: the
