@@ -32,7 +32,7 @@ import {
 import { createAuthApp } from "./app.js";
 import { AuthStore, type GrantRevocationListener } from "./store.js";
 import { createPassword } from "./password.js";
-import { configSchema, D1_SCOPES, READ_SCOPES, READ_TOOLS, type GrantProfile } from "./contracts.js";
+import { configSchema, D1_SCOPES, READ_SCOPES, READ_TOOLS, W1_SCOPES, W1_TOOLS, type GrantProfile } from "./contracts.js";
 import { fingerprint } from "./provider.js";
 import { readAuthFile, runAuthCli } from "./cli.js";
 import type { ApprovalBrowserBridge, ApprovalBrowserPreview } from "./approval-browser-bridge.js";
@@ -236,6 +236,20 @@ test("D1 staging grant profile exposes only its explicit scope set", async t => 
   const consent = await f.request("/oauth/consent", undefined, session.cookie);
   assert.equal(consent.status, 200);
   assert.match(await consent.text(), /separate Broker owner approval/u);
+});
+
+test("W1 owner grant exposes project writes without task or service control", async t => {
+  const f = await fixture(t, undefined, "w1");
+  const metadata = await (await f.request("/.well-known/oauth-authorization-server")).json() as { scopes_supported: string[] };
+  assert.deepEqual(metadata.scopes_supported, [...W1_SCOPES]);
+  const client = await f.register();
+  assert.equal((await f.begin(client, { scope: W1_SCOPES.join(" ") })).status, 303);
+  for (const scope of ["mac.task.run", "mac.service.control", "mac.gui.control", "mac.priv.service"]) {
+    assert.equal((await f.begin(client, { scope: `mac.control.read ${scope}` })).status, 400);
+  }
+  const tokens = await f.issue(W1_SCOPES.join(" "));
+  const auth = await (await f.edgeVerifier()).verifyAccessToken(tokens.access_token);
+  assert.deepEqual(auth.scopes, [...W1_SCOPES]);
 });
 
 test("isolated D1 canary binds the Auth grant to Edge tools/list and owner-approved write", async t => {
@@ -1112,6 +1126,47 @@ test("auth init persists the explicit D1 OAuth profile without enabling mutation
       configBytes.fill(0); edgeBytes.fill(0); policyBytes.fill(0);
     }
   } finally { await rm(parent, { recursive: true, force: true }); }
+});
+
+test("auth init keeps the W1 policy input inside one owner Git project", async () => {
+  const parent = await realpath(await mkdtemp(join(homedir(), ".mac-auth-w1-init-")));
+  const directory = join(parent, "auth");
+  const project = join(parent, "project");
+  const invalidProject = join(parent, "not-a-git-project");
+  const envFile = join(parent, "credentials.env");
+  const previousProjectRoot = process.env.MAC_OPERATOR_PROJECT_ROOT;
+  await mkdir(project, { mode: 0o700 });
+  await mkdir(join(project, ".git"), { mode: 0o700 });
+  await mkdir(invalidProject, { mode: 0o700 });
+  await writeFile(envFile, "MAC_OPERATOR_USERNAME=owner\nMAC_OPERATOR_PASSWORD=test-only-long-owner-passphrase\n", { mode: 0o600 });
+  try {
+    process.env.MAC_OPERATOR_PROJECT_ROOT = invalidProject;
+    await assert.rejects(runAuthCli(["init", "--dir", directory, "--env-file", envFile,
+      "--redirect-uri", redirectUri, "--issuer", issuer, "--grant-profile", "w1"]), /Git repository/u);
+    await assert.rejects(lstat(directory), { code: "ENOENT" });
+    process.env.MAC_OPERATOR_PROJECT_ROOT = project;
+    await runAuthCli(["init", "--dir", directory, "--env-file", envFile, "--redirect-uri", redirectUri, "--issuer", issuer,
+      "--grant-profile", "w1"]);
+    const configBytes = readAuthFile(join(directory, "auth-config.json"));
+    const policyBytes = readAuthFile(join(directory, "broker-policy-input.json"));
+    try {
+      assert.equal(JSON.parse(configBytes.toString()).grantProfile, "w1");
+      const policy = JSON.parse(policyBytes.toString()) as {
+        principal: { scopes: string[] }; enabled_tools: string[];
+        filesystem_roots: { root_id: string; path: string; write: boolean }[];
+        target_rules: { scope: string; target: { kind: string; reference: string } }[];
+      };
+      assert.deepEqual(policy.principal.scopes, [...W1_SCOPES]);
+      assert.deepEqual(policy.enabled_tools, [...W1_TOOLS]);
+      assert.deepEqual(policy.filesystem_roots.filter(root => root.write).map(root => root.path), [project]);
+      assert.deepEqual(policy.target_rules.filter(rule => rule.scope === "mac.git.write").map(rule => rule.target),
+        [{ kind: "project", reference: project }]);
+    } finally { configBytes.fill(0); policyBytes.fill(0); }
+  } finally {
+    if (previousProjectRoot === undefined) delete process.env.MAC_OPERATOR_PROJECT_ROOT;
+    else process.env.MAC_OPERATOR_PROJECT_ROOT = previousProjectRoot;
+    await rm(parent, { recursive: true, force: true });
+  }
 });
 
 test("corrupt state is rejected without creating a replacement", async () => {

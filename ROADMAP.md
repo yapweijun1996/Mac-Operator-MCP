@@ -43,6 +43,12 @@ same 30 read-only actions; an older app still retains its historical R0 grant.
 This deployment is a validated personal snapshot, not acceptance of the formal
 Developer ID/notarized release.
 
+The current owner priority is W1: attended file and local Git writes for one
+selected repository on this Mac mini. W1 source and provisioning tests are in
+place, but the live service remains R1 pending a separate snapshot switch and
+ChatGPT reconnect. Task execution, GUI, service control, and privileged work
+are outside the current owner request.
+
 The working tree also implements direct owner-issuer revocation push through
 the fixed Auth child, owner supervisor, and Edge child, reusing the existing
 authenticated Edge-to-Broker revocation event. This is focused-tested source
@@ -50,15 +56,13 @@ evidence only; the live personal snapshot was not restarted.
 
 ## Owner-only full access expansion
 
-This is the capability rollout overlay for the current objective: let the
-owner's ChatGPT app operate the Mac mini across read, developer, GUI, host
-control, and narrowly privileged workflows. It does not replace the Phase 0-7
+This is the longer-term capability rollout overlay retained for planning. The
+current owner request is limited to W1. It does not replace the Phase 0-7
 engineering lifecycle below. A contract or policy entry is not remotely usable
 until its exact scopes, targets, runtime, approval path, verification evidence,
 and release gate all pass.
 
-The security target is comprehensive bounded control, not an unrestricted root
-shell. The following remain permanently excluded from the public MCP surface:
+The following remain excluded from the public MCP surface:
 arbitrary shell strings, arbitrary root commands, raw Keychain or private-key
 reads, raw Docker socket proxying, arbitrary AppleScript/JXA, generic
 click-anywhere automation, credential autofill, Git push/force-reset, and
@@ -74,7 +78,8 @@ to expand its stored default scopes.
 | --- | --- | --- | --- |
 | `R0` | Historical three-tool read-only baseline | `mac.control.read`, `mac.system.read` | Accepted; retained by the older app |
 | `R1` | Current full bounded read-only diagnosis | `mac.control.read`, `mac.policy.explain`, `mac.system.read`, `mac.storage.read`, `mac.process.read`, `mac.log.read`, `mac.network.read`, `mac.service.read`, `mac.package.read`, `mac.files.read`, `mac.files.search`, `mac.files.hash`, `mac.project.read`, `mac.git.read`, `mac.docker.read`, `mac.app.read`, `mac.job.read` | Service/API and separate ChatGPT app accepted; 30 tools |
-| `D1` | Controlled developer workflows | `R1` plus `mac.files.write`, `mac.project.write`, `mac.git.write`, `mac.task.run`, `mac.job.cancel` | Staging OAuth/profile parity and production-startup exposure gates implemented for TaskRunner and developer mutations; fresh owner-only host-readiness evidence is required; public enablement remains sandbox/release/approval gated |
+| `W1` | One owner Git project with attended file and local Git writes | `R1` plus `mac.files.write`, `mac.project.write`, `mac.git.write`, `mac.job.cancel` | Source and provisioning verified; live switch and ChatGPT write probe pending |
+| `D1` | Controlled developer workflows | `R1` plus `mac.files.write`, `mac.project.write`, `mac.git.write`, `mac.service.control`, `mac.task.run`, `mac.job.cancel` | Staging OAuth/profile parity and production-startup exposure gates implemented for TaskRunner and developer mutations; fresh owner-only host-readiness evidence is required; public enablement remains sandbox/release/approval gated |
 | `G1` | Approved application and GUI workflows | `D1` plus `mac.app.control`, `mac.ui.observe`, `mac.ui.control` | Production exposure gate implemented; Accessibility, target, rollback, and real-app evidence gates remain |
 | `P1` | Narrow privileged operations | `G1` plus `mac.priv.service`, `mac.priv.package`, `mac.priv.power` | Proposed; helper/release gated |
 

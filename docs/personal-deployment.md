@@ -12,6 +12,27 @@ describe the current policy. A separate owner-approved ChatGPT R1 app is
 connected with the full 17-scope grant and exactly 30 discovered read-only
 actions; an older installed app still retains its earlier R0 grant.
 
+## W1 personal project write candidate
+
+The source now supports a separate `w1` owner profile for one canonical Git
+repository under the owner's home. It adds `mac_write_file_atomic`,
+`mac_apply_patch`, `mac_git_stage`, `mac_git_commit`, and `mac_job_cancel` to
+the 30 R1 tools. The signed policy gives write access only to that project;
+other home paths remain read-only. Each write requires an attended owner browser
+approval bound to the exact tool, target, and payload. W1 does not grant task
+execution, service control, GUI control, privileged operations, or arbitrary
+shell access.
+
+W1 is a source candidate, not the live profile. The running `r1f` snapshot and
+its existing ChatGPT grant remain read-only. To prepare a separate W1 snapshot,
+initialize Auth with `--grant-profile w1`, set `MAC_OPERATOR_PROJECT_ROOT` to
+the canonical path of the selected Git repository before personal provisioning,
+and provision a fresh protected state root. The supervisor verifies the exact
+W1 scopes, tool set, roots, target rules, kill switches, and attended approval
+issuer before opening a listener. Run the snapshot verifier, then test an
+approved write and a denied out-of-project write on the real Mac before any
+live switch. A ChatGPT connection needs fresh consent to receive the W1 scopes.
+
 ## Connect
 
 - MCP URL: `https://mac.yapweijun1996.com/mcp`

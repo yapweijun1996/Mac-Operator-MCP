@@ -2,6 +2,16 @@
 
 ## Current overall progress: 92%
 
+Owner-only W1 candidate (2026-09-24): the source now provisions a separate
+one-project file/Git write profile with attended browser approval. A signed
+policy binds write authority to one canonical Git repository under the owner's
+home; task execution, service control, GUI, and privileged tools are excluded.
+The signed-policy, OAuth scope, auth initialization, and temporary personal
+snapshot provisioning tests pass. The full local regression passes 1,226,
+skips 16, fails 0. The live personal service remains R1 read-only; W1 still
+needs a separate snapshot switch, real-Mac write/denial readback, and ChatGPT
+re-consent before claiming live acceptance. Formal release progress remains 92%.
+
 Linux EFI guest boot (2026-09-24): after an earlier repack lost the leading dot
 from Alpine's `.boot_repository` marker, an xorriso-based derivative preserved
 the original Rock Ridge tree and EFI boot record while replacing only GRUB's

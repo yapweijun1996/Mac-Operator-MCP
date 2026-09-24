@@ -8,11 +8,13 @@ export const READ_SCOPES = [
   "mac.project.read", "mac.git.read", "mac.docker.read", "mac.app.read", "mac.job.read"
 ] as const;
 export const D1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "mac.git.write", "mac.service.control", "mac.task.run", "mac.job.cancel"] as const;
+export const W1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "mac.git.write", "mac.job.cancel"] as const;
+export const W1_SCOPES = [...READ_SCOPES, ...W1_ADDITIONAL_SCOPES] as const;
 export const D1_SCOPES = [...READ_SCOPES, ...D1_ADDITIONAL_SCOPES] as const;
 export const OAUTH_SCOPES = D1_SCOPES;
-export type GrantProfile = "r1" | "d1";
+export type GrantProfile = "r1" | "w1" | "d1";
 export function scopesForGrantProfile(profile: GrantProfile): readonly string[] {
-  return profile === "d1" ? D1_SCOPES : READ_SCOPES;
+  return profile === "d1" ? D1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
 }
 export const READ_TOOLS = [
   "mac_app_list", "mac_capabilities", "mac_directory_tree", "mac_docker_inspect", "mac_docker_logs",
@@ -21,6 +23,10 @@ export const READ_TOOLS = [
   "mac_network_status", "mac_package_inspect", "mac_policy_explain", "mac_process_inspect", "mac_process_list",
   "mac_project_discover", "mac_project_summary", "mac_read_file", "mac_recent_files", "mac_search_text",
   "mac_service_status", "mac_stat_path", "mac_storage_analysis", "mac_system_summary"
+] as const;
+export const W1_TOOLS = [
+  ...READ_TOOLS,
+  "mac_write_file_atomic", "mac_apply_patch", "mac_git_stage", "mac_git_commit", "mac_job_cancel"
 ] as const;
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
 const hash = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -42,7 +48,7 @@ export const configSchema = z.object({
   keyId: id,
   port: z.number().int().min(1024).max(65535),
   allowedRedirectUris: z.array(httpsUrl).min(1).max(16),
-  grantProfile: z.enum(["r1", "d1"]).default("r1")
+  grantProfile: z.enum(["r1", "w1", "d1"]).default("r1")
 }).strict().refine(value => value.resource === new URL("/mcp", value.issuer).href);
 export type AuthConfig = z.infer<typeof configSchema>;
 

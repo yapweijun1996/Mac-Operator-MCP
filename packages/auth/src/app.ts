@@ -175,7 +175,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     // Chromium applies form-action to the final redirect after a form POST.
     // Only this validated transaction's callback origin is allowed here.
     res.set("Content-Security-Policy", contentSecurityPolicy(new URL(transaction.redirectUri).origin));
-    res.type("html").send(consentPage(session.csrf, client.name, transaction.redirectUri, transaction.scopes.includes("mac.system.read"), config.grantProfile === "d1"));
+    res.type("html").send(consentPage(session.csrf, client.name, transaction.redirectUri, transaction.scopes.includes("mac.system.read"), config.grantProfile !== "r1"));
   });
   app.post("/oauth/consent", async (req, res) => {
     const body = consentBody.parse(req.body);

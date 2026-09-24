@@ -8,14 +8,16 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { Broker, BrokerStore, BrokerServiceInstanceLock, EdgeKeyring, MacOsNativeBrokerIpcServer,
   capturePeerProcessIdentity, PolicyBundleVerifier, PolicyManager, createDefaultPolicy,
+  ApprovalIssuerKeyManager, provisionAuthenticationKey, writeApprovalIssuerKeyConfig,
   type SignedPolicyBundle, type PolicyDocument } from "@mac-operator/broker";
 import { runEdgeServiceMain, validateEdgeServiceStartupConfig, type JwtRevocationContext } from "@mac-operator/edge";
 import { assertPrivateDirectory } from "./store.js";
 import { readAuthFile, runAuthCli } from "./cli.js";
-import { configSchema, READ_SCOPES, READ_TOOLS } from "./contracts.js";
+import { configSchema, READ_SCOPES, READ_TOOLS, W1_SCOPES, W1_TOOLS } from "./contracts.js";
 import { configureIssuerNetwork } from "./issuer-network.js";
 import { enableConnectionDiagnostics } from "./connection-diagnostics.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
+import { assertW1Policy, buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
 import { createProcessApprovalBrowserBridge, parseApprovalBrowserRequest } from "./approval-browser-bridge.js";
 import { createPersonalApprovalBrowserController } from "./personal-approval-browser-controller.js";
@@ -28,11 +30,12 @@ const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
 const save = (path: string, value: string | Buffer) => writeFileSync(path, value, { mode: 0o600, flag: "wx" });
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
-/** Personal installation: signed bounded policy, no privileged or mutation adapters. */
+/** Personal installation: signed policy for one owner and one selected profile. */
 async function provision(root: string, revision: string) {
   assertPrivateDirectory(root);
   const auth = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
-  if (auth.grantProfile !== "r1") throw new Error("Personal R1 service requires the r1 OAuth grant profile");
+  if (auth.grantProfile === "d1") throw new Error("Personal service accepts only r1 or w1 OAuth grants");
+  const writeProfile = auth.grantProfile === "w1";
   const data = join(root, "personal"); const runtime = join(data, "run");
   if (Buffer.byteLength(join(runtime, "broker.sock")) >= 104) throw new Error("Runtime socket path is too long");
   mkdirSync(data, { mode: 0o700 }); mkdirSync(runtime, { mode: 0o700 });
@@ -40,14 +43,18 @@ async function provision(root: string, revision: string) {
   const statusKey = readAuthFile(join(root, "auth/status.key"));
   const keys = generateKeyPairSync("ed25519");
   const now = Date.now();
-  const filesystemRoots = r1FilesystemRoots();
   const projectRoot = realpathSync(process.env.MAC_OPERATOR_PROJECT_ROOT ?? packageRoot);
+  const filesystemRoots = writeProfile ? w1FilesystemRoots(w1ProjectRoot(projectRoot)) : r1FilesystemRoots();
+  const scopes = writeProfile ? W1_SCOPES : READ_SCOPES;
+  const enabledTools = writeProfile ? W1_TOOLS : READ_TOOLS;
   const policy: PolicyDocument = { schema_version: "0.1", revision: 1, audience: "mac-operator-broker", issued_at_ms: now,
     trusted_edge_keys: [{ edge_id: "personal-edge", key_id: "personal-edge-1", not_before_ms: now - 5000, expires_at_ms: now + 365 * 86400000 }],
-    principal_grants: [{ principal_id: auth.principalId, issuer: auth.issuerId, scopes: [...READ_SCOPES], enabled: true }],
-    target_rules: buildR1TargetRules(auth.principalId, filesystemRoots, projectRoot),
-    filesystem_roots: filesystemRoots, tool_enablement: READ_TOOLS.map(tool => ({ tool, enabled: true })),
-    kill_switches: { global: false, mutations: true, process: false, network: false, gui: true, destructive: true, privileged: true } };
+    principal_grants: [{ principal_id: auth.principalId, issuer: auth.issuerId, scopes: [...scopes], enabled: true }],
+    target_rules: writeProfile
+      ? buildW1TargetRules(auth.principalId, filesystemRoots, projectRoot)
+      : buildR1TargetRules(auth.principalId, filesystemRoots, projectRoot),
+    filesystem_roots: filesystemRoots, tool_enablement: enabledTools.map(tool => ({ tool, enabled: true })),
+    kill_switches: { global: false, mutations: !writeProfile, process: false, network: false, gui: true, destructive: true, privileged: true } };
   const payload = Buffer.from(canonicalJson(policy));
   const bundle: SignedPolicyBundle = { bundle_version: "0.1", key_id: "personal-policy-1", algorithm: "Ed25519", payload_digest: sha256(payload), payload: policy,
     signature: sign(null, payload, keys.privateKey).toString("base64") };
@@ -73,12 +80,26 @@ async function provision(root: string, revision: string) {
       policyVersion: "policy-1", sourceRevision: revision, contractVersion: "0.1", ipcTimeoutMs: 5000, maxIpcResponseBytes: 1048576,
       rateLimitWindowMs: 60000, rateLimitMaxRequests: 100, rateLimitMaxKeys: 100 });
     save(join(data, "edge-service.json"), json(edge));
-    save(join(data, "approval-issuer.json"), json({ schemaVersion: "0.1", enabled: false,
+    if (writeProfile) {
+      const approvalKeyPath = join(data, "approval.key");
+      await provisionAuthenticationKey(approvalKeyPath);
+      await writeApprovalIssuerKeyConfig(join(data, "approval-keys.json"), {
+        schemaVersion: "0.1",
+        revision: 1,
+        keys: [{ issuerId: auth.principalId, keyId: "personal-approval-1", path: approvalKeyPath,
+          notBeforeMs: now - 5_000, expiresAtMs: now + 365 * 86_400_000, allowUnattended: false }]
+      });
+    }
+    save(join(data, "approval-issuer.json"), json({ schemaVersion: "0.1", enabled: writeProfile,
       keyConfigPath: join(data, "approval-keys.json"), socketPath: join(runtime, "approval.sock") }));
     const store = openStore(data);
     try {
       const verifier = await policyVerifier(data);
       new PolicyManager(createDefaultPolicy("personal-edge"), store).activate(verifier.verify(bundle));
+      if (writeProfile) {
+        const manager = new ApprovalIssuerKeyManager(join(data, "approval-keys.json"), store);
+        try { await manager.activate(); } finally { manager.dispose(); }
+      }
     } finally { store.close(); }
     console.log("Personal service state provisioned; no listener started.");
   } finally { edgeKey.fill(0); anchorKey.fill(0); statusKey.fill(0); }
@@ -109,33 +130,40 @@ async function start(root: string) {
   const key = readAuthFile(join(data, "edge.key"), 32);
   try {
     const config = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
-    if (config.grantProfile !== "r1") throw new Error("Personal R1 service requires the r1 OAuth grant profile");
+    if (config.grantProfile === "d1") throw new Error("Personal service accepts only r1 or w1 OAuth grants");
+    const writeProfile = config.grantProfile === "w1";
     store = openStore(data);
     const verified = await (await policyVerifier(data)).verifyFile(join(data, "policy.json"));
     new PolicyManager(verified.policy, store).restore(verified);
     const granted = [...verified.policy.principalGrants.values()];
     if (granted.length !== 1 || granted[0]?.principalId !== config.principalId || granted[0]?.issuer !== config.issuerId ||
-        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...READ_SCOPES].sort())) throw new Error("Owner policy mismatch");
+        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...(writeProfile ? W1_SCOPES : READ_SCOPES)].sort())) throw new Error("Owner policy mismatch");
     const enabled = [...verified.policy.tools.values()].filter(t => t.enabled).map(t => t.tool).sort();
     const roots = verified.policy.filesystemRoots;
-    if (JSON.stringify(enabled) !== JSON.stringify([...READ_TOOLS].sort()) ||
-        roots.length !== 2 || roots.some(root => root.write === true || root.denyRelativePaths.length !== 0) ||
-        !roots.some(root => root.rootId === "owner-home" && root.contentRead === true) ||
-        !roots.some(root => root.rootId === "system-metadata" && root.path === "/" && root.contentRead === false) ||
-        verified.policy.killSwitches.mutations !== true || verified.policy.killSwitches.process !== false ||
-        verified.policy.killSwitches.network !== false || verified.policy.killSwitches.gui !== true ||
-        verified.policy.killSwitches.destructive !== true || verified.policy.killSwitches.privileged !== true) {
-      throw new Error("Read-only boundary mismatch");
+    if (writeProfile) {
+      assertW1Policy(verified.policy, config.principalId, config.issuerId);
+    } else {
+      if (JSON.stringify(enabled) !== JSON.stringify([...READ_TOOLS].sort()) ||
+          roots.length !== 2 || roots.some(root => root.write === true || root.denyRelativePaths.length !== 0) ||
+          !roots.some(root => root.rootId === "owner-home" && root.contentRead === true) ||
+          !roots.some(root => root.rootId === "system-metadata" && root.path === "/" && root.contentRead === false) ||
+          verified.policy.killSwitches.mutations !== true || verified.policy.killSwitches.process !== false ||
+          verified.policy.killSwitches.network !== false || verified.policy.killSwitches.gui !== true ||
+          verified.policy.killSwitches.destructive !== true || verified.policy.killSwitches.privileged !== true) {
+        throw new Error("Read-only boundary mismatch");
+      }
     }
     const bundle = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const validity = bundle.payload.trusted_edge_keys[0]!;
     broker = new Broker({ store, policy: verified.policy, edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "personal-edge", keyId: "personal-edge-1", key,
       notBeforeMs: validity.not_before_ms, expiresAtMs: validity.expires_at_ms }]) });
-    if (JSON.stringify([...broker.enabledRuntimeCapabilityNames()].sort()) !== JSON.stringify(READ_TOOLS)) throw new Error("Unexpected runtime capability");
+    const expectedTools = writeProfile ? W1_TOOLS : READ_TOOLS;
+    if (JSON.stringify([...broker.enabledRuntimeCapabilityNames()].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error("Unexpected runtime capability");
     approvalIssuerRuntime = await createPersonalApprovalIssuerRuntime({
       configPath: join(data, "approval-issuer.json"), dataRoot: data, runtimeRoot: runtime, store,
       uid: process.getuid!(), ...(process.getgid === undefined ? {} : { gid: process.getgid() })
     });
+    if (writeProfile !== (approvalIssuerRuntime !== undefined)) throw new Error("Personal approval boundary mismatch");
     const browserApprovalController = approvalIssuerRuntime === undefined ? undefined : createPersonalApprovalBrowserController({
       store, approvalIssuerRuntime, socketPath: join(runtime, "approval.sock")
     });
@@ -198,7 +226,7 @@ async function start(root: string) {
     await server.listen();
     await approvalIssuerRuntime?.channel.listen();
     await chmod(join(data, "broker.sqlite"), 0o600);
-    console.log(`Personal R1 read-only supervisor running; capabilities: ${READ_TOOLS.join(", ")}.`);
+    console.log(`Personal ${config.grantProfile} supervisor running; capabilities: ${expectedTools.join(", ")}.`);
     await stopped;
   } finally {
     stopping = true;
