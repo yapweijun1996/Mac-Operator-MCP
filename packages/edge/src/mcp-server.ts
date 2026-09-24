@@ -1,4 +1,4 @@
-import { BrokerError, CONTRACT_VERSION, PROTOCOL_VERSION, SCOPES, type BrokerFailure, type BrokerResult, type BrokerSuccess, type PrincipalContext } from "@mac-operator/contracts";
+import { BrokerError, CONTRACT_VERSION, isCompatibleVersionPair, isSupportedContractVersion, PROTOCOL_VERSION, SCOPES, type BrokerFailure, type BrokerResult, type BrokerSuccess, type PrincipalContext } from "@mac-operator/contracts";
 import {
   McpServer,
   fromJsonSchema,
@@ -155,7 +155,7 @@ function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry
   const capabilities = result.data.capabilities;
   if (!isPlainDataArray(capabilities, 128)) throw new Error("Broker capability response list is malformed");
   const data = result.data;
-  if (data.protocol_version !== PROTOCOL_VERSION || data.contract_version !== CONTRACT_VERSION) {
+  if (!isCompatibleVersionPair("capability_discovery", data.protocol_version, data.contract_version)) {
     throw new Error("Broker capability response version is incompatible");
   }
   const parsed = capabilities.map(parseCapability);
@@ -177,7 +177,7 @@ function readEnabledTools(result: BrokerSuccess, contracts: ToolContractRegistry
     if (!item.planned || !item.implemented) {
       throw new Error(`Broker capability state is inconsistent for ${item.name}`);
     }
-    if (item.contractVersion !== contract.schemaVersion || item.contractVersion !== CONTRACT_VERSION) {
+    if (item.contractVersion !== contract.schemaVersion || !isSupportedContractVersion(item.contractVersion)) {
       throw new Error(`Broker capability contract version is incompatible for ${item.name}`);
     }
     enabled.push(item.name);

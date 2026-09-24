@@ -551,6 +551,7 @@ function admitRunningJob(store: BrokerStore, jobId: string, requestId: string): 
   });
   const created = store.createJob({
     jobId,
+    edgeId: "edge-1",
     ownerPrincipalId: "principal-1",
     ownerSessionId: "session-1",
     tool: "mac_priv_service_control",

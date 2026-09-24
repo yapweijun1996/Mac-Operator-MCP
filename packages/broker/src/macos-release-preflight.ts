@@ -14,6 +14,7 @@ import {
 import {
   buildMacOsNotarizationAssessmentCommand,
   readMacOsNotarizationAssessment,
+  validateMacOsNotarizationReadback,
   type MacOsNotarizationReadback
 } from "./macos-notarization.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
@@ -81,6 +82,11 @@ export interface MacOsReleasePreflightEvidence {
   policy: "developer-id-notarized";
 }
 
+export interface MacOsReleasePreflightEvidenceExpectation {
+  artifactPath: string;
+  signature: CodeSignatureExpectation;
+}
+
 interface ArtifactCounts {
   files: number;
   directories: number;
@@ -138,6 +144,43 @@ export async function readMacOsReleaseArtifactSummary(
     fail("INVALID_ARGUMENT", "release artifact owner UID is invalid");
   }
   return summarizeArtifact(artifactPath, ownerUid, undefined, undefined);
+}
+
+/** Validate persisted release evidence before a privileged component consumes it. */
+export function validateMacOsReleasePreflightEvidence(
+  evidence: unknown,
+  expectation: MacOsReleasePreflightEvidenceExpectation
+): asserts evidence is MacOsReleasePreflightEvidence {
+  if (!isPlainDataRecord(evidence) || !hasExactKeys(evidence, ["artifact", "notarization", "policy", "signature"]) ||
+      evidence.policy !== "developer-id-notarized" || !isCanonicalArtifactPath(expectation.artifactPath) ||
+      !isPlainDataRecord(expectation.signature) || typeof expectation.signature.identifier !== "string" ||
+      typeof expectation.signature.teamIdentifier !== "string" || typeof expectation.signature.cdHash !== "string") {
+    fail("INVALID_RELEASE_POLICY", "release evidence expectation is malformed");
+  }
+  const artifact = evidence.artifact;
+  if (!isPlainDataRecord(artifact) || !hasExactKeys(artifact, ["artifactPath", "bytes", "device", "directories", "files", "inode", "mode", "sha256"]) ||
+      artifact.artifactPath !== expectation.artifactPath || typeof artifact.sha256 !== "string" || !SHA256_PATTERN.test(artifact.sha256) ||
+      !isPositiveSafeInteger(artifact.bytes) || !isPositiveSafeInteger(artifact.files) ||
+      typeof artifact.directories !== "number" || !Number.isSafeInteger(artifact.directories) || artifact.directories < 0 ||
+      typeof artifact.device !== "string" || artifact.device.length < 1 || artifact.device.length > 64 ||
+      typeof artifact.inode !== "string" || artifact.inode.length < 1 || artifact.inode.length > 64 ||
+      typeof artifact.mode !== "number" || !Number.isSafeInteger(artifact.mode) || artifact.mode < 0) {
+    fail("ARTIFACT_CHANGED", "release artifact evidence is malformed");
+  }
+  if (!isPlainDataRecord(evidence.signature) || !hasExactKeys(evidence.signature, ["artifactPath", "authority", "cdHash", "identifier", "signatureType", "teamIdentifier", "valid"]) ||
+      !isPlainDataRecord(evidence.notarization) || !hasExactKeys(evidence.notarization, ["artifactPath", "assessed", "origin", "source", "teamIdentifier"])) {
+    fail("SIGNATURE_MISMATCH", "release identity evidence is malformed");
+  }
+  try {
+    validateCodeSignatureReadback(expectation.signature, evidence.signature as unknown as CodeSignatureReadback, expectation.artifactPath);
+    validateMacOsNotarizationReadback(
+      evidence.notarization as unknown as MacOsNotarizationReadback,
+      expectation.artifactPath,
+      expectation.signature.teamIdentifier
+    );
+  } catch {
+    fail("SIGNATURE_MISMATCH", "release signature or notarization evidence is not valid");
+  }
 }
 
 function validateInput(input: MacOsReleasePreflightInput): void {
@@ -391,6 +434,16 @@ function assertIdentityStable(expected: ArtifactIdentity, actual: ArtifactIdenti
 
 function isCanonicalArtifactPath(path: string): boolean {
   return isAbsolute(path) && path !== "/" && !path.endsWith("/") && !path.includes("\0") && !path.includes("\r") && !path.includes("\n") && resolve(path) === path;
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
 async function readArtifactRealPath(path: string, expectedRootOrPath: string): Promise<string> {

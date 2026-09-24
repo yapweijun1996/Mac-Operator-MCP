@@ -8,6 +8,7 @@ import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-i
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore } from "./persistence.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import { validateOwnerSocketParentChain } from "./owner-socket-path.js";
 
 const STATUS_REQUEST_DOMAIN = "mac-operator-broker-status-request-v0.1\0";
 const STATUS_RESPONSE_DOMAIN = "mac-operator-broker-status-response-v0.1\0";
@@ -330,10 +331,36 @@ export function validateBrokerStatusReadback(status: BrokerServiceReadback): Bro
       !/^v?\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(status.contractVersion) ||
       !/^(?:policy-[1-9][0-9]*|\d+\.\d+(?:\.\d+)?(?:[-+].*)?)$/u.test(status.policyVersion) ||
       !isDenseArray(status.enabledCapabilities, 128) ||
-      status.enabledCapabilities.some((capability) => typeof capability !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(capability))) {
+      status.enabledCapabilities.some((capability) => typeof capability !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(capability)) ||
+      (status.audit !== undefined && !isValidAuditIntegrityReadback(status.audit))) {
     throw new BrokerError("EXECUTION_FAILED", "Broker status readback is malformed");
   }
-  return { ...status, enabledCapabilities: [...status.enabledCapabilities] };
+  return {
+    ...status,
+    enabledCapabilities: [...status.enabledCapabilities],
+    ...(status.audit === undefined ? {} : { audit: { ...status.audit } })
+  };
+}
+
+function isValidAuditIntegrityReadback(value: unknown): boolean {
+  if (!isPlainDataRecord(value)) return false;
+  const record = value as Record<string, unknown>;
+  const eventCount = record.eventCount;
+  const tailSequence = record.tailSequence;
+  const tailHash = record.tailHash;
+  const keys = Object.keys(record).sort().join(",");
+  const validEventCount = Number.isSafeInteger(eventCount) && (eventCount as number) >= 0;
+  const validTailSequence = tailSequence === null || (Number.isSafeInteger(tailSequence) && (tailSequence as number) >= 1);
+  const validTailHash = tailHash === null || (typeof tailHash === "string" && /^[a-f0-9]{64}$/u.test(tailHash));
+  if (keys !== "eventCount,format,keyedAnchor,tailHash,tailSequence" ||
+      record.format !== "mac-operator-audit-integrity-v1" ||
+      !validEventCount || !validTailSequence || !validTailHash ||
+      ((eventCount as number) === 0 && (tailSequence !== null || tailHash !== null)) ||
+      ((eventCount as number) > 0 && (tailSequence === null || tailHash === null)) ||
+      (record.keyedAnchor !== "verified" && record.keyedAnchor !== "not_configured")) {
+    return false;
+  }
+  return true;
 }
 
 export function authenticateBrokerStatusResponse(
@@ -373,11 +400,16 @@ export function authenticateBrokerStatusResponse(
 export async function validateBrokerStatusSocketTarget(socketPath: string): Promise<SocketPathIdentity> {
   if (!canonicalStatusPath(socketPath)) throw new BrokerError("AUTH_INVALID", "Broker status socket path is not canonical");
   const parentPath = dirname(socketPath);
-  const parent = await lstat(parentPath);
   const uid = process.getuid?.();
-  if (!parent.isDirectory() || parent.isSymbolicLink() || uid === undefined || parent.uid !== uid || (parent.mode & 0o077) !== 0) {
+  if (uid === undefined) {
     throw new BrokerError("AUTH_INVALID", "Broker status socket directory failed ownership or permission checks");
   }
+  try {
+    await validateOwnerSocketParentChain(socketPath, uid);
+  } catch {
+    throw new BrokerError("AUTH_INVALID", "Broker status socket parent chain failed ownership or permission checks");
+  }
+  const parent = await lstat(parentPath);
   const canonicalParent = await realpath(parentPath).catch(() => { throw new BrokerError("AUTH_INVALID", "Broker status socket directory could not be canonicalized"); });
   const canonicalParentStat = await lstat(canonicalParent);
   if (!canonicalParentStat.isDirectory() || canonicalParentStat.dev !== parent.dev || canonicalParentStat.ino !== parent.ino) {

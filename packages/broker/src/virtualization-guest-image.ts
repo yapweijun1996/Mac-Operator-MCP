@@ -3,6 +3,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
 import type { VirtualizationGuestIdentity } from "./task-runner.js";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -86,6 +87,7 @@ export async function loadVirtualizationGuestImage(
       ? "Virtualization guest image is not a protected system-published regular file"
       : "Virtualization guest image is not a protected owner-only regular file");
   }
+  if (publication === "system-published") assertNoExtendedAcl(canonicalPath!);
   await assertProtectedDirectory(canonicalParent!, currentUid, publication);
 
   const handle = await open(canonicalPath!, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => undefined);
@@ -146,6 +148,7 @@ async function assertProtectedDirectory(path: string, currentUid: number, public
           directory.uid !== 0 || (directory.mode & 0o022) !== 0) {
         throw new BrokerError("POLICY_DENIED", "Virtualization guest image directory is not system-published");
       }
+      assertNoExtendedAcl(cursor);
       const parent = dirname(cursor);
       if (parent === cursor) break;
       cursor = parent;
@@ -156,6 +159,18 @@ async function assertProtectedDirectory(path: string, currentUid: number, public
   if (!directory || !directory.isDirectory() || directory.isSymbolicLink() ||
       directory.uid !== currentUid || (directory.mode & 0o077) !== 0) {
     throw new BrokerError("POLICY_DENIED", "Virtualization guest image directory is not protected");
+  }
+}
+
+function assertNoExtendedAcl(path: string): void {
+  let result: unknown;
+  try {
+    result = loadNativePeerAdapter().hasExtendedAclEntries(path);
+  } catch {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest image ACL could not be verified");
+  }
+  if (result !== false) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest image or directory has an extended ACL");
   }
 }
 

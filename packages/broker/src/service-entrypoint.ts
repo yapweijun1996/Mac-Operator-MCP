@@ -1,4 +1,5 @@
 import type { LocalBrokerRuntime, LocalBrokerRuntimeState } from "./runtime.js";
+import type { AuditIntegrityReadback } from "./audit-integrity.js";
 
 export interface BrokerServiceMetadata {
   component: "mac-operator-broker";
@@ -14,6 +15,8 @@ export interface BrokerServiceReadback extends BrokerServiceMetadata {
   runtimeState: LocalBrokerRuntimeState;
   nativeTransportRequired: true;
   enabledCapabilities: readonly string[];
+  /** Optional owner-only, non-sensitive audit integrity summary. */
+  audit?: AuditIntegrityReadback;
 }
 
 export interface ServiceSignalSource {
@@ -34,7 +37,8 @@ export class BrokerServiceEntrypoint {
   constructor(
     private readonly runtime: LocalBrokerRuntime,
     private readonly metadata: BrokerServiceMetadata,
-    private readonly enabledCapabilities: readonly string[] = []
+    private readonly enabledCapabilities: readonly string[] = [],
+    private readonly readAudit?: () => AuditIntegrityReadback
   ) {
     if (!/^v?\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(metadata.contractVersion)) {
       throw new Error("Broker service contract version is invalid");
@@ -47,6 +51,9 @@ export class BrokerServiceEntrypoint {
     }
     if (enabledCapabilities.some((capability) => typeof capability !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(capability))) {
       throw new Error("Broker service capability readback is invalid");
+    }
+    if (readAudit !== undefined && typeof readAudit !== "function") {
+      throw new Error("Broker service audit readback callback is invalid");
     }
   }
 
@@ -93,13 +100,15 @@ export class BrokerServiceEntrypoint {
   }
 
   readback(): BrokerServiceReadback {
-    return {
+    const readback: BrokerServiceReadback = {
       ...this.metadata,
       state: this.stateValue,
       runtimeState: this.runtime.state,
       nativeTransportRequired: true,
       enabledCapabilities: [...this.enabledCapabilities]
     };
+    if (this.readAudit !== undefined) readback.audit = this.readAudit();
+    return readback;
   }
 
   async runUntilSignal(signals: ServiceSignalSource): Promise<void> {

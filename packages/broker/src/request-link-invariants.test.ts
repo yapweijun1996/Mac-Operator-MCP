@@ -16,6 +16,7 @@ function requestInput(requestId: string) {
   return {
     requestId,
     edgeId: "edge-1",
+    edgeKeyId: "edge-1:edge-key-1",
     nonce: `nonce-${requestId}`,
     nonceExpiresAtMs: NOW + 60_000,
     principalId: "principal-1",
@@ -46,9 +47,16 @@ function approvalInput(approvalId: string) {
   };
 }
 
-function jobInput(jobId: string, ownerPrincipalId = "principal-1") {
+function jobInput(
+  jobId: string,
+  ownerPrincipalId = "principal-1",
+  edgeId: string | null = "edge-1",
+  edgeKeyId = edgeId === null ? undefined : `${edgeId}:edge-key-1`
+) {
   return {
     jobId,
+    ...(edgeId === null ? {} : { edgeId }),
+    ...(edgeKeyId === undefined ? {} : { edgeKeyId }),
     ownerPrincipalId,
     ownerSessionId: "session-1",
     tool: TOOL,
@@ -107,6 +115,22 @@ test("Request-to-Job linkage requires a matching owned Job", async () => {
       (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
     );
     assert.equal(store.requestRecord("request:link-runtime")?.jobId, null);
+    store.createJob(jobInput("job:link-other-edge", "principal-1", "edge-2"));
+    assert.throws(
+      () => store.linkRequestJob("request:link-runtime", "job:link-other-edge", NOW + 3),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    store.createJob(jobInput("job:link-no-edge", "principal-1", null));
+    assert.throws(
+      () => store.linkRequestJob("request:link-runtime", "job:link-no-edge", NOW + 3),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    store.createJob(jobInput("job:link-wrong-key", "principal-1", "edge-1", "edge-1:edge-key-2"));
+    assert.throws(
+      () => store.linkRequestJob("request:link-runtime", "job:link-wrong-key", NOW + 3),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(store.requestRecord("request:link-runtime")?.jobId, null);
     assert.throws(
       () => store.linkRequestJob("request:link-runtime", "job:missing", NOW + 3),
       (error: unknown) => error instanceof BrokerError && error.errorClass === "TARGET_NOT_FOUND"
@@ -144,6 +168,77 @@ test("missing persisted Request Approval linkage fails closed during startup", a
   }
 });
 
+test("persisted approval and Job targets remain bound to intent when terminal result refines the target", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-link-final-target-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  let storeOpen = true;
+  try {
+    prepareIntent(store, "request:link-final-target", "approval:link-final-target");
+    store.createJob(jobInput("job:link-final-target"));
+    store.linkRequestJob("request:link-final-target", "job:link-final-target", NOW + 3);
+    const started = store.startJob("job:link-final-target", "principal-1", 0, NOW + 4);
+    store.finishJob("job:link-final-target", "principal-1", started.revision, {
+      state: "unknown", resultClass: "unknown", finishedAtMs: NOW + 5
+    });
+    store.failRequest({
+      requestId: "request:link-final-target",
+      principalId: "principal-1",
+      tool: TOOL,
+      eventType: "completion",
+      decision: "allow",
+      resultClass: "UNKNOWN_OUTCOME",
+      targetRef: "path:/private/tmp/canonical-target",
+      policyVersion: "policy-0.1",
+      evidence: {},
+      timestampMs: NOW + 6
+    });
+    store.close();
+    storeOpen = false;
+    const reopened = new BrokerStore(databasePath);
+    try {
+      assert.equal(reopened.requestRecord("request:link-final-target")?.targetRef, "path:/private/tmp/canonical-target");
+      assert.equal(reopened.requestRecord("request:link-final-target")?.jobId, "job:link-final-target");
+      assert.equal(reopened.approvalRecord("approval:link-final-target")?.usedCount, 1);
+      assert.equal(reopened.ownedJob("job:link-final-target", "principal-1")?.targetRef, TARGET_REF);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    if (storeOpen) store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("persisted Request Approval target mismatch against its intent fails closed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-link-intent-target-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  prepareIntent(store, "request:link-intent-target", "approval:link-intent-target");
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE approvals SET target_ref = ? WHERE approval_id = ?")
+        .run("path:other-workspace", "approval:link-intent-target");
+    } finally {
+      database.close();
+    }
+    let reopened: BrokerStore | undefined;
+    try {
+      assert.throws(
+        () => { reopened = new BrokerStore(databasePath); },
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE" &&
+          error.message === "Stored Request Approval linkage is inconsistent"
+      );
+    } finally {
+      reopened?.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mismatched persisted Request Job linkage fails closed during startup", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-link-job-"));
   const databasePath = join(directory, "broker.sqlite");
@@ -170,6 +265,71 @@ test("mismatched persisted Request Job linkage fails closed during startup", asy
       reopened?.close();
     }
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("persisted Request and Job Edge-key provenance must match during startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-link-edge-key-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  prepareIntent(store, "request:link-edge-key", "approval:link-edge-key");
+  store.createJob(jobInput("job:link-edge-key"));
+  store.linkRequestJob("request:link-edge-key", "job:link-edge-key", NOW + 3);
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE jobs SET owner_edge_key_id = ? WHERE job_id = ?")
+        .run("edge-1:edge-key-2", "job:link-edge-key");
+    } finally {
+      database.close();
+    }
+    let reopened: BrokerStore | undefined;
+    try {
+      assert.throws(
+        () => { reopened = new BrokerStore(databasePath); },
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+      );
+    } finally {
+      reopened?.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("persisted successful Request cannot point to a non-terminal Job", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-link-state-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  let storeClosed = false;
+  try {
+    prepareIntent(store, "request:link-state", "approval:link-state");
+    store.createJob(jobInput("job:link-state"));
+    store.linkRequestJob("request:link-state", "job:link-state", NOW + 3);
+    store.close();
+    storeClosed = true;
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare(`
+        UPDATE requests SET state = 'SUCCEEDED', result_class = 'IDEMPOTENT_REUSE'
+        WHERE request_id = ?
+      `).run("request:link-state");
+    } finally {
+      database.close();
+    }
+    let reopened: BrokerStore | undefined;
+    try {
+      assert.throws(
+        () => { reopened = new BrokerStore(databasePath); },
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+      );
+    } finally {
+      reopened?.close();
+    }
+  } finally {
+    if (!storeClosed) store.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

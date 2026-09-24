@@ -4,10 +4,12 @@ import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-cre
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 import { loadPrivilegedHelperKeyConfigWithoutBroker, PrivilegedHelperKeyManager } from "./privileged-helper-keyring.js";
 import {
+  BrokerStorePrivilegedHelperReplayGuard,
   PrivilegedHelperIpcServer,
   type PrivilegedHelperAdapter,
   type PrivilegedHelperIpcServerOptions,
   type PrivilegedHelperReplayGuard,
+  type UnsignedPrivilegedHelperJobReadbackRequest,
   type PrivilegedHelperStatusReadback,
   type UnsignedPrivilegedHelperCommand
 } from "./privileged-helper.js";
@@ -15,6 +17,7 @@ import type { BrokerStore } from "./persistence.js";
 import type { NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { PrivilegedHelperAuthorityClient, type PrivilegedHelperAuthorityPoller } from "./privileged-helper-authority-ipc.js";
 import { LaunchdReadbackError, parseLaunchdJobReadback } from "./launchd-readback.js";
+import { PrivilegedHelperReplayLedger } from "./privileged-helper-replay-ledger.js";
 
 export type PrivilegedHelperRuntimeState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
@@ -26,7 +29,8 @@ export type PrivilegedHelperStartupErrorCode =
   | "HELPER_SERVICE_UNAVAILABLE"
   | "HELPER_PROCESS_NOT_RUNNING"
   | "HELPER_PROCESS_IDENTITY_UNAVAILABLE"
-  | "HELPER_AUTHORITY_UNAVAILABLE";
+  | "HELPER_AUTHORITY_UNAVAILABLE"
+  | "HELPER_REPLAY_GUARD_UNAVAILABLE";
 
 export class PrivilegedHelperStartupError extends Error {
   readonly code: PrivilegedHelperStartupErrorCode;
@@ -48,11 +52,18 @@ export interface PrivilegedHelperRuntimeOptions {
   authoritySocketPath?: string;
   /** Optional additional local control socket paths that must remain distinct. */
   reservedSocketPaths?: readonly string[];
+  /** Optional shared-group access for explicitly configured helper listeners. */
+  socketGroupGid?: number;
+  /** Exact Broker-user ACL used by production Launchd factories. */
+  socketPeerUid?: number;
   /** Production helper startup requires native peer credentials and identity. */
   peerPolicy: NativePeerPolicy;
+  /** Must survive helper restarts whenever privileged operations are enabled. */
   replayGuard: PrivilegedHelperReplayGuard;
   adapter: PrivilegedHelperAdapter;
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
+  /** Optional final Broker/helper authority gate for UNKNOWN Job readback. */
+  authorizeReadback?: (request: UnsignedPrivilegedHelperJobReadbackRequest) => void | Promise<void>;
   /** Optional separately authenticated Broker authority poll channel. */
   authorityPoller?: PrivilegedHelperAuthorityPoller;
   authorityPollIntervalMs?: number;
@@ -60,7 +71,7 @@ export interface PrivilegedHelperRuntimeOptions {
   readStatus?: () => PrivilegedHelperStatusReadback;
   /** Broker-owned final authority gate for status reads. */
   authorizeStatus?: () => void;
-  serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "replayGuard" | "adapter" | "authorizeCommand" | "readStatus" | "authorizeStatus">;
+  serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "socketGroupGid" | "socketPeerUid" | "replayGuard" | "adapter" | "authorizeCommand" | "authorizeReadback" | "readStatus" | "authorizeStatus">;
 }
 
 /**
@@ -69,6 +80,8 @@ export interface PrivilegedHelperRuntimeOptions {
  * authenticated authority channel before dispatching enabled operations.
  */
 export interface PrivilegedHelperRuntimeKeyMaterialOptions {
+  /** Root-owned package directory; the replay ledger is created below its state directory. */
+  helperRoot: string;
   helperKeyConfigPath: string;
   /** Canonical helper executable used for Keychain ACL binding when configured. */
   keychainTrustedExecutablePath?: string;
@@ -78,18 +91,22 @@ export interface PrivilegedHelperRuntimeKeyMaterialOptions {
   /** Broker-owned authority polling socket; required when an adapter is enabled. */
   authoritySocketPath?: string;
   reservedSocketPaths?: readonly string[];
+  /** Optional shared-group access for explicitly configured helper listeners. */
+  socketGroupGid?: number;
+  /** Exact Broker-user ACL used by production Launchd factories. */
+  socketPeerUid?: number;
   /** Broker identity for both the helper command and authority poll channels. */
   peerPolicy: NativePeerPolicy;
-  replayGuard: PrivilegedHelperReplayGuard;
   adapter: PrivilegedHelperAdapter;
   /** Local command gate. Broker authority remains mandatory through polling. */
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
+  authorizeReadback?: (request: UnsignedPrivilegedHelperJobReadbackRequest) => void | Promise<void>;
   /** No poller injection is accepted; enabled adapters are wired to this socket. */
   authorityPollIntervalMs?: number;
   readStatus?: () => PrivilegedHelperStatusReadback;
   authorizeStatus?: () => void;
   keyAuthorityCheck?: () => void;
-  serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "replayGuard" | "adapter" | "authorizeCommand" | "readStatus" | "authorizeStatus">;
+  serverOptions?: Omit<PrivilegedHelperIpcServerOptions, "authenticationKey" | "socketPath" | "peerPolicy" | "socketGroupGid" | "socketPeerUid" | "replayGuard" | "adapter" | "authorizeCommand" | "authorizeReadback" | "readStatus" | "authorizeStatus">;
 }
 
 export interface LaunchdHelperIdentityCommandExecutor {
@@ -252,14 +269,15 @@ export async function captureLaunchdBrokerProcessIdentity(
  * process identity; it must match the exact per-user Broker LaunchAgent.
  */
 export async function createPrivilegedHelperRuntimeForLaunchdBroker(
-  options: Omit<PrivilegedHelperRuntimeOptions, "peerPolicy"> & {
+  options: Omit<PrivilegedHelperRuntimeOptions, "peerPolicy" | "socketGroupGid" | "socketPeerUid"> & {
     brokerServiceId: string;
     expectedBrokerUid: number;
-    expectedBrokerGid?: number;
+    expectedBrokerGid: number;
     commandExecutor?: LaunchdHelperIdentityCommandExecutor;
   }
 ): Promise<PrivilegedHelperRuntime> {
   const { brokerServiceId, expectedBrokerUid, expectedBrokerGid, commandExecutor, ...runtimeOptions } = options;
+  validateExpectedBrokerGid(expectedBrokerGid);
   const identity = await captureLaunchdBrokerProcessIdentity({
     brokerServiceId,
     expectedBrokerUid,
@@ -267,9 +285,40 @@ export async function createPrivilegedHelperRuntimeForLaunchdBroker(
   });
   return createPrivilegedHelperRuntimeFromActiveKeyConfig({
     ...runtimeOptions,
+    socketPeerUid: expectedBrokerUid,
     peerPolicy: {
       expectedUid: expectedBrokerUid,
-      ...(expectedBrokerGid === undefined ? {} : { expectedGid: expectedBrokerGid }),
+      expectedGid: expectedBrokerGid,
+      allowedProcessIdentity: identity
+    }
+  });
+}
+
+/**
+ * Production-shaped root-helper startup. The Broker peer identity is captured
+ * from the exact LaunchAgent before protected helper key material is opened.
+ */
+export async function createPrivilegedHelperRuntimeFromKeyMaterialForLaunchdBroker(
+  options: Omit<PrivilegedHelperRuntimeKeyMaterialOptions, "peerPolicy" | "socketGroupGid" | "socketPeerUid"> & {
+    brokerServiceId: string;
+    expectedBrokerUid: number;
+    expectedBrokerGid: number;
+    commandExecutor?: LaunchdHelperIdentityCommandExecutor;
+  }
+): Promise<PrivilegedHelperRuntime> {
+  const { brokerServiceId, expectedBrokerUid, expectedBrokerGid, commandExecutor, ...runtimeOptions } = options;
+  validateExpectedBrokerGid(expectedBrokerGid);
+  const identity = await captureLaunchdBrokerProcessIdentity({
+    brokerServiceId,
+    expectedBrokerUid,
+    ...(commandExecutor === undefined ? {} : { commandExecutor })
+  });
+  return createPrivilegedHelperRuntimeFromKeyMaterial({
+    ...runtimeOptions,
+    socketPeerUid: expectedBrokerUid,
+    peerPolicy: {
+      expectedUid: expectedBrokerUid,
+      expectedGid: expectedBrokerGid,
       allowedProcessIdentity: identity
     }
   });
@@ -284,6 +333,7 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
 ): Promise<PrivilegedHelperRuntime> {
   validateSocketBoundary(options);
   validateHelperPeerPolicy(options.peerPolicy);
+  requireDurableHelperReplayGuard(options.replayGuard, options.adapter);
   const manager = new PrivilegedHelperKeyManager(options.helperKeyConfigPath, options.helperKeyStore);
   let authorityPoller = options.authorityPoller;
   try {
@@ -310,9 +360,12 @@ export async function createPrivilegedHelperRuntimeFromActiveKeyConfig(
       ...(options.serverOptions ?? {}),
       socketPath: options.socketPath,
       peerPolicy: options.peerPolicy,
+      ...(options.socketGroupGid === undefined ? {} : { socketGroupGid: options.socketGroupGid }),
+      ...(options.socketPeerUid === undefined ? {} : { socketPeerUid: options.socketPeerUid }),
       replayGuard: options.replayGuard,
       adapter: options.adapter,
       authorizeCommand: options.authorizeCommand,
+      ...(options.authorizeReadback === undefined ? {} : { authorizeReadback: options.authorizeReadback }),
       ...(authorityPoller === undefined ? {} : { authorityPoller }),
       ...(options.authorityPollIntervalMs === undefined ? {} : { authorityPollIntervalMs: options.authorityPollIntervalMs }),
       ...(options.readStatus === undefined ? {} : { readStatus: options.readStatus }),
@@ -342,6 +395,15 @@ export async function createPrivilegedHelperRuntimeFromKeyMaterial(
 ): Promise<PrivilegedHelperRuntime> {
   validateSocketBoundary(options);
   validateHelperPeerPolicy(options.peerPolicy);
+  let replayGuard: PrivilegedHelperReplayLedger;
+  try {
+    replayGuard = new PrivilegedHelperReplayLedger(options.helperRoot);
+  } catch (error) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_REPLAY_GUARD_UNAVAILABLE",
+      error instanceof Error ? error.message : "Privileged helper replay ledger could not be opened"
+    );
+  }
   let loaded: Awaited<ReturnType<typeof loadPrivilegedHelperKeyConfigWithoutBroker>> | undefined;
   let authorityPoller: PrivilegedHelperAuthorityPoller | undefined;
   let server: PrivilegedHelperIpcServer | undefined;
@@ -387,9 +449,12 @@ export async function createPrivilegedHelperRuntimeFromKeyMaterial(
       socketPath: options.socketPath,
       authenticationKey: loaded.key.key,
       peerPolicy: options.peerPolicy,
-      replayGuard: options.replayGuard,
+      ...(options.socketGroupGid === undefined ? {} : { socketGroupGid: options.socketGroupGid }),
+      ...(options.socketPeerUid === undefined ? {} : { socketPeerUid: options.socketPeerUid }),
+      replayGuard,
       adapter: options.adapter,
       authorizeCommand: options.authorizeCommand,
+      ...(options.authorizeReadback === undefined ? {} : { authorizeReadback: options.authorizeReadback }),
       keyAuthorityCheck: assertConfiguredKeyUsable,
       ...(authorityPoller === undefined ? {} : { authorityPoller }),
       ...(options.authorityPollIntervalMs === undefined ? {} : { authorityPollIntervalMs: options.authorityPollIntervalMs }),
@@ -407,6 +472,18 @@ export async function createPrivilegedHelperRuntimeFromKeyMaterial(
     throw new PrivilegedHelperStartupError(
       "HELPER_KEY_CONFIG_UNAVAILABLE",
       error instanceof Error ? error.message : "Privileged helper key material could not be loaded"
+    );
+  }
+}
+
+function requireDurableHelperReplayGuard(
+  replayGuard: PrivilegedHelperReplayGuard,
+  adapter: PrivilegedHelperAdapter
+): void {
+  if (adapter.available && !(replayGuard instanceof BrokerStorePrivilegedHelperReplayGuard || replayGuard instanceof PrivilegedHelperReplayLedger)) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_REPLAY_GUARD_UNAVAILABLE",
+      "Enabled privileged helper operations require a trusted durable replay guard"
     );
   }
 }
@@ -440,6 +517,22 @@ function validateHelperPeerPolicy(peerPolicy: NativePeerPolicy): void {
     throw new PrivilegedHelperStartupError(
       "HELPER_PEER_POLICY_INVALID",
       "Privileged helper startup requires a non-root Broker peer identity"
+    );
+  }
+  if (peerPolicy.expectedGid !== undefined &&
+      (!Number.isSafeInteger(peerPolicy.expectedGid) || peerPolicy.expectedGid < 0 || peerPolicy.expectedGid > 2_147_483_647)) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_PEER_POLICY_INVALID",
+      "Privileged helper startup requires a valid Broker peer group identity"
+    );
+  }
+}
+
+function validateExpectedBrokerGid(expectedBrokerGid: number): void {
+  if (!Number.isSafeInteger(expectedBrokerGid) || expectedBrokerGid < 0 || expectedBrokerGid > 2_147_483_647) {
+    throw new PrivilegedHelperStartupError(
+      "HELPER_PEER_POLICY_INVALID",
+      "Privileged helper production startup requires the Broker primary group identity"
     );
   }
 }

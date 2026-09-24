@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
-import { CONTRACT_VERSION, SCOPES, decodeUtf8Strict, parseJsonStrict } from "@mac-operator/contracts";
+import { APPROVAL_POLICIES, CONTRACT_VERSION, SCOPES, decodeUtf8Strict, parseJsonStrict, validateToolContractSafety } from "@mac-operator/contracts";
 import { isPlainDataRecord } from "./plain-record.js";
 import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
 
@@ -36,9 +36,10 @@ const REQUIRED_CONTRACT_KEYS = new Set([
 ]);
 const CAPABILITY_LEVELS = new Set(["L0", "L1", "L2", "L3", "L4", "L5"]);
 const SAFETY_CLASSES = new Set(["read_only", "writes_local", "destructive", "privileged"]);
+const APPROVAL_POLICY_VALUES = new Set(APPROVAL_POLICIES);
 const AUDIT_CLASSES = new Set([
   "observe", "filesystem_read", "developer_read", "execution", "filesystem_write", "git_write",
-  "app_control", "gui_control", "privileged"
+  "service_control", "app_control", "gui_control", "privileged"
 ]);
 const DELIVERY_WAVES = new Set(["wave_1", "wave_2", "wave_3", "wave_4", "wave_5"]);
 const POSTCONDITION_STRATEGIES = new Set([
@@ -159,9 +160,11 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
   }
   enumField(record, "capability_level", CAPABILITY_LEVELS, file);
   enumField(record, "safety_class", SAFETY_CLASSES, file);
+  enumField(record, "approval_policy", APPROVAL_POLICY_VALUES, file);
   enumField(record, "audit_class", AUDIT_CLASSES, file);
   enumField(record, "tool_delivery_wave", DELIVERY_WAVES, file);
   if (record.implementation_status !== "planned") throw new Error(`${file}: implementation_status is invalid`);
+  validateToolContractSafety(record, file);
   const scopes = record.required_scopes;
   if (!Array.isArray(scopes) || scopes.length === 0 || scopes.length > SCOPES.length ||
       new Set(scopes).size !== scopes.length || scopes.some((scope) => typeof scope !== "string" || !SCOPES.includes(scope as typeof SCOPES[number]))) {

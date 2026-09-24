@@ -33,6 +33,7 @@ test("JWT verifier fails closed for expiry, audience, missing token identity, an
   const { publicKey, privateKey } = await generateKeyPair("RS256");
   const jwks = await createJwks(publicKey);
   const revoked: JwtRevocationContext[] = [];
+  const propagated: JwtRevocationContext[] = [];
   const verifier = createJwtAccessTokenVerifier({
     issuer,
     issuerId: "issuer-prod",
@@ -41,18 +42,23 @@ test("JWT verifier fails closed for expiry, audience, missing token identity, an
     revocationCheck: async (context) => {
       revoked.push(context);
       return true;
+    },
+    onRevoked: async (context) => {
+      propagated.push(context);
     }
   });
   const expectedExpiresAt = Math.floor(Date.now() / 1_000) + 300;
   const token = await createToken(privateKey, { expiresAt: expectedExpiresAt });
   await assertInvalid(verifier, token);
   assert.deepEqual(revoked, [{
+    scopes: ["mac.control.read", "mac.app.control"],
     issuerId: "issuer-prod",
     subject: "principal-1",
     sessionId: "session-1",
     tokenId: "token-1",
     expiresAt: expectedExpiresAt
   }]);
+  assert.deepEqual(propagated, revoked);
 
   const wrongAudience = await createToken(privateKey, { audience: "https://other.example.test/mcp" });
   await assertInvalid(createJwtAccessTokenVerifier({ issuer, issuerId: "issuer-prod", resourceServerUrl, jwks }), wrongAudience);

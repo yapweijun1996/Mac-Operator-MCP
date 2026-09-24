@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdir, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { mkdtemp } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { loadNativePeerAdapter } from "./peer-credentials.js";
+import { OwnerSocketParentChainError, validateUserAclSocketParentChain } from "./owner-socket-path.js";
 import {
   applyPrivilegedHelperPlistPlan,
   buildPrivilegedHelperPackageExecutionPlan,
@@ -19,6 +22,7 @@ import {
   observePrivilegedHelperPackageReadback,
   readPrivilegedHelperExistingServiceSnapshot,
   readPrivilegedHelperCodeSignature,
+  readPrivilegedHelperSocketReadback,
   readPrivilegedHelperAuthoritySocketReadback,
   requiredPrivilegedHelperFilesystemPaths,
   PrivilegedHelperPackageError,
@@ -31,6 +35,7 @@ import {
 } from "./privileged-helper-package.js";
 import { LaunchdReadbackError, type LaunchdJobReadback } from "./launchd-readback.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
+import { PrivilegedHelperReplayLedger } from "./privileged-helper-replay-ledger.js";
 import { AllowlistedPrivilegedHelper, InMemoryPrivilegedHelperReplayGuard, PrivilegedHelperIpcServer } from "./privileged-helper.js";
 
 const root = "/Library/Application Support/MacOperator/PrivilegedHelper";
@@ -38,8 +43,8 @@ const base: PrivilegedHelperPackagePlanInput = {
   helperRoot: root,
   service: {
     label: "com.mac-operator.privileged-helper",
-    program: `${root}/bin/mac-operator-privileged-helper`,
-    programArguments: [`${root}/bin/mac-operator-privileged-helper`],
+    program: `${root}/MacOperatorPrivilegedHelper.app/Contents/MacOS/mac-operator-privileged-helper`,
+    programArguments: [`${root}/MacOperatorPrivilegedHelper.app/Contents/MacOS/mac-operator-privileged-helper`],
     workingDirectory: root,
     stdoutPath: `${root}/logs/helper.out.log`,
     stderrPath: `${root}/logs/helper.err.log`
@@ -67,6 +72,29 @@ function authoritySocketForPlan(plan: { helperAuthoritySocketPath: string; broke
   };
 }
 
+function helperSocketForPlan(plan: { helperSocketPath: string; brokerPeer: { uid: number } }) {
+  return {
+    path: plan.helperSocketPath,
+    ownerUid: 0,
+    ownerGid: 0,
+    mode: 0o600,
+    device: 1,
+    inode: 2,
+    aclPeerUid: plan.brokerPeer.uid
+  };
+}
+
+function brokerSocketForPlan(plan: { brokerSocketPath: string; brokerPeer: { uid: number; gid?: number } }) {
+  return {
+    path: plan.brokerSocketPath,
+    ownerUid: plan.brokerPeer.uid,
+    ownerGid: plan.brokerPeer.gid ?? 20,
+    mode: 0o600,
+    device: 2,
+    inode: 3
+  };
+}
+
 test("privileged helper package plan is a fixed root-domain native LaunchDaemon", () => {
   const plan = buildPrivilegedHelperPackagePlan(base);
   assert.equal(plan.domain, "system");
@@ -82,6 +110,7 @@ test("privileged helper package plan is a fixed root-domain native LaunchDaemon"
   assert.deepEqual(plan.rollback.bootout.args, ["bootout", "system/com.mac-operator.privileged-helper"]);
   assert.equal(plan.install.file.ownerUid, 0);
   assert.equal(plan.install.file.mode, 0o600);
+  assert.equal(plan.replayLedgerPath, join(root, "state", "replay-ledger.sqlite"));
   assert.equal(plan.adapterAvailable, false);
   assert.equal(plan.helperAuthoritySocketPath, base.helperAuthoritySocketPath);
   assert.deepEqual(plan.enabledCapabilities, []);
@@ -119,18 +148,16 @@ test("privileged helper package capability release is explicit and implementatio
   assert.deepEqual(plan.enabledCapabilities, ["mac_priv_service_control"]);
   assert.deepEqual(plan.capabilityRelease?.enabledCapabilities, ["mac_priv_service_control"]);
 
-  assert.throws(
-    () => buildPrivilegedHelperPackagePlan({
-      ...base,
-      capabilityRelease: {
-        source: "host-verified",
-        adapterAvailable: true,
-        enabledCapabilities: ["mac_priv_package_install"],
-        evidenceRef: "evidence/helper.md"
-      }
-    }),
-    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_CAPABILITY_RELEASE"
-  );
+  const packagePlan = buildPrivilegedHelperPackagePlan({
+    ...base,
+    capabilityRelease: {
+      source: "host-verified",
+      adapterAvailable: true,
+      enabledCapabilities: ["mac_priv_package_install"],
+      evidenceRef: "evidence/helper.md"
+    }
+  });
+  assert.deepEqual(packagePlan.enabledCapabilities, ["mac_priv_package_install"]);
   assert.throws(
     () => buildPrivilegedHelperPackagePlan({
       ...base,
@@ -156,13 +183,11 @@ test("privileged helper capability release derives only from the adapter project
     enabledCapabilities: ["mac_priv_service_control"],
     evidenceRef: "evidence/helper.md"
   });
-  assert.throws(
-    () => createPrivilegedHelperCapabilityRelease({
-      available: true,
-      enabledCapabilities: ["mac_priv_package_install"]
-    }, "evidence/helper.md"),
-    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_CAPABILITY_RELEASE"
-  );
+  const packageRelease = createPrivilegedHelperCapabilityRelease({
+    available: true,
+    enabledCapabilities: ["mac_priv_package_install"]
+  }, "evidence/helper.md");
+  assert.deepEqual(packageRelease.enabledCapabilities, ["mac_priv_package_install"]);
 });
 
 test("privileged helper package plan rejects user-domain, interpreter, socket, and signature escapes", () => {
@@ -172,6 +197,17 @@ test("privileged helper package plan rejects user-domain, interpreter, socket, a
   );
   assert.throws(
     () => buildPrivilegedHelperPackagePlan({ ...base, service: { ...base.service, program: `${root}/bin/node`, programArguments: [`${root}/bin/node`] } }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PACKAGE_PATH"
+  );
+  assert.throws(
+    () => buildPrivilegedHelperPackagePlan({
+      ...base,
+      service: {
+        ...base.service,
+        program: `${root}/bin/unsigned-helper`,
+        programArguments: [`${root}/bin/unsigned-helper`]
+      }
+    }),
     (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "INVALID_PACKAGE_PATH"
   );
   assert.throws(
@@ -229,6 +265,8 @@ test("privileged helper package readback binds root service, Broker peer, and di
       inode: "2"
     },
     launchd: plan.launchd,
+    helperSocket: helperSocketForPlan(plan),
+    brokerSocket: brokerSocketForPlan(plan),
     authoritySocket,
     helper: {
       component: "mac-operator-privileged-helper" as const,
@@ -258,6 +296,29 @@ test("privileged helper package readback binds root service, Broker peer, and di
     notarization: notarizationReadback(plan)
   };
   validatePrivilegedHelperPackageReadback(plan, readback);
+  assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, {
+      ...readback,
+      helperSocket: { ...readback.helperSocket, ownerUid: plan.brokerPeer.uid }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
+  for (const helperSocket of [
+    { ...readback.helperSocket, mode: 0o620 },
+    { ...readback.helperSocket, ownerGid: plan.brokerPeer.gid + 1 }
+  ]) {
+    assert.throws(
+      () => validatePrivilegedHelperPackageReadback(plan, { ...readback, helperSocket }),
+      (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+    );
+  }
+  assert.throws(
+    () => validatePrivilegedHelperPackageReadback(plan, {
+      ...readback,
+      brokerSocket: { ...readback.brokerSocket, path: `${plan.brokerSocketPath}.replacement` }
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+  );
   const { notarization: omittedNotarization, ...missingNotarization } = readback;
   void omittedNotarization;
   assert.throws(
@@ -280,6 +341,8 @@ test("privileged helper package readback binds root service, Broker peer, and di
     },
     processIdentity: readback.processIdentity,
     plist: readback.plist,
+    helperSocket: readback.helperSocket,
+    brokerSocket: readback.brokerSocket,
     authoritySocket: readback.authoritySocket,
     helper: readback.helper,
     signature: readback.signature,
@@ -303,6 +366,8 @@ test("privileged helper package readback binds root service, Broker peer, and di
       },
       processIdentity: readback.processIdentity,
       plist: readback.plist,
+      helperSocket: readback.helperSocket,
+      brokerSocket: readback.brokerSocket,
       authoritySocket: readback.authoritySocket,
       helper: readback.helper,
       signature: readback.signature
@@ -366,11 +431,15 @@ test("privileged helper package readback binds root service, Broker peer, and di
   let launchdReads = 0;
   let processReads = 0;
   let plistReads = 0;
+  let helperSocketReads = 0;
+  let brokerSocketReads = 0;
   let authoritySocketReads = 0;
   const observer: PrivilegedHelperPackageReadbackObserver = {
     readLaunchd: async () => { launchdReads += 1; return launchdSource; },
     readProcessIdentity: (pid) => { processReads += 1; return { pid, startTimeMicros: 987654321 }; },
     readPlist: async () => { plistReads += 1; return readback.plist; },
+    readHelperSocket: async () => { helperSocketReads += 1; return readback.helperSocket; },
+    readBrokerSocket: async () => { brokerSocketReads += 1; return readback.brokerSocket; },
     readRuntime: async () => readback.helper,
     readAuthoritySocket: async () => { authoritySocketReads += 1; return readback.authoritySocket; },
     readSignature: async () => readback.signature,
@@ -380,6 +449,8 @@ test("privileged helper package readback binds root service, Broker peer, and di
   assert.equal(launchdReads, 2);
   assert.equal(processReads, 2);
   assert.equal(plistReads, 2);
+  assert.equal(helperSocketReads, 1);
+  assert.equal(brokerSocketReads, 1);
   assert.equal(authoritySocketReads, 1);
 
   let swappedReads = 0;
@@ -428,6 +499,141 @@ test("privileged helper authority socket readback binds Broker ownership and rej
     );
   } finally {
     await new Promise<void>((resolvePromise) => server.close(() => resolvePromise())).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("privileged helper socket readback rejects group-readable endpoints", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-socket-mode-"));
+  const socketPath = join(directory, "broker.sock");
+  const outsideDirectory = join(directory, "outside");
+  const linkedParent = join(directory, "linked-parent");
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  const server = createServer();
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolvePromise);
+    });
+    await chmod(socketPath, 0o620);
+    await assert.rejects(
+      readPrivilegedHelperSocketReadback(socketPath, uid, gid, "Broker"),
+      (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+    );
+    await mkdir(outsideDirectory);
+    const linkedSocketPath = join(linkedParent, "broker.sock");
+    const linkedServer = createServer();
+    try {
+      await new Promise<void>((resolvePromise, reject) => {
+        linkedServer.once("error", reject);
+        linkedServer.listen(join(outsideDirectory, "broker.sock"), resolvePromise);
+      });
+      await chmod(join(outsideDirectory, "broker.sock"), 0o600);
+      await symlink(outsideDirectory, linkedParent);
+      await assert.rejects(
+        readPrivilegedHelperSocketReadback(linkedSocketPath, uid, gid, "Broker"),
+        (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+      );
+    } finally {
+      await new Promise<void>((resolvePromise) => linkedServer.close(() => resolvePromise())).catch(() => undefined);
+    }
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise())).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("privileged helper socket readback permits only the authenticated Broker group boundary", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-group-socket-"));
+  const runDirectory = join(directory, "run");
+  const socketPath = join(runDirectory, "helper.sock");
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined || uid < 1) throw new Error("POSIX identity is unavailable");
+  const server = createServer();
+  try {
+    await mkdir(runDirectory, { mode: 0o700 });
+    await chmod(runDirectory, 0o710);
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolvePromise);
+    });
+    await chmod(socketPath, 0o620);
+    const readback = await readPrivilegedHelperSocketReadback(socketPath, uid, gid, "privileged helper", {
+      kind: "group",
+      peerUid: uid,
+      peerGid: gid
+    });
+    assert.equal(readback.ownerUid, uid);
+    assert.equal(readback.ownerGid, gid);
+    assert.equal(readback.mode, 0o620);
+
+    await chmod(runDirectory, 0o750);
+    await assert.rejects(
+      readPrivilegedHelperSocketReadback(socketPath, uid, gid, "privileged helper", {
+        kind: "group",
+        peerUid: uid,
+        peerGid: gid
+      }),
+      (error: unknown) => error instanceof PrivilegedHelperPackageError && error.code === "SERVICE_MISMATCH"
+    );
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise())).catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("privileged helper socket readback verifies an exact user ACL on an owner-only socket", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-user-acl-socket-"));
+  const runDirectory = join(directory, "run");
+  const socketPath = join(runDirectory, "helper.sock");
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined || uid < 1) throw new Error("POSIX identity is unavailable");
+  const native = loadNativePeerAdapter();
+  let listenerFd: number | undefined;
+  try {
+    await mkdir(runDirectory, { mode: 0o700 });
+    await chmod(runDirectory, 0o711);
+    listenerFd = native.createUnixListener(socketPath, 16, undefined, uid);
+    const readback = await readPrivilegedHelperSocketReadback(socketPath, uid, process.getegid?.() ?? gid, "privileged helper", {
+      kind: "user-acl",
+      peerUid: uid,
+      peerGid: gid
+    });
+    assert.equal(readback.ownerUid, uid);
+    assert.equal(readback.mode, 0o600);
+    assert.equal(readback.aclPeerUid, uid);
+
+    execFileSync("/bin/chmod", ["+a", "user:root allow readattr", socketPath], {
+      env: { PATH: "/usr/bin:/bin" },
+      stdio: "pipe"
+    });
+    assert.throws(() => native.getUnixSocketAclPeerUid(socketPath));
+
+    execFileSync("/bin/chmod", ["+a", "user:root allow search", runDirectory], {
+      env: { PATH: "/usr/bin:/bin" },
+      stdio: "pipe"
+    });
+    await assert.rejects(
+      validateUserAclSocketParentChain(
+        socketPath,
+        uid,
+        process.getegid?.() ?? gid,
+        uid,
+        gid,
+        (parentPath) => {
+          const hasEntries = native.hasExtendedAclEntries(parentPath);
+          if (typeof hasEntries !== "boolean") throw new Error("Native parent ACL result is invalid");
+          return hasEntries;
+        }
+      ),
+      (error: unknown) => error instanceof OwnerSocketParentChainError && error.code === "UNSAFE"
+    );
+  } finally {
+    if (listenerFd !== undefined) native.closeUnixDescriptor(listenerFd);
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -508,6 +714,8 @@ test("privileged helper host observer wires bounded launchd and native readback 
     launchdExecutor,
     processIdentityReader: (pid) => ({ pid, startTimeMicros: 987654321 }),
     readPlist: async () => plist,
+    readHelperSocket: async () => ({ ...helperSocketForPlan(plan) }),
+    readBrokerSocket: async () => ({ ...brokerSocketForPlan(plan) }),
     readAuthoritySocket: async () => ({ ...authoritySocketForPlan(plan) }),
     readSignature: async () => signature,
     notarizationExecutor: { run: async () => successfulProcessResult(notarizationOutput(plan)) }
@@ -584,7 +792,7 @@ test("released helper package readback binds authenticated capability status", a
   const server = new PrivilegedHelperIpcServer({
     socketPath,
     authenticationKey: key,
-    replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+    replayGuard: new PrivilegedHelperReplayLedger(await realpath(directory)),
     authorizeCommand: () => undefined,
     authorizeStatus: () => undefined,
     readStatus: () => ({
@@ -648,6 +856,8 @@ test("released helper package readback binds authenticated capability status", a
       device: "1",
       inode: "2"
     }),
+    readHelperSocket: async () => ({ ...helperSocketForPlan(plan) }),
+    readBrokerSocket: async () => ({ ...brokerSocketForPlan(plan) }),
     readAuthoritySocket: async () => ({ ...authoritySocketForPlan(plan) }),
     readSignature: async () => ({
       artifactPath: plan.signedArtifactPath,

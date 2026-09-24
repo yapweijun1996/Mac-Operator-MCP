@@ -66,18 +66,28 @@ function successfulProcessResult(): ProcessExecutionResult {
   };
 }
 
-function adapterFixture(states: SafeServiceStatus["state"][], commands: ProcessExecutionRequest[] = []): PrivilegedServiceControlAdapter {
+function adapterFixture(
+  states: SafeServiceStatus["state"][],
+  commands: ProcessExecutionRequest[] = [],
+  enablementStates: ("enabled" | "disabled")[] = [],
+  commandResult: ProcessExecutionResult = successfulProcessResult()
+): PrivilegedServiceControlAdapter {
   const inspector: ServiceInspector = {
     inspect: async () => {
       const next = states.shift();
       if (next === undefined) throw new BrokerError("EXECUTION_FAILED", "fixture readback exhausted");
       return status(next);
+    },
+    inspectEnablement: async () => {
+      const next = enablementStates.shift();
+      if (next === undefined) throw new BrokerError("EXECUTION_FAILED", "fixture enablement readback exhausted");
+      return next;
     }
   };
   const commandRunner: PrivilegedServiceControlCommandRunner = {
     run: async (request) => {
       commands.push(request);
-      return successfulProcessResult();
+      return commandResult;
     }
   };
   return new PrivilegedServiceControlAdapter({ enabled: true, commandRunner, inspector, now: () => NOW });
@@ -87,6 +97,15 @@ test("privileged service-control adapter is disabled by default", () => {
   const adapter = new PrivilegedServiceControlAdapter();
   assert.equal(adapter.available, false);
   assert.deepEqual(adapter.enabledCapabilities, []);
+});
+
+test("privileged service-control native wiring requires explicit fixed launchctl boundary acceptance", () => {
+  const adapter = new PrivilegedServiceControlAdapter({
+    enabled: true,
+    systemPublishedExecutablePathAccepted: true
+  });
+  const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  assert.equal(adapter.available, runningAsRoot && process.platform === "darwin");
 });
 
 test("privileged service-control adapter uses fixed argv and verifies the postcondition", async () => {
@@ -123,9 +142,13 @@ test("privileged service-control adapter never publishes an unverifiable state",
   assert.equal(commands.length, 1);
 });
 
-test("privileged service-control adapter rejects unsupported actions and cancellation before launch", async () => {
+test("privileged service-control adapter rejects missing enablement readback and cancellation before launch", async () => {
   const commands: ProcessExecutionRequest[] = [];
-  const unsupported = adapterFixture(["stopped"], commands);
+  const unsupported = new PrivilegedServiceControlAdapter({
+    enabled: true,
+    commandRunner: { run: async (request) => { commands.push(request); return successfulProcessResult(); } },
+    inspector: { inspect: async () => status("stopped") }
+  });
   await assert.rejects(
     () => unsupported.execute(command("enable"), { timeoutMs: 5_000, shouldCancel: () => false }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "UNSUPPORTED_CAPABILITY"
@@ -138,6 +161,84 @@ test("privileged service-control adapter rejects unsupported actions and cancell
     (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
   );
   assert.equal(commands.length, 0);
+});
+
+test("privileged service enablement uses fixed actions, idempotency, and verified readback", async () => {
+  const commands: ProcessExecutionRequest[] = [];
+  const enabling = adapterFixture([], commands, ["disabled", "enabled"]);
+  const enabled = await enabling.execute(command("enable", "enabled"), { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(enabled.resultClass, "SUCCEEDED");
+  assert.equal(enabled.verification.status, "verified");
+  assert.deepEqual(enabled.evidence, { pre_state: "disabled", post_state: "enabled", idempotent: false });
+  assert.deepEqual(commands[0]?.args, ["enable", "system/com.example.test"]);
+  assert.equal(commands[0]?.executable, "/bin/launchctl");
+  assert.deepEqual(commands[0]?.environment, {});
+
+  const disabling = adapterFixture([], commands, ["enabled", "disabled"]);
+  const disabled = await disabling.execute(command("disable", "disabled"), { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(disabled.resultClass, "SUCCEEDED");
+  assert.deepEqual(disabled.evidence, { pre_state: "enabled", post_state: "disabled", idempotent: false });
+  assert.deepEqual(commands[1]?.args, ["disable", "system/com.example.test"]);
+
+  const alreadyDisabled = adapterFixture([], commands, ["disabled", "disabled"]);
+  const unchanged = await alreadyDisabled.execute(command("disable", "disabled"), { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(unchanged.resultClass, "SUCCEEDED");
+  assert.equal(unchanged.evidence.idempotent, true);
+  assert.equal(commands.length, 2);
+});
+
+test("privileged service enablement refuses an unverifiable postcondition", async () => {
+  const commands: ProcessExecutionRequest[] = [];
+  const adapter = adapterFixture([], commands, ["disabled", "disabled"]);
+  const result = await adapter.execute(command("enable", "enabled"), { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(result.resultClass, "VERIFICATION_FAILED");
+  assert.equal(result.verification.status, "failed");
+  assert.deepEqual(commands[0]?.args, ["enable", "system/com.example.test"]);
+});
+
+test("privileged service mutations classify interrupted command outcomes as unknown", async () => {
+  const interruptedResults: ProcessExecutionResult["resultClass"][] = ["CANCELLED", "TIMEOUT", "OUTPUT_LIMIT", "UNKNOWN_OUTCOME"];
+  for (const resultClass of interruptedResults) {
+    const commands: ProcessExecutionRequest[] = [];
+    const result = { ...successfulProcessResult(), resultClass } as ProcessExecutionResult;
+    const adapter = adapterFixture([], commands, ["disabled"], result);
+    await assert.rejects(
+      () => adapter.execute(command("enable", "enabled"), { timeoutMs: 10_000, shouldCancel: () => false }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME"
+    );
+    assert.equal(commands.length, 1);
+  }
+});
+
+test("privileged service Job readback verifies enabled and disabled postconditions", async () => {
+  const makeReadbackRequest = (action: "enable" | "disable", expected: "enabled" | "disabled") => {
+    const value = command(action, expected);
+    return {
+      protocolVersion: value.protocolVersion,
+      contractVersion: value.contractVersion,
+      requestId: "request:readback-service-control-1",
+      nonce: "readback-nonce-service-control-1",
+      timestampMs: NOW,
+      expiresAtMs: NOW + 30_000,
+      kind: "job_readback" as const,
+      jobId: "job:service-control-1",
+      principalId: "principal-service-control-1",
+      sessionId: "session-service-control-1",
+      operation: "service_control" as const,
+      targetRef: value.targetRef,
+      payload: value.payload,
+      payloadDigest: value.payloadDigest,
+      policyVersion: value.policyVersion
+    };
+  };
+  const enabling = adapterFixture([], [], ["enabled"]);
+  const enabled = await enabling.readback(makeReadbackRequest("enable", "enabled"), { timeoutMs: 5_000, shouldCancel: () => false });
+  assert.equal(enabled.postcondition, "matches");
+  assert.equal(enabled.evidence.post_state, "enabled");
+
+  const disabling = adapterFixture([], [], ["enabled"]);
+  const disabled = await disabling.readback(makeReadbackRequest("disable", "disabled"), { timeoutMs: 5_000, shouldCancel: () => false });
+  assert.equal(disabled.postcondition, "mismatch");
 });
 
 test("privileged service-control adapter requires a matching expected state", async () => {

@@ -2,11 +2,12 @@ import { lstat, realpath, chmod } from "node:fs/promises";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, decodeUtf8Strict, parseJsonStrict, parseJsonUtf8Strict, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, decodeUtf8Strict, isSupportedProtocolVersion, parseJsonStrict, parseJsonUtf8Strict, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore, RevocationKind, SwitchName } from "./persistence.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import { validateOwnerSocketParentChain } from "./owner-socket-path.js";
 
 const AUTHORITY_CONTROL_DOMAIN = "mac-operator-authority-control-v0.1\0";
 const AUTHORITY_CONTROL_RESPONSE_DOMAIN = "mac-operator-authority-control-response-v0.1\0";
@@ -18,7 +19,7 @@ const REVOCATION_KINDS: readonly RevocationKind[] = AUTHORITY_CONTROL_REVOCATION
 export type AuthorityControlOperation = "set_switch" | "revoke" | "read";
 
 export interface UnsignedAuthorityControlCommand {
-  protocolVersion: "0.1";
+  protocolVersion: typeof PROTOCOL_VERSION;
   requestId: string;
   nonce: string;
   nonceExpiresAtMs: number;
@@ -289,7 +290,7 @@ function unsignedAuthorityControlCandidate(raw: unknown): UnsignedAuthorityContr
   ]);
   if (Object.keys(record).some((key) => !allowed.has(key)) || typeof record.authenticationProof !== "string") return undefined;
   const candidate: UnsignedAuthorityControlCommand = {
-    protocolVersion: record.protocolVersion as "0.1",
+      protocolVersion: record.protocolVersion as typeof PROTOCOL_VERSION,
     requestId: record.requestId as string,
     nonce: record.nonce as string,
     nonceExpiresAtMs: record.nonceExpiresAtMs as number,
@@ -440,7 +441,7 @@ export class AuthorityControlIpcClient {
     const nowMs = this.now();
     const nonce = `authority-client-nonce:${randomBytes(24).toString("hex")}`;
     return {
-      protocolVersion: "0.1",
+      protocolVersion: PROTOCOL_VERSION,
       requestId: `authority-client-request:${randomBytes(18).toString("hex")}`,
       nonce,
       nonceExpiresAtMs: nowMs + this.maxRequestAgeMs,
@@ -505,11 +506,16 @@ export async function validateAuthorityControlSocketTarget(socketPath: string): 
     throw new BrokerError("AUTH_INVALID", "Authority control IPC socket path is not canonical");
   }
   const parentPath = dirname(socketPath);
-  const parent = await lstat(parentPath);
   const currentUid = process.getuid?.();
-  if (!parent.isDirectory() || parent.isSymbolicLink() || currentUid === undefined || parent.uid !== currentUid || (parent.mode & 0o077) !== 0) {
+  if (currentUid === undefined) {
     throw new BrokerError("AUTH_INVALID", "Authority control IPC socket directory failed ownership or permission checks");
   }
+  try {
+    await validateOwnerSocketParentChain(socketPath, currentUid);
+  } catch {
+    throw new BrokerError("AUTH_INVALID", "Authority control IPC socket parent chain failed ownership or permission checks");
+  }
+  const parent = await lstat(parentPath);
   const canonicalParent = await realpath(parentPath).catch(() => { throw new BrokerError("AUTH_INVALID", "Authority control IPC socket directory could not be canonicalized"); });
   const canonicalParentStat = await lstat(canonicalParent);
   if (!canonicalParentStat.isDirectory() || canonicalParentStat.dev !== parent.dev || canonicalParentStat.ino !== parent.ino) {
@@ -576,7 +582,7 @@ function parseSignedAuthorityControlCommand(value: unknown): {
     throw new BrokerError("PRECONDITION_FAILED", "Authority control command envelope is malformed");
   }
   const unsigned: UnsignedAuthorityControlCommand = {
-    protocolVersion: record.protocolVersion as "0.1",
+    protocolVersion: record.protocolVersion as typeof PROTOCOL_VERSION,
     requestId: record.requestId as string,
     nonce: record.nonce as string,
     nonceExpiresAtMs: record.nonceExpiresAtMs as number,
@@ -597,7 +603,7 @@ function parseSignedAuthorityControlCommand(value: unknown): {
 }
 
 export function validateUnsignedAuthorityControlCommand(command: UnsignedAuthorityControlCommand): void {
-  if (command.protocolVersion !== "0.1" ||
+  if (!isSupportedProtocolVersion(command.protocolVersion) ||
       !/^[A-Za-z0-9._:-]{1,128}$/u.test(command.requestId) ||
       !/^[A-Za-z0-9._:-]{16,128}$/u.test(command.nonce) ||
       !Number.isSafeInteger(command.nonceExpiresAtMs) || command.nonceExpiresAtMs < 0 ||
@@ -647,7 +653,7 @@ function isAsciiWhitespace(byte: number): boolean {
   return byte === 0x09 || byte === 0x0a || byte === 0x0d || byte === 0x20;
 }
 
-function signAuthorityControlResponse(
+export function signAuthorityControlResponse(
   response: AuthorityControlIpcResponse,
   command: UnsignedAuthorityControlCommand,
   authenticationKey: Buffer

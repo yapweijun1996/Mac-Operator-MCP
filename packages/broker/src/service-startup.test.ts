@@ -21,6 +21,7 @@ import { PolicyBundleVerifier, PolicyManager, type PolicyDocument, type SignedPo
 import {
   createBrokerServiceFromStartupConfig,
   brokerSandboxProtectedFilesystemRoots,
+  createUserServiceControlRuntime,
   loadBrokerServiceStartupConfig,
   validateBrokerServiceStartupConfig,
   type BrokerServiceStartupConfig
@@ -37,6 +38,15 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../.
 test("Broker service startup config is strict, canonical, and root-bound", () => {
   const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
   assert.deepEqual(validateBrokerServiceStartupConfig(config), config);
+  const archiveConfig = {
+    ...config,
+    auditArchiveKeyService: "com.mac-operator.test",
+    auditArchiveKeyAccount: "audit-export:service-startup",
+    auditArchiveKeyId: "audit-export-key-1"
+  };
+  assert.deepEqual(validateBrokerServiceStartupConfig(archiveConfig), archiveConfig);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, auditArchiveKeyService: "com.mac-operator.test" }), /complete/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...archiveConfig, auditArchiveKeyAccount: config.auditAnchorKeyAccount }), /reuses the audit anchor/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, unexpected: true } as never), /unknown field/u);
   const accessor = { ...config } as Record<string, unknown>;
   Object.defineProperty(accessor, "packageRoot", { enumerable: true, get: () => config.packageRoot });
@@ -49,13 +59,106 @@ test("Broker service startup config is strict, canonical, and root-bound", () =>
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, policyBundlePath: "/Users/operator/other/policy.json" }), /configured roots/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, edgeServiceId: "system/com.mac-operator.edge" }), /launchd identity/u);
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, expectedEdgeUid: 0 }), /positive non-root/u);
+  const exposureConfig = {
+    ...config,
+    guiPublicEnablement: "production" as const,
+    developerPublicEnablement: "staging-only" as const,
+    hostReadinessEvidencePath: join(config.dataRoot, "host-readiness.json")
+  };
+  assert.deepEqual(validateBrokerServiceStartupConfig(exposureConfig), exposureConfig);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, guiPublicEnablement: "enabled" } as never), /guiPublicEnablement is invalid/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, developerPublicEnablement: true } as never), /developerPublicEnablement is invalid/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, hostReadinessEvidencePath: "/Users/operator/other/host-readiness.json" }), /configured roots/u);
   assert.equal(validateBrokerServiceStartupConfig({ ...config, guestAttestationKeyConfigPath: join(config.dataRoot, "guest-attestation-keys.json") }).guestAttestationKeyConfigPath, join(config.dataRoot, "guest-attestation-keys.json"));
   assert.throws(() => validateBrokerServiceStartupConfig({ ...config, guestAttestationKeyConfigPath: "/Users/operator/other/guest-keys.json" }), /configured roots/u);
+  const approvalConfig = {
+    ...config,
+    approvalIssuerKeyConfigPath: join(config.dataRoot, "approval-keys.json"),
+    approvalIssuerSocketPath: join(config.runtimeRoot, "approval.sock")
+  };
+  assert.deepEqual(validateBrokerServiceStartupConfig(approvalConfig), approvalConfig);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, approvalIssuerSocketPath: join(config.runtimeRoot, "approval.sock") }), /complete/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...approvalConfig, approvalIssuerSocketPath: config.brokerSocketPath }), /socket/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...approvalConfig, approvalIssuerKeyConfigPath: "/Users/operator/other/approval-keys.json" }), /configured roots/u);
+  const rootHelperConfig = {
+    ...config,
+    rootHelperSnapshotKeyConfigPath: join(config.dataRoot, "root-helper-keys.json"),
+    rootHelperSnapshotSocketPath: join(config.runtimeRoot, "root-helper-snapshot.sock"),
+    rootHelperSnapshotAuthoritySocketPath: join(config.runtimeRoot, "root-helper-authority.sock"),
+    rootHelperSnapshotServiceId: "system/com.mac-operator.root-helper-snapshot" as const
+  };
+  assert.deepEqual(validateBrokerServiceStartupConfig(rootHelperConfig), rootHelperConfig);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, rootHelperSnapshotAuthoritySocketPath: join(config.runtimeRoot, "root-helper-authority.sock") }), /complete/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...rootHelperConfig, rootHelperSnapshotAuthoritySocketPath: "/Users/operator/authority.sock" }), /configured roots/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...rootHelperConfig, rootHelperSnapshotSocketPath: rootHelperConfig.brokerSocketPath }), /paths or service identity/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...rootHelperConfig, rootHelperSnapshotServiceId: "gui/501/com.mac-operator.root-helper-snapshot" as never }), /paths or service identity/u);
+  const authorityConfig = {
+    ...config,
+    authorityControlKeyConfigPath: join(config.dataRoot, "authority-keys.json"),
+    authorityControlSocketPath: join(config.runtimeRoot, "authority.sock"),
+    authorityOperatorSocketPath: join(config.runtimeRoot, "authority-operator.sock"),
+    authorityControlServiceId: `gui/${config.expectedEdgeUid}/com.mac-operator.authority` as const
+  };
+  assert.deepEqual(validateBrokerServiceStartupConfig(authorityConfig), authorityConfig);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...config, authorityControlSocketPath: join(config.runtimeRoot, "authority.sock") }), /complete/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...authorityConfig, authorityControlKeyConfigPath: "/Users/operator/other/authority-keys.json" }), /configured roots/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...authorityConfig, authorityControlSocketPath: config.brokerSocketPath }), /socket or service identity/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...authorityConfig, authorityOperatorSocketPath: config.brokerSocketPath }), /socket or service identity/u);
+  assert.throws(() => validateBrokerServiceStartupConfig({ ...authorityConfig, authorityControlServiceId: "gui/502/com.mac-operator.authority" as never }), /service user/u);
 });
 
 test("Broker startup derives protected sandbox roots from its validated state roots", () => {
   const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
   assert.deepEqual(brokerSandboxProtectedFilesystemRoots(config), [config.packageRoot, config.dataRoot, config.runtimeRoot]);
+});
+
+test("user-service startup assembly remains fail-closed without fixed host evidence", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("user-service startup assembly is a macOS boundary");
+    return;
+  }
+  const root = await mkdtemp(join(tmpdir(), "mss-user-service-runtime-"));
+  const store = new BrokerStore(join(root, "broker.sqlite"));
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  const startup = {
+    uid,
+    bindings: [{
+      serviceId: `gui/${uid}/com.mac-operator.startup-test`,
+      sourceRevision: "abcdef1",
+      plistPath: "/Users/operator/Library/LaunchAgents/com.mac-operator.startup-test.plist",
+      program: "/usr/bin/true",
+      arguments: ["/usr/bin/true"]
+    }],
+    authorizedPrincipalIds: ["principal-1"],
+    sourceRevisionReader: { read: async () => "abcdef1" }
+  };
+  try {
+    const disabled = createUserServiceControlRuntime({
+      store,
+      startup: { ...startup, enabled: false },
+      now: () => Date.now()
+    });
+    assert.equal(disabled.adapter.available, false);
+    assert.equal(disabled.executor.available, false);
+    assert.throws(
+      () => createUserServiceControlRuntime({
+        store,
+        startup: { ...startup, enabled: true },
+        now: () => Date.now()
+      }),
+      /requires an available adapter/u
+    );
+    const enabled = createUserServiceControlRuntime({
+      store,
+      startup: { ...startup, enabled: true, systemPublishedExecutablePathAccepted: true },
+      now: () => Date.now()
+    });
+    assert.equal(enabled.adapter.available, true);
+    assert.equal(enabled.executor.available, true);
+  } finally {
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("Broker startup rejects competing task isolation runners", async () => {
@@ -83,6 +186,65 @@ test("Broker startup rejects task profiles without an isolated runner", async ()
     }),
     /cannot configure task profiles without an isolated task runner/u
   );
+});
+
+test("Broker startup rejects production exposure without host readiness evidence", async () => {
+  const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime");
+  await assert.rejects(
+    createBrokerServiceFromStartupConfig({
+      config: { ...config, developerPublicEnablement: "production" },
+    }),
+    /requires host readiness evidence/u
+  );
+});
+
+test("Broker startup rejects a structurally valid but blocked host readiness record", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("host readiness startup is a macOS boundary");
+    return;
+  }
+  const root = await mkdtemp(join(tmpdir(), "mhr-"));
+  const dataRoot = join(root, "data");
+  const runtimeRoot = join(root, "runtime");
+  await mkdir(dataRoot, { mode: 0o700 });
+  await mkdir(runtimeRoot, { mode: 0o700 });
+  const canonicalDataRoot = await realpath(dataRoot);
+  const canonicalRuntimeRoot = await realpath(runtimeRoot);
+  const now = Date.now();
+  const evidencePath = join(canonicalDataRoot, "host-readiness.json");
+  const uid = process.getuid?.() ?? 501;
+  await writeFile(evidencePath, JSON.stringify({
+    schemaVersion: "0.1",
+    mechanism: "macos-host-readiness-v1",
+    status: "blocked",
+    failClosed: true,
+    capturedAtMs: now,
+    readyForRelease: false,
+    readyForGui: false,
+    persistentServiceVerified: false,
+    host: { platform: "darwin", arch: process.arch, ownerUid: uid },
+    signing: { status: "read", validIdentityCount: 0, developerIdCount: 0, ready: false },
+    gatekeeper: { status: "read", enabled: true },
+    accessibility: { status: "permission-denied", failClosed: true },
+    launchd: []
+  }), { mode: 0o600 });
+  try {
+    const config = baseConfig(repositoryRoot, canonicalDataRoot, canonicalRuntimeRoot);
+    assert.doesNotThrow(() => validateBrokerServiceStartupConfig({
+      ...config,
+      developerPublicEnablement: "production",
+      hostReadinessEvidencePath: evidencePath
+    }));
+    await assert.rejects(
+      createBrokerServiceFromStartupConfig({
+        config: { ...config, developerPublicEnablement: "production", hostReadinessEvidencePath: evidencePath },
+        now: () => now
+      }),
+      /release evidence is not ready/u
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("Broker startup rejects a malformed task profile registry", async () => {
@@ -232,6 +394,11 @@ test("Broker service startup restores signed authority before native runtime sta
       const statusReadback = await readBrokerStatus({ socketPath: config.statusSocketPath, authenticationKey: statusAuthenticationKey, now: () => now });
       assert.equal(statusReadback.state, "running");
       assert.equal(statusReadback.runtimeState, "running");
+      assert.equal(statusReadback.audit?.format, "mac-operator-audit-integrity-v1");
+      assert.ok((statusReadback.audit?.eventCount ?? 0) > 0);
+      assert.equal(statusReadback.audit?.tailSequence, statusReadback.audit?.eventCount);
+      assert.match(statusReadback.audit?.tailHash ?? "", /^[a-f0-9]{64}$/u);
+      assert.equal(statusReadback.audit?.keyedAnchor, "verified");
     } finally {
       statusAuthenticationKey.fill(0);
     }

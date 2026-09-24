@@ -52,6 +52,14 @@ test("HTTPS Edge rejects malformed transport and policy configuration before sta
     ...baseOptions(),
     oauthMetadata: { ...baseOptions().oauthMetadata, token_endpoint: "http://issuer.example.test/token" }
   }), /token endpoint.*HTTPS/u);
+  assert.throws(() => createHttpsMcpEdge({
+    ...baseOptions(),
+    requiredScopes: ["mac.control.read", "mac.control.read"]
+  }), /required scopes are invalid/u);
+  assert.throws(() => createHttpsMcpEdge({
+    ...baseOptions(),
+    requiredScopes: ["mac.unknown.read"]
+  }), /required scopes are invalid/u);
 });
 
 test("HTTPS Edge normalizes case and rejects host-list syntax smuggling", () => {
@@ -81,7 +89,14 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
   const publicJwk = await exportJWK(publicKey);
   const revokedTokenIds = new Set<string>();
   let brokerRevoked = false;
-  const accessToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read", "integration-token-1");
+  edgeOptions.requiredScopes = ["mac.control.read", "mac.system.read"];
+  const accessToken = await createAccessToken(
+    privateKey,
+    issuer,
+    edgeOptions.resourceServerUrl,
+    "mac.control.read mac.system.read",
+    "integration-token-1"
+  );
   edgeOptions.tokenVerifier = createJwtAccessTokenVerifier({
     issuer,
     issuerId: "issuer-1",
@@ -158,6 +173,12 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     const metadata = await metadataResponse.json() as { resource?: string; authorization_servers?: string[] };
     assert.equal(metadata.resource, edgeOptions.resourceServerUrl.href);
     assert.deepEqual(metadata.authorization_servers, ["https://issuer.example.test"]);
+    const rootMetadataResponse = await fetch(
+      new URL(`https://edge.example.test:${address.port}/.well-known/oauth-protected-resource`)
+    );
+    assert.equal(rootMetadataResponse.status, 200);
+    assert.equal(rootMetadataResponse.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await rootMetadataResponse.json(), metadata);
 
     const malformedJsonResponse = await fetch(
       new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
@@ -186,15 +207,16 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     assert.equal(invalidTokenResponse.status, 401);
     assert.match(invalidTokenResponse.headers.get("www-authenticate") ?? "", /invalid_token/u);
 
-    const scopeReducedToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.app.control", "scope-reduced-token");
+    const scopeReducedToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read", "scope-reduced-token");
     const scopeResponse = await fetch(
       new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
       createMcpAuthRequest(scopeReducedToken)
     );
     assert.equal(scopeResponse.status, 403);
     assert.match(scopeResponse.headers.get("www-authenticate") ?? "", /insufficient_scope/u);
+    assert.match(scopeResponse.headers.get("www-authenticate") ?? "", /mac\.control\.read mac\.system\.read/u);
 
-    const expiredToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read", "expired-token", Math.floor(Date.now() / 1_000) - 10);
+    const expiredToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read mac.system.read", "expired-token", Math.floor(Date.now() / 1_000) - 10);
     const expiredResponse = await fetch(
       new URL(`https://edge.example.test:${address.port}${edgeOptions.resourceServerUrl.pathname}`),
       createMcpAuthRequest(expiredToken)
@@ -212,7 +234,7 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     const brokerRevokedToken = await new SignJWT({
       sid: "session-2",
       azp: "client-2",
-      scope: "mac.control.read"
+      scope: "mac.control.read mac.system.read"
     })
       .setProtectedHeader({ alg: "RS256", kid: "integration-key", typ: "at+jwt" })
       .setIssuer(issuer.href)

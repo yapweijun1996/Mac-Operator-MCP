@@ -10,6 +10,7 @@ import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import {
   captureLaunchdEdgeProcessIdentity,
+  captureLaunchdAuthorityProcessIdentity,
   createMacOsNativeBrokerRuntimeForLaunchdEdge,
   createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndAuthority,
   createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndPrivilegedHelperAuthority,
@@ -60,6 +61,50 @@ test("launchd Edge identity capture retries only the xpcproxy bootstrap state", 
   assert.equal(commands.length, 2);
   assert.equal(commands[0]?.timeoutMs, 5_000);
   assert.ok((commands[1]?.timeoutMs ?? 0) > 0);
+});
+
+test("launchd Authority identity capture binds the fixed operator LaunchAgent", async () => {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  const serviceId = `gui/${uid}/com.mac-operator.authority`;
+  const identity = await captureLaunchdAuthorityProcessIdentity({
+    authorityServiceId: serviceId,
+    expectedUid: uid,
+    commandExecutor: new FakeLaunchdExecutor(success(`
+${serviceId} = {
+\ttype = LaunchAgent
+\tstate = running
+\tpid = ${process.pid}
+}
+`))
+  });
+  assert.equal(identity.pid, process.pid);
+  assert.ok(identity.startTimeMicros > 0);
+});
+
+test("launchd Authority identity capture rejects substitution and retries xpcproxy", async () => {
+  const uid = process.getuid?.();
+  if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
+  await assert.rejects(
+    captureLaunchdAuthorityProcessIdentity({
+      authorityServiceId: `gui/${uid}/com.mac-operator.other`,
+      expectedUid: uid,
+      commandExecutor: new FakeLaunchdExecutor(success(""))
+    }),
+    (error: unknown) => error instanceof NativeRuntimeStartupError && error.code === "AUTHORITY_SERVICE_INVALID"
+  );
+  const serviceId = `gui/${uid}/com.mac-operator.authority`;
+  const commands: ProcessExecutionRequest[] = [];
+  const executor = {
+    async run(command: ProcessExecutionRequest): Promise<ProcessExecutionResult> {
+      commands.push(command);
+      const state = commands.length === 1 ? "xpcproxy" : "running";
+      return success(`${serviceId} = {\n\ttype = LaunchAgent\n\tstate = ${state}\n\tpid = ${process.pid}\n}`);
+    }
+  };
+  const identity = await captureLaunchdAuthorityProcessIdentity({ authorityServiceId: serviceId, expectedUid: uid, commandExecutor: executor });
+  assert.equal(identity.pid, process.pid);
+  assert.equal(commands.length, 2);
 });
 
 test("launchd Edge identity capture rejects wrong domains, stopped services, and malformed identities", async () => {

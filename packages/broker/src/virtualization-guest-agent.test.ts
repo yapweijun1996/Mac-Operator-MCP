@@ -15,7 +15,7 @@ import {
 import { VirtualizationGuestAgent } from "./virtualization-guest-agent.js";
 
 const key = Buffer.alloc(32, 0x61);
-const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "macos-26.2-vz-1" } as const;
+const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "test-generic-efi-vz-1" } as const;
 const now = 1_800_000_000_000;
 
 function requestInput(requestId: string, nonce: string) {

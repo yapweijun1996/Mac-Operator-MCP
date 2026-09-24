@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
+import { DescriptorSnapshotAttestationSigner } from "./descriptor-snapshot-attestation.js";
+import { VirtualizationGuestVmLifecycle } from "./virtualization-guest-lifecycle.js";
 import { virtualizationGuestAttestationSigningPayload, type SignedVirtualizationGuestAttestation } from "./virtualization-guest-attestation.js";
-import { FailClosedTaskRunner, VirtualizationGuestTransportExecutor, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, virtualizationProfileDigest, virtualizationTaskDigest, type TaskExecutionResult, type VirtualizationGuestTransport, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
+import { assertTaskRunnerPublicEnablement, FailClosedTaskRunner, RootHelperSnapshotTaskRunner, VirtualizationGuestTransportExecutor, VirtualizationTaskRunner, requireTaskIsolationProof, validateTaskExecutionResult, validateTaskIsolationProof, validateVirtualizationGuestAttestation, virtualizationProfileDigest, virtualizationTaskDigest, type DescriptorSnapshotTaskRegistry, type TaskExecutionResult, type TaskIsolationProof, type VirtualizationGuestTransport, type VirtualizationGuestAttestation, type VirtualizationGuestIdentity } from "./task-runner.js";
 import type { LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
 
@@ -79,6 +81,36 @@ async function guestImageFixture(runtimeVersion: string): Promise<{ guest: Virtu
   };
 }
 
+function guestLifecycleFixture(guestIdentity: VirtualizationGuestIdentity, events: string[] = []): VirtualizationGuestVmLifecycle {
+  let bootNumber = 0;
+  return new VirtualizationGuestVmLifecycle({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    expectedGuestIdentity: guestIdentity,
+    adapter: {
+      available: true,
+      guestIdentity,
+      taskInstanceIsolation: "fresh-vm-object-per-task-v1",
+      async prepareTaskInstance() {
+        return { state: "stopped", guestIdentity, instanceId: `vm-test-${String(bootNumber + 1).padStart(8, "0")}` };
+      },
+      async start() {
+        bootNumber += 1;
+        const bootId = `boot-test-${String(bootNumber).padStart(8, "0")}`;
+        events.push("vm-started");
+        return { state: "running", guestIdentity, bootId };
+      },
+      async stop(input) {
+        events.push("vm-hard-stopped");
+        return { state: "stopped", guestIdentity, bootId: input.bootId };
+      },
+      async status() {
+        return { state: "stopped", guestIdentity, bootId: null };
+      }
+    }
+  });
+}
+
 test("default task runner is unavailable and fails closed", async () => {
   const runner = new FailClosedTaskRunner();
   assert.equal(runner.available, false);
@@ -86,6 +118,135 @@ test("default task runner is unavailable and fails closed", async () => {
     runner.run({} as never, { timeoutMs: 1, shouldCancel: () => false }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
+});
+
+test("production task exposure rejects an available staging runner", () => {
+  assert.doesNotThrow(() => assertTaskRunnerPublicEnablement(true, {
+    available: false,
+    publicEnablement: "unavailable"
+  }));
+  assert.throws(
+    () => assertTaskRunnerPublicEnablement(true, {
+      available: true,
+      publicEnablement: "staging-only"
+    }),
+    /production task runner release/u
+  );
+  assert.doesNotThrow(() => assertTaskRunnerPublicEnablement(true, {
+    available: true,
+    publicEnablement: "production"
+  }));
+});
+
+test("root-helper task runner binds one-shot descriptors and forwards ownership events", { skip: process.platform !== "darwin" }, async () => {
+  const keyPair = generateKeyPairSync("ed25519");
+  const signer = new DescriptorSnapshotAttestationSigner({ keyId: "root-helper-test-key", privateKey: keyPair.privateKey });
+  const processSnapshot = {
+    identity: { pid: 101, processGroupId: 101, startTimeMicros: 123_456 },
+    descendants: [],
+    ownershipProof: "sandbox-exec-no-fork-v1" as const
+  };
+  const registry: DescriptorSnapshotTaskRegistry = {
+    available: true,
+    async prepare(input) {
+      return {
+        snapshotRef: "snapshot:" + "1".repeat(48),
+        attestation: signer.sign({
+          schemaVersion: "0.1",
+          audience: "mac-operator-descriptor-helper-v0.1",
+          snapshotRef: "snapshot:" + "1".repeat(48),
+          profile: input.profile,
+          taskDescriptorDigest: input.taskDescriptorDigest,
+          argsDigest: input.argsDigest,
+          environmentDigest: input.environmentDigest,
+          filesystemRootsDigest: input.filesystemRootsDigest,
+          sandboxProfile: input.sandboxProfile,
+          networkPolicy: input.networkPolicy,
+          processTreePolicy: input.processTreePolicy,
+          credentialPolicy: "none",
+          immutableSelection: "revalidation-only",
+          executableContentSha256: "a".repeat(64),
+          executableIdentityDigest: "b".repeat(64),
+          cwdIdentityDigest: "c".repeat(64)
+        })
+      };
+    },
+    async withSnapshot(snapshot, callback) {
+      return callback({ executableFd: 11, cwdFd: 12, attestation: snapshot.attestation });
+    },
+    async close() {}
+  };
+  let receivedStarted = false;
+  let receivedChanged = false;
+  let dispatched = false;
+  const requestAuthority = {
+    admit() {},
+    release() {}
+  };
+  const runner = new RootHelperSnapshotTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: {
+      schemaVersion: "0.1",
+      sandboxMechanism: "sandbox-exec",
+      sandboxProfile: "root-helper-deny-default-v0.1",
+      filesystem: "enforced",
+      network: "enforced",
+      credentials: "isolated",
+      persistence: "isolated",
+      credentialIsolation: "sandbox-exec-empty-env-deny-secret-zones-v1",
+      processTree: "owned",
+      processTreePolicy: "single_process",
+      evidenceRef: "evidence://root-helper-task-runner",
+      executableSelection: "descriptor-snapshot-root-helper-v1"
+    } satisfies TaskIsolationProof,
+    snapshotRegistry: registry,
+    executor: {
+      available: true,
+      publicEnablement: "staging-only",
+      async run(request, control) {
+        dispatched = true;
+        assert.equal(control.requestAuthority, requestAuthority);
+        assert.equal(request.executableFd, 11);
+        assert.equal(request.cwdFd, 12);
+        control.onProcessStarted?.(processSnapshot);
+        control.onProcessOwnershipChanged?.(processSnapshot);
+        return {
+          state: "completed",
+          resultClass: "SUCCEEDED",
+          exitCode: 0,
+          signal: null,
+          stdout: "ok",
+          stderr: "",
+          truncated: false,
+          durationMs: 3,
+          processId: 101,
+          processGroupId: 101,
+          terminationObserved: true
+        };
+      },
+      async close() {}
+    }
+  });
+  assert.equal(runner.available, true);
+  const profile = { ...resolvedGuestProfile(), sandboxProfile: "root-helper-deny-default-v0.1" };
+  await assert.rejects(
+    runner.run(profile, { timeoutMs: 1_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRIVILEGE_DENIED"
+  );
+  assert.equal(dispatched, false);
+  const result = await runner.run(profile, {
+    timeoutMs: 1_000,
+    shouldCancel: () => false,
+    rootHelperSnapshotRequestAuthority: requestAuthority,
+    onProcessStarted: (snapshot) => { receivedStarted = snapshot.identity.pid === 101; },
+    onProcessOwnershipChanged: (snapshot) => { receivedChanged = snapshot.identity.processGroupId === 101; }
+  });
+  assert.equal(dispatched, true);
+  assert.equal(receivedStarted, true);
+  assert.equal(receivedChanged, true);
+  assert.equal(result.resultClass, "SUCCEEDED");
+  await runner.close();
 });
 
 test("task runner result validation accepts bounded verified results", () => {
@@ -375,10 +536,13 @@ test("VirtualizationTaskRunner stays unavailable without matched native guest ev
 test("VirtualizationTaskRunner rechecks guest identity before dispatch", async () => {
   const fixture = await guestImageFixture("macos-26.2-vz-1");
   const { guest, image, directory } = fixture;
+  let lifecycle: VirtualizationGuestVmLifecycle | undefined;
   try {
     let executorGuest: VirtualizationGuestIdentity | null = guest;
     let executorAttestation: VirtualizationGuestAttestation | null = guestAttestation(guest);
     let calls = 0;
+    const lifecycleEvents: string[] = [];
+    lifecycle = guestLifecycleFixture(guest, lifecycleEvents);
     const runner = new VirtualizationTaskRunner({
     enabled: true,
     hostEvidenceAccepted: true,
@@ -397,13 +561,14 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
       evidenceRef: "evidence://virtualization-guest",
       virtualizationGuest: guest
     },
+    vmLifecycle: lifecycle,
     executor: {
       available: true,
       get guestIdentity() { return executorGuest; },
       get attestation() { return executorAttestation; },
-      async run() {
+      async run(request) {
         calls += 1;
-        return {
+        const result = {
           state: "completed" as const,
           resultClass: "SUCCEEDED" as const,
           exitCode: 0,
@@ -413,6 +578,8 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
           durationMs: 1,
           verification: { status: "verified" as const, summary: "guest readback" }
         };
+        request.control.onGuestResultVerified?.(result);
+        return result;
       }
     }
     });
@@ -432,9 +599,17 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
       return;
     }
     assert.equal(runner.available, true);
-    const result = await runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false });
+    const result = await runner.run(
+      { sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never,
+      {
+        timeoutMs: 1_000,
+        shouldCancel: () => false,
+        onGuestResultVerified: () => { lifecycleEvents.push("result-journaled"); }
+      }
+    );
     assert.equal(result.resultClass, "SUCCEEDED");
     assert.equal(calls, 1);
+    assert.deepEqual(lifecycleEvents, ["vm-started", "result-journaled", "vm-hard-stopped"]);
     await writeFile(image.path, "guest-image-replaced\n", { mode: 0o600 });
     await assert.rejects(
       runner.run({ sandboxProfile: "guest-deny-default-v0.1", processTreePolicy: "single_process", credentialPolicy: "none" } as never, { timeoutMs: 1_000, shouldCancel: () => false }),
@@ -456,6 +631,7 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
     );
     assert.equal(calls, 1);
   } finally {
+    await lifecycle?.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -463,6 +639,7 @@ test("VirtualizationTaskRunner rechecks guest identity before dispatch", async (
 test("VirtualizationTaskRunner maps native adapter transport loss to unknown", async () => {
   const fixture = await guestImageFixture("macos-26.2-vz-1");
   const { guest, image, directory } = fixture;
+  const lifecycle = guestLifecycleFixture(guest);
   try {
     const runner = new VirtualizationTaskRunner({
     enabled: true,
@@ -482,6 +659,7 @@ test("VirtualizationTaskRunner maps native adapter transport loss to unknown", a
       evidenceRef: "evidence://virtualization-guest",
       virtualizationGuest: guest
     },
+    vmLifecycle: lifecycle,
     executor: {
       available: true,
       guestIdentity: guest,
@@ -498,6 +676,7 @@ test("VirtualizationTaskRunner maps native adapter transport loss to unknown", a
       (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME" && error.retryable === true
     );
   } finally {
+    await lifecycle.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -510,6 +689,7 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
   const profile = resolvedGuestProfile();
   let sent: Record<string, unknown> | undefined;
   let admitted: Record<string, unknown> | undefined;
+  let verifiedResult: TaskExecutionResult | undefined;
   let closed = false;
   const signedAttestation = signedGuestAttestation(guestAttestation(guest));
   const transport: VirtualizationGuestTransport = {
@@ -588,10 +768,12 @@ test("VirtualizationGuestTransportExecutor sends only bound digests and maps ver
     control: {
       timeoutMs: 1_500,
       shouldCancel: () => false,
-      onGuestRequestAdmitted: (value) => { admitted = value as unknown as Record<string, unknown>; }
+      onGuestRequestAdmitted: (value) => { admitted = value as unknown as Record<string, unknown>; },
+      onGuestResultVerified: (value) => { verifiedResult = value; }
     }
   });
   assert.equal(result.resultClass, "SUCCEEDED");
+  assert.deepEqual(verifiedResult, result);
   assert.equal(sent?.sandboxProfile, profile.sandboxProfile);
   assert.equal(sent?.timeoutMs, 1_500);
   assert.equal(sent?.outputCapBytes, 4_096);
@@ -731,10 +913,20 @@ test("VirtualizationGuestTransportExecutor never publishes an unverified guest s
     guestIdentity: guest,
     attestation: guestAttestation(guest)
   });
+  let published = false;
   await assert.rejects(
-    executor.run({ profile: resolvedGuestProfile(), guestIdentity: guest, control: { timeoutMs: 1_500, shouldCancel: () => false } }),
+    executor.run({
+      profile: resolvedGuestProfile(),
+      guestIdentity: guest,
+      control: {
+        timeoutMs: 1_500,
+        shouldCancel: () => false,
+        onGuestResultVerified: () => { published = true; }
+      }
+    }),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "VERIFICATION_FAILED"
   );
+  assert.equal(published, false);
 });
 
 test("VirtualizationGuestTransportExecutor rejects a response from another guest identity", async () => {

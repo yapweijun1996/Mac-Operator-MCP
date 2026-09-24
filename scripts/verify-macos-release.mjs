@@ -1,8 +1,10 @@
-import { readFile } from "node:fs/promises";
-import { lstatSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import { hasSafeParentChain } from "./safe-path-parent.mjs";
+import { readProtectedRegularFile } from "./protected-file-read.mjs";
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
+const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
+const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 
 try {
   const manifestPath = parseManifestPath(process.argv.slice(2));
@@ -31,23 +33,17 @@ function parseManifestPath(args) {
 }
 
 async function readManifest(path) {
-  let stats;
-  try {
-    stats = lstatSync(path);
-  } catch {
-    throw new Error("release manifest is unavailable");
-  }
   const ownerUid = process.getuid?.() ?? -1;
-  if (!stats.isFile() || stats.uid !== ownerUid || (stats.mode & 0o022) !== 0) {
+  if (!hasSafeParentChain(path, ownerUid)) {
     throw new Error("release manifest must be an owner-only regular file");
   }
-  let bytes;
-  try {
-    bytes = await readFile(path);
-  } catch {
-    throw new Error("release manifest could not be read");
-  }
-  if (bytes.byteLength > MAX_MANIFEST_BYTES) throw new Error("release manifest exceeds its size budget");
+  const bytes = await readProtectedRegularFile(path, {
+    ownerUid,
+    maxBytes: MAX_MANIFEST_BYTES,
+    unavailableMessage: "release manifest is unavailable",
+    invalidMessage: "release manifest must be an owner-only regular file",
+    oversizedMessage: "release manifest exceeds its size budget"
+  });
   let value;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -63,9 +59,27 @@ function validateManifestShape(value) {
   const keys = Object.keys(value).sort();
   const allowed = ["artifactBytes", "artifactPath", "artifactSha256", "ownerUid", "signature"];
   if (keys.length < 4 || keys.length > allowed.length || keys.some((key) => !allowed.includes(key))) throw new Error("release manifest contains unsupported fields");
+  const ownerUid = process.getuid?.() ?? -1;
+  if (typeof value.artifactPath !== "string" || !isCanonicalAbsolutePath(value.artifactPath)) {
+    throw new Error("release manifest artifactPath is not canonical");
+  }
+  if (typeof value.artifactSha256 !== "string" || !DIGEST_PATTERN.test(value.artifactSha256) ||
+      !Number.isSafeInteger(value.ownerUid) || value.ownerUid < 0 || value.ownerUid !== ownerUid) {
+    throw new Error("release manifest identity fields are invalid");
+  }
+  if (value.artifactBytes !== undefined &&
+      (!Number.isSafeInteger(value.artifactBytes) || value.artifactBytes < 1 || value.artifactBytes > MAX_ARTIFACT_BYTES)) {
+    throw new Error("release manifest artifact byte count is invalid");
+  }
   if (value.signature === null || typeof value.signature !== "object" || Array.isArray(value.signature)) throw new Error("release manifest signature is malformed");
   const signatureKeys = Object.keys(value.signature).sort();
-  if (signatureKeys.length !== 3 || signatureKeys.some((key, index) => key !== ["cdHash", "identifier", "teamIdentifier"][index])) {
+  if (signatureKeys.length !== 3 || signatureKeys.some((key, index) => key !== ["cdHash", "identifier", "teamIdentifier"][index]) ||
+      Object.values(value.signature).some((field) => typeof field !== "string" || field.length < 1 || field.length > 256)) {
     throw new Error("release manifest signature fields are malformed");
   }
+}
+
+function isCanonicalAbsolutePath(path) {
+  return isAbsolute(path) && path !== "/" && !path.endsWith("/") && !path.includes("\0") &&
+    !path.includes("\r") && !path.includes("\n") && resolve(path) === path;
 }

@@ -29,7 +29,9 @@ test("overlapping Edge keys support rotation and key-specific revocation", async
   });
   try {
     assert.equal((await broker.handle(signRequest(request("old-1", "edge-key-old"), oldKey))).ok, true);
+    assert.equal(store.requestRecord("rotation-request-old-1")?.edgeKeyId, "edge-1:edge-key-old");
     assert.equal((await broker.handle(signRequest(request("new-1", "edge-key-new"), newKey))).ok, true);
+    assert.equal(store.requestRecord("rotation-request-new-1")?.edgeKeyId, "edge-1:edge-key-new");
     store.revoke("edge_key", keyIdentity("edge-1", "edge-key-old"), "ROTATED", NOW);
     assert.equal(
       (await broker.handle(signRequest(request("old-2", "edge-key-old"), oldKey))).result_class,

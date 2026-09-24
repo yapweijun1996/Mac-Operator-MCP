@@ -17,7 +17,20 @@ test("default Broker policy represents every planned tool and keeps privileged t
     ["mac_priv_package_install", "mac.priv.package", "package", 600_000, 1_048_576],
     ["mac_priv_power", "mac.priv.power", "broker", 30_000, 262_144]
   ] as const;
-  assert.equal(policy.tools.size, 44);
+  assert.equal(policy.tools.size, 45);
+  assert.deepEqual(policy.tools.get("mac_service_control"), {
+    tool: "mac_service_control",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.service.control"],
+    capabilityFamilies: ["write"],
+    targetType: "service",
+    mutation: true,
+    approvalPolicy: "trusted_write",
+    outputCapBytes: 262_144,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: false
+  });
   for (const [toolName, scope, targetType, timeoutMs, outputCapBytes] of privileged) {
     const tool = policy.tools.get(toolName);
     assert.ok(tool);

@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/contracts" },
     { "path": "./packages/broker" },
-    { "path": "./packages/edge" }
+    { "path": "./packages/edge" },
+    { "path": "./packages/auth" }
   ]
 }

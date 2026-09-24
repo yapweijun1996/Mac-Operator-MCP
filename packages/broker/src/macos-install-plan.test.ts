@@ -44,6 +44,42 @@ import { BrokerStatusIpcServer } from "./broker-status-ipc.js";
 import { LaunchdReadbackError, type LaunchdJobReadback } from "./launchd-readback.js";
 import type { MacOsNotarizationAssessmentCommand } from "./macos-notarization.js";
 
+const baseInstallRoot = "/Users/operator/Library/Application Support/MacOperator";
+const baseBrokerArtifact = join(baseInstallRoot, "MacOperatorBroker.app");
+const baseBrokerExecutable = join(baseBrokerArtifact, "Contents", "MacOS", "broker");
+const baseBrokerEntrypoint = join(baseBrokerArtifact, "Contents", "Resources", "runtime", "service-entrypoint.js");
+
+function brokerArtifactPaths(installRoot: string) {
+  const artifact = join(installRoot, "MacOperatorBroker.app");
+  const contents = join(artifact, "Contents");
+  const macOs = join(contents, "MacOS");
+  const resources = join(contents, "Resources");
+  const runtime = join(resources, "runtime");
+  return {
+    artifact,
+    executable: join(macOs, "broker"),
+    entrypoint: join(runtime, "service-entrypoint.js"),
+    directories: [artifact, contents, macOs, resources, runtime]
+  };
+}
+
+async function createBrokerInstallFixture(userHome: string, installRoot: string, logRoot: string, launchAgents: string) {
+  const bundle = brokerArtifactPaths(installRoot);
+  const directories = [
+    userHome,
+    join(userHome, "Library"),
+    launchAgents,
+    installRoot,
+    logRoot,
+    ...bundle.directories
+  ];
+  for (const directory of directories) await mkdir(directory, { recursive: true, mode: 0o700 });
+  await writeFile(bundle.executable, "broker", { mode: 0o700 });
+  await writeFile(bundle.entrypoint, "", { mode: 0o600 });
+  for (const directory of directories) await chmod(directory, 0o700);
+  return bundle;
+}
+
 const base: MacOsInstallPlanInput = {
   uid: 501,
   userHome: "/Users/operator",
@@ -51,10 +87,10 @@ const base: MacOsInstallPlanInput = {
   plistPath: "/Users/operator/Library/LaunchAgents/com.mac-operator.broker.plist",
   service: {
     label: "com.mac-operator.broker",
-    program: "/Users/operator/Library/Application Support/MacOperator/bin/node",
+    program: baseBrokerExecutable,
     programArguments: [
-      "/Users/operator/Library/Application Support/MacOperator/bin/node",
-      "/Users/operator/Library/Application Support/MacOperator/service-entrypoint.js"
+      baseBrokerExecutable,
+      baseBrokerEntrypoint
     ],
     workingDirectory: "/Users/operator/Library/Application Support/MacOperator",
     stdoutPath: "/Users/operator/Library/Application Support/MacOperator/logs/broker.out.log",
@@ -71,7 +107,7 @@ const base: MacOsInstallPlanInput = {
     teamIdentifier: "ABCDE12345",
     cdHash: "0123456789abcdef0123456789abcdef01234567"
   },
-  signedArtifactPath: "/Users/operator/Library/Application Support/MacOperator/MacOperatorBroker.app",
+  signedArtifactPath: baseBrokerArtifact,
   enabledCapabilities: []
 };
 
@@ -138,6 +174,21 @@ test("install plan rejects root domains, daemon paths, escapes, and script-like 
   assert.throws(() => buildMacOsInstallPlan({ ...base, plistPath: "/Library/LaunchDaemons/com.mac-operator.broker.plist" }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_PLIST_PATH");
   assert.throws(() => buildMacOsInstallPlan({ ...base, service: { ...base.service, program: "/usr/local/bin/node", programArguments: ["/usr/local/bin/node", base.service.programArguments[1]!] } }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_PACKAGE_PATH");
   assert.throws(() => buildMacOsInstallPlan({ ...base, service: { ...base.service, programArguments: [base.service.program, "-e", "process.exit()"] } }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_PACKAGE_PATH");
+  assert.throws(() => buildMacOsInstallPlan({
+    ...base,
+    service: {
+      ...base.service,
+      program: join(baseInstallRoot, "bin", "node"),
+      programArguments: [join(baseInstallRoot, "bin", "node"), baseBrokerEntrypoint]
+    }
+  }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_PACKAGE_PATH");
+  assert.throws(() => buildMacOsInstallPlan({
+    ...base,
+    service: {
+      ...base.service,
+      programArguments: [baseBrokerExecutable, join(baseInstallRoot, "service-entrypoint.js")]
+    }
+  }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "INVALID_PACKAGE_PATH");
   assert.throws(() => buildMacOsInstallPlan({ ...base, installRoot: "/Users/operator/Library/Application Support/MacOperator/../Other" }), /canonical absolute path/u);
 });
 
@@ -733,11 +784,13 @@ test("signature verification plan accepts a real temporary ad-hoc signed artifac
   try {
     const userHome = join(root, "home");
     const installRoot = join(userHome, "MacOperator");
-    const artifact = join(installRoot, "MacOperatorBroker.app");
+    const bundle = brokerArtifactPaths(installRoot);
+    const { artifact } = bundle;
     const contents = join(artifact, "Contents");
-    const executable = join(contents, "MacOS", "broker");
-    await mkdir(join(contents, "MacOS"), { recursive: true, mode: 0o700 });
-    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await mkdir(dirname(bundle.executable), { recursive: true, mode: 0o700 });
+    await mkdir(dirname(bundle.entrypoint), { recursive: true, mode: 0o700 });
+    await writeFile(bundle.executable, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    await writeFile(bundle.entrypoint, "", { mode: 0o600 });
     await writeFile(join(contents, "Info.plist"), [
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
       "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
@@ -768,8 +821,8 @@ test("signature verification plan accepts a real temporary ad-hoc signed artifac
       signaturePolicy: "development-ad-hoc",
       service: {
         ...base.service,
-        program: join(installRoot, "bin", "node"),
-        programArguments: [join(installRoot, "bin", "node"), join(installRoot, "service-entrypoint.js")],
+        program: bundle.executable,
+        programArguments: [bundle.executable, bundle.entrypoint],
         workingDirectory: installRoot,
         stdoutPath: join(installRoot, "logs", "broker.out.log"),
         stderrPath: join(installRoot, "logs", "broker.err.log")
@@ -805,23 +858,9 @@ test("filesystem preflight rejects symlinks and writable paths, then returns sta
   try {
     const userHome = join(root, "home");
     const installRoot = join(userHome, "MacOperator");
-    const binRoot = join(installRoot, "bin");
     const logRoot = join(installRoot, "logs");
-    const artifact = join(installRoot, "MacOperatorBroker.app");
     const launchAgents = join(userHome, "Library", "LaunchAgents");
-    await mkdir(binRoot, { recursive: true, mode: 0o700 });
-    await mkdir(logRoot, { recursive: true, mode: 0o700 });
-    await mkdir(artifact, { recursive: true, mode: 0o700 });
-    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
-    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
-    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
-    await chmod(userHome, 0o700);
-    await chmod(join(userHome, "Library"), 0o700);
-    await chmod(launchAgents, 0o700);
-    await chmod(installRoot, 0o700);
-    await chmod(binRoot, 0o700);
-    await chmod(logRoot, 0o700);
-    await chmod(artifact, 0o700);
+    const bundle = await createBrokerInstallFixture(userHome, installRoot, logRoot, launchAgents);
     const uid = process.getuid?.();
     if (uid === undefined) throw new Error("POSIX identity is unavailable");
     const plan = buildMacOsInstallPlan({
@@ -830,23 +869,23 @@ test("filesystem preflight rejects symlinks and writable paths, then returns sta
       userHome,
       installRoot,
       plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
-      signedArtifactPath: artifact,
+      signedArtifactPath: bundle.artifact,
       service: {
         ...base.service,
-        program: join(binRoot, "node"),
-        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        program: bundle.executable,
+        programArguments: [bundle.executable, bundle.entrypoint],
         workingDirectory: installRoot,
         stdoutPath: join(logRoot, "broker.out.log"),
         stderrPath: join(logRoot, "broker.err.log")
       }
     });
     const preflight = await inspectMacOsInstallFilesystem(plan, { ownerUid: uid });
-    assert.ok(preflight.entries.some((entry) => entry.path === artifact && entry.kind === "directory"));
-    await chmod(join(binRoot, "node"), 0o722);
+    assert.ok(preflight.entries.some((entry) => entry.path === bundle.artifact && entry.kind === "directory"));
+    await chmod(bundle.executable, 0o722);
     await assert.rejects(inspectMacOsInstallFilesystem(plan, { ownerUid: uid }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "FILESYSTEM_MISMATCH");
-    await chmod(join(binRoot, "node"), 0o700);
-    await rm(join(binRoot, "node"));
-    await symlink(join(installRoot, "service-entrypoint.js"), join(binRoot, "node"));
+    await chmod(bundle.executable, 0o700);
+    await rm(bundle.executable);
+    await symlink(bundle.entrypoint, bundle.executable);
     await assert.rejects(inspectMacOsInstallFilesystem(plan, { ownerUid: uid }), (error: unknown) => error instanceof MacOsInstallPlanError && error.code === "FILESYSTEM_MISMATCH");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -858,28 +897,20 @@ test("plist apply uses native atomic write, creates a backup on upgrade, and res
   try {
     const userHome = join(root, "home");
     const installRoot = join(userHome, "MacOperator");
-    const binRoot = join(installRoot, "bin");
     const logRoot = join(installRoot, "logs");
-    const artifact = join(installRoot, "MacOperatorBroker.app");
     const launchAgents = join(userHome, "Library", "LaunchAgents");
-    await mkdir(binRoot, { recursive: true, mode: 0o700 });
-    await mkdir(logRoot, { recursive: true, mode: 0o700 });
-    await mkdir(artifact, { recursive: true, mode: 0o700 });
-    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
-    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
-    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
-    for (const directory of [userHome, join(userHome, "Library"), launchAgents, installRoot, binRoot, logRoot, artifact]) await chmod(directory, 0o700);
+    const bundle = await createBrokerInstallFixture(userHome, installRoot, logRoot, launchAgents);
     const uid = process.getuid?.();
     if (uid === undefined) throw new Error("POSIX identity is unavailable");
     const service = {
       ...base.service,
-      program: join(binRoot, "node"),
-      programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+      program: bundle.executable,
+      programArguments: [bundle.executable, bundle.entrypoint],
       workingDirectory: installRoot,
       stdoutPath: join(logRoot, "broker.out.log"),
       stderrPath: join(logRoot, "broker.err.log")
     };
-    const common = { ...base, uid, userHome, installRoot, plistPath: join(launchAgents, "com.mac-operator.broker.plist"), signedArtifactPath: artifact, service };
+    const common = { ...base, uid, userHome, installRoot, plistPath: join(launchAgents, "com.mac-operator.broker.plist"), signedArtifactPath: bundle.artifact, service };
     const install = buildMacOsInstallPlan(common);
     const first = await applyMacOsPlistPlan(install, { ownerUid: uid });
     assert.equal(first.created, true);
@@ -917,30 +948,20 @@ test("install executor requires explicit confirmation and verifies final Broker 
     if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
     const userHome = join(root, "home");
     const installRoot = join(userHome, "MacOperator");
-    const binRoot = join(installRoot, "bin");
     const logRoot = join(installRoot, "logs");
-    const artifact = join(installRoot, "MacOperatorBroker.app");
     const launchAgents = join(userHome, "Library", "LaunchAgents");
-    await mkdir(binRoot, { recursive: true, mode: 0o700 });
-    await mkdir(logRoot, { recursive: true, mode: 0o700 });
-    await mkdir(artifact, { recursive: true, mode: 0o700 });
-    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
-    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
-    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
-    for (const directory of [userHome, join(userHome, "Library"), launchAgents, installRoot, binRoot, logRoot, artifact]) {
-      await chmod(directory, 0o700);
-    }
+    const bundle = await createBrokerInstallFixture(userHome, installRoot, logRoot, launchAgents);
     const plan = buildMacOsInstallPlan({
       ...base,
       uid,
       userHome,
       installRoot,
       plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
-      signedArtifactPath: artifact,
+      signedArtifactPath: bundle.artifact,
       service: {
         ...base.service,
-        program: join(binRoot, "node"),
-        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        program: bundle.executable,
+        programArguments: [bundle.executable, bundle.entrypoint],
         workingDirectory: installRoot,
         stdoutPath: join(logRoot, "broker.out.log"),
         stderrPath: join(logRoot, "broker.err.log")
@@ -982,11 +1003,11 @@ test("install executor requires explicit confirmation and verifies final Broker 
       userHome,
       installRoot,
       plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
-      signedArtifactPath: artifact,
+      signedArtifactPath: bundle.artifact,
       service: {
         ...base.service,
-        program: join(binRoot, "node"),
-        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        program: bundle.executable,
+        programArguments: [bundle.executable, bundle.entrypoint],
         workingDirectory: installRoot,
         stdoutPath: join(logRoot, "broker.out.log"),
         stderrPath: join(logRoot, "broker.err.log")
@@ -1071,19 +1092,9 @@ test("install executor stops a mismatched service and leaves an explicit recover
     if (uid === undefined || uid < 1) throw new Error("POSIX non-root identity is unavailable");
     const userHome = join(root, "home");
     const installRoot = join(userHome, "MacOperator");
-    const binRoot = join(installRoot, "bin");
     const logRoot = join(installRoot, "logs");
-    const artifact = join(installRoot, "MacOperatorBroker.app");
     const launchAgents = join(userHome, "Library", "LaunchAgents");
-    await mkdir(binRoot, { recursive: true, mode: 0o700 });
-    await mkdir(logRoot, { recursive: true, mode: 0o700 });
-    await mkdir(artifact, { recursive: true, mode: 0o700 });
-    await mkdir(launchAgents, { recursive: true, mode: 0o700 });
-    await writeFile(join(binRoot, "node"), "node", { mode: 0o700 });
-    await writeFile(join(installRoot, "service-entrypoint.js"), "", { mode: 0o600 });
-    for (const directory of [userHome, join(userHome, "Library"), launchAgents, installRoot, binRoot, logRoot, artifact]) {
-      await chmod(directory, 0o700);
-    }
+    const bundle = await createBrokerInstallFixture(userHome, installRoot, logRoot, launchAgents);
     const plan = buildMacOsInstallPlan({
       ...base,
       uid,
@@ -1093,11 +1104,11 @@ test("install executor stops a mismatched service and leaves an explicit recover
       userHome,
       installRoot,
       plistPath: join(launchAgents, "com.mac-operator.broker.plist"),
-      signedArtifactPath: artifact,
+      signedArtifactPath: bundle.artifact,
       service: {
         ...base.service,
-        program: join(binRoot, "node"),
-        programArguments: [join(binRoot, "node"), join(installRoot, "service-entrypoint.js")],
+        program: bundle.executable,
+        programArguments: [bundle.executable, bundle.entrypoint],
         workingDirectory: installRoot,
         stdoutPath: join(logRoot, "broker.out.log"),
         stderrPath: join(logRoot, "broker.err.log")

@@ -4,11 +4,16 @@ import test from "node:test";
 import {
   canonicalJson,
   requestPayloadDigest,
+  signBrokerRevocationEvent,
+  signBrokerRevocationResponse,
   signBrokerResponse,
   signRequest,
+  verifyBrokerRevocationEvent,
+  verifyBrokerRevocationResponse,
   verifyBrokerResponse,
   verifyRequestAuthentication,
   type BrokerResult,
+  type BrokerRevocationResult,
   type UnsignedBrokerRequest
 } from "./index.js";
 import { parseKeychainDeliveryChallenge, parseKeychainDeliveryRequest, parseKeychainDeliveryResponse } from "./keychain-delivery.js";
@@ -72,6 +77,33 @@ test("Broker response authentication binds the request and full response", () =>
   assert.equal(verifyBrokerResponse(signedRequest, altered, key), false);
   const malformed = { ...envelope, response: { data: BigInt(1) } };
   assert.equal(verifyBrokerResponse(signedRequest, malformed as never, key), false);
+});
+
+test("OAuth authority revocation event authentication binds identity and response", () => {
+  const key = randomBytes(32);
+  const event = signBrokerRevocationEvent({
+    protocolVersion: "0.1",
+    eventType: "oauth_authority_revoked",
+    requestId: "edge-revoke:1234567890123456",
+    nonce: "edge-revoke-nonce:1234567890123456",
+    edgeId: "edge-1",
+    authenticationKeyId: "edge-key-1",
+    principalId: "principal-1",
+    sessionId: "session-1",
+    timestampMs: 1_700_000_000_000
+  }, key);
+  assert.equal(verifyBrokerRevocationEvent(event, key), true);
+  assert.equal(verifyBrokerRevocationEvent({ ...event, sessionId: "session-2" }, key), false);
+  const response: BrokerRevocationResult = {
+    ok: true,
+    request_id: event.requestId,
+    event_type: event.eventType,
+    revoked: true,
+    duration_ms: 1
+  };
+  const envelope = signBrokerRevocationResponse(event, response, key);
+  assert.equal(verifyBrokerRevocationResponse(event, envelope, key), true);
+  assert.equal(verifyBrokerRevocationResponse(event, { ...envelope, response: { ...response, revoked: false } } as never, key), false);
 });
 
 test("Keychain delivery contract is strict and binds the request identity", () => {

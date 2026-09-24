@@ -13,6 +13,8 @@ test("process supervisor rejects invalid per-executable capacity", () => {
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 0 }), /limits are outside/u);
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 65 }), /limits are outside/u);
   assert.throws(() => new ProcessSupervisor({ requireDescriptorExecution: "yes" as never }), /limits are outside/u);
+  assert.throws(() => new ProcessSupervisor({ requireSystemPublishedExecutable: "yes" as never }), /limits are outside/u);
+  assert.throws(() => new ProcessSupervisor({ requireDescriptorExecution: true, requireSystemPublishedExecutable: true }), /limits are outside/u);
   assert.throws(() => new ProcessSupervisor({
     descriptorSpawnAdapter: {
       mechanism: "darwin-descriptor-exec-v1",
@@ -222,6 +224,16 @@ test("process supervisor redacts known credentials from child output", async () 
   assert.equal(result.resultClass, "SUCCEEDED");
   assert.equal(result.stdout.trim(), "[REDACTED]");
   assert.equal(result.stderr, "");
+  const splitResult = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: ["-c", "import os,time; os.write(1,b'ghp_1234567890'); time.sleep(0.02); os.write(1,b'abcdefghijklmnop'); os.write(2,b'rk_' + b'live_1234567890'); time.sleep(0.02); os.write(2,b'abcdefghijklmnop')"],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 1_024
+  });
+  assert.equal(splitResult.resultClass, "SUCCEEDED");
+  assert.equal(splitResult.stdout, "[REDACTED]");
+  assert.equal(splitResult.stderr, "[REDACTED]");
 });
 
 test("process supervisor requires a final native descendant readback for strict task exits", async (t) => {
@@ -244,7 +256,7 @@ test("process supervisor requires a final native descendant readback for strict 
   assert.equal(supervisor.activeCount(), 0);
 });
 
-test("strict task exit proof keeps a late descendant unresolved", async (t) => {
+test("strict task exit proof keeps a live late descendant unresolved", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("Strict task exit proof uses the macOS native process observer");
     return;
@@ -252,15 +264,71 @@ test("strict task exit proof keeps a late descendant unresolved", async (t) => {
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 25, terminationGraceMs: 50 });
   const result = await supervisor.run({
     executable: "/usr/bin/python3",
-    args: ["-c", "import os,time; child=os.fork(); time.sleep(0.15) if child == 0 else os._exit(0)"],
+    args: ["-c", "import os,time; child=os.fork();\nif child == 0:\n os.close(1); os.close(2); time.sleep(5)\nelse:\n os._exit(0)"],
     cwd: CWD,
     timeoutMs: 2_000,
     outputCapBytes: 100,
     requireCleanExitProof: true
   });
   assert.equal(result.resultClass, "UNKNOWN_OUTCOME");
-  assert.equal(result.terminationObserved, false);
+  assert.equal(result.terminationObserved, true);
   await supervisor.close();
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("strict task exit proof follows an observed detached process group", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Strict task exit proof uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 10, terminationGraceMs: 50 });
+  const result = await supervisor.run({
+    executable: "/usr/bin/python3",
+    args: [
+      "-c",
+      [
+        "import os,time",
+        "child=os.fork()",
+        "if child == 0:",
+        " os.setsid()",
+        " grandchild=os.fork()",
+        " if grandchild == 0:",
+        "  print(os.getpid(), flush=True)",
+        "  os.close(1); os.close(2); time.sleep(5)",
+        " else:",
+        "  time.sleep(0.25); os._exit(0)",
+        "else:",
+        " time.sleep(0.6); os._exit(0)"
+      ].join("\n")
+    ],
+    cwd: CWD,
+    timeoutMs: 2_000,
+    outputCapBytes: 10_000,
+    requireCleanExitProof: true
+  });
+  assert.equal(result.resultClass, "UNKNOWN_OUTCOME");
+  assert.equal(result.terminationObserved, true);
+  await supervisor.close();
+  assert.equal(supervisor.activeCount(), 0);
+});
+
+test("process supervisor rechecks cancellation before publishing a closed child as success", async () => {
+  let checks = 0;
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 1_000, terminationGraceMs: 50 });
+  const result = await supervisor.run({
+    executable: "/usr/bin/true",
+    args: [],
+    cwd: CWD,
+    timeoutMs: 1_000,
+    outputCapBytes: 100,
+    shouldCancel: () => {
+      checks += 1;
+      return checks >= 3;
+    }
+  });
+  assert.equal(result.resultClass, "CANCELLED");
+  assert.equal(result.state, "cancelled");
+  assert.ok(checks >= 3);
   assert.equal(supervisor.activeCount(), 0);
 });
 
@@ -480,6 +548,45 @@ test("process supervisor can require root-owned executables for fixed adapters",
       /not root-owned/u
     );
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("process supervisor accepts only a root-published executable path for fixed adapters", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("System-published executable evidence is a macOS boundary");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({
+    requireRootOwnedExecutable: true,
+    requireSystemPublishedExecutable: true
+  });
+  const trusted = await supervisor.run({
+    executable: "/usr/bin/printf",
+    args: ["system-published"],
+    cwd: CWD,
+    timeoutMs: 1_000,
+    outputCapBytes: 100
+  });
+  assert.equal(trusted.state, "completed");
+  assert.equal(trusted.stdout, "system-published");
+
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-process-published-owner-"));
+  const executable = join(await realpath(directory), "runner");
+  try {
+    await writeFile(executable, "#!/bin/sh\nprintf user-owned\n", { mode: 0o700 });
+    await assert.rejects(
+      supervisor.run({
+        executable,
+        args: [],
+        cwd: CWD,
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      }),
+      /not root-owned|system-published/u
+    );
+  } finally {
+    await supervisor.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -1172,7 +1279,7 @@ test("process supervisor enforces concurrent process capacity", async () => {
     outputCapBytes: 100,
     shouldCancel: () => cancelled
   });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitForActiveProcess(supervisor, 1, 5_000);
   await assert.rejects(
     supervisor.run({
       executable: "/usr/bin/printf",

@@ -511,6 +511,19 @@ const tools: ToolPolicy[] = [
     enabled: false
   },
   {
+    tool: "mac_service_control",
+    contractVersion: "0.1",
+    requiredScopes: ["mac.service.control"],
+    capabilityFamilies: ["write"],
+    targetType: "service",
+    mutation: true,
+    approvalPolicy: "trusted_write",
+    outputCapBytes: 262_144,
+    timeoutMs: 30_000,
+    implemented: true,
+    enabled: false
+  },
+  {
     tool: "mac_priv_service_control",
     contractVersion: "0.1",
     requiredScopes: ["mac.priv.service"],

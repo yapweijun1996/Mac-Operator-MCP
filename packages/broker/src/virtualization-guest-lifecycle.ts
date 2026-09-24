@@ -1,4 +1,5 @@
 import { BrokerError } from "@mac-operator/contracts";
+import { isPlainDataRecord } from "./plain-record.js";
 import {
   parseVirtualizationGuestIdentity,
   sameVirtualizationGuestIdentity,
@@ -8,6 +9,7 @@ import {
 const DEFAULT_START_TIMEOUT_MS = 120_000;
 const DEFAULT_STOP_TIMEOUT_MS = 30_000;
 const BOOT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/u;
+const TASK_INSTANCE_ID_PATTERN = /^vm-[A-Za-z0-9._:-]{7,124}$/u;
 
 export type VirtualizationGuestVmState = "disabled" | "stopped" | "starting" | "running" | "stopping" | "unknown" | "closed";
 
@@ -29,6 +31,12 @@ export interface VirtualizationGuestVmStatusResult {
   bootId: string | null;
 }
 
+export interface VirtualizationGuestVmTaskInstance {
+  state: "stopped";
+  guestIdentity: VirtualizationGuestIdentity;
+  instanceId: string;
+}
+
 /**
  * Native adapter surface for VM lifecycle only. The adapter owns
  * Virtualization.framework objects and virtio details; it receives no host
@@ -37,6 +45,8 @@ export interface VirtualizationGuestVmStatusResult {
 export interface VirtualizationGuestVmAdapter {
   readonly available: boolean;
   readonly guestIdentity: VirtualizationGuestIdentity | null;
+  readonly taskInstanceIsolation: "fresh-vm-object-per-task-v1";
+  prepareTaskInstance(input: { guestIdentity: VirtualizationGuestIdentity; signal: AbortSignal }): Promise<VirtualizationGuestVmTaskInstance>;
   start(input: { guestIdentity: VirtualizationGuestIdentity; signal: AbortSignal }): Promise<VirtualizationGuestVmStartResult>;
   stop(input: { guestIdentity: VirtualizationGuestIdentity; bootId: string; signal: AbortSignal }): Promise<VirtualizationGuestVmStopResult>;
   status(input: { guestIdentity: VirtualizationGuestIdentity; signal: AbortSignal }): Promise<VirtualizationGuestVmStatusResult>;
@@ -55,7 +65,7 @@ export interface VirtualizationGuestVmLifecycleOptions {
 }
 
 /**
- * Broker-owned serialized lifecycle gate for a future native VM adapter.
+ * Broker-owned serialized lifecycle gate for the native VM adapter.
  * Unknown outcomes are sticky until an explicit status readback proves a
  * stable state. Identity and boot IDs are checked on every transition.
  */
@@ -74,12 +84,15 @@ export class VirtualizationGuestVmLifecycle {
   private activeOperation: Promise<unknown> | undefined;
   private currentState: VirtualizationGuestVmState;
   private currentBootId: string | null = null;
+  private lastTaskInstanceId: string | null = null;
   private closed = false;
 
   constructor(options: VirtualizationGuestVmLifecycleOptions) {
     if (options === null || typeof options !== "object" || options.adapter === undefined ||
         typeof options.adapter.start !== "function" || typeof options.adapter.stop !== "function" ||
-        typeof options.adapter.status !== "function" || typeof options.adapter.available !== "boolean" ||
+        typeof options.adapter.status !== "function" || typeof options.adapter.prepareTaskInstance !== "function" ||
+        options.adapter.taskInstanceIsolation !== "fresh-vm-object-per-task-v1" ||
+        typeof options.adapter.available !== "boolean" ||
         options.expectedGuestIdentity === null || typeof options.expectedGuestIdentity !== "object" ||
         (options.enabled !== undefined && typeof options.enabled !== "boolean") ||
         (options.hostEvidenceAccepted !== undefined && typeof options.hostEvidenceAccepted !== "boolean")) {
@@ -111,6 +124,76 @@ export class VirtualizationGuestVmLifecycle {
 
   async start(signal?: AbortSignal): Promise<VirtualizationGuestVmStartResult> {
     return this.serialized(() => this.startInternal(signal));
+  }
+
+  /**
+   * Runs one Broker-owned guest operation in an exclusive VM boot cycle.
+   * The operation must resolve only after its authenticated result has been
+   * durably recorded by the caller. Stop is deliberately not cancellable: a
+   * caller timeout must not skip the containment attempt.
+   */
+  async runTask<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    return this.serialized(async () => {
+      this.assertAvailable();
+      if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled before VM reset");
+      if (this.currentState === "unknown") {
+        throw new BrokerError("UNKNOWN_OUTCOME", "Virtualization guest VM state requires status recovery", true);
+      }
+      if (this.currentState === "running") await this.stopInternal();
+      if (this.currentState !== "stopped" || this.currentBootId !== null) {
+        throw new BrokerError("UNKNOWN_OUTCOME", "Virtualization guest VM is not confirmed stopped before task reset", true);
+      }
+      const instance = await this.withDeadline(
+        (combinedSignal) => this.adapter.prepareTaskInstance({
+          guestIdentity: { ...this.expectedGuestIdentity },
+          signal: combinedSignal
+        }),
+        this.startTimeoutMs,
+        signal,
+        "prepare task VM"
+      ).catch((error: unknown) => {
+        this.currentState = "unknown";
+        this.currentBootId = null;
+        throw mapLifecycleError(error, "prepare task VM");
+      });
+      if (signal?.aborted) throw new BrokerError("CANCELLED", "Virtualization guest task was cancelled before VM start");
+      let instanceId: string;
+      try {
+        instanceId = parseTaskInstance(instance, this.expectedGuestIdentity);
+      } catch (error) {
+        this.currentState = "unknown";
+        this.currentBootId = null;
+        throw error;
+      }
+      if (instanceId === this.lastTaskInstanceId) {
+        this.currentState = "unknown";
+        this.currentBootId = null;
+        throw new BrokerError("POLICY_DENIED", "Virtualization guest task reused a previous VM instance");
+      }
+      this.lastTaskInstanceId = instanceId;
+      await this.startInternal(signal);
+      let result: T | undefined;
+      let operationError: unknown;
+      let operationFailed = false;
+      try {
+        result = await operation();
+      } catch (error) {
+        operationFailed = true;
+        operationError = error;
+      }
+
+      let stopError: unknown;
+      let stopFailed = false;
+      try {
+        await this.stopInternal();
+      } catch (error) {
+        stopFailed = true;
+        stopError = error;
+      }
+      if (stopFailed) throw stopError;
+      if (operationFailed) throw operationError;
+      return result as T;
+    });
   }
 
   private async startInternal(signal?: AbortSignal): Promise<VirtualizationGuestVmStartResult> {
@@ -312,6 +395,20 @@ export class VirtualizationGuestVmLifecycle {
     this.queue = result.then(() => undefined, () => undefined);
     return result;
   }
+}
+
+function parseTaskInstance(value: unknown, expectedGuestIdentity: VirtualizationGuestIdentity): string {
+  if (!isPlainDataRecord(value) || Object.keys(value).length !== 3 ||
+      !Object.prototype.hasOwnProperty.call(value, "state") ||
+      !Object.prototype.hasOwnProperty.call(value, "guestIdentity") ||
+      !Object.prototype.hasOwnProperty.call(value, "instanceId") ||
+      value.state !== "stopped" || typeof value.instanceId !== "string" ||
+      !TASK_INSTANCE_ID_PATTERN.test(value.instanceId) || value.guestIdentity === null ||
+      typeof value.guestIdentity !== "object" ||
+      !sameVirtualizationGuestIdentity(expectedGuestIdentity, value.guestIdentity as VirtualizationGuestIdentity)) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest task VM instance proof is invalid");
+  }
+  return value.instanceId;
 }
 
 function mapLifecycleError(error: unknown, operation: string): BrokerError {

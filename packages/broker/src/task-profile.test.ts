@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { captureProcessPathIdentity } from "./process-supervisor.js";
 import { TaskProfileRegistry, validateTaskRunArguments, type TaskProfile } from "./task-profile.js";
 
 function profile(root: string, overrides: Partial<TaskProfile> = {}): TaskProfile {
@@ -36,12 +37,14 @@ test("named task resolution fixes executable, environment, roots, and budgets", 
     assert.equal(resolved.profile, "tests.echo");
     assert.deepEqual(resolved.process, {
       executable: "/bin/echo",
+      expectedExecutableContentSha256: resolved.process.expectedExecutableContentSha256,
       args: ["hello", "world"],
       cwd: canonicalRoot,
       environment: { LANG: "C" },
       timeoutMs: 1_000,
       outputCapBytes: 1_024
     });
+    assert.match(resolved.process.expectedExecutableContentSha256 ?? "", /^[a-f0-9]{64}$/u);
     assert.deepEqual(resolved.filesystemRoots, [canonicalRoot]);
     assert.equal(resolved.networkPolicy, "none");
     assert.deepEqual(resolved.networkAllowlist, []);
@@ -61,6 +64,72 @@ test("named task resolution fixes executable, environment, roots, and budgets", 
       TypeError
     );
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("named task resolution binds executable content identity and rejects a mismatched profile digest", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-task-profile-digest-"));
+  try {
+    const canonicalRoot = await realpath(root);
+    const identity = await captureProcessPathIdentity("/bin/echo", "executable");
+    assert.match(identity.contentSha256 ?? "", /^[a-f0-9]{64}$/u);
+    const digest = identity.contentSha256;
+    assert.ok(digest);
+    const registry = new TaskProfileRegistry([profile(canonicalRoot, {
+      executableContentSha256: digest
+    })]);
+    const resolved = await registry.resolve({ profile: "tests.echo", cwd: canonicalRoot });
+    assert.equal(resolved.process.expectedExecutableContentSha256, digest);
+    const mismatched = new TaskProfileRegistry([profile(canonicalRoot, {
+      executableContentSha256: "a".repeat(64)
+    })]);
+    await assert.rejects(
+      mismatched.resolve({ profile: "tests.echo", cwd: canonicalRoot }),
+      /content identity does not match/u
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("posix-sh task profiles bind a Broker-owned script digest and reject script escapes", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "mac-operator-task-profile-script-"));
+  const root = join(parent, "root");
+  const outside = join(parent, "outside.sh");
+  await mkdir(root);
+  await writeFile(join(root, "task.sh"), "#!/bin/sh\nprintf '%s\\n' safe\n", { mode: 0o700 });
+  await writeFile(outside, "#!/bin/sh\nprintf '%s\\n' outside\n", { mode: 0o700 });
+  try {
+    const canonicalRoot = await realpath(root);
+    const scriptPath = await realpath(join(root, "task.sh"));
+    const canonicalOutside = await realpath(outside);
+    const resolved = await new TaskProfileRegistry([profile(canonicalRoot, {
+      profile: "tests.script",
+      executable: "/bin/sh",
+      executionKind: "posix-sh-script",
+      scriptPath,
+      fixedArgs: ["bounded"],
+      allowedArgumentPattern: "^[a-z]+$",
+      maxArguments: 0
+    })]).resolve({ profile: "tests.script", cwd: canonicalRoot });
+    assert.equal(resolved.executionKind, "posix-sh-script");
+    assert.equal(resolved.scriptPath, scriptPath);
+    assert.equal(resolved.scriptContent, "#!/bin/sh\nprintf '%s\\n' safe\n");
+    assert.match(resolved.scriptContentSha256 ?? "", /^[a-f0-9]{64}$/u);
+    assert.equal(resolved.process.executable, "/bin/sh");
+    assert.deepEqual(resolved.process.args, ["bounded"]);
+    assert.throws(() => new TaskProfileRegistry([profile(canonicalRoot, {
+      profile: "tests.bad-script-shape",
+      scriptPath,
+      executionKind: "binary"
+    })]), /script binding/u);
+    await assert.rejects(
+      new TaskProfileRegistry([profile(canonicalRoot, {
+        profile: "tests.bad-script-root",
+        executable: "/bin/sh",
+        executionKind: "posix-sh-script",
+        scriptPath: canonicalOutside
+      })]).resolve({ profile: "tests.bad-script-root", cwd: canonicalRoot }),
+      /outside the Broker-owned filesystem roots/u
+    );
+  } finally { await rm(parent, { recursive: true, force: true }); }
 });
 
 test("named task resolution rejects unknown, disabled, extra, and non-allowlisted arguments", async () => {

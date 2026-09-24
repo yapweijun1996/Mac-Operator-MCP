@@ -7,9 +7,11 @@ import test from "node:test";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
 import {
   authenticatePrivilegedHelperCommand,
+  signPrivilegedHelperJobReadbackRequest,
   signPrivilegedHelperCommand,
   type SignedPrivilegedHelperCommand,
-  type UnsignedPrivilegedHelperCommand
+  type UnsignedPrivilegedHelperCommand,
+  type UnsignedPrivilegedHelperJobReadbackRequest
 } from "./privileged-helper.js";
 import {
   authenticatePrivilegedHelperAuthorityResponse,
@@ -46,7 +48,8 @@ function command(sequence: number): UnsignedPrivilegedHelperCommand {
 async function setupAuthorityServer(
   root: string,
   key: Buffer,
-  authorizeCommand: (candidate: UnsignedPrivilegedHelperCommand) => void
+  authorizeCommand: (candidate: UnsignedPrivilegedHelperCommand) => void,
+  authorizeReadback: (candidate: UnsignedPrivilegedHelperJobReadbackRequest) => void = () => undefined
 ): Promise<{ server: PrivilegedHelperAuthorityIpcServer; socketPath: string }> {
   const socketPath = join(root, "authority.sock");
   const server = new PrivilegedHelperAuthorityIpcServer({
@@ -56,6 +59,7 @@ async function setupAuthorityServer(
       admit: () => undefined
     },
     authorizeCommand,
+    authorizeReadback,
     peerCredentialVerifier: { verify: () => undefined },
     now: () => NOW
   });
@@ -137,6 +141,48 @@ test("authority polling rejects response tampering and key material is wiped on 
       (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
     );
   } finally {
+    await server.close();
+    key.fill(0);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("authority polling binds readback to the exact UNKNOWN Job descriptor", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mops-authority-readback-"));
+  const key = randomBytes(32);
+  const payload = { operation: "service_control" as const, service_id: "system/com.example.test", action: "start" as const };
+  const unsigned: UnsignedPrivilegedHelperJobReadbackRequest = {
+    protocolVersion: "0.1",
+    contractVersion: CONTRACT_VERSION,
+    requestId: "request:readback-authority-0001",
+    nonce: "readback-nonce-authority-0001",
+    timestampMs: NOW,
+    expiresAtMs: NOW + 5_000,
+    kind: "job_readback",
+    jobId: "job:authority-readback-1",
+    principalId: "principal-1",
+    sessionId: "session-1",
+    operation: "service_control",
+    targetRef: "service:system/com.example.test",
+    payload,
+    payloadDigest: sha256(canonicalJson(payload)),
+    policyVersion: "policy-test-1"
+  };
+  const signed = signPrivilegedHelperJobReadbackRequest(unsigned, key);
+  let readbackCalls = 0;
+  const { server, socketPath } = await setupAuthorityServer(root, key, () => undefined, (candidate) => {
+    readbackCalls += 1;
+    assert.equal(candidate.jobId, unsigned.jobId);
+    assert.equal(candidate.principalId, unsigned.principalId);
+    assert.equal(candidate.sessionId, unsigned.sessionId);
+    assert.equal(candidate.payloadDigest, unsigned.payloadDigest);
+  });
+  const client = new PrivilegedHelperAuthorityClient({ socketPath, authenticationKey: key, peerCredentialVerifier: { verify: () => undefined }, now: () => NOW });
+  try {
+    await client.assertReadbackAuthorized(signed);
+    assert.equal(readbackCalls, 1);
+  } finally {
+    client.dispose();
     await server.close();
     key.fill(0);
     await rm(root, { recursive: true, force: true });

@@ -11,8 +11,12 @@ let files;
 try {
   const output = execFileSync("/usr/bin/git", ["ls-files", "-z"], {
     cwd: repositoryRoot,
+    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C" },
     encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024
+    shell: false,
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: 5_000,
+    windowsHide: true
   });
   files = output.split("\0").filter(Boolean);
 } catch {

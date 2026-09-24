@@ -1,10 +1,13 @@
 #include <node_api.h>
 #include <node_version.h>
 
+#include "filesystem_acl.h"
+
 #import <Foundation/Foundation.h>
 #import <Virtualization/Virtualization.h>
 
 #include <CommonCrypto/CommonDigest.h>
+#include <Security/SecTask.h>
 #include <dispatch/dispatch.h>
 
 #include <algorithm>
@@ -67,12 +70,14 @@ struct GuestConnectionHandle {
   std::atomic<uint64_t> magic;
   std::mutex listener_mutex;
   std::unordered_map<uint32_t, std::shared_ptr<GuestListenerState>> listener_states;
+  std::unordered_map<uint32_t, uint32_t> listener_connection_caps;
   // Broker-owned exchanges are tracked so stop/close can interrupt guest I/O.
   std::mutex connection_mutex;
   std::unordered_set<void*> active_connections;
   std::atomic<bool> closed_atomic;
 }
 @property(nonatomic, strong) VZVirtualMachine* machine;
+@property(nonatomic, strong) VZVirtualMachineConfiguration* configuration;
 @property(nonatomic, strong) dispatch_queue_t queue;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber*, VZVirtioSocketListener*>* listeners;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber*, MOPVirtioSocketListenerDelegate*>* listenerDelegates;
@@ -150,6 +155,23 @@ void CloseListenerState(const std::shared_ptr<GuestListenerState>& state) {
 
 void ThrowError(napi_env env, const char* message) {
   napi_throw_error(env, nullptr, message);
+}
+
+bool HasVirtualizationEntitlement() {
+  SecTaskRef task = SecTaskCreateFromSelf(kCFAllocatorDefault);
+  if (task == nullptr) return false;
+
+  CFErrorRef error = nullptr;
+  CFTypeRef value = SecTaskCopyValueForEntitlement(
+      task, CFSTR("com.apple.security.virtualization"), &error);
+  const bool entitled = value != nullptr &&
+      CFGetTypeID(value) == CFBooleanGetTypeID() &&
+      CFBooleanGetValue(static_cast<CFBooleanRef>(value));
+
+  if (value != nullptr) CFRelease(value);
+  if (error != nullptr) CFRelease(error);
+  CFRelease(task);
+  return entitled;
 }
 
 bool ReadString(napi_env env, napi_value value, char* output, size_t capacity) {
@@ -241,10 +263,16 @@ bool IsSystemPublishedImage(const char* canonical_path, const struct stat& path_
   // The Virtualization.framework image attachment accepts a pathname, not an
   // already-open descriptor. Require a root-owned publication boundary so an
   // unprivileged process cannot replace the image between our descriptor
-  // readback and initWithURL:. Root may still rotate the artifact, but that is
-  // an explicit host administration action and is detected by later readback.
+  // readback and initWithURL:. Also reject extended ACLs, which can grant
+  // pathname mutation access beyond POSIX mode bits. Root may still rotate the
+  // artifact, but that is an explicit host administration action and is
+  // detected by later readback.
   if (!S_ISREG(path_stat.st_mode) || path_stat.st_uid != 0 ||
       (path_stat.st_mode & 0022) != 0 || (path_stat.st_mode & 0444) == 0) {
+    return false;
+  }
+  bool image_has_extended_acl = false;
+  if (!mop::HasExtendedAclEntries(canonical_path, &image_has_extended_acl) || image_has_extended_acl) {
     return false;
   }
   char parent_path[PATH_MAX];
@@ -257,6 +285,10 @@ bool IsSystemPublishedImage(const char* canonical_path, const struct stat& path_
     struct stat parent_stat{};
     if (lstat(parent_path, &parent_stat) != 0 || !S_ISDIR(parent_stat.st_mode) ||
         parent_stat.st_uid != 0 || (parent_stat.st_mode & 0022) != 0) {
+      return false;
+    }
+    bool parent_has_extended_acl = false;
+    if (!mop::HasExtendedAclEntries(parent_path, &parent_has_extended_acl) || parent_has_extended_acl) {
       return false;
     }
     if (strcmp(parent_path, "/") == 0) break;
@@ -362,6 +394,7 @@ void CloseAllListeners(MOPVirtualizationGuestHandle* handle) {
   {
     std::lock_guard<std::mutex> lock(handle->listener_mutex);
     states.swap(handle->listener_states);
+    handle->listener_connection_caps.clear();
   }
   if (handle.queue != nil) {
     dispatch_sync(handle.queue, ^{
@@ -391,6 +424,7 @@ void FinalizeHandle(napi_env env, void* data, void* hint) {
     CloseAllListeners(handle);
     handle->magic.store(0, std::memory_order_release);
     handle.machine = nil;
+    handle.configuration = nil;
     handle.queue = nil;
   }
 }
@@ -725,6 +759,7 @@ napi_value ListenGuestPort(napi_env env, napi_callback_info info) {
         handle->listener_states.erase(previous);
       }
       handle->listener_states.emplace(port, state);
+      handle->listener_connection_caps[port] = max_connections;
     }
     if (replaced != nullptr) CloseListenerState(replaced);
     MOPVirtioSocketListenerDelegate* delegate = [[MOPVirtioSocketListenerDelegate alloc] initWithState:state];
@@ -766,6 +801,7 @@ napi_value RemoveGuestPort(napi_env env, napi_callback_info info) {
       state = found->second;
       handle->listener_states.erase(found);
     }
+    handle->listener_connection_caps.erase(port);
   }
   dispatch_sync(handle.queue, ^{
     VZVirtioSocketDevice* socket_device = SocketDeviceForHandle(handle);
@@ -1648,6 +1684,10 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     napi_throw_type_error(env, nullptr, "Virtualization guest VM identity arguments are malformed");
     return nullptr;
   }
+  if (!HasVirtualizationEntitlement()) {
+    ThrowError(env, "Virtualization guest VM requires com.apple.security.virtualization on the current process");
+    return nullptr;
+  }
   std::string canonical_path;
   if (!ValidateImage(image_path, expected_device, expected_inode, expected_digest, &canonical_path)) {
     ThrowError(env, "Virtualization guest VM image identity or protection precondition failed");
@@ -1691,6 +1731,7 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     handle->magic.store(kHandleMagic, std::memory_order_release);
     handle->closed_atomic.store(false, std::memory_order_release);
     handle.queue = queue;
+    handle.configuration = configuration;
     handle.machine = [[VZVirtualMachine alloc] initWithConfiguration:configuration queue:queue];
     handle.listeners = [NSMutableDictionary dictionary];
     handle.listenerDelegates = [NSMutableDictionary dictionary];
@@ -1708,6 +1749,87 @@ napi_value CreateGuestVm(napi_env env, napi_callback_info info) {
     }
     return result;
   }
+}
+
+napi_value ResetStoppedGuestVm(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "resetStoppedGuestVm requires a handle");
+    return nullptr;
+  }
+  MOPVirtualizationGuestHandle* handle = ReadHandle(env, args[0]);
+  if (handle == nullptr) return nullptr;
+
+  __block std::unordered_map<uint32_t, std::shared_ptr<GuestListenerState>> previous_states;
+  __block bool failed = false;
+  __block std::string instance_id;
+  dispatch_sync(handle.queue, ^{
+    if (handle.closed || handle.machine == nil || handle.configuration == nil ||
+        handle.machine.state != VZVirtualMachineStateStopped || handle.bootId != nil) {
+      failed = true;
+      return;
+    }
+    CloseActiveVirtioConnections(handle);
+    __block std::unordered_map<uint32_t, uint32_t> listener_caps;
+    {
+      std::lock_guard<std::mutex> lock(handle->listener_mutex);
+      previous_states.swap(handle->listener_states);
+      listener_caps = handle->listener_connection_caps;
+    }
+    VZVirtioSocketDevice* old_socket_device = SocketDeviceForHandle(handle);
+    if (old_socket_device != nil) {
+      for (const auto& entry : listener_caps) [old_socket_device removeSocketListenerForPort:entry.first];
+    }
+    [handle.listeners removeAllObjects];
+    [handle.listenerDelegates removeAllObjects];
+
+    handle.machine = nil;
+    VZVirtualMachine* fresh_machine = [[VZVirtualMachine alloc] initWithConfiguration:handle.configuration queue:handle.queue];
+    if (fresh_machine == nil) {
+      failed = true;
+      return;
+    }
+    handle.machine = fresh_machine;
+    VZVirtioSocketDevice* socket_device = SocketDeviceForHandle(handle);
+    if (socket_device == nil) {
+      handle.machine = nil;
+      failed = true;
+      return;
+    }
+    for (const auto& entry : listener_caps) {
+      auto state = std::make_shared<GuestListenerState>();
+      state->max_connections = entry.second;
+      MOPVirtioSocketListenerDelegate* delegate = [[MOPVirtioSocketListenerDelegate alloc] initWithState:state];
+      VZVirtioSocketListener* listener = [[VZVirtioSocketListener alloc] init];
+      listener.delegate = delegate;
+      [socket_device setSocketListener:listener forPort:entry.first];
+      handle.listeners[@(entry.first)] = listener;
+      handle.listenerDelegates[@(entry.first)] = delegate;
+      std::lock_guard<std::mutex> lock(handle->listener_mutex);
+      handle->listener_states.emplace(entry.first, std::move(state));
+    }
+    NSString* token = NewBootId();
+    const char* token_bytes = token.UTF8String;
+    if (token_bytes == nullptr) {
+      handle.machine = nil;
+      failed = true;
+      return;
+    }
+    instance_id = "vm-";
+    instance_id += token_bytes;
+  });
+  for (const auto& entry : previous_states) CloseListenerState(entry.second);
+  if (failed || instance_id.empty()) {
+    ThrowError(env, "Virtualization guest VM could not be replaced with a fresh stopped instance");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "state", "stopped");
+  SetGuestIdentity(env, result, handle);
+  SetString(env, result, "instanceId", instance_id.c_str());
+  return result;
 }
 
 napi_value StartGuestVm(napi_env env, napi_callback_info info) {
@@ -1734,7 +1856,7 @@ napi_value CloseGuestVm(napi_env env, napi_callback_info info) {
   __block bool rejected = false;
   dispatch_sync(handle.queue, ^{
     if (handle.closed) return;
-    if (handle.machine == nil || handle.machine.state != VZVirtualMachineStateStopped) {
+    if (handle.machine != nil && handle.machine.state != VZVirtualMachineStateStopped) {
       rejected = true;
     }
   });
@@ -1760,6 +1882,16 @@ napi_value CloseGuestVm(napi_env env, napi_callback_info info) {
   return undefined;
 }
 
+napi_value ReadVirtualizationEntitlement(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  if (napi_get_boolean(env, HasVirtualizationEntitlement(), &result) != napi_ok) {
+    napi_throw_error(env, nullptr, "Virtualization entitlement readback is unavailable");
+    return nullptr;
+  }
+  return result;
+}
+
 void SetFunction(napi_env env, napi_value exports, const char* name, napi_callback callback) {
   napi_value function;
   napi_create_function(env, name, NAPI_AUTO_LENGTH, callback, nullptr, &function);
@@ -1779,7 +1911,9 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value native_arch;
   napi_create_string_utf8(env, kNativeArch, NAPI_AUTO_LENGTH, &native_arch);
   napi_set_named_property(env, exports, "nativeArch", native_arch);
+  SetFunction(env, exports, "hasVirtualizationEntitlement", ReadVirtualizationEntitlement);
   SetFunction(env, exports, "createGuestVm", CreateGuestVm);
+  SetFunction(env, exports, "resetStoppedGuestVm", ResetStoppedGuestVm);
   SetFunction(env, exports, "startGuestVm", StartGuestVm);
   SetFunction(env, exports, "stopGuestVm", StopGuestVm);
   SetFunction(env, exports, "statusGuestVm", StatusGuestVm);

@@ -36,7 +36,14 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 9, name: "request-capability-family-capacity" },
         { version: 10, name: "job-edge-provenance" },
         { version: 11, name: "job-edge-key-provenance" },
-        { version: 12, name: "keychain-delivery-replay-ledger" }
+        { version: 12, name: "keychain-delivery-replay-ledger" },
+        { version: 13, name: "user-service-control-job-metadata" },
+        { version: 14, name: "pending-approval-previews" },
+        { version: 15, name: "approval-preview-lifecycle" },
+        { version: 16, name: "edge-revocation-replay-ledger" },
+        { version: 17, name: "terminal-ledger-tombstones" },
+        { version: 18, name: "request-edge-key-provenance" },
+        { version: 19, name: "guest-task-authenticated-result-journal" }
       ]);
     } finally {
       database.close();
@@ -139,6 +146,56 @@ test("BrokerStore persists Keychain delivery replay identities across restart an
     reopened.admitKeychainDeliveryRequest({
       requestId: "keychain-request-2",
       nonce: "keychain-nonce-2",
+      acceptedAtMs: 200,
+      expiresAtMs: 300
+    });
+  } finally {
+    reopened.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore persists Edge OAuth revocation replay identities across restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-edge-revocation-replay-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  try {
+    store.admitEdgeRevocationEvent({
+      requestId: "edge-revoke:1234567890123456",
+      nonce: "edge-revoke-nonce:1234567890123456",
+      edgeId: "edge-1",
+      acceptedAtMs: 100,
+      expiresAtMs: 200
+    });
+    assert.throws(
+      () => store.admitEdgeRevocationEvent({
+        requestId: "edge-revoke:1234567890123456",
+        nonce: "edge-revoke-nonce:2234567890123456",
+        edgeId: "edge-1",
+        acceptedAtMs: 101,
+        expiresAtMs: 201
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED"
+    );
+  } finally {
+    store.close();
+  }
+  const reopened = new BrokerStore(databasePath);
+  try {
+    assert.throws(
+      () => reopened.admitEdgeRevocationEvent({
+        requestId: "edge-revoke:2234567890123456",
+        nonce: "edge-revoke-nonce:1234567890123456",
+        edgeId: "edge-1",
+        acceptedAtMs: 150,
+        expiresAtMs: 250
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "REPLAY_DENIED"
+    );
+    reopened.admitEdgeRevocationEvent({
+      requestId: "edge-revoke:2234567890123456",
+      nonce: "edge-revoke-nonce:2234567890123456",
+      edgeId: "edge-1",
       acceptedAtMs: 200,
       expiresAtMs: 300
     });
@@ -320,8 +377,88 @@ test("BrokerStore adds approval linkage to an existing request ledger", async ()
   const store = new BrokerStore(databasePath);
   try {
     assert.equal(store.requestRecord("request-legacy")?.approvalId, null);
+    assert.equal(store.requestRecord("request-legacy")?.edgeKeyId, null);
   } finally {
     store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore migrates version 17 Request and tombstone Edge-key columns as nullable legacy data", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-edge-key-migration-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.admitRequest({
+    ...requestInput("request:pre-v18", "nonce:pre-v18", false),
+    edgeKeyId: "edge-1:edge-key-1"
+  });
+  store.close();
+  try {
+    const legacy = new DatabaseSync(databasePath);
+    try {
+      legacy.exec("ALTER TABLE requests DROP COLUMN edge_key_id");
+      legacy.exec("ALTER TABLE request_tombstones DROP COLUMN edge_key_id");
+      legacy.prepare("DELETE FROM schema_migrations WHERE version >= 18").run();
+      legacy.exec("PRAGMA user_version = 17");
+    } finally {
+      legacy.close();
+    }
+
+    const migrated = new BrokerStore(databasePath);
+    try {
+      assert.equal(migrated.requestRecord("request:pre-v18")?.edgeKeyId, null);
+      const check = new DatabaseSync(databasePath);
+      try {
+        for (const table of ["requests", "request_tombstones"]) {
+          const columns = check.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string; type: string; notnull: number }>;
+          const edgeKeyColumn = columns.find((column) => column.name === "edge_key_id");
+          assert.deepEqual(edgeKeyColumn && { type: edgeKeyColumn.type, notnull: edgeKeyColumn.notnull }, { type: "TEXT", notnull: 0 });
+        }
+      } finally {
+        check.close();
+      }
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore adds the authenticated guest-result journal to a version 18 database", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-result-migration-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const initial = new BrokerStore(databasePath);
+  initial.createJob(jobInput("job:pre-v19", "pre-v19"));
+  initial.close();
+  try {
+    const legacy = new DatabaseSync(databasePath);
+    try {
+      legacy.exec("ALTER TABLE jobs DROP COLUMN guest_result_json");
+      legacy.prepare("DELETE FROM schema_migrations WHERE version = 19").run();
+      legacy.exec("PRAGMA user_version = 18");
+    } finally {
+      legacy.close();
+    }
+
+    const migrated = new BrokerStore(databasePath);
+    try {
+      assert.equal(migrated.ownedJob("job:pre-v19", "principal-1")?.state, "cancelled");
+      const database = new DatabaseSync(databasePath);
+      try {
+        const columns = database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string; type: string; notnull: number }>;
+        assert.deepEqual(columns.find((column) => column.name === "guest_result_json") && {
+          type: columns.find((column) => column.name === "guest_result_json")?.type,
+          notnull: columns.find((column) => column.name === "guest_result_json")?.notnull
+        }, { type: "TEXT", notnull: 1 });
+        assert.equal((database.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 19);
+      } finally {
+        database.close();
+      }
+    } finally {
+      migrated.close();
+    }
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -367,7 +504,7 @@ test("BrokerStore adds write metadata storage to an existing Job Ledger", async 
     try {
       const columns = migrated.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
       const names = new Set(columns.map((column) => column.name));
-      for (const name of ["owner_edge_id", "owner_edge_key_id", "lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms", "process_metadata_json", "privileged_payload_json"]) {
+      for (const name of ["owner_edge_id", "owner_edge_key_id", "lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms", "lease_expires_at_ms", "process_metadata_json", "service_metadata_json", "privileged_payload_json"]) {
         assert.equal(names.has(name), true, `expected migrated Job column ${name}`);
       }
     } finally {
@@ -1213,6 +1350,81 @@ test("approval consumption rejects every bound-field substitution and single-use
   }
 });
 
+test("missing approval creates a durable non-secret owner preview with bounded expiry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-preview-"));
+  const databasePath = join(directory, "broker.sqlite");
+  let store = new BrokerStore(databasePath);
+  try {
+    authorizeMutationRequest(store, "request-preview", "nonce-preview");
+    assert.throws(
+      () => store.recordRequestIntent(
+        requestEvent("request-preview", "intent", "INTENT_RECORDED", 3),
+        approvalBinding()
+      ),
+      /No valid approval/u
+    );
+    const preview = store.createApprovalPreview("request-preview", approvalBinding(), 3);
+    assert.deepEqual(preview, {
+      requestId: "request-preview",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_job_cancel",
+      contractVersion: "0.1",
+      targetKind: "job",
+      targetRef: "job:owned",
+      payloadDigest: "d".repeat(64),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      status: "pending",
+      approvalId: null,
+      createdAtMs: 3,
+      expiresAtMs: 120_003,
+      revision: 0
+    });
+    assert.equal(store.approvalPreview("request-preview", 120_002)?.requestId, "request-preview");
+    assert.equal(store.approvalPreview("request-preview", 120_003), undefined);
+
+    store.issueApproval({
+      approvalId: "approval:preview",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_job_cancel",
+      contractVersion: "0.1",
+      targetKind: "job",
+      targetRef: "job:owned",
+      payloadDigest: "d".repeat(64),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      issuedAtMs: 4,
+      expiresAtMs: 120_002
+    });
+    assert.equal(store.markApprovalPreviewIssued("request-preview", "approval:preview", 4).status, "issued");
+    assert.equal(store.approvalPreview("request-preview", 4), undefined);
+    store.recordRequestIntent(
+      requestEvent("request-preview", "intent", "INTENT_RECORDED", 5),
+      approvalBinding()
+    );
+    const lifecycleDatabase = new DatabaseSync(databasePath);
+    try {
+      const lifecycle = lifecycleDatabase.prepare(
+        "SELECT status, approval_id FROM approval_previews WHERE request_id = ?"
+      ).get("request-preview") as { status?: unknown; approval_id?: unknown };
+      assert.equal(lifecycle.status, "consumed");
+      assert.equal(lifecycle.approval_id, "approval:preview");
+    } finally {
+      lifecycleDatabase.close();
+    }
+
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.equal(store.approvalPreview("request-preview", 4), undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("competing request admissions cannot consume one approval twice", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-race-"));
   const databasePath = join(directory, "broker.sqlite");
@@ -1293,7 +1505,15 @@ test("atomic approved job admission links request, approval, intent, and idempot
     assert.equal(admitted.request.state, "INTENT_RECORDED");
     assert.equal(admitted.request.jobId, "job:atomic");
     assert.equal(admitted.request.approvalId, "approval:atomic");
+    assert.equal(admitted.request.edgeKeyId, "edge-1:edge-key-1");
     assert.equal(admitted.job.state, "queued");
+    const mismatchedKey = atomicJobAdmissionInput(
+      "request-atomic-key-mismatch", "nonce-atomic-key-mismatch", "job:atomic-key-mismatch",
+      "task:test", "task_profile:test"
+    );
+    mismatchedKey.job.edgeKeyId = "edge-1:edge-key-other";
+    assert.throws(() => store.admitApprovedJob(mismatchedKey));
+    assert.equal(store.requestRecord("request-atomic-key-mismatch"), undefined);
     assert.equal(store.approvalRecord("approval:atomic")?.usedCount, 1);
     assert.throws(
       () => store.admitApprovedJob({
@@ -1303,8 +1523,34 @@ test("atomic approved job admission links request, approval, intent, and idempot
       /identity was already accepted/u
     );
 
+    assert.throws(
+      () => store.admitApprovedJob({
+        ...atomicJobAdmissionInput("request-atomic-retry", "nonce-atomic-retry", "job:ignored", "task:test", "task_profile:test"),
+        approval: first.approval
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(store.requestRecord("request-atomic-retry"), undefined);
+    const started = store.startJob("job:atomic", "principal-1", admitted.job.revision, 4);
+    store.finishJob("job:atomic", "principal-1", started.revision, {
+      state: "completed", resultClass: "success", finishedAtMs: 5
+    });
+    const crossSessionRetry = atomicJobAdmissionInput(
+      "request-atomic-cross-session",
+      "nonce-atomic-cross-session",
+      "job:ignored-cross-session",
+      "task:test",
+      "task_profile:test"
+    );
+    crossSessionRetry.request.sessionId = "session-2";
+    crossSessionRetry.job.ownerSessionId = "session-2";
+    assert.throws(
+      () => store.admitApprovedJob({ ...crossSessionRetry, approval: first.approval }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(store.requestRecord("request-atomic-cross-session"), undefined);
     const retry = store.admitApprovedJob({
-      ...atomicJobAdmissionInput("request-atomic-retry", "nonce-atomic-retry", "job:ignored", "task:test", "task_profile:test"),
+      ...atomicJobAdmissionInput("request-atomic-retry", "nonce-atomic-retry-2", "job:ignored", "task:test", "task_profile:test"),
       approval: first.approval
     });
     assert.equal(retry.reused, true);
@@ -1322,11 +1568,11 @@ test("atomic approved job admission links request, approval, intent, and idempot
       payloadDigest: "b".repeat(64),
       approvalClass: "trusted_profile"
     });
-    assert.throws(() => store.admitApprovedJob({ ...conflict, approval: { ...conflict.approval, approvalClass: "trusted_profile" } }), /different job payload/u);
+    assert.throws(() => store.admitApprovedJob({ ...conflict, approval: { ...conflict.approval, approvalClass: "trusted_profile" } }), /different job identity or payload/u);
     assert.equal(store.requestRecord("request-atomic-conflict"), undefined);
     assert.equal(store.ownedJob("job:conflict", "principal-1"), undefined);
     assert.equal(store.approvalRecord("approval:atomic-conflict")?.usedCount, 0);
-    assert.throws(() => store.admitApprovedJob(conflict), /different job payload/u);
+    assert.throws(() => store.admitApprovedJob(conflict), /different job identity or payload/u);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -1394,6 +1640,45 @@ test("atomic approved job admission rolls back every injected failure point", as
       store.close();
       await rm(directory, { recursive: true, force: true });
     }
+  }
+});
+
+test("approved Job after-decision admission rejects a mismatched Request Edge key", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-approved-edge-key-mismatch-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const input = atomicJobAdmissionInput(
+      "request-approved-edge-key-mismatch", "nonce-approved-edge-key-mismatch",
+      "job:approved-edge-key-mismatch", "task_profile:test", "task_profile:test"
+    );
+    store.issueApproval({
+      approvalId: "approval:approved-edge-key-mismatch",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:test",
+      payloadDigest: "b".repeat(64),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: 1,
+      expiresAtMs: 100
+    });
+    store.admitRequest(input.request);
+    store.recordRequestDecision(input.decision);
+    input.job.edgeKeyId = "edge-1:edge-key-other";
+    assert.throws(
+      () => store.admitApprovedJobAfterDecision({ intent: input.intent, approval: input.approval, job: input.job }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(store.requestRecord(input.request.requestId)?.state, "AUTHORIZED");
+    assert.equal(store.ownedJob(input.job.jobId, input.job.ownerPrincipalId), undefined);
+    assert.equal(store.approvalRecord("approval:approved-edge-key-mismatch")?.usedCount, 0);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -1466,12 +1751,25 @@ test("job creation is principal-scoped and payload-bound idempotent", async () =
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-idempotency-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   try {
-    const first = store.createJob(jobInput("job:first", "idem-1"));
+    const first = store.createJob({ ...jobInput("job:first", "idem-1"), edgeId: "edge-1" });
     assert.equal(first.reused, false);
     assert.equal(first.job.state, "queued");
-    const repeated = store.createJob({ ...jobInput("job:ignored", "idem-1") });
+    assert.throws(
+      () => store.createJob({ ...jobInput("job:ignored", "idem-1") }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    const started = store.startJob("job:first", "principal-1", first.job.revision, 2);
+    store.finishJob("job:first", "principal-1", started.revision, {
+      state: "completed", resultClass: "success", finishedAtMs: 3
+    });
+    const repeated = store.createJob({ ...jobInput("job:ignored", "idem-1"), edgeId: "edge-1" });
     assert.equal(repeated.reused, true);
     assert.equal(repeated.job.jobId, "job:first");
+    assert.throws(
+      () => store.createJob({ ...jobInput("job:cross-session", "idem-1"), edgeId: "edge-1", ownerSessionId: "session-2" }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+    assert.equal(store.ownedJob("job:cross-session", "principal-1"), undefined);
     assert.throws(
       () => store.createJob({ ...jobInput("job:different", "idem-1"), payloadDigest: "b".repeat(64) }),
       /different authorized job/u
@@ -1482,6 +1780,7 @@ test("job creation is principal-scoped and payload-bound idempotent", async () =
     );
     const otherPrincipal = store.createJob({
       ...jobInput("job:other", "idem-1"),
+      edgeId: "edge-1",
       ownerPrincipalId: "principal-2"
     });
     assert.equal(otherPrincipal.reused, false);
@@ -1511,9 +1810,13 @@ test("privileged helper payload descriptors persist across BrokerStore restart",
       privilegedPayload
     });
     assert.deepEqual(created.job.privilegedPayload, privilegedPayload);
+    store.startJob(created.job.jobId, "principal-1", created.job.revision, 2);
     store.close();
     store = new BrokerStore(databasePath);
-    assert.deepEqual(store.ownedJob("job:privileged-payload", "principal-1")?.privilegedPayload, privilegedPayload);
+    const recovered = store.ownedJob("job:privileged-payload", "principal-1");
+    assert.deepEqual(recovered?.privilegedPayload, privilegedPayload);
+    assert.equal(recovered?.state, "unknown");
+    assert.deepEqual(store.restartUnknownPrivilegedJobs().map((job) => job.jobId), ["job:privileged-payload"]);
     assert.throws(() => store.createJob({
       jobId: "job:privileged-payload-invalid",
       ownerPrincipalId: "principal-1",
@@ -2015,6 +2318,78 @@ test("restart reconciliation cancels queued jobs and marks running outcomes unkn
   }
 });
 
+test("queued service-control cancellation clears terminal-only recovery metadata", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-queued-service-cancel-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const serviceMetadata = {
+    serviceId: "gui/501/com.mac-operator.edge",
+    action: "start" as const,
+    expectedState: "running" as const,
+    preState: "stopped" as const,
+    preSourceRevision: "a".repeat(7),
+    bindingSourceRevision: "a".repeat(7)
+  };
+  const privilegedPayload = { operation: "power" as const, action: "reboot" as const };
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob({ ...jobInput("job:queued-service-cancel", "queued-service-cancel"), tool: "mac_service_control", targetRef: "service:gui/501/com.mac-operator.edge", serviceMetadata });
+    store.createJob({
+      ...jobInput("job:queued-privileged-cancel", "queued-privileged-cancel"),
+      tool: "mac_priv_power",
+      targetRef: "host:local",
+      payloadDigest: sha256(canonicalJson(privilegedPayload)),
+      privilegedPayload
+    });
+    const cancelled = store.requestJobCancellation("job:queued-service-cancel", "principal-1", "OWNER_CANCELLED", 2).job;
+    const privilegedCancelled = store.requestJobCancellation("job:queued-privileged-cancel", "principal-1", "OWNER_CANCELLED", 2).job;
+    assert.equal(cancelled.state, "cancelled");
+    assert.equal(cancelled.serviceMetadata, undefined);
+    assert.equal(privilegedCancelled.state, "cancelled");
+    assert.equal(privilegedCancelled.privilegedPayload, undefined);
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.equal(store.ownedJob("job:queued-service-cancel", "principal-1")?.state, "cancelled");
+    assert.equal(store.ownedJob("job:queued-service-cancel", "principal-1")?.serviceMetadata, undefined);
+    assert.equal(store.ownedJob("job:queued-privileged-cancel", "principal-1")?.privilegedPayload, undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("queued service-control restart recovery clears metadata and remains stable on the next restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-queued-service-restart-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const serviceMetadata = {
+    serviceId: "gui/501/com.mac-operator.broker",
+    action: "stop" as const,
+    expectedState: "stopped" as const,
+    preState: "running" as const,
+    preSourceRevision: "b".repeat(7),
+    bindingSourceRevision: "b".repeat(7)
+  };
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob({ ...jobInput("job:queued-service-restart", "queued-service-restart"), tool: "mac_service_control", targetRef: "service:gui/501/com.mac-operator.broker", serviceMetadata });
+    store.close();
+    store = new BrokerStore(databasePath);
+    const firstReadback = store.ownedJob("job:queued-service-restart", "principal-1");
+    assert.equal(firstReadback?.state, "cancelled");
+    assert.equal(firstReadback?.cancelRequested, true);
+    assert.equal(firstReadback?.serviceMetadata, undefined);
+    const firstRevision = firstReadback?.revision;
+    store.close();
+    store = new BrokerStore(databasePath);
+    const secondReadback = store.ownedJob("job:queued-service-restart", "principal-1");
+    assert.equal(secondReadback?.state, "cancelled");
+    assert.equal(secondReadback?.revision, firstRevision);
+    assert.equal(secondReadback?.serviceMetadata, undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("write job idempotency identity survives restart and unresolved work becomes unknown", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-write-job-reconcile-"));
   const databasePath = join(directory, "broker.sqlite");
@@ -2073,6 +2448,39 @@ test("unresolved write metadata survives restart without storing content", async
   }
 });
 
+test("unresolved user-service metadata survives restart without losing the source identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-service-metadata-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const serviceMetadata = {
+    serviceId: "gui/501/com.mac-operator.test",
+    action: "start" as const,
+    expectedState: "running" as const,
+    preState: "stopped" as const,
+    preSourceRevision: "abcdef1",
+    bindingSourceRevision: "abcdef1"
+  };
+  let store = new BrokerStore(databasePath);
+  store.createJob({
+    ...jobInput("job:service-metadata", "service-metadata"),
+    tool: "mac_service_control",
+    targetRef: "service:gui/501/com.mac-operator.test",
+    serviceMetadata
+  });
+  store.startJob("job:service-metadata", "principal-1", 0, 2);
+  store.close();
+  store = new BrokerStore(databasePath);
+  try {
+    const recovered = store.ownedJob("job:service-metadata", "principal-1");
+    assert.deepEqual(recovered?.serviceMetadata, serviceMetadata);
+    assert.deepEqual(store.restartUnknownServiceJobs().map((job) => job.jobId), ["job:service-metadata"]);
+    assert.equal(recovered?.stdout, "");
+    assert.equal(recovered?.state, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("task process ownership metadata survives restart as UNKNOWN", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-process-metadata-"));
   const databasePath = join(directory, "broker.sqlite");
@@ -2122,7 +2530,7 @@ test("task process ownership metadata survives restart as UNKNOWN", async () => 
     const recovered = store.ownedJob("job:task-process-metadata", "principal-1");
     assert.equal(recovered?.state, "unknown");
     assert.deepEqual(recovered?.processMetadata, extendedMetadata);
-    assert.deepEqual(store.restartUnknownProcessJobs().map((job) => job.jobId), ["job:task-process-metadata"]);
+    assert.deepEqual(store.unresolvedTaskProcessJobs().map((job) => job.jobId), ["job:task-process-metadata"]);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -2161,6 +2569,161 @@ test("task process no-fork ownership proof survives restart", async () => {
     store.close();
     store = new BrokerStore(databasePath);
     assert.deepEqual(store.ownedJob("job:task-process-proof", "principal-1")?.processMetadata, metadata);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("unknown host task without process evidence remains quarantined after restart", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-quarantine-no-identity-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const lease = { ownerId: "broker:quarantine", token: "lease:quarantine-123456", expiresAtMs: 30_000 };
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:quarantine-no-identity", "quarantine-no-identity"));
+    const started = store.startJob("job:quarantine-no-identity", "principal-1", 0, 2, lease);
+    store.finishJob("job:quarantine-no-identity", "principal-1", started.revision, {
+      state: "unknown", resultClass: "unknown", finishedAtMs: 3
+    }, lease, 3);
+    assert.equal(store.hasUnresolvedHostTaskExecution(), true);
+    assert.deepEqual(store.unresolvedTaskProcessJobs(), []);
+
+    store.close();
+    store = new BrokerStore(databasePath);
+    assert.equal(store.ownedJob("job:quarantine-no-identity", "principal-1")?.state, "unknown");
+    assert.equal(store.hasUnresolvedHostTaskExecution(), true);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("process-group recovery cannot clear quarantine without a no-fork proof", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-quarantine-observer-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const lease = { ownerId: "broker:quarantine", token: "lease:quarantine-234567", expiresAtMs: 30_000 };
+  const metadata = {
+    pid: 4321,
+    processGroupId: 4321,
+    startTimeMicros: 987654321,
+    recordedAtMs: 2,
+    descendants: []
+  } as const;
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:quarantine-observer", "quarantine-observer"));
+    const started = store.startJob("job:quarantine-observer", "principal-1", 0, 1, lease);
+    const recorded = store.recordJobProcessOwnership(
+      "job:quarantine-observer", "principal-1", started.revision, metadata, lease, 2
+    );
+    const unknown = store.finishJob(
+      "job:quarantine-observer", "principal-1", recorded.revision,
+      { state: "unknown", resultClass: "unknown", finishedAtMs: 3 }, lease, 3
+    );
+    store.appendAudit({
+      requestId: `job-process-recovery-${unknown.jobId}-${unknown.revision}`,
+      principalId: "principal-1",
+      tool: "internal_task_process_recovery",
+      eventType: "intent",
+      decision: "allow",
+      resultClass: "INTENT_RECORDED",
+      targetRef: `job:${unknown.jobId}`,
+      policyVersion: unknown.policyVersion,
+      evidence: { jobId: unknown.jobId, pid: metadata.pid },
+      timestampMs: 4
+    });
+    store.appendAudit({
+      requestId: `job-process-recovery-${unknown.jobId}-${unknown.revision}`,
+      principalId: "principal-1",
+      tool: "internal_task_process_recovery",
+      eventType: "completion",
+      decision: "allow",
+      resultClass: "PROCESS_DRAINED",
+      targetRef: `job:${unknown.jobId}`,
+      policyVersion: unknown.policyVersion,
+      evidence: { jobId: unknown.jobId, pid: metadata.pid },
+      timestampMs: 5
+    });
+    assert.equal(store.hasUnresolvedHostTaskExecution(), true);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("verified no-fork recovery clears host quarantine without blocking guest Jobs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-quarantine-nofork-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const lease = { ownerId: "broker:quarantine", token: "lease:quarantine-345678", expiresAtMs: 30_000 };
+  const processMetadata = {
+    pid: 5432,
+    processGroupId: 5432,
+    startTimeMicros: 987654322,
+    recordedAtMs: 2,
+    descendants: [],
+    ownershipProof: "sandbox-exec-no-fork-v1"
+  } as const;
+  const guestMetadata = {
+    requestId: "request:guest-quarantine-12345678",
+    nonce: "guest-nonce-quarantine-12345678",
+    requestDigest: "a".repeat(64),
+    guestIdentity: { imageSha256: "b".repeat(64), runtimeVersion: "linux-guest-test" },
+    profileDigest: "c".repeat(64),
+    taskDigest: "d".repeat(64),
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    recordedAtMs: 7
+  } as const;
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:quarantine-nofork", "quarantine-nofork"));
+    const started = store.startJob("job:quarantine-nofork", "principal-1", 0, 1, lease);
+    const recorded = store.recordJobProcessOwnership(
+      "job:quarantine-nofork", "principal-1", started.revision, processMetadata, lease, 2
+    );
+    const unknown = store.finishJob(
+      "job:quarantine-nofork", "principal-1", recorded.revision,
+      { state: "unknown", resultClass: "unknown", finishedAtMs: 3 }, lease, 3
+    );
+    assert.equal(store.hasUnresolvedHostTaskExecution(), true);
+    const recoveryRequestId = `job-process-recovery-${unknown.jobId}-${unknown.revision}`;
+    store.appendAudit({
+      requestId: recoveryRequestId,
+      principalId: "principal-1",
+      tool: "internal_task_process_recovery",
+      eventType: "intent",
+      decision: "allow",
+      resultClass: "INTENT_RECORDED",
+      targetRef: `job:${unknown.jobId}`,
+      policyVersion: unknown.policyVersion,
+      evidence: { jobId: unknown.jobId, pid: processMetadata.pid },
+      timestampMs: 4
+    });
+    store.appendAudit({
+      requestId: recoveryRequestId,
+      principalId: "principal-1",
+      tool: "internal_task_process_recovery",
+      eventType: "completion",
+      decision: "allow",
+      resultClass: "PROCESS_ABSENT",
+      targetRef: `job:${unknown.jobId}`,
+      policyVersion: unknown.policyVersion,
+      evidence: { jobId: unknown.jobId, pid: processMetadata.pid },
+      timestampMs: 5
+    });
+    assert.equal(store.hasUnresolvedHostTaskExecution(), false);
+
+    store.createJob(jobInput("job:quarantine-guest", "quarantine-guest"));
+    const guestStarted = store.startJob("job:quarantine-guest", "principal-1", 0, 6, lease);
+    const guestRecorded = store.recordJobGuestRequest(
+      "job:quarantine-guest", "principal-1", guestStarted.revision, guestMetadata, lease, 7
+    );
+    store.finishJob(
+      "job:quarantine-guest", "principal-1", guestRecorded.revision,
+      { state: "unknown", resultClass: "unknown", finishedAtMs: 8 }, lease, 8
+    );
+    assert.equal(store.hasUnresolvedHostTaskExecution(), false);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -2224,6 +2787,117 @@ test("Virtualization guest request identity survives restart and terminal recove
     assert.deepEqual(store.restartUnknownGuestJobs(), []);
   } finally {
     store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("authenticated guest result journal survives restart, is audit-bound, and clears on reconciliation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-result-journal-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const metadata = {
+    requestId: "request:guest-1234567890abcdef",
+    nonce: "guest-nonce-1234567890abcdef",
+    requestDigest: "b".repeat(64),
+    guestIdentity: { imageSha256: "c".repeat(64), runtimeVersion: "macos-guest-1" },
+    profileDigest: "d".repeat(64),
+    taskDigest: "e".repeat(64),
+    timeoutMs: 10_000,
+    outputCapBytes: 4_096,
+    recordedAtMs: 2
+  } as const;
+  const lease = {
+    ownerId: "broker:guest-result-journal",
+    token: "lease:guest-result-journal-1234",
+    expiresAtMs: 30
+  };
+  let store = new BrokerStore(databasePath);
+  try {
+    store.createJob(jobInput("job:guest-result-journal", "guest-result-journal"));
+    const started = store.startJob("job:guest-result-journal", "principal-1", 0, 1, lease);
+    const admitted = store.recordJobGuestRequest(
+      "job:guest-result-journal", "principal-1", started.revision, metadata, lease, 2
+    );
+    const journaled = store.recordJobGuestResult(
+      "job:guest-result-journal", "principal-1", admitted.revision,
+      {
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "verified guest output",
+        stderr: "",
+        truncated: false,
+        durationMs: 4,
+        verification: { status: "verified", summary: "guest response authenticated" }
+      },
+      lease,
+      3
+    );
+    assert.equal(journaled.guestResultJournal?.result.stdout, "verified guest output");
+    assert.equal(store.auditEventResult(`guest-result-${sha256("job:guest-result-journal").slice(0, 16)}-${metadata.requestDigest.slice(0, 16)}`, "completion"), "GUEST_RESULT_JOURNALED");
+    store.close();
+
+    store = new BrokerStore(databasePath);
+    const recovered = store.ownedJob("job:guest-result-journal", "principal-1");
+    assert.equal(recovered?.state, "unknown");
+    assert.deepEqual(recovered?.guestResultJournal?.result.stdout, "verified guest output");
+    assert.deepEqual(store.restartUnknownGuestJobs().map((job) => job.jobId), ["job:guest-result-journal"]);
+    const reconciled = store.reconcileUnknownGuestTask(
+      "job:guest-result-journal", "principal-1", recovered?.revision ?? -1,
+      { state: "completed", resultClass: "success", finishedAtMs: 4, exitCode: 0, stdout: "verified guest output", verificationStatus: "verified" }
+    );
+    assert.equal(reconciled.state, "completed");
+    assert.equal(reconciled.guestMetadata, undefined);
+    assert.equal(reconciled.guestResultJournal, undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("BrokerStore rejects a guest result journal changed independently of its audit evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-result-tamper-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const metadata = {
+    requestId: "request:guest-tamper-123456789",
+    nonce: "guest-nonce-tamper-123456789",
+    requestDigest: "b".repeat(64),
+    guestIdentity: { imageSha256: "c".repeat(64), runtimeVersion: "macos-guest-1" },
+    profileDigest: "d".repeat(64),
+    taskDigest: "e".repeat(64),
+    timeoutMs: 10_000,
+    outputCapBytes: 4_096,
+    recordedAtMs: 2
+  } as const;
+  const lease = { ownerId: "broker:guest-result-tamper", token: "lease:guest-result-tamper-1234", expiresAtMs: 30 };
+  const store = new BrokerStore(databasePath);
+  store.createJob(jobInput("job:guest-result-tamper", "guest-result-tamper"));
+  const started = store.startJob("job:guest-result-tamper", "principal-1", 0, 1, lease);
+  const admitted = store.recordJobGuestRequest("job:guest-result-tamper", "principal-1", started.revision, metadata, lease, 2);
+  store.recordJobGuestResult(
+    "job:guest-result-tamper", "principal-1", admitted.revision,
+    {
+      state: "completed", resultClass: "SUCCEEDED", exitCode: 0, stdout: "original",
+      stderr: "", truncated: false, durationMs: 4, verification: { status: "verified" }
+    },
+    lease,
+    3
+  );
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      const row = database.prepare("SELECT guest_result_json FROM jobs WHERE job_id = ?").get("job:guest-result-tamper") as { guest_result_json: string };
+      const journal = JSON.parse(row.guest_result_json) as { result: { stdout: string } };
+      journal.result.stdout = "altered without audit update";
+      database.prepare("UPDATE jobs SET guest_result_json = ? WHERE job_id = ?").run(canonicalJson(journal), "job:guest-result-tamper");
+    } finally {
+      database.close();
+    }
+    assert.throws(
+      () => new BrokerStore(databasePath),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -2341,6 +3015,7 @@ function atomicJobAdmissionInput(
     request: {
       requestId,
       edgeId: "edge-1",
+      edgeKeyId: "edge-1:edge-key-1",
       nonce,
       nonceExpiresAtMs: 10_000,
       principalId: "principal-1",
@@ -2385,6 +3060,8 @@ function atomicJobAdmissionInput(
     },
     job: {
       jobId,
+      edgeId: "edge-1",
+      edgeKeyId: "edge-1:edge-key-1",
       ownerPrincipalId: "principal-1",
       ownerSessionId: "session-1",
       tool: "mac_task_run",

@@ -70,7 +70,8 @@ export function applyFilesystemPatch(
   projectRootPlan: FilesystemPathPlan,
   patchText: string,
   expectedBaseHash: string | undefined,
-  temporaryNameFactory: () => string = () => `.mac-operator-write-patch-${cryptoRandomToken()}`
+  temporaryNameFactory: () => string = () => `.mac-operator-write-patch-${cryptoRandomToken()}`,
+  beforeMutation?: () => void
 ): FilesystemPatchResult {
   const parsed = parsePatch(patchText);
   assertContentDoesNotContainSecrets(Buffer.from(patchText, "utf8"));
@@ -141,12 +142,13 @@ export function applyFilesystemPatch(
         file.originalDigest ?? undefined,
         file.originalDigest === null,
         temporaryNameFactory(),
-        file.originalIdentity
+        file.originalIdentity,
+        beforeMutation
       );
       applied.push({ file, identity: { device: write.device, inode: write.inode } });
     }
   } catch (error) {
-    rollbackApplied(inspector, applied, temporaryNameFactory);
+    rollbackApplied(inspector, applied, temporaryNameFactory, beforeMutation);
     throw error instanceof BrokerError ? error : new BrokerError("UNKNOWN_OUTCOME", "Patch outcome could not be verified", true);
   }
 
@@ -302,12 +304,17 @@ function fileResult(path: string, content: Buffer): FilesystemPatchFileResult {
 function rollbackApplied(
   inspector: FilesystemInspector,
   applied: ReadonlyArray<{ file: PreparedPatchFile; identity: { device: string; inode: string } }>,
-  temporaryNameFactory: () => string
+  temporaryNameFactory: () => string,
+  beforeMutation?: () => void
 ): void {
   for (const { file, identity } of [...applied].reverse()) {
     try {
       if (file.originalDigest === null) {
-        inspector.unlinkPlanned(file.plan, { present: true, device: identity.device, inode: identity.inode });
+        inspector.unlinkPlanned(
+          file.plan,
+          { present: true, device: identity.device, inode: identity.inode },
+          beforeMutation
+        );
       } else {
         inspector.writePlanned(
           file.plan,
@@ -315,7 +322,8 @@ function rollbackApplied(
           sha256(file.next),
           false,
           temporaryNameFactory(),
-          { present: true, device: identity.device, inode: identity.inode }
+          { present: true, device: identity.device, inode: identity.inode },
+          beforeMutation
         );
       }
     } catch {

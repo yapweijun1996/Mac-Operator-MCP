@@ -15,6 +15,9 @@ import {
   type BrokerBackupPruneResult
 } from "./persistence-backup.js";
 import { EDGE_KEY_IDENTITY_PATTERN, isValidEdgeId } from "./edge-keyring.js";
+import type { AuditIntegrityReadback } from "./audit-integrity.js";
+import { createAuditArchive, inspectAuditArchive, type AuditArchiveManifest, type AuditArchiveOptions } from "./audit-export.js";
+import { createLedgerArchive, inspectLedgerArchive, type LedgerArchiveManifest, type LedgerArchiveOptions } from "./ledger-export.js";
 
 export type SwitchName = "global" | "mutations" | "process" | "network" | "gui" | "destructive" | "privileged";
 const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
@@ -98,8 +101,12 @@ const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 12;
+export const BROKER_SCHEMA_VERSION = 19;
+export const APPROVAL_PREVIEW_TTL_MS = 120_000;
 const MAX_REPLAY_LEDGER_ROWS = 4096;
+const MAX_LEDGER_TOMBSTONE_ROWS = 100_000;
+const MAX_LEDGER_ROTATION_RETAIN_ROWS = 1_000_000;
+const MAX_LEDGER_ROTATION_MIN_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 type ReplayLedgerTable =
   | "nonces"
   | "approval_nonces"
@@ -108,7 +115,8 @@ type ReplayLedgerTable =
   | "privileged_helper_nonces"
   | "broker_status_nonces"
   | "virtualization_guest_nonces"
-  | "keychain_delivery_nonces";
+  | "keychain_delivery_nonces"
+  | "edge_revocation_nonces";
 
 /**
  * Non-secret write facts retained so an unresolved mutation can be inspected
@@ -176,6 +184,39 @@ export interface GuestTaskJobMetadata {
   recordedAtMs: number;
 }
 
+/** Authenticated terminal response retained until the enclosing Job is settled. */
+export interface GuestTaskResultJournal {
+  admission: GuestTaskJobMetadata;
+  recordedAtMs: number;
+  result: {
+    state: "completed" | "failed" | "cancelled" | "timed_out" | "unknown";
+    resultClass: "SUCCEEDED" | "EXECUTION_FAILED" | "CANCELLED" | "TIMEOUT" | "OUTPUT_LIMIT" | "UNKNOWN_OUTCOME";
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    truncated: boolean;
+    durationMs: number;
+    verification: {
+      status: "verified" | "failed" | "unknown" | "not_run";
+      summary?: string;
+    };
+  };
+}
+
+/**
+ * Non-secret precondition identity retained for an admitted user-domain
+ * LaunchAgent Job. The source revision is supplied by Broker-owned metadata,
+ * never inferred from launchctl output.
+ */
+export interface ServiceControlJobMetadata {
+  serviceId: string;
+  action: "start" | "stop" | "restart";
+  expectedState: "running" | "stopped";
+  preState: "running" | "stopped";
+  preSourceRevision: string;
+  bindingSourceRevision: string;
+}
+
 /**
  * Non-secret, allowlisted arguments that may cross the helper boundary.
  * Generic shell text, executable paths, and arbitrary maps are intentionally
@@ -228,7 +269,31 @@ export interface BrokerJob {
   writeMetadata?: WriteJobMetadata;
   processMetadata?: ProcessJobMetadata;
   guestMetadata?: GuestTaskJobMetadata;
+  guestResultJournal?: GuestTaskResultJournal;
+  serviceMetadata?: ServiceControlJobMetadata;
   privilegedPayload?: PrivilegedHelperPayload;
+}
+
+/** Minimal terminal Job identity retained after a verified ledger rotation. */
+export interface ArchivedJobRecord {
+  jobId: string;
+  ownerPrincipalId: string;
+  ownerSessionId: string;
+  tool: string;
+  targetRef: string;
+  policyVersion: string;
+  payloadDigest: string;
+  idempotencyKey: string;
+  state: "completed" | "failed" | "cancelled";
+  resultClass: Exclude<JobResultClass, "queued" | "accepted" | "unknown">;
+  createdAtMs: number;
+  startedAtMs: number | null;
+  finishedAtMs: number;
+  exitCode: number | null;
+  cancelRequested: boolean;
+  revision: number;
+  archivedAtMs: number;
+  archiveSha256: string;
 }
 
 export interface CreateJobInput {
@@ -246,6 +311,7 @@ export interface CreateJobInput {
   idempotencyKey: string;
   createdAtMs: number;
   writeMetadata?: WriteJobMetadata;
+  serviceMetadata?: ServiceControlJobMetadata;
   privilegedPayload?: PrivilegedHelperPayload;
 }
 
@@ -256,6 +322,8 @@ export type RequestState =
 export interface RequestRecord {
   requestId: string;
   edgeId: string;
+  /** Edge/key identity that authenticated this Request; null only for legacy/local records. */
+  edgeKeyId?: string | null;
   principalId: string;
   sessionId: string;
   tool: string;
@@ -277,6 +345,8 @@ export interface RequestRecord {
 export interface AdmitRequestInput {
   requestId: string;
   edgeId: string;
+  /** Edge/key identity that authenticated this Request; omitted only for legacy/local callers. */
+  edgeKeyId?: string;
   nonce: string;
   nonceExpiresAtMs: number;
   principalId: string;
@@ -364,12 +434,37 @@ export interface ApprovalConsumptionBinding {
   unattended: boolean;
 }
 
+/**
+ * Non-secret owner-review facts retained for a mutation that reached the
+ * approval boundary without a matching single-use approval. Raw arguments
+ * are deliberately absent; the payload digest is the only payload identity.
+ */
+export interface ApprovalPreviewRecord {
+  requestId: string;
+  requestingPrincipalId: string;
+  tool: string;
+  contractVersion: string;
+  targetKind: string;
+  targetRef: string;
+  payloadDigest: string;
+  policyVersion: string;
+  approvalClass: ApprovalClass;
+  unattended: boolean;
+  status: "pending" | "issued" | "consumed";
+  approvalId: string | null;
+  createdAtMs: number;
+  expiresAtMs: number;
+  revision: number;
+}
+
 export interface AtomicJobAdmissionInput {
   request: AdmitRequestInput;
   decision: AuditEvent;
   intent: AuditEvent;
   approval: ApprovalConsumptionBinding;
   job: CreateJobInput;
+  /** Optional durable request-capacity limits for internal atomic callers. */
+  limits?: RequestAdmissionLimits;
 }
 
 export interface ApprovedJobAdmissionInput {
@@ -406,13 +501,49 @@ export interface BrokerStoreOptions {
    * until cross-process sidecar locking is separately accepted.
    */
   auditAnchor?: AuditAnchorOptions;
+  /**
+   * Append-only audit retention guard. Reaching either bound rejects the
+   * next transaction; rows are never silently deleted or compacted.
+   */
+  auditRetention?: AuditRetentionPolicy;
 }
+
+export interface LedgerRotationOptions extends LedgerArchiveOptions {
+  /** Keep at least this many newest known-terminal Request rows. */
+  retainRequestCount: number;
+  /** Keep at least this many newest known-terminal Job rows. */
+  retainJobCount: number;
+  /** Only rows finished/updated at least this many milliseconds ago are eligible. */
+  minAgeMs: number;
+}
+
+export interface LedgerRotationResult {
+  archive: LedgerArchiveManifest;
+  rotatedRequestCount: number;
+  rotatedJobCount: number;
+  requestTombstoneCount: number;
+  jobTombstoneCount: number;
+}
+
+export interface AuditRetentionPolicy {
+  maxEvents: number;
+  maxBytes: number;
+}
+
+export const DEFAULT_AUDIT_RETENTION: Readonly<AuditRetentionPolicy> = Object.freeze({
+  maxEvents: 100_000,
+  maxBytes: 128 * 1024 * 1024
+});
+
+const MAX_AUDIT_RETENTION_EVENTS = 1_000_000;
+const MAX_AUDIT_RETENTION_BYTES = 1024 * 1024 * 1024;
 
 export class BrokerStore {
   private readonly database: DatabaseSync;
   private readonly faultInjector: ((point: PersistenceFaultPoint) => void) | undefined;
   private readonly auditAnchor: AuditAnchorManager | undefined;
   private readonly runtimeFenceEnabled: boolean;
+  private readonly auditRetention: AuditRetentionPolicy;
   /** Unique process-instance token used to fence stale Broker writers after restart. */
   private readonly runtimeFenceToken = `fence:${randomUUID()}`;
   private runtimeFenceGeneration = 0;
@@ -423,6 +554,7 @@ export class BrokerStore {
   constructor(path: string, options: BrokerStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
     this.auditAnchor = options.auditAnchor ? new AuditAnchorManager(options.auditAnchor) : undefined;
+    this.auditRetention = normalizeAuditRetention(options.auditRetention ?? DEFAULT_AUDIT_RETENTION);
     this.runtimeFenceEnabled = options.runtimeFence === true;
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA busy_timeout = 5000;");
@@ -503,6 +635,13 @@ export class BrokerStore {
       CREATE TABLE IF NOT EXISTS keychain_delivery_nonces (
         nonce TEXT PRIMARY KEY,
         request_id TEXT NOT NULL UNIQUE,
+        accepted_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS edge_revocation_nonces (
+        nonce TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL UNIQUE,
+        edge_id TEXT NOT NULL,
         accepted_at_ms INTEGER NOT NULL,
         expires_at_ms INTEGER NOT NULL
       ) STRICT;
@@ -652,13 +791,39 @@ export class BrokerStore {
         write_metadata_json TEXT NOT NULL DEFAULT '',
         process_metadata_json TEXT NOT NULL DEFAULT '',
         guest_metadata_json TEXT NOT NULL DEFAULT '',
+        guest_result_json TEXT NOT NULL DEFAULT '',
+        service_metadata_json TEXT NOT NULL DEFAULT '',
         privileged_payload_json TEXT NOT NULL DEFAULT '',
         revision INTEGER NOT NULL,
+        UNIQUE (owner_principal_id, idempotency_key)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS job_tombstones (
+        job_id TEXT PRIMARY KEY,
+        owner_edge_id TEXT,
+        owner_edge_key_id TEXT,
+        owner_principal_id TEXT NOT NULL,
+        owner_session_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        target_ref TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('completed', 'failed', 'cancelled')),
+        result_class TEXT NOT NULL CHECK (result_class IN ('success', 'denied', 'failed', 'verification_failed')),
+        created_at_ms INTEGER NOT NULL,
+        started_at_ms INTEGER,
+        finished_at_ms INTEGER NOT NULL,
+        exit_code INTEGER,
+        cancel_requested INTEGER NOT NULL CHECK (cancel_requested IN (0, 1)),
+        revision INTEGER NOT NULL,
+        archived_at_ms INTEGER NOT NULL,
+        archive_sha256 TEXT NOT NULL,
         UNIQUE (owner_principal_id, idempotency_key)
       ) STRICT;
       CREATE TABLE IF NOT EXISTS requests (
         request_id TEXT PRIMARY KEY,
         edge_id TEXT NOT NULL,
+        edge_key_id TEXT,
         principal_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
         tool TEXT NOT NULL,
@@ -677,6 +842,30 @@ export class BrokerStore {
         received_at_ms INTEGER NOT NULL,
         updated_at_ms INTEGER NOT NULL,
         revision INTEGER NOT NULL
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS request_tombstones (
+        request_id TEXT PRIMARY KEY,
+        edge_id TEXT NOT NULL,
+        edge_key_id TEXT,
+        principal_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        mutation INTEGER NOT NULL CHECK (mutation IN (0, 1)),
+        capability_families TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL CHECK (state IN (
+          'DENIED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'VERIFICATION_FAILED', 'UNKNOWN'
+        )),
+        result_class TEXT,
+        target_ref TEXT,
+        approval_id TEXT,
+        job_id TEXT,
+        received_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        revision INTEGER NOT NULL,
+        archived_at_ms INTEGER NOT NULL,
+        archive_sha256 TEXT NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS approvals (
         approval_id TEXT PRIMARY KEY,
@@ -702,6 +891,26 @@ export class BrokerStore {
         revocation_reason TEXT,
         revision INTEGER NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS approval_previews (
+        request_id TEXT PRIMARY KEY,
+        requesting_principal_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        contract_version TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_ref TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        approval_class TEXT NOT NULL CHECK (approval_class IN (
+          'trusted_write', 'trusted_gui', 'trusted_profile', 'explicit_privileged_policy'
+        )),
+        unattended INTEGER NOT NULL CHECK (unattended IN (0, 1)),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'issued', 'consumed')),
+        approval_id TEXT,
+        created_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL,
+        revision INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS approval_previews_expiry_idx ON approval_previews(expires_at_ms, request_id);
       CREATE INDEX IF NOT EXISTS approvals_match_idx ON approvals(
         requesting_principal_id, tool, contract_version, target_kind, target_ref,
         payload_digest, policy_version, approval_class, issued_at_ms, approval_id
@@ -712,9 +921,12 @@ export class BrokerStore {
       this.verifyReplayLedgerIntegrity();
       this.verifyConfigurationLedgerIntegrity();
       this.verifyRequestLedgerIntegrity();
+      this.verifyApprovalPreviewLedgerIntegrity();
       this.verifyAuthorityLedgerIntegrity();
       this.verifyJobLedgerIntegrity();
+      this.verifyLedgerTombstoneIntegrity();
       this.verifyAuditIntegrity();
+      this.verifyAuditRetention();
       this.verifyExternalAuditAnchor();
       if (this.runtimeFenceEnabled) this.acquireRuntimeFence(Date.now());
       this.reconcileInterruptedRequests(Date.now());
@@ -749,6 +961,7 @@ export class BrokerStore {
       broker_status_nonces: ["nonce", "request_id", "accepted_at_ms", "expires_at_ms"],
       virtualization_guest_nonces: ["nonce", "request_id", "accepted_at_ms", "expires_at_ms"],
       keychain_delivery_nonces: ["nonce", "request_id", "accepted_at_ms", "expires_at_ms"],
+      edge_revocation_nonces: ["nonce", "request_id", "edge_id", "accepted_at_ms", "expires_at_ms"],
       policy_history: ["revision", "version", "payload_digest", "key_id", "activated_at_ms"],
       active_policy: ["singleton", "revision", "version", "payload_digest", "key_id", "activated_at_ms"],
       approval_key_config_history: ["revision", "payload_digest", "activated_at_ms"],
@@ -764,7 +977,7 @@ export class BrokerStore {
       guest_attestation_key_config_history: ["revision", "payload_digest", "activated_at_ms"],
       active_guest_attestation_key_config: ["singleton", "revision", "payload_digest", "activated_at_ms"],
       requests: [
-        "request_id", "edge_id", "principal_id", "session_id", "tool", "policy_version", "payload_digest",
+        "request_id", "edge_id", "edge_key_id", "principal_id", "session_id", "tool", "policy_version", "payload_digest",
         "mutation", "capability_families", "state", "result_class", "target_ref", "approval_id", "job_id",
         "received_at_ms", "updated_at_ms", "revision"
       ],
@@ -774,13 +987,28 @@ export class BrokerStore {
         "expires_at_ms", "use_limit", "used_count", "last_consumed_at_ms", "last_request_id", "revoked_at_ms",
         "revocation_reason", "revision"
       ],
+      approval_previews: [
+        "request_id", "requesting_principal_id", "tool", "contract_version", "target_kind", "target_ref",
+        "payload_digest", "policy_version", "approval_class", "unattended", "status", "approval_id",
+        "created_at_ms", "expires_at_ms", "revision"
+      ],
       jobs: [
         "job_id", "owner_edge_id", "owner_edge_key_id", "owner_principal_id", "owner_session_id", "tool", "target_ref",
         "policy_version", "payload_digest", "idempotency_key", "state", "result_class", "created_at_ms", "started_at_ms",
         "finished_at_ms", "exit_code", "stdout_text", "stderr_text", "output_truncated", "cancel_requested",
         "cancel_reason", "lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms",
-        "lease_expires_at_ms", "write_metadata_json", "process_metadata_json", "guest_metadata_json",
-        "privileged_payload_json", "revision"
+        "lease_expires_at_ms", "write_metadata_json", "process_metadata_json", "guest_metadata_json", "guest_result_json",
+        "service_metadata_json", "privileged_payload_json", "revision"
+      ],
+      job_tombstones: [
+        "job_id", "owner_edge_id", "owner_edge_key_id", "owner_principal_id", "owner_session_id", "tool", "target_ref",
+        "policy_version", "payload_digest", "idempotency_key", "state", "result_class", "created_at_ms", "started_at_ms",
+        "finished_at_ms", "exit_code", "cancel_requested", "revision", "archived_at_ms", "archive_sha256"
+      ],
+      request_tombstones: [
+        "request_id", "edge_id", "edge_key_id", "principal_id", "session_id", "tool", "policy_version", "payload_digest", "mutation",
+        "capability_families", "state", "result_class", "target_ref", "approval_id", "job_id", "received_at_ms",
+        "updated_at_ms", "revision", "archived_at_ms", "archive_sha256"
       ],
       audit_events: [
         "sequence", "request_id", "principal_id", "tool", "event_type", "decision", "result_class", "target_ref",
@@ -813,7 +1041,7 @@ export class BrokerStore {
       const replayTables: readonly ReplayLedgerTable[] = [
         "nonces", "approval_nonces", "policy_signer_nonces", "authority_control_nonces",
         "privileged_helper_nonces", "broker_status_nonces", "virtualization_guest_nonces",
-        "keychain_delivery_nonces"
+        "keychain_delivery_nonces", "edge_revocation_nonces"
       ];
       for (const table of replayTables) assertReplayLedgerIntegrityCapacity(this.database, table);
       const requestRows = this.database.prepare(
@@ -855,6 +1083,11 @@ export class BrokerStore {
         "SELECT nonce, request_id, accepted_at_ms, expires_at_ms FROM keychain_delivery_nonces"
       ).all() as unknown[];
       for (const row of keychainRows) validateStoredReplayRow("keychain_delivery", row);
+
+      const edgeRevocationRows = this.database.prepare(
+        "SELECT nonce, request_id, edge_id, accepted_at_ms, expires_at_ms FROM edge_revocation_nonces"
+      ).all() as unknown[];
+      for (const row of edgeRevocationRows) validateStoredReplayRow("edge_revocation", row);
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Replay ledger integrity could not be verified");
@@ -919,6 +1152,9 @@ export class BrokerStore {
       ).all() as unknown as RequestRow[];
       for (const row of rows) {
         const request = mapRequest(row);
+        // Terminal readback may canonicalize a target; approvals and Jobs stay
+        // bound to the target recorded by the admitted intent.
+        let admittedTargetRef = request.targetRef;
         if (request.approvalId !== null) {
           const approvalRow = this.database.prepare("SELECT * FROM approvals WHERE approval_id = ?")
             .get(request.approvalId) as ApprovalRow | undefined;
@@ -926,14 +1162,35 @@ export class BrokerStore {
             throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Approval linkage is missing");
           }
           const approval = mapApproval(approvalRow);
+          const intentRows = this.database.prepare(`
+            SELECT principal_id, tool, target_ref, policy_version, evidence_json
+            FROM audit_events WHERE request_id = ? AND event_type = 'intent'
+          `).all(request.requestId) as Array<{
+            principal_id?: unknown;
+            tool?: unknown;
+            target_ref?: unknown;
+            policy_version?: unknown;
+            evidence_json?: unknown;
+          }>;
+          let intentEvidence: unknown;
+          try {
+            if (intentRows.length === 1) intentEvidence = parseJsonStrict(String(intentRows[0]?.evidence_json));
+          } catch {
+            throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Approval intent is malformed");
+          }
+          const intent = intentRows[0];
           if (approval.requestingPrincipalId !== request.principalId ||
               approval.tool !== request.tool ||
               approval.policyVersion !== request.policyVersion ||
-              approval.targetRef !== request.targetRef ||
+              intentRows.length !== 1 || intent?.principal_id !== request.principalId ||
+              intent.tool !== request.tool || intent.policy_version !== request.policyVersion ||
+              approval.targetRef !== intent.target_ref || !isPlainDataRecord(intentEvidence) ||
+              intentEvidence.approvalId !== request.approvalId ||
               approval.usedCount !== 1 ||
               approval.lastRequestId !== request.requestId) {
             throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Approval linkage is inconsistent");
           }
+          admittedTargetRef = intent.target_ref as string;
         }
         if (request.jobId !== null) {
           const jobRow = this.database.prepare("SELECT * FROM jobs WHERE job_id = ?")
@@ -945,16 +1202,62 @@ export class BrokerStore {
           if (job.ownerPrincipalId !== request.principalId ||
               job.ownerSessionId !== request.sessionId ||
               job.tool !== request.tool ||
-              job.targetRef !== request.targetRef ||
+              job.targetRef !== admittedTargetRef ||
               job.policyVersion !== request.policyVersion ||
-              (job.ownerEdgeId !== null && job.ownerEdgeId !== request.edgeId)) {
+              (job.ownerEdgeId !== null && job.ownerEdgeId !== request.edgeId) ||
+              !matchingEdgeKeyIdentity(request.edgeKeyId ?? null, job.ownerEdgeKeyId)) {
             throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Job linkage is inconsistent");
+          }
+          if (request.state === "SUCCEEDED" &&
+              (request.resultClass !== "SUCCEEDED" && request.resultClass !== "IDEMPOTENT_REUSE" ||
+               job.state !== "completed" || job.resultClass !== "success")) {
+            throw new BrokerError("AUDIT_UNAVAILABLE", "Stored successful Request does not have a successful terminal Job");
           }
         }
       }
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Request ledger integrity could not be verified");
+    }
+  }
+
+  /**
+   * Approval previews are durable authority requests. They must remain
+   * linked to the same mutation identity as the Request that produced them.
+   */
+  private verifyApprovalPreviewLedgerIntegrity(): void {
+    try {
+      const rows = this.database.prepare(
+        "SELECT * FROM approval_previews ORDER BY created_at_ms, request_id"
+      ).all() as unknown as ApprovalPreviewRow[];
+      for (const row of rows) {
+        const preview = mapApprovalPreview(row);
+        const request = this.requestRecord(preview.requestId);
+        if (!request || !request.mutation || request.principalId !== preview.requestingPrincipalId ||
+            request.tool !== preview.tool || request.policyVersion !== preview.policyVersion ||
+            request.targetRef !== preview.targetRef) {
+          throw new BrokerError("AUDIT_UNAVAILABLE", "Stored approval preview linkage is inconsistent");
+        }
+        if (preview.approvalId !== null) {
+          const approvalRow = this.database.prepare("SELECT * FROM approvals WHERE approval_id = ?")
+            .get(preview.approvalId) as ApprovalRow | undefined;
+          if (!approvalRow) throw new BrokerError("AUDIT_UNAVAILABLE", "Stored approval preview approval is missing");
+          const approval = mapApproval(approvalRow);
+          if (approval.requestingPrincipalId !== preview.requestingPrincipalId ||
+              approval.tool !== preview.tool || approval.contractVersion !== preview.contractVersion ||
+              approval.targetKind !== preview.targetKind || approval.targetRef !== preview.targetRef ||
+              approval.payloadDigest !== preview.payloadDigest || approval.policyVersion !== preview.policyVersion ||
+              approval.approvalClass !== preview.approvalClass || approval.unattended !== preview.unattended ||
+              approval.useLimit !== 1 || (preview.status === "issued"
+                ? approval.usedCount !== 0 || approval.lastRequestId !== null
+                : approval.usedCount !== 1 || approval.lastRequestId !== preview.requestId)) {
+            throw new BrokerError("AUDIT_UNAVAILABLE", "Stored approval preview approval linkage is inconsistent");
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Approval preview ledger integrity could not be verified");
     }
   }
 
@@ -996,10 +1299,82 @@ export class BrokerStore {
       const rows = this.database.prepare(
         "SELECT * FROM jobs ORDER BY created_at_ms, job_id"
       ).all() as unknown as JobRow[];
-      for (const row of rows) mapJob(row);
+      for (const row of rows) {
+        const job = mapJob(row);
+        if (job.guestResultJournal !== undefined) {
+          this.verifyGuestTaskResultJournalAudit(job, job.guestResultJournal);
+        }
+      }
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Job ledger integrity could not be verified");
+    }
+  }
+
+  private verifyGuestTaskResultJournalAudit(job: BrokerJob, journal: GuestTaskResultJournal): void {
+    const requestId = guestTaskResultAuditRequestId(job.jobId, journal.admission.requestDigest);
+    const resultDigest = sha256(canonicalJson(journal));
+    const expectedEvidence = canonicalJson({
+      jobId: job.jobId,
+      guestRequestId: journal.admission.requestId,
+      guestRequestDigest: journal.admission.requestDigest,
+      resultDigest,
+      recordedAtMs: journal.recordedAtMs
+    });
+    const rows = this.database.prepare(`
+      SELECT principal_id, tool, event_type, decision, result_class, target_ref, policy_version, evidence_json, timestamp_ms
+      FROM audit_events WHERE request_id = ? ORDER BY sequence
+    `).all(requestId) as Array<{
+      principal_id?: unknown;
+      tool?: unknown;
+      event_type?: unknown;
+      decision?: unknown;
+      result_class?: unknown;
+      target_ref?: unknown;
+      policy_version?: unknown;
+      evidence_json?: unknown;
+      timestamp_ms?: unknown;
+    }>;
+    const expectedEvents = [
+      { eventType: "intent", resultClass: "GUEST_RESULT_JOURNAL_INTENT" },
+      { eventType: "completion", resultClass: "GUEST_RESULT_JOURNALED" }
+    ];
+    if (rows.length !== expectedEvents.length || rows.some((row, index) => {
+      const expected = expectedEvents[index];
+      let evidence: unknown;
+      try { evidence = parseJsonStrict(String(row.evidence_json)); }
+      catch { return true; }
+      return expected === undefined || row.principal_id !== job.ownerPrincipalId ||
+        row.tool !== "internal_virtualization_guest_result" || row.event_type !== expected.eventType ||
+        row.decision !== "allow" || row.result_class !== expected.resultClass ||
+        row.target_ref !== `job:${job.jobId}` || row.policy_version !== job.policyVersion ||
+        row.timestamp_ms !== journal.recordedAtMs || canonicalJson(evidence) !== expectedEvidence;
+    })) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Guest result journal is not bound to its audit evidence");
+    }
+  }
+
+  /**
+   * Tombstones are the bounded replay and idempotency boundary after terminal
+   * ledger rotation. They are authority inputs and must be validated before
+   * any request or Job can be admitted against the compacted history.
+   */
+  private verifyLedgerTombstoneIntegrity(): void {
+    try {
+      const requestRows = this.database.prepare(
+        "SELECT * FROM request_tombstones ORDER BY archived_at_ms, request_id"
+      ).all() as unknown as RequestTombstoneRow[];
+      const jobRows = this.database.prepare(
+        "SELECT * FROM job_tombstones ORDER BY archived_at_ms, job_id"
+      ).all() as unknown as JobTombstoneRow[];
+      if (requestRows.length > MAX_LEDGER_TOMBSTONE_ROWS || jobRows.length > MAX_LEDGER_TOMBSTONE_ROWS) {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Ledger tombstone capacity is exceeded");
+      }
+      for (const row of requestRows) validateStoredRequestTombstone(row);
+      for (const row of jobRows) validateStoredJobTombstone(row);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Ledger tombstone integrity could not be verified");
     }
   }
 
@@ -1018,6 +1393,170 @@ export class BrokerStore {
     return restoreBrokerBackup(backupPath, destinationPath, keySource);
   }
 
+  /** Creates an owner-only encrypted audit-chain archive without changing the live ledger. */
+  exportAuditArchive(directory: string, options: AuditArchiveOptions = {}): Promise<AuditArchiveManifest> {
+    this.auditIntegrityReadback();
+    return createAuditArchive(this.auditRows(), directory, options);
+  }
+
+  /** Verifies an encrypted audit archive without returning its raw events. */
+  static inspectAuditArchive(path: string, keySource?: BrokerBackupKeySource): Promise<AuditArchiveManifest> {
+    return inspectAuditArchive(path, keySource);
+  }
+
+  /** Creates an encrypted snapshot of terminal Request/Job history without changing the live ledger. */
+  exportLedgerArchive(directory: string, options: LedgerArchiveOptions = {}): Promise<LedgerArchiveManifest> {
+    const requests = (this.database.prepare("SELECT * FROM requests ORDER BY received_at_ms, request_id").all() as unknown as RequestRow[])
+      .map(mapRequest)
+      .filter((request) => isTerminalRequestState(request.state));
+    const jobs = (this.database.prepare("SELECT * FROM jobs ORDER BY created_at_ms, job_id").all() as unknown as JobRow[])
+      .map(mapJob)
+      .filter((job) => ["completed", "failed", "cancelled", "unknown"].includes(job.state));
+    return createLedgerArchive(requests, jobs, directory, options);
+  }
+
+  /**
+   * Creates the encrypted archive first, then atomically replaces only
+   * sufficiently old known-terminal rows with compact tombstones. A runtime
+   * fence is mandatory so this destructive step is available only to the
+   * stopped-service operator path, never to a generic Broker fixture.
+   */
+  async rotateLedgerArchive(directory: string, options: LedgerRotationOptions): Promise<LedgerRotationResult> {
+    validateLedgerRotationOptions(options);
+    if (!this.runtimeFenceEnabled || !this.runtimeFenceAcquired) {
+      throw new BrokerError("POLICY_DENIED", "Ledger rotation requires the stopped-service runtime fence");
+    }
+    const nowMs = options.nowMs ?? Date.now();
+    if (!validAuditTimestamp(nowMs)) throw new BrokerError("PRECONDITION_FAILED", "Ledger rotation timestamp is malformed");
+    this.assertRuntimeFence();
+    this.auditIntegrityReadback();
+    const archive = await this.exportLedgerArchive(directory, {
+      ...(options.keySource === undefined ? {} : { keySource: options.keySource }),
+      ...(options.capacityProbe === undefined ? {} : { capacityProbe: options.capacityProbe }),
+      nowMs
+    });
+    this.assertRuntimeFence();
+    const cutoffMs = nowMs - options.minAgeMs;
+    const rotationRequestId = `internal_ledger_rotation_${archive.sha256.slice(0, 32)}`;
+    return this.runTransaction(() => {
+      this.assertRuntimeFence();
+      const requestRows = this.database.prepare(`
+        SELECT * FROM requests
+        WHERE state IN ('DENIED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'VERIFICATION_FAILED')
+          AND updated_at_ms <= ?
+        ORDER BY updated_at_ms, request_id
+      `).all(cutoffMs) as unknown as RequestRow[];
+      const requestCountRow = this.database.prepare(
+        "SELECT COUNT(*) AS count FROM requests WHERE state IN ('DENIED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'VERIFICATION_FAILED')"
+      ).get() as { count?: unknown } | undefined;
+      const jobRows = this.database.prepare(`
+        SELECT * FROM jobs
+        WHERE state IN ('completed', 'failed', 'cancelled') AND finished_at_ms <= ?
+        ORDER BY finished_at_ms, job_id
+      `).all(cutoffMs) as unknown as JobRow[];
+      const jobCountRow = this.database.prepare(
+        "SELECT COUNT(*) AS count FROM jobs WHERE state IN ('completed', 'failed', 'cancelled')"
+      ).get() as { count?: unknown } | undefined;
+      if (!Number.isSafeInteger(requestCountRow?.count) || !Number.isSafeInteger(jobCountRow?.count)) {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Ledger rotation counts are malformed");
+      }
+      const requestDeleteCount = Math.min(requestRows.length, Math.max(0, (requestCountRow?.count as number) - options.retainRequestCount));
+      const jobDeleteCount = Math.min(jobRows.length, Math.max(0, (jobCountRow?.count as number) - options.retainJobCount));
+      const requests = requestRows.slice(0, requestDeleteCount).map(mapRequest);
+      const jobs = jobRows.slice(0, jobDeleteCount).map(mapJob);
+      assertLedgerTombstoneCapacity(this.database, requests.length, jobs.length);
+      this.insertAudit({
+        requestId: rotationRequestId,
+        principalId: "owner",
+        tool: "internal_ledger_rotation",
+        eventType: "intent",
+        decision: "allow",
+        resultClass: "LEDGER_ROTATION_INTENT",
+        targetRef: "host:broker-ledger",
+        policyVersion: "policy-internal",
+        evidence: {
+          archiveSha256: archive.sha256,
+          requestCount: requests.length,
+          jobCount: jobs.length,
+          cutoffMs,
+          retainRequestCount: options.retainRequestCount,
+          retainJobCount: options.retainJobCount
+        },
+        timestampMs: nowMs
+      });
+      for (const job of jobs) {
+        this.database.prepare(`
+          INSERT INTO job_tombstones(
+            job_id, owner_edge_id, owner_edge_key_id, owner_principal_id, owner_session_id, tool, target_ref,
+            policy_version, payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
+            finished_at_ms, exit_code, cancel_requested, revision, archived_at_ms, archive_sha256
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          job.jobId, job.ownerEdgeId, job.ownerEdgeKeyId, job.ownerPrincipalId, job.ownerSessionId, job.tool,
+          job.targetRef, job.policyVersion, job.payloadDigest, job.idempotencyKey, job.state, job.resultClass,
+          job.createdAtMs, job.startedAtMs, job.finishedAtMs, job.exitCode, job.cancelRequested ? 1 : 0,
+          job.revision, nowMs, archive.sha256
+        );
+      }
+      for (const request of requests) {
+        this.database.prepare(`
+          INSERT INTO request_tombstones(
+            request_id, edge_id, edge_key_id, principal_id, session_id, tool, policy_version, payload_digest, mutation,
+            capability_families, state, result_class, target_ref, approval_id, job_id, received_at_ms,
+            updated_at_ms, revision, archived_at_ms, archive_sha256
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          request.requestId, request.edgeId, request.edgeKeyId ?? null, request.principalId, request.sessionId, request.tool,
+          request.policyVersion, request.payloadDigest, request.mutation ? 1 : 0,
+          encodeCapabilityFamilies(request.capabilityFamilies), request.state, request.resultClass,
+          request.targetRef, request.approvalId, request.jobId, request.receivedAtMs, request.updatedAtMs,
+          request.revision, nowMs, archive.sha256
+        );
+      }
+      for (const request of requests) {
+        this.database.prepare("DELETE FROM approval_previews WHERE request_id = ?").run(request.requestId);
+        const deleted = this.database.prepare(
+          "DELETE FROM requests WHERE request_id = ? AND revision = ? AND state IN ('DENIED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'VERIFICATION_FAILED')"
+        ).run(request.requestId, request.revision);
+        if (deleted.changes !== 1) throw new BrokerError("CONFLICT", "Request changed during ledger rotation", true);
+      }
+      for (const job of jobs) {
+        const deleted = this.database.prepare(
+          "DELETE FROM jobs WHERE job_id = ? AND owner_principal_id = ? AND revision = ? AND state IN ('completed', 'failed', 'cancelled')"
+        ).run(job.jobId, job.ownerPrincipalId, job.revision);
+        if (deleted.changes !== 1) throw new BrokerError("CONFLICT", "Job changed during ledger rotation", true);
+      }
+      this.insertAudit({
+        requestId: rotationRequestId,
+        principalId: "owner",
+        tool: "internal_ledger_rotation",
+        eventType: "completion",
+        decision: "allow",
+        resultClass: "LEDGER_ROTATED",
+        targetRef: "host:broker-ledger",
+        policyVersion: "policy-internal",
+        evidence: {
+          archiveSha256: archive.sha256,
+          requestCount: requests.length,
+          jobCount: jobs.length
+        },
+        timestampMs: nowMs
+      });
+      return {
+        archive,
+        rotatedRequestCount: requests.length,
+        rotatedJobCount: jobs.length,
+        requestTombstoneCount: requests.length,
+        jobTombstoneCount: jobs.length
+      };
+    });
+  }
+
+  /** Verifies an encrypted Request/Job archive without returning its raw records. */
+  static inspectLedgerArchive(path: string, keySource?: BrokerBackupKeySource): Promise<LedgerArchiveManifest> {
+    return inspectLedgerArchive(path, keySource);
+  }
+
   admitRequest(input: AdmitRequestInput, limits?: RequestAdmissionLimits): RequestRecord {
     validateRequestAdmission(input);
     validateRequestAdmissionLimits(limits);
@@ -1025,17 +1564,18 @@ export class BrokerStore {
       return this.runTransaction(() => {
         this.database.prepare("DELETE FROM nonces WHERE expires_at_ms <= ?").run(input.receivedAtMs);
         assertReplayLedgerCapacity(this.database, "nonces");
+        assertRequestTombstoneAbsent(this.database, input.requestId);
         enforceRequestAdmissionLimits(this.database, input, limits);
         this.database.prepare(
           "INSERT INTO nonces(edge_id, nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
         ).run(input.edgeId, input.nonce, input.requestId, input.receivedAtMs, input.nonceExpiresAtMs);
         this.database.prepare(`
           INSERT INTO requests(
-            request_id, edge_id, principal_id, session_id, tool, policy_version, payload_digest,
+            request_id, edge_id, edge_key_id, principal_id, session_id, tool, policy_version, payload_digest,
             mutation, capability_families, state, result_class, target_ref, received_at_ms, updated_at_ms, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', NULL, NULL, ?, ?, 0)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RECEIVED', NULL, NULL, ?, ?, 0)
         `).run(
-          input.requestId, input.edgeId, input.principalId, input.sessionId, input.tool,
+          input.requestId, input.edgeId, input.edgeKeyId ?? null, input.principalId, input.sessionId, input.tool,
           input.policyVersion, input.payloadDigest, input.mutation ? 1 : 0,
           encodeCapabilityFamilies(input.capabilityFamilies), input.receivedAtMs, input.receivedAtMs
         );
@@ -1055,8 +1595,125 @@ export class BrokerStore {
     return row ? mapRequest(row) : undefined;
   }
 
+  /**
+   * Persist the exact non-secret approval facts needed for owner review. This
+   * is intentionally separate from approval issuance: a preview is an
+   * authority request, never an approval or a permission grant.
+   */
+  createApprovalPreview(
+    requestId: string,
+    binding: ApprovalConsumptionBinding,
+    createdAtMs: number,
+    expiresAtMs = createdAtMs + APPROVAL_PREVIEW_TTL_MS
+  ): ApprovalPreviewRecord {
+    if (!validRequestId(requestId) || !validAuditTimestamp(createdAtMs) ||
+        !validAuditTimestamp(expiresAtMs) || expiresAtMs <= createdAtMs ||
+        expiresAtMs - createdAtMs > APPROVAL_PREVIEW_TTL_MS) {
+      throw malformedApproval();
+    }
+    validateApprovalBinding(binding);
+    try {
+      return this.runTransaction(() => {
+        const request = this.requireRequest(requestId);
+        if (!request.mutation || !["AUTHORIZED", "FAILED"].includes(request.state) ||
+            request.targetRef !== binding.targetRef) {
+          throw new BrokerError("CONFLICT", "Approval preview does not match the authorized mutation");
+        }
+        const existing = this.database.prepare(
+          "SELECT * FROM approval_previews WHERE request_id = ?"
+        ).get(requestId) as ApprovalPreviewRow | undefined;
+        if (existing) {
+          const preview = mapApprovalPreview(existing);
+          if (preview.requestingPrincipalId !== request.principalId || preview.tool !== request.tool ||
+              preview.targetRef !== binding.targetRef || preview.payloadDigest !== binding.payloadDigest ||
+              preview.policyVersion !== request.policyVersion || preview.contractVersion !== binding.contractVersion ||
+              preview.targetKind !== binding.targetKind || preview.approvalClass !== binding.approvalClass ||
+              preview.unattended !== binding.unattended) {
+            throw new BrokerError("CONFLICT", "Approval preview identity changed");
+          }
+          return preview;
+        }
+        this.database.prepare(`
+          INSERT INTO approval_previews(
+            request_id, requesting_principal_id, tool, contract_version, target_kind, target_ref,
+            payload_digest, policy_version, approval_class, unattended, status, approval_id,
+            created_at_ms, expires_at_ms, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, 0)
+        `).run(
+          request.requestId, request.principalId, request.tool, binding.contractVersion, binding.targetKind,
+          binding.targetRef, binding.payloadDigest, request.policyVersion, binding.approvalClass,
+          binding.unattended ? 1 : 0, createdAtMs, expiresAtMs
+        );
+        return this.requireApprovalPreview(requestId);
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Approval preview could not be persisted");
+    }
+  }
+
+  /**
+   * Read a still-live preview by request ID. The caller must already have
+   * access to the protected Broker database; no raw request payload is
+   * returned by this API.
+   */
+  approvalPreview(requestId: string, nowMs: number): ApprovalPreviewRecord | undefined {
+    if (!validRequestId(requestId) || !validAuditTimestamp(nowMs)) throw malformedApproval();
+    const row = this.database.prepare(
+      "SELECT * FROM approval_previews WHERE request_id = ? AND status = 'pending' AND expires_at_ms > ?"
+    ).get(requestId, nowMs) as ApprovalPreviewRow | undefined;
+    if (!row) return undefined;
+    const preview = mapApprovalPreview(row);
+    const request = this.requestRecord(requestId);
+    if (!request || !request.mutation || request.principalId !== preview.requestingPrincipalId ||
+        request.tool !== preview.tool || request.policyVersion !== preview.policyVersion ||
+        request.targetRef !== preview.targetRef) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Approval preview linkage is inconsistent");
+    }
+    return preview;
+  }
+
+  /**
+   * Bind a successfully persisted owner approval to the preview that was
+   * displayed. The exact approval fields are checked again before the preview
+   * leaves the pending state, preventing a request-ID mix-up.
+   */
+  markApprovalPreviewIssued(requestId: string, approvalId: string, nowMs: number): ApprovalPreviewRecord {
+    if (!validRequestId(requestId) || !validApprovalId(approvalId) || !validAuditTimestamp(nowMs)) {
+      throw malformedApproval();
+    }
+    try {
+      return this.runTransaction(() => {
+        const preview = this.requireApprovalPreview(requestId);
+        if (preview.status !== "pending" || preview.expiresAtMs <= nowMs) {
+          throw new BrokerError("CONFLICT", "Approval preview is no longer pending");
+        }
+        const approval = this.requireApproval(approvalId);
+        if (approval.requestingPrincipalId !== preview.requestingPrincipalId ||
+            approval.tool !== preview.tool || approval.contractVersion !== preview.contractVersion ||
+            approval.targetKind !== preview.targetKind || approval.targetRef !== preview.targetRef ||
+            approval.payloadDigest !== preview.payloadDigest || approval.policyVersion !== preview.policyVersion ||
+            approval.approvalClass !== preview.approvalClass || approval.unattended !== preview.unattended ||
+            approval.usedCount !== 0 || approval.revokedAtMs !== null || approval.issuedAtMs > nowMs ||
+            approval.expiresAtMs <= nowMs || approval.useLimit !== 1) {
+          throw new BrokerError("CONFLICT", "Issued approval does not match the displayed preview");
+        }
+        const updated = this.database.prepare(`
+          UPDATE approval_previews SET status = 'issued', approval_id = ?, revision = revision + 1
+          WHERE request_id = ? AND status = 'pending' AND revision = ?
+        `).run(approval.approvalId, requestId, preview.revision);
+        if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Approval preview changed concurrently");
+        return this.requireApprovalPreview(requestId);
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Approval preview issuance linkage could not be persisted");
+    }
+  }
+
   admitApprovedJob(input: AtomicJobAdmissionInput): { request: RequestRecord; job: BrokerJob; reused: boolean } {
     validateRequestAdmission(input.request);
+    validateRequestAdmissionLimits(input.limits);
     validateApprovalBinding(input.approval);
     validateJobCreation(input.job);
     if (!input.request.mutation || input.decision.eventType !== "decision" || input.decision.decision !== "allow" ||
@@ -1066,6 +1723,7 @@ export class BrokerStore {
         input.job.ownerPrincipalId !== input.request.principalId || input.job.ownerSessionId !== input.request.sessionId ||
         (input.job.edgeId !== undefined && input.job.edgeId !== input.request.edgeId) ||
         (input.job.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.job.edgeKeyId, input.request.edgeId)) ||
+        !matchingEdgeKeyIdentity(input.request.edgeKeyId ?? null, input.job.edgeKeyId ?? null) ||
         input.job.tool !== input.request.tool || input.job.policyVersion !== input.request.policyVersion ||
         input.intent.targetRef !== input.decision.targetRef || input.approval.targetRef !== input.decision.targetRef ||
         input.intent.timestampMs < input.decision.timestampMs || input.job.createdAtMs < input.intent.timestampMs ||
@@ -1077,6 +1735,8 @@ export class BrokerStore {
       return this.runTransaction(() => {
         this.database.prepare("DELETE FROM nonces WHERE expires_at_ms <= ?").run(input.request.receivedAtMs);
         assertReplayLedgerCapacity(this.database, "nonces");
+        assertRequestTombstoneAbsent(this.database, input.request.requestId);
+        enforceRequestAdmissionLimits(this.database, input.request, input.limits);
         this.database.prepare(
           "INSERT INTO nonces(edge_id, nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
         ).run(
@@ -1085,11 +1745,12 @@ export class BrokerStore {
         );
         this.database.prepare(`
           INSERT INTO requests(
-            request_id, edge_id, principal_id, session_id, tool, policy_version, payload_digest,
+            request_id, edge_id, edge_key_id, principal_id, session_id, tool, policy_version, payload_digest,
             mutation, capability_families, state, result_class, target_ref, approval_id, job_id, received_at_ms, updated_at_ms, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'RECEIVED', NULL, NULL, NULL, NULL, ?, ?, 0)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 'RECEIVED', NULL, NULL, NULL, NULL, ?, ?, 0)
         `).run(
-          input.request.requestId, input.request.edgeId, input.request.principalId, input.request.sessionId,
+          input.request.requestId, input.request.edgeId, input.request.edgeKeyId ?? null,
+          input.request.principalId, input.request.sessionId,
           input.request.tool, input.request.policyVersion, input.request.payloadDigest,
           encodeCapabilityFamilies(input.request.capabilityFamilies), input.request.receivedAtMs, input.request.receivedAtMs
         );
@@ -1109,11 +1770,15 @@ export class BrokerStore {
         if (existing) {
           if (existing.payload_digest !== input.job.payloadDigest || existing.tool !== input.job.tool ||
               existing.target_ref !== input.job.targetRef || existing.policy_version !== input.job.policyVersion ||
+              existing.owner_session_id !== input.request.sessionId ||
               existing.owner_edge_id !== input.request.edgeId ||
               existing.owner_edge_key_id !== (input.job.edgeKeyId ?? null)) {
-            throw new BrokerError("CONFLICT", "Idempotency key was already used for a different job payload");
+            throw new BrokerError("CONFLICT", "Idempotency key was already used for a different job identity or payload");
           }
           const reused = mapJob(existing);
+          if (reused.state !== "completed" || reused.resultClass !== "success") {
+            throw new BrokerError("CONFLICT", "Idempotency key refers to a Job without a successful terminal outcome");
+          }
           const completion: AuditEvent = {
             requestId: input.request.requestId,
             principalId: input.request.principalId,
@@ -1133,6 +1798,7 @@ export class BrokerStore {
           `).run(completion.resultClass, completion.targetRef, reused.jobId, completion.timestampMs, input.request.requestId);
           return { request: this.requireRequest(input.request.requestId), job: reused, reused: true };
         }
+        assertJobTombstoneAbsent(this.database, input.job.jobId, input.job.ownerPrincipalId, input.job.idempotencyKey);
 
         const approvalRow = this.findConsumableApproval(input.request.principalId, input.request.tool,
           input.request.policyVersion, input.approval, input.intent.timestampMs);
@@ -1143,6 +1809,7 @@ export class BrokerStore {
           WHERE approval_id = ? AND revision = ? AND revoked_at_ms IS NULL AND used_count < use_limit
         `).run(input.intent.timestampMs, input.request.requestId, approval.approvalId, approval.revision);
         if (consumed.changes !== 1) throw new BrokerError("CONFLICT", "Approval changed concurrently");
+        this.markApprovalPreviewConsumed(approval.approvalId, input.request.requestId);
         this.injectFault("admit_approved_job.after_approval");
         this.insertAudit({
           ...input.intent,
@@ -1153,12 +1820,12 @@ export class BrokerStore {
             job_id, owner_edge_id, owner_edge_key_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
             payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
             finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-            cancel_requested, cancel_reason, write_metadata_json, privileged_payload_json, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, ?, 0)
+            cancel_requested, cancel_reason, write_metadata_json, service_metadata_json, privileged_payload_json, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, ?, ?, 0)
         `).run(
           input.job.jobId, input.request.edgeId, input.job.edgeKeyId ?? null, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
-          input.job.createdAtMs, serializeWriteJobMetadata(input.job.writeMetadata), serializePrivilegedHelperPayload(input.job.privilegedPayload)
+          input.job.createdAtMs, serializeWriteJobMetadata(input.job.writeMetadata), serializeServiceControlJobMetadata(input.job.serviceMetadata), serializePrivilegedHelperPayload(input.job.privilegedPayload)
         );
         this.injectFault("admit_approved_job.after_job");
         const transitioned = this.database.prepare(`
@@ -1397,6 +2064,7 @@ export class BrokerStore {
         WHERE approval_id = ? AND revision = ? AND revoked_at_ms IS NULL AND used_count < use_limit
       `).run(event.timestampMs, current.requestId, approval.approvalId, approval.revision);
       if (consumed.changes !== 1) throw new BrokerError("CONFLICT", "Approval changed concurrently");
+      this.markApprovalPreviewConsumed(approval.approvalId, current.requestId);
       this.insertAudit({
         ...event,
         evidence: { ...asEvidenceRecord(event.evidence), approvalId: approval.approvalId, approvalClass: approval.approvalClass }
@@ -1427,7 +2095,8 @@ export class BrokerStore {
             input.job.ownerSessionId !== current.sessionId || input.job.tool !== current.tool ||
             input.job.policyVersion !== current.policyVersion || input.job.targetRef !== input.intent.targetRef ||
             (input.job.edgeId !== undefined && input.job.edgeId !== current.edgeId) ||
-            (input.job.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.job.edgeKeyId, current.edgeId))) {
+            (input.job.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.job.edgeKeyId, current.edgeId)) ||
+            !matchingEdgeKeyIdentity(current.edgeKeyId ?? null, input.job.edgeKeyId ?? null)) {
           throw new BrokerError("CONFLICT", "Request state or approved Job identity changed");
         }
         assertAuditMatchesRequest(input.intent, current);
@@ -1439,6 +2108,7 @@ export class BrokerStore {
           WHERE approval_id = ? AND revision = ? AND revoked_at_ms IS NULL AND used_count < use_limit
         `).run(input.intent.timestampMs, current.requestId, approval.approvalId, approval.revision);
         if (consumed.changes !== 1) throw new BrokerError("CONFLICT", "Approval changed concurrently");
+        this.markApprovalPreviewConsumed(approval.approvalId, current.requestId);
         this.injectFault("admit_approved_job_after_decision.after_approval");
         this.insertAudit({
           ...input.intent,
@@ -1454,12 +2124,12 @@ export class BrokerStore {
             job_id, owner_edge_id, owner_edge_key_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
             payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
             finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-            cancel_requested, cancel_reason, privileged_payload_json, revision
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, 0)
+            cancel_requested, cancel_reason, write_metadata_json, service_metadata_json, privileged_payload_json, revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, ?, ?, 0)
         `).run(
           input.job.jobId, current.edgeId, input.job.edgeKeyId ?? null, input.job.ownerPrincipalId, input.job.ownerSessionId, input.job.tool,
           input.job.targetRef, input.job.policyVersion, input.job.payloadDigest, input.job.idempotencyKey,
-          input.job.createdAtMs, serializePrivilegedHelperPayload(input.job.privilegedPayload)
+          input.job.createdAtMs, serializeWriteJobMetadata(input.job.writeMetadata), serializeServiceControlJobMetadata(input.job.serviceMetadata), serializePrivilegedHelperPayload(input.job.privilegedPayload)
         );
         this.injectFault("admit_approved_job_after_decision.after_job");
         const transitioned = this.database.prepare(`
@@ -1799,6 +2469,38 @@ export class BrokerStore {
     }
   }
 
+  /** Persist one authenticated Edge OAuth-authority event before revocation. */
+  admitEdgeRevocationEvent(input: {
+    requestId: string;
+    nonce: string;
+    edgeId: string;
+    acceptedAtMs: number;
+    expiresAtMs: number;
+  }): void {
+    if (!/^edge-revoke:[A-Za-z0-9._:-]{16,128}$/u.test(input.requestId) ||
+        !/^edge-revoke-nonce:[A-Za-z0-9._:-]{16,128}$/u.test(input.nonce) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(input.edgeId) ||
+        !Number.isSafeInteger(input.acceptedAtMs) || input.acceptedAtMs < 0 ||
+        !Number.isSafeInteger(input.expiresAtMs) || input.expiresAtMs <= input.acceptedAtMs) {
+      throw new BrokerError("PRECONDITION_FAILED", "Edge revocation event admission is malformed");
+    }
+    try {
+      this.runTransaction(() => {
+        this.database.prepare("DELETE FROM edge_revocation_nonces WHERE expires_at_ms <= ?").run(input.acceptedAtMs);
+        assertReplayLedgerCapacity(this.database, "edge_revocation_nonces");
+        this.database.prepare(
+          "INSERT INTO edge_revocation_nonces(nonce, request_id, edge_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
+        ).run(input.nonce, input.requestId, input.edgeId, input.acceptedAtMs, input.expiresAtMs);
+      });
+    } catch (error) {
+      if (String(error).includes("UNIQUE constraint failed")) {
+        throw new BrokerError("REPLAY_DENIED", "Edge revocation event nonce or request ID was already accepted");
+      }
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Edge revocation event admission could not be persisted");
+    }
+  }
+
   revokePolicySigner(keyId: string, reason: string, nowMs = Date.now()): void {
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(keyId) ||
         typeof reason !== "string" || reason.length < 1 || reason.length > 128 ||
@@ -1843,7 +2545,8 @@ export class BrokerStore {
       if (!affected(row)) continue;
       this.database.prepare(`
         UPDATE jobs SET state = 'cancelled', result_class = 'denied', finished_at_ms = ?,
-          cancel_requested = 1, cancel_reason = ?, revision = revision + 1
+          cancel_requested = 1, cancel_reason = ?, service_metadata_json = '',
+          privileged_payload_json = '', revision = revision + 1
         WHERE job_id = ? AND state = 'queued' AND revision = ?
       `).run(nowMs, authority, row.job_id, row.revision);
       this.insertAudit({
@@ -1919,23 +2622,29 @@ export class BrokerStore {
       if (existing) {
         if (existing.payload_digest !== input.payloadDigest || existing.tool !== input.tool ||
             existing.target_ref !== input.targetRef || existing.policy_version !== input.policyVersion ||
+            existing.owner_session_id !== input.ownerSessionId ||
             existing.owner_edge_id !== (input.edgeId ?? null) ||
             existing.owner_edge_key_id !== (input.edgeKeyId ?? null)) {
-          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different authorized job");
+          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different authorized job identity or payload");
         }
-        return { job: mapJob(existing), reused: true };
+        const reused = mapJob(existing);
+        if (reused.state === "queued" || reused.state === "running") {
+          throw new BrokerError("CONFLICT", "Idempotency key refers to an active Job");
+        }
+        return { job: reused, reused: true };
       }
+      assertJobTombstoneAbsent(this.database, input.jobId, input.ownerPrincipalId, input.idempotencyKey);
       this.database.prepare(`
         INSERT INTO jobs(
           job_id, owner_edge_id, owner_edge_key_id, owner_principal_id, owner_session_id, tool, target_ref, policy_version,
           payload_digest, idempotency_key, state, result_class, created_at_ms, started_at_ms,
           finished_at_ms, exit_code, stdout_text, stderr_text, output_truncated,
-          cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, guest_metadata_json, privileged_payload_json, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', '', ?, 0)
+          cancel_requested, cancel_reason, write_metadata_json, process_metadata_json, guest_metadata_json, service_metadata_json, privileged_payload_json, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, NULL, NULL, NULL, '', '', 0, 0, NULL, ?, '', '', ?, ?, 0)
       `).run(
         input.jobId, input.edgeId ?? null, input.edgeKeyId ?? null, input.ownerPrincipalId, input.ownerSessionId, input.tool, input.targetRef,
         input.policyVersion, input.payloadDigest, input.idempotencyKey, input.createdAtMs,
-        serializeWriteJobMetadata(input.writeMetadata), serializePrivilegedHelperPayload(input.privilegedPayload)
+        serializeWriteJobMetadata(input.writeMetadata), serializeServiceControlJobMetadata(input.serviceMetadata), serializePrivilegedHelperPayload(input.privilegedPayload)
       );
       return { job: this.requireOwnedJob(input.jobId, input.ownerPrincipalId), reused: false };
     });
@@ -1946,6 +2655,32 @@ export class BrokerStore {
       "SELECT * FROM jobs WHERE job_id = ? AND owner_principal_id = ?"
     ).get(jobId, principalId) as JobRow | undefined;
     return row ? mapJob(row) : undefined;
+  }
+
+  /** Read the active lease deadline without exposing its owner or token. */
+  activeJobLeaseExpiresAtMs(jobId: string, principalId: string, nowMs: number): number | undefined {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+    const row = this.requireOwnedJobRow(jobId, principalId);
+    if (row.state !== "running" || row.cancel_requested !== 0 || row.lease_owner_id === null ||
+        row.lease_token === null || row.lease_expires_at_ms === null || row.lease_expires_at_ms <= nowMs) {
+      return undefined;
+    }
+    return row.lease_expires_at_ms;
+  }
+
+  /** Read a live Job or its compact terminal tombstone after rotation. */
+  ownedJobStatus(jobId: string, principalId: string): { job?: BrokerJob; archived?: ArchivedJobRecord } {
+    if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(jobId) || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(principalId)) {
+      throw malformedJob();
+    }
+    const live = this.database.prepare(
+      "SELECT * FROM jobs WHERE job_id = ? AND owner_principal_id = ?"
+    ).get(jobId, principalId) as JobRow | undefined;
+    if (live !== undefined) return { job: mapJob(live) };
+    const archived = this.database.prepare(
+      "SELECT * FROM job_tombstones WHERE job_id = ? AND owner_principal_id = ?"
+    ).get(jobId, principalId) as JobTombstoneRow | undefined;
+    return archived === undefined ? {} : { archived: mapArchivedJob(archived) };
   }
 
   ownedJobByIdempotencyKey(idempotencyKey: string, principalId: string): BrokerJob | undefined {
@@ -2023,19 +2758,57 @@ export class BrokerStore {
     });
   }
 
-  /** Return restart-reconciled task Jobs that retain a verified process identity. */
-  restartUnknownProcessJobs(limit = 100): BrokerJob[] {
+  /** Return unresolved host task Jobs with a persisted process identity. */
+  unresolvedTaskProcessJobs(limit = 100): BrokerJob[] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
     const rows = this.database.prepare(`
       SELECT * FROM jobs
       WHERE tool = 'mac_task_run'
         AND state = 'unknown'
-        AND cancel_reason = 'BROKER_RESTART'
+        AND guest_metadata_json = ''
         AND process_metadata_json <> ''
       ORDER BY created_at_ms, job_id
       LIMIT ?
     `).all(limit) as unknown as JobRow[];
     return rows.map(mapJob);
+  }
+
+  /**
+   * Keep host task admission closed while any host Job has an unresolved
+   * process outcome. Only a no-fork proof plus a durable exact-process
+   * recovery result can clear the quarantine; process-group readback alone
+   * cannot account for a descendant that escaped after the last snapshot.
+   */
+  hasUnresolvedHostTaskExecution(): boolean {
+    try {
+      const row = this.database.prepare(`
+        SELECT 1
+        FROM jobs AS job
+        WHERE job.tool = 'mac_task_run'
+          AND job.state = 'unknown'
+          AND job.guest_metadata_json = ''
+          AND (
+            CASE
+              WHEN job.process_metadata_json = '' THEN 1
+              WHEN json_valid(job.process_metadata_json) = 0 THEN 1
+              WHEN json_extract(job.process_metadata_json, '$.ownershipProof') IS NOT 'sandbox-exec-no-fork-v1' THEN 1
+              WHEN COALESCE(json_array_length(job.process_metadata_json, '$.descendants'), -1) <> 0 THEN 1
+              ELSE 0
+            END = 1
+            OR NOT EXISTS (
+              SELECT 1 FROM audit_events AS recovery
+              WHERE recovery.request_id = 'job-process-recovery-' || job.job_id || '-' || job.revision
+                AND recovery.event_type = 'completion'
+                AND recovery.result_class IN ('PROCESS_ABSENT', 'PROCESS_DRAINED')
+            )
+          )
+        LIMIT 1
+      `).get();
+      return row !== undefined;
+    } catch {
+      // An unavailable or malformed quarantine read must never admit a host task.
+      return true;
+    }
   }
 
   /** Return restart-reconciled Virtualization tasks with an admitted request identity. */
@@ -2047,6 +2820,36 @@ export class BrokerStore {
         AND state = 'unknown'
         AND cancel_reason = 'BROKER_RESTART'
         AND guest_metadata_json <> ''
+      ORDER BY created_at_ms, job_id
+      LIMIT ?
+    `).all(limit) as unknown as JobRow[];
+    return rows.map(mapJob);
+  }
+
+  /** Return restart-reconciled user-service Jobs with their admitted identity. */
+  restartUnknownServiceJobs(limit = 100): BrokerJob[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
+    const rows = this.database.prepare(`
+      SELECT * FROM jobs
+      WHERE tool = 'mac_service_control'
+        AND state = 'unknown'
+        AND cancel_reason = 'BROKER_RESTART'
+        AND service_metadata_json <> ''
+      ORDER BY created_at_ms, job_id
+      LIMIT ?
+    `).all(limit) as unknown as JobRow[];
+    return rows.map(mapJob);
+  }
+
+  /** Return restart-reconciled privileged Jobs without permitting replay. */
+  restartUnknownPrivilegedJobs(limit = 100): BrokerJob[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
+    const rows = this.database.prepare(`
+      SELECT * FROM jobs
+      WHERE tool IN ('mac_priv_service_control', 'mac_priv_package_install', 'mac_priv_power')
+        AND state = 'unknown'
+        AND cancel_reason = 'BROKER_RESTART'
+        AND privileged_payload_json <> ''
       ORDER BY created_at_ms, job_id
       LIMIT ?
     `).all(limit) as unknown as JobRow[];
@@ -2072,7 +2875,8 @@ export class BrokerStore {
           job.tool !== current.tool ||
           job.targetRef !== current.targetRef ||
           job.policyVersion !== current.policyVersion ||
-          (job.ownerEdgeId !== null && job.ownerEdgeId !== current.edgeId)) {
+          job.ownerEdgeId !== current.edgeId ||
+          !matchingEdgeKeyIdentity(current.edgeKeyId ?? null, job.ownerEdgeKeyId)) {
         throw new BrokerError("CONFLICT", "Request and Job identities do not match");
       }
       this.database.prepare(`
@@ -2209,6 +3013,65 @@ export class BrokerStore {
     }, lease, nowMs);
   }
 
+  /** Persist an authenticated guest terminal response before returning it to the caller. */
+  recordJobGuestResult(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    result: GuestTaskResultJournal["result"],
+    lease: JobLease,
+    nowMs: number
+  ): BrokerJob {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0 || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw malformedJob();
+    }
+    validateJobLease(lease, nowMs, false);
+    const normalizedResult = normalizeGuestTaskResult(result);
+    return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
+      const admission = current.guestMetadata;
+      if (current.tool !== "mac_task_run" || current.startedAtMs === null || admission === undefined ||
+          current.guestResultJournal !== undefined || nowMs < admission.recordedAtMs) {
+        throw new BrokerError("PRECONDITION_FAILED", "Guest result is outside its admitted Job boundary");
+      }
+      const journal: GuestTaskResultJournal = {
+        admission,
+        recordedAtMs: nowMs,
+        result: normalizedResult
+      };
+      const serialized = serializeGuestTaskResultJournal(journal);
+      if (Buffer.byteLength(serialized, "utf8") > 1_100_000) throw new BrokerError("OUTPUT_LIMIT", "Guest result journal exceeded its storage bound");
+      const resultDigest = sha256(canonicalJson(journal));
+      const auditRequestId = guestTaskResultAuditRequestId(jobId, admission.requestDigest);
+      const auditBase = {
+        requestId: auditRequestId,
+        principalId,
+        tool: "internal_virtualization_guest_result",
+        decision: "allow" as const,
+        targetRef: `job:${jobId}`,
+        policyVersion: current.policyVersion,
+        evidence: {
+          jobId,
+          guestRequestId: admission.requestId,
+          guestRequestDigest: admission.requestDigest,
+          resultDigest,
+          recordedAtMs: nowMs
+        },
+        timestampMs: nowMs
+      };
+      this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "GUEST_RESULT_JOURNAL_INTENT" });
+      const updated = this.database.prepare(`
+        UPDATE jobs SET guest_result_json = ?, revision = revision + 1
+        WHERE job_id = ? AND owner_principal_id = ? AND state = 'running'
+          AND revision = ? AND lease_owner_id = ? AND lease_token = ?
+          AND lease_expires_at_ms > ? AND guest_metadata_json <> '' AND guest_result_json = ''
+      `).run(
+        serialized, jobId, principalId, expectedRevision, lease.ownerId, lease.token, nowMs
+      );
+      if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Guest result journal could not be committed to its Job");
+      this.insertAudit({ ...auditBase, eventType: "completion", resultClass: "GUEST_RESULT_JOURNALED" });
+    }, lease, nowMs);
+  }
+
   finishJob(
     jobId: string,
     principalId: string,
@@ -2234,8 +3097,15 @@ export class BrokerStore {
     if (exitCode !== null && (!Number.isInteger(exitCode) || exitCode < -2_147_483_648 || exitCode > 2_147_483_647)) {
       throw malformedJob();
     }
-    return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
+    const persist = (current: BrokerJob): void => {
       if (current.startedAtMs === null || outcome.finishedAtMs < current.startedAtMs) throw malformedJob();
+      // A cancelled terminal state is only authoritative when the durable
+      // cancellation marker won the Job revision race first. Without this
+      // fence, a worker could manufacture a cancelled row that does not prove
+      // which Broker-owned authority change caused the terminal outcome.
+      if (outcome.state === "cancelled" && !current.cancelRequested) {
+        throw new BrokerError("CONFLICT", "Cancelled Job is missing a durable cancellation request");
+      }
       // A cancellation request is a durable authority change. If it wins the
       // revision race before completion, never persist a late success; the
       // caller must recover the running Job as unknown instead.
@@ -2246,14 +3116,35 @@ export class BrokerStore {
         UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = ?,
           stdout_text = ?, stderr_text = ?, output_truncated = ?, process_metadata_json = CASE WHEN ? = 'unknown' THEN process_metadata_json ELSE '' END,
           guest_metadata_json = CASE WHEN ? = 'unknown' THEN guest_metadata_json ELSE '' END,
+          guest_result_json = CASE WHEN ? = 'unknown' THEN guest_result_json ELSE '' END,
+          service_metadata_json = CASE WHEN ? = 'unknown' THEN service_metadata_json ELSE '' END,
           lease_owner_id = NULL, lease_token = NULL, lease_acquired_at_ms = NULL,
           lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL, revision = revision + 1
         WHERE job_id = ? AND owner_principal_id = ?
       `).run(
         outcome.state, outcome.resultClass, outcome.finishedAtMs, exitCode,
-        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0, outcome.state, outcome.state, jobId, principalId
+        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0,
+        outcome.state, outcome.state, outcome.state, outcome.state, jobId, principalId
       );
-    }, lease, leaseNowMs, outcome.state === "unknown");
+    };
+    try {
+      return this.transitionJob(jobId, principalId, expectedRevision, ["running"], persist, lease, leaseNowMs, outcome.state === "unknown");
+    } catch (error) {
+      // Cancellation increments the Job revision before the worker can return.
+      // A late worker must still be able to persist the conservative UNKNOWN
+      // outcome, but only when the durable row proves that this exact Job is
+      // still running and cancellation is already recorded. No late success
+      // or arbitrary revision recovery is accepted.
+      if (!(error instanceof BrokerError) || error.errorClass !== "CONFLICT" || outcome.state !== "unknown") throw error;
+      return this.runTransaction(() => {
+        const currentRow = this.requireOwnedJobRow(jobId, principalId);
+        const current = mapJob(currentRow);
+        if (current.revision === expectedRevision || current.state !== "running" || !current.cancelRequested) throw error;
+        if (lease !== undefined) assertActiveJobLease(currentRow, lease, leaseNowMs, true);
+        persist(current);
+        return this.requireOwnedJob(jobId, principalId);
+      });
+    }
   }
 
   /**
@@ -2297,7 +3188,7 @@ export class BrokerStore {
       }
       const updated = this.database.prepare(`
         UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = ?,
-          stdout_text = ?, stderr_text = ?, output_truncated = ?, guest_metadata_json = '',
+          stdout_text = ?, stderr_text = ?, output_truncated = ?, guest_metadata_json = '', guest_result_json = '',
           revision = revision + 1
         WHERE job_id = ? AND owner_principal_id = ? AND state = 'unknown'
           AND revision = ? AND lease_token IS NULL AND guest_metadata_json <> ''
@@ -2346,7 +3237,8 @@ export class BrokerStore {
       if (current.state === "queued") {
         this.database.prepare(`
           UPDATE jobs SET state = 'cancelled', result_class = 'denied', finished_at_ms = ?,
-            cancel_requested = 1, cancel_reason = ?, revision = revision + 1
+            cancel_requested = 1, cancel_reason = ?, service_metadata_json = '',
+            privileged_payload_json = '', revision = revision + 1
           WHERE job_id = ? AND owner_principal_id = ? AND revision = ?
         `).run(nowMs, reason, jobId, principalId, current.revision);
       } else if (current.state === "running" && !current.cancelRequested) {
@@ -2386,8 +3278,10 @@ export class BrokerStore {
           UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, cancel_requested = 1,
             cancel_reason = 'BROKER_RESTART', lease_owner_id = NULL, lease_token = NULL,
             lease_acquired_at_ms = NULL, lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL,
+            service_metadata_json = CASE WHEN ? = 'unknown' THEN service_metadata_json ELSE '' END,
+            privileged_payload_json = CASE WHEN ? = 'unknown' THEN privileged_payload_json ELSE '' END,
             revision = revision + 1 WHERE job_id = ? AND revision = ?
-        `).run(nextState, resultClass, nowMs, current.jobId, current.revision);
+        `).run(nextState, resultClass, nowMs, nextState, nextState, current.jobId, current.revision);
         if (priorState === "queued") queuedCancelled += 1;
         else runningUnknown += 1;
         this.insertAudit({
@@ -3193,6 +4087,37 @@ export class BrokerStore {
     }
   }
 
+  /**
+   * Returns only bounded audit-chain facts for an authenticated host
+   * readback. This method re-verifies the complete chain and keyed tail before
+   * returning, and never exposes persisted evidence or audit row contents.
+   */
+  auditIntegrityReadback(): AuditIntegrityReadback {
+    if (this.auditAnchorUnavailable) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Audit anchor publication is unavailable; Broker restart is required");
+    }
+    this.verifyAuditIntegrity();
+    const tail = this.database.prepare("SELECT sequence, event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1").get() as {
+      sequence: number;
+      event_hash: string;
+    } | undefined;
+    const tailValue = tail === undefined ? undefined : { sequence: tail.sequence, eventHash: tail.event_hash };
+    if (this.auditAnchor !== undefined) {
+      try {
+        this.auditAnchor.verify(tailValue);
+      } catch {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Audit anchor could not be verified for host readback");
+      }
+    }
+    return {
+      format: "mac-operator-audit-integrity-v1",
+      eventCount: this.auditRows().length,
+      tailSequence: tail?.sequence ?? null,
+      tailHash: tail?.event_hash ?? null,
+      keyedAnchor: this.auditAnchor === undefined ? "not_configured" : "verified"
+    };
+  }
+
   private verifyExternalAuditAnchor(): void {
     if (this.auditAnchor === undefined) return;
     const tail = this.database.prepare("SELECT sequence, event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1").get() as {
@@ -3325,6 +4250,29 @@ export class BrokerStore {
     return approval;
   }
 
+  private requireApprovalPreview(requestId: string): ApprovalPreviewRecord {
+    const row = this.database.prepare(
+      "SELECT * FROM approval_previews WHERE request_id = ?"
+    ).get(requestId) as ApprovalPreviewRow | undefined;
+    if (!row) throw new BrokerError("TARGET_NOT_FOUND", "Approval preview was not persisted");
+    return mapApprovalPreview(row);
+  }
+
+  private markApprovalPreviewConsumed(approvalId: string, requestId: string): void {
+    const row = this.database.prepare(
+      "SELECT * FROM approval_previews WHERE request_id = ? AND approval_id = ?"
+    ).get(requestId, approvalId) as ApprovalPreviewRow | undefined;
+    if (!row) return;
+    const preview = mapApprovalPreview(row);
+    if (preview.status === "consumed") return;
+    if (preview.status !== "issued") throw new BrokerError("CONFLICT", "Approval preview lifecycle is inconsistent");
+    const updated = this.database.prepare(`
+      UPDATE approval_previews SET status = 'consumed', revision = revision + 1
+      WHERE request_id = ? AND approval_id = ? AND status = 'issued' AND revision = ?
+    `).run(requestId, approvalId, preview.revision);
+    if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Approval preview changed concurrently");
+  }
+
   private requireOwnedJob(jobId: string, principalId: string): BrokerJob {
     return mapJob(this.requireOwnedJobRow(jobId, principalId));
   }
@@ -3351,6 +4299,15 @@ export class BrokerStore {
     const previous = this.database.prepare("SELECT event_hash FROM audit_events ORDER BY sequence DESC LIMIT 1").get() as { event_hash: string } | undefined;
     const previousHash = previous?.event_hash ?? "0".repeat(64);
     const eventHash = sha256(canonicalJson({ ...event, evidence: parseJsonStrict(evidenceJson), previousHash }));
+    const eventBytes = auditStoredTextBytes([
+      event.requestId, event.principalId, event.tool, event.eventType, event.decision,
+      event.resultClass, event.targetRef, event.policyVersion, evidenceJson, previousHash, eventHash
+    ]);
+    const usage = this.auditRetentionUsage();
+    if (usage.eventCount >= this.auditRetention.maxEvents ||
+        usage.byteCount > this.auditRetention.maxBytes - eventBytes) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Audit retention bound reached; operator export and retention recovery are required");
+    }
     this.database.prepare(`
       INSERT INTO audit_events(request_id, principal_id, tool, event_type, decision, result_class, target_ref, policy_version, evidence_json, timestamp_ms, previous_hash, event_hash)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -3413,6 +4370,33 @@ export class BrokerStore {
     return row?.user_version as number;
   }
 
+  private verifyAuditRetention(): void {
+    const usage = this.auditRetentionUsage();
+    if (usage.eventCount > this.auditRetention.maxEvents || usage.byteCount > this.auditRetention.maxBytes) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Persisted audit data exceeds its configured retention bound");
+    }
+  }
+
+  private auditRetentionUsage(): { eventCount: number; byteCount: number } {
+    const row = this.database.prepare(`
+      SELECT COUNT(*) AS event_count,
+        COALESCE(SUM(
+          length(CAST(request_id AS BLOB)) + length(CAST(principal_id AS BLOB)) +
+          length(CAST(tool AS BLOB)) + length(CAST(event_type AS BLOB)) +
+          length(CAST(decision AS BLOB)) + length(CAST(result_class AS BLOB)) +
+          length(CAST(target_ref AS BLOB)) + length(CAST(policy_version AS BLOB)) +
+          length(CAST(evidence_json AS BLOB)) + length(CAST(previous_hash AS BLOB)) +
+          length(CAST(event_hash AS BLOB))
+        ), 0) AS byte_count
+      FROM audit_events
+    `).get() as { event_count?: unknown; byte_count?: unknown } | undefined;
+    if (!Number.isSafeInteger(row?.event_count) || (row?.event_count as number) < 0 ||
+        !Number.isSafeInteger(row?.byte_count) || (row?.byte_count as number) < 0) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Persisted audit retention usage is malformed");
+    }
+    return { eventCount: row?.event_count as number, byteCount: row?.byte_count as number };
+  }
+
   private migrateSchema(previousVersion: number): void {
     this.runTransaction(() => {
       this.validateSchemaMigrationsTable(previousVersion);
@@ -3428,7 +4412,14 @@ export class BrokerStore {
         { version: 9, name: "request-capability-family-capacity", apply: () => this.migrateRequestCapabilityFamilySchema() },
         { version: 10, name: "job-edge-provenance", apply: () => this.migrateJobEdgeProvenanceSchema() },
         { version: 11, name: "job-edge-key-provenance", apply: () => this.migrateJobEdgeKeyProvenanceSchema() },
-        { version: 12, name: "keychain-delivery-replay-ledger", apply: () => this.migrateKeychainDeliveryReplaySchema() }
+        { version: 12, name: "keychain-delivery-replay-ledger", apply: () => this.migrateKeychainDeliveryReplaySchema() },
+        { version: 13, name: "user-service-control-job-metadata", apply: () => this.migrateServiceControlJobMetadataSchema() },
+        { version: 14, name: "pending-approval-previews", apply: () => this.migrateApprovalPreviewSchema() },
+        { version: 15, name: "approval-preview-lifecycle", apply: () => this.migrateApprovalPreviewLifecycleSchema() },
+        { version: 16, name: "edge-revocation-replay-ledger", apply: () => this.migrateEdgeRevocationReplaySchema() },
+        { version: 17, name: "terminal-ledger-tombstones", apply: () => this.migrateLedgerTombstoneSchema() },
+        { version: 18, name: "request-edge-key-provenance", apply: () => this.migrateRequestEdgeKeyProvenanceSchema() },
+        { version: 19, name: "guest-task-authenticated-result-journal", apply: () => this.migrateGuestTaskResultJournalSchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -3541,8 +4532,68 @@ export class BrokerStore {
     if (!names.has("guest_metadata_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN guest_metadata_json TEXT NOT NULL DEFAULT ''");
     }
+    if (!names.has("service_metadata_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN service_metadata_json TEXT NOT NULL DEFAULT ''");
+    }
     if (!names.has("privileged_payload_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN privileged_payload_json TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  private migrateGuestTaskResultJournalSchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("guest_result_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN guest_result_json TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  private migrateServiceControlJobMetadataSchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("service_metadata_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN service_metadata_json TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  private migrateApprovalPreviewSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS approval_previews (
+        request_id TEXT PRIMARY KEY,
+        requesting_principal_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        contract_version TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        target_ref TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        approval_class TEXT NOT NULL CHECK (approval_class IN (
+          'trusted_write', 'trusted_gui', 'trusted_profile', 'explicit_privileged_policy'
+        )),
+        unattended INTEGER NOT NULL CHECK (unattended IN (0, 1)),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'issued', 'consumed')),
+        approval_id TEXT,
+        created_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL,
+        revision INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS approval_previews_expiry_idx ON approval_previews(expires_at_ms, request_id);
+    `);
+  }
+
+  private migrateApprovalPreviewLifecycleSchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(approval_previews)").all() as Array<{ name?: string }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (!names.has("status")) {
+      this.database.exec("ALTER TABLE approval_previews ADD COLUMN status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'issued', 'consumed'))");
+    }
+    if (!names.has("approval_id")) {
+      this.database.exec("ALTER TABLE approval_previews ADD COLUMN approval_id TEXT");
+    }
+    const migrated = this.database.prepare("PRAGMA table_info(approval_previews)").all() as Array<{ name?: string }>;
+    const migratedNames = new Set(migrated.map((column) => column.name));
+    if (!migratedNames.has("status") || !migratedNames.has("approval_id")) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Approval preview lifecycle schema is unavailable");
     }
   }
 
@@ -3588,6 +4639,94 @@ export class BrokerStore {
     const names = new Set(columns.map((column) => column.name));
     if (names.size !== 4 || !names.has("nonce") || !names.has("request_id") || !names.has("accepted_at_ms") || !names.has("expires_at_ms")) {
       throw new BrokerError("AUDIT_UNAVAILABLE", "Keychain delivery replay schema is malformed");
+    }
+  }
+
+  private migrateEdgeRevocationReplaySchema(): void {
+    const table = this.database.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'edge_revocation_nonces'"
+    ).get() as { sql?: unknown } | undefined;
+    if (typeof table?.sql !== "string" || !table.sql.includes("edge_id") || !table.sql.includes("request_id") ||
+        !table.sql.includes("accepted_at_ms") || !table.sql.includes("expires_at_ms") || !table.sql.includes("STRICT")) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Edge revocation replay schema is unavailable");
+    }
+    const columns = this.database.prepare("PRAGMA table_info(edge_revocation_nonces)").all() as Array<{ name?: unknown }>;
+    const names = new Set(columns.map((column) => column.name));
+    if (names.size !== 5 || !names.has("nonce") || !names.has("request_id") || !names.has("edge_id") ||
+        !names.has("accepted_at_ms") || !names.has("expires_at_ms")) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Edge revocation replay schema is malformed");
+    }
+  }
+
+  private migrateLedgerTombstoneSchema(): void {
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS job_tombstones (
+        job_id TEXT PRIMARY KEY,
+        owner_edge_id TEXT,
+        owner_edge_key_id TEXT,
+        owner_principal_id TEXT NOT NULL,
+        owner_session_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        target_ref TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('completed', 'failed', 'cancelled')),
+        result_class TEXT NOT NULL CHECK (result_class IN ('success', 'denied', 'failed', 'verification_failed')),
+        created_at_ms INTEGER NOT NULL,
+        started_at_ms INTEGER,
+        finished_at_ms INTEGER NOT NULL,
+        exit_code INTEGER,
+        cancel_requested INTEGER NOT NULL CHECK (cancel_requested IN (0, 1)),
+        revision INTEGER NOT NULL,
+        archived_at_ms INTEGER NOT NULL,
+        archive_sha256 TEXT NOT NULL,
+        UNIQUE (owner_principal_id, idempotency_key)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS request_tombstones (
+        request_id TEXT PRIMARY KEY,
+        edge_id TEXT NOT NULL,
+        edge_key_id TEXT,
+        principal_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        mutation INTEGER NOT NULL CHECK (mutation IN (0, 1)),
+        capability_families TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL CHECK (state IN (
+          'DENIED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'VERIFICATION_FAILED', 'UNKNOWN'
+        )),
+        result_class TEXT,
+        target_ref TEXT,
+        approval_id TEXT,
+        job_id TEXT,
+        received_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        revision INTEGER NOT NULL,
+        archived_at_ms INTEGER NOT NULL,
+        archive_sha256 TEXT NOT NULL
+      ) STRICT;
+    `);
+  }
+
+  private migrateRequestEdgeKeyProvenanceSchema(): void {
+    for (const table of ["requests", "request_tombstones"] as const) {
+      let columns = this.database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+        name?: unknown;
+        type?: unknown;
+        notnull?: unknown;
+        pk?: unknown;
+      }>;
+      let edgeKeyColumn = columns.find((column) => column.name === "edge_key_id");
+      if (edgeKeyColumn === undefined) {
+        this.database.exec(`ALTER TABLE ${table} ADD COLUMN edge_key_id TEXT`);
+        columns = this.database.prepare(`PRAGMA table_info(${table})`).all() as typeof columns;
+        edgeKeyColumn = columns.find((column) => column.name === "edge_key_id");
+      }
+      if (edgeKeyColumn?.type !== "TEXT" || edgeKeyColumn.notnull !== 0 || edgeKeyColumn.pk !== 0) {
+        throw new BrokerError("AUDIT_UNAVAILABLE", "Request Edge-key provenance schema is malformed");
+      }
     }
   }
 
@@ -3852,6 +4991,8 @@ interface JobRow {
   write_metadata_json: string;
   process_metadata_json: string;
   guest_metadata_json: string;
+  guest_result_json: string;
+  service_metadata_json: string;
   privileged_payload_json: string;
   revision: number;
 }
@@ -3859,6 +5000,7 @@ interface JobRow {
 interface RequestRow {
   request_id: string;
   edge_id: string;
+  edge_key_id: string | null;
   principal_id: string;
   session_id: string;
   tool: string;
@@ -3873,6 +5015,70 @@ interface RequestRow {
   job_id: string | null;
   received_at_ms: number;
   updated_at_ms: number;
+  revision: number;
+}
+
+interface RequestTombstoneRow {
+  request_id: string;
+  edge_id: string;
+  edge_key_id: string | null;
+  principal_id: string;
+  session_id: string;
+  tool: string;
+  policy_version: string;
+  payload_digest: string;
+  mutation: number;
+  capability_families: unknown;
+  state: RequestState;
+  result_class: string | null;
+  target_ref: string | null;
+  approval_id: string | null;
+  job_id: string | null;
+  received_at_ms: number;
+  updated_at_ms: number;
+  revision: number;
+  archived_at_ms: number;
+  archive_sha256: string;
+}
+
+interface JobTombstoneRow {
+  job_id: string;
+  owner_edge_id: string | null;
+  owner_edge_key_id: string | null;
+  owner_principal_id: string;
+  owner_session_id: string;
+  tool: string;
+  target_ref: string;
+  policy_version: string;
+  payload_digest: string;
+  idempotency_key: string;
+  state: Exclude<JobState, "queued" | "running" | "unknown">;
+  result_class: Exclude<JobResultClass, "queued" | "accepted" | "unknown">;
+  created_at_ms: number;
+  started_at_ms: number | null;
+  finished_at_ms: number;
+  exit_code: number | null;
+  cancel_requested: number;
+  revision: number;
+  archived_at_ms: number;
+  archive_sha256: string;
+}
+
+interface ApprovalPreviewRow {
+  request_id: string;
+  requesting_principal_id: string;
+  tool: string;
+  contract_version: string;
+  target_kind: string;
+  target_ref: string;
+  payload_digest: string;
+  policy_version: string;
+  approval_class: ApprovalClass;
+  unattended: number;
+  status: "pending" | "issued" | "consumed";
+  approval_id: string | null;
+  created_at_ms: number;
+  expires_at_ms: number;
   revision: number;
 }
 
@@ -3933,6 +5139,28 @@ function validateAuditEventForPersistence(event: AuditEvent): void {
   }
 }
 
+function normalizeAuditRetention(value: AuditRetentionPolicy): AuditRetentionPolicy {
+  if (!value || typeof value !== "object" ||
+      !Number.isSafeInteger(value.maxEvents) || value.maxEvents < 1 || value.maxEvents > MAX_AUDIT_RETENTION_EVENTS ||
+      !Number.isSafeInteger(value.maxBytes) || value.maxBytes < 1 || value.maxBytes > MAX_AUDIT_RETENTION_BYTES) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Audit retention policy is malformed");
+  }
+  return { maxEvents: value.maxEvents, maxBytes: value.maxBytes };
+}
+
+/** Logical UTF-8 bytes retained for one append-only audit row. */
+function auditStoredTextBytes(values: readonly string[]): number {
+  let total = 0;
+  for (const value of values) {
+    const bytes = Buffer.byteLength(value, "utf8");
+    if (!Number.isSafeInteger(bytes) || total > Number.MAX_SAFE_INTEGER - bytes) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Audit retention usage overflowed");
+    }
+    total += bytes;
+  }
+  return total;
+}
+
 interface ApprovalRow {
   approval_id: string;
   approver_principal_id: string;
@@ -3978,7 +5206,8 @@ type ReplayLedgerKind =
   | "privileged_helper"
   | "broker_status"
   | "virtualization_guest"
-  | "keychain_delivery";
+  | "keychain_delivery"
+  | "edge_revocation";
 
 /** Keep every replay ledger bounded before a new authority decision is stored. */
 function assertReplayLedgerCapacity(database: DatabaseSync, table: ReplayLedgerTable): void {
@@ -4045,9 +5274,138 @@ function validateStoredReplayRow(kind: ReplayLedgerKind, value: unknown): void {
       if (!stringField("nonce", /^[A-Za-z0-9._:-]{1,128}$/u) ||
           !stringField("request_id", /^[A-Za-z0-9._:-]{1,128}$/u)) fail();
       return;
+    case "edge_revocation":
+      if (!stringField("nonce", /^edge-revoke-nonce:[A-Za-z0-9._:-]{16,128}$/u) ||
+          !stringField("request_id", /^edge-revoke:[A-Za-z0-9._:-]{16,128}$/u) ||
+          !stringField("edge_id", /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u)) fail();
+      return;
     default:
       fail();
   }
+}
+
+function validateLedgerRotationOptions(options: LedgerRotationOptions): void {
+  if (options === null || typeof options !== "object" ||
+      !Number.isSafeInteger(options.retainRequestCount) || options.retainRequestCount < 0 ||
+      options.retainRequestCount > MAX_LEDGER_ROTATION_RETAIN_ROWS ||
+      !Number.isSafeInteger(options.retainJobCount) || options.retainJobCount < 0 ||
+      options.retainJobCount > MAX_LEDGER_ROTATION_RETAIN_ROWS ||
+      !Number.isSafeInteger(options.minAgeMs) || options.minAgeMs < 0 || options.minAgeMs > MAX_LEDGER_ROTATION_MIN_AGE_MS) {
+    throw new BrokerError("PRECONDITION_FAILED", "Ledger rotation retention options are malformed");
+  }
+  if (options.keySource === undefined || typeof options.keySource !== "object" ||
+      typeof options.keySource.keyId !== "string" || typeof options.keySource.loadKey !== "function") {
+    throw new BrokerError("POLICY_DENIED", "Ledger rotation requires a protected archive key source");
+  }
+}
+
+function assertLedgerTombstoneCapacity(database: DatabaseSync, requestCount: number, jobCount: number): void {
+  const requestRow = database.prepare("SELECT COUNT(*) AS count FROM request_tombstones").get() as { count?: unknown } | undefined;
+  const jobRow = database.prepare("SELECT COUNT(*) AS count FROM job_tombstones").get() as { count?: unknown } | undefined;
+  if (!Number.isSafeInteger(requestRow?.count) || !Number.isSafeInteger(jobRow?.count) ||
+      (requestRow?.count as number) + requestCount > MAX_LEDGER_TOMBSTONE_ROWS ||
+      (jobRow?.count as number) + jobCount > MAX_LEDGER_TOMBSTONE_ROWS) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Ledger tombstone capacity is full; rotation is stopped safely");
+  }
+}
+
+function assertRequestTombstoneAbsent(database: DatabaseSync, requestId: string): void {
+  if (database.prepare("SELECT 1 FROM request_tombstones WHERE request_id = ?").get(requestId) !== undefined) {
+    throw new BrokerError("REPLAY_DENIED", "Request ID was already accepted and archived");
+  }
+}
+
+function assertJobTombstoneAbsent(
+  database: DatabaseSync,
+  jobId: string,
+  principalId: string,
+  idempotencyKey: string
+): void {
+  const archived = database.prepare(
+    "SELECT 1 FROM job_tombstones WHERE job_id = ? OR (owner_principal_id = ? AND idempotency_key = ?) LIMIT 1"
+  ).get(jobId, principalId, idempotencyKey);
+  if (archived !== undefined) {
+    throw new BrokerError("CONFLICT", "Job identity or idempotency key refers to archived history; inspect its status before reuse");
+  }
+}
+
+function validateStoredRequestTombstone(row: RequestTombstoneRow): void {
+  const request: RequestRow = {
+    request_id: row.request_id,
+    edge_id: row.edge_id,
+    edge_key_id: row.edge_key_id,
+    principal_id: row.principal_id,
+    session_id: row.session_id,
+    tool: row.tool,
+    policy_version: row.policy_version,
+    payload_digest: row.payload_digest,
+    mutation: row.mutation,
+    capability_families: row.capability_families,
+    state: row.state,
+    result_class: row.result_class,
+    target_ref: row.target_ref,
+    approval_id: row.approval_id,
+    job_id: row.job_id,
+    received_at_ms: row.received_at_ms,
+    updated_at_ms: row.updated_at_ms,
+    revision: row.revision
+  };
+  validateStoredRequestState(request);
+  if (!isTerminalRequestState(row.state) || !validAuditTimestamp(row.archived_at_ms) || row.archived_at_ms < row.updated_at_ms ||
+      !/^[a-f0-9]{64}$/u.test(row.archive_sha256)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request tombstone is malformed");
+  }
+}
+
+function validateStoredJobTombstone(row: JobTombstoneRow): void {
+  const timestamp = (value: number | null): boolean => value === null || validAuditTimestamp(value);
+  if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(row.job_id) ||
+      (row.owner_edge_id !== null && !isValidEdgeId(row.owner_edge_id)) ||
+      (row.owner_edge_key_id !== null && !validEdgeKeyIdentity(row.owner_edge_key_id, row.owner_edge_id)) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_principal_id) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.owner_session_id) ||
+      !/^mac_[a-z0-9_]{1,123}$/u.test(row.tool) ||
+      typeof row.target_ref !== "string" || row.target_ref.length < 1 || row.target_ref.length > 4096 || row.target_ref.includes("\0") ||
+      !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(row.policy_version) || !/^[a-f0-9]{64}$/u.test(row.payload_digest) ||
+      !/^[A-Za-z0-9._:-]{1,128}$/u.test(row.idempotency_key) ||
+      !["completed", "failed", "cancelled"].includes(row.state) ||
+      !["success", "denied", "failed", "verification_failed"].includes(row.result_class) ||
+      !timestamp(row.created_at_ms) || !timestamp(row.started_at_ms) || !validAuditTimestamp(row.finished_at_ms) ||
+      (row.started_at_ms !== null && row.started_at_ms < row.created_at_ms) || row.finished_at_ms < row.created_at_ms ||
+      (row.started_at_ms !== null && row.finished_at_ms < row.started_at_ms) ||
+      (row.exit_code !== null && (!Number.isSafeInteger(row.exit_code) || row.exit_code < -2_147_483_648 || row.exit_code > 2_147_483_647)) ||
+      (row.cancel_requested !== 0 && row.cancel_requested !== 1) || !Number.isSafeInteger(row.revision) || row.revision < 0 ||
+      !validAuditTimestamp(row.archived_at_ms) || row.archived_at_ms < row.finished_at_ms ||
+      !/^[a-f0-9]{64}$/u.test(row.archive_sha256)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job tombstone is malformed");
+  }
+  if (row.state === "completed" && row.result_class !== "success") throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job tombstone result is malformed");
+  if (row.state === "cancelled" && row.result_class !== "denied") throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job tombstone result is malformed");
+  if (row.state === "failed" && !["failed", "verification_failed", "denied"].includes(row.result_class)) throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job tombstone result is malformed");
+}
+
+function mapArchivedJob(row: JobTombstoneRow): ArchivedJobRecord {
+  validateStoredJobTombstone(row);
+  return {
+    jobId: row.job_id,
+    ownerPrincipalId: row.owner_principal_id,
+    ownerSessionId: row.owner_session_id,
+    tool: row.tool,
+    targetRef: row.target_ref,
+    policyVersion: row.policy_version,
+    payloadDigest: row.payload_digest,
+    idempotencyKey: row.idempotency_key,
+    state: row.state,
+    resultClass: row.result_class,
+    createdAtMs: row.created_at_ms,
+    startedAtMs: row.started_at_ms,
+    finishedAtMs: row.finished_at_ms,
+    exitCode: row.exit_code,
+    cancelRequested: row.cancel_requested === 1,
+    revision: row.revision,
+    archivedAtMs: row.archived_at_ms,
+    archiveSha256: row.archive_sha256
+  };
 }
 
 function mapRequest(row: RequestRow): RequestRecord {
@@ -4059,6 +5417,7 @@ function mapRequest(row: RequestRow): RequestRecord {
   return {
     requestId: row.request_id,
     edgeId: row.edge_id,
+    edgeKeyId: row.edge_key_id,
     principalId: row.principal_id,
     sessionId: row.session_id,
     tool: row.tool,
@@ -4095,6 +5454,7 @@ function validateStoredRequestState(row: RequestRow): void {
 
   if (typeof row.request_id !== "string" || !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(row.request_id) ||
       typeof row.edge_id !== "string" || !isValidEdgeId(row.edge_id) ||
+      (row.edge_key_id !== null && !validEdgeKeyIdentity(row.edge_key_id, row.edge_id)) ||
       typeof row.principal_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.principal_id) ||
       typeof row.session_id !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.session_id) ||
       typeof row.tool !== "string" || !/^mac_[a-z0-9_]{1,123}$/u.test(row.tool) ||
@@ -4164,6 +5524,52 @@ function mapApproval(row: ApprovalRow): ApprovalRecord {
     revocationReason: row.revocation_reason,
     revision: row.revision
   };
+}
+
+function mapApprovalPreview(row: ApprovalPreviewRow): ApprovalPreviewRecord {
+  validateStoredApprovalPreview(row);
+  return {
+    requestId: row.request_id,
+    requestingPrincipalId: row.requesting_principal_id,
+    tool: row.tool,
+    contractVersion: row.contract_version,
+    targetKind: row.target_kind,
+    targetRef: row.target_ref,
+    payloadDigest: row.payload_digest,
+    policyVersion: row.policy_version,
+    approvalClass: row.approval_class,
+    unattended: row.unattended === 1,
+    status: row.status,
+    approvalId: row.approval_id,
+    createdAtMs: row.created_at_ms,
+    expiresAtMs: row.expires_at_ms,
+    revision: row.revision
+  };
+}
+
+function validateStoredApprovalPreview(row: ApprovalPreviewRow): void {
+  const fail = (): never => {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Stored approval preview is malformed");
+  };
+  if (!validRequestId(row.request_id) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(row.requesting_principal_id) ||
+      !/^mac_[a-z0-9_]{1,123}$/u.test(row.tool) ||
+      !/^\d+\.\d+$/u.test(row.contract_version) ||
+      !validApprovalTarget(row.target_kind, row.target_ref) ||
+      !/^[a-f0-9]{64}$/u.test(row.payload_digest) ||
+      !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(row.policy_version) ||
+      !["trusted_write", "trusted_gui", "trusted_profile", "explicit_privileged_policy"].includes(row.approval_class) ||
+      (row.unattended !== 0 && row.unattended !== 1) ||
+      !["pending", "issued", "consumed"].includes(row.status) ||
+      (row.approval_id !== null && !validApprovalId(row.approval_id)) ||
+      !validAuditTimestamp(row.created_at_ms) || !validAuditTimestamp(row.expires_at_ms) ||
+      row.expires_at_ms <= row.created_at_ms ||
+      row.expires_at_ms - row.created_at_ms > APPROVAL_PREVIEW_TTL_MS ||
+      !Number.isSafeInteger(row.revision) || row.revision < 0) {
+    fail();
+  }
+  if (row.status === "pending" && row.approval_id !== null) fail();
+  if (row.status !== "pending" && row.approval_id === null) fail();
 }
 
 /**
@@ -4250,7 +5656,7 @@ function mapJob(row: JobRow): BrokerJob {
       !validEdgeKeyIdentity(row.owner_edge_key_id, row.owner_edge_id)) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Job Edge-key provenance is malformed");
   }
-  return {
+  const job: BrokerJob = {
     jobId: row.job_id,
     ownerEdgeId: row.owner_edge_id,
     ownerEdgeKeyId: row.owner_edge_key_id,
@@ -4275,8 +5681,15 @@ function mapJob(row: JobRow): BrokerJob {
     ...(row.write_metadata_json ? { writeMetadata: parseWriteJobMetadata(row.write_metadata_json) } : {}),
     ...(row.process_metadata_json ? { processMetadata: parseProcessJobMetadata(row.process_metadata_json) } : {}),
     ...(row.guest_metadata_json ? { guestMetadata: parseGuestTaskJobMetadata(row.guest_metadata_json) } : {}),
+    ...(row.guest_result_json ? { guestResultJournal: parseGuestTaskResultJournal(row.guest_result_json) } : {}),
+    ...(row.service_metadata_json ? { serviceMetadata: parseServiceControlJobMetadata(row.service_metadata_json) } : {}),
     ...(row.privileged_payload_json ? { privilegedPayload: parsePrivilegedHelperPayload(row.privileged_payload_json) } : {})
   };
+  if (job.guestResultJournal !== undefined &&
+      (job.guestMetadata === undefined || canonicalJson(job.guestResultJournal.admission) !== canonicalJson(job.guestMetadata))) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Guest result journal is not bound to the admitted request");
+  }
+  return job;
 }
 
 /**
@@ -4314,7 +5727,9 @@ function validateStoredJobState(row: JobRow): void {
       (row.exit_code !== null && (!Number.isSafeInteger(row.exit_code) || row.exit_code < -2_147_483_648 || row.exit_code > 2_147_483_647)) ||
       (row.cancel_reason !== null && typeof row.cancel_reason !== "string") ||
       typeof row.write_metadata_json !== "string" || typeof row.process_metadata_json !== "string" ||
-      typeof row.guest_metadata_json !== "string" || typeof row.privileged_payload_json !== "string") fail();
+      typeof row.guest_metadata_json !== "string" || typeof row.guest_result_json !== "string" ||
+      typeof row.service_metadata_json !== "string" ||
+      typeof row.privileged_payload_json !== "string") fail();
   if (row.created_at_ms < 0 || row.started_at_ms !== null && row.started_at_ms < row.created_at_ms ||
       row.finished_at_ms !== null && row.started_at_ms !== null && row.finished_at_ms < row.started_at_ms) fail();
   if (row.state === "queued") {
@@ -4326,7 +5741,7 @@ function validateStoredJobState(row: JobRow): void {
   } else if (row.state === "failed") {
     if (!["failed", "denied", "verification_failed"].includes(row.result_class) || row.started_at_ms === null || row.finished_at_ms === null) fail();
   } else if (row.state === "cancelled") {
-    if (row.result_class !== "denied" || row.finished_at_ms === null) fail();
+    if (row.result_class !== "denied" || row.finished_at_ms === null || row.cancel_requested !== 1) fail();
   } else if (row.state === "unknown") {
     if (row.result_class !== "unknown" || row.finished_at_ms === null) fail();
   } else {
@@ -4352,10 +5767,15 @@ function validateStoredJobState(row: JobRow): void {
   const hasWriteMetadata = row.write_metadata_json.length > 0;
   const hasProcessMetadata = row.process_metadata_json.length > 0;
   const hasGuestMetadata = row.guest_metadata_json.length > 0;
+  const hasGuestResult = row.guest_result_json.length > 0;
+  const hasServiceMetadata = row.service_metadata_json.length > 0;
   if (hasWriteMetadata && row.tool !== "mac_write_file_atomic") fail();
   if ((hasProcessMetadata || hasGuestMetadata) && row.tool !== "mac_task_run") fail();
   if (hasProcessMetadata && hasGuestMetadata) fail();
   if ((hasProcessMetadata || hasGuestMetadata) && row.state !== "running" && row.state !== "unknown") fail();
+  if (hasGuestResult && (!hasGuestMetadata || row.tool !== "mac_task_run" || row.state !== "running" && row.state !== "unknown")) fail();
+  if (hasServiceMetadata && row.tool !== "mac_service_control") fail();
+  if (hasServiceMetadata && row.state !== "queued" && row.state !== "running" && row.state !== "unknown") fail();
 }
 
 function validateJobCreation(input: CreateJobInput): void {
@@ -4373,6 +5793,9 @@ function validateJobCreation(input: CreateJobInput): void {
     throw malformedJob();
   }
   if (input.writeMetadata !== undefined) validateWriteJobMetadata(input.writeMetadata);
+  if (input.serviceMetadata !== undefined) validateServiceControlJobMetadata(input.serviceMetadata);
+  if (input.tool === "mac_service_control" && input.serviceMetadata === undefined) throw malformedJob();
+  if (input.tool !== "mac_service_control" && input.serviceMetadata !== undefined) throw malformedJob();
   const privilegedTool = input.tool === "mac_priv_service_control" || input.tool === "mac_priv_package_install" || input.tool === "mac_priv_power";
   if (privilegedTool) {
     if (input.privilegedPayload === undefined || privilegedHelperPayloadTarget(input.privilegedPayload) !== input.targetRef ||
@@ -4388,6 +5811,14 @@ function validEdgeKeyIdentity(value: unknown, edgeId: string | null | undefined)
   if (typeof value !== "string" || !isValidEdgeId(edgeId) ||
       !EDGE_KEY_IDENTITY_PATTERN.test(value) || !value.startsWith(`${edgeId}:`)) return false;
   return EDGE_KEY_ID_PATTERN.test(value.slice(edgeId.length + 1));
+}
+
+function matchingEdgeKeyIdentity(requestEdgeKeyId: string | null, jobEdgeKeyId: string | null): boolean {
+  return requestEdgeKeyId === jobEdgeKeyId;
+}
+
+function guestTaskResultAuditRequestId(jobId: string, requestDigest: string): string {
+  return `guest-result-${sha256(jobId).slice(0, 16)}-${requestDigest.slice(0, 16)}`;
 }
 
 function validateJobLease(lease: JobLease, nowMs: number, allowExpired: boolean): void {
@@ -4482,6 +5913,47 @@ export function privilegedHelperPayloadTarget(payload: PrivilegedHelperPayload):
   return "host:local";
 }
 
+function serializeServiceControlJobMetadata(metadata: ServiceControlJobMetadata | undefined): string {
+  if (metadata === undefined) return "";
+  validateServiceControlJobMetadata(metadata);
+  return canonicalJson(metadata);
+}
+
+function parseServiceControlJobMetadata(value: string): ServiceControlJobMetadata {
+  if (value.length < 1 || value.length > 2_048) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker service-control Job metadata is malformed");
+  }
+  let parsed: unknown;
+  try { parsed = parseJsonStrict(value); }
+  catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker service-control Job metadata is malformed"); }
+  try { validateServiceControlJobMetadata(parsed as ServiceControlJobMetadata); }
+  catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker service-control Job metadata is malformed"); }
+  return parsed as ServiceControlJobMetadata;
+}
+
+export function validateServiceControlJobMetadata(metadata: ServiceControlJobMetadata): void {
+  if (!isPlainDataRecord(metadata)) throw malformedJob();
+  const serviceId = typeof metadata.serviceId === "string" ? metadata.serviceId : "";
+  if (
+      typeof metadata.serviceId !== "string" ||
+      !/^gui\/[1-9][0-9]{0,9}\/com\.mac-operator\.[A-Za-z0-9_:@+-]{1,96}$/u.test(metadata.serviceId) ||
+      !["start", "stop", "restart"].includes(metadata.action) ||
+      !["running", "stopped"].includes(metadata.expectedState) ||
+      !["running", "stopped"].includes(metadata.preState) ||
+      !/^[0-9a-f]{7,64}$/u.test(metadata.preSourceRevision) ||
+      !/^[0-9a-f]{7,64}$/u.test(metadata.bindingSourceRevision) || serviceId.length > 160) {
+    throw malformedJob();
+  }
+  const expected = metadata.action === "stop" ? "stopped" : "running";
+  if (metadata.expectedState !== expected || metadata.preSourceRevision !== metadata.bindingSourceRevision) {
+    throw malformedJob();
+  }
+  const keys = Object.keys(metadata).sort().join(",");
+  if (keys !== "action,bindingSourceRevision,expectedState,preSourceRevision,preState,serviceId") {
+    throw malformedJob();
+  }
+}
+
 function validateProcessJobMetadata(metadata: ProcessJobMetadata): void {
   if (metadata === null || typeof metadata !== "object" ||
       !Number.isSafeInteger(metadata.pid) || metadata.pid < 1 || metadata.pid > 99_999_999 ||
@@ -4532,6 +6004,73 @@ function parseGuestTaskJobMetadata(value: string): GuestTaskJobMetadata {
   try { validateGuestTaskJobMetadata(parsed as GuestTaskJobMetadata); }
   catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task metadata is malformed"); }
   return parsed as GuestTaskJobMetadata;
+}
+
+function serializeGuestTaskResultJournal(journal: GuestTaskResultJournal): string {
+  validateGuestTaskResultJournal(journal);
+  return canonicalJson(journal);
+}
+
+function parseGuestTaskResultJournal(value: string): GuestTaskResultJournal {
+  if (Buffer.byteLength(value, "utf8") < 1 || Buffer.byteLength(value, "utf8") > 1_100_000) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task result journal is malformed");
+  }
+  let parsed: unknown;
+  try { parsed = parseJsonStrict(value); }
+  catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task result journal is malformed"); }
+  try { validateGuestTaskResultJournal(parsed as GuestTaskResultJournal); }
+  catch { throw new BrokerError("AUDIT_UNAVAILABLE", "Broker guest task result journal is malformed"); }
+  return parsed as GuestTaskResultJournal;
+}
+
+function normalizeGuestTaskResult(result: GuestTaskResultJournal["result"]): GuestTaskResultJournal["result"] {
+  if (!isPlainDataRecord(result) || !isPlainDataRecord(result.verification)) throw malformedJob();
+  const resultKeys = Object.keys(result).sort().join(",");
+  const verificationKeys = Object.keys(result.verification).sort().join(",");
+  if (resultKeys !== "durationMs,exitCode,resultClass,state,stderr,stdout,truncated,verification" ||
+      verificationKeys !== "status" && verificationKeys !== "status,summary" ||
+      !["completed", "failed", "cancelled", "timed_out", "unknown"].includes(result.state) ||
+      !["SUCCEEDED", "EXECUTION_FAILED", "CANCELLED", "TIMEOUT", "OUTPUT_LIMIT", "UNKNOWN_OUTCOME"].includes(result.resultClass) ||
+      (result.exitCode !== null && (!Number.isInteger(result.exitCode) || result.exitCode < -2_147_483_648 || result.exitCode > 2_147_483_647)) ||
+      typeof result.stdout !== "string" || typeof result.stderr !== "string" ||
+      Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") > 2 * 1024 * 1024 ||
+      typeof result.truncated !== "boolean" || !Number.isSafeInteger(result.durationMs) || result.durationMs < 0 || result.durationMs > 1_200_000 ||
+      !["verified", "failed", "unknown", "not_run"].includes(result.verification.status) ||
+      (result.verification.summary !== undefined && (typeof result.verification.summary !== "string" ||
+        Buffer.byteLength(result.verification.summary, "utf8") > 512 || result.verification.summary.includes("\0"))) ||
+      result.resultClass === "SUCCEEDED" && (result.state !== "completed" || result.verification.status !== "verified") ||
+      result.resultClass === "CANCELLED" && result.state !== "cancelled" ||
+      result.resultClass === "TIMEOUT" && result.state !== "timed_out" ||
+      result.resultClass === "UNKNOWN_OUTCOME" && result.state !== "unknown" ||
+      (result.resultClass === "EXECUTION_FAILED" || result.resultClass === "OUTPUT_LIMIT") && result.state !== "failed") {
+    throw malformedJob();
+  }
+  const stdout = sanitizeJobOutput(result.stdout);
+  const stderr = sanitizeJobOutput(result.stderr);
+  const summary = result.verification.summary === undefined ? undefined : sanitizeJobOutput(result.verification.summary);
+  if (summary !== undefined && Buffer.byteLength(summary.value, "utf8") > 512) throw malformedJob();
+  return {
+    state: result.state,
+    resultClass: result.resultClass,
+    exitCode: result.exitCode,
+    stdout: stdout.value,
+    stderr: stderr.value,
+    truncated: result.truncated || stdout.truncated || stderr.truncated,
+    durationMs: result.durationMs,
+    verification: {
+      status: result.verification.status,
+      ...(summary === undefined ? {} : { summary: summary.value })
+    }
+  };
+}
+
+function validateGuestTaskResultJournal(journal: GuestTaskResultJournal): void {
+  if (!isPlainDataRecord(journal) ||
+      Object.keys(journal).sort().join(",") !== "admission,recordedAtMs,result" ||
+      !Number.isSafeInteger(journal.recordedAtMs) || journal.recordedAtMs < 0) throw malformedJob();
+  validateGuestTaskJobMetadata(journal.admission);
+  const normalized = normalizeGuestTaskResult(journal.result);
+  if (canonicalJson(normalized) !== canonicalJson(journal.result)) throw malformedJob();
 }
 
 function validateGuestTaskJobMetadata(metadata: GuestTaskJobMetadata): void {
@@ -4687,6 +6226,7 @@ function validateWriteJobMetadata(metadata: WriteJobMetadata): void {
 function validateRequestAdmission(input: AdmitRequestInput): void {
   if (!/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(input.requestId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.edgeId) ||
+      (input.edgeKeyId !== undefined && !validEdgeKeyIdentity(input.edgeKeyId, input.edgeId)) ||
       !/^[A-Za-z0-9._:@/+-]{1,256}$/u.test(input.nonce) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.principalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.sessionId) ||
@@ -4880,6 +6420,10 @@ function validateApprovalBinding(binding: ApprovalConsumptionBinding): void {
 
 function validApprovalId(value: string): boolean {
   return /^approval:[A-Za-z0-9._:-]{1,240}$/u.test(value);
+}
+
+function validRequestId(value: string): boolean {
+  return /^[A-Za-z0-9._:@/+-]{1,128}$/u.test(value);
 }
 
 function validApprovalTarget(kind: string, reference: string): boolean {

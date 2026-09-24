@@ -29,6 +29,7 @@ const MAX_JWKS_RESPONSE_BYTES = 256 * 1024;
 const KNOWN_SCOPES = new Set<string>(SCOPES);
 
 export interface JwtRevocationContext {
+  scopes: readonly string[];
   issuerId: string;
   subject: string;
   sessionId: string;
@@ -50,6 +51,10 @@ export interface JwtAccessTokenVerifierOptions {
   /** Permit a controlled test or operator profile to shorten unknown-kid refresh cooldown. */
   jwksCooldownMs?: number;
   revocationCheck?: (context: JwtRevocationContext) => Promise<boolean>;
+  /** Register a successfully verified session for bounded issuer monitoring. */
+  onAccepted?: (context: JwtRevocationContext) => void;
+  /** Propagate a verified issuer authority loss into the local Broker. */
+  onRevoked?: (context: JwtRevocationContext) => Promise<void>;
 }
 
 /**
@@ -85,15 +90,12 @@ export function createJwtAccessTokenVerifier(options: JwtAccessTokenVerifierOpti
         const issuedAtSeconds = readNumericDate(claims.iat);
         const clientId = readOptionalClaimId(claims.azp) ?? readOptionalClaimId(claims.client_id) ?? subject;
         const scopes = readScopes(claims);
-        if (validated.revocationCheck && await validated.revocationCheck({
-          issuerId: validated.issuerId,
-          subject,
-          sessionId,
-          tokenId,
-          expiresAt
-        })) {
+        const revocationContext = { scopes, issuerId: validated.issuerId, subject, sessionId, tokenId, expiresAt };
+        if (validated.revocationCheck && await validated.revocationCheck(revocationContext)) {
+          await validated.onRevoked?.(revocationContext);
           throw invalidToken();
         }
+        validated.onAccepted?.(revocationContext);
         return {
           token,
           clientId,
@@ -128,6 +130,8 @@ interface ValidatedOptions {
   clockToleranceSeconds: number;
   jwksCooldownMs: number;
   revocationCheck?: (context: JwtRevocationContext) => Promise<boolean>;
+  onAccepted?: (context: JwtRevocationContext) => void;
+  onRevoked?: (context: JwtRevocationContext) => Promise<void>;
 }
 
 function validateOptions(options: JwtAccessTokenVerifierOptions): ValidatedOptions {
@@ -167,7 +171,9 @@ function validateOptions(options: JwtAccessTokenVerifierOptions): ValidatedOptio
     maxTokenAgeSeconds,
     clockToleranceSeconds,
     jwksCooldownMs,
-    ...(options.revocationCheck === undefined ? {} : { revocationCheck: options.revocationCheck })
+    ...(options.revocationCheck === undefined ? {} : { revocationCheck: options.revocationCheck }),
+    ...(options.onAccepted === undefined ? {} : { onAccepted: options.onAccepted }),
+    ...(options.onRevoked === undefined ? {} : { onRevoked: options.onRevoked })
   };
 }
 

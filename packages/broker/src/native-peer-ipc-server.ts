@@ -1,4 +1,4 @@
-import { chmod } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { captureSocketPathIdentity, removeStaleSocket, unlinkOwnedSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
@@ -11,9 +11,12 @@ import {
   type PeerProcessIdentity,
   type PeerCredentials
 } from "./peer-credentials.js";
+import { validateGroupSocketParentChain, validateUserAclSocketParentChain } from "./owner-socket-path.js";
 
 interface NativeUnixPeerAdapter {
-  createUnixListener(path: string, backlog: number): number;
+  createUnixListener(path: string, backlog: number, peerGroupId?: number, peerUserId?: number): number;
+  getUnixSocketAclPeerUid(path: string): unknown;
+  hasExtendedAclEntries(path: string): unknown;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
   getProcessIdentity(pid: number): unknown;
@@ -22,6 +25,10 @@ interface NativeUnixPeerAdapter {
 export interface NativePeerIpcServerOptions {
   socketPath: string;
   peerPolicy: NativePeerPolicy;
+  /** Optional group access for a root-owned listener serving one Broker GID. */
+  socketGroupGid?: number;
+  /** Optional exact-user ACL access for a root-owned listener serving one Broker UID. */
+  socketPeerUid?: number;
   backlog?: number;
   pollIntervalMs?: number;
   peerIdentityMonitorIntervalMs?: number;
@@ -60,6 +67,17 @@ export class MacOsNativePeerIpcServer {
     ) {
       throw new Error("Native peer IPC limits are invalid");
     }
+    if (options.socketGroupGid !== undefined &&
+        (!Number.isSafeInteger(options.socketGroupGid) || options.socketGroupGid < 0 || options.socketGroupGid > 2_147_483_647 ||
+         !Number.isSafeInteger(options.peerPolicy.expectedUid) || options.peerPolicy.expectedUid < 1 || options.peerPolicy.expectedUid > 2_147_483_647 ||
+         options.peerPolicy.expectedGid !== options.socketGroupGid || options.socketPeerUid !== undefined)) {
+      throw new Error("Native peer IPC socket group must match the authenticated peer group");
+    }
+    if (options.socketPeerUid !== undefined &&
+        (!Number.isSafeInteger(options.socketPeerUid) || options.socketPeerUid < 1 || options.socketPeerUid > 2_147_483_647 ||
+         options.socketPeerUid !== options.peerPolicy.expectedUid)) {
+      throw new Error("Native peer IPC socket user ACL must match the authenticated peer user");
+    }
     if (options.peerPolicy.allowedProcessIdentity !== undefined) {
       validatePeerIdentity(options.peerPolicy.allowedProcessIdentity);
     }
@@ -68,19 +86,71 @@ export class MacOsNativePeerIpcServer {
   async listen(): Promise<void> {
     if (this.listenerFd !== undefined) throw new Error("Native peer IPC server is already running");
     assertNativeSocketPath(this.options.socketPath);
-    await validateSocketParent(this.options.socketPath);
+    if (this.options.socketGroupGid === undefined && this.options.socketPeerUid === undefined) {
+      await validateSocketParent(this.options.socketPath);
+    } else if (this.options.socketGroupGid !== undefined) {
+      const ownerUid = process.geteuid?.();
+      if (ownerUid === undefined || !Number.isSafeInteger(ownerUid) || ownerUid < 0) {
+        throw new Error("Group-access native peer IPC requires a POSIX effective owner identity");
+      }
+      await validateGroupSocketParentChain(
+        this.options.socketPath,
+        ownerUid,
+        this.options.peerPolicy.expectedUid,
+        this.options.socketGroupGid
+      );
+    } else {
+      const ownerUid = process.geteuid?.();
+      const ownerGid = process.getegid?.();
+      if (ownerUid === undefined || ownerGid === undefined || !Number.isSafeInteger(ownerUid) || ownerUid < 0 ||
+          !Number.isSafeInteger(ownerGid) || ownerGid < 0) {
+        throw new Error("User-ACL native peer IPC requires POSIX effective owner identities");
+      }
+      await validateUserAclSocketParentChain(
+        this.options.socketPath,
+        ownerUid,
+        ownerUid === 0 ? 0 : ownerGid,
+        this.options.socketPeerUid!,
+        this.options.peerPolicy.expectedGid ?? process.getgid?.() ?? ownerGid,
+        (path) => {
+          const result = this.native.hasExtendedAclEntries(path);
+          if (result !== false) throw new Error("Native path ACL readback is invalid");
+          return false;
+        }
+      );
+    }
     await removeStaleSocket(this.options.socketPath);
     this.assertExpectedPeerIdentity();
     this.peerIdentityFailure = undefined;
-    const descriptor = this.native.createUnixListener(this.options.socketPath, this.backlog);
+    const descriptor = this.native.createUnixListener(
+      this.options.socketPath,
+      this.backlog,
+      ...(this.options.socketGroupGid !== undefined ? [this.options.socketGroupGid] :
+        this.options.socketPeerUid !== undefined ? [undefined, this.options.socketPeerUid] : [])
+    );
     this.listenerFd = descriptor;
+    let createdSocketIdentity: SocketPathIdentity | undefined;
     try {
-      await chmod(this.options.socketPath, 0o600);
-      this.socketIdentity = await captureSocketPathIdentity(this.options.socketPath);
+      createdSocketIdentity = await captureSocketPathIdentity(this.options.socketPath);
+      const socket = await lstat(this.options.socketPath);
+      const ownerUid = process.geteuid?.();
+      const ownerGid = this.options.socketGroupGid ??
+        (this.options.socketPeerUid !== undefined && ownerUid === 0 ? 0 : process.getegid?.());
+      const expectedMode = this.options.socketGroupGid === undefined ? 0o600 : 0o620;
+      if (ownerUid === undefined || !socket.isSocket() || socket.isSymbolicLink() || socket.uid !== ownerUid ||
+          (ownerGid !== undefined && socket.gid !== ownerGid) || (socket.mode & 0o777) !== expectedMode) {
+        throw new Error("Native peer IPC listener socket ownership or mode is invalid");
+      }
+      if (this.options.socketPeerUid !== undefined &&
+          this.native.getUnixSocketAclPeerUid(this.options.socketPath) !== this.options.socketPeerUid) {
+        throw new Error("Native peer IPC listener user ACL does not match the authenticated peer");
+      }
+      this.socketIdentity = createdSocketIdentity;
     } catch (error) {
       this.listenerFd = undefined;
       this.native.closeUnixDescriptor(descriptor);
       this.socketIdentity = undefined;
+      await unlinkOwnedSocket(this.options.socketPath, createdSocketIdentity).catch(() => undefined);
       throw error;
     }
     this.acceptLoopPromise = this.acceptLoop();

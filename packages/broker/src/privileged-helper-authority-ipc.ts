@@ -13,9 +13,13 @@ import {
 } from "@mac-operator/contracts";
 import {
   assertPrivilegedHelperCommandAuthority,
+  assertPrivilegedHelperReadbackAuthority,
   authenticatePrivilegedHelperCommand,
+  authenticatePrivilegedHelperJobReadbackRequest,
   type SignedPrivilegedHelperCommand,
-  type UnsignedPrivilegedHelperCommand
+  type SignedPrivilegedHelperJobReadbackRequest,
+  type UnsignedPrivilegedHelperCommand,
+  type UnsignedPrivilegedHelperJobReadbackRequest
 } from "./privileged-helper.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import type { BrokerStore } from "./persistence.js";
@@ -44,6 +48,23 @@ export interface UnsignedPrivilegedHelperAuthorityRequest {
   command: SignedPrivilegedHelperCommand;
 }
 
+export interface UnsignedPrivilegedHelperReadbackAuthorityRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  contractVersion: typeof CONTRACT_VERSION;
+  requestId: string;
+  nonce: string;
+  nonceExpiresAtMs: number;
+  timestampMs: number;
+  expiresAtMs: number;
+  kind: "readback_check";
+  readback: SignedPrivilegedHelperJobReadbackRequest;
+}
+
+export type UnsignedPrivilegedHelperAuthorityEnvelope = UnsignedPrivilegedHelperAuthorityRequest | UnsignedPrivilegedHelperReadbackAuthorityRequest;
+export type SignedPrivilegedHelperAuthorityEnvelope =
+  | (UnsignedPrivilegedHelperAuthorityRequest & { authenticationProof: string })
+  | (UnsignedPrivilegedHelperReadbackAuthorityRequest & { authenticationProof: string });
+
 export interface SignedPrivilegedHelperAuthorityRequest extends UnsignedPrivilegedHelperAuthorityRequest {
   authenticationProof: string;
 }
@@ -51,7 +72,7 @@ export interface SignedPrivilegedHelperAuthorityRequest extends UnsignedPrivileg
 export type PrivilegedHelperAuthorityResponse =
   | {
       ok: true;
-      kind: "authority_check";
+      kind: "authority_check" | "readback_check";
       requestId: string;
       commandId: string;
       authorized: true;
@@ -59,7 +80,7 @@ export type PrivilegedHelperAuthorityResponse =
     }
   | {
       ok: false;
-      kind: "authority_check";
+      kind: "authority_check" | "readback_check";
       requestId: string;
       commandId: string;
       resultClass: ErrorClass;
@@ -92,6 +113,7 @@ export interface PrivilegedHelperAuthorityIpcServerOptions {
   replayGuard: PrivilegedHelperAuthorityReplayGuard;
   /** Broker-owned final authority. It must re-read active Job and policy state. */
   authorizeCommand: (command: UnsignedPrivilegedHelperCommand) => void;
+  authorizeReadback?: (request: UnsignedPrivilegedHelperJobReadbackRequest) => void;
   peerCredentialVerifier?: { verify(socket: Socket): unknown };
   peerPolicy?: NativePeerPolicy;
   /** Optional active-key/revocation check owned by the key manager. */
@@ -120,7 +142,8 @@ export function createBrokerPrivilegedHelperAuthorityIpcServer(
   return new PrivilegedHelperAuthorityIpcServer({
     ...serverOptions,
     replayGuard: new BrokerStorePrivilegedHelperAuthorityReplayGuard(store),
-    authorizeCommand: (command) => assertPrivilegedHelperCommandAuthority(store, command)
+    authorizeCommand: (command) => assertPrivilegedHelperCommandAuthority(store, command),
+    authorizeReadback: (request) => assertPrivilegedHelperReadbackAuthority(store, request)
   });
 }
 
@@ -261,7 +284,7 @@ export class PrivilegedHelperAuthorityIpcServer {
       if (newline === -1) return;
       handled = true;
       socket.pause();
-      let request: UnsignedPrivilegedHelperAuthorityRequest | undefined;
+      let request: UnsignedPrivilegedHelperAuthorityEnvelope | undefined;
       let response: PrivilegedHelperAuthorityResponse;
       try {
         const raw = parseJsonUtf8Strict(combined.subarray(0, newline));
@@ -272,13 +295,23 @@ export class PrivilegedHelperAuthorityIpcServer {
         }
         this.options.keyAuthorityCheck?.();
         this.options.replayGuard.admit(request);
-        const command = authenticatePrivilegedHelperCommand(request.command, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
-        this.options.authorizeCommand(command);
-        response = authoritySuccess(request, this.authenticationKey);
+        const bindingId = request.kind === "authority_check"
+          ? (() => {
+            const command = authenticatePrivilegedHelperCommand(request.command, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+            this.options.authorizeCommand(command);
+            return command.commandId;
+          })()
+          : (() => {
+            if (!this.options.authorizeReadback) throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper readback authority is not enabled");
+            const readback = authenticatePrivilegedHelperJobReadbackRequest(request.readback, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+            this.options.authorizeReadback(readback);
+            return readback.jobId;
+          })();
+        response = authoritySuccess(request, bindingId, this.authenticationKey);
       } catch (error) {
         const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper authority request is invalid");
         const fallback = request ?? fallbackAuthorityRequest();
-        response = authorityFailure(brokerError.errorClass, brokerError.message, fallback.requestId, fallback.command.commandId, brokerError.retryable, request, this.authenticationKey);
+        response = authorityFailure(brokerError.errorClass, brokerError.message, fallback.requestId, authorityBindingId(fallback), brokerError.retryable, request, this.authenticationKey);
       }
       writeAuthorityResponse(socket, response, this.maxResponseBytes);
     });
@@ -287,6 +320,7 @@ export class PrivilegedHelperAuthorityIpcServer {
 
 export interface PrivilegedHelperAuthorityPoller {
   assertAuthorized(command: SignedPrivilegedHelperCommand): Promise<void>;
+  assertReadbackAuthorized?(request: SignedPrivilegedHelperJobReadbackRequest): Promise<void>;
   dispose?: () => void;
 }
 
@@ -377,6 +411,39 @@ export class PrivilegedHelperAuthorityClient implements PrivilegedHelperAuthorit
     }
   }
 
+  async assertReadbackAuthorized(readback: SignedPrivilegedHelperJobReadbackRequest): Promise<void> {
+    if (this.disposed) throw new BrokerError("CANCELLED", "Privileged helper authority client is disposed");
+    this.options.keyAuthorityCheck?.();
+    const timestampMs = this.now();
+    if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority client clock is invalid");
+    const expiresAtMs = Math.min(timestampMs + this.timeoutMs, readback.expiresAtMs);
+    if (expiresAtMs <= timestampMs) throw new BrokerError("AUTH_EXPIRED", "Privileged helper readback is no longer authorized");
+    const request: UnsignedPrivilegedHelperReadbackAuthorityRequest = {
+      protocolVersion: PROTOCOL_VERSION,
+      contractVersion: CONTRACT_VERSION,
+      requestId: `request:helper-authority-${randomBytes(16).toString("hex")}`,
+      nonce: `helper-authority-nonce-${randomBytes(16).toString("hex")}`,
+      nonceExpiresAtMs: expiresAtMs,
+      timestampMs,
+      expiresAtMs,
+      kind: "readback_check",
+      readback
+    };
+    const signed = signPrivilegedHelperAuthorityRequest(request, this.authenticationKey);
+    const before = await this.captureSocket();
+    try {
+      const response = await exchangeAuthoritySocket(this.options.socketPath, `${JSON.stringify(signed)}\n`, this.timeoutMs, this.peerCredentialVerifier);
+      const after = await this.captureSocket();
+      if (before.device !== after.device || before.inode !== after.inode) {
+        throw new BrokerError("CONFLICT", "Privileged helper authority socket identity changed during readback polling", true);
+      }
+      const verified = authenticatePrivilegedHelperAuthorityResponse(response, request, this.authenticationKey);
+      if (!verified.ok) throw new BrokerError(verified.resultClass, verified.error.message, verified.error.retryable);
+    } finally {
+      this.options.keyAuthorityCheck?.();
+    }
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -390,9 +457,9 @@ export class PrivilegedHelperAuthorityClient implements PrivilegedHelperAuthorit
 }
 
 export function signPrivilegedHelperAuthorityRequest(
-  request: UnsignedPrivilegedHelperAuthorityRequest,
+  request: UnsignedPrivilegedHelperAuthorityEnvelope,
   authenticationKey: Buffer
-): SignedPrivilegedHelperAuthorityRequest {
+): SignedPrivilegedHelperAuthorityEnvelope {
   validateUnsignedPrivilegedHelperAuthorityRequest(request);
   if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Privileged helper authority key is invalid");
   return { ...request, authenticationProof: authorityRequestProof(request, authenticationKey) };
@@ -404,7 +471,7 @@ export function authenticatePrivilegedHelperAuthorityRequest(
   nowMs: number,
   maxRequestAgeMs = MAX_REQUEST_AGE_MS,
   allowedClockSkewMs = 5_000
-): UnsignedPrivilegedHelperAuthorityRequest {
+): UnsignedPrivilegedHelperAuthorityEnvelope {
   if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Privileged helper authority key is invalid");
   const parsed = parseSignedAuthorityRequest(raw);
   const request = parsed.unsigned;
@@ -421,30 +488,32 @@ export function authenticatePrivilegedHelperAuthorityRequest(
   return request;
 }
 
-export function validateUnsignedPrivilegedHelperAuthorityRequest(request: UnsignedPrivilegedHelperAuthorityRequest): void {
-  const allowed = ["protocolVersion", "contractVersion", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs", "kind", "command"];
+export function validateUnsignedPrivilegedHelperAuthorityRequest(request: UnsignedPrivilegedHelperAuthorityEnvelope): void {
   if (!isPlainDataRecord(request)) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority request fields are malformed");
   const keys = Object.keys(request);
-  if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
+  const common = ["protocolVersion", "contractVersion", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs", "kind"];
+  const target = request.kind === "authority_check" ? ["command"] : request.kind === "readback_check" ? ["readback"] : [];
+  if (target.length === 0 || keys.length !== common.length + target.length || [...common, ...target].some((key) => !keys.includes(key)) ||
       request.protocolVersion !== PROTOCOL_VERSION || request.contractVersion !== CONTRACT_VERSION ||
       !REQUEST_ID_PATTERN.test(request.requestId) || !NONCE_PATTERN.test(request.nonce) ||
       !Number.isSafeInteger(request.timestampMs) || request.timestampMs < 0 ||
       !Number.isSafeInteger(request.expiresAtMs) || request.expiresAtMs <= request.timestampMs ||
       !Number.isSafeInteger(request.nonceExpiresAtMs) || request.nonceExpiresAtMs <= request.timestampMs ||
-      request.kind !== "authority_check" || !isPlainDataRecord(request.command)) {
+      (request.kind === "authority_check" && !isPlainDataRecord(request.command)) ||
+      (request.kind === "readback_check" && !isPlainDataRecord(request.readback))) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority request fields are malformed");
   }
 }
 
 export function authenticatePrivilegedHelperAuthorityResponse(
   raw: unknown,
-  request: UnsignedPrivilegedHelperAuthorityRequest,
+  request: UnsignedPrivilegedHelperAuthorityEnvelope,
   authenticationKey: Buffer
 ): PrivilegedHelperAuthorityResponse {
   validateUnsignedPrivilegedHelperAuthorityRequest(request);
   if (authenticationKey.byteLength < 32 || !isPlainDataRecord(raw)) throw new BrokerError("AUTH_INVALID", "Privileged helper authority response is invalid");
   const response = raw as Record<string, unknown>;
-  if (response.kind !== "authority_check" || response.requestId !== request.requestId || response.commandId !== request.command.commandId ||
+  if (response.kind !== request.kind || response.requestId !== request.requestId || response.commandId !== authorityBindingId(request) ||
       typeof response.responseProof !== "string") {
     throw new BrokerError("AUTH_INVALID", "Privileged helper authority response identity is invalid");
   }
@@ -475,8 +544,8 @@ export function authenticatePrivilegedHelperAuthorityResponse(
   return response as unknown as PrivilegedHelperAuthorityResponse;
 }
 
-function authoritySuccess(request: UnsignedPrivilegedHelperAuthorityRequest, key: Buffer): Extract<PrivilegedHelperAuthorityResponse, { ok: true }> {
-  const body = { ok: true as const, kind: "authority_check" as const, requestId: request.requestId, commandId: request.command.commandId, authorized: true as const };
+function authoritySuccess(request: UnsignedPrivilegedHelperAuthorityEnvelope, bindingId: string, key: Buffer): Extract<PrivilegedHelperAuthorityResponse, { ok: true }> {
+  const body = { ok: true as const, kind: request.kind, requestId: request.requestId, commandId: bindingId, authorized: true as const };
   return { ...body, responseProof: authorityResponseProof(request, body, key) };
 }
 
@@ -486,22 +555,24 @@ function authorityFailure(
   requestId: string,
   commandId: string,
   retryable: boolean,
-  request: UnsignedPrivilegedHelperAuthorityRequest | undefined,
+  request: UnsignedPrivilegedHelperAuthorityEnvelope | undefined,
   key: Buffer
 ): Extract<PrivilegedHelperAuthorityResponse, { ok: false }> {
-  const body = { ok: false as const, kind: "authority_check" as const, requestId, commandId, resultClass, error: { message: boundedMessage(message), retryable } };
+  const body = { ok: false as const, kind: request?.kind ?? "authority_check" as const, requestId, commandId, resultClass, error: { message: boundedMessage(message), retryable } };
   return { ...body, responseProof: authorityResponseProof(request, body, key) };
 }
 
-function parseSignedAuthorityRequest(value: unknown): { unsigned: UnsignedPrivilegedHelperAuthorityRequest; authenticationProof: string } {
+function parseSignedAuthorityRequest(value: unknown): { unsigned: UnsignedPrivilegedHelperAuthorityEnvelope; authenticationProof: string } {
   if (!isPlainDataRecord(value)) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority envelope is malformed");
   const record = value as Record<string, unknown>;
-  const allowed = ["protocolVersion", "contractVersion", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs", "kind", "command", "authenticationProof"];
-  if (Object.keys(record).length !== allowed.length || allowed.some((key) => !Object.hasOwn(record, key)) ||
+  const common = ["protocolVersion", "contractVersion", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs", "expiresAtMs", "kind"];
+  const target = record.kind === "authority_check" ? ["command"] : record.kind === "readback_check" ? ["readback"] : [];
+  const allowed = [...common, ...target, "authenticationProof"];
+  if (target.length === 0 || Object.keys(record).length !== allowed.length || allowed.some((key) => !Object.hasOwn(record, key)) ||
       typeof record.authenticationProof !== "string" || !/^[a-f0-9]{64}$/u.test(record.authenticationProof)) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority envelope is malformed");
   }
-  const unsigned = {
+  const commonFields = {
     protocolVersion: record.protocolVersion as typeof PROTOCOL_VERSION,
     contractVersion: record.contractVersion as typeof CONTRACT_VERSION,
     requestId: record.requestId as string,
@@ -509,31 +580,33 @@ function parseSignedAuthorityRequest(value: unknown): { unsigned: UnsignedPrivil
     nonceExpiresAtMs: record.nonceExpiresAtMs as number,
     timestampMs: record.timestampMs as number,
     expiresAtMs: record.expiresAtMs as number,
-    kind: record.kind as "authority_check",
-    command: record.command as SignedPrivilegedHelperCommand
-  } satisfies UnsignedPrivilegedHelperAuthorityRequest;
+    kind: record.kind as "authority_check" | "readback_check"
+  };
+  const unsigned = record.kind === "authority_check"
+    ? { ...commonFields, kind: "authority_check" as const, command: record.command as SignedPrivilegedHelperCommand }
+    : { ...commonFields, kind: "readback_check" as const, readback: record.readback as SignedPrivilegedHelperJobReadbackRequest };
   validateUnsignedPrivilegedHelperAuthorityRequest(unsigned);
   return { unsigned, authenticationProof: record.authenticationProof as string };
 }
 
-function unsignedAuthorityCandidate(raw: unknown): UnsignedPrivilegedHelperAuthorityRequest | undefined {
+function unsignedAuthorityCandidate(raw: unknown): UnsignedPrivilegedHelperAuthorityEnvelope | undefined {
   try { return parseSignedAuthorityRequest(raw).unsigned; }
   catch { return undefined; }
 }
 
-function validateAuthorityReplayInput(input: Pick<UnsignedPrivilegedHelperAuthorityRequest, "requestId" | "nonce" | "timestampMs" | "nonceExpiresAtMs">): void {
+function validateAuthorityReplayInput(input: Pick<UnsignedPrivilegedHelperAuthorityEnvelope, "requestId" | "nonce" | "timestampMs" | "nonceExpiresAtMs">): void {
   if (!REQUEST_ID_PATTERN.test(input.requestId) || !NONCE_PATTERN.test(input.nonce) || !Number.isSafeInteger(input.timestampMs) ||
       input.timestampMs < 0 || !Number.isSafeInteger(input.nonceExpiresAtMs) || input.nonceExpiresAtMs <= input.timestampMs) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper authority replay admission is malformed");
   }
 }
 
-function authorityRequestProof(request: UnsignedPrivilegedHelperAuthorityRequest, key: Buffer): string {
+function authorityRequestProof(request: UnsignedPrivilegedHelperAuthorityEnvelope, key: Buffer): string {
   if (key.byteLength < 32) throw new Error("Privileged helper authority key must contain at least 32 bytes");
   return createHmac("sha256", key).update(AUTHORITY_REQUEST_DOMAIN, "utf8").update(sha256(canonicalJson(request)), "utf8").digest("hex");
 }
 
-function authorityResponseProof(request: UnsignedPrivilegedHelperAuthorityRequest | undefined, body: object, key: Buffer): string {
+function authorityResponseProof(request: UnsignedPrivilegedHelperAuthorityEnvelope | undefined, body: object, key: Buffer): string {
   if (key.byteLength < 32) throw new Error("Privileged helper authority key must contain at least 32 bytes");
   return createHmac("sha256", key)
     .update(AUTHORITY_RESPONSE_DOMAIN, "utf8")
@@ -600,6 +673,10 @@ function writeAuthorityResponse(socket: Socket, response: PrivilegedHelperAuthor
   const serialized = `${JSON.stringify(response)}\n`;
   if (Buffer.byteLength(serialized, "utf8") <= maxBytes) socket.end(serialized);
   else socket.destroy();
+}
+
+function authorityBindingId(request: UnsignedPrivilegedHelperAuthorityEnvelope): string {
+  return request.kind === "authority_check" ? request.command.commandId : request.readback.jobId;
 }
 
 function fallbackAuthorityRequest(): UnsignedPrivilegedHelperAuthorityRequest {

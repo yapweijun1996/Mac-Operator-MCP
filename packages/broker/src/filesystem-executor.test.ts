@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import { FilesystemInspector } from "./filesystem-inspector.js";
 import { validateFilesystemWorkerResult, WorkerFilesystemExecutor } from "./filesystem-executor.js";
 
@@ -85,6 +86,68 @@ test("filesystem worker result validation rejects unstable authority fields", ()
     extra: true
   };
   assert.throws(() => validateFilesystemWorkerResult(sparseRead as never), /malformed result/u);
+});
+
+test("filesystem worker normalizes structured-cloned Buffer content before secret inspection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-worker-write-"));
+  try {
+    const inspector = new FilesystemInspector([{ ...root("write-root", directory), write: true }]);
+    const plan = inspector.planPath(join(directory, "write.txt"), "write");
+    const executor = new WorkerFilesystemExecutor(1);
+    try {
+      const result = await executor.write(
+        plan,
+        Buffer.from("d1-atomic-write", "utf8"),
+        undefined,
+        true,
+        { timeoutMs: 5_000, shouldCancel: () => false }
+      );
+      assert.equal(result.operation, "write");
+      if (result.operation === "write") {
+        assert.equal(result.created, true);
+        assert.equal(result.bytesWritten, Buffer.byteLength("d1-atomic-write", "utf8"));
+      }
+    } finally {
+      await executor.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("filesystem worker denies a mutation at the pre-mutation authority gate", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-fs-worker-pre-mutation-"));
+  const path = join(directory, "denied.txt");
+  try {
+    const inspector = new FilesystemInspector([{ ...root("write-root", directory), write: true }]);
+    const plan = inspector.planPath(path, "write");
+    const executor = new WorkerFilesystemExecutor(1);
+    try {
+      let checks = 0;
+      await assert.rejects(
+        executor.write(plan, Buffer.from("must-not-write", "utf8"), undefined, true, {
+          timeoutMs: 5_000,
+          shouldCancel: () => false,
+          beforeMutation: () => {
+            checks += 1;
+            throw new BrokerError("REVOKED", "authority revoked at the mutation boundary");
+          }
+        }),
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "REVOKED"
+      );
+      assert.equal(checks, 1);
+      await assert.rejects(readFile(path), /ENOENT/u);
+      const releaseDeadline = Date.now() + 2_000;
+      while (executor.activeCount() !== 0 && Date.now() < releaseDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(executor.activeCount(), 0);
+    } finally {
+      await executor.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 function root(rootId: string, path: string) {

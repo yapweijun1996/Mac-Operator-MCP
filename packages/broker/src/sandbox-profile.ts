@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import { parseTaskNetworkDestination, type ResolvedTaskProfile } from "./task-profile.js";
+import { sha256 } from "@mac-operator/contracts";
 
 const MAX_PROFILE_BYTES = 128 * 1024;
 // Keep the serialized SBPL argument bounded while leaving room for the fixed
@@ -92,6 +93,13 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile, options: 
     "(allow file-read* (literal \"/private/etc/hosts\"))",
     "(allow file-read* (literal \"/private/etc/resolv.conf\"))",
   ];
+  if (profile.executionKind === "posix-sh-script" && profile.process.executable === "/bin/sh") {
+    // On current macOS, /bin/sh consults this fixed selector and dispatches to
+    // the system Bash binary. Permit only that OS-owned implementation path.
+    lines.push('(allow file-read* (literal "/private/var/select/sh"))');
+    lines.push('(allow process-exec (literal "/bin/bash"))');
+    lines.push('(allow file-read* (literal "/bin/bash"))');
+  }
   if (processTreePolicy === "owned_group") lines.splice(3, 0, "(allow process-fork)");
   for (const destination of networkDestinations) {
     if (destination !== null) lines.push(`(allow network-outbound (remote ${destination.protocol} \"${destination.address}:${destination.port}\"))`);
@@ -131,6 +139,24 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile, options: 
 
 export function buildSandboxExecArguments(profile: ResolvedTaskProfile, options: TaskSandboxProfileOptions = {}): readonly string[] {
   const sandboxProfile = renderTaskSandboxProfile(profile, options);
+  if ((profile.executionKind ?? "binary") === "posix-sh-script") {
+    const scriptContent = profile.scriptContent;
+    if (profile.process.executable !== "/bin/sh" || profile.processTreePolicy !== "single_process" ||
+        typeof profile.scriptPath !== "string" || !isCanonicalAbsolutePath(profile.scriptPath) ||
+        !profile.filesystemRoots.some((root) => isContained(root, profile.scriptPath!)) ||
+        typeof scriptContent !== "string" || typeof profile.scriptContentSha256 !== "string" ||
+        scriptContent.includes("\0") ||
+        !/^[a-f0-9]{64}$/u.test(profile.scriptContentSha256) || sha256(Buffer.from(scriptContent, "utf8")) !== profile.scriptContentSha256) {
+      throw new BrokerError("POLICY_DENIED", "Broker-owned shell script identity is incomplete or mismatched");
+    }
+    if (Buffer.byteLength(scriptContent, "utf8") > 64 * 1024) {
+      throw new BrokerError("OUTPUT_LIMIT", "Broker-owned shell script exceeds the stdin execution limit");
+    }
+    return ["-p", sandboxProfile, "/bin/sh", "-s", "--", ...profile.process.args];
+  }
+  if (profile.process.executable === "/bin/sh") {
+    throw new BrokerError("POLICY_DENIED", "The shell interpreter requires a Broker-owned script profile");
+  }
   return ["-p", sandboxProfile, profile.process.executable, ...profile.process.args];
 }
 

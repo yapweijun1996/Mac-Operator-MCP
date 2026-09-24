@@ -165,6 +165,52 @@ test("contract registry rejects unknown scopes and malformed postconditions", as
     });
     await assert.rejects(() => ToolContractRegistry.load(directory), /postcondition_verification is invalid/u);
   });
+
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, { ...validContract, approval_policy: "future_policy" });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /approval_policy is invalid/u);
+  });
+});
+
+test("contract registry enforces cross-field safety invariants", async () => {
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, { ...validContract, idempotent: false });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /read_only tools must be idempotent/u);
+  });
+
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, {
+      ...validContract,
+      safety_class: "writes_local",
+      idempotent: false,
+      approval_policy: "trusted_write",
+      postcondition_verification: { ...validContract.postcondition_verification, required: false }
+    });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /non-read-only tools must require postcondition verification/u);
+  });
+
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, {
+      ...validContract,
+      safety_class: "privileged",
+      audit_class: "privileged",
+      approval_policy: "trusted_write",
+      idempotent: false,
+      postcondition_verification: { ...validContract.postcondition_verification, required: true }
+    });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /privileged tools must require explicit privileged approval/u);
+  });
+
+  await withTempDirectory(async (directory) => {
+    await writeContract(directory, {
+      ...validContract,
+      safety_class: "destructive",
+      idempotent: false,
+      approval_policy: "trusted_read",
+      postcondition_verification: { ...validContract.postcondition_verification, required: true }
+    });
+    await assert.rejects(() => ToolContractRegistry.load(directory), /cannot use trusted-read approval/u);
+  });
 });
 
 test("contract registry rejects nested authority fields in model-editable schemas", async () => {

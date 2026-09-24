@@ -1,0 +1,216 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_service_control",
+  "capability_level": "L3",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.service.control"
+  ],
+  "normalized_target_type": "user_launch_agent",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 262144,
+  "network_policy": "none",
+  "filesystem_policy": "bound_launch_agent_metadata_only",
+  "secret_policy": "deny_secret_content",
+  "approval_policy": "trusted_write",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "service_state_readback",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "service_control",
+  "tool_delivery_wave": "wave_4",
+  "implementation_status": "planned",
+  "purpose": "control only a previously bound owner-domain LaunchAgent through fixed launchctl actions and verified state/source-revision readback.",
+  "input_summary": "service_id:gui/<uid>/com.mac-operator.*; action:start|stop|restart; expected_state?:running|stopped; idempotency_key:string.",
+  "output_summary": "pre/post service state, source revision, durable job ID, rollback status, and verified readback; unresolved outcomes remain UNKNOWN_OUTCOME.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_service_control input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "service_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^gui/[1-9][0-9]{0,9}/com\\.mac-operator\\.[A-Za-z0-9_:@+-]{1,96}$"
+      },
+      "action": {
+        "enum": [
+          "start",
+          "stop",
+          "restart"
+        ]
+      },
+      "expected_state": {
+        "enum": [
+          "running",
+          "stopped"
+        ]
+      },
+      "idempotency_key": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._:-]+$"
+      }
+    },
+    "required": [
+      "service_id",
+      "action",
+      "expected_state",
+      "idempotency_key"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_service_control result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_service_control"
+      },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^job:[A-Za-z0-9._-]{1,240}$"
+          },
+          "service_id": {
+            "type": "string",
+            "pattern": "^gui/[1-9][0-9]{0,9}/com\\.mac-operator\\.[A-Za-z0-9_:@+-]{1,96}$"
+          },
+          "action": {
+            "enum": [
+              "start",
+              "stop",
+              "restart"
+            ]
+          },
+          "pre_state": {
+            "enum": [
+              "running",
+              "stopped"
+            ]
+          },
+          "post_state": {
+            "enum": [
+              "running",
+              "stopped",
+              "unknown"
+            ]
+          },
+          "source_revision": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{7,64}$"
+          },
+          "idempotent": {
+            "type": "boolean"
+          },
+          "rollback_status": {
+            "enum": [
+              "not_needed",
+              "verified",
+              "failed",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "job_id",
+          "service_id",
+          "action",
+          "pre_state",
+          "post_state",
+          "source_revision",
+          "idempotent",
+          "rollback_status"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "maxItems": 32,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "failed",
+              "unknown",
+              "accepted",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "service_state_readback"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "maxLength": 512
+              }
+            }
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "001888e5-c495-4b86-86a8-5dc71cb92744",
+    "source_text": "Purpose: control only a previously bound owner-domain LaunchAgent through fixed launchctl actions and verified state/source-revision readback. Contract: L3 writes_local; scope mac.service.control; target user_launch_agent; timeout 30000ms; cap 256KiB; network none; fixed binding and no shell arguments; approval trusted_write; idempotent state-setting actions; inverse rollback and UNKNOWN_OUTCOME recovery required. Phase 4 planned."
+  }
+}

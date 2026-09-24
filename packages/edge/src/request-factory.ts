@@ -3,9 +3,13 @@ import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
   signRequest,
+  signBrokerRevocationEvent,
   verifyBrokerResponse,
+  verifyBrokerRevocationResponse,
+  type AuthenticatedBrokerRevocationResponse,
   type AuthenticatedBrokerResponse,
   type BrokerRequest,
+  type BrokerRevocationEvent,
   type PrincipalContext
 } from "@mac-operator/contracts";
 import { loadProtectedEdgeAuthenticationKey } from "./authentication-key.js";
@@ -107,6 +111,31 @@ export class EdgeRequestFactory {
   verifyResponse(request: BrokerRequest, response: AuthenticatedBrokerResponse): boolean {
     if (this.disposed) return false;
     return verifyBrokerResponse(request, response, this.options.authenticationKey);
+  }
+
+  createRevocationEvent(edgeId: string, principalId: string, sessionId: string): BrokerRevocationEvent {
+    if (this.disposed) throw new Error("Edge request factory is disposed");
+    const now = (this.options.now ?? Date.now)();
+    const randomId = this.options.randomId ?? randomUUID;
+    return signBrokerRevocationEvent({
+      protocolVersion: PROTOCOL_VERSION,
+      eventType: "oauth_authority_revoked",
+      requestId: `edge-revoke:${randomId()}`,
+      nonce: `edge-revoke-nonce:${randomId()}`,
+      edgeId,
+      authenticationKeyId: this.options.authenticationKeyId,
+      principalId,
+      sessionId,
+      timestampMs: now
+    }, this.options.authenticationKey);
+  }
+
+  verifyRevocationResponse(
+    event: BrokerRevocationEvent,
+    response: AuthenticatedBrokerRevocationResponse
+  ): boolean {
+    if (this.disposed) return false;
+    return verifyBrokerRevocationResponse(event, response, this.options.authenticationKey);
   }
 
   /** Wipe the in-memory Edge-to-Broker authentication key during shutdown. */

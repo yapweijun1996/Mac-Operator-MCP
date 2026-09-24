@@ -63,7 +63,15 @@
     "network_policy": { "type": "string", "minLength": 1 },
     "filesystem_policy": { "type": "string", "minLength": 1 },
     "secret_policy": { "type": "string", "minLength": 1 },
-    "approval_policy": { "type": "string", "minLength": 1 },
+    "approval_policy": {
+      "enum": [
+        "trusted_read",
+        "trusted_write",
+        "trusted_profile",
+        "trusted_gui",
+        "explicit_privileged_policy"
+      ]
+    },
     "idempotent": { "type": "boolean" },
     "postcondition_verification": {
       "type": "object",
@@ -120,6 +128,7 @@
         "execution",
         "filesystem_write",
         "git_write",
+        "service_control",
         "app_control",
         "gui_control",
         "privileged"
@@ -143,5 +152,40 @@
         "source_text": { "type": "string", "minLength": 1 }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "safety_class": { "const": "read_only" } }, "required": ["safety_class"] },
+      "then": { "properties": { "idempotent": { "const": true } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "safety_class": { "enum": ["writes_local", "destructive", "privileged"] }
+        },
+        "required": ["safety_class"]
+      },
+      "then": {
+        "properties": {
+          "postcondition_verification": {
+            "type": "object",
+            "properties": { "required": { "const": true } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "safety_class": { "const": "privileged" } }, "required": ["safety_class"] },
+      "then": {
+        "properties": {
+          "audit_class": { "const": "privileged" },
+          "approval_policy": { "const": "explicit_privileged_policy" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "safety_class": { "const": "writes_local" } }, "required": ["safety_class"] },
+      "then": { "properties": { "approval_policy": { "not": { "const": "trusted_read" } } } }
+    }
+  ]
 }

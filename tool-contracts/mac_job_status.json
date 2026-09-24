@@ -25,7 +25,7 @@
   "implementation_status": "planned",
   "purpose": "read status and bounded sanitized output for a Broker-owned asynchronous job.",
   "input_summary": "job_id:string, tail_bytes?:0..524288.",
-    "output_summary": "queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative write postcondition status for unresolved writes.",
+    "output_summary": "queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative postcondition status for unresolved writes and independently authenticated Job-bound privileged-helper readback.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_job_status input",
@@ -277,6 +277,6 @@
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
     "kb_item_id": "2002bf22-f988-4068-a952-8227b4bf7ab1",
-    "source_text": "Purpose: read status and bounded sanitized output for a Broker-owned asynchronous job. Input: job_id:string, tail_bytes?:0..524288. Output: queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative write postcondition status for unresolved writes. Contract: L2 read_only; scope mac.job.read; target job_id; timeout 5000ms; cap 512KiB; network none; filesystem broker_job_artifacts only; redaction mandatory; approval trusted_read; idempotent yes. Phase 3 planned."
+    "source_text": "Purpose: read status and bounded sanitized output for a Broker-owned asynchronous job. Input: job_id:string, tail_bytes?:0..524288. Output: queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative postcondition status for unresolved writes plus independently authenticated Job-bound privileged-helper readback. Contract: L2 read_only; scope mac.job.read; target job_id; timeout 5000ms; cap 512KiB; network none; filesystem broker_job_artifacts only; redaction mandatory; approval trusted_read; idempotent yes. Phase 3 planned."
   }
 }

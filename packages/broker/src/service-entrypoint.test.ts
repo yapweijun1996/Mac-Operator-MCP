@@ -33,6 +33,24 @@ test("Broker service entrypoint exposes native-required readback and handles ter
   assert.deepEqual(events, ["listen", "close"]);
 });
 
+test("Broker service entrypoint can bind a non-sensitive audit summary to host readback", async () => {
+  const runtime = new LocalBrokerRuntime({ brokerChannel: channel([]) });
+  const audit = {
+    format: "mac-operator-audit-integrity-v1" as const,
+    eventCount: 3,
+    tailSequence: 3,
+    tailHash: "a".repeat(64),
+    keyedAnchor: "verified" as const
+  };
+  const service = new BrokerServiceEntrypoint(runtime, metadata(), [], () => audit);
+  await service.start();
+  try {
+    assert.deepEqual(service.readback().audit, audit);
+  } finally {
+    await service.stop();
+  }
+});
+
 test("Broker service entrypoint fails closed when startup fails", async () => {
   const runtime = new LocalBrokerRuntime({
     brokerChannel: {

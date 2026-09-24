@@ -24,6 +24,12 @@ if [ ! -f "$sdk_path/System/Library/Frameworks/Virtualization.framework/Headers/
 fi
 
 mkdir -p "$output_directory"
+temporary_output="$(mktemp "$output_directory/.virtualization_guest_lifecycle.XXXXXX")"
+cleanup() {
+  if [ -n "${temporary_output:-}" ]; then rm -f "$temporary_output"; fi
+}
+trap cleanup 0 1 2 15
+
 xcrun clang++ \
   -std=c++17 \
   -Wall \
@@ -39,9 +45,11 @@ xcrun clang++ \
   -I"$node_headers" \
   -x objective-c++ \
   "$source_file" \
-  -o "$output_file"
+  -o "$temporary_output"
 
 # Refuse to leave an un-verifiable native artifact in the build output. This
 # checks the current artifact only; it does not establish Developer ID
 # provenance or notarization.
-/usr/bin/codesign --verify --strict "$output_file"
+/usr/bin/codesign --verify --strict "$temporary_output"
+mv -f "$temporary_output" "$output_file"
+temporary_output=""

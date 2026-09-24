@@ -9,6 +9,7 @@ import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { assertArgumentsDoNotContainSecrets, assertContentDoesNotContainSecrets, assertEnvironmentValuesDoNotContainSecrets, redactBoundedText } from "./secret-policy.js";
+import { assertSystemPublishedExecutablePath } from "./system-published-executable.js";
 
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_BYTES = 64 * 1024;
@@ -21,6 +22,7 @@ const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_MAX_CONCURRENT_PER_EXECUTABLE = 4;
+const MAX_TRACKED_PROCESS_GROUPS = 256;
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
   listProcessGroupMembers(processGroupId: number): unknown;
@@ -97,6 +99,9 @@ export interface ProcessExecutionRequest {
   stdin?: string;
   timeoutMs: number;
   outputCapBytes: number;
+  /** Host-owned privilege drop used only by a separately authenticated root helper. */
+  runAsUid?: number;
+  runAsGid?: number;
   /**
    * Host-owned fixed adapters may opt into a configured user-owned executable
    * path. This is never derived from MCP arguments or task profiles.
@@ -216,6 +221,12 @@ export interface ProcessSupervisorOptions {
    * required. MCP/tool arguments cannot provide this adapter.
    */
   descriptorSpawnAdapter?: DescriptorProcessSpawnAdapter;
+  /**
+   * Require a fixed root-owned executable path whose complete ancestor chain
+   * is non-writable by the unprivileged Broker user. This is only for
+   * Broker-owned fixed adapters; it is not a general task-script fallback.
+   */
+  requireSystemPublishedExecutable?: boolean;
 }
 
 export type ProcessExecutionState = "completed" | "failed" | "cancelled" | "timed_out" | "unknown";
@@ -251,6 +262,7 @@ export class ProcessSupervisor {
   private readonly trustedUserOwnedExecutablePaths: ReadonlySet<string>;
   private readonly requireDescriptorExecution: boolean;
   private readonly descriptorSpawnAdapter: DescriptorProcessSpawnAdapter | undefined;
+  private readonly requireSystemPublishedExecutable: boolean;
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
@@ -264,6 +276,7 @@ export class ProcessSupervisor {
     this.trustedUserOwnedExecutablePaths = new Set(options.trustedUserOwnedExecutablePaths ?? []);
     this.requireDescriptorExecution = options.requireDescriptorExecution ?? false;
     this.descriptorSpawnAdapter = options.descriptorSpawnAdapter;
+    this.requireSystemPublishedExecutable = options.requireSystemPublishedExecutable ?? false;
     if (!Number.isSafeInteger(this.maxConcurrent) || this.maxConcurrent < 1 || this.maxConcurrent > 64 ||
         !Number.isSafeInteger(this.maxConcurrentPerExecutable) || this.maxConcurrentPerExecutable < 1 || this.maxConcurrentPerExecutable > 64 ||
         !Number.isSafeInteger(this.pollIntervalMs) || this.pollIntervalMs < 5 || this.pollIntervalMs > 1_000 ||
@@ -271,10 +284,12 @@ export class ProcessSupervisor {
         typeof this.requireRootOwnedExecutable !== "boolean" ||
         [...this.trustedUserOwnedExecutablePaths].some((path) => !isCanonicalAbsolutePath(path)) ||
         typeof this.requireDescriptorExecution !== "boolean" ||
+        typeof this.requireSystemPublishedExecutable !== "boolean" ||
         (this.descriptorSpawnAdapter !== undefined &&
           (this.requireDescriptorExecution !== true ||
            this.descriptorSpawnAdapter.mechanism !== "darwin-descriptor-exec-v1" ||
-           typeof this.descriptorSpawnAdapter.spawn !== "function"))) {
+           typeof this.descriptorSpawnAdapter.spawn !== "function")) ||
+        (this.requireDescriptorExecution && this.requireSystemPublishedExecutable)) {
       throw new Error("Process supervisor limits are outside the supported range");
     }
     for (const key of this.allowedEnvironmentKeys) validateEnvironmentKey(key);
@@ -291,6 +306,9 @@ export class ProcessSupervisor {
       this.requireRootOwnedExecutable,
       this.trustedUserOwnedExecutablePaths
     );
+    if (this.requireSystemPublishedExecutable) {
+      await assertSystemPublishedExecutablePath(safeRequest.executable);
+    }
     if (this.requireDescriptorExecution) {
       requireProcessDescriptorExecution();
       if (this.descriptorSpawnAdapter === undefined) {
@@ -340,6 +358,7 @@ export class ProcessSupervisor {
               env: environment,
               shell: false,
               detached: true,
+              ...(safeRequest.runAsUid === undefined ? {} : { uid: safeRequest.runAsUid, gid: safeRequest.runAsGid }),
               stdio: [safeRequest.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
             });
         } else {
@@ -398,6 +417,9 @@ export class ProcessSupervisor {
       try {
         await assertProcessPathStable(safeRequest.executable, validatedPaths.executable, "Executable");
         await assertProcessPathStable(safeRequest.cwd, validatedPaths.cwd, "Process cwd");
+        if (this.requireSystemPublishedExecutable) {
+          await assertSystemPublishedExecutablePath(safeRequest.executable);
+        }
       } catch (error) {
         const drained = await this.abortUnownedProcess(child, processId, processTree);
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process path target-swap cleanup could not be verified", true);
@@ -429,8 +451,11 @@ export class ProcessSupervisor {
               descendants: processTree.snapshotDescendants()
             }));
           }
-          await assertProcessPathStable(safeRequest.executable, validatedPaths.executable, "Executable");
-          await assertProcessPathStable(safeRequest.cwd, validatedPaths.cwd, "Process cwd");
+        await assertProcessPathStable(safeRequest.executable, validatedPaths.executable, "Executable");
+        await assertProcessPathStable(safeRequest.cwd, validatedPaths.cwd, "Process cwd");
+        if (this.requireSystemPublishedExecutable) {
+          await assertSystemPublishedExecutablePath(safeRequest.executable);
+        }
         } catch (error) {
           const drained = await this.abortUnownedProcess(child, processId, processTree);
           if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
@@ -937,6 +962,15 @@ export class ProcessSupervisor {
         childExitSignal = capture.exitSignal;
         void (async () => {
           if (settled) return;
+          // Recheck revocation/cancellation after the child has closed and
+          // immediately before publishing a terminal result. A kill switch
+          // can trip after the periodic poll but before the final readback;
+          // publishing success across that boundary would violate the
+          // Broker's fail-closed active-work contract.
+          if (terminationReason === null && this.cancelled(request.shouldCancel)) {
+            terminate("cancelled");
+            if (settled) return;
+          }
           processTree?.sample();
           notifyOwnership();
           const rootState = processTree?.rootState() ?? "alive";
@@ -1067,7 +1101,7 @@ async function validateRequest(
   trustedUserOwnedExecutablePaths: ReadonlySet<string>
 ): Promise<ValidatedProcessPaths> {
   if (!isPlainDataRecord(request) ||
-      !hasAllowedKeys(request, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
+      !hasAllowedKeys(request, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "runAsUid", "runAsGid", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
       !isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
       !isDenseStringArray(request.args, MAX_ARGUMENTS) ||
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
@@ -1095,6 +1129,14 @@ async function validateRequest(
   if (request.expectedExecutableContentSha256 !== undefined &&
       (typeof request.expectedExecutableContentSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(request.expectedExecutableContentSha256))) {
     throw new BrokerError("PRECONDITION_FAILED", "Process executable content identity is malformed");
+  }
+  if ((request.runAsUid === undefined) !== (request.runAsGid === undefined) ||
+      (request.runAsUid !== undefined && (!Number.isSafeInteger(request.runAsUid) || request.runAsUid < 1 || request.runAsUid > 2_147_483_647)) ||
+      (request.runAsGid !== undefined && (!Number.isSafeInteger(request.runAsGid) || request.runAsGid < 1 || request.runAsGid > 2_147_483_647))) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process privilege-drop identity is malformed");
+  }
+  if (request.runAsUid !== undefined && process.getuid?.() !== 0) {
+    throw new BrokerError("POLICY_DENIED", "Process privilege drop requires a root helper");
   }
   if ((request.shouldCancel !== undefined && typeof request.shouldCancel !== "function") ||
       (request.onStarted !== undefined && typeof request.onStarted !== "function") ||
@@ -1163,7 +1205,7 @@ function isCanonicalAbsolutePath(value: string): boolean {
 
 function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (!isPlainDataRecord(value) ||
-      !hasAllowedKeys(value, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
+      !hasAllowedKeys(value, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "runAsUid", "runAsGid", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
   }
   if (!isDenseStringArray(value.args, MAX_ARGUMENTS)) {
@@ -1201,6 +1243,8 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
     timeoutMs: value.timeoutMs as number,
     outputCapBytes: value.outputCapBytes as number
   };
+  if (value.runAsUid !== undefined) snapshot.runAsUid = value.runAsUid as number;
+  if (value.runAsGid !== undefined) snapshot.runAsGid = value.runAsGid as number;
   if (value.expectedExecutableContentSha256 !== undefined) {
     snapshot.expectedExecutableContentSha256 = value.expectedExecutableContentSha256 as string;
   }
@@ -1529,6 +1573,12 @@ async function waitForRootProcessIdentity(
 
 class ProcessTreeTracker {
   private readonly descendants = new Map<number, ProcessTreeIdentity>();
+  /**
+   * A child can create a new session, exit, and leave a grandchild behind.
+   * Keep only groups whose leader was itself observed as an owned descendant;
+   * arbitrary pre-existing groups are not admitted as ownership evidence.
+   */
+  private readonly observedProcessGroups = new Set<number>();
   private failed = false;
   private rootIdentity: ProcessTreeIdentity | undefined;
 
@@ -1545,11 +1595,15 @@ class ProcessTreeTracker {
         startTimeMicros: expectedRootIdentity.startTimeMicros,
         processGroupId: expectedRootIdentity.processGroupId
       };
+      this.observedProcessGroups.add(expectedRootIdentity.processGroupId);
       return;
     }
     try {
       const identity = parseProcessIdentity(native.getProcessIdentity(processId), true);
-      if (identity.pid === processId) this.rootIdentity = identity;
+      if (identity.pid === processId) {
+        this.rootIdentity = identity;
+        this.observedProcessGroups.add(identity.processGroupId ?? processId);
+      }
     } catch {
       // A very short-lived process can exit before its root identity is read.
       // Descendant tracking remains useful, but group signalling must stay disabled.
@@ -1565,7 +1619,10 @@ class ProcessTreeTracker {
     if (this.rootIdentity !== undefined || this.failed) return this.rootIdentity?.startTimeMicros;
     try {
       const identity = parseProcessIdentity(this.native.getProcessIdentity(this.processId), true);
-      if (identity.pid === this.processId) this.rootIdentity = identity;
+      if (identity.pid === this.processId) {
+        this.rootIdentity = identity;
+        this.observedProcessGroups.add(identity.processGroupId ?? this.processId);
+      }
     } catch {
       // A short-lived process may not be visible in the native process table yet.
     }
@@ -1612,8 +1669,7 @@ class ProcessTreeTracker {
     if (this.failed) return;
     try {
       const snapshots = [parseProcessTreeSnapshot(this.native.listDescendantProcesses(this.processId))];
-      const processGroupId = this.rootIdentity?.processGroupId;
-      if (processGroupId !== undefined) {
+      for (const processGroupId of this.observedProcessGroups) {
         snapshots.push(parseProcessTreeSnapshot(this.native.listProcessGroupMembers(processGroupId)));
       }
       const observedByPid = new Map<number, ProcessTreeIdentity>();
@@ -1637,7 +1693,19 @@ class ProcessTreeTracker {
         this.failed = true;
         return;
       }
-      for (const identity of observed) this.descendants.set(identity.pid, identity);
+      for (const identity of observed) {
+        this.descendants.set(identity.pid, identity);
+        // Only adopt a group whose leader is the observed process. A task that
+        // joins an unrelated existing group must not grant ownership over all
+        // members of that external group.
+        if (identity.processGroupId === identity.pid) {
+          this.observedProcessGroups.add(identity.processGroupId);
+          if (this.observedProcessGroups.size > MAX_TRACKED_PROCESS_GROUPS) {
+            this.failed = true;
+            return;
+          }
+        }
+      }
     } catch {
       this.failed = true;
     }

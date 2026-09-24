@@ -19,7 +19,7 @@ test("virtualization guest startup stays disabled without both host gates", asyn
     image: {
       path: "/Users/operator/guest.img",
       expectedSha256: "a".repeat(64),
-      runtimeVersion: "macos-26.2-vz-1"
+      runtimeVersion: "test-generic-efi-vz-1"
     },
     enabled: false,
     hostEvidenceAccepted: true,
@@ -44,7 +44,7 @@ test("virtualization guest startup requires complete authority before native cre
       image: {
         path: "/Users/operator/guest.img",
         expectedSha256: "b".repeat(64),
-        runtimeVersion: "macos-26.2-vz-1"
+        runtimeVersion: "test-generic-efi-vz-1"
       },
       enabled: true,
       hostEvidenceAccepted: true
@@ -66,7 +66,7 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
   await provisionAuthenticationKey(keyPath);
   const guestIdentity: VirtualizationGuestIdentity = {
     imageSha256: sha256(imageBytes),
-    runtimeVersion: "macos-26.2-vz-1"
+    runtimeVersion: "test-generic-efi-vz-1"
   };
   const unsigned = {
     schemaVersion: "0.1" as const,
@@ -99,6 +99,7 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
   };
   let state: "stopped" | "running" = "stopped";
   let bootId = "boot-test-12345678";
+  let instanceNumber = 0;
   let channelPort: number | undefined;
   let listenerPort: number | undefined;
   let listenerClosed = false;
@@ -109,6 +110,8 @@ test("enabled startup binds one image, port, lifecycle, and authenticated transp
   } = {
     available: true,
     guestIdentity,
+    taskInstanceIsolation: "fresh-vm-object-per-task-v1",
+    async prepareTaskInstance() { return { state: "stopped", guestIdentity, instanceId: `vm-startup-test-${String(++instanceNumber).padStart(8, "0")}` }; },
     async start() { state = "running"; return { state: "running", guestIdentity, bootId }; },
     async stop(input) { assert.equal(input.bootId, bootId); state = "stopped"; return { state: "stopped", guestIdentity, bootId }; },
     async status() { return { state, guestIdentity, bootId: state === "running" ? bootId : null }; },

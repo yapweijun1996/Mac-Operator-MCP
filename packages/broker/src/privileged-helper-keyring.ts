@@ -25,6 +25,11 @@ import {
   type PrivilegedHelperAuthorityClientOptions,
   type PrivilegedHelperAuthorityIpcServerOptions
 } from "./privileged-helper-authority-ipc.js";
+import {
+  BrokerStoreRootHelperSnapshotAuthorityReplayGuard,
+  RootHelperSnapshotAuthorityIpcServer,
+  type RootHelperSnapshotAuthorityIpcServerOptions
+} from "./root-helper-snapshot-authority.js";
 
 const MAX_CONFIG_BYTES = 128 * 1024;
 const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -168,6 +173,12 @@ export class PrivilegedHelperKeyManager {
             this.assertBindingUsable(binding);
             options.authorizeStatus!();
           }
+        }),
+        ...(options.authorizeReadback === undefined ? {} : {
+          authorizeReadback: (request) => {
+            this.assertBindingUsable(binding);
+            return options.authorizeReadback!(request);
+          }
         })
       });
     } finally {
@@ -215,6 +226,32 @@ export class PrivilegedHelperKeyManager {
         authorizeCommand: (command) => {
           this.assertBindingUsable(binding);
           options.authorizeCommand(command);
+        }
+      });
+    } finally {
+      key.fill(0);
+    }
+  }
+
+  /**
+   * Creates the dedicated root-helper snapshot authority endpoint from the
+   * same active helper-key binding. The protocol remains direction-specific;
+   * this method only centralizes key activation, revocation, and rotation
+   * checks at the Broker-owned key boundary.
+   */
+  createRootHelperSnapshotAuthorityServer(
+    options: Omit<RootHelperSnapshotAuthorityIpcServerOptions, "authenticationKey" | "replayGuard">
+  ): RootHelperSnapshotAuthorityIpcServer {
+    const key = this.assertUsable();
+    const binding = this.captureBinding();
+    try {
+      return new RootHelperSnapshotAuthorityIpcServer({
+        ...options,
+        authenticationKey: key,
+        replayGuard: new BrokerStoreRootHelperSnapshotAuthorityReplayGuard(this.store),
+        authorizeRequest: (requestDigest) => {
+          this.assertBindingUsable(binding);
+          options.authorizeRequest(requestDigest);
         }
       });
     } finally {

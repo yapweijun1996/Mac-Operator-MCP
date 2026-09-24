@@ -9,6 +9,7 @@ import {
   type PeerCredentialPolicy
 } from "./peer-credentials.js";
 import type { VirtualizationGuestChannel } from "./virtualization-guest-transport.js";
+import { validateOwnerSocketParentChain } from "./owner-socket-path.js";
 
 const MAX_SOCKET_PATH_BYTES = 4_096;
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -172,10 +173,18 @@ export async function validateVirtualizationGuestSocketTarget(socketPath: string
     throw new BrokerError("PRECONDITION_FAILED", "Virtualization guest channel socket path is not canonical");
   }
   const parentPath = dirname(socketPath);
-  const parent = await lstat(parentPath).catch(() => undefined);
   const currentUid = process.getuid?.();
-  if (!parent || !parent.isDirectory() || parent.isSymbolicLink() || currentUid === undefined || parent.uid !== currentUid || (parent.mode & 0o077) !== 0) {
+  if (currentUid === undefined) {
     throw new BrokerError("POLICY_DENIED", "Virtualization guest channel socket directory is not protected");
+  }
+  try {
+    await validateOwnerSocketParentChain(socketPath, currentUid);
+  } catch {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest channel socket parent chain is not protected");
+  }
+  const parent = await lstat(parentPath).catch(() => undefined);
+  if (!parent) {
+    throw new BrokerError("POLICY_DENIED", "Virtualization guest channel socket directory is unavailable");
   }
   const canonicalParent = await realpath(parentPath).catch(() => undefined);
   if (canonicalParent === undefined) throw new BrokerError("POLICY_DENIED", "Virtualization guest channel socket directory is unavailable");

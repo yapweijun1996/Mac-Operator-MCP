@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import {
   LaunchdReadbackError,
   parseLaunchdJobReadback,
@@ -119,6 +120,21 @@ test("launchd readback normalizes macOS xpcproxy bootstrap state without claimin
   assert.equal(readback.pid, 4123);
   assert.equal(readback.type, "LaunchAgent");
   assert.deepEqual(readback.arguments, ["/bin/sleep", "30"]);
+});
+
+test("launchd readback normalizes the macOS not-running state to stopped", () => {
+  const serviceId = "gui/501/com.mac-operator.test";
+  const readback = parseLaunchdJobReadback(serviceId, `${serviceId} = {\n\ttype = LaunchAgent\n\tstate = not running\n}`);
+  assert.equal(readback.state, "stopped");
+});
+
+test("launchd readback preserves stable Broker cancellation errors from its executor", async () => {
+  await assert.rejects(
+    () => readLaunchdJobReadback("gui/501/com.mac-operator.test", {
+      executor: { run: async () => { throw new BrokerError("CANCELLED", "cancelled"); } }
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+  );
 });
 
 test("launchd readback smoke reads an existing system service on macOS", async (t) => {

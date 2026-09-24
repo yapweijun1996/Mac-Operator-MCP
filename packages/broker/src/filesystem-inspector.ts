@@ -1077,7 +1077,8 @@ export class FilesystemInspector {
     expectedSha256: string | undefined,
     createOnly: boolean,
     temporaryName: string,
-    expectedIdentity?: FilesystemIdentityPrecondition
+    expectedIdentity?: FilesystemIdentityPrecondition,
+    beforeMutation?: () => void
   ): {
     path: string;
     bytesWritten: number;
@@ -1118,6 +1119,7 @@ export class FilesystemInspector {
       if (!expectedMatched) throw new BrokerError("PRECONDITION_FAILED", "Filesystem write expected hash did not match");
     }
     this.assertPlanVolumeStable(plan);
+    beforeMutation?.();
     let nativeWrite: unknown;
     try {
       nativeWrite = this.native.writeFileAtomicWithinRoot(
@@ -1196,13 +1198,15 @@ export class FilesystemInspector {
 
   unlinkPlanned(
     plan: FilesystemPathPlan,
-    expectedIdentity: FilesystemIdentityPrecondition
+    expectedIdentity: FilesystemIdentityPrecondition,
+    beforeMutation?: () => void
   ): { path: string; removed: boolean; device: string; inode: string } {
     assertContentPathAllowed(plan.requestedPath);
     if (!/^\d+$/u.test(expectedIdentity.device) || !/^\d+$/u.test(expectedIdentity.inode)) {
       throw new BrokerError("PRECONDITION_FAILED", "Filesystem unlink identity precondition is malformed");
     }
     this.assertPlanVolumeStable(plan);
+    beforeMutation?.();
     let nativeUnlink: unknown;
     try {
       nativeUnlink = this.native.unlinkFileWithinRoot(

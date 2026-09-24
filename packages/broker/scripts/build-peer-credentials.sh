@@ -18,6 +18,12 @@ if [ ! -f "$node_headers/node_api.h" ]; then
 fi
 
 mkdir -p "$output_directory"
+temporary_output="$(mktemp "$output_directory/.peer_credentials.XXXXXX")"
+cleanup() {
+  if [ -n "${temporary_output:-}" ]; then rm -f "$temporary_output"; fi
+}
+trap cleanup 0 1 2 15
+
 xcrun clang++ \
   -std=c++17 \
   -Wall \
@@ -29,9 +35,11 @@ xcrun clang++ \
   -framework CoreFoundation \
   -I"$node_headers" \
   "$source_file" \
-  -o "$output_directory/peer_credentials.node"
+  -o "$temporary_output"
 
 # Refuse to leave an un-verifiable native artifact in the build output. This
 # checks the artifact produced by the current build; it does not establish
 # Developer ID provenance or notarization.
-/usr/bin/codesign --verify --strict "$output_directory/peer_credentials.node"
+/usr/bin/codesign --verify --strict "$temporary_output"
+mv -f "$temporary_output" "$output_directory/peer_credentials.node"
+temporary_output=""

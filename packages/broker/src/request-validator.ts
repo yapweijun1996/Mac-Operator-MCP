@@ -1,4 +1,4 @@
-import { BrokerError, CONTRACT_VERSION, PROTOCOL_VERSION, SCOPES, type BrokerRequest, type Scope } from "@mac-operator/contracts";
+import { BrokerError, isCompatibleVersionPair, PROTOCOL_VERSION, SCOPES, type BrokerRequest, type BrokerRevocationEvent, type Scope } from "@mac-operator/contracts";
 import { isPlainDataRecord } from "./plain-record.js";
 
 const KNOWN_SCOPES = new Set<Scope>(SCOPES);
@@ -16,7 +16,7 @@ export function parseBrokerRequest(value: unknown): BrokerRequest {
   if (Object.keys(value).some((key) => !exactKeys.has(key))) {
     throw new BrokerError("AUTH_INVALID", "Request envelope contains an unknown field");
   }
-  if (value.protocolVersion !== PROTOCOL_VERSION || value.contractVersion !== CONTRACT_VERSION) {
+  if (!isCompatibleVersionPair("edge_broker", value.protocolVersion, value.contractVersion)) {
     throw new BrokerError("UNSUPPORTED_CAPABILITY", "Protocol or contract version is not supported");
   }
   for (const field of ["requestId", "tool", "nonce", "policyAudience", "policyVersion", "authenticationKeyId", "payloadDigest", "authenticationProof"] as const) {
@@ -57,6 +57,30 @@ export function parseBrokerRequest(value: unknown): BrokerRequest {
   // objects after validation: a later mutation must not swap the arguments,
   // principal, or target fields while authentication and authorization run.
   return freezeRequestSnapshot(value) as BrokerRequest;
+}
+
+/** Parse the separate Edge-to-Broker OAuth authority event contract. */
+export function parseBrokerRevocationEvent(value: unknown): BrokerRevocationEvent {
+  if (!isRecord(value) || Object.keys(value).some((key) => !new Set([
+    "protocolVersion", "eventType", "requestId", "nonce", "edgeId", "authenticationKeyId",
+    "principalId", "sessionId", "timestampMs", "payloadDigest", "authenticationProof"
+  ]).has(key))) {
+    throw new BrokerError("AUTH_INVALID", "Revocation event envelope is malformed");
+  }
+  const event = value as Record<string, unknown>;
+  if (event.protocolVersion !== PROTOCOL_VERSION || event.eventType !== "oauth_authority_revoked" ||
+      typeof event.requestId !== "string" || !/^edge-revoke:[A-Za-z0-9._:-]{16,128}$/u.test(event.requestId) ||
+      typeof event.nonce !== "string" || !/^edge-revoke-nonce:[A-Za-z0-9._:-]{16,128}$/u.test(event.nonce) ||
+      typeof event.edgeId !== "string" || !ID_PATTERN.test(event.edgeId) ||
+      typeof event.authenticationKeyId !== "string" || !ID_PATTERN.test(event.authenticationKeyId) ||
+      typeof event.principalId !== "string" || !ID_PATTERN.test(event.principalId) ||
+      typeof event.sessionId !== "string" || !ID_PATTERN.test(event.sessionId) ||
+      !Number.isSafeInteger(event.timestampMs) || (event.timestampMs as number) < 0 ||
+      typeof event.payloadDigest !== "string" || !HEX_64_PATTERN.test(event.payloadDigest) ||
+      typeof event.authenticationProof !== "string" || !HEX_64_PATTERN.test(event.authenticationProof)) {
+    throw new BrokerError("AUTH_INVALID", "Revocation event envelope is malformed");
+  }
+  return freezeRequestSnapshot(value) as BrokerRevocationEvent;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

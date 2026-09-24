@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
+import { BrokerError } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 
 const LAUNCHCTL_PATH = "/bin/launchctl";
@@ -29,6 +30,11 @@ export interface LaunchdReadbackExecutor {
   run(command: ProcessExecutionRequest): Promise<ProcessExecutionResult>;
 }
 
+export interface LaunchdReadbackControl {
+  timeoutMs: number;
+  shouldCancel: () => boolean;
+}
+
 export interface LaunchdJobReadback {
   serviceId: string;
   domain: "system" | `gui/${number}`;
@@ -50,7 +56,7 @@ export interface LaunchdJobReadback {
  */
 export async function readLaunchdJobReadback(
   serviceId: string,
-  options: { executor?: LaunchdReadbackExecutor } = {}
+  options: { executor?: LaunchdReadbackExecutor; control?: LaunchdReadbackControl } = {}
 ): Promise<LaunchdJobReadback> {
   const parsedId = parseServiceId(serviceId);
   const executor = options.executor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
@@ -61,10 +67,12 @@ export async function readLaunchdJobReadback(
       args: ["print", serviceId],
       cwd: LAUNCHCTL_CWD,
       environment: {},
-      timeoutMs: LAUNCHCTL_TIMEOUT_MS,
-      outputCapBytes: LAUNCHCTL_OUTPUT_CAP_BYTES
+      timeoutMs: Math.min(options.control?.timeoutMs ?? LAUNCHCTL_TIMEOUT_MS, LAUNCHCTL_TIMEOUT_MS),
+      outputCapBytes: LAUNCHCTL_OUTPUT_CAP_BYTES,
+      ...(options.control === undefined ? {} : { shouldCancel: options.control.shouldCancel })
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof BrokerError) throw error;
     throw new LaunchdReadbackError("EXECUTION_FAILED", "launchd readback execution failed");
   }
   if (result.resultClass === "OUTPUT_LIMIT") {
@@ -212,6 +220,7 @@ function parseState(value: string | undefined): LaunchdJobReadback["state"] {
     case "launching":
     case "loaded":
     case "failed": return value;
+    case "not running": return "stopped";
     // macOS reports this transient proxy state immediately after a
     // LaunchAgent bootstrap. It is not proof that the requested program is
     // running, so preserve the strict running check at higher boundaries.

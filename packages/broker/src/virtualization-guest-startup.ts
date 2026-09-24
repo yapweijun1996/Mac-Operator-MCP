@@ -204,6 +204,7 @@ export async function createVirtualizationGuestRuntime(
       executor,
       guestImage: image,
       isolationProof: options.isolationProof,
+      vmLifecycle: lifecycle,
       ...(options.attestationVerifier === undefined ? {} : { attestationVerifier: options.attestationVerifier })
     });
     return new VirtualizationGuestRuntimeImpl({ lifecycle, guestIdentity, taskRunner, connectionSource });
@@ -298,6 +299,8 @@ function disabledAdapter(): VirtualizationGuestVmAdapter {
   return {
     available: false,
     guestIdentity: null,
+    taskInstanceIsolation: "fresh-vm-object-per-task-v1",
+    prepareTaskInstance: reject,
     start: reject,
     stop: reject,
     status: reject,

@@ -1,7 +1,8 @@
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
-import type { ProcessExecutionRequest } from "./process-supervisor.js";
+import { captureProcessPathIdentity, type ProcessExecutionRequest } from "./process-supervisor.js";
 import { isSafeProcessEnvironmentKey } from "./process-environment.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { assertArgumentsDoNotContainSecrets, containsSecretRepresentation } from "./secret-policy.js";
@@ -17,10 +18,13 @@ const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_ARGUMENT_PATTERN_LENGTH = 256;
 const MAX_PROFILE_PATHS = 32;
 const MAX_NETWORK_DESTINATIONS = 32;
+const MAX_SCRIPT_BYTES = 16 * 1024 * 1024;
 const NETWORK_DESTINATION_PATTERN = /^(tcp|udp):\/\/(localhost|127\.0\.0\.1):(\d{1,5})$/u;
 
 export type TaskNetworkPolicy = "none" | "allowlist";
 export type TaskProcessTreePolicy = "single_process" | "owned_group";
+/** Explicit task source shape for the future App Sandbox interpreter path. */
+export type TaskExecutionKind = "binary" | "posix-sh-script";
 /** Task credentials are intentionally unavailable until a separate broker-managed workflow exists. */
 export type TaskCredentialPolicy = "none";
 
@@ -47,6 +51,11 @@ export interface TaskProfile {
   schemaVersion: "0.1";
   profile: string;
   executable: string;
+  /** Optional signed content identity for the profile-owned executable. */
+  executableContentSha256?: string;
+  /** A fixed Broker-owned script may be interpreted only by the fixed /bin/sh path. */
+  executionKind?: TaskExecutionKind;
+  scriptPath?: string;
   fixedArgs?: readonly string[];
   allowedCwdRoots: readonly string[];
   allowedArgumentPattern?: string;
@@ -112,6 +121,11 @@ export function validateTaskRunArguments(argumentsValue: unknown): TaskRunReques
 export interface ResolvedTaskProfile {
   profile: string;
   cwd: string;
+  executionKind?: TaskExecutionKind;
+  scriptPath?: string;
+  /** Broker-read UTF-8 snapshot; used only by the deny-fork stdin runner. */
+  scriptContent?: string;
+  scriptContentSha256?: string;
   process: ProcessExecutionRequest;
   filesystemRoots: readonly string[];
   networkPolicy: TaskNetworkPolicy;
@@ -156,7 +170,31 @@ export class TaskProfileRegistry {
     if (!allowedRoot) throw new BrokerError("POLICY_DENIED", "Task cwd is outside the profile roots");
 
     const executable = await validateCanonicalExecutable(profile.executable);
-    for (const root of profile.filesystemRoots) await validateCanonicalDirectory(root);
+    const executableIdentity = await captureProcessPathIdentity(executable, "executable");
+    const executableContentSha256 = executableIdentity.contentSha256;
+    if (executableContentSha256 === undefined ||
+        (profile.executableContentSha256 !== undefined && profile.executableContentSha256 !== executableContentSha256)) {
+      throw new BrokerError("POLICY_DENIED", "Task executable content identity does not match the profile");
+    }
+    const filesystemRoots = await Promise.all(profile.filesystemRoots.map((root) => validateCanonicalDirectory(root)));
+    const executionKind = profile.executionKind ?? "binary";
+    let scriptPath: string | undefined;
+    let scriptContent: string | undefined;
+    let scriptContentSha256: string | undefined;
+    if (executionKind === "posix-sh-script") {
+      if (profile.scriptPath === undefined || executable !== "/bin/sh") {
+        throw new BrokerError("POLICY_DENIED", "A posix-sh task must bind the fixed /bin/sh interpreter and a script");
+      }
+      const script = await validateCanonicalScript(profile.scriptPath);
+      if (!filesystemRoots.some((root) => isContained(root, script.path))) {
+        throw new BrokerError("POLICY_DENIED", "Task script is outside the Broker-owned filesystem roots");
+      }
+      scriptPath = script.path;
+      scriptContent = script.content;
+      scriptContentSha256 = script.contentSha256;
+    } else if (profile.scriptPath !== undefined) {
+      throw new BrokerError("POLICY_DENIED", "A binary task cannot declare a script path");
+    }
     const requestedArgs = safeRequest.args ?? [];
     const argumentPattern = this.argumentPatterns.get(profile.profile)!;
     validateArguments(requestedArgs, profile.maxArguments ?? 0, argumentPattern);
@@ -168,8 +206,19 @@ export class TaskProfileRegistry {
     return freezeResolvedTaskProfile({
       profile: profile.profile,
       cwd,
-      process: { executable, args, cwd, environment, timeoutMs: profile.timeoutMs, outputCapBytes: profile.outputCapBytes },
-      filesystemRoots: [...profile.filesystemRoots],
+      process: {
+        executable,
+        expectedExecutableContentSha256: executableContentSha256,
+        args,
+        cwd,
+        environment,
+        timeoutMs: profile.timeoutMs,
+        outputCapBytes: profile.outputCapBytes
+      },
+      ...(executionKind === "posix-sh-script"
+        ? { executionKind, scriptPath: scriptPath!, scriptContent: scriptContent!, scriptContentSha256: scriptContentSha256! }
+        : {}),
+      filesystemRoots,
       networkPolicy: profile.networkPolicy,
       networkAllowlist: [...(profile.networkAllowlist ?? [])],
       credentialPolicy: profile.credentialPolicy ?? "none",
@@ -191,7 +240,7 @@ export class TaskProfileRegistry {
 function validateProfileDocument(profile: TaskProfile): void {
   if (!isPlainDataRecord(profile) ||
       !hasAllowedKeys(profile, [
-        "schemaVersion", "profile", "executable", "fixedArgs", "allowedCwdRoots",
+        "schemaVersion", "profile", "executable", "executableContentSha256", "executionKind", "scriptPath", "fixedArgs", "allowedCwdRoots",
         "allowedArgumentPattern", "maxArguments", "environment", "filesystemRoots",
         "networkPolicy", "networkAllowlist", "credentialPolicy", "processTreePolicy",
         "sandboxProfile", "timeoutMs", "outputCapBytes", "verificationStrategy", "enabled"
@@ -199,6 +248,9 @@ function validateProfileDocument(profile: TaskProfile): void {
       profile.schemaVersion !== "0.1" ||
       typeof profile.profile !== "string" || !PROFILE_ID_PATTERN.test(profile.profile) ||
       typeof profile.executable !== "string" || !isCanonicalAbsolutePath(profile.executable) ||
+      (profile.executableContentSha256 !== undefined && !/^[a-f0-9]{64}$/u.test(profile.executableContentSha256)) ||
+      (profile.executionKind !== undefined && profile.executionKind !== "binary" && profile.executionKind !== "posix-sh-script") ||
+      (profile.scriptPath !== undefined && !isCanonicalAbsolutePath(profile.scriptPath)) ||
       !isStringArray(profile.allowedCwdRoots, MAX_PROFILE_PATHS) || profile.allowedCwdRoots.length === 0 ||
       profile.allowedCwdRoots.some((root) => typeof root !== "string" || !isCanonicalAbsolutePath(root)) ||
       !isStringArray(profile.filesystemRoots, MAX_PROFILE_PATHS) || profile.filesystemRoots.some((root) => typeof root !== "string" || !isCanonicalAbsolutePath(root)) ||
@@ -219,6 +271,11 @@ function validateProfileDocument(profile: TaskProfile): void {
   if (!isStringArray(profile.allowedCwdRoots, MAX_PROFILE_PATHS) ||
       !isStringArray(profile.filesystemRoots, MAX_PROFILE_PATHS)) {
     throw new Error("Task profile paths are malformed");
+  }
+  const executionKind = profile.executionKind ?? "binary";
+  if ((executionKind === "posix-sh-script" && (profile.executable !== "/bin/sh" || profile.scriptPath === undefined)) ||
+      (executionKind === "binary" && profile.scriptPath !== undefined)) {
+    throw new Error("Task profile script binding is malformed");
   }
   validateArguments(profile.fixedArgs ?? [], MAX_PROFILE_ARGUMENTS, /[\s\S]*/u, true);
   assertArgumentsDoNotContainSecrets(profile.fixedArgs ?? []);
@@ -355,6 +412,8 @@ function cloneProfile(profile: TaskProfile): TaskProfile {
   return {
     ...profile,
     ...(profile.fixedArgs ? { fixedArgs: [...profile.fixedArgs] } : {}),
+    ...(profile.executionKind === undefined ? {} : { executionKind: profile.executionKind }),
+    ...(profile.scriptPath === undefined ? {} : { scriptPath: profile.scriptPath }),
     allowedCwdRoots: [...profile.allowedCwdRoots],
     ...(profile.environment ? { environment: { ...profile.environment } } : {}),
     filesystemRoots: [...profile.filesystemRoots],
@@ -458,6 +517,33 @@ async function validateCanonicalExecutable(path: string): Promise<string> {
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("TARGET_NOT_FOUND", "Task executable was not found");
+  }
+}
+
+async function validateCanonicalScript(path: string): Promise<{ path: string; content: string; contentSha256: string }> {
+  try {
+    const before = await lstat(path);
+    if (before.isSymbolicLink() || !before.isFile() || before.size > MAX_SCRIPT_BYTES) {
+      throw new BrokerError("POLICY_DENIED", "Task script must be a bounded regular non-symlink file");
+    }
+    const canonical = await realpath(path);
+    if (canonical !== path) throw new BrokerError("POLICY_DENIED", "Task script must be canonical");
+    const content = await readFile(canonical);
+    const after = await lstat(canonical);
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size ||
+        after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) {
+      throw new BrokerError("POLICY_DENIED", "Task script changed while being authorized");
+    }
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(content);
+    } catch {
+      throw new BrokerError("POLICY_DENIED", "Task script must contain valid UTF-8");
+    }
+    return { path: canonical, content: text, contentSha256: createHash("sha256").update(content).digest("hex") };
+  } catch (error) {
+    if (error instanceof BrokerError) throw error;
+    throw new BrokerError("TARGET_NOT_FOUND", "Task script was not found");
   }
 }
 

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { connect } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError, canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts";
 import { BrokerStore, validatePrivilegedHelperPayload } from "./persistence.js";
+import { PrivilegedHelperReplayLedger } from "./privileged-helper-replay-ledger.js";
 import {
   assertPrivilegedHelperCommandAuthority,
   AllowlistedPrivilegedHelper,
@@ -15,19 +16,25 @@ import {
   InMemoryPrivilegedHelperReplayGuard,
   PrivilegedHelperIpcServer,
   authenticatePrivilegedHelperCommand,
+  authenticatePrivilegedHelperJobReadbackResponse,
   authenticatePrivilegedHelperResponse,
   authenticatePrivilegedHelperStatusResponse,
   executePrivilegedHelperCommand,
   readPrivilegedHelperStatus,
+  readPrivilegedHelperJobReadback,
   signPrivilegedHelperCommand,
+  signPrivilegedHelperJobReadbackRequest,
   signPrivilegedHelperStatusRequest,
   validateUnsignedPrivilegedHelperStatusRequest,
+  validateUnsignedPrivilegedHelperJobReadbackRequest,
   validatePrivilegedHelperStatusReadback,
   validatePrivilegedHelperExecutionResult,
   type PrivilegedHelperResponse,
+  type PrivilegedHelperJobReadbackResponse,
   type PrivilegedHelperStatusReadback,
   type PrivilegedHelperStatusResponse,
-  type UnsignedPrivilegedHelperCommand
+  type UnsignedPrivilegedHelperCommand,
+  type UnsignedPrivilegedHelperJobReadbackRequest
 } from "./privileged-helper.js";
 
 const NOW = 1_700_000_000_000;
@@ -100,6 +107,30 @@ async function sendStatus(socketPath: string, payload: unknown, suffix = ""): Pr
     });
     socket.on("close", () => {
       if (chunks.length === 0) reject(new Error("Privileged helper status IPC closed without a response"));
+    });
+    socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
+  });
+}
+
+async function sendReadback(socketPath: string, payload: unknown, suffix = ""): Promise<PrivilegedHelperJobReadbackResponse> {
+  return new Promise((resolvePromise, reject) => {
+    const socket = connect(socketPath);
+    const chunks: Buffer[] = [];
+    socket.once("error", reject);
+    socket.on("data", (chunk) => {
+      chunks.push(chunk);
+      const combined = Buffer.concat(chunks);
+      const newline = combined.indexOf(0x0a);
+      if (newline === -1) return;
+      socket.destroy();
+      try {
+        resolvePromise(JSON.parse(combined.subarray(0, newline).toString("utf8")) as PrivilegedHelperJobReadbackResponse);
+      } catch (error) {
+        reject(error);
+      }
+    });
+    socket.on("close", () => {
+      if (chunks.length === 0) reject(new Error("Privileged helper readback IPC closed without a response"));
     });
     socket.on("connect", () => socket.write(`${JSON.stringify(payload)}\n${suffix}`));
   });
@@ -519,6 +550,91 @@ test("privileged helper status readback is separately authenticated, replay-prot
   }
 });
 
+test("privileged helper Job readback is independently authenticated, Job-bound, and never a mutation replay", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-job-readback-"));
+  const socketPath = join(directory, "helper.sock");
+  const key = randomBytes(32);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const payload = { operation: "service_control" as const, service_id: "system/com.example.test", action: "start" as const };
+  let authorityCalls = 0;
+  let readbackCalls = 0;
+  const server = new PrivilegedHelperIpcServer({
+    socketPath,
+    authenticationKey: key,
+    replayGuard: new BrokerStorePrivilegedHelperReplayGuard(store),
+    authorizeCommand: () => undefined,
+    authorizeReadback: (request) => {
+      authorityCalls += 1;
+      assert.equal(request.jobId, "job:readback-1");
+      assert.equal(request.principalId, "principal-1");
+      assert.equal(request.sessionId, "session-1");
+      assert.equal(request.payloadDigest, sha256(canonicalJson(payload)));
+    },
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter: new AllowlistedPrivilegedHelper({
+      service_control_readback: async (request) => {
+        readbackCalls += 1;
+        return {
+          operation: request.operation,
+          targetRef: request.targetRef,
+          postcondition: "matches" as const,
+          evidence: { post_state: "running" },
+          warnings: [],
+          summary: "Launchd state matches the approved service postcondition"
+        };
+      }
+    }),
+    now: () => NOW
+  });
+  const request: UnsignedPrivilegedHelperJobReadbackRequest = {
+    protocolVersion: "0.1",
+    contractVersion: CONTRACT_VERSION,
+    requestId: "request:readback-test-1",
+    nonce: "readback-nonce-test-0001",
+    timestampMs: NOW,
+    expiresAtMs: NOW + 5_000,
+    kind: "job_readback",
+    jobId: "job:readback-1",
+    principalId: "principal-1",
+    sessionId: "session-1",
+    operation: "service_control",
+    targetRef: "service:system/com.example.test",
+    payload,
+    payloadDigest: sha256(canonicalJson(payload)),
+    policyVersion: "policy-test-1"
+  };
+  validateUnsignedPrivilegedHelperJobReadbackRequest(request);
+  try {
+    await server.listen();
+    const signed = signPrivilegedHelperJobReadbackRequest(request, key);
+    const response = await sendReadback(socketPath, signed);
+    const verified = authenticatePrivilegedHelperJobReadbackResponse(response, request, key);
+    assert.equal(verified.ok, true);
+    if (verified.ok) assert.equal(verified.readback.postcondition, "matches");
+    assert.equal(authorityCalls, 1);
+    assert.equal(readbackCalls, 1);
+
+    const replay = await sendReadback(socketPath, signed);
+    assert.equal(replay.ok, false);
+    if (!replay.ok) assert.equal(replay.resultClass, "REPLAY_DENIED");
+    assert.equal(readbackCalls, 1);
+
+    const clientRequest = { ...request, requestId: "request:readback-test-2", nonce: "readback-nonce-test-0002" };
+    const clientResponse = await readPrivilegedHelperJobReadback(signPrivilegedHelperJobReadbackRequest(clientRequest, key), {
+      socketPath,
+      authenticationKey: key,
+      now: () => NOW
+    });
+    assert.equal(clientResponse.ok, true);
+    assert.equal(authorityCalls, 2);
+    assert.equal(readbackCalls, 2);
+  } finally {
+    await server.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("privileged helper rejects trailing frames before replay admission or dispatch", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mops-helper-framing-"));
   const socketPath = join(directory, "helper.sock");
@@ -674,7 +790,7 @@ test("privileged helper polls the separate Broker authority before and after exe
   const server = new PrivilegedHelperIpcServer({
     socketPath,
     authenticationKey: key,
-    replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+    replayGuard: new PrivilegedHelperReplayLedger(await realpath(directory)),
     authorizeCommand: () => undefined,
     authorityPoller: {
       assertAuthorized: async () => {
@@ -716,6 +832,39 @@ test("privileged helper polls the separate Broker authority before and after exe
     key.fill(0);
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("enabled privileged helper IPC rejects a process-local replay guard", () => {
+  const adapter = new AllowlistedPrivilegedHelper({
+    service_control: async (command) => ({
+      operation: command.operation,
+      targetRef: command.targetRef,
+      state: "completed",
+      resultClass: "SUCCEEDED",
+      evidence: {},
+      warnings: [],
+      truncated: false,
+      verification: { status: "verified", strategy: "allowlisted_postcondition" }
+    })
+  });
+  assert.throws(() => new PrivilegedHelperIpcServer({
+    socketPath: "/tmp/privileged-helper-replay-guard.sock",
+    authenticationKey: randomBytes(32),
+    replayGuard: new InMemoryPrivilegedHelperReplayGuard(),
+    authorizeCommand: () => undefined,
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter,
+    now: () => NOW
+  }), /durable replay guard/u);
+  assert.throws(() => new PrivilegedHelperIpcServer({
+    socketPath: "/tmp/privileged-helper-untrusted-replay-guard.sock",
+    authenticationKey: randomBytes(32),
+    replayGuard: { durability: "durable", admit: () => undefined },
+    authorizeCommand: () => undefined,
+    peerCredentialVerifier: { verify: () => undefined },
+    adapter,
+    now: () => NOW
+  }), /durable replay guard/u);
 });
 
 test("privileged helper rejects a denied peer before parsing", async () => {
@@ -931,6 +1080,38 @@ test("Broker-backed helper authority rechecks active switches, revocation, and J
   }
 });
 
+test("Broker-backed helper authority rejects an expired Job lease while approval remains active", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mops-helper-expired-lease-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  try {
+    const identity = admitRunningPrivilegedJob(store, {
+      requestId: "request-expired-lease",
+      jobId: "job:expired-lease",
+      tool: "mac_priv_service_control",
+      targetRef: "service:system/com.example.expired-lease",
+      privilegedPayload: { operation: "service_control", service_id: "system/com.example.expired-lease", action: "start" },
+      payloadDigest: sha256(canonicalJson({ operation: "service_control", service_id: "system/com.example.expired-lease", action: "start" }))
+    }, 1_000);
+    const factory = new BrokerPrivilegedHelperCommandFactory({
+      store,
+      authenticationKey: key,
+      authorizeCommand: (command) => assertPrivilegedHelperCommandAuthority(store, command, NOW + 4),
+      now: () => NOW + 4
+    });
+    const command = factory.issue(identity);
+    assert.equal(command.expiresAtMs, NOW + 1_004);
+    assert.doesNotThrow(() => assertPrivilegedHelperCommandAuthority(store, command, NOW + 1_003));
+    assert.throws(
+      () => assertPrivilegedHelperCommandAuthority(store, command, NOW + 1_005),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 type PrivilegedJobSetup = {
   requestId: string;
   jobId: string;
@@ -940,10 +1121,14 @@ type PrivilegedJobSetup = {
   payloadDigest: string;
 };
 
-function admitRunningPrivilegedJob(store: BrokerStore, setup: PrivilegedJobSetup) {
+function admitRunningPrivilegedJob(store: BrokerStore, setup: PrivilegedJobSetup, leaseDurationMs = 60_000) {
   const identity = admitApprovedPrivilegedJob(store, setup);
   const runningRequest = store.markRequestRunning(setup.requestId, NOW + 4);
-  const runningJob = store.startJob(setup.jobId, "principal-1", identity.jobRevision, NOW + 4);
+  const runningJob = store.startJob(setup.jobId, "principal-1", identity.jobRevision, NOW + 4, {
+    ownerId: "privileged-helper-test",
+    token: `lease:${"a".repeat(32)}`,
+    expiresAtMs: NOW + 4 + leaseDurationMs
+  });
   assert.equal(runningRequest.state, "RUNNING");
   assert.equal(runningJob.state, "running");
   return identity;
@@ -955,6 +1140,7 @@ function admitApprovedPrivilegedJob(store: BrokerStore, setup: PrivilegedJobSetu
   store.admitRequest({
     requestId: setup.requestId,
     edgeId: "edge-1",
+    edgeKeyId: "edge-1:edge-key-1",
     nonce: `nonce-${setup.requestId}`,
     nonceExpiresAtMs: NOW + 60_000,
     principalId: "principal-1",

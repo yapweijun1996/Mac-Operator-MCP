@@ -10,6 +10,7 @@ export const SCOPES = [
   "mac.project.read", "mac.project.write", "mac.git.read", "mac.git.write",
   "mac.task.run", "mac.job.read", "mac.job.cancel", "mac.docker.read",
   "mac.app.read", "mac.app.control", "mac.ui.observe", "mac.ui.control",
+  "mac.service.control",
   "mac.priv.service", "mac.priv.package", "mac.priv.power"
 ] as const;
 
@@ -88,6 +89,56 @@ export interface AuthenticatedBrokerResponse {
   responseDigest: string;
   authenticationProof: string;
   response: BrokerResult;
+}
+
+/**
+ * Authenticated host event used by the Edge to propagate an issuer-side
+ * OAuth authority loss into the Broker. This is deliberately separate from
+ * MCP tool requests: it cannot execute an adapter or grant a capability.
+ */
+export interface UnsignedBrokerRevocationEvent {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  eventType: "oauth_authority_revoked";
+  requestId: string;
+  nonce: string;
+  edgeId: string;
+  authenticationKeyId: string;
+  principalId: string;
+  sessionId: string;
+  timestampMs: number;
+}
+
+export interface BrokerRevocationEvent extends UnsignedBrokerRevocationEvent {
+  payloadDigest: string;
+  authenticationProof: string;
+}
+
+export interface BrokerRevocationSuccess {
+  ok: true;
+  request_id: string;
+  event_type: "oauth_authority_revoked";
+  revoked: true;
+  duration_ms: number;
+}
+
+export interface BrokerRevocationFailure {
+  ok: false;
+  request_id: string;
+  event_type: "oauth_authority_revoked";
+  result_class: ErrorClass;
+  error: { message: string; retryable: boolean };
+  duration_ms: number;
+}
+
+export type BrokerRevocationResult = BrokerRevocationSuccess | BrokerRevocationFailure;
+
+export interface AuthenticatedBrokerRevocationResponse {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  requestPayloadDigest: string;
+  authenticationKeyId: string;
+  responseDigest: string;
+  authenticationProof: string;
+  response: BrokerRevocationResult;
 }
 
 export interface RuntimeToolState {

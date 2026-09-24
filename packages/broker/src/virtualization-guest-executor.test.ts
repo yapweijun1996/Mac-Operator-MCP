@@ -22,7 +22,7 @@ import {
   type UnsignedVirtualizationGuestRequest
 } from "./virtualization-guest-transport.js";
 
-const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "macos-26.2-vz-1" } as const;
+const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "test-generic-efi-vz-1" } as const;
 const key = Buffer.alloc(32, 0x61);
 const now = 1_800_000_000_000;
 

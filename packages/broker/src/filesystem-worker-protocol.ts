@@ -29,12 +29,14 @@ export type FilesystemWorkerCommand =
       expectedSha256: string | undefined;
       createOnly: boolean;
       tempName: string;
+      preMutationGate?: SharedArrayBuffer;
     }
   | {
       operation: "patch";
       plan: FilesystemPathPlan;
       patch: string;
       expectedBaseHash: string | undefined;
+      preMutationGate?: SharedArrayBuffer;
     };
 
 export type FilesystemWorkerResult =

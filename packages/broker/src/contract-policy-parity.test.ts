@@ -56,6 +56,7 @@ function policyTargetType(toolName: string, contractTargetType: string): string 
     policy_request: "policy_query",
     process_set: "process",
     project_root: "project",
+    user_launch_agent: "service",
     service_id: "service"
   };
   return aliases[contractTargetType] ?? contractTargetType;

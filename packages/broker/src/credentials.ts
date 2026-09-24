@@ -74,6 +74,20 @@ export function createKeychainBrokerBackupKeySource(
   };
 }
 
+/** Returns the separately configured Keychain source used only for audit archives. */
+export function createKeychainAuditArchiveKeySource(
+  service: string,
+  account: string,
+  keyId: string
+): BrokerBackupKeySource {
+  validateKeychainCoordinates(service, account);
+  if (!BACKUP_KEY_ID_PATTERN.test(keyId)) throw new Error("Audit archive key ID is invalid");
+  return {
+    keyId,
+    loadKey: () => readKeychainGenericPassword(service, account, process.execPath)
+  };
+}
+
 /** Returns a synchronous Keychain-backed source for the optional audit anchor. */
 export function createKeychainAuditAnchorKeySource(
   service: string,

@@ -51,8 +51,16 @@ const SECRET_CONTENT_PATTERNS = [
   /\bsk-proj-[0-9A-Za-z_-]{16,}\b/u,
   /\bsk-(?!proj-)[0-9A-Za-z]{24,}\b/u,
   /\bsk_(?:live|test)_[0-9A-Za-z]{16,}\b/u,
+  /\brk_(?:live|test)_[0-9A-Za-z]{16,}\b/u,
+  /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/u,
+  /\bhf_[0-9A-Za-z]{20,}\b/u,
+  /\bsntrys_[0-9A-Za-z_-]{16,}\b/u,
+  /\bvercel_[0-9A-Za-z_-]{16,}\b/u,
+  /\bsb_secret_[0-9A-Za-z_-]{16,}\b/u,
   /\bcfp_[0-9A-Za-z_-]{16,}\b/u,
   /\b(?:cf[_-](?:pat|token)|heroku[_-]?api[_-]?key)[=:_-]?[0-9A-Za-z._-]{16,}\b/iu,
+  /\bX-Amz-Signature\s*=\s*[a-f0-9]{64}\b/iu,
+  /\bX-Amz-Security-Token\s*=\s*[A-Za-z0-9%+/_~.=-]{20,}/iu,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}\b/iu,
   /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/iu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/u,
@@ -68,6 +76,13 @@ const SECRET_CONTENT_PATTERNS = [
 const BASE64_CANDIDATE_PATTERN = /(?:^|[\s"'=,:;()[\]{}])([A-Za-z0-9+/]{24,}={0,2})(?=$|[\s"'=,:;()[\]{}])/gu;
 const MAX_ENCODED_CANDIDATES = 512;
 const MAX_BINARY_KEY_PARSE_BYTES = 128 * 1024;
+const MAX_AZURE_SAS_QUERY_CHARS = 8_192;
+const MAX_AZURE_SAS_QUERY_CANDIDATES = 128;
+const AZURE_SAS_PARAMETER_NAMES = new Set([
+  "sv", "ss", "srt", "sp", "se", "st", "spr", "sr", "skoid", "sktid", "skt", "ske", "sks", "skv",
+  "saoid", "suoid", "scid", "ses"
+]);
+const AZURE_SAS_SIGNATURE_VALUE_PATTERN = /^[A-Za-z0-9%+/_~.=-]{20,}$/u;
 
 /**
  * Command-line option names are observable through process listings. A task
@@ -102,8 +117,16 @@ const LOG_SECRET_REDACTION_PATTERNS: readonly RegExp[] = [
   /\bsk-proj-[0-9A-Za-z_-]{16,}\b/gu,
   /\bsk-(?!proj-)[0-9A-Za-z]{24,}\b/gu,
   /\bsk_(?:live|test)_[0-9A-Za-z]{16,}\b/gu,
+  /\brk_(?:live|test)_[0-9A-Za-z]{16,}\b/gu,
+  /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/gu,
+  /\bhf_[0-9A-Za-z]{20,}\b/gu,
+  /\bsntrys_[0-9A-Za-z_-]{16,}\b/gu,
+  /\bvercel_[0-9A-Za-z_-]{16,}\b/gu,
+  /\bsb_secret_[0-9A-Za-z_-]{16,}\b/gu,
   /\bcfp_[0-9A-Za-z_-]{16,}\b/gu,
   /\b(?:cf[_-](?:pat|token)|heroku[_-]?api[_-]?key)[=:_-]?[0-9A-Za-z._-]{16,}\b/giu,
+  /\bX-Amz-Signature\s*=\s*[a-f0-9]{64}\b/giu,
+  /\bX-Amz-Security-Token\s*=\s*[A-Za-z0-9%+/_~.=-]{20,}/giu,
   /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}\b/giu,
   /\bBasic\s+[A-Za-z0-9+/=]{16,}\b/giu,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gu,
@@ -187,7 +210,8 @@ export function assertEnvironmentValuesDoNotContainSecrets(environment: Readonly
 
 /** Return whether a bounded value matches one of the known credential signatures. */
 export function containsKnownSecretSignature(value: string): boolean {
-  return typeof value === "string" && SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(value));
+  return typeof value === "string" &&
+    (SECRET_CONTENT_PATTERNS.some((pattern) => pattern.test(value)) || findAzureSasSignatureRanges(value).length > 0);
 }
 
 export function redactLogText(value: string): { text: string; redacted: boolean } {
@@ -203,6 +227,9 @@ export function redactBoundedText(value: string, maxBytes: number): { text: stri
     redacted ||= next !== text;
     text = next;
   }
+  const azureSasResult = redactAzureSasSignatures(text);
+  text = azureSasResult.text;
+  redacted ||= azureSasResult.redacted;
   const encodedResult = redactEncodedSecretRepresentations(text);
   text = encodedResult.text;
   redacted ||= encodedResult.redacted;
@@ -223,6 +250,70 @@ export function redactBoundedText(value: string, maxBytes: number): { text: stri
     truncated = true;
   }
   return { text, redacted, truncated };
+}
+
+function redactAzureSasSignatures(value: string): { text: string; redacted: boolean } {
+  const ranges = findAzureSasSignatureRanges(value);
+  if (ranges.length === 0) return { text: value, redacted: false };
+  let text = value;
+  for (const range of ranges.sort((left, right) => right.start - left.start)) {
+    text = `${text.slice(0, range.start)}[REDACTED]${text.slice(range.end)}`;
+  }
+  return { text, redacted: true };
+}
+
+/** Detect only long `sig` query values accompanied by Azure Storage SAS fields. */
+function findAzureSasSignatureRanges(value: string): Array<{ start: number; end: number }> {
+  const starts: number[] = [];
+  for (const match of value.matchAll(/\?/gu)) {
+    if (match.index !== undefined) starts.push(match.index + 1);
+    if (starts.length >= MAX_AZURE_SAS_QUERY_CANDIDATES) break;
+  }
+  if (starts.length < MAX_AZURE_SAS_QUERY_CANDIDATES) {
+    const standaloneStartPattern = /(?:^|[\s"'(<])(?=(?:sv|ss|srt|sp|se|st|spr|sr)=)/giu;
+    for (const match of value.matchAll(standaloneStartPattern)) {
+      if (match.index === undefined) continue;
+      starts.push(match.index + match[0].length);
+      if (starts.length >= MAX_AZURE_SAS_QUERY_CANDIDATES) break;
+    }
+  }
+
+  const signatures: Array<{ start: number; end: number }> = [];
+  const seen = new Set<number>();
+  for (const start of starts) {
+    if (seen.has(start)) continue;
+    seen.add(start);
+    let queryEnd = start;
+    while (queryEnd < value.length && queryEnd - start < MAX_AZURE_SAS_QUERY_CHARS &&
+        !/[#\s"'<>)]/u.test(value[queryEnd]!)) queryEnd += 1;
+
+    const observedParameters = new Set<string>();
+    const candidateSignatures: Array<{ start: number; end: number }> = [];
+    let parameterStart = start;
+    while (parameterStart < queryEnd) {
+      const ampersand = value.indexOf("&", parameterStart);
+      const parameterEnd = ampersand < 0 || ampersand >= queryEnd ? queryEnd : ampersand;
+      const equals = value.indexOf("=", parameterStart);
+      if (equals >= parameterStart && equals < parameterEnd) {
+        let name = value.slice(parameterStart, equals);
+        try { name = decodeURIComponent(name); } catch { /* malformed names are ignored */ }
+        name = name.toLowerCase();
+        if (AZURE_SAS_PARAMETER_NAMES.has(name)) observedParameters.add(name);
+        if (name === "sig") {
+          const signatureStart = equals + 1;
+          const signatureEnd = parameterEnd;
+          if (AZURE_SAS_SIGNATURE_VALUE_PATTERN.test(value.slice(signatureStart, signatureEnd))) {
+            candidateSignatures.push({ start: signatureStart, end: signatureEnd });
+          }
+        }
+      }
+      parameterStart = parameterEnd + 1;
+    }
+    if (observedParameters.has("sv") && observedParameters.has("sp") && observedParameters.has("se")) {
+      signatures.push(...candidateSignatures);
+    }
+  }
+  return signatures;
 }
 
 function containsEncodedSecretRepresentation(content: Buffer, text: string): boolean {

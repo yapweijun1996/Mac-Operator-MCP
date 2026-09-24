@@ -16,6 +16,7 @@ import {
   type EdgeServiceStartupConfig
 } from "./service-startup.js";
 import type { HttpsMcpEdge } from "./https-edge.js";
+import { readEdgeStatus } from "./edge-status-ipc.js";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -27,6 +28,7 @@ test("Edge service startup config is strict, canonical, and root-bound", () => {
   assert.throws(() => validateEdgeServiceStartupConfig({ ...config, brokerSocketPath: "/Users/operator/runtime/../escape.sock" }), /canonical/u);
   assert.throws(() => validateEdgeServiceStartupConfig({ ...config, tlsPrivateKeyPath: "/Users/operator/other/edge.key" }), /escaped/u);
   assert.throws(() => validateEdgeServiceStartupConfig({ ...config, jwksUri: "http://issuer.example.test/jwks" }), /HTTPS/u);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, oauthScopes: ["mac.control.read"], requiredScopes: ["mac.files.read"] }), /not advertised/u);
   assert.throws(() => validateEdgeServiceStartupConfig({ ...config, bindPort: 0 }), /out of bounds/u);
 });
 
@@ -44,6 +46,23 @@ test("Edge service startup config rejects inherited, accessor, and sparse author
     () => validateEdgeServiceStartupConfig({ ...config, allowedHosts: sparseHosts }),
     /allowlist must not be empty/u
   );
+});
+
+test("owner OAuth issuer requires a root-bound authenticated revocation channel", () => {
+  const base = { ...baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime"), issuerId: "mac-operator-auth" };
+  assert.throws(() => validateEdgeServiceStartupConfig(base));
+  const config = { ...base, oauthStatusUrl: new URL("/oauth/status", base.oauthIssuer).href,
+    oauthStatusKeyPath: "/Users/operator/data/status.key", oauthStatusKeyDigest: "a".repeat(64) };
+  assert.throws(() => validateEdgeServiceStartupConfig(config), /requires the loopback channel/u);
+  const loopback = { ...config, oauthStatusLocalUrl: "https://127.0.0.1:3444/oauth/status",
+    oauthStatusLocalServerName: "issuer.example.test", oauthStatusLocalCaPath: "/Users/operator/data/status-ca.crt" };
+  assert.deepEqual(validateEdgeServiceStartupConfig(loopback), loopback);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, oauthStatusUrl: "https://other.example.test/oauth/status" }));
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, oauthStatusKeyPath: "/Users/operator/other/status.key" }));
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...loopback, oauthStatusLocalUrl: "https://localhost:3444/oauth/status" }), /fixed local boundary/u);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...loopback, oauthStatusLocalServerName: "other.example.test" }), /fixed local boundary/u);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...loopback, oauthStatusLocalCaPath: "/Users/operator/other/status-ca.crt" }), /fixed local boundary/u);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, oauthStatusLocalUrl: "https://127.0.0.1:3444/oauth/status" }), /incomplete/u);
 });
 
 test("Edge service startup config loader rejects weak and symlinked files", async () => {
@@ -70,13 +89,16 @@ test("Edge service startup assembles protected TLS and IPC bindings and owns lis
   await mkdir(dataRoot, { mode: 0o700 });
   await mkdir(runtimeRoot, { mode: 0o700 });
   const key = Buffer.alloc(32, 0x51);
+  const serviceStatusKey = Buffer.alloc(32, 0x52);
   const authenticationKeyPath = join(dataRoot, "edge-auth.key");
+  const serviceStatusKeyPath = join(dataRoot, "edge-status.key");
   const certificatePath = join(dataRoot, "edge.crt");
   const privateKeyPath = join(dataRoot, "edge.key");
   const port = await reservePort();
   let assembly: Awaited<ReturnType<typeof createEdgeServiceFromStartupConfig>> | undefined;
   try {
     await writeFile(authenticationKeyPath, key, { mode: 0o600 });
+    await writeFile(serviceStatusKeyPath, serviceStatusKey, { mode: 0o600 });
     await createTestCertificate(dataRoot, certificatePath, privateKeyPath);
     await chmod(certificatePath, 0o600);
     await chmod(privateKeyPath, 0o600);
@@ -85,6 +107,9 @@ test("Edge service startup assembles protected TLS and IPC bindings and owns lis
       authenticationKeyPath: join(canonicalDataRoot, "edge-auth.key"),
       tlsCertificatePath: join(canonicalDataRoot, "edge.crt"),
       tlsPrivateKeyPath: join(canonicalDataRoot, "edge.key"),
+      serviceStatusSocketPath: join(await realpath(runtimeRoot), "s.sock"),
+      serviceStatusKeyPath: join(canonicalDataRoot, "edge-status.key"),
+      serviceStatusKeyDigest: sha256(serviceStatusKey),
       bindPort: port,
       authenticationKeyDigest: sha256(key)
     });
@@ -101,11 +126,16 @@ test("Edge service startup assembles protected TLS and IPC bindings and owns lis
       bindPort: port,
       listening: true
     });
+    assert.deepEqual(
+      await readEdgeStatus({ socketPath: config.serviceStatusSocketPath!, authenticationKey: serviceStatusKey }),
+      assembly.service.readback()
+    );
     await assembly.close();
     assert.equal(assembly.service.readback().state, "stopped");
   } finally {
     if (assembly) await assembly.close().catch(() => undefined);
     key.fill(0);
+    serviceStatusKey.fill(0);
     await rm(root, { recursive: true, force: true });
   }
 });

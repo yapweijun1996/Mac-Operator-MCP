@@ -26,7 +26,9 @@ test("native Virtualization guest lifecycle artifact exposes handle-bound operat
   assert.equal(native.nativeNodeVersion, process.versions.node);
   assert.equal(native.nativePlatform, process.platform);
   assert.equal(native.nativeArch, process.arch);
+  assert.equal(typeof native.hasVirtualizationEntitlement(), "boolean");
   assert.equal(typeof native.createGuestVm, "function");
+  assert.equal(typeof native.resetStoppedGuestVm, "function");
   assert.equal(typeof native.startGuestVm, "function");
   assert.equal(typeof native.stopGuestVm, "function");
   assert.equal(typeof native.statusGuestVm, "function");
@@ -40,15 +42,31 @@ test("native Virtualization guest lifecycle artifact exposes handle-bound operat
   validateNativeVirtualizationGuestVmAdapterPath(require.resolve("./virtualization_guest_lifecycle.node"));
 });
 
+test("native VM creation rejects an unentitled current process before reading the image", () => {
+  const native = loadNativeVirtualizationGuestVmBinding();
+  if (native.hasVirtualizationEntitlement()) return;
+  assert.throws(
+    () => native.createGuestVm("/", "0", "0", "0".repeat(64), "test-generic-efi-vz-1"),
+    /com\.apple\.security\.virtualization on the current process/u
+  );
+});
+
 test("native Virtualization guest close cannot resurrect a retained handle or dispatch through a null queue", async () => {
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   const source = await readFile(join(repositoryRoot, "packages/broker/native/virtualization_guest_lifecycle.cc"), "utf8");
   assert.match(source, /std::atomic<uint64_t> magic/u);
   assert.match(source, /active_connections/u);
+  assert.match(source, /VZVirtualMachineConfiguration\* configuration/u);
+  assert.match(source, /ResetStoppedGuestVm/u);
+  assert.match(source, /initWithConfiguration:handle\.configuration queue:handle\.queue/u);
+  assert.match(source, /listener_connection_caps/u);
+  assert.match(source, /handle\.machine != nil && handle\.machine\.state != VZVirtualMachineStateStopped/u);
   assert.match(source, /CloseActiveVirtioConnections\(handle\);\s*\[handle\.machine stopWithCompletionHandler/u);
   assert.doesNotMatch(source, /operation->handle->magic\s*=\s*kHandleMagic/u);
   assert.match(source, /handle\.machine = nil;\s*\/\/ Keep the serial queue alive until the external handle finalizer runs\./u);
   assert.match(source, /IsSystemPublishedImage\(resolved_path, path_stat\)/u);
+  assert.match(source, /mop::HasExtendedAclEntries\(canonical_path, &image_has_extended_acl\)/u);
+  assert.match(source, /mop::HasExtendedAclEntries\(parent_path, &parent_has_extended_acl\)/u);
   assert.match(source, /current_uid == 0/u);
   assert.match(source, /initWithURL:url readOnly:YES/u);
 });
@@ -63,7 +81,7 @@ test("native Virtualization guest lifecycle remains disabled without explicit ho
     const loadedImage = await loadVirtualizationGuestImage({
       path: await realpath(imagePath),
       expectedSha256: createHash("sha256").update(image).digest("hex"),
-      runtimeVersion: "macos-26.2-vz-1"
+      runtimeVersion: "test-generic-efi-vz-1"
     });
     const adapter = await createNativeVirtualizationGuestVm({
       image: loadedImage,
@@ -91,7 +109,7 @@ test("native Virtualization guest lifecycle creation fails closed without a vali
     const image = await loadVirtualizationGuestImage({
       path: await realpath(imagePath),
       expectedSha256: createHash("sha256").update(bytes).digest("hex"),
-      runtimeVersion: "macos-26.2-vz-1"
+      runtimeVersion: "test-generic-efi-vz-1"
     });
     let adapter: Awaited<ReturnType<typeof createNativeVirtualizationGuestVm>> | undefined;
     try {
@@ -122,7 +140,7 @@ test("native Virtualization guest lifecycle rejects broker-owned images before n
     const image = await loadVirtualizationGuestImage({
       path: await realpath(imagePath),
       expectedSha256: createHash("sha256").update(bytes).digest("hex"),
-      runtimeVersion: "macos-26.2-vz-1"
+      runtimeVersion: "test-generic-efi-vz-1"
     });
     await assert.rejects(
       () => createNativeVirtualizationGuestVm({ image, enabled: true, hostEvidenceAccepted: true }),
@@ -135,7 +153,7 @@ test("native Virtualization guest lifecycle rejects broker-owned images before n
 });
 
 test("native Virtualization guest VM results reject unstable authority fields", () => {
-  const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "macos-26.2-vz-1" };
+  const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "test-generic-efi-vz-1" };
   const running = { bootId: "boot-12345678", guestIdentity, state: "running" as const };
   assert.deepEqual(parseTransitionResult(running, "running", guestIdentity), running);
   assert.throws(
@@ -223,6 +241,32 @@ test("native virtio guest listener adapts bounded connections into the bootstrap
   await source.close();
   assert.deepEqual(calls, ["listen:38765:2", "close", "remove:38765"]);
   assert.deepEqual(writes, [Buffer.from([9, 8])]);
+});
+
+test("native virtio guest listener resumes after VM-instance listener replacement", async () => {
+  let accepts = 0;
+  const native = {
+    listenGuestPort: (): void => undefined,
+    removeGuestPort: (): void => undefined,
+    acceptGuestConnection: async (): Promise<unknown | null> => {
+      accepts += 1;
+      if (accepts === 1) throw new Error("Virtualization guest listener is closed");
+      return { nativeConnection: true };
+    },
+    readGuestConnectionChunk: async (): Promise<null> => null,
+    writeGuestConnectionChunk: async (): Promise<void> => undefined,
+    closeGuestConnection: (): void => undefined
+  } as unknown as NativeVirtualizationGuestVmBinding;
+  const source = createNativeVirtualizationGuestConnectionSource(native, { privateHandle: true }, {
+    port: 38_765,
+    maxConnections: 2,
+    ioTimeoutMs: 500
+  });
+  const stream = await source.accept(new AbortController().signal);
+  assert.ok(stream);
+  assert.equal(accepts, 2);
+  await stream.close();
+  await source.close();
 });
 
 test("native virtio guest listener closes a connection that arrives after accept cancellation", async () => {

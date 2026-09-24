@@ -1,4 +1,5 @@
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
+import { BrokerError } from "@mac-operator/contracts";
 import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
 import { createMacOsNativeBrokerRuntime, type MacOsNativeBrokerRuntimeOptions } from "./runtime.js";
 import { EdgeAuthenticationKeyManager } from "./edge-keyring-config.js";
@@ -7,7 +8,12 @@ import { AuthorityControlIpcServer } from "./authority-control-ipc.js";
 import { BrokerStoreKeychainDeliveryReplayGuard, KeychainDeliveryServer } from "./keychain-delivery.js";
 import { assertPrivilegedHelperCommandAuthority } from "./privileged-helper.js";
 import { PrivilegedHelperKeyManager } from "./privileged-helper-keyring.js";
+import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-authority.js";
 import { LaunchdReadbackError, parseLaunchdJobReadback } from "./launchd-readback.js";
+import {
+  captureLaunchdRootHelperProcessIdentity,
+  type LaunchdRootHelperIdentityCommandExecutor
+} from "./root-helper-snapshot-service.js";
 import type { EdgeKeyring } from "./edge-keyring.js";
 import type { Broker } from "./broker.js";
 import type { BrokerStore } from "./persistence.js";
@@ -26,6 +32,10 @@ export type NativeRuntimeStartupErrorCode =
   | "EDGE_PROCESS_NOT_RUNNING"
   | "EDGE_PROCESS_IDENTITY_UNAVAILABLE"
   | "EDGE_KEY_CONFIG_UNAVAILABLE"
+  | "AUTHORITY_SERVICE_INVALID"
+  | "AUTHORITY_SERVICE_UNAVAILABLE"
+  | "AUTHORITY_PROCESS_NOT_RUNNING"
+  | "AUTHORITY_PROCESS_IDENTITY_UNAVAILABLE"
   | "AUTHORITY_KEY_CONFIG_UNAVAILABLE"
   | "HELPER_AUTHORITY_CONFIG_UNAVAILABLE";
 
@@ -51,10 +61,67 @@ export interface LaunchdEdgeProcessReadback {
   state: "running";
 }
 
+export type LaunchdAuthorityProcessReadback = LaunchdEdgeProcessReadback;
+
 export interface LaunchdEdgeIdentityCaptureOptions {
   edgeServiceId: string;
   expectedUid: number;
   commandExecutor?: LaunchdIdentityCommandExecutor;
+}
+
+export interface LaunchdAuthorityIdentityCaptureOptions {
+  authorityServiceId: string;
+  expectedUid: number;
+  commandExecutor?: LaunchdIdentityCommandExecutor;
+}
+
+/**
+ * Captures the stable owner/operator process identity used by the separate
+ * Authority Control channel. The service must already be a running user
+ * LaunchAgent; startup never bootstraps or substitutes a same-UID process.
+ */
+export async function captureLaunchdAuthorityProcessIdentity(
+  options: LaunchdAuthorityIdentityCaptureOptions
+): Promise<PeerProcessIdentity> {
+  const service = parseAuthorityServiceId(options.authorityServiceId, options.expectedUid);
+  const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+  const deadline = Date.now() + LAUNCHD_STARTUP_DEADLINE_MS;
+  for (;;) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new NativeRuntimeStartupError("AUTHORITY_PROCESS_NOT_RUNNING", "Authority operator launchd service did not reach running state");
+    }
+    let result: ProcessExecutionResult;
+    try {
+      result = await executor.run({
+        executable: LAUNCHCTL_PATH,
+        args: ["print", service.serviceId],
+        cwd: "/",
+        environment: {},
+        timeoutMs: Math.min(LAUNCHCTL_TIMEOUT_MS, remainingMs),
+        outputCapBytes: LAUNCHCTL_OUTPUT_CAP_BYTES
+      });
+    } catch {
+      throw new NativeRuntimeStartupError("AUTHORITY_SERVICE_UNAVAILABLE", "Authority operator launchd readback failed");
+    }
+    try {
+      const readback = parseLaunchdAuthorityProcessReadback(service.serviceId, result);
+      try {
+        return capturePeerProcessIdentity(readback.pid);
+      } catch {
+        throw new NativeRuntimeStartupError("AUTHORITY_PROCESS_IDENTITY_UNAVAILABLE", "Authority operator process identity readback failed");
+      }
+    } catch (error) {
+      if (error instanceof NativeRuntimeStartupError && error.code === "AUTHORITY_PROCESS_NOT_RUNNING" && isXpcProxyState(result.stdout)) {
+        const delayMs = Math.min(LAUNCHD_XPCPROXY_RETRY_DELAY_MS, Math.max(0, deadline - Date.now()));
+        if (delayMs > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+      }
+      throw error;
+    }
+  }
 }
 
 /**
@@ -403,6 +470,114 @@ export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyC
   }
 }
 
+/**
+ * Production startup assembly for the root-helper snapshot authority poll
+ * channel. The Broker owns the listener and its durable authority callback;
+ * the root helper is accepted only after exact system LaunchDaemon and native
+ * PID/start-time readback. The returned channel is exposed only so an
+ * unstarted assembly can wipe its key material during disposal.
+ */
+export async function createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfigAndRootHelperSnapshotAuthority(
+  options: Omit<MacOsNativeBrokerRuntimeOptions, "peerPolicy" | "broker"> & {
+    edgeServiceId: string;
+    expectedEdgeUid: number;
+    expectedEdgeGid?: number;
+    commandExecutor?: LaunchdIdentityCommandExecutor;
+    edgeKeyConfigPath: string;
+    edgeKeyStore: BrokerStore;
+    createBroker: (edgeAuthenticationKeys: EdgeKeyring) => Broker;
+    keychainDelivery?: {
+      socketPath: string;
+      keyId: string;
+    };
+    rootHelperKeyConfigPath: string;
+    rootHelperAuthoritySocketPath: string;
+    rootHelperServiceId: string;
+    rootHelperCommandExecutor?: LaunchdRootHelperIdentityCommandExecutor;
+    /** The same registry used by the Broker task runner is authoritative. */
+    rootHelperSnapshotRequestAuthority: Pick<RootHelperSnapshotRequestAuthority, "assertAuthorized">;
+    /** Broker-owned active-request gate; omitted authority is never allowed. */
+    authorizeRootHelperSnapshotRequest?: (requestDigest: string) => void;
+  }
+): Promise<ReturnType<typeof createMacOsNativeBrokerRuntime> & {
+  rootHelperAuthorityChannel: import("./root-helper-snapshot-authority.js").RootHelperSnapshotAuthorityIpcServer;
+}> {
+  const {
+    rootHelperKeyConfigPath,
+    rootHelperAuthoritySocketPath,
+    rootHelperServiceId,
+    rootHelperCommandExecutor,
+    rootHelperSnapshotRequestAuthority,
+    authorizeRootHelperSnapshotRequest,
+    edgeKeyStore,
+    socketPath,
+    ...baseOptions
+  } = options;
+  if (rootHelperSnapshotRequestAuthority === undefined ||
+      typeof rootHelperSnapshotRequestAuthority.assertAuthorized !== "function") {
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      "Root-helper snapshot authority requires the Broker-owned active-request registry"
+    );
+  }
+  if (rootHelperAuthoritySocketPath === socketPath) {
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      "Root-helper snapshot authority socket must be separate from the Broker IPC socket"
+    );
+  }
+  let rootHelperIdentity;
+  try {
+    rootHelperIdentity = await captureLaunchdRootHelperProcessIdentity({
+      rootHelperServiceId,
+      ...(rootHelperCommandExecutor === undefined ? {} : { commandExecutor: rootHelperCommandExecutor })
+    });
+  } catch (error) {
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      error instanceof Error ? error.message : "Root-helper process identity could not be captured"
+    );
+  }
+  const keyManager = new PrivilegedHelperKeyManager(rootHelperKeyConfigPath, edgeKeyStore);
+  let authorityChannel: import("./root-helper-snapshot-authority.js").RootHelperSnapshotAuthorityIpcServer;
+  try {
+    await keyManager.restore();
+    authorityChannel = keyManager.createRootHelperSnapshotAuthorityServer({
+      socketPath: rootHelperAuthoritySocketPath,
+      peerPolicy: { expectedUid: 0, allowedProcessIdentity: rootHelperIdentity },
+      authorizeRequest: (requestDigest) => {
+        if (!/^[a-f0-9]{64}$/u.test(requestDigest)) {
+          throw new BrokerError("PRECONDITION_FAILED", "Root-helper snapshot authority request digest is invalid");
+        }
+        // The shared registry is the source of truth for the exact envelope
+        // admitted by the Broker task. An optional host gate may add policy or
+        // kill-switch checks, but it can never widen the registry decision.
+        rootHelperSnapshotRequestAuthority.assertAuthorized(requestDigest);
+        authorizeRootHelperSnapshotRequest?.(requestDigest);
+      }
+    });
+    keyManager.dispose();
+  } catch (error) {
+    keyManager.dispose();
+    throw new NativeRuntimeStartupError(
+      "AUTHORITY_KEY_CONFIG_UNAVAILABLE",
+      error instanceof Error ? error.message : "Root-helper snapshot authority could not be constructed"
+    );
+  }
+  try {
+    const assembled = await createMacOsNativeBrokerRuntimeForLaunchdEdgeFromActiveKeyConfig({
+      ...baseOptions,
+      socketPath,
+      edgeKeyStore,
+      operatorChannels: [...(baseOptions.operatorChannels ?? []), authorityChannel]
+    });
+    return { ...assembled, rootHelperAuthorityChannel: authorityChannel };
+  } catch (error) {
+    await authorityChannel.close().catch(() => undefined);
+    throw error;
+  }
+}
+
 export function parseLaunchdEdgeProcessReadback(
   serviceId: string,
   result: ProcessExecutionResult
@@ -436,12 +611,55 @@ export function parseLaunchdEdgeProcessReadback(
   return { ...service, pid, state: "running" };
 }
 
+export function parseLaunchdAuthorityProcessReadback(
+  serviceId: string,
+  result: ProcessExecutionResult
+): LaunchdAuthorityProcessReadback {
+  const service = parseAuthorityServiceId(serviceId);
+  if (result.resultClass !== "SUCCEEDED") {
+    if (/Could not find service|No such process|service .* not found/iu.test(result.stderr)) {
+      throw new NativeRuntimeStartupError("AUTHORITY_SERVICE_UNAVAILABLE", "Authority operator launchd service is unavailable");
+    }
+    throw new NativeRuntimeStartupError("AUTHORITY_SERVICE_UNAVAILABLE", "Authority operator launchd readback failed");
+  }
+  let readback;
+  try {
+    readback = parseLaunchdJobReadback(service.serviceId, result.stdout);
+  } catch (error) {
+    if (error instanceof LaunchdReadbackError) {
+      if (error.message === "launchd returned an unsupported service state" ||
+          error.message === "launchd returned a malformed process identity") {
+        throw new NativeRuntimeStartupError("AUTHORITY_PROCESS_NOT_RUNNING", "Authority operator launchd service is not running");
+      }
+      throw new NativeRuntimeStartupError("AUTHORITY_SERVICE_UNAVAILABLE", "Authority operator launchd readback identity is malformed");
+    }
+    throw error;
+  }
+  if (readback.type !== "LaunchAgent") {
+    throw new NativeRuntimeStartupError("AUTHORITY_SERVICE_UNAVAILABLE", "Authority operator launchd service type is not LaunchAgent");
+  }
+  if (readback.state !== "running") throw new NativeRuntimeStartupError("AUTHORITY_PROCESS_NOT_RUNNING", "Authority operator launchd service is not running");
+  const pid = readback.pid;
+  if (pid === null) throw new NativeRuntimeStartupError("AUTHORITY_PROCESS_NOT_RUNNING", "Authority operator launchd service has no valid process identity");
+  return { ...service, pid, state: "running" };
+}
+
 function parseEdgeServiceId(serviceId: string, expectedUid?: number): { serviceId: string; uid: number; label: string } {
   const match = typeof serviceId === "string" ? EDGE_SERVICE_PATTERN.exec(serviceId) : null;
   if (!match) throw new NativeRuntimeStartupError("INVALID_EDGE_SERVICE", "Edge launchd service ID is invalid");
   const uid = Number(match[1]);
   if (expectedUid !== undefined && (!Number.isSafeInteger(expectedUid) || expectedUid < 1 || uid !== expectedUid)) {
     throw new NativeRuntimeStartupError("INVALID_EDGE_SERVICE", "Edge launchd service user does not match the expected user");
+  }
+  return { serviceId, uid, label: match[2]! };
+}
+
+function parseAuthorityServiceId(serviceId: string, expectedUid?: number): { serviceId: string; uid: number; label: string } {
+  const match = typeof serviceId === "string" ? /^gui\/([1-9][0-9]{0,9})\/(com\.mac-operator\.authority)$/u.exec(serviceId) : null;
+  if (!match) throw new NativeRuntimeStartupError("AUTHORITY_SERVICE_INVALID", "Authority operator launchd service ID is invalid");
+  const uid = Number(match[1]);
+  if (expectedUid !== undefined && (!Number.isSafeInteger(expectedUid) || expectedUid < 1 || uid !== expectedUid)) {
+    throw new NativeRuntimeStartupError("AUTHORITY_SERVICE_INVALID", "Authority operator launchd service user does not match the expected user");
   }
   return { serviceId, uid, label: match[2]! };
 }

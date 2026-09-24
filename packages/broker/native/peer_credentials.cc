@@ -1,11 +1,15 @@
 #include <node_api.h>
 #include <node_version.h>
 
+#include "filesystem_acl.h"
+
 #include <CommonCrypto/CommonDigest.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <arpa/inet.h>
 #include <chrono>
+#include <cmath>
+#include <dlfcn.h>
 #include <ifaddrs.h>
 #include <libproc.h>
 #include <algorithm>
@@ -13,14 +17,18 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cstdint>
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <map>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <set>
 #include <string>
+#include <membership.h>
+#include <sys/acl.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/mount.h>
@@ -28,8 +36,10 @@
 #include <sys/stdio.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+#include <signal.h>
 #ifdef MAC_OPERATOR_NATIVE_FAULT_INJECTION
 #include <signal.h>
 #endif
@@ -927,11 +937,96 @@ bool ReadDescriptor(napi_env env, napi_value value, int* output) {
   return true;
 }
 
+bool SetSocketPeerUserAcl(const char* path, uid_t peer_uid) {
+  uuid_t peer_uuid;
+  if (mbr_uid_to_uuid(peer_uid, peer_uuid) != 0) return false;
+  // The Broker needs read-security only to independently read back this ACL.
+  acl_t acl = acl_init(1);
+  if (acl == nullptr) return false;
+  acl_entry_t entry;
+  acl_permset_t permissions;
+  acl_flagset_t flags;
+  bool okay = acl_create_entry(&acl, &entry) == 0 &&
+      acl_set_tag_type(entry, ACL_EXTENDED_ALLOW) == 0 &&
+      acl_set_qualifier(entry, peer_uuid) == 0 &&
+      acl_get_permset(entry, &permissions) == 0 &&
+      acl_clear_perms(permissions) == 0 &&
+      acl_add_perm(permissions, ACL_WRITE_DATA) == 0 &&
+      acl_add_perm(permissions, ACL_READ_SECURITY) == 0 &&
+      acl_set_permset(entry, permissions) == 0 &&
+      acl_get_flagset_np(entry, &flags) == 0 &&
+      acl_clear_flags_np(flags) == 0 &&
+      acl_set_flagset_np(entry, flags) == 0 &&
+      acl_valid(acl) == 0 &&
+      acl_set_file(path, ACL_TYPE_EXTENDED, acl) == 0;
+  acl_free(acl);
+  return okay;
+}
+
+bool ReadSocketPeerUserAcl(const char* path, uid_t* peer_uid) {
+  struct stat socket_status{};
+  if (lstat(path, &socket_status) != 0 || !S_ISSOCK(socket_status.st_mode)) return false;
+  acl_t acl = acl_get_file(path, ACL_TYPE_EXTENDED);
+  if (acl == nullptr) return false;
+
+  acl_entry_t entry;
+  bool okay = acl_get_entry(acl, ACL_FIRST_ENTRY, &entry) == 0;
+  if (okay) {
+    acl_entry_t extra_entry;
+    errno = 0;
+    okay = acl_get_entry(acl, ACL_NEXT_ENTRY, &extra_entry) == -1 && errno == EINVAL;
+  }
+
+  acl_tag_t tag = ACL_UNDEFINED_TAG;
+  acl_permset_mask_t permission_mask = 0;
+  acl_flagset_t entry_flags;
+  acl_flagset_t acl_flags;
+  uuid_t* qualifier = nullptr;
+  id_t mapped_id = 0;
+  int mapped_type = -1;
+  if (okay) {
+    okay = acl_get_tag_type(entry, &tag) == 0 && tag == ACL_EXTENDED_ALLOW &&
+        acl_get_permset_mask_np(entry, &permission_mask) == 0 &&
+        permission_mask == (ACL_WRITE_DATA | ACL_READ_SECURITY) &&
+        acl_get_flagset_np(entry, &entry_flags) == 0 &&
+        acl_get_flagset_np(acl, &acl_flags) == 0;
+  }
+  if (okay) {
+    const acl_flag_t entry_flag_values[] = {
+      ACL_ENTRY_INHERITED,
+      ACL_ENTRY_FILE_INHERIT,
+      ACL_ENTRY_DIRECTORY_INHERIT,
+      ACL_ENTRY_LIMIT_INHERIT,
+      ACL_ENTRY_ONLY_INHERIT
+    };
+    for (const acl_flag_t flag : entry_flag_values) {
+      if (acl_get_flag_np(entry_flags, flag) != 0) {
+        okay = false;
+        break;
+      }
+    }
+    if (okay && (acl_get_flag_np(acl_flags, ACL_FLAG_DEFER_INHERIT) != 0 ||
+                 acl_get_flag_np(acl_flags, ACL_FLAG_NO_INHERIT) != 0)) {
+      okay = false;
+    }
+  }
+  if (okay) {
+    qualifier = static_cast<uuid_t*>(acl_get_qualifier(entry));
+    okay = qualifier != nullptr && mbr_uuid_to_id(*qualifier, &mapped_id, &mapped_type) == 0 &&
+        mapped_type == ID_TYPE_UID && mapped_id <= 2'147'483'647;
+  }
+  if (qualifier != nullptr) acl_free(qualifier);
+  acl_free(acl);
+  if (!okay) return false;
+  *peer_uid = static_cast<uid_t>(mapped_id);
+  return true;
+}
+
 napi_value CreateUnixListener(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value args[2];
-  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
-    napi_throw_type_error(env, nullptr, "createUnixListener requires a socket path and backlog");
+  size_t argc = 4;
+  napi_value args[4];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc < 2 || argc > 4) {
+    napi_throw_type_error(env, nullptr, "createUnixListener requires a socket path, backlog, and optional peer group or user ID");
     return nullptr;
   }
 
@@ -945,14 +1040,56 @@ napi_value CreateUnixListener(napi_env env, napi_callback_info info) {
     napi_throw_type_error(env, nullptr, "Unix socket backlog must be between 1 and 128");
     return nullptr;
   }
+  int32_t peer_group_id = -1;
+  napi_valuetype peer_group_type = napi_undefined;
+  if (argc >= 3 && napi_typeof(env, args[2], &peer_group_type) != napi_ok) {
+    napi_throw_type_error(env, nullptr, "Unix socket peer group ID is invalid");
+    return nullptr;
+  }
+  if (argc >= 3 && peer_group_type != napi_undefined) {
+    double peer_group_value = -1;
+    if (napi_get_value_double(env, args[2], &peer_group_value) != napi_ok || !std::isfinite(peer_group_value) ||
+        peer_group_value < 0 || peer_group_value > 2'147'483'647 || std::floor(peer_group_value) != peer_group_value) {
+      napi_throw_type_error(env, nullptr, "Unix socket peer group ID must be a non-negative 32-bit integer");
+      return nullptr;
+    }
+    peer_group_id = static_cast<int32_t>(peer_group_value);
+  }
+  int32_t peer_user_id = -1;
+  if (argc == 4) {
+    napi_valuetype peer_user_type = napi_undefined;
+    double peer_user_value = -1;
+    if (napi_typeof(env, args[3], &peer_user_type) != napi_ok ||
+        (peer_user_type != napi_undefined &&
+         (napi_get_value_double(env, args[3], &peer_user_value) != napi_ok || !std::isfinite(peer_user_value) ||
+          peer_user_value < 1 || peer_user_value > 2'147'483'647 || std::floor(peer_user_value) != peer_user_value))) {
+      napi_throw_type_error(env, nullptr, "Unix socket peer user ID must be a positive 32-bit integer");
+      return nullptr;
+    }
+    if (peer_user_type != napi_undefined) peer_user_id = static_cast<int32_t>(peer_user_value);
+  }
+  if (peer_group_id >= 0 && peer_user_id >= 0) {
+    napi_throw_type_error(env, nullptr, "Unix socket peer access must use either a group or a user ACL");
+    return nullptr;
+  }
+  if (peer_group_id >= 0 && geteuid() != 0 && static_cast<gid_t>(peer_group_id) != getegid()) {
+    napi_throw_error(env, nullptr, "Only root may assign a Unix socket to a different peer group");
+    return nullptr;
+  }
+  if (peer_user_id >= 0 && geteuid() != 0 && static_cast<uid_t>(peer_user_id) != getuid()) {
+    napi_throw_error(env, nullptr, "Only root may assign a Unix socket ACL to a different peer user");
+    return nullptr;
+  }
 
   const int descriptor = socket(AF_UNIX, SOCK_STREAM, 0);
   if (descriptor < 0) {
     ThrowSystemError(env, "Unix socket creation failed");
     return nullptr;
   }
-  const auto close_on_error = [descriptor](const char* message) {
+  bool socket_bound = false;
+  const auto close_on_error = [descriptor, &socket_bound, &address](const char* message) {
     close(descriptor);
+    if (socket_bound) unlink(address.sun_path);
     return message;
   };
   if (fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) {
@@ -971,8 +1108,24 @@ napi_value CreateUnixListener(napi_env env, napi_callback_info info) {
     ThrowSystemError(env, close_on_error("Unix socket bind failed"));
     return nullptr;
   }
-  if (chmod(address.sun_path, S_IRUSR | S_IWUSR) != 0) {
+  socket_bound = true;
+  if (peer_group_id >= 0 && chown(address.sun_path, static_cast<uid_t>(-1), static_cast<gid_t>(peer_group_id)) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket peer-group setup failed"));
+    return nullptr;
+  }
+  if (peer_user_id >= 0 && geteuid() == 0 && chown(address.sun_path, 0, 0) != 0) {
+    ThrowSystemError(env, close_on_error("Unix socket owner setup failed"));
+    return nullptr;
+  }
+  const mode_t socket_mode = peer_group_id >= 0
+      ? static_cast<mode_t>(S_IRUSR | S_IWUSR | S_IWGRP)
+      : static_cast<mode_t>(S_IRUSR | S_IWUSR);
+  if (chmod(address.sun_path, socket_mode) != 0) {
     ThrowSystemError(env, close_on_error("Unix socket permission setup failed"));
+    return nullptr;
+  }
+  if (peer_user_id >= 0 && !SetSocketPeerUserAcl(address.sun_path, static_cast<uid_t>(peer_user_id))) {
+    ThrowSystemError(env, close_on_error("Unix socket peer-user ACL setup failed"));
     return nullptr;
   }
   if (listen(descriptor, backlog) != 0) {
@@ -987,6 +1140,42 @@ napi_value CreateUnixListener(napi_env env, napi_callback_info info) {
 
   napi_value result;
   napi_create_int32(env, descriptor, &result);
+  return result;
+}
+
+napi_value GetUnixSocketAclPeerUid(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "getUnixSocketAclPeerUid requires a socket path");
+    return nullptr;
+  }
+  char path[PATH_MAX]{};
+  uid_t peer_uid = 0;
+  if (!ReadString(env, args[0], path, sizeof(path)) || !ReadSocketPeerUserAcl(path, &peer_uid)) {
+    napi_throw_error(env, nullptr, "Unix socket user ACL is unavailable or unsafe");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_uint32(env, static_cast<uint32_t>(peer_uid), &result);
+  return result;
+}
+
+napi_value HasUnixPathExtendedAclEntries(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "hasExtendedAclEntries requires a filesystem path");
+    return nullptr;
+  }
+  char path[PATH_MAX]{};
+  bool has_entries = false;
+  if (!ReadString(env, args[0], path, sizeof(path)) || !mop::HasExtendedAclEntries(path, &has_entries)) {
+    napi_throw_error(env, nullptr, "Filesystem extended ACL readback is unavailable");
+    return nullptr;
+  }
+  napi_value result;
+  napi_get_boolean(env, has_entries, &result);
   return result;
 }
 
@@ -1078,6 +1267,354 @@ napi_value CloseUnixDescriptor(napi_env env, napi_callback_info info) {
   napi_value undefined_value;
   napi_get_undefined(env, &undefined_value);
   return undefined_value;
+}
+
+constexpr size_t kDescriptorHandoffHeaderBytes = 12;
+constexpr size_t kDescriptorHandoffMaxPayloadBytes = 64 * 1024;
+constexpr size_t kDescriptorHandoffMaxDescriptors = 4;
+// XNU bounds SCM_RIGHTS descriptors to 512 per mbuf; receiving at that cap
+// lets rejected over-limit frames close every descriptor the kernel installs.
+constexpr size_t kDarwinMaxScmRightsDescriptors = 512;
+constexpr unsigned char kDescriptorHandoffVersion = 1;
+constexpr char kDescriptorHandoffMagic[] = "MOPH";
+constexpr int32_t kDescriptorHandoffDefaultTimeoutMs = 5'000;
+constexpr int32_t kDescriptorHandoffMaxTimeoutMs = 30'000;
+
+bool IsDescriptorHandoffSocket(int descriptor) {
+  int socket_type = 0;
+  socklen_t socket_type_length = sizeof(socket_type);
+  return getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type, &socket_type_length) == 0 &&
+      socket_type_length == sizeof(socket_type) && socket_type == SOCK_STREAM;
+}
+
+void CloseDescriptors(const std::vector<int>& descriptors) {
+  for (const int descriptor : descriptors) {
+    if (descriptor >= 0) close(descriptor);
+  }
+}
+
+bool ReadDescriptorArray(napi_env env, napi_value value, std::vector<int>* descriptors) {
+  if (descriptors == nullptr) return false;
+  bool is_array = false;
+  if (napi_is_array(env, value, &is_array) != napi_ok || !is_array) return false;
+  uint32_t length = 0;
+  if (napi_get_array_length(env, value, &length) != napi_ok ||
+      length < 1 || length > kDescriptorHandoffMaxDescriptors) return false;
+  descriptors->clear();
+  descriptors->reserve(length);
+  for (uint32_t index = 0; index < length; ++index) {
+    napi_value item;
+    if (napi_get_element(env, value, index, &item) != napi_ok) return false;
+    int descriptor = -1;
+    if (!ReadDescriptor(env, item, &descriptor) || fcntl(descriptor, F_GETFD) < 0) return false;
+    if (std::find(descriptors->begin(), descriptors->end(), descriptor) != descriptors->end()) return false;
+    descriptors->push_back(descriptor);
+  }
+  return true;
+}
+
+napi_value CreateDescriptorHandoffSocketPair(napi_env env, napi_callback_info info) {
+  size_t argc = 0;
+  if (napi_get_cb_info(env, info, &argc, nullptr, nullptr, nullptr) != napi_ok || argc != 0) {
+    napi_throw_type_error(env, nullptr, "createDescriptorHandoffSocketPair takes no arguments");
+    return nullptr;
+  }
+  int sockets[2] = {-1, -1};
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0) {
+    ThrowSystemError(env, "Descriptor handoff socket pair creation failed");
+    return nullptr;
+  }
+  const auto close_on_error = [&]() {
+    if (sockets[0] >= 0) close(sockets[0]);
+    if (sockets[1] >= 0) close(sockets[1]);
+  };
+  if (fcntl(sockets[0], F_SETFD, FD_CLOEXEC) != 0 || fcntl(sockets[1], F_SETFD, FD_CLOEXEC) != 0) {
+    close_on_error();
+    ThrowSystemError(env, "Descriptor handoff socket close-on-exec setup failed");
+    return nullptr;
+  }
+  int no_sigpipe = 1;
+  if (setsockopt(sockets[0], SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe)) != 0 ||
+      setsockopt(sockets[1], SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe)) != 0) {
+    close_on_error();
+    ThrowSystemError(env, "Descriptor handoff socket SIGPIPE protection setup failed");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_array_with_length(env, 2, &result);
+  for (size_t index = 0; index < 2; ++index) {
+    napi_value descriptor;
+    napi_create_int32(env, sockets[index], &descriptor);
+    napi_set_element(env, result, index, descriptor);
+  }
+  return result;
+}
+
+napi_value SendDescriptorHandoff(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+    napi_throw_type_error(env, nullptr, "sendDescriptorHandoff requires a socket descriptor, payload, and descriptors");
+    return nullptr;
+  }
+  int socket_descriptor = -1;
+  if (!ReadDescriptor(env, args[0], &socket_descriptor) || !IsDescriptorHandoffSocket(socket_descriptor)) {
+    napi_throw_type_error(env, nullptr, "Descriptor handoff socket must be an AF_UNIX SOCK_STREAM descriptor");
+    return nullptr;
+  }
+  bool is_buffer = false;
+  if (napi_is_buffer(env, args[1], &is_buffer) != napi_ok || !is_buffer) {
+    napi_throw_type_error(env, nullptr, "Descriptor handoff payload must be a Buffer");
+    return nullptr;
+  }
+  void* payload_data = nullptr;
+  size_t payload_length = 0;
+  if (napi_get_buffer_info(env, args[1], &payload_data, &payload_length) != napi_ok ||
+      payload_length > kDescriptorHandoffMaxPayloadBytes) {
+    napi_throw_range_error(env, nullptr, "Descriptor handoff payload exceeds the byte limit");
+    return nullptr;
+  }
+  std::vector<int> descriptors;
+  if (!ReadDescriptorArray(env, args[2], &descriptors)) {
+    napi_throw_type_error(env, nullptr, "Descriptor handoff descriptor list is malformed");
+    return nullptr;
+  }
+
+  std::vector<unsigned char> frame(kDescriptorHandoffHeaderBytes + payload_length);
+  memcpy(frame.data(), kDescriptorHandoffMagic, 4);
+  frame[4] = kDescriptorHandoffVersion;
+  frame[5] = static_cast<unsigned char>(descriptors.size());
+  frame[6] = 0;
+  frame[7] = 0;
+  const uint32_t encoded_length = htonl(static_cast<uint32_t>(payload_length));
+  memcpy(frame.data() + 8, &encoded_length, sizeof(encoded_length));
+  if (payload_length > 0) memcpy(frame.data() + kDescriptorHandoffHeaderBytes, payload_data, payload_length);
+
+  struct iovec outgoing_iovec{};
+  outgoing_iovec.iov_base = frame.data();
+  outgoing_iovec.iov_len = frame.size();
+  char outgoing_control[CMSG_SPACE(sizeof(int) * kDescriptorHandoffMaxDescriptors)] = {};
+  struct msghdr outgoing_message{};
+  outgoing_message.msg_iov = &outgoing_iovec;
+  outgoing_message.msg_iovlen = 1;
+  outgoing_message.msg_control = outgoing_control;
+  outgoing_message.msg_controllen = CMSG_SPACE(sizeof(int) * descriptors.size());
+  struct cmsghdr* outgoing_header = CMSG_FIRSTHDR(&outgoing_message);
+  if (outgoing_header == nullptr) {
+    ThrowSystemError(env, "Descriptor handoff ancillary message could not be created");
+    return nullptr;
+  }
+  outgoing_header->cmsg_level = SOL_SOCKET;
+  outgoing_header->cmsg_type = SCM_RIGHTS;
+  outgoing_header->cmsg_len = CMSG_LEN(sizeof(int) * descriptors.size());
+  memcpy(CMSG_DATA(outgoing_header), descriptors.data(), sizeof(int) * descriptors.size());
+  const ssize_t sent_bytes = sendmsg(socket_descriptor, &outgoing_message, 0);
+  if (sent_bytes != static_cast<ssize_t>(frame.size())) {
+    ThrowSystemError(env, "Descriptor handoff frame send failed");
+    return nullptr;
+  }
+  if (shutdown(socket_descriptor, SHUT_WR) != 0) {
+    ThrowSystemError(env, "Descriptor handoff write side close failed");
+    return nullptr;
+  }
+  napi_value undefined_value;
+  napi_get_undefined(env, &undefined_value);
+  return undefined_value;
+}
+
+napi_value ReceiveDescriptorHandoff(napi_env env, napi_callback_info info) {
+  size_t argc = 4;
+  napi_value args[4];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || (argc != 3 && argc != 4)) {
+    napi_throw_type_error(env, nullptr, "receiveDescriptorHandoff requires a socket descriptor, max payload bytes, descriptor count, and optional timeout");
+    return nullptr;
+  }
+  int socket_descriptor = -1;
+  if (!ReadDescriptor(env, args[0], &socket_descriptor) || !IsDescriptorHandoffSocket(socket_descriptor)) {
+    napi_throw_type_error(env, nullptr, "Descriptor handoff socket must be an AF_UNIX SOCK_STREAM descriptor");
+    return nullptr;
+  }
+  int32_t max_payload_bytes = 0;
+  int32_t expected_descriptor_count = 0;
+  int32_t timeout_ms = kDescriptorHandoffDefaultTimeoutMs;
+  if (napi_get_value_int32(env, args[1], &max_payload_bytes) != napi_ok ||
+      max_payload_bytes < 0 || static_cast<size_t>(max_payload_bytes) > kDescriptorHandoffMaxPayloadBytes ||
+      napi_get_value_int32(env, args[2], &expected_descriptor_count) != napi_ok ||
+      expected_descriptor_count < 1 || static_cast<size_t>(expected_descriptor_count) > kDescriptorHandoffMaxDescriptors ||
+      (argc == 4 && (napi_get_value_int32(env, args[3], &timeout_ms) != napi_ok ||
+          timeout_ms < 25 || timeout_ms > kDescriptorHandoffMaxTimeoutMs))) {
+    napi_throw_range_error(env, nullptr, "Descriptor handoff receive limits are invalid");
+    return nullptr;
+  }
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  const auto wait_for_readable = [&]() -> bool {
+    while (true) {
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline - std::chrono::steady_clock::now()).count();
+      if (remaining <= 0) return false;
+      struct pollfd poll_descriptor{};
+      poll_descriptor.fd = socket_descriptor;
+      poll_descriptor.events = POLLIN | POLLHUP | POLLERR;
+      const int poll_result = poll(&poll_descriptor, 1, static_cast<int>(remaining));
+      if (poll_result > 0) {
+        return (poll_descriptor.revents & (POLLIN | POLLHUP | POLLERR)) != 0 &&
+            (poll_descriptor.revents & POLLNVAL) == 0;
+      }
+      if (poll_result == 0) return false;
+      if (errno == EINTR) continue;
+      return false;
+    }
+  };
+
+  const auto receive_with_deadline = [&](void* buffer, size_t length, int flags) -> ssize_t {
+    while (true) {
+      if (!wait_for_readable()) return -2;
+      const ssize_t received = recv(socket_descriptor, buffer, length, flags | MSG_DONTWAIT);
+      if (received >= 0) return received;
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+      return -1;
+    }
+  };
+
+  std::vector<unsigned char> frame(kDescriptorHandoffHeaderBytes + static_cast<size_t>(max_payload_bytes));
+  struct iovec incoming_iovec{};
+  incoming_iovec.iov_base = frame.data();
+  incoming_iovec.iov_len = frame.size();
+  char incoming_control[CMSG_SPACE(sizeof(int) * kDarwinMaxScmRightsDescriptors)] = {};
+  struct msghdr incoming_message{};
+  incoming_message.msg_iov = &incoming_iovec;
+  incoming_message.msg_iovlen = 1;
+  incoming_message.msg_control = incoming_control;
+  incoming_message.msg_controllen = sizeof(incoming_control);
+  ssize_t first_received_bytes = -1;
+  while (true) {
+    if (!wait_for_readable()) {
+      ThrowSystemError(env, "Descriptor handoff frame receive timed out");
+      return nullptr;
+    }
+    first_received_bytes = recvmsg(socket_descriptor, &incoming_message, MSG_DONTWAIT);
+    if (first_received_bytes >= 0) break;
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+    break;
+  }
+  if (first_received_bytes <= 0) {
+    ThrowSystemError(env, first_received_bytes == -2
+        ? "Descriptor handoff frame receive timed out"
+        : "Descriptor handoff frame receive failed");
+    return nullptr;
+  }
+  size_t received_bytes = static_cast<size_t>(first_received_bytes);
+  std::vector<int> descriptors;
+  std::vector<int> ancillary_descriptors;
+  const auto reject_frame = [&](const char* message) -> napi_value {
+    CloseDescriptors(descriptors);
+    CloseDescriptors(ancillary_descriptors);
+    ThrowSystemError(env, message);
+    return nullptr;
+  };
+  bool malformed_ancillary_data = false;
+  for (struct cmsghdr* header = CMSG_FIRSTHDR(&incoming_message); header != nullptr; header = CMSG_NXTHDR(&incoming_message, header)) {
+    if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS) {
+      malformed_ancillary_data = true;
+      continue;
+    }
+    const size_t control_offset = static_cast<size_t>(
+        reinterpret_cast<const unsigned char*>(header) - reinterpret_cast<const unsigned char*>(incoming_control));
+    const size_t header_length = CMSG_LEN(0);
+    if (control_offset > incoming_message.msg_controllen || header->cmsg_len < header_length) {
+      malformed_ancillary_data = true;
+      continue;
+    }
+    const size_t control_bytes_remaining = incoming_message.msg_controllen - control_offset;
+    const size_t available_data_bytes = control_bytes_remaining > header_length
+        ? control_bytes_remaining - header_length
+        : 0;
+    const size_t declared_data_bytes = header->cmsg_len - header_length;
+    const size_t readable_data_bytes = std::min(declared_data_bytes, available_data_bytes);
+    const size_t descriptor_count = readable_data_bytes / sizeof(int);
+    if (readable_data_bytes != declared_data_bytes || declared_data_bytes % sizeof(int) != 0 ||
+        header->cmsg_len > CMSG_SPACE(sizeof(int) * kDescriptorHandoffMaxDescriptors) ||
+        descriptor_count == 0 || descriptor_count > kDescriptorHandoffMaxDescriptors ||
+        !ancillary_descriptors.empty()) {
+      malformed_ancillary_data = true;
+    }
+    const auto* received = reinterpret_cast<const unsigned char*>(CMSG_DATA(header));
+    for (size_t index = 0; index < descriptor_count; ++index) {
+      int received_descriptor = -1;
+      memcpy(&received_descriptor, received + index * sizeof(int), sizeof(received_descriptor));
+      if (received_descriptor < 0 ||
+          std::find(ancillary_descriptors.begin(), ancillary_descriptors.end(), received_descriptor) != ancillary_descriptors.end()) {
+        malformed_ancillary_data = true;
+        continue;
+      }
+      ancillary_descriptors.push_back(received_descriptor);
+    }
+  }
+  descriptors.swap(ancillary_descriptors);
+  if ((incoming_message.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) != 0 || malformed_ancillary_data) {
+    return reject_frame("Descriptor handoff ancillary message is malformed");
+  }
+  if (descriptors.empty()) return reject_frame("Descriptor handoff descriptor list is missing");
+
+  uint32_t payload_length = 0;
+  size_t expected_frame_length = 0;
+  while (true) {
+    if (received_bytes >= kDescriptorHandoffHeaderBytes) {
+      if (memcmp(frame.data(), kDescriptorHandoffMagic, 4) != 0 ||
+          frame[4] != kDescriptorHandoffVersion || frame[6] != 0 || frame[7] != 0) {
+        return reject_frame("Descriptor handoff frame header is malformed");
+      }
+      uint32_t encoded_length = 0;
+      memcpy(&encoded_length, frame.data() + 8, sizeof(encoded_length));
+      payload_length = ntohl(encoded_length);
+      expected_frame_length = kDescriptorHandoffHeaderBytes + static_cast<size_t>(payload_length);
+      if (frame[5] != descriptors.size() || frame[5] != static_cast<unsigned char>(expected_descriptor_count) ||
+          payload_length > static_cast<uint32_t>(max_payload_bytes) || expected_frame_length > frame.size()) {
+        return reject_frame("Descriptor handoff frame length or descriptor count is invalid");
+      }
+      if (received_bytes > expected_frame_length) {
+        return reject_frame("Descriptor handoff frame has trailing bytes");
+      }
+      if (received_bytes == expected_frame_length) break;
+    }
+    if (received_bytes == frame.size()) return reject_frame("Descriptor handoff frame is incomplete");
+    const ssize_t additional_bytes = receive_with_deadline(frame.data() + received_bytes,
+        frame.size() - received_bytes, 0);
+    if (additional_bytes == -2) return reject_frame("Descriptor handoff frame receive timed out");
+    if (additional_bytes <= 0) return reject_frame("Descriptor handoff frame ended before its declared length");
+    received_bytes += static_cast<size_t>(additional_bytes);
+  }
+  unsigned char trailing_byte = 0;
+  const ssize_t trailing_bytes = receive_with_deadline(&trailing_byte, sizeof(trailing_byte), 0);
+  if (trailing_bytes == -2) return reject_frame("Descriptor handoff stream close timed out");
+  if (trailing_bytes < 0) return reject_frame("Descriptor handoff stream close could not be observed");
+  if (trailing_bytes != 0) return reject_frame("Descriptor handoff stream contains trailing bytes");
+  for (const int descriptor : descriptors) {
+    if (fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0 ||
+        (fcntl(descriptor, F_GETFD) & FD_CLOEXEC) == 0) {
+      return reject_frame("Received descriptor close-on-exec setup failed");
+    }
+  }
+
+  napi_value result;
+  napi_value payload;
+  if (napi_create_buffer_copy(env, payload_length, frame.data() + kDescriptorHandoffHeaderBytes, nullptr, &payload) != napi_ok ||
+      napi_create_object(env, &result) != napi_ok) {
+    CloseDescriptors(descriptors);
+    ThrowSystemError(env, "Descriptor handoff frame could not be returned");
+    return nullptr;
+  }
+  napi_value descriptor_array;
+  napi_create_array_with_length(env, descriptors.size(), &descriptor_array);
+  for (size_t index = 0; index < descriptors.size(); ++index) {
+    napi_value descriptor;
+    napi_create_int32(env, descriptors[index], &descriptor);
+    napi_set_element(env, descriptor_array, index, descriptor);
+  }
+  napi_set_named_property(env, result, "payload", payload);
+  napi_set_named_property(env, result, "descriptors", descriptor_array);
+  return result;
 }
 
 napi_value InspectNetwork(napi_env env, napi_callback_info info) {
@@ -2905,6 +3442,31 @@ napi_value GetProcessIdentity(napi_env env, napi_callback_info info) {
   return result;
 }
 
+napi_value GetProcessCredentials(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "getProcessCredentials requires pid");
+    return nullptr;
+  }
+  int32_t requested_pid = 0;
+  if (napi_get_value_int32(env, args[0], &requested_pid) != napi_ok || requested_pid < 1 || requested_pid > 99'999'999) {
+    napi_throw_type_error(env, nullptr, "Process pid must be between 1 and 99999999");
+    return nullptr;
+  }
+  struct proc_bsdinfo bsd_info{};
+  if (proc_pidinfo(static_cast<pid_t>(requested_pid), PROC_PIDTBSDINFO, 0, &bsd_info, sizeof(bsd_info)) != sizeof(bsd_info)) {
+    ThrowSystemError(env, "Process credentials could not be read");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  SetNumber(env, result, "uid", static_cast<double>(bsd_info.pbi_uid));
+  SetNumber(env, result, "gid", static_cast<double>(bsd_info.pbi_gid));
+  SetNumber(env, result, "pid", static_cast<double>(bsd_info.pbi_pid));
+  return result;
+}
+
 napi_value GetProcessLaunchCapability(napi_env env, napi_callback_info info) {
   size_t argc = 0;
   if (napi_get_cb_info(env, info, &argc, nullptr, nullptr, nullptr) != napi_ok || argc != 0) {
@@ -2920,6 +3482,264 @@ napi_value GetProcessLaunchCapability(napi_env env, napi_callback_info info) {
   SetString(env, result, "immutableSelection", "unproven");
   SetString(env, result, "closeOnExec", "unproven");
   SetString(env, result, "evidenceRef", "mac-operator-native-descriptor-exec-unavailable-v1");
+  return result;
+}
+
+struct FexecveProbeResult {
+  const char* symbol;
+  const char* execution;
+};
+
+struct DescriptorPathExecProbeResult {
+  const char* open;
+  const char* execution;
+};
+
+FexecveProbeResult ProbeFexecve() {
+  using FexecveFunction = int (*)(int, char* const[], char* const[]);
+  void* symbol = dlsym(RTLD_DEFAULT, "fexecve");
+  if (symbol == nullptr) return {"absent", "unavailable"};
+  const auto fexecve_function = reinterpret_cast<FexecveFunction>(symbol);
+  const int executable_descriptor = open("/usr/bin/true", O_RDONLY);
+  if (executable_descriptor < 0) return {"present", "open-failed"};
+  const pid_t child = fork();
+  if (child < 0) {
+    close(executable_descriptor);
+    return {"present", "fork-failed"};
+  }
+  if (child == 0) {
+    const int descriptor_flags = fcntl(executable_descriptor, F_GETFD);
+    if (descriptor_flags < 0 || fcntl(executable_descriptor, F_SETFD, descriptor_flags & ~FD_CLOEXEC) != 0) {
+      _exit(125);
+    }
+    char argument_zero[] = "/usr/bin/true";
+    char* arguments[] = {argument_zero, nullptr};
+    char* environment[] = {nullptr};
+    fexecve_function(executable_descriptor, arguments, environment);
+    _exit(126);
+  }
+  close(executable_descriptor);
+  int status = 0;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  for (;;) {
+    const pid_t waited = waitpid(child, &status, WNOHANG);
+    if (waited == child) {
+      return {"present", WIFEXITED(status) && WEXITSTATUS(status) == 0 ? "passed" : "failed"};
+    }
+    if (waited < 0) return {"present", "wait-failed"};
+    if (std::chrono::steady_clock::now() >= deadline) {
+      kill(child, SIGKILL);
+      waitpid(child, &status, 0);
+      return {"present", "timeout"};
+    }
+    usleep(1000);
+  }
+}
+
+DescriptorPathExecProbeResult ProbeDescriptorPathExec() {
+  const int executable_descriptor = open("/usr/bin/true", O_EXEC | O_CLOEXEC);
+  if (executable_descriptor < 0) return {"failed", "open-failed"};
+  const pid_t child = fork();
+  if (child < 0) {
+    close(executable_descriptor);
+    return {"passed", "fork-failed"};
+  }
+  if (child == 0) {
+    const int descriptor_flags = fcntl(executable_descriptor, F_GETFD);
+    if (descriptor_flags < 0 || fcntl(executable_descriptor, F_SETFD, descriptor_flags & ~FD_CLOEXEC) != 0) {
+      _exit(125);
+    }
+    char descriptor_path[64] = {};
+    if (snprintf(descriptor_path, sizeof(descriptor_path), "/dev/fd/%d", executable_descriptor) < 0) {
+      _exit(125);
+    }
+    char argument_zero[64] = {};
+    if (strlcpy(argument_zero, descriptor_path, sizeof(argument_zero)) >= sizeof(argument_zero)) {
+      _exit(125);
+    }
+    char* arguments[] = {argument_zero, nullptr};
+    char* environment[] = {nullptr};
+    execve(descriptor_path, arguments, environment);
+    _exit(126);
+  }
+  close(executable_descriptor);
+  int status = 0;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  for (;;) {
+    const pid_t waited = waitpid(child, &status, WNOHANG);
+    if (waited == child) {
+      return {"passed", WIFEXITED(status) && WEXITSTATUS(status) == 0 ? "passed" : "failed"};
+    }
+    if (waited < 0) return {"passed", "wait-failed"};
+    if (std::chrono::steady_clock::now() >= deadline) {
+      kill(child, SIGKILL);
+      waitpid(child, &status, 0);
+      return {"passed", "timeout"};
+    }
+    usleep(1000);
+  }
+}
+
+napi_value GetDescriptorExecProbe(napi_env env, napi_callback_info info) {
+  size_t argc = 0;
+  if (napi_get_cb_info(env, info, &argc, nullptr, nullptr, nullptr) != napi_ok || argc != 0) {
+    napi_throw_type_error(env, nullptr, "getDescriptorExecProbe takes no arguments");
+    return nullptr;
+  }
+  const FexecveProbeResult probe = ProbeFexecve();
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "schemaVersion", "0.1");
+  SetString(env, result, "mechanism", "darwin-descriptor-exec-probe-v1");
+  SetString(env, result, "fexecveSymbol", probe.symbol);
+  SetString(env, result, "fexecveExecution", probe.execution);
+  SetString(env, result, "execveatSymbol", "absent");
+  const bool passed = strcmp(probe.execution, "passed") == 0;
+  SetString(env, result, "executableCoverage", passed
+      ? "single-fixed-executable" : "unproven");
+  SetString(env, result, "immutableSelection", passed
+      ? "single-fixed-executable" : "unproven");
+  const DescriptorPathExecProbeResult descriptor_path_probe = ProbeDescriptorPathExec();
+  SetString(env, result, "descriptorPathOpen", descriptor_path_probe.open);
+  SetString(env, result, "descriptorPathExecution", descriptor_path_probe.execution);
+  SetString(env, result, "evidenceRef", "mac-operator-native-descriptor-exec-probe-v1");
+  return result;
+}
+
+bool VerifyDescriptorHandoffTransport() {
+  int sockets[2] = {-1, -1};
+  int source_descriptor = -1;
+  int received_descriptor = -1;
+  const auto close_all = [&]() {
+    if (received_descriptor >= 0) close(received_descriptor);
+    if (source_descriptor >= 0) close(source_descriptor);
+    if (sockets[0] >= 0) close(sockets[0]);
+    if (sockets[1] >= 0) close(sockets[1]);
+  };
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0) {
+    close_all();
+    return false;
+  }
+  if (fcntl(sockets[0], F_SETFD, FD_CLOEXEC) != 0 || fcntl(sockets[1], F_SETFD, FD_CLOEXEC) != 0) {
+    close_all();
+    return false;
+  }
+  source_descriptor = open("/dev/null", O_RDONLY | O_CLOEXEC);
+  if (source_descriptor < 0) {
+    close_all();
+    return false;
+  }
+  struct stat source_stat{};
+  if (fstat(source_descriptor, &source_stat) != 0) {
+    close_all();
+    return false;
+  }
+
+  const unsigned char marker[] = {'m', 'o', 'p', '-', 'f', 'd', '-', 'v', '1'};
+  struct iovec outgoing_iovec{};
+  outgoing_iovec.iov_base = const_cast<unsigned char*>(marker);
+  outgoing_iovec.iov_len = sizeof(marker);
+  char outgoing_control[CMSG_SPACE(sizeof(int))] = {};
+  struct msghdr outgoing_message{};
+  outgoing_message.msg_iov = &outgoing_iovec;
+  outgoing_message.msg_iovlen = 1;
+  outgoing_message.msg_control = outgoing_control;
+  outgoing_message.msg_controllen = sizeof(outgoing_control);
+  struct cmsghdr* outgoing_header = CMSG_FIRSTHDR(&outgoing_message);
+  if (outgoing_header == nullptr) {
+    close_all();
+    return false;
+  }
+  outgoing_header->cmsg_level = SOL_SOCKET;
+  outgoing_header->cmsg_type = SCM_RIGHTS;
+  outgoing_header->cmsg_len = CMSG_LEN(sizeof(int));
+  memcpy(CMSG_DATA(outgoing_header), &source_descriptor, sizeof(source_descriptor));
+  if (sendmsg(sockets[0], &outgoing_message, 0) != static_cast<ssize_t>(sizeof(marker))) {
+    close_all();
+    return false;
+  }
+
+  unsigned char received_marker[sizeof(marker)] = {};
+  struct iovec incoming_iovec{};
+  incoming_iovec.iov_base = received_marker;
+  incoming_iovec.iov_len = sizeof(received_marker);
+  char incoming_control[CMSG_SPACE(sizeof(int))] = {};
+  struct msghdr incoming_message{};
+  incoming_message.msg_iov = &incoming_iovec;
+  incoming_message.msg_iovlen = 1;
+  incoming_message.msg_control = incoming_control;
+  incoming_message.msg_controllen = sizeof(incoming_control);
+  const ssize_t received_bytes = recvmsg(sockets[1], &incoming_message, 0);
+  if (received_bytes != static_cast<ssize_t>(sizeof(marker)) ||
+      memcmp(received_marker, marker, sizeof(marker)) != 0 ||
+      (incoming_message.msg_flags & MSG_CTRUNC) != 0) {
+    close_all();
+    return false;
+  }
+  int descriptor_count = 0;
+  for (struct cmsghdr* header = CMSG_FIRSTHDR(&incoming_message); header != nullptr; header = CMSG_NXTHDR(&incoming_message, header)) {
+    if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS ||
+        header->cmsg_len != CMSG_LEN(sizeof(int))) {
+      close_all();
+      return false;
+    }
+    memcpy(&received_descriptor, CMSG_DATA(header), sizeof(received_descriptor));
+    descriptor_count += 1;
+  }
+  if (descriptor_count != 1 || received_descriptor < 0 ||
+      fcntl(received_descriptor, F_SETFD, FD_CLOEXEC) != 0) {
+    close_all();
+    return false;
+  }
+  const int descriptor_flags = fcntl(received_descriptor, F_GETFD);
+  struct stat received_stat{};
+  const bool identity_matches = descriptor_flags >= 0 && (descriptor_flags & FD_CLOEXEC) != 0 &&
+    fstat(received_descriptor, &received_stat) == 0 &&
+    received_stat.st_dev == source_stat.st_dev && received_stat.st_ino == source_stat.st_ino &&
+    (received_stat.st_mode & S_IFMT) == (source_stat.st_mode & S_IFMT);
+  close_all();
+  return identity_matches;
+}
+
+napi_value GetDescriptorHandoffCapability(napi_env env, napi_callback_info info) {
+  size_t argc = 0;
+  if (napi_get_cb_info(env, info, &argc, nullptr, nullptr, nullptr) != napi_ok || argc != 0) {
+    napi_throw_type_error(env, nullptr, "getDescriptorHandoffCapability takes no arguments");
+    return nullptr;
+  }
+  const bool available = VerifyDescriptorHandoffTransport();
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "schemaVersion", "0.1");
+  SetString(env, result, "mechanism", "darwin-scm-rights-v1");
+  SetBoolean(env, result, "available", available);
+  SetString(env, result, "fdTransfer", available ? "verified" : "unproven");
+  SetString(env, result, "fdCloseOnExec", available ? "verified" : "unproven");
+  SetString(env, result, "peerAuthentication", "unproven");
+  SetString(env, result, "immutableSelection", "unproven");
+  SetString(env, result, "evidenceRef", "mac-operator-native-scm-rights-probe-v1");
+  return result;
+}
+
+napi_value GetDescriptorPath(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+    napi_throw_type_error(env, nullptr, "getDescriptorPath requires one descriptor");
+    return nullptr;
+  }
+  int descriptor = -1;
+  if (!ReadDescriptor(env, args[0], &descriptor)) {
+    napi_throw_type_error(env, nullptr, "Descriptor must be a non-negative integer");
+    return nullptr;
+  }
+  char path[PATH_MAX] = {};
+  if (fcntl(descriptor, F_GETPATH, path) != 0 || path[0] == '\0') {
+    ThrowSystemError(env, "Descriptor path lookup failed");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_string_utf8(env, path, NAPI_AUTO_LENGTH, &result);
   return result;
 }
 
@@ -3033,10 +3853,20 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "getPeerCredentials", function);
   napi_create_function(env, "createUnixListener", NAPI_AUTO_LENGTH, CreateUnixListener, nullptr, &function);
   napi_set_named_property(env, exports, "createUnixListener", function);
+  napi_create_function(env, "getUnixSocketAclPeerUid", NAPI_AUTO_LENGTH, GetUnixSocketAclPeerUid, nullptr, &function);
+  napi_set_named_property(env, exports, "getUnixSocketAclPeerUid", function);
+  napi_create_function(env, "hasExtendedAclEntries", NAPI_AUTO_LENGTH, HasUnixPathExtendedAclEntries, nullptr, &function);
+  napi_set_named_property(env, exports, "hasExtendedAclEntries", function);
   napi_create_function(env, "acceptUnixClient", NAPI_AUTO_LENGTH, AcceptUnixClient, nullptr, &function);
   napi_set_named_property(env, exports, "acceptUnixClient", function);
   napi_create_function(env, "closeUnixDescriptor", NAPI_AUTO_LENGTH, CloseUnixDescriptor, nullptr, &function);
   napi_set_named_property(env, exports, "closeUnixDescriptor", function);
+  napi_create_function(env, "createDescriptorHandoffSocketPair", NAPI_AUTO_LENGTH, CreateDescriptorHandoffSocketPair, nullptr, &function);
+  napi_set_named_property(env, exports, "createDescriptorHandoffSocketPair", function);
+  napi_create_function(env, "sendDescriptorHandoff", NAPI_AUTO_LENGTH, SendDescriptorHandoff, nullptr, &function);
+  napi_set_named_property(env, exports, "sendDescriptorHandoff", function);
+  napi_create_function(env, "receiveDescriptorHandoff", NAPI_AUTO_LENGTH, ReceiveDescriptorHandoff, nullptr, &function);
+  napi_set_named_property(env, exports, "receiveDescriptorHandoff", function);
   napi_create_function(env, "inspectNetwork", NAPI_AUTO_LENGTH, InspectNetwork, nullptr, &function);
   napi_set_named_property(env, exports, "inspectNetwork", function);
   napi_create_function(env, "statPathWithinRoot", NAPI_AUTO_LENGTH, StatPathWithinRoot, nullptr, &function);
@@ -3071,8 +3901,16 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "isProcessIdentityAlive", function);
   napi_create_function(env, "getProcessIdentity", NAPI_AUTO_LENGTH, GetProcessIdentity, nullptr, &function);
   napi_set_named_property(env, exports, "getProcessIdentity", function);
+  napi_create_function(env, "getProcessCredentials", NAPI_AUTO_LENGTH, GetProcessCredentials, nullptr, &function);
+  napi_set_named_property(env, exports, "getProcessCredentials", function);
   napi_create_function(env, "getProcessLaunchCapability", NAPI_AUTO_LENGTH, GetProcessLaunchCapability, nullptr, &function);
   napi_set_named_property(env, exports, "getProcessLaunchCapability", function);
+  napi_create_function(env, "getDescriptorExecProbe", NAPI_AUTO_LENGTH, GetDescriptorExecProbe, nullptr, &function);
+  napi_set_named_property(env, exports, "getDescriptorExecProbe", function);
+  napi_create_function(env, "getDescriptorHandoffCapability", NAPI_AUTO_LENGTH, GetDescriptorHandoffCapability, nullptr, &function);
+  napi_set_named_property(env, exports, "getDescriptorHandoffCapability", function);
+  napi_create_function(env, "getDescriptorPath", NAPI_AUTO_LENGTH, GetDescriptorPath, nullptr, &function);
+  napi_set_named_property(env, exports, "getDescriptorPath", function);
   napi_create_function(env, "readKeychainGenericPassword", NAPI_AUTO_LENGTH, ReadKeychainGenericPassword, nullptr, &function);
   napi_set_named_property(env, exports, "readKeychainGenericPassword", function);
   napi_create_function(env, "inspectKeychainGenericPassword", NAPI_AUTO_LENGTH, InspectKeychainGenericPassword, nullptr, &function);

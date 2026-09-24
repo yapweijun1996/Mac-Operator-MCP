@@ -368,7 +368,7 @@ interface ProtectedFile {
   stat: Awaited<ReturnType<typeof lstat>>;
 }
 
-async function validateProtectedDirectory(directory: string): Promise<string> {
+export async function validateProtectedDirectory(directory: string): Promise<string> {
   const path = validateAbsolutePath(directory, "Broker persistence directory");
   const stat = await lstat(path).catch(() => undefined);
   if (!stat || !stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || !isOwnedByCurrentUser(stat.uid)) {

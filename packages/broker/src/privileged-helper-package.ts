@@ -1,13 +1,15 @@
-import { lstat } from "node:fs/promises";
+import { lstat, readlink } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { CodeSignatureCommandSpec, CodeSignatureExpectation, CodeSignatureReadback, LaunchdCommandSpec, MacOsPlistReadback } from "./macos-install-plan.js";
 import { parseCodeSignatureDetails, validateCodeSignatureReadback } from "./macos-install-plan.js";
 import { FilesystemInspector, type FilesystemIdentityPrecondition, type FilesystemPathPlan } from "./filesystem-inspector.js";
 import { LaunchdReadbackError, readLaunchdJobReadback, type LaunchdJobReadback, type LaunchdReadbackExecutor } from "./launchd-readback.js";
-import { capturePeerProcessIdentity, type PeerProcessIdentity } from "./peer-credentials.js";
+import { capturePeerProcessIdentity, loadNativePeerAdapter, type PeerProcessIdentity } from "./peer-credentials.js";
+import { validateGroupSocketParentChain, validateUserAclSocketParentChain } from "./owner-socket-path.js";
 import { ProcessSupervisor, type ProcessExecutionRequest, type ProcessExecutionResult } from "./process-supervisor.js";
 import { readPrivilegedHelperStatus, type PrivilegedHelperAdapter, type PrivilegedHelperStatusClientOptions } from "./privileged-helper.js";
+import { privilegedHelperReplayLedgerPath } from "./privileged-helper-replay-ledger.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import {
   buildMacOsNotarizationAssessmentCommand,
@@ -30,7 +32,11 @@ const REVISION_PATTERN = /^[a-f0-9]{40}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/u;
 const CAPABILITY_PATTERN = /^mac_priv_[a-z][a-z0-9_]{0,63}$/u;
 const CAPABILITY_EVIDENCE_PATTERN = /^[A-Za-z0-9._:/-]{1,256}$/u;
-const IMPLEMENTED_HELPER_CAPABILITIES = new Set(["mac_priv_service_control"]);
+const IMPLEMENTED_HELPER_CAPABILITIES = new Set([
+  "mac_priv_package_install",
+  "mac_priv_power",
+  "mac_priv_service_control"
+]);
 const INTERPRETER_NAMES = new Set([
   "bash",
   "csh",
@@ -90,7 +96,7 @@ export interface PrivilegedHelperLaunchdConfig {
 
 export interface PrivilegedHelperBrokerPeerExpectation {
   uid: number;
-  gid?: number;
+  gid: number;
 }
 
 export interface PrivilegedHelperPackagePlanInput {
@@ -188,26 +194,34 @@ export interface PrivilegedHelperPackageReadback {
   processIdentity: PeerProcessIdentity;
   plist: MacOsPlistReadback;
   launchd: PrivilegedHelperLaunchdReadback;
+  helperSocket: PrivilegedHelperSocketReadback;
+  brokerSocket: PrivilegedHelperSocketReadback;
   authoritySocket: PrivilegedHelperAuthoritySocketReadback;
   helper: PrivilegedHelperRuntimeReadback;
   signature: CodeSignatureReadback;
   notarization?: MacOsNotarizationReadback;
 }
 
-export interface PrivilegedHelperAuthoritySocketReadback {
+export interface PrivilegedHelperSocketReadback {
   path: string;
   ownerUid: number;
   ownerGid: number;
   mode: number;
   device: number;
   inode: number;
+  aclPeerUid?: number;
 }
+
+/** Backward-compatible name for the Broker-owned authority socket source. */
+export type PrivilegedHelperAuthoritySocketReadback = PrivilegedHelperSocketReadback;
 
 export interface PrivilegedHelperPackageReadbackSources {
   launchd: LaunchdJobReadback;
   processIdentity: PeerProcessIdentity;
   plist: MacOsPlistReadback;
   helper: PrivilegedHelperRuntimeReadback;
+  helperSocket: PrivilegedHelperSocketReadback;
+  brokerSocket: PrivilegedHelperSocketReadback;
   authoritySocket: PrivilegedHelperAuthoritySocketReadback;
   signature: CodeSignatureReadback;
   notarization?: MacOsNotarizationReadback;
@@ -218,6 +232,8 @@ export interface PrivilegedHelperPackageReadbackObserver {
   readProcessIdentity(pid: number): Promise<PeerProcessIdentity> | PeerProcessIdentity;
   readPlist(plan: PrivilegedHelperPackagePlan): Promise<MacOsPlistReadback>;
   readRuntime(): Promise<PrivilegedHelperRuntimeReadback>;
+  readHelperSocket(plan: PrivilegedHelperPackagePlan): Promise<PrivilegedHelperSocketReadback>;
+  readBrokerSocket(plan: PrivilegedHelperPackagePlan): Promise<PrivilegedHelperSocketReadback>;
   readAuthoritySocket(plan: PrivilegedHelperPackagePlan): Promise<PrivilegedHelperAuthoritySocketReadback>;
   readSignature(): Promise<CodeSignatureReadback>;
   readNotarization?: () => Promise<MacOsNotarizationReadback>;
@@ -231,6 +247,8 @@ export interface PrivilegedHelperPackageHostObserverOptions {
   launchdExecutor?: LaunchdReadbackExecutor;
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
   readPlist?: (plan: PrivilegedHelperPackagePlan) => Promise<MacOsPlistReadback>;
+  readHelperSocket?: (plan: PrivilegedHelperPackagePlan) => Promise<PrivilegedHelperSocketReadback>;
+  readBrokerSocket?: (plan: PrivilegedHelperPackagePlan) => Promise<PrivilegedHelperSocketReadback>;
   readAuthoritySocket?: (plan: PrivilegedHelperPackagePlan) => Promise<PrivilegedHelperAuthoritySocketReadback>;
   readSignature?: (plan: PrivilegedHelperPackagePlan) => Promise<CodeSignatureReadback>;
   notarizationExecutor?: PrivilegedHelperPackageCommandExecutor;
@@ -241,6 +259,7 @@ export interface PrivilegedHelperPackagePlan {
   domain: "system";
   label: typeof HELPER_LABEL;
   helperRoot: string;
+  replayLedgerPath: string;
   plistPath: typeof HELPER_PLIST_PATH;
   signedArtifactPath: string;
   signature: CodeSignatureExpectation;
@@ -382,6 +401,9 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
   if (plistPath !== HELPER_PLIST_PATH) fail("INVALID_ROOT_DOMAIN", "privileged helper must use the exact system LaunchDaemon plist path");
   const service = normalizeService(input.service, helperRoot);
   const signedArtifactPath = canonicalPath(input.signedArtifactPath, "signed helper artifact");
+  if (service.program !== signedArtifactPath && !isDescendant(signedArtifactPath, service.program, false)) {
+    fail("INVALID_PACKAGE_PATH", "privileged helper program must be the signed artifact or reside inside its signed bundle");
+  }
   const helperKeyConfigPath = canonicalPath(input.helperKeyConfigPath, "helper key config");
   const helperSocketPath = canonicalPath(input.helperSocketPath, "helper socket");
   const brokerSocketPath = canonicalPath(input.brokerSocketPath, "Broker socket");
@@ -439,6 +461,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
     domain: "system",
     label: HELPER_LABEL,
     helperRoot,
+    replayLedgerPath: privilegedHelperReplayLedgerPath(helperRoot),
     plistPath: HELPER_PLIST_PATH,
     signedArtifactPath,
     signature,
@@ -446,7 +469,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
     helperSocketPath,
     brokerSocketPath,
     helperAuthoritySocketPath,
-    brokerPeer: { uid: input.brokerPeer.uid, ...(input.brokerPeer.gid === undefined ? {} : { gid: input.brokerPeer.gid }) },
+    brokerPeer: { uid: input.brokerPeer.uid, gid: input.brokerPeer.gid },
     sourceRevision: input.sourceRevision,
     contractVersion: input.contractVersion,
     policyVersion: input.policyVersion,
@@ -467,6 +490,7 @@ export function buildPrivilegedHelperPackagePlan(input: PrivilegedHelperPackageP
       "verify the helper artifact is Developer ID signed with the exact helper identifier before any root-domain write",
       "verify Gatekeeper accepts the helper artifact as notarized Developer ID code for the expected Team ID before any root-domain write",
       "verify helper root, key config, socket parent, executable, and logs are root-owned regular paths with no symlinks or group/other writes",
+      "provision the immediate helper socket directory as root:Broker-primary-group 0710 and the helper socket as root:Broker-primary-group 0620",
       "verify the Broker peer UID/GID and native PID/start-time identity are captured by helper startup before accepting a request",
       "verify the Broker-owned authority socket is distinct from the root helper socket and is authenticated before enabled dispatch",
       operation === "install" ? "verify the exact system LaunchDaemon is absent before installation" :
@@ -690,34 +714,173 @@ export function validatePrivilegedHelperFilesystemReadback(
 }
 
 /**
- * Reads the Broker-owned authority socket as a separate ownership domain.
- * The socket is intentionally not included in the root-owned helper file
- * preflight; only its exact endpoint identity and restricted mode are checked.
+ * Reads a Unix socket twice and returns only stable owner/mode/device/inode
+ * metadata. Runtime socket paths are intentionally not inferred from launchd
+ * or caller input; each endpoint is independently observed before final
+ * package readback is composed.
  */
-export async function readPrivilegedHelperAuthoritySocketReadback(
-  plan: PrivilegedHelperPackagePlan
-): Promise<PrivilegedHelperAuthoritySocketReadback> {
+export async function readPrivilegedHelperSocketReadback(
+  path: string,
+  expectedOwnerUid: number,
+  expectedOwnerGid: number | undefined,
+  label: string,
+  access?: { kind: "group"; peerUid: number; peerGid: number } | { kind: "user-acl"; peerUid: number; peerGid: number }
+): Promise<PrivilegedHelperSocketReadback> {
+  if (!canonicalPath(path, `${label} path`) || !Number.isSafeInteger(expectedOwnerUid) || expectedOwnerUid < 0 ||
+      (expectedOwnerGid !== undefined && (!Number.isSafeInteger(expectedOwnerGid) || expectedOwnerGid < 0)) ||
+      (access !== undefined && (!Number.isSafeInteger(access.peerUid) || access.peerUid < 1 || access.peerUid > 2_147_483_647 ||
+        !Number.isSafeInteger(access.peerGid) || access.peerGid < 0 || access.peerGid > 2_147_483_647 ||
+        (access.kind !== "group" && access.kind !== "user-acl") ||
+        (access.kind === "group" && access.peerGid !== expectedOwnerGid)))) {
+    fail("INVALID_ARGUMENT", `${label} socket readback binding is invalid`);
+  }
+  const native = access?.kind === "user-acl" ? loadNativePeerAdapter() : undefined;
+  if (access === undefined) {
+    await validatePrivilegedHelperSocketParentChain(path, expectedOwnerUid, label);
+  } else if (access.kind === "group") {
+    try {
+      await validateGroupSocketParentChain(path, expectedOwnerUid, access.peerUid, access.peerGid);
+    } catch {
+      fail("SERVICE_MISMATCH", `${label} socket parent chain is unsafe for its peer group`);
+    }
+  } else {
+    try {
+      await validateUserAclSocketParentChain(
+        path,
+        expectedOwnerUid,
+        expectedOwnerGid ?? 0,
+        access.peerUid,
+        access.peerGid
+      );
+    } catch {
+      fail("SERVICE_MISMATCH", `${label} socket parent chain is unsafe for its ACL peer`);
+    }
+  }
   let first;
   let second;
   try {
-    first = await lstat(plan.helperAuthoritySocketPath);
-    second = await lstat(plan.helperAuthoritySocketPath);
+    first = await lstat(path);
+    second = await lstat(path);
   } catch {
-    fail("READBACK_FAILED", "privileged helper authority socket is unavailable");
+    fail("READBACK_FAILED", `${label} socket is unavailable`);
   }
   if (!first.isSocket() || first.isSymbolicLink() || !second.isSocket() || second.isSymbolicLink() ||
       first.uid !== second.uid || first.gid !== second.gid || first.mode !== second.mode ||
       first.dev !== second.dev || first.ino !== second.ino) {
-    fail("SERVICE_MISMATCH", "privileged helper authority socket identity changed during readback");
+    fail("SERVICE_MISMATCH", `${label} socket identity changed during readback`);
+  }
+  const expectedMode = access?.kind === "group" ? 0o620 : 0o600;
+  if (first.uid !== expectedOwnerUid || (expectedOwnerGid !== undefined && first.gid !== expectedOwnerGid) ||
+      (first.mode & 0o777) !== expectedMode) {
+    fail("SERVICE_MISMATCH", `${label} socket ownership or mode is unsafe`);
+  }
+  const aclPeerUid = access?.kind === "user-acl" ? native!.getUnixSocketAclPeerUid(path) : undefined;
+  if (access?.kind === "user-acl" && aclPeerUid !== access.peerUid) {
+    fail("SERVICE_MISMATCH", `${label} socket ACL does not match its authenticated user`);
   }
   return {
-    path: plan.helperAuthoritySocketPath,
+    path,
     ownerUid: first.uid,
     ownerGid: first.gid,
     mode: first.mode & 0o777,
     device: first.dev,
-    inode: first.ino
+    inode: first.ino,
+    ...(typeof aclPeerUid === "number" ? { aclPeerUid } : {})
   };
+}
+
+async function validatePrivilegedHelperSocketParentChain(
+  socketPath: string,
+  expectedOwnerUid: number,
+  label: string
+): Promise<void> {
+  let current = dirname(socketPath);
+  let isImmediateParent = true;
+  for (;;) {
+    let entry;
+    try {
+      entry = await lstat(current);
+    } catch {
+      fail("READBACK_FAILED", `${label} socket parent is unavailable`);
+    }
+    if (entry.isSymbolicLink()) {
+      const fixedTarget = current === "/var" ? "/private/var" : current === "/tmp" ? "/private/tmp" : undefined;
+      let target;
+      try { target = await readlink(current); } catch { target = undefined; }
+      if (fixedTarget === undefined || target !== fixedTarget.slice(1)) {
+        fail("SERVICE_MISMATCH", `${label} socket parent chain is unsafe`);
+      }
+      current = fixedTarget;
+      isImmediateParent = false;
+      continue;
+    }
+    const writableWithoutStickyProtection = (entry.mode & 0o022) !== 0 && (entry.mode & 0o1000) === 0;
+    if (!entry.isDirectory() || writableWithoutStickyProtection ||
+        (isImmediateParent && entry.uid !== expectedOwnerUid)) {
+      fail("SERVICE_MISMATCH", `${label} socket parent chain is unsafe`);
+    }
+    if (current === "/") return;
+    const parent = dirname(current);
+    if (parent === current) fail("SERVICE_MISMATCH", `${label} socket parent chain is malformed`);
+    current = parent;
+    isImmediateParent = false;
+  }
+}
+
+export async function readPrivilegedHelperAuthoritySocketReadback(
+  plan: PrivilegedHelperPackagePlan
+): Promise<PrivilegedHelperAuthoritySocketReadback> {
+  return readPrivilegedHelperSocketReadback(
+    plan.helperAuthoritySocketPath,
+    plan.brokerPeer.uid,
+    plan.brokerPeer.gid,
+    "privileged helper authority"
+  );
+}
+
+export async function readPrivilegedHelperHelperSocketReadback(
+  plan: PrivilegedHelperPackagePlan
+): Promise<PrivilegedHelperSocketReadback> {
+  return readPrivilegedHelperSocketReadback(
+    plan.helperSocketPath,
+    0,
+    0,
+    "privileged helper",
+    { kind: "user-acl", peerUid: plan.brokerPeer.uid, peerGid: plan.brokerPeer.gid }
+  );
+}
+
+export async function readPrivilegedHelperBrokerSocketReadback(
+  plan: PrivilegedHelperPackagePlan
+): Promise<PrivilegedHelperSocketReadback> {
+  return readPrivilegedHelperSocketReadback(
+    plan.brokerSocketPath,
+    plan.brokerPeer.uid,
+    plan.brokerPeer.gid,
+    "Broker"
+  );
+}
+
+function validatePrivilegedHelperSocketReadback(
+  readback: PrivilegedHelperSocketReadback,
+  expectedPath: string,
+  expectedOwnerUid: number,
+  expectedOwnerGid: number | undefined,
+  label: string,
+  expectedMode = 0o600,
+  expectedAclPeerUid?: number
+): void {
+  if (readback === null || typeof readback !== "object" || readback.path !== expectedPath ||
+      !Number.isSafeInteger(readback.ownerUid) || readback.ownerUid !== expectedOwnerUid ||
+      !Number.isSafeInteger(readback.ownerGid) || readback.ownerGid < 0 || readback.ownerGid > 2_147_483_647 ||
+      (expectedOwnerGid !== undefined && readback.ownerGid !== expectedOwnerGid) ||
+      !Number.isSafeInteger(readback.mode) || readback.mode < 0 || readback.mode > 0o777 || readback.mode !== expectedMode ||
+      !Number.isSafeInteger(readback.device) || readback.device < 0 ||
+      !Number.isSafeInteger(readback.inode) || readback.inode < 0 ||
+      (expectedAclPeerUid !== undefined && readback.aclPeerUid !== expectedAclPeerUid) ||
+      (readback.aclPeerUid !== undefined && (!Number.isSafeInteger(readback.aclPeerUid) || readback.aclPeerUid < 1 || readback.aclPeerUid > 2_147_483_647))) {
+    fail("SERVICE_MISMATCH", `${label} socket ownership or identity does not match the plan`);
+  }
 }
 
 export function requiredPrivilegedHelperFilesystemPaths(
@@ -996,17 +1159,9 @@ export function validatePrivilegedHelperPackageReadback(
       !isPrivilegedHelperPlistReadback(readback.plist, plan)) {
     fail("INVALID_READBACK", "privileged helper readback identity is malformed");
   }
-  const authoritySocket = readback.authoritySocket;
-  if (authoritySocket === null || typeof authoritySocket !== "object" ||
-      authoritySocket.path !== plan.helperAuthoritySocketPath ||
-      !Number.isSafeInteger(authoritySocket.ownerUid) || authoritySocket.ownerUid !== plan.brokerPeer.uid ||
-      !Number.isSafeInteger(authoritySocket.ownerGid) || authoritySocket.ownerGid < 0 || authoritySocket.ownerGid > 2_147_483_647 ||
-      (plan.brokerPeer.gid !== undefined && authoritySocket.ownerGid !== plan.brokerPeer.gid) ||
-      !Number.isSafeInteger(authoritySocket.mode) || (authoritySocket.mode & 0o077) !== 0 ||
-      !Number.isSafeInteger(authoritySocket.device) || authoritySocket.device < 0 ||
-      !Number.isSafeInteger(authoritySocket.inode) || authoritySocket.inode < 0) {
-    fail("SERVICE_MISMATCH", "privileged helper authority socket ownership or identity does not match the plan");
-  }
+  validatePrivilegedHelperSocketReadback(readback.helperSocket, plan.helperSocketPath, 0, 0, "privileged helper", 0o600, plan.brokerPeer.uid);
+  validatePrivilegedHelperSocketReadback(readback.brokerSocket, plan.brokerSocketPath, plan.brokerPeer.uid, plan.brokerPeer.gid, "Broker");
+  validatePrivilegedHelperSocketReadback(readback.authoritySocket, plan.helperAuthoritySocketPath, plan.brokerPeer.uid, plan.brokerPeer.gid, "privileged helper authority");
   if (readback.launchd === null || typeof readback.launchd !== "object" ||
       readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
       !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
@@ -1054,6 +1209,8 @@ export function composePrivilegedHelperPackageReadback(
       sources.processIdentity === null || typeof sources.processIdentity !== "object" ||
       sources.plist === null || typeof sources.plist !== "object" ||
       sources.helper === null || typeof sources.helper !== "object" ||
+      sources.helperSocket === null || typeof sources.helperSocket !== "object" ||
+      sources.brokerSocket === null || typeof sources.brokerSocket !== "object" ||
       sources.authoritySocket === null || typeof sources.authoritySocket !== "object" ||
       sources.signature === null || typeof sources.signature !== "object") {
     fail("INVALID_READBACK", "privileged helper readback sources are malformed");
@@ -1074,10 +1231,12 @@ export function composePrivilegedHelperPackageReadback(
     label: plan.label,
     plistPath: plan.plistPath,
     pid: launchd.pid,
-    processIdentity: sources.processIdentity,
-    plist: sources.plist,
-    launchd: plan.launchd,
-    authoritySocket: sources.authoritySocket,
+      processIdentity: sources.processIdentity,
+      plist: sources.plist,
+      launchd: plan.launchd,
+      helperSocket: sources.helperSocket,
+      brokerSocket: sources.brokerSocket,
+      authoritySocket: sources.authoritySocket,
     helper: sources.helper,
     signature: sources.signature,
     ...(sources.notarization === undefined ? {} : { notarization: sources.notarization })
@@ -1106,6 +1265,8 @@ export async function observePrivilegedHelperPackageReadback(
     const processBefore = await observer.readProcessIdentity(launchdBefore.pid);
     const plistBefore = await observer.readPlist(plan);
     const helper = await observer.readRuntime();
+    const helperSocket = await observer.readHelperSocket(plan);
+    const brokerSocket = await observer.readBrokerSocket(plan);
     const authoritySocket = await observer.readAuthoritySocket(plan);
     const signature = await observer.readSignature();
     const notarization = observer.readNotarization === undefined ? undefined : await observer.readNotarization();
@@ -1126,6 +1287,8 @@ export async function observePrivilegedHelperPackageReadback(
       processIdentity: processAfter,
       plist: plistAfter,
       helper,
+      helperSocket,
+      brokerSocket,
       authoritySocket,
       signature,
       ...(notarization === undefined ? {} : { notarization })
@@ -1157,6 +1320,8 @@ export function createPrivilegedHelperPackageHostObserver(
     readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? capturePeerProcessIdentity(pid),
     readPlist: options.readPlist ?? (async (candidate) => readPrivilegedHelperPlistReadback(candidate)),
     readRuntime,
+    readHelperSocket: options.readHelperSocket ?? (async (candidate) => readPrivilegedHelperHelperSocketReadback(candidate)),
+    readBrokerSocket: options.readBrokerSocket ?? (async (candidate) => readPrivilegedHelperBrokerSocketReadback(candidate)),
     readAuthoritySocket: options.readAuthoritySocket ?? (async (candidate) => readPrivilegedHelperAuthoritySocketReadback(candidate)),
     readSignature: options.readSignature === undefined
       ? async () => readPrivilegedHelperCodeSignature(plan, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor })
@@ -1378,7 +1543,7 @@ function normalizeService(config: PrivilegedHelperLaunchdConfig, helperRoot: str
 
 function validatePeerExpectation(value: PrivilegedHelperBrokerPeerExpectation): void {
   if (value === null || typeof value !== "object" || !Number.isSafeInteger(value.uid) || value.uid < 1 || value.uid > 2_147_483_647 ||
-      (value.gid !== undefined && (!Number.isSafeInteger(value.gid) || value.gid < 0 || value.gid > 2_147_483_647))) {
+      !Number.isSafeInteger(value.gid) || value.gid < 0 || value.gid > 2_147_483_647) {
     fail("INVALID_PEER_IDENTITY", "privileged helper Broker peer identity is invalid");
   }
 }

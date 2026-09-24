@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { Socket } from "node:net";
 
 export interface PeerCredentials {
@@ -46,6 +46,8 @@ interface NativePeerCredentials {
   sha256Utf8(value: string): unknown;
   getPeerCredentials(descriptor: number): unknown;
   getProcessIdentity(pid: number): unknown;
+  isProcessIdentityAlive(pid: number, startTimeMicros: number): unknown;
+  getProcessCredentials(pid: number): unknown;
   listProcessGroupMembers(processGroupId: number): unknown;
   statStorageVolumeWithinRoot(rootPath: string): unknown;
   readKeychainGenericPassword(service: string, account: string, trustedExecutablePath: string): unknown;
@@ -54,10 +56,18 @@ interface NativePeerCredentials {
   deleteKeychainGenericPassword(service: string, account: string, key: Buffer, trustedExecutablePath: string): unknown;
   unlinkFileWithinRoot(rootPath: string, targetPath: string, expectedPresent: boolean, expectedDevice: string, expectedInode: string): unknown;
   recoverUnlinkFileWithinRoot(rootPath: string, targetPath: string, expectedDevice: string, expectedInode: string, minAgeMs: number): unknown;
-  createUnixListener(path: string, backlog: number): number;
+  createUnixListener(path: string, backlog: number, peerGroupId?: number, peerUserId?: number): number;
+  getUnixSocketAclPeerUid(path: string): unknown;
+  hasExtendedAclEntries(path: string): unknown;
   acceptUnixClient(descriptor: number): unknown;
   closeUnixDescriptor(descriptor: number): void;
+  createDescriptorHandoffSocketPair(): unknown;
+  sendDescriptorHandoff(socketDescriptor: number, payload: Buffer, descriptors: readonly number[]): void;
+  receiveDescriptorHandoff(socketDescriptor: number, maxPayloadBytes: number, expectedDescriptorCount: number, timeoutMs?: number): unknown;
   getProcessLaunchCapability(): unknown;
+  getDescriptorExecProbe(): unknown;
+  getDescriptorHandoffCapability(): unknown;
+  getDescriptorPath(descriptor: number): unknown;
 }
 
 interface SocketWithHandle extends Socket {
@@ -67,12 +77,13 @@ interface SocketWithHandle extends Socket {
 const require = createRequire(import.meta.url);
 const MAX_NATIVE_ADAPTER_BYTES = 16 * 1024 * 1024;
 const REQUIRED_NATIVE_EXPORTS = [
-  "sha256Utf8", "getPeerCredentials", "createUnixListener", "acceptUnixClient", "closeUnixDescriptor",
+  "sha256Utf8", "getPeerCredentials", "createUnixListener", "getUnixSocketAclPeerUid", "hasExtendedAclEntries", "acceptUnixClient", "closeUnixDescriptor",
+  "createDescriptorHandoffSocketPair", "sendDescriptorHandoff", "receiveDescriptorHandoff",
   "inspectNetwork", "statPathWithinRoot", "statStorageVolumeWithinRoot", "listDirectoryWithinRoot",
   "readFileWithinRoot", "hashFileWithinRoot", "writeFileAtomicWithinRoot", "unlinkFileWithinRoot", "recoverUnlinkFileWithinRoot",
-  "listProcesses", "inspectProcess", "listDescendantProcesses", "listProcessGroupMembers", "isProcessIdentityAlive", "getProcessIdentity",
+  "listProcesses", "inspectProcess", "listDescendantProcesses", "listProcessGroupMembers", "isProcessIdentityAlive", "getProcessIdentity", "getProcessCredentials",
   "readKeychainGenericPassword", "writeKeychainGenericPassword",
-  "inspectKeychainGenericPassword", "deleteKeychainGenericPassword", "getProcessLaunchCapability"
+  "inspectKeychainGenericPassword", "deleteKeychainGenericPassword", "getProcessLaunchCapability", "getDescriptorExecProbe", "getDescriptorHandoffCapability", "getDescriptorPath"
 ] as const;
 const MIN_SUPPORTED_NAPI_VERSION = 8;
 const NODE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?$/u;
@@ -175,13 +186,34 @@ export function validateNativeAdapterPath(nativePath: string): void {
   if (!isAbsolute(nativePath) || resolve(nativePath) !== nativePath || realpathSync(nativePath) !== nativePath) {
     throw new Error("Native peer adapter path is not canonical");
   }
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error("Native peer adapter process owner is unavailable");
+  validateNativeAdapterParentDirectories(nativePath, uid);
   const linkStat = lstatSync(nativePath);
   if (!linkStat.isFile() || linkStat.isSymbolicLink() || linkStat.size < 1 || linkStat.size > MAX_NATIVE_ADAPTER_BYTES ||
       (linkStat.mode & 0o022) !== 0) {
     throw new Error("Native peer adapter file is not protected");
   }
-  const uid = process.getuid?.();
-  if (uid !== undefined && linkStat.uid !== uid) throw new Error("Native peer adapter owner is not current user");
+  if (linkStat.uid !== uid) throw new Error("Native peer adapter owner is not current user");
+}
+
+function validateNativeAdapterParentDirectories(nativePath: string, processUid: number): void {
+  const filesystemRoot = resolve("/");
+  let directoryPath = dirname(nativePath);
+  while (true) {
+    const directory = lstatSync(directoryPath);
+    if (!directory.isDirectory() || directory.isSymbolicLink() ||
+        (directory.mode & 0o022) !== 0 || (directory.uid !== 0 && directory.uid !== processUid)) {
+      throw new Error("Native peer adapter parent directory is not protected");
+    }
+    if (processUid === 0 && directory.uid !== 0) {
+      throw new Error("Root native peer adapter parent directory is not root-owned");
+    }
+    if (directoryPath === filesystemRoot) return;
+    const parentPath = dirname(directoryPath);
+    if (parentPath === directoryPath) throw new Error("Native peer adapter parent path is malformed");
+    directoryPath = parentPath;
+  }
 }
 
 export function parsePeerCredentials(value: unknown): PeerCredentials {
@@ -220,6 +252,25 @@ export function capturePeerProcessIdentity(pid: number): PeerProcessIdentity {
   }
   const native = loadNativePeerAdapter();
   return parsePeerProcessIdentity(native.getProcessIdentity(pid));
+}
+
+export function capturePeerProcessCredentials(pid: number): PeerCredentials {
+  if (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999) {
+    throw new Error("Peer process ID is invalid");
+  }
+  return parsePeerCredentials(loadNativePeerAdapter().getProcessCredentials(pid));
+}
+
+/** Resolve a canonical path from an already-open Darwin descriptor. */
+export function getDescriptorPath(descriptor: number): string {
+  if (!Number.isSafeInteger(descriptor) || descriptor < 0) {
+    throw new Error("Descriptor is invalid");
+  }
+  const value = loadNativePeerAdapter().getDescriptorPath(descriptor);
+  if (typeof value !== "string" || !isAbsolute(value) || resolve(value) !== value || value.includes("\0") || value.includes("\n")) {
+    throw new Error("Descriptor path is malformed");
+  }
+  return value;
 }
 
 /**

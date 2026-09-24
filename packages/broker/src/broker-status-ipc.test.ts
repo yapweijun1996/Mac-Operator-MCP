@@ -57,6 +57,35 @@ test("Broker status parser rejects accessor request fields", () => {
   key.fill(0);
 });
 
+test("Broker status validates the bounded authenticated audit summary", () => {
+  const status = {
+    component: "mac-operator-broker" as const,
+    sourceRevision: "0123456789abcdef0123456789abcdef01234567",
+    contractVersion: "0.1",
+    policyVersion: "policy-1",
+    state: "running" as const,
+    runtimeState: "running" as const,
+    nativeTransportRequired: true as const,
+    enabledCapabilities: ["mac_health"],
+    audit: {
+      format: "mac-operator-audit-integrity-v1" as const,
+      eventCount: 2,
+      tailSequence: 2,
+      tailHash: "b".repeat(64),
+      keyedAnchor: "verified" as const
+    }
+  };
+  assert.deepEqual(validateBrokerStatusReadback(status), status);
+  assert.throws(
+    () => validateBrokerStatusReadback({ ...status, audit: { ...status.audit, tailHash: "secret" } }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+  assert.throws(
+    () => validateBrokerStatusReadback({ ...status, audit: { ...status.audit, eventCount: 0 } }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED"
+  );
+});
+
 test("Broker status IPC authenticates readback and rejects durable replay", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-broker-status-"));
   let store = new BrokerStore(join(directory, "broker.sqlite"));

@@ -8,6 +8,11 @@ export type WorkerResult<T> =
 
 export type WorkerFactory<TCommand> = (command: TCommand) => Worker;
 
+export interface WorkerPreMutationGate {
+  gate: SharedArrayBuffer;
+  beforeMutation: () => void;
+}
+
 export class BoundedWorkerExecutor<TCommand, TResult> {
   private activeWorkers = 0;
   private readonly workers = new Set<Worker>();
@@ -23,7 +28,7 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
     }
   }
 
-  run(command: TCommand, timeoutMs: number, shouldCancel: () => boolean): Promise<TResult> {
+  run(command: TCommand, timeoutMs: number, shouldCancel: () => boolean, preMutation?: WorkerPreMutationGate): Promise<TResult> {
     if (this.closing) {
       return Promise.reject(new BrokerError("CANCELLED", "Worker executor is shutting down"));
     }
@@ -76,7 +81,24 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
       timeout.unref();
       cancellationPoll.unref();
 
-      worker.once("message", (message: unknown) => {
+      worker.on("message", (message: unknown) => {
+        if (settled) return;
+        if (isPreMutationRequest(message)) {
+          if (preMutation === undefined) {
+            finish(new BrokerError("EXECUTION_FAILED", "Worker requested an unavailable mutation authority gate"));
+            terminate();
+            return;
+          }
+          try {
+            preMutation.beforeMutation();
+            releasePreMutationAuthority(preMutation.gate, true);
+          } catch (error) {
+            releasePreMutationAuthority(preMutation.gate, false);
+            finish(error instanceof BrokerError ? error : new BrokerError("CANCELLED", "Pre-mutation authority was revoked"));
+            terminate();
+          }
+          return;
+        }
         if (!isWorkerResult<TResult>(message)) {
           finish(new BrokerError("EXECUTION_FAILED", "Worker returned a malformed result"));
           terminate();
@@ -121,6 +143,16 @@ export class BoundedWorkerExecutor<TCommand, TResult> {
     try { return check(); }
     catch { return true; }
   }
+}
+
+function isPreMutationRequest(value: unknown): boolean {
+  return isPlainDataRecord(value) && value.type === "pre_mutation" && Object.keys(value).length === 1;
+}
+
+function releasePreMutationAuthority(gate: SharedArrayBuffer, allowed: boolean): void {
+  const state = new Int32Array(gate);
+  Atomics.store(state, 0, allowed ? 1 : 2);
+  Atomics.notify(state, 0);
 }
 
 function isWorkerResult<T>(value: unknown): value is WorkerResult<T> {

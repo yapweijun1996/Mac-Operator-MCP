@@ -69,6 +69,13 @@ const cases: readonly ReplayCorruptionCase[] = [
       "INSERT INTO keychain_delivery_nonces(nonce, request_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?)"
     ).run("keychain-nonce-123456", "keychain-request-1", 1, 100),
     corrupt: (database) => database.prepare("UPDATE keychain_delivery_nonces SET nonce = ?").run("bad nonce")
+  },
+  {
+    name: "Edge revocation",
+    insert: (database) => database.prepare(
+      "INSERT INTO edge_revocation_nonces(nonce, request_id, edge_id, accepted_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)"
+    ).run("edge-revoke-nonce-123456", "edge-revoke:1234567890123456", "edge-1", 1, 100),
+    corrupt: (database) => database.prepare("UPDATE edge_revocation_nonces SET edge_id = ?").run("")
   }
 ];
 

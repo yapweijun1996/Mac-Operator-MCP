@@ -134,3 +134,31 @@ test("stored Request identity fields fail closed before reconciliation", async (
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("stored Request Edge-key identity must be bound to its Edge before startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-request-edge-key-corruption-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  store.admitRequest({ ...requestInput("request:corrupt-edge-key"), edgeKeyId: "edge:local:key-1" });
+  store.close();
+  try {
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE requests SET edge_key_id = ? WHERE request_id = ?")
+        .run("edge:other:key-1", "request:corrupt-edge-key");
+    } finally {
+      database.close();
+    }
+    let reopened: BrokerStore | undefined;
+    try {
+      assert.throws(
+        () => { reopened = new BrokerStore(databasePath); },
+        (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+      );
+    } finally {
+      reopened?.close();
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

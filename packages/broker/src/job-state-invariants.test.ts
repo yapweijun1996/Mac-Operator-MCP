@@ -27,17 +27,45 @@ test("a durable running-job cancellation fences a late success", async () => {
     assert.equal(cancellation.job.state, "running");
     assert.equal(cancellation.job.cancelRequested, true);
     assert.throws(
-      () => store.finishJob("job:cancel-fence", "principal-1", cancellation.job.revision, {
+      () => store.finishJob("job:cancel-fence", "principal-1", running.revision, {
         state: "completed", resultClass: "success", finishedAtMs: 4
       }),
-      (error: unknown) => error instanceof BrokerError && error.errorClass === "CANCELLED"
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
     );
-    const unknown = store.finishJob("job:cancel-fence", "principal-1", cancellation.job.revision, {
+    const unknown = store.finishJob("job:cancel-fence", "principal-1", running.revision, {
       state: "unknown", resultClass: "unknown", finishedAtMs: 4
     });
     assert.equal(unknown.state, "unknown");
     assert.equal(unknown.resultClass, "unknown");
     assert.equal(running.state, "running");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a cancelled terminal Job requires a durable cancellation request", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-cancel-marker-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    store.createJob({
+      jobId: "job:cancel-marker",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task:bounded",
+      policyVersion: "policy-0.1",
+      payloadDigest: sha256("payload"),
+      idempotencyKey: "cancel-marker",
+      createdAtMs: 1
+    });
+    const running = store.startJob("job:cancel-marker", "principal-1", 0, 2);
+    assert.throws(
+      () => store.finishJob("job:cancel-marker", "principal-1", running.revision, {
+        state: "cancelled", resultClass: "denied", finishedAtMs: 3
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "CONFLICT"
+    );
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -74,6 +102,50 @@ test("stored Job state/result mismatches fail closed on readback", async () => {
       (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
     );
   } finally {
+    reopenedStore?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stored cancelled Jobs without a durable cancellation marker fail closed on startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-cancel-row-"));
+  const databasePath = join(directory, "broker.sqlite");
+  let store: BrokerStore | undefined = new BrokerStore(databasePath);
+  let reopenedStore: BrokerStore | undefined;
+  try {
+    store.createJob({
+      jobId: "job:cancel-row",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task:bounded",
+      policyVersion: "policy-0.1",
+      payloadDigest: sha256("payload"),
+      idempotencyKey: "cancel-row",
+      createdAtMs: 1
+    });
+    const running = store.startJob("job:cancel-row", "principal-1", 0, 2);
+    store.requestJobCancellation("job:cancel-row", "principal-1", "KILL_SWITCH", 3);
+    store.finishJob("job:cancel-row", "principal-1", running.revision + 1, {
+      state: "cancelled", resultClass: "denied", finishedAtMs: 4
+    });
+    store.close();
+    store = undefined;
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.prepare("UPDATE jobs SET cancel_requested = 0, cancel_reason = NULL WHERE job_id = ?")
+        .run("job:cancel-row");
+    } finally {
+      database.close();
+    }
+
+    assert.throws(
+      () => { reopenedStore = new BrokerStore(databasePath); },
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE"
+    );
+  } finally {
+    store?.close();
     reopenedStore?.close();
     await rm(directory, { recursive: true, force: true });
   }

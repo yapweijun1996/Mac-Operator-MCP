@@ -48,11 +48,12 @@ test("launchd renderer escapes XML and rejects unsafe command boundaries", () =>
   assert.throws(() => normalizeLaunchdServiceConfig({ ...valid, stdoutPath: valid.stderrPath }), /must differ/u);
 });
 
-test("reviewed Edge and Broker LaunchAgent templates stay unprivileged", async () => {
+test("reviewed Edge, Broker, and Authority LaunchAgent templates stay unprivileged", async () => {
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   const templates = [
     { file: "com.mac-operator.edge.plist.in", label: "com.mac-operator.edge", entrypoint: "@EDGE_ENTRYPOINT@", stdout: "edge.out.log", stderr: "edge.err.log" },
-    { file: "com.mac-operator.broker.plist.in", label: "com.mac-operator.broker", entrypoint: "@BROKER_ENTRYPOINT@", stdout: "broker.out.log", stderr: "broker.err.log" }
+    { file: "com.mac-operator.broker.plist.in", label: "com.mac-operator.broker", entrypoint: "@BROKER_ENTRYPOINT@", stdout: "broker.out.log", stderr: "broker.err.log" },
+    { file: "com.mac-operator.authority.plist.in", label: "com.mac-operator.authority", entrypoint: "@AUTHORITY_ENTRYPOINT@", stdout: "authority.out.log", stderr: "authority.err.log" }
   ] as const;
   for (const template of templates) {
     const plist = await readFile(join(repositoryRoot, "packaging/macos", template.file), "utf8");

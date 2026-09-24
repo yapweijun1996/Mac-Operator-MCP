@@ -1,7 +1,14 @@
-import { BrokerError, canonicalJson } from "@mac-operator/contracts";
+import { randomBytes } from "node:crypto";
+import { BrokerError, canonicalJson, CONTRACT_VERSION } from "@mac-operator/contracts";
 import { isPlainDataRecord } from "./plain-record.js";
 import {
   executePrivilegedHelperCommand,
+  readPrivilegedHelperJobReadback,
+  signPrivilegedHelperJobReadbackRequest,
+  validatePrivilegedHelperJobReadback,
+  type PrivilegedHelperJobReadback,
+  type PrivilegedHelperJobReadbackClientOptions,
+  type PrivilegedHelperJobReadbackResponse,
   validatePrivilegedHelperExecutionResult,
   type PrivilegedHelperCommandIssueInput,
   type PrivilegedHelperCommandClientOptions,
@@ -30,6 +37,30 @@ export type PrivilegedHelperCommandClient = (
   command: SignedPrivilegedHelperCommand,
   timeoutMs: number
 ) => Promise<PrivilegedHelperResponse>;
+
+export type PrivilegedHelperReadbackClient = (
+  request: import("./privileged-helper.js").UnsignedPrivilegedHelperJobReadbackRequest,
+  timeoutMs: number
+) => Promise<PrivilegedHelperJobReadbackResponse>;
+
+export function createPrivilegedHelperReadbackClient(
+  optionsForRequest: (timeoutMs: number) => PrivilegedHelperJobReadbackClientOptions
+): PrivilegedHelperReadbackClient {
+  if (typeof optionsForRequest !== "function") throw new Error("Privileged helper readback options provider is required");
+  return async (request, timeoutMs) => {
+    const options = optionsForRequest(timeoutMs);
+    if (!options || !Buffer.isBuffer(options.authenticationKey)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback options are unavailable");
+    }
+    const key = Buffer.from(options.authenticationKey);
+    try {
+      const signed = signPrivilegedHelperJobReadbackRequest(request, key);
+      return await readPrivilegedHelperJobReadback(signed, { ...options, authenticationKey: key, timeoutMs });
+    } finally {
+      key.fill(0);
+    }
+  };
+}
 
 /**
  * Operation names that the Broker may project from an authenticated helper.
@@ -71,6 +102,7 @@ export interface PrivilegedHelperJobExecutorOptions {
   enabledOperations?: readonly PrivilegedHelperOperation[];
   commandFactory?: PrivilegedHelperCommandIssuer;
   commandClient?: PrivilegedHelperCommandClient;
+  readbackClient?: PrivilegedHelperReadbackClient;
   now?: () => number;
   leaseDurationMs?: number;
 }
@@ -84,6 +116,16 @@ export interface PrivilegedHelperJobExecutionInput {
   operation: PrivilegedHelperOperation;
   timeoutMs: number;
   /** Re-checks Broker policy, revocation, kill-switch, and helper-key state. */
+  assertAuthority: () => void;
+}
+
+export interface PrivilegedHelperJobReadbackInput {
+  principalId: string;
+  sessionId: string;
+  job: BrokerJob;
+  operation: PrivilegedHelperOperation;
+  timeoutMs: number;
+  /** Re-checks the owner request's Broker authority before and after readback. */
   assertAuthority: () => void;
 }
 
@@ -107,6 +149,7 @@ export class PrivilegedHelperJobExecutor {
   private readonly leaseDurationMs: number;
   private readonly commandFactory: PrivilegedHelperCommandIssuer | undefined;
   private readonly commandClient: PrivilegedHelperCommandClient | undefined;
+  private readonly readbackClient: PrivilegedHelperReadbackClient | undefined;
 
   constructor(private readonly options: PrivilegedHelperJobExecutorOptions) {
     if (!isPlainDataRecord(options)) throw new Error("Privileged helper Job executor options must be plain data");
@@ -135,8 +178,50 @@ export class PrivilegedHelperJobExecutor {
     }
     this.commandFactory = options.commandFactory;
     this.commandClient = options.commandClient;
+    this.readbackClient = options.readbackClient;
     if (this.enabled && (this.enabledOperations.size === 0 || !this.commandFactory || !this.commandClient)) {
       throw new Error("Enabled privileged helper Job executor requires command authority, transport, and operation allowlist");
+    }
+  }
+
+  async readback(input: PrivilegedHelperJobReadbackInput): Promise<PrivilegedHelperJobReadback> {
+    if (!this.enabled || !this.readbackClient) {
+      return unavailableReadback(input.job, "Privileged helper Job readback is not configured");
+    }
+    validateReadbackInput(input);
+    if (!this.enabledOperations.has(input.operation)) {
+      return unavailableReadback(input.job, "Privileged helper operation readback is not allowlisted");
+    }
+    try {
+      input.assertAuthority();
+      const payload = input.job.privilegedPayload;
+      if (payload === undefined) return unavailableReadback(input.job, "Privileged helper Job payload is unavailable");
+      const timestampMs = this.now();
+      if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) return unavailableReadback(input.job, "Privileged helper readback clock is invalid");
+      const expiresAtMs = timestampMs + Math.min(input.timeoutMs, MAX_TIMEOUT_MS);
+      const request = {
+        protocolVersion: "0.1" as const,
+        contractVersion: CONTRACT_VERSION,
+        requestId: `request:readback-${randomBytes(16).toString("hex")}`,
+        nonce: `readback-nonce-${randomBytes(16).toString("hex")}`,
+        timestampMs,
+        expiresAtMs,
+        kind: "job_readback" as const,
+        jobId: input.job.jobId,
+        principalId: input.principalId,
+        sessionId: input.sessionId,
+        operation: input.operation,
+        targetRef: input.job.targetRef,
+        payload,
+        payloadDigest: input.job.payloadDigest,
+        policyVersion: input.job.policyVersion
+      };
+      const response = await this.readbackClient(request, input.timeoutMs);
+      input.assertAuthority();
+      if (!response.ok) return unavailableReadback(input.job, "Privileged helper Job readback was denied or unavailable");
+      return validatePrivilegedHelperJobReadback(response.readback, { operation: input.operation, targetRef: input.job.targetRef });
+    } catch {
+      return unavailableReadback(input.job, "Privileged helper Job readback was unavailable");
     }
   }
 
@@ -353,6 +438,32 @@ function isDenseDataArray(value: unknown, maxLength: number): value is readonly 
 
 function isSupportedPrivilegedHelperOperation(value: unknown): value is PrivilegedHelperOperation {
   return value === "service_control" || value === "package_install" || value === "power";
+}
+
+function validateReadbackInput(input: PrivilegedHelperJobReadbackInput): void {
+  const job = input?.job;
+  if (!input || typeof input !== "object" || !isPlainDataRecord(job) || typeof input.assertAuthority !== "function" ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.principalId) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(input.sessionId) ||
+      !isSupportedPrivilegedHelperOperation(input.operation) ||
+      !/^job:[A-Za-z0-9._-]{1,240}$/u.test(job.jobId) || job.state !== "unknown" ||
+      typeof job.targetRef !== "string" || job.targetRef.length < 1 || job.targetRef.length > 4_096 || job.targetRef.includes("\0") ||
+      !/^[a-f0-9]{64}$/u.test(job.payloadDigest) || !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(job.policyVersion) ||
+      !Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1 || input.timeoutMs > MAX_TIMEOUT_MS) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper Job readback input is malformed");
+  }
+}
+
+function unavailableReadback(job: BrokerJob, summary: string): PrivilegedHelperJobReadback {
+  const operation = job.privilegedPayload?.operation ?? "power";
+  return {
+    operation,
+    targetRef: job.targetRef,
+    postcondition: "unavailable",
+    evidence: { state: "unavailable" },
+    warnings: [summary],
+    summary
+  };
 }
 
 function validateInput(input: PrivilegedHelperJobExecutionInput): void {

@@ -6,11 +6,13 @@ import type { FilesystemPathPlan } from "./filesystem-inspector.js";
 import type { FilesystemPatchResult } from "./filesystem-patch.js";
 import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { BoundedWorkerExecutor } from "./worker-executor.js";
+import { BoundedWorkerExecutor, type WorkerPreMutationGate } from "./worker-executor.js";
 
 export interface FilesystemExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
+  /** Revalidate Broker authority immediately before a native mutation. */
+  beforeMutation?: () => void;
 }
 
 export interface WorkerFilesystemExecutorOptions {
@@ -243,14 +245,21 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     control: FilesystemExecutionControl,
     temporaryName?: string
   ): Promise<FilesystemWorkerResult> {
-    return this.executor.run({
+    const gate = new SharedArrayBuffer(4);
+    const command: FilesystemWorkerCommand = {
       operation: "write",
       plan,
       content,
       expectedSha256,
       createOnly,
-      tempName: temporaryName ?? `.mac-operator-write-${randomUUID()}`
-    }, control.timeoutMs, control.shouldCancel).then(validateFilesystemWorkerResult);
+      tempName: temporaryName ?? `.mac-operator-write-${randomUUID()}`,
+      preMutationGate: gate
+    };
+    const preMutation: WorkerPreMutationGate = {
+      gate,
+      beforeMutation: () => control.beforeMutation?.()
+    };
+    return this.executor.run(command, control.timeoutMs, control.shouldCancel, preMutation).then(validateFilesystemWorkerResult);
   }
 
   applyPatch(
@@ -259,7 +268,13 @@ export class WorkerFilesystemExecutor implements FilesystemExecutor {
     expectedBaseHash: string | undefined,
     control: FilesystemExecutionControl
   ): Promise<FilesystemPatchResult> {
-    return this.executor.run({ operation: "patch", plan, patch, expectedBaseHash }, control.timeoutMs, control.shouldCancel)
+    const gate = new SharedArrayBuffer(4);
+    const command: FilesystemWorkerCommand = { operation: "patch", plan, patch, expectedBaseHash, preMutationGate: gate };
+    const preMutation: WorkerPreMutationGate = {
+      gate,
+      beforeMutation: () => control.beforeMutation?.()
+    };
+    return this.executor.run(command, control.timeoutMs, control.shouldCancel, preMutation)
       .then(validateFilesystemWorkerResult)
       .then((value) => {
         if (value.operation !== "patch") throw new BrokerError("EXECUTION_FAILED", "Filesystem worker returned the wrong result type");

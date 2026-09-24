@@ -5,14 +5,21 @@
   "type": "module",
   "exports": "./dist/index.js",
   "bin": {
-    "mac-operator-authority": "./dist/authority-control-cli.js"
+    "mac-operator-authority": "./dist/authority-control-cli.js",
+    "mac-operator-authority-service": "./dist/authority-control-service.js",
+    "mac-operator-approval": "./dist/approval-issuance-cli.js",
+    "mac-operator-audit": "./dist/audit-archive-cli.js"
   },
   "scripts": {
     "build:native": "sh scripts/build-peer-credentials.sh",
+    "build:native:root-helper-snapshot": "sh scripts/build-root-helper-snapshot.sh",
     "build:native:fault-test": "sh scripts/build-peer-credentials-fault-test.sh",
     "build:native:virtualization-probe": "sh scripts/build-virtualization-probe.sh",
     "build:native:virtualization-guest": "sh scripts/build-virtualization-guest.sh",
-    "build:native:virtualization-guest-lifecycle": "sh scripts/build-virtualization-guest-lifecycle.sh"
+    "build:native:virtualization-guest-lifecycle": "sh scripts/build-virtualization-guest-lifecycle.sh",
+    "build:native:virtualization-guest-vsock-linux": "sh scripts/build-virtualization-guest-vsock-linux.sh",
+    "build:native:app-sandbox-probe": "sh scripts/build-app-sandbox-probe.sh",
+    "build:native:app-sandbox-helper": "sh scripts/build-app-sandbox-helper.sh"
   },
   "dependencies": {
     "@mac-operator/contracts": "0.1.0",

@@ -7,6 +7,7 @@ import {
   DOCKER_CODE_SIGNATURE_EXPECTATION,
   DOCKER_EXECUTABLE_CANDIDATES,
   DockerInspectorImpl,
+  createDockerProcessSupervisor,
   dockerObjectIdentityMatches,
   parseDockerContainerRecord,
   parseDockerImageRecord,
@@ -218,6 +219,22 @@ test("Docker status fails closed when the daemon is unavailable", async () => {
   assert.equal(status.containers.length, 0);
   assert.equal(status.images.length, 0);
   assert.ok(status.warnings.some((warning) => warning.includes("unavailable")));
+
+  const productionSupervisor = createDockerProcessSupervisor();
+  try {
+    await assert.rejects(
+      productionSupervisor.run({
+        executable: "/usr/bin/true",
+        args: [],
+        cwd: process.cwd(),
+        timeoutMs: 1_000,
+        outputCapBytes: 100
+      }),
+      (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+    );
+  } finally {
+    await productionSupervisor.close();
+  }
 });
 
 test("Docker status does not convert active cancellation into success", async () => {

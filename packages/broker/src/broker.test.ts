@@ -6,17 +6,18 @@ import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
-import { canonicalJson, sha256, signRequest, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
+import { canonicalJson, sha256, signBrokerRevocationEvent, verifyBrokerRevocationResponse, signRequest, type AuthenticatedBrokerRevocationResponse, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { FilesystemInspector } from "./filesystem-inspector.js";
-import { BrokerStore, redactEvidence, type BrokerJob, type GuestTaskJobMetadata, type JobLease } from "./persistence.js";
+import { APPROVAL_PREVIEW_TTL_MS, BrokerStore, redactEvidence, type BrokerJob, type GuestTaskJobMetadata, type JobLease } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
 import { BrokerPrivilegedHelperCommandFactory } from "./privileged-helper.js";
 import { PrivilegedHelperJobExecutor } from "./privileged-helper-executor.js";
+import { InMemoryRootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-authority.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import { SandboxExecTaskRunner } from "./task-runner.js";
 import type { TaskIsolationProof, TaskRunner } from "./task-runner.js";
@@ -24,6 +25,7 @@ import { UiSnapshotRegistry } from "./ui-inspector.js";
 import type { FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 import { ProcessSupervisor } from "./process-supervisor.js";
 import type { ProcessExecutor } from "./process-executor.js";
+import { inspectSystemPublishedExecutablePath } from "./system-published-executable.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -34,6 +36,12 @@ function realSandboxCanRun(): boolean {
   } catch {
     return false;
   }
+}
+
+function realSystemPublishedSandboxCanRun(): boolean {
+  return process.platform === "darwin" && process.env.MOPS_REAL_SANDBOX === "1" &&
+    inspectSystemPublishedExecutablePath("/usr/bin/sandbox-exec") &&
+    inspectSystemPublishedExecutablePath("/bin/sleep");
 }
 
 async function fixture() {
@@ -186,6 +194,7 @@ test("Broker close remains retryable after a resource cleanup failure", async ()
   let closeCalls = 0;
   const taskRunner: TaskRunner = {
     available: false,
+    publicEnablement: "unavailable",
     mechanism: null,
     isolationProof: null,
     run: async () => {
@@ -252,6 +261,12 @@ test("restarted Broker recovers an exact task process identity without resolving
     });
     const started = store.startJob("job:task-process-recovery", "principal-1", 0, nowMs, lease);
     let capturedIdentity: import("./process-supervisor.js").ProcessOwnershipIdentity | undefined;
+    let resolveStarted!: (identity: import("./process-supervisor.js").ProcessOwnershipIdentity) => void;
+    let rejectStarted!: (error: unknown) => void;
+    const startedSignal = new Promise<import("./process-supervisor.js").ProcessOwnershipIdentity>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
     running = supervisor.run({
       executable: "/bin/sleep",
       args: ["10"],
@@ -259,24 +274,30 @@ test("restarted Broker recovers an exact task process identity without resolving
       timeoutMs: 5_000,
       outputCapBytes: 100,
       onStarted: (snapshot) => {
-        capturedIdentity = snapshot.identity;
-        const recordedAtMs = Date.now();
-        store.recordJobProcessOwnership(
-          "job:task-process-recovery",
-          "principal-1",
-          started.revision,
-          {
-            ...snapshot.identity,
-            recordedAtMs,
-            descendants: snapshot.descendants.map((descendant) => ({ ...descendant }))
-          },
-          lease,
-          recordedAtMs
-        );
+        try {
+          capturedIdentity = snapshot.identity;
+          const recordedAtMs = Date.now();
+          store.recordJobProcessOwnership(
+            "job:task-process-recovery",
+            "principal-1",
+            started.revision,
+            {
+              ...snapshot.identity,
+              recordedAtMs,
+              descendants: snapshot.descendants.map((descendant) => ({ ...descendant }))
+            },
+            lease,
+            recordedAtMs
+          );
+          resolveStarted(snapshot.identity);
+        } catch (error) {
+          rejectStarted(error);
+          throw error;
+        }
       }
     });
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    assert.ok(capturedIdentity);
+    const startedIdentity = await startedSignal;
+    assert.deepEqual(capturedIdentity, startedIdentity);
     store.close();
     store = new BrokerStore(databasePath);
     assert.equal(store.ownedJob("job:task-process-recovery", "principal-1")?.state, "unknown");
@@ -408,6 +429,7 @@ test("restarted Broker reconciles a guest Job only through an authenticated term
   };
   const taskRunner: TaskRunner = {
     available: true,
+    publicEnablement: "production",
     mechanism: "virtualization",
     isolationProof: null,
     async run() { throw new Error("not used"); },
@@ -462,6 +484,105 @@ test("restarted Broker reconciles a guest Job only through an authenticated term
     assert.equal(job?.resultClass, "success");
     assert.equal(job?.guestMetadata, undefined);
     assert.equal(store.auditEventResult("job-guest-recovery-job:guest-recovery-3", "completion"), "GUEST_RECOVERED");
+  } finally {
+    await broker?.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("restarted Broker settles a durable authenticated guest result without a second guest lookup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-guest-journal-recovery-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const key = randomBytes(32);
+  const root = await realpath(directory);
+  let store = new BrokerStore(databasePath);
+  let broker: Broker | undefined;
+  let recoveryCalls = 0;
+  const metadata: GuestTaskJobMetadata = {
+    requestId: "request:guest-journal-12345678",
+    nonce: "guest-nonce-journal-12345678",
+    requestDigest: "a".repeat(64),
+    guestIdentity: { imageSha256: "b".repeat(64), runtimeVersion: "macos-guest-1" },
+    profileDigest: "c".repeat(64),
+    taskDigest: "d".repeat(64),
+    timeoutMs: 1_000,
+    outputCapBytes: 1_024,
+    recordedAtMs: NOW + 2
+  };
+  const lease: JobLease = {
+    ownerId: "broker:guest-journal-recovery",
+    token: "lease:guest-journal-recovery-1234",
+    expiresAtMs: NOW + 30_000
+  };
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...basePolicy.tools.get("mac_task_run")!, enabled: true })
+  };
+  const taskRunner: TaskRunner = {
+    available: true,
+    publicEnablement: "production",
+    mechanism: "virtualization",
+    isolationProof: null,
+    async run() { throw new Error("not used"); },
+    async recoverUnknownTask() {
+      recoveryCalls += 1;
+      throw new Error("a durable local result must not trigger a guest lookup");
+    }
+  };
+  try {
+    store.createJob({
+      jobId: "job:guest-journal-recovery",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_task_run",
+      targetRef: "task_profile:tests.echo",
+      policyVersion: "policy-0.1",
+      payloadDigest: "e".repeat(64),
+      idempotencyKey: "guest-journal-recovery",
+      createdAtMs: NOW
+    });
+    const started = store.startJob("job:guest-journal-recovery", "principal-1", 0, NOW + 1, lease);
+    const admitted = store.recordJobGuestRequest(
+      "job:guest-journal-recovery", "principal-1", started.revision, metadata, lease, NOW + 2
+    );
+    store.recordJobGuestResult(
+      "job:guest-journal-recovery", "principal-1", admitted.revision,
+      {
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "recovered-from-local-journal",
+        stderr: "",
+        truncated: false,
+        durationMs: 5,
+        verification: { status: "verified", summary: "authenticated guest task response" }
+      },
+      lease,
+      NOW + 3
+    );
+    store.close();
+    store = new BrokerStore(databasePath);
+    broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), taskRunner, now: () => NOW + 10 });
+
+    assert.deepEqual(await broker.reconcileRestartedGuestTasks(), {
+      inspected: 1,
+      recovered: 1,
+      unavailable: 0,
+      unknown: 0,
+      skipped: 0
+    });
+    assert.equal(recoveryCalls, 0);
+    const job = store.ownedJob("job:guest-journal-recovery", "principal-1");
+    assert.equal(job?.state, "completed");
+    assert.equal(job?.stdout, "recovered-from-local-journal");
+    assert.equal(job?.guestMetadata, undefined);
+    assert.equal(job?.guestResultJournal, undefined);
   } finally {
     await broker?.close();
     store.close();
@@ -607,6 +728,112 @@ test("Broker applies durable capability-family capacity across sessions", async 
     release();
     const firstResult = await first;
     assert.equal(firstResult.ok, true, JSON.stringify(firstResult));
+  } finally {
+    release();
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Broker applies the process-family capacity to long-running task Jobs across sessions", async () => {
+  const key = randomBytes(32);
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-family-capacity-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let startedResolve!: () => void;
+  const started = new Promise<void>((resolve) => { startedResolve = resolve; });
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const taskRunner: TaskRunner = {
+    available: true,
+    publicEnablement: "production",
+    mechanism: "sandbox-exec",
+    isolationProof: testTaskIsolationProof(),
+    async run(_profile, _control) {
+      startedResolve();
+      await gate;
+      return {
+        state: "completed",
+        resultClass: "SUCCEEDED",
+        exitCode: 0,
+        stdout: "ok",
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
+        verification: { status: "verified" }
+      };
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
+    taskRunner,
+    maxActiveRequestsPerSession: 8,
+    maxActiveRequestsGlobal: 8,
+    maxActiveRequestsByFamily: { process: 1 },
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
+  const issueApproval = (approvalId: string, requestId: string): void => {
+    store.issueApproval({
+      approvalId,
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    assert.equal(store.requestRecord(requestId), undefined);
+  };
+  try {
+    issueApproval("approval:task-family-first", "task-family-first");
+    const first = broker.handle(signRequest(unsigned({
+      requestId: "task-family-first",
+      nonce: "task-family-first-nonce",
+      tool: "mac_task_run",
+      arguments: argumentsValue
+    }, ["mac.task.run"]), key));
+    await started;
+
+    issueApproval("approval:task-family-second", "task-family-second");
+    const second = await broker.handle(signRequest(unsigned({
+      requestId: "task-family-second",
+      nonce: "task-family-second-nonce",
+      tool: "mac_task_run",
+      arguments: argumentsValue,
+      principal: { ...unsigned({}, ["mac.task.run"]).principal, sessionId: "session-task-family-2" }
+    }, ["mac.task.run"]), key));
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(second.result_class, "CONFLICT");
+      assert.equal(second.error.retryable, true);
+    }
+    assert.equal(store.requestRecord("task-family-second"), undefined);
+
+    release();
+    const firstResult = await first;
+    assert.equal(firstResult.ok, true, JSON.stringify(firstResult));
+    assert.equal(store.ownedJobByIdempotencyKey("task:task-family-first", "principal-1")?.state, "completed");
   } finally {
     release();
     await broker.close();
@@ -1240,6 +1467,13 @@ test("expired requests and sessions fail closed", async () => {
     const expiredSession = unsigned({ requestId: "request-2", nonce: "nonce-2" });
     expiredSession.principal = { ...expiredSession.principal, expiresAtMs: NOW };
     assert.equal((await context.broker.handle(signRequest(expiredSession, context.key))).result_class, "AUTH_EXPIRED");
+    const overlongSession = unsigned({ requestId: "request-3", nonce: "nonce-3" });
+    overlongSession.principal = {
+      ...overlongSession.principal,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 24 * 60 * 60 * 1_000 + 1
+    };
+    assert.equal((await context.broker.handle(signRequest(overlongSession, context.key))).result_class, "AUTH_EXPIRED");
   } finally { await context.close(); }
 });
 
@@ -1307,6 +1541,38 @@ test("host Edge lifecycle revocation is durable and rejects new work", async () 
   }
 });
 
+test("authenticated Edge OAuth revocation persists Broker session authority and rejects replay", async () => {
+  const context = await fixture();
+  try {
+    const event = signBrokerRevocationEvent({
+      protocolVersion: "0.1",
+      eventType: "oauth_authority_revoked",
+      requestId: "edge-revoke:1234567890123456",
+      nonce: "edge-revoke-nonce:1234567890123456",
+      edgeId: "edge-1",
+      authenticationKeyId: "edge-key-1",
+      principalId: "principal-1",
+      sessionId: "session-1",
+      timestampMs: NOW
+    }, context.key);
+    const raw = await context.broker.handleForIpc(event);
+    assert.ok("response" in raw && "event_type" in raw.response);
+    const revocationResponse = raw as AuthenticatedBrokerRevocationResponse;
+    assert.equal(verifyBrokerRevocationResponse(event, revocationResponse, context.key), true);
+    assert.equal(revocationResponse.response.ok, true);
+    assert.equal(context.store.isRevoked("session", "session-1"), true);
+    const denied = await context.broker.handle(signRequest(unsigned({ requestId: "after-oauth-revoke", nonce: "after-oauth-revoke-nonce" }), context.key));
+    assert.equal(denied.result_class, "REVOKED");
+
+    const replay = await context.broker.handleForIpc(event);
+    assert.ok("response" in replay && "event_type" in replay.response);
+    const replayResponse = replay as AuthenticatedBrokerRevocationResponse;
+    assert.equal(verifyBrokerRevocationResponse(event, replayResponse, context.key), true);
+    assert.equal(replayResponse.response.ok, false);
+    if (!replayResponse.response.ok) assert.equal(replayResponse.response.result_class, "REPLAY_DENIED");
+  } finally { await context.close(); }
+});
+
 test("capability discovery separates planned, implemented, and enabled", async () => {
   const context = await fixture();
   try {
@@ -1315,7 +1581,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
     assert.equal(result.ok, true);
     if (result.ok) {
       const capabilities = (result.data as { capabilities: Array<{ name: string; planned: boolean; implemented: boolean; enabled: boolean; reason: string }> }).capabilities;
-      assert.equal(capabilities.length, 44);
+      assert.equal(capabilities.length, 45);
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_health"), {
         name: "mac_health", planned: true, implemented: true, enabled: true, scopes: ["mac.control.read"], contract_version: "0.1", reason: "enabled"
       });
@@ -1327,6 +1593,9 @@ test("capability discovery separates planned, implemented, and enabled", async (
       });
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_priv_power"), {
         name: "mac_priv_power", planned: true, implemented: true, enabled: false, scopes: ["mac.priv.power"], contract_version: "0.1", reason: "disabled_by_policy"
+      });
+      assert.deepEqual(capabilities.find((tool) => tool.name === "mac_service_control"), {
+        name: "mac_service_control", planned: true, implemented: true, enabled: false, scopes: ["mac.service.control"], contract_version: "0.1", reason: "disabled_by_policy"
       });
     }
   } finally { await context.close(); }
@@ -1925,6 +2194,60 @@ test("mac_app_focus binds GUI approval, app-window target, Job lease, and focus 
   }
 });
 
+test("Accessibility-dependent GUI requests fail closed before approval consumption", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-gui-readiness-gate-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.example.Editor";
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.app.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const appTool = basePolicy.tools.get("mac_app_focus")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_app_focus", { ...appTool, enabled: true }) };
+  let calls = 0;
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    guiPublicEnablement: "staging-only",
+    appControlInspector: {
+      async open() { throw new Error("unused"); },
+      async focus() { calls += 1; throw new Error("GUI adapter must not be reached"); }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { app_id: appId, window_hint: "Example" };
+  const request = unsigned({
+    requestId: "gui-readiness-gate",
+    nonce: "gui-readiness-gate-nonce",
+    tool: "mac_app_focus",
+    arguments: argumentsValue
+  }, ["mac.app.control"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:gui-readiness-gate",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_app_focus",
+      contractVersion: "0.1",
+      targetKind: "app_window",
+      targetRef: `app_window:window:${appId}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "POLICY_DENIED");
+    assert.equal(calls, 0);
+    assert.equal(store.approvalRecord("approval:gui-readiness-gate")?.usedCount, 0);
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_app_open never publishes success after active session revocation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-app-open-revoke-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -2039,7 +2362,7 @@ test("mac_app_focus never publishes success after active session revocation", as
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 44);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 45);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 
@@ -2150,6 +2473,7 @@ test("mac_task_run fails closed before consuming approval when runner mechanism 
     taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
     taskRunner: {
       available: true,
+      publicEnablement: "production",
       mechanism: null,
       isolationProof: testTaskIsolationProof(),
       async run() { throw new Error("must not execute without a bound isolation mechanism"); }
@@ -2185,6 +2509,199 @@ test("mac_task_run fails closed before consuming approval when runner mechanism 
     assert.equal(store.requestRecord("task-fail-closed")?.state, "DENIED");
     assert.equal(store.ownedJobByIdempotencyKey("task:task-fail-closed", "principal-1"), undefined);
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("persisted unknown host task quarantines App Sandbox before approval consumption", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-persisted-quarantine-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const lease = { ownerId: "broker:quarantine", token: "lease:broker-task-quarantine-1234", expiresAtMs: NOW + 30_000 };
+  store.createJob({
+    jobId: "job:previous-unknown-task",
+    ownerPrincipalId: "principal-1",
+    ownerSessionId: "session-1",
+    tool: "mac_task_run",
+    targetRef: "task:tests.echo",
+    policyVersion: "policy-0.1",
+    payloadDigest: "a".repeat(64),
+    idempotencyKey: "previous-unknown-task",
+    createdAtMs: NOW - 3
+  });
+  const started = store.startJob("job:previous-unknown-task", "principal-1", 0, NOW - 2, lease);
+  store.finishJob("job:previous-unknown-task", "principal-1", started.revision, {
+    state: "unknown", resultClass: "unknown", finishedAtMs: NOW - 1
+  }, lease, NOW - 1);
+  let runnerCalls = 0;
+  let runnerCloses = 0;
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([{
+      ...taskProfile(root),
+      sandboxProfile: "app-sandbox-deny-default-v0.1"
+    }]),
+    taskRunner: {
+      available: true,
+      publicEnablement: "production",
+      mechanism: "app-sandbox",
+      isolationProof: {
+        ...testTaskIsolationProof(),
+        sandboxMechanism: "app-sandbox",
+        sandboxProfile: "app-sandbox-deny-default-v0.1",
+        credentialIsolation: "app-sandbox-container-no-host-credentials-v1",
+        processTree: "observer-only",
+        executableSelection: "app-sandbox-helper-v1"
+      },
+      async run() {
+        runnerCalls += 1;
+        throw new Error("must not execute while a prior host outcome is unresolved");
+      },
+      async close() {
+        runnerCloses += 1;
+        if (runnerCloses === 1) throw new Error("synthetic quarantined Runner close failure");
+      }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
+  const request = unsigned({
+    requestId: "task-persisted-quarantine",
+    nonce: "task-persisted-quarantine-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_task_run"), false);
+    store.issueApproval({
+      approvalId: "approval:task-persisted-quarantine",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "POLICY_DENIED");
+    assert.equal(store.approvalRecord("approval:task-persisted-quarantine")?.usedCount, 0);
+    assert.equal(runnerCalls, 0);
+    assert.equal(runnerCloses, 1);
+    await broker.close().catch(() => undefined);
+    await broker.close();
+    assert.equal(runnerCloses, 2);
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("runtime unknown host task result closes and quarantines its Runner", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-runtime-quarantine-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  let runnerCalls = 0;
+  let runnerCloses = 0;
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, ["mac.task.run"], ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([{
+      ...taskProfile(root),
+      sandboxProfile: "app-sandbox-deny-default-v0.1"
+    }]),
+    taskRunner: {
+      available: true,
+      publicEnablement: "production",
+      mechanism: "app-sandbox",
+      isolationProof: {
+        ...testTaskIsolationProof(),
+        sandboxMechanism: "app-sandbox",
+        sandboxProfile: "app-sandbox-deny-default-v0.1",
+        credentialIsolation: "app-sandbox-container-no-host-credentials-v1",
+        processTree: "observer-only",
+        executableSelection: "app-sandbox-helper-v1"
+      },
+      async run() {
+        runnerCalls += 1;
+        return {
+          state: "unknown",
+          resultClass: "UNKNOWN_OUTCOME",
+          exitCode: null,
+          stdout: "",
+          stderr: "execution outcome is unknown",
+          truncated: false,
+          durationMs: 1,
+          verification: { status: "unknown" }
+        };
+      },
+      async close() { runnerCloses += 1; }
+    },
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
+  const request = unsigned({
+    requestId: "task-runtime-quarantine",
+    nonce: "task-runtime-quarantine-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:task-runtime-quarantine",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "UNKNOWN_OUTCOME");
+    assert.equal(runnerCalls, 1);
+    assert.equal(store.hasUnresolvedHostTaskExecution(), true);
+    assert.equal(broker.enabledRuntimeCapabilityNames().includes("mac_task_run"), false);
+    assert.equal(runnerCloses, 1);
+  } finally {
+    await broker.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
@@ -2226,8 +2743,11 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
     tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
   };
   let runnerCalls = 0;
+  let rootAuthorityAdmissions = 0;
+  const rootHelperAuthority = new InMemoryRootHelperSnapshotRequestAuthority(8, () => NOW);
   const taskRunner: TaskRunner = {
     available: true,
+    publicEnablement: "production",
     mechanism: "sandbox-exec",
     isolationProof: testTaskIsolationProof(),
     async run(profile, control) {
@@ -2236,6 +2756,11 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
       assert.equal(profile.networkPolicy, "none");
       assert.equal(control.timeoutMs, 600_000);
       assert.equal(control.shouldCancel(), false);
+      assert.ok(control.rootHelperSnapshotRequestAuthority);
+      const helperRequestDigest = sha256(`broker-task-helper-${runnerCalls}`);
+      control.rootHelperSnapshotRequestAuthority.admit(helperRequestDigest, NOW + 1_000);
+      rootAuthorityAdmissions += 1;
+      control.rootHelperSnapshotRequestAuthority.release(helperRequestDigest);
       control.onProcessStarted?.({
         identity: { pid: 1234, processGroupId: 1234, startTimeMicros: 987654321 },
         descendants: []
@@ -2258,6 +2783,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
     edgeAuthenticationKeys: testKeyring(key),
     taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
     taskRunner,
+    rootHelperSnapshotRequestAuthority: rootHelperAuthority,
     now: () => NOW
   });
   const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
@@ -2285,6 +2811,7 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
     });
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(rootAuthorityAdmissions, 1);
     assert.equal(store.approvalRecord("approval:task-success")?.usedCount, 1);
     assert.equal(store.requestRecord("task-success")?.state, "SUCCEEDED");
     assert.ok(store.requestRecord("task-success")?.jobId);
@@ -2334,6 +2861,92 @@ test("mac_task_run binds approval, profile resolution, and verified Job completi
     assert.ok(oversizedJobId);
     assert.equal(store.ownedJob(oversizedJobId, "principal-1")?.state, "failed");
   } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_task_run reconciles a cancellation revision race before terminal Job persistence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-cancel-race-"));
+  const root = await realpath(directory);
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const scopes: Scope[] = ["mac.task.run", "mac.job.read", "mac.job.cancel"];
+  const basePolicy = createDefaultPolicy(
+    "edge-1", true, scopes, ["edge-key-1"],
+    [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
+    [], [], [], [], ["tests.echo"]
+  );
+  const taskTool = basePolicy.tools.get("mac_task_run")!;
+  const policy = {
+    ...basePolicy,
+    tools: new Map(basePolicy.tools).set("mac_task_run", { ...taskTool, enabled: true })
+  };
+  const taskRunner: TaskRunner = {
+    available: true,
+    publicEnablement: "production",
+    mechanism: "sandbox-exec",
+    isolationProof: testTaskIsolationProof(),
+    async run(_profile, control) {
+      control.onProcessStarted?.({
+        identity: { pid: 1234, processGroupId: 1234, startTimeMicros: 987654321 },
+        descendants: []
+      });
+      const job = store.ownedJobByIdempotencyKey("task:cancel-race", "principal-1");
+      assert.ok(job);
+      store.requestJobCancellation(job.jobId, "principal-1", "test-cancel-race", NOW);
+      return {
+        state: "cancelled",
+        resultClass: "CANCELLED",
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        durationMs: 1,
+        verification: { status: "unknown" }
+      };
+    }
+  };
+  const broker = new Broker({
+    store,
+    policy,
+    edgeAuthenticationKeys: testKeyring(key),
+    taskProfileRegistry: new TaskProfileRegistry([taskProfile(root)]),
+    taskRunner,
+    now: () => NOW
+  });
+  const argumentsValue = { profile: "tests.echo", cwd: root, args: ["safe"] };
+  const request = unsigned({
+    requestId: "cancel-race",
+    nonce: "cancel-race-nonce",
+    tool: "mac_task_run",
+    arguments: argumentsValue
+  }, ["mac.task.run"]);
+  try {
+    store.issueApproval({
+      approvalId: "approval:cancel-race",
+      approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_task_run",
+      contractVersion: "0.1",
+      targetKind: "task_profile",
+      targetRef: "task_profile:tests.echo",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_profile",
+      unattended: false,
+      issuedAtMs: NOW - 1_000,
+      expiresAtMs: NOW + 1_000
+    });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.result_class, "CANCELLED", JSON.stringify(result));
+    const jobId = store.requestRecord("cancel-race")?.jobId;
+    assert.ok(jobId);
+    const job = store.ownedJob(jobId, "principal-1");
+    assert.equal(job?.state, "cancelled");
+    assert.equal(job?.processMetadata, undefined);
+  } finally {
+    await broker.close();
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
@@ -2597,7 +3210,7 @@ test("real macOS Broker task crash keeps the Job unknown", {
 });
 
 test("real macOS Broker task cancellation drains the process after session revocation", {
-  skip: !realSandboxCanRun()
+  skip: !realSystemPublishedSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-revoke-"));
   const root = await realpath(directory);
@@ -2639,7 +3252,15 @@ test("real macOS Broker task cancellation drains the process after session revoc
     taskRunner: new SandboxExecTaskRunner({
       enabled: true,
       hostEvidenceAccepted: true,
-      isolationProof: { ...testTaskIsolationProof(), evidenceRef: "evidence://real-broker-task-revocation" }
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/bin/sleep"],
+      systemPublishedExecutablePathAccepted: true,
+      protectedFilesystemRoots: [root],
+      isolationProof: {
+        ...testTaskIsolationProof(),
+        executableSelection: "system-published-root-owned-v1",
+        evidenceRef: "evidence://real-broker-task-revocation"
+      }
     }),
     now: () => NOW
   });
@@ -2675,8 +3296,10 @@ test("real macOS Broker task cancellation drains the process after session revoc
     assert.equal(store.requestRecord("task-real-revocation")?.state, "CANCELLED");
     const jobId = store.requestRecord("task-real-revocation")?.jobId;
     assert.ok(jobId);
-    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
-    assert.equal(store.ownedJob(jobId, "principal-1")?.resultClass, "unknown");
+    const job = store.ownedJob(jobId, "principal-1");
+    assert.equal(job?.state, "unknown");
+    assert.equal(job?.resultClass, "unknown");
+    assert.equal(job?.processMetadata?.ownershipProof, "sandbox-exec-no-fork-v1");
     assert.deepEqual(store.auditRows()
       .filter((row) => row.request_id === "task-real-revocation")
       .map((row) => row.event_type), ["decision", "intent", "completion"]);
@@ -2689,7 +3312,7 @@ test("real macOS Broker task cancellation drains the process after session revoc
 });
 
 test("real macOS Broker task cancellation drains the process after Edge revocation", {
-  skip: !realSandboxCanRun()
+  skip: !realSystemPublishedSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-edge-revoke-"));
   const root = await realpath(directory);
@@ -2731,7 +3354,15 @@ test("real macOS Broker task cancellation drains the process after Edge revocati
     taskRunner: new SandboxExecTaskRunner({
       enabled: true,
       hostEvidenceAccepted: true,
-      isolationProof: { ...testTaskIsolationProof(), evidenceRef: "evidence://real-broker-task-edge-revocation" }
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/bin/sleep"],
+      systemPublishedExecutablePathAccepted: true,
+      protectedFilesystemRoots: [root],
+      isolationProof: {
+        ...testTaskIsolationProof(),
+        executableSelection: "system-published-root-owned-v1",
+        evidenceRef: "evidence://real-broker-task-edge-revocation"
+      }
     }),
     now: () => NOW
   });
@@ -2768,8 +3399,10 @@ test("real macOS Broker task cancellation drains the process after Edge revocati
     assert.equal(store.requestRecord("task-real-edge-revocation")?.state, "CANCELLED");
     const jobId = store.requestRecord("task-real-edge-revocation")?.jobId;
     assert.ok(jobId);
-    assert.equal(store.ownedJob(jobId, "principal-1")?.state, "unknown");
-    assert.equal(store.ownedJob(jobId, "principal-1")?.resultClass, "unknown");
+    const job = store.ownedJob(jobId, "principal-1");
+    assert.equal(job?.state, "unknown");
+    assert.equal(job?.resultClass, "unknown");
+    assert.equal(job?.processMetadata?.ownershipProof, "sandbox-exec-no-fork-v1");
   } finally {
     if (revocationTimer !== undefined) clearTimeout(revocationTimer);
     await broker.close();
@@ -2779,7 +3412,7 @@ test("real macOS Broker task cancellation drains the process after Edge revocati
 });
 
 test("real macOS Broker task cancellation drains the process after process kill switch", {
-  skip: !realSandboxCanRun()
+  skip: !realSystemPublishedSandboxCanRun()
 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-task-real-kill-switch-"));
   const root = await realpath(directory);
@@ -2821,7 +3454,15 @@ test("real macOS Broker task cancellation drains the process after process kill 
     taskRunner: new SandboxExecTaskRunner({
       enabled: true,
       hostEvidenceAccepted: true,
-      isolationProof: { ...testTaskIsolationProof(), evidenceRef: "evidence://real-broker-task-kill-switch" }
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/bin/sleep"],
+      systemPublishedExecutablePathAccepted: true,
+      protectedFilesystemRoots: [root],
+      isolationProof: {
+        ...testTaskIsolationProof(),
+        executableSelection: "system-published-root-owned-v1",
+        evidenceRef: "evidence://real-broker-task-kill-switch"
+      }
     }),
     now: () => NOW
   });
@@ -2885,6 +3526,7 @@ test("mac_task_run does not publish success after active session revocation", as
   };
   const taskRunner: TaskRunner = {
     available: true,
+    publicEnablement: "production",
     mechanism: "sandbox-exec",
     isolationProof: testTaskIsolationProof(),
     async run(_profile, control) {
@@ -3754,6 +4396,23 @@ test("mac_write_file_atomic requires a bound approval and verifies atomic readba
     const unapproved = await broker.handle(signRequest(unsignedRequest, key));
     assert.equal(unapproved.result_class, "POLICY_DENIED");
     assert.equal(store.requestRecord("write-request")?.state, "FAILED");
+    assert.deepEqual(store.approvalPreview("write-request", NOW), {
+      requestId: "write-request",
+      requestingPrincipalId: "principal-1",
+      tool: "mac_write_file_atomic",
+      contractVersion: "0.1",
+      targetKind: "path",
+      targetRef: "path:test-root",
+      payloadDigest: sha256(canonicalJson(argumentsValue)),
+      policyVersion: "policy-0.1",
+      approvalClass: "trusted_write",
+      unattended: false,
+      status: "pending",
+      approvalId: null,
+      createdAtMs: NOW,
+      expiresAtMs: NOW + APPROVAL_PREVIEW_TTL_MS,
+      revision: 0
+    });
 
     store.issueApproval({
       approvalId: "approval:write",

@@ -5,6 +5,7 @@ import { FilesystemInspector, type FilesystemNativeAdapter } from "./filesystem-
 import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 import type { WorkerResult } from "./worker-executor.js";
+import { awaitPreMutationAuthority } from "./filesystem-pre-mutation-gate.js";
 
 if (!parentPort) throw new Error("Filesystem fault worker requires a parent port");
 
@@ -26,7 +27,9 @@ try {
     command.content,
     command.expectedSha256,
     command.createOnly,
-    command.tempName
+    command.tempName,
+    undefined,
+    () => awaitPreMutationAuthority(command.preMutationGate, (message) => parentPort!.postMessage(message))
   );
   const value: FilesystemWorkerResult = {
     operation: "write",

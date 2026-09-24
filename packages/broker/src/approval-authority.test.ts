@@ -14,6 +14,7 @@ import {
   type UnsignedApprovalIssuance
 } from "./approval-authority.js";
 import { ApprovalIpcServer } from "./approval-ipc-server.js";
+import { ApprovalIpcClient } from "./approval-ipc-client.js";
 import { BrokerStore, type IssueApprovalInput } from "./persistence.js";
 
 const NOW = 1_700_000_000_000;
@@ -278,6 +279,64 @@ test("approval issuance uses a separate owner-only local IPC channel", async () 
   } finally {
     await server.close();
     await context.close();
+  }
+});
+
+test("owner approval IPC client signs an exact single-use approval and verifies readback", async () => {
+  const context = await fixture();
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-client-"));
+  const socketPath = join(directory, "approval.sock");
+  const server = new ApprovalIpcServer({
+    socketPath,
+    authority: context.authority,
+    peerPolicy: currentProcessPeerPolicy()
+  });
+  const client = new ApprovalIpcClient({
+    socketPath,
+    issuerId: "operator-1",
+    keyId: "operator-key-1",
+    authenticationKey: context.key,
+    now: () => NOW
+  });
+  await server.listen();
+  try {
+    const response = await client.issue(approval({ approvalId: "approval:client" }));
+    assert.deepEqual(response, { ok: true, approval_id: "approval:client", expires_at_ms: NOW + 30_000, revision: 0 });
+    assert.equal(context.store.approvalRecord("approval:client")?.useLimit, 1);
+    await assert.rejects(
+      client.issue(approval({ approvalId: "approval:client" })),
+      /Approval ID was already issued/u
+    );
+  } finally {
+    client.dispose();
+    await server.close();
+    await context.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("owner approval IPC client rejects stale or unattended approvals before transport", async () => {
+  const key = randomBytes(32);
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-client-deny-"));
+  const client = new ApprovalIpcClient({
+    socketPath: join(directory, "missing.sock"),
+    issuerId: "operator-1",
+    keyId: "operator-key-1",
+    authenticationKey: key,
+    now: () => NOW
+  });
+  try {
+    await assert.rejects(
+      client.issue(approval({ approvalId: "approval:stale", issuedAtMs: NOW - 120_000 })),
+      /malformed or stale/u
+    );
+    await assert.rejects(
+      client.issue(approval({ approvalId: "approval:unattended-client", approvalClass: "trusted_profile", unattended: true })),
+      /malformed or stale/u
+    );
+  } finally {
+    client.dispose();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

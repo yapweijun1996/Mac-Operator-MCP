@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -211,11 +211,13 @@ test("native canonical digest boundary rejects oversized input", () => {
   assert.throws(() => native.sha256Utf8(42 as never), /must be a string/u);
 });
 
-test("native adapter path validation rejects symlinks and writable artifacts", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "mac-operator-native-path-"));
+test("native adapter path validation rejects symlinks and writable artifacts or parent directories", async () => {
+  const directory = await mkdtemp(join(repositoryRoot, ".native-path-"));
   const canonicalDirectory = await realpath(directory);
   const regularPath = join(canonicalDirectory, "peer_credentials.node");
   const symlinkPath = join(canonicalDirectory, "peer_credentials-link.node");
+  const writableDirectory = join(canonicalDirectory, "writable-parent");
+  const writableNativePath = join(writableDirectory, "peer_credentials.node");
   try {
     await writeFile(regularPath, "native-placeholder", { mode: 0o600 });
     validateNativeAdapterPath(regularPath);
@@ -224,6 +226,10 @@ test("native adapter path validation rejects symlinks and writable artifacts", a
     await chmod(regularPath, 0o622);
     assert.throws(() => validateNativeAdapterPath(regularPath), /protected/u);
     assert.throws(() => validateNativeAdapterPath(`${regularPath}/..`), /canonical/u);
+    await mkdir(writableDirectory, { mode: 0o700 });
+    await writeFile(writableNativePath, "native-placeholder", { mode: 0o600 });
+    await chmod(writableDirectory, 0o777);
+    assert.throws(() => validateNativeAdapterPath(writableNativePath), /parent directory is not protected/u);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

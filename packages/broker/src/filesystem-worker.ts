@@ -6,6 +6,7 @@ import { applyFilesystemPatch } from "./filesystem-patch.js";
 import type { FilesystemWorkerCommand, FilesystemWorkerResult } from "./filesystem-worker-protocol.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 import type { WorkerResult } from "./worker-executor.js";
+import { awaitPreMutationAuthority } from "./filesystem-pre-mutation-gate.js";
 
 if (!parentPort) throw new Error("Filesystem worker requires a parent port");
 
@@ -109,13 +110,18 @@ try {
     const analysis = inspector.analyzeStoragePlanned(command.plans, command.topN, command.maxDepth);
     value = { operation: "storage_analysis", ...analysis };
   } else if (command.operation === "write") {
-    assertContentDoesNotContainSecrets(command.content);
+    // Structured clone transports Buffer values as Uint8Array instances.
+    // Re-materialize the byte boundary before secret inspection and native I/O.
+    const content = Buffer.from(command.content);
+    assertContentDoesNotContainSecrets(content);
     const write = inspector.writePlanned(
       command.plan,
-      command.content,
+      content,
       command.expectedSha256,
       command.createOnly,
-      command.tempName
+      command.tempName,
+      undefined,
+      () => awaitPreMutationAuthority(command.preMutationGate, (message) => parentPort!.postMessage(message))
     );
     value = {
       operation: "write",
@@ -130,7 +136,14 @@ try {
       inode: write.inode
     };
   } else if (command.operation === "patch") {
-    value = applyFilesystemPatch(inspector, command.plan, command.patch, command.expectedBaseHash);
+    value = applyFilesystemPatch(
+      inspector,
+      command.plan,
+      command.patch,
+      command.expectedBaseHash,
+      undefined,
+      () => awaitPreMutationAuthority(command.preMutationGate, (message) => parentPort!.postMessage(message))
+    );
   } else {
     throw new BrokerError("PRECONDITION_FAILED", "Filesystem worker command is unsupported");
   }

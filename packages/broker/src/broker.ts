@@ -6,18 +6,23 @@ import {
   PROTOCOL_VERSION,
   sha256,
   signBrokerResponse,
+  signBrokerRevocationResponse,
   parseJsonStrict,
   verifyRequestAuthentication,
+  verifyBrokerRevocationEvent,
+  type AuthenticatedBrokerRevocationResponse,
   type AuthenticatedBrokerResponse,
   type BrokerFailure,
   type BrokerRequest,
   type BrokerResult,
+  type BrokerRevocationEvent,
+  type BrokerRevocationResult,
   type CapabilityFamily
 } from "@mac-operator/contracts";
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
-import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
+import { APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -34,7 +39,7 @@ import {
 } from "./policy.js";
 import { isPolicyQueryTargetReference } from "./target-authority.js";
 import { PolicyManager } from "./policy-loader.js";
-import { parseBrokerRequest } from "./request-validator.js";
+import { parseBrokerRequest, parseBrokerRevocationEvent } from "./request-validator.js";
 import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition, type TemporaryWriteCleanupResult, type UnlinkRecoveryResult } from "./filesystem-inspector.js";
 import type { FilesystemPatchResult } from "./filesystem-patch.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
@@ -46,15 +51,23 @@ import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } fro
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
 import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
-import { DOCKER_CODE_SIGNATURE_EXPECTATION, DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
+import { createDockerProcessSupervisor, DOCKER_CODE_SIGNATURE_EXPECTATION, DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
-import { FailClosedTaskRunner, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
+import { FailClosedTaskRunner, requireTaskIsolationProof, taskDescriptorDigest, validateTaskExecutionResult, validateTaskIsolationProof, type TaskExecutionResult, type TaskRecoveryRequest, type TaskRunner, type VirtualizationGuestTaskAdmission } from "./task-runner.js";
 import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArguments, type ResolvedTaskProfile } from "./task-profile.js";
+import type { RootHelperSnapshotRequestAdmission } from "./root-helper-snapshot.js";
+import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-authority.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
 import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, type UiActionName, type UiInputKey, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
+import { requiresAccessibilityPermission, type GuiPublicEnablement } from "./gui-readiness.js";
+import { requiresDeveloperReadiness, type DeveloperPublicEnablement } from "./developer-readiness.js";
 import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
 import { validatePrivilegedHelperExecutionResult, type PrivilegedHelperExecutionResult, type PrivilegedHelperOperation, type PrivilegedHelperResponse } from "./privileged-helper.js";
+import { parseUserServiceControlArguments, UserServiceControlBrokerCandidate, type UserServiceControlCandidateExecution } from "./user-service-control-admission.js";
+import { UserServiceControlAdapter, validateUserServiceControlResult, type UserServiceControlRequest } from "./user-service-control.js";
+import { createServiceControlJobMetadata, UserServiceControlJobExecutor } from "./user-service-control-executor.js";
+import { validateSemanticResourceBudget, validateStorageSemanticResourceBudget } from "./resource-budget.js";
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -85,16 +98,32 @@ export interface BrokerOptions {
   appInspector?: AppInventoryInspector;
   appControlInspector?: AppControlInspector;
   uiInspector?: UiInspector;
+  /** Production startup evidence gate for Accessibility-dependent GUI tools. */
+  guiPublicEnablement?: GuiPublicEnablement;
+  /** Production startup evidence gate for D1 mutation tools. */
+  developerPublicEnablement?: DeveloperPublicEnablement;
   uiSnapshotRegistry?: UiSnapshotRegistry;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
+  /** Optional Broker-owned active-request authority for root-helper tasks. */
+  rootHelperSnapshotRequestAuthority?: RootHelperSnapshotRequestAuthority;
   /** Optional privileged helper Job boundary; disabled by default. */
   privilegedHelperExecutor?: PrivilegedHelperJobExecutor;
+  /** Optional MOP-104 runtime; omitted and disabled by default. */
+  userServiceControlCandidate?: {
+    adapter: UserServiceControlAdapter;
+    executor: UserServiceControlJobExecutor;
+    authorizedPrincipalIds: readonly string[];
+    enabled?: boolean;
+    now?: () => number;
+    maxRequestAgeMs?: number;
+  };
 }
 
 const JOB_LEASE_DURATION_MS = 30_000;
 const JOB_LEASE_RENEW_INTERVAL_MS = 5_000;
 const MAX_REQUEST_AGE_MS = 600_000;
+const MAX_SESSION_LIFETIME_MS = 24 * 60 * 60 * 1_000;
 const MAX_CLOCK_SKEW_MS = 60_000;
 const DEFAULT_MAX_ACTIVE_REQUESTS_PER_SESSION = 8;
 const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
@@ -120,6 +149,8 @@ export class Broker {
   private readonly filesystemExecutor: FilesystemExecutor;
   private readonly processExecutor: ProcessExecutor;
   private readonly processSupervisor: ProcessSupervisor;
+  /** Separate authority so Docker cannot inherit ordinary pathname execution. */
+  private readonly dockerProcessSupervisor: ProcessSupervisor | undefined;
   private readonly serviceInspector: ServiceInspector;
   private readonly logInspector: LogInspector;
   private readonly gitInspector: GitInspector;
@@ -135,7 +166,9 @@ export class Broker {
   private readonly uiSnapshotRegistry: UiSnapshotRegistry;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
+  private readonly rootHelperSnapshotRequestAuthority: RootHelperSnapshotRequestAuthority | undefined;
   private readonly privilegedHelperExecutor: PrivilegedHelperJobExecutor;
+  private readonly userServiceControlCandidate: UserServiceControlBrokerCandidate | undefined;
   private readonly staticPolicy: BrokerPolicy | undefined;
   private readonly jobLeaseOwnerId: string;
   private readonly activeRequestsBySession = new Map<string, number>();
@@ -198,19 +231,50 @@ export class Broker {
     this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl(this.processSupervisor);
     this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl(this.processSupervisor);
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
-    this.dockerInspector = options.dockerInspector ?? new DockerInspectorImpl({
-      supervisor: this.processSupervisor,
-      requireCodeSignature: true,
-      codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
-    });
+    if (options.dockerInspector !== undefined) {
+      this.dockerProcessSupervisor = undefined;
+      this.dockerInspector = options.dockerInspector;
+    } else {
+      this.dockerProcessSupervisor = createDockerProcessSupervisor();
+      this.dockerInspector = new DockerInspectorImpl({
+        supervisor: this.dockerProcessSupervisor,
+        requireCodeSignature: true,
+        codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
+      });
+    }
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl(this.processSupervisor);
     this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, this.processSupervisor);
     this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(this.processSupervisor);
     this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     validateTaskProfileRegistry(this.taskProfileRegistry);
-    this.taskRunner = options.taskRunner ?? new FailClosedTaskRunner();
+    const configuredTaskRunner = options.taskRunner ?? new FailClosedTaskRunner();
+    this.taskRunner = configuredTaskRunner.mechanism === null || configuredTaskRunner.mechanism === "virtualization"
+      ? configuredTaskRunner
+      : new PersistentlyQuarantinedTaskRunner(
+        configuredTaskRunner,
+        () => options.store.hasUnresolvedHostTaskExecution()
+      );
+    if (options.rootHelperSnapshotRequestAuthority !== undefined &&
+        (typeof options.rootHelperSnapshotRequestAuthority.admit !== "function" ||
+         typeof options.rootHelperSnapshotRequestAuthority.assertAuthorized !== "function" ||
+         typeof options.rootHelperSnapshotRequestAuthority.release !== "function" ||
+         typeof options.rootHelperSnapshotRequestAuthority.revoke !== "function")) {
+      throw new Error("Root-helper snapshot request authority is malformed");
+    }
+    this.rootHelperSnapshotRequestAuthority = options.rootHelperSnapshotRequestAuthority;
     this.privilegedHelperExecutor = options.privilegedHelperExecutor ?? new PrivilegedHelperJobExecutor({ store: options.store });
+    this.userServiceControlCandidate = options.userServiceControlCandidate === undefined
+      ? undefined
+      : new UserServiceControlBrokerCandidate({
+        store: options.store,
+        adapter: options.userServiceControlCandidate.adapter,
+        executor: options.userServiceControlCandidate.executor,
+        authorizedPrincipalIds: options.userServiceControlCandidate.authorizedPrincipalIds,
+        ...(options.userServiceControlCandidate.enabled === undefined ? {} : { enabled: options.userServiceControlCandidate.enabled }),
+        ...(options.userServiceControlCandidate.now === undefined ? {} : { now: options.userServiceControlCandidate.now }),
+        ...(options.userServiceControlCandidate.maxRequestAgeMs === undefined ? {} : { maxRequestAgeMs: options.userServiceControlCandidate.maxRequestAgeMs })
+      });
     this.jobLeaseOwnerId = `broker:${randomUUID()}`;
   }
 
@@ -232,6 +296,13 @@ export class Broker {
 
   private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
     if (toolName === "mac_task_run" && !this.taskRunner.available) return "runtime_unavailable";
+    if (requiresAccessibilityPermission(toolName) && this.options.guiPublicEnablement !== undefined &&
+        this.options.guiPublicEnablement !== "production") return "runtime_unavailable";
+    if (requiresDeveloperReadiness(toolName) && this.options.developerPublicEnablement !== undefined &&
+        this.options.developerPublicEnablement !== "production") return "runtime_unavailable";
+    if (toolName === "mac_service_control" && (this.userServiceControlCandidate === undefined || !this.userServiceControlCandidate.available)) {
+      return "runtime_unavailable";
+    }
     if (toolName === "mac_priv_service_control" && !this.privilegedHelperExecutor.supportsOperation("service_control")) return "runtime_unavailable";
     if (toolName === "mac_priv_package_install" && !this.privilegedHelperExecutor.supportsOperation("package_install")) return "runtime_unavailable";
     if (toolName === "mac_priv_power" && !this.privilegedHelperExecutor.supportsOperation("power")) return "runtime_unavailable";
@@ -247,10 +318,11 @@ export class Broker {
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closing = true;
-    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.taskRunner];
+    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.dockerProcessSupervisor, this.taskRunner];
     this.closePromise = (async () => {
       let firstError: unknown;
       for (const resource of resources) {
+        if (resource === undefined) continue;
         if (typeof resource.close !== "function") continue;
         try { await resource.close.call(resource); }
         catch (error) { firstError ??= error; }
@@ -263,6 +335,79 @@ export class Broker {
       }
     })();
     return this.closePromise;
+  }
+
+  /**
+   * Internal-only MOP-104 candidate path. No MCP, HTTPS Edge, or IPC handler
+   * calls this method; public capability discovery remains unchanged. The
+   * candidate is explicitly disabled unless its adapter, executor, principal
+   * allowlist, and host evidence are supplied by a local owner process.
+   */
+  async executeUserServiceControlCandidate(rawRequest: unknown): Promise<UserServiceControlCandidateExecution> {
+    const candidate = this.userServiceControlCandidate;
+    if (candidate === undefined) {
+      throw new BrokerError("UNSUPPORTED_CAPABILITY", "User service-control candidate is not configured");
+    }
+    const request = parseBrokerRequest(rawRequest);
+    const startedAt = this.now();
+    const policy = this.currentPolicy();
+    this.authenticate(request, startedAt, policy);
+    this.checkRevocation(request);
+    if (request.policyVersion !== policy.version) {
+      throw new BrokerError("POLICY_DENIED", "Request policy version is not active");
+    }
+    authorizePrincipalProjection(
+      policy,
+      request.principal.principalId,
+      request.principal.issuer,
+      request.principal.scopes
+    );
+    this.reserveSessionRequest(request.principal.principalId, request.principal.sessionId);
+    const assertAuthority = (): void => {
+      if (this.closing) throw new BrokerError("CANCELLED", "Broker is shutting down");
+      if (this.now() >= request.principal.expiresAtMs) throw new BrokerError("CANCELLED", "Active work session expired");
+      this.checkRevocation(request);
+      const currentPolicy = this.currentPolicy();
+      if (currentPolicy.version !== request.policyVersion || currentPolicy.killSwitches.global || currentPolicy.killSwitches.mutations ||
+          this.options.store.isSwitchDisabled("global") || this.options.store.isSwitchDisabled("mutations")) {
+        throw new BrokerError("REVOKED", "User service-control candidate authority is no longer active");
+      }
+      authorizePrincipalProjection(
+        currentPolicy,
+        request.principal.principalId,
+        request.principal.issuer,
+        request.principal.scopes
+      );
+    };
+    try {
+      const admission = await candidate.admit(request, { assertRequestAuthority: assertAuthority }, {
+        maxActiveRequestsGlobal: this.maxActiveRequestsGlobal,
+        maxActiveRequestsPerSession: this.maxActiveRequestsPerSession,
+        maxActiveRequestsByFamily: this.maxActiveRequestsByFamily
+      });
+      return await candidate.execute(admission, { assertRequestAuthority: assertAuthority });
+    } finally {
+      this.releaseSessionRequest(request.principal.principalId, request.principal.sessionId);
+    }
+  }
+
+  /**
+   * Host-startup recovery hook for user-service Jobs left unresolved by a
+   * prior Broker instance. Recovery performs readback only: it never replays
+   * a service mutation or promotes an UNKNOWN Job to success.
+   */
+  async reconcileRestartedUserServiceJobs(limit = 100): Promise<{
+    inspected: number;
+    readback: number;
+    identityMismatch: number;
+    unavailable: number;
+    unknown: number;
+  }> {
+    const candidate = this.userServiceControlCandidate;
+    if (candidate === undefined) {
+      return { inspected: 0, readback: 0, identityMismatch: 0, unavailable: 0, unknown: 0 };
+    }
+    return candidate.executor.reconcileRestartedJobs(limit);
   }
 
   /**
@@ -488,7 +633,7 @@ export class Broker {
     identityMismatch: number;
     unknown: number;
   }> {
-    const jobs = this.options.store.restartUnknownProcessJobs(limit);
+    const jobs = this.options.store.unresolvedTaskProcessJobs(limit);
     if (jobs.length === 0) return { inspected: 0, drained: 0, absent: 0, identityMismatch: 0, unknown: 0 };
     let drained = 0;
     let absent = 0;
@@ -633,8 +778,8 @@ export class Broker {
           this.options.store.isRevoked("session", job.ownerSessionId) ||
           (job.ownerEdgeId !== null && this.options.store.isRevoked("edge", job.ownerEdgeId)) ||
           (job.ownerEdgeKeyId !== null && this.options.store.isRevoked("edge_key", job.ownerEdgeKeyId)) ||
-          this.taskRunner.mechanism !== "virtualization" ||
-          typeof this.taskRunner.recoverUnknownTask !== "function") {
+          (job.guestResultJournal === undefined && (this.taskRunner.mechanism !== "virtualization" ||
+            typeof this.taskRunner.recoverUnknownTask !== "function"))) {
         unavailable += 1;
         this.options.store.appendAudit({
           requestId: auditRequestId,
@@ -668,28 +813,42 @@ export class Broker {
           throw new BrokerError("REVOKED", "Guest status lookup authority is revoked");
         }
       };
-      let result;
+      let result: TaskExecutionResult;
       try {
-        result = await this.taskRunner.recoverUnknownTask({
-          metadata,
-          authorizeStatusLookup,
-          shouldCancel: () => {
-            if (this.closing) return true;
-            try {
-              authorizeStatusLookup({
-                guestIdentity: metadata.guestIdentity,
-                originalRequestId: metadata.requestId,
-                originalNonce: metadata.nonce,
-                originalRequestDigest: metadata.requestDigest,
-                timeoutMs: metadata.timeoutMs,
-                outputCapBytes: metadata.outputCapBytes
-              });
-              return false;
-            } catch {
-              return true;
-            }
-          }
+        authorizeStatusLookup({
+          guestIdentity: metadata.guestIdentity,
+          originalRequestId: metadata.requestId,
+          originalNonce: metadata.nonce,
+          originalRequestDigest: metadata.requestDigest,
+          timeoutMs: metadata.timeoutMs,
+          outputCapBytes: metadata.outputCapBytes
         });
+        if (job.guestResultJournal !== undefined) {
+          result = job.guestResultJournal.result;
+        } else if (typeof this.taskRunner.recoverUnknownTask === "function") {
+          result = await this.taskRunner.recoverUnknownTask({
+            metadata,
+            authorizeStatusLookup,
+            shouldCancel: () => {
+              if (this.closing) return true;
+              try {
+                authorizeStatusLookup({
+                  guestIdentity: metadata.guestIdentity,
+                  originalRequestId: metadata.requestId,
+                  originalNonce: metadata.nonce,
+                  originalRequestDigest: metadata.requestDigest,
+                  timeoutMs: metadata.timeoutMs,
+                  outputCapBytes: metadata.outputCapBytes
+                });
+                return false;
+              } catch {
+                return true;
+              }
+            }
+          });
+        } else {
+          throw new BrokerError("POLICY_DENIED", "Guest result recovery is unavailable");
+        }
       } catch (error) {
         if (error instanceof BrokerError && error.errorClass === "POLICY_DENIED") unavailable += 1;
         else unknown += 1;
@@ -707,7 +866,9 @@ export class Broker {
         });
         continue;
       }
-      if (result.state === "unknown" || result.verification.status !== "verified") {
+      if (result.state === "unknown" || result.verification.status !== "verified" || result.truncated ||
+          result.durationMs > metadata.timeoutMs ||
+          Buffer.byteLength(result.stdout, "utf8") + Buffer.byteLength(result.stderr, "utf8") > metadata.outputCapBytes) {
         unknown += 1;
         this.options.store.appendAudit({
           requestId: auditRequestId,
@@ -834,6 +995,7 @@ export class Broker {
       this.options.store.admitRequest({
         requestId: request.requestId,
         edgeId: request.principal.edgeId,
+        edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
         nonce: request.nonce,
         nonceExpiresAtMs: startedAt + this.maxRequestAgeMs + this.allowedClockSkewMs,
         principalId: request.principal.principalId,
@@ -938,58 +1100,83 @@ export class Broker {
             idempotencyKey: `task:${request.requestId}`,
             createdAtMs: admissionAt
           } as const;
-          const admitted = this.options.store.admitApprovedJobAfterDecision({
-            intent: {
-              requestId: request.requestId,
-              principalId: request.principal.principalId,
-              tool: request.tool,
-              eventType: "intent",
-              decision: "allow",
-              resultClass: "INTENT_RECORDED",
-              targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
-              policyVersion: policy.version,
-              evidence: { argumentDigest: sha256(canonicalJson(request.arguments)) },
-              timestampMs: admissionAt
-            },
-            approval: {
-              contractVersion: request.contractVersion,
-              targetKind: target.kind,
-              targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
-              payloadDigest: sha256(canonicalJson(request.arguments)),
-              approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
-              unattended: false
-            },
-            job: jobInput
-          });
+          const approvalBinding: ApprovalConsumptionBinding = {
+            contractVersion: request.contractVersion,
+            targetKind: target.kind,
+            targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
+            payloadDigest: sha256(canonicalJson(request.arguments)),
+            approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
+            unattended: false
+          };
+          let admitted: ReturnType<BrokerStore["admitApprovedJobAfterDecision"]>;
+          try {
+            admitted = this.options.store.admitApprovedJobAfterDecision({
+              intent: {
+                requestId: request.requestId,
+                principalId: request.principal.principalId,
+                tool: request.tool,
+                eventType: "intent",
+                decision: "allow",
+                resultClass: "INTENT_RECORDED",
+                targetRef: approvalBinding.targetRef,
+                policyVersion: policy.version,
+                evidence: { argumentDigest: sha256(canonicalJson(request.arguments)) },
+                timestampMs: admissionAt
+              },
+              approval: approvalBinding,
+              job: jobInput
+            });
+          } catch (error) {
+            this.persistApprovalPreviewOnMissing(request, approvalBinding, admissionAt, error);
+            throw error;
+          }
           execution.taskJob = admitted.job;
           execution.taskJobNew = true;
         } else {
           const mutationPayloadDigest = execution.privileged === undefined
             ? sha256(canonicalJson(request.arguments))
             : sha256(canonicalJson(execution.privileged.payload));
-          this.options.store.recordRequestIntent({
-            requestId: request.requestId,
-            principalId: request.principal.principalId,
-            tool: request.tool,
-            eventType: "intent",
-            decision: "allow",
-            resultClass: "INTENT_RECORDED",
-            targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
-            policyVersion: policy.version,
-            evidence: {
-              argumentDigest: sha256(canonicalJson(request.arguments)),
-              ...(execution.privileged === undefined ? {} : { privilegedPayloadDigest: mutationPayloadDigest }),
-              ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {})
-            },
-            timestampMs: this.now()
-          }, {
+          const intentAt = this.now();
+          const approvalBinding: ApprovalConsumptionBinding = {
             contractVersion: request.contractVersion,
             targetKind: target.kind,
             targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
             payloadDigest: mutationPayloadDigest,
             approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
             unattended: false
-          });
+          };
+          try {
+            this.options.store.recordRequestIntent({
+              requestId: request.requestId,
+              principalId: request.principal.principalId,
+              tool: request.tool,
+              eventType: "intent",
+              decision: "allow",
+              resultClass: "INTENT_RECORDED",
+              targetRef: approvalBinding.targetRef,
+              policyVersion: policy.version,
+              evidence: {
+                argumentDigest: sha256(canonicalJson(request.arguments)),
+                ...(execution.privileged === undefined ? {} : { privilegedPayloadDigest: mutationPayloadDigest }),
+                ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {})
+              },
+              timestampMs: intentAt
+            }, approvalBinding);
+          } catch (error) {
+            this.persistApprovalPreviewOnMissing(request, approvalBinding, intentAt, error);
+            throw error;
+          }
+          if (request.tool === "mac_service_control") {
+            const candidate = this.userServiceControlCandidate;
+            if (!candidate || !execution.serviceControl) {
+              throw new BrokerError("UNSUPPORTED_CAPABILITY", "User service-control runtime is unavailable");
+            }
+            execution.serviceControl.precondition = await candidate.readPrecondition(
+              execution.serviceControl.request,
+              this.executionControl(request, execution.target, toolPolicy.timeoutMs),
+              request.principal.principalId
+            );
+          }
           if (request.tool === "mac_priv_service_control" || request.tool === "mac_priv_package_install" || request.tool === "mac_priv_power") {
             if (!execution.privileged) throw new BrokerError("EXECUTION_FAILED", "Privileged helper payload is unavailable");
             const payloadDigest = sha256(canonicalJson(execution.privileged.payload));
@@ -1030,6 +1217,31 @@ export class Broker {
             const created = this.options.store.createJob(jobInput);
             execution.writeJob = created.job;
             execution.writeJobNew = !created.reused;
+            this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
+          }
+          if (request.tool === "mac_service_control") {
+            const serviceControl = execution.serviceControl;
+            if (!serviceControl || !serviceControl.precondition) {
+              throw new BrokerError("EXECUTION_FAILED", "User service-control precondition is unavailable");
+            }
+            const precondition = serviceControl.precondition;
+            const jobInput = {
+              jobId: `job:service-${sha256(canonicalJson({ principalId: request.principal.principalId, idempotencyKey: serviceControl.idempotencyKey })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId,
+              edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
+              ownerPrincipalId: request.principal.principalId,
+              ownerSessionId: request.principal.sessionId,
+              tool: request.tool,
+              targetRef: `${target.kind}:${target.reference}`,
+              policyVersion: request.policyVersion,
+              payloadDigest: sha256(canonicalJson(request.arguments)),
+              idempotencyKey: `service-control:${serviceControl.idempotencyKey}`,
+              createdAtMs: this.now(),
+              serviceMetadata: createServiceControlJobMetadata(serviceControl.request, precondition)
+            } as const;
+            const created = this.options.store.createJob(jobInput);
+            execution.serviceControlJob = created.job;
+            execution.serviceControlJobNew = !created.reused;
             this.options.store.linkRequestJob(request.requestId, created.job.jobId, this.now());
           }
           if (request.tool === "mac_apply_patch") {
@@ -1167,10 +1379,12 @@ export class Broker {
                   ? { kind: "app_focus" as const, job: execution.appFocusJob }
                   : execution.uiActionJob && execution.uiActionJobNew
                     ? { kind: "ui_action" as const, job: execution.uiActionJob }
-                    : execution.uiTypeJob && execution.uiTypeJobNew
-                      ? { kind: "ui_type" as const, job: execution.uiTypeJob }
-                      : execution.privilegedJob && execution.privilegedJobNew
-                        ? { kind: "privileged" as const, job: execution.privilegedJob }
+                      : execution.uiTypeJob && execution.uiTypeJobNew
+                        ? { kind: "ui_type" as const, job: execution.uiTypeJob }
+                        : execution.serviceControlJob && execution.serviceControlJobNew
+                          ? { kind: "service_control" as const, job: execution.serviceControlJob }
+                        : execution.privilegedJob && execution.privilegedJobNew
+                          ? { kind: "privileged" as const, job: execution.privilegedJob }
           : undefined;
       if (pendingJob && pendingJob.job.state === "queued") {
         const leaseStartedAtMs = this.now();
@@ -1210,6 +1424,7 @@ export class Broker {
         else if (pendingJob.kind === "app_focus") execution.appFocusJob = started;
         else if (pendingJob.kind === "ui_action") execution.uiActionJob = started;
         else if (pendingJob.kind === "ui_type") execution.uiTypeJob = started;
+        else if (pendingJob.kind === "service_control") execution.serviceControlJob = started;
         else execution.privilegedJob = started;
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
@@ -1259,7 +1474,80 @@ export class Broker {
     }
   }
 
-  async handleForIpc(rawRequest: unknown): Promise<AuthenticatedBrokerResponse | BrokerResult> {
+  /**
+   * Accept a signed Edge OAuth-authority event on the existing peer-authenticated
+   * IPC channel. This path has no MCP tool shape and can only revoke the
+   * session named by the already trusted Edge event.
+   */
+  async handleRevocationForIpc(rawEvent: unknown): Promise<AuthenticatedBrokerRevocationResponse | BrokerRevocationResult> {
+    const startedAt = this.now();
+    let event: BrokerRevocationEvent | undefined;
+    let key: Buffer | undefined;
+    try {
+      event = parseBrokerRevocationEvent(rawEvent);
+      const policy = this.currentPolicy();
+      const identity = keyIdentity(event.edgeId, event.authenticationKeyId);
+      const trustedKey = policy.trustedEdgeKeys.get(identity);
+      if (!policy.trustedEdgeIds.has(event.edgeId) || trustedKey === undefined) {
+        throw new BrokerError("AUTH_INVALID", "Revocation event authentication failed");
+      }
+      const nowMs = this.now();
+      if (nowMs < trustedKey.notBeforeMs || nowMs >= trustedKey.expiresAtMs) {
+        throw new BrokerError("AUTH_EXPIRED", "Edge authentication key is not currently valid");
+      }
+      if (event.timestampMs > nowMs + this.allowedClockSkewMs || nowMs - event.timestampMs > this.maxRequestAgeMs) {
+        throw new BrokerError("AUTH_EXPIRED", "Revocation event timestamp is outside the accepted window");
+      }
+      if (this.options.store.isRevoked("edge", event.edgeId) || this.options.store.isRevoked("edge_key", identity)) {
+        throw new BrokerError("REVOKED", "Revocation event authority has been revoked");
+      }
+      key = this.options.edgeAuthenticationKeys.keyByIdentity(event.edgeId, event.authenticationKeyId);
+      if (key === undefined || !verifyBrokerRevocationEvent(event, key)) {
+        throw new BrokerError("AUTH_INVALID", "Revocation event authentication failed");
+      }
+      this.options.store.admitEdgeRevocationEvent({
+        requestId: event.requestId,
+        nonce: event.nonce,
+        edgeId: event.edgeId,
+        acceptedAtMs: nowMs,
+        expiresAtMs: Math.min(nowMs + this.maxRequestAgeMs, trustedKey.expiresAtMs)
+      });
+      if (!this.options.store.isRevoked("session", event.sessionId)) {
+        this.options.store.revoke("session", event.sessionId, "OAUTH_AUTHORITY_REVOKED", nowMs, event.requestId);
+      }
+      const response: BrokerRevocationResult = {
+        ok: true,
+        request_id: event.requestId,
+        event_type: event.eventType,
+        revoked: true,
+        duration_ms: Math.max(0, this.now() - startedAt)
+      };
+      return signBrokerRevocationResponse(event, response, key);
+    } catch (error) {
+      const brokerError = error instanceof BrokerError
+        ? error
+        : new BrokerError("AUDIT_UNAVAILABLE", "Revocation event could not be persisted");
+      const response: BrokerRevocationResult = {
+        ok: false,
+        request_id: event?.requestId ?? "invalid-request",
+        event_type: "oauth_authority_revoked",
+        result_class: brokerError.errorClass,
+        error: { message: brokerError.message, retryable: brokerError.retryable },
+        duration_ms: Math.max(0, this.now() - startedAt)
+      };
+      if (event !== undefined && key !== undefined && verifyBrokerRevocationEvent(event, key)) {
+        return signBrokerRevocationResponse(event, response, key);
+      }
+      return response;
+    } finally {
+      key?.fill(0);
+    }
+  }
+
+  async handleForIpc(rawRequest: unknown): Promise<AuthenticatedBrokerResponse | AuthenticatedBrokerRevocationResponse | BrokerResult | BrokerRevocationResult> {
+    if (isPlainDataRecord(rawRequest) && rawRequest.eventType === "oauth_authority_revoked") {
+      return this.handleRevocationForIpc(rawRequest);
+    }
     // Parse once before dispatch and carry that immutable snapshot through the
     // async handler. Re-reading caller-owned input after execution would let a
     // same-process caller swap the signed target while the response envelope
@@ -1337,6 +1625,7 @@ export class Broker {
       request.principal.issuedAtMs > nowMs + this.allowedClockSkewMs ||
       request.principal.expiresAtMs <= nowMs ||
       request.principal.expiresAtMs <= request.principal.issuedAtMs ||
+      request.principal.expiresAtMs - request.principal.issuedAtMs > MAX_SESSION_LIFETIME_MS ||
       request.timestampMs < request.principal.issuedAtMs - this.allowedClockSkewMs ||
       request.timestampMs >= request.principal.expiresAtMs
     ) {
@@ -2505,17 +2794,36 @@ export class Broker {
       case "mac_task_run": {
         return this.dispatchTask(request, execution, toolPolicy.timeoutMs, toolPolicy.outputCapBytes);
       }
+      case "mac_service_control": {
+        return this.dispatchUserServiceControl(request, execution, toolPolicy.timeoutMs);
+      }
       case "mac_priv_service_control":
       case "mac_priv_package_install":
       case "mac_priv_power": {
         return this.dispatchPrivileged(request, execution, toolPolicy.timeoutMs);
       }
       case "mac_job_status": {
+        if (execution.archivedJob) {
+          return {
+            data: archivedJobStatusData(execution.archivedJob),
+            verification: { required: false, status: "verified", strategy: "job_result_validation" },
+            truncated: true,
+            warnings: ["Job history was archived; output is no longer retained in the live Broker ledger"],
+            auditTarget: `job:${execution.archivedJob.jobId}`,
+            auditEvidence: {
+              jobState: execution.archivedJob.state,
+              jobRevision: execution.archivedJob.revision,
+              archiveSha256: execution.archivedJob.archiveSha256
+            }
+          };
+        }
         if (!execution.job) throw new BrokerError("EXECUTION_FAILED", "Job execution plan is unavailable");
         const tailBytes = (request.arguments.tail_bytes ?? 65_536) as number;
         const output = boundedJobOutput(execution.job, tailBytes);
         const recovery = execution.job.state === "unknown"
-          ? this.inspectWritePostcondition(execution.job, policy)
+          ? execution.job.writeMetadata !== undefined
+            ? this.inspectWritePostcondition(execution.job, policy)
+            : await this.inspectPrivilegedPostcondition(execution.job, request)
           : undefined;
         return {
           data: jobStatusData(execution.job, output, recovery),
@@ -2528,15 +2836,16 @@ export class Broker {
             ...(recovery ? { writePostcondition: recovery.postcondition, writeRecoveryResolution: recovery.resolution } : {})
           },
           ...(recovery?.postcondition === "matches"
-            ? { warnings: ["Write postcondition matches, but the job remains UNKNOWN because the actor in the crash window cannot be proven"] }
+            ? { warnings: ["Mutation postcondition matches, but the job remains UNKNOWN because the actor in the crash window cannot be proven"] }
             : recovery?.postcondition === "mismatch"
-              ? { warnings: ["Write postcondition does not match; the job remains UNKNOWN and must not be retried automatically"] }
+              ? { warnings: ["Mutation postcondition does not match; the job remains UNKNOWN and must not be retried automatically"] }
               : recovery?.postcondition === "unavailable"
-                ? { warnings: ["Write postcondition could not be verified; the job remains UNKNOWN"] }
+                ? { warnings: ["Mutation postcondition could not be verified; the job remains UNKNOWN"] }
                 : {})
         };
       }
       case "mac_job_cancel": {
+        if (execution.archivedJob) throw new BrokerError("CONFLICT", "Archived Job history cannot be cancelled");
         if (!execution.job) throw new BrokerError("EXECUTION_FAILED", "Job execution plan is unavailable");
         const cancellation = this.options.store.requestJobCancellation(
           execution.job.jobId,
@@ -2613,6 +2922,47 @@ export class Broker {
     });
     execution.privilegedJob = outcome.job;
     return privilegedDispatchResult(outcome.job, outcome.response, execution.privileged.payload, false);
+  }
+
+  private async dispatchUserServiceControl(
+    request: BrokerRequest,
+    execution: ExecutionPlan,
+    timeoutMs: number
+  ): Promise<DispatchResult> {
+    const candidate = this.userServiceControlCandidate;
+    if (!candidate || !execution.serviceControl || !execution.serviceControlJob) {
+      throw new BrokerError("EXECUTION_FAILED", "User service-control Job execution plan is unavailable");
+    }
+    const job = execution.serviceControlJob;
+    if (job.state === "completed") {
+      return userServiceControlDispatchResult(job, parseStoredUserServiceControlResult(job.stdout), true);
+    }
+    if (job.state === "queued") {
+      throw new BrokerError("CONFLICT", "User service-control operation is already queued", true);
+    }
+    if (job.state === "running" && execution.serviceControlJobNew !== true) {
+      throw new BrokerError("UNKNOWN_OUTCOME", "User service-control operation is unresolved; inspect its Broker job", true);
+    }
+    if (job.state === "unknown") {
+      throw new BrokerError("UNKNOWN_OUTCOME", "User service-control operation is unresolved; inspect its Broker job", true);
+    }
+    if (job.state === "cancelled") {
+      throw new BrokerError("CANCELLED", "User service-control operation was cancelled");
+    }
+    if (job.state !== "running" || !execution.jobLease) {
+      throw new BrokerError("EXECUTION_FAILED", "User service-control Job is not executable");
+    }
+    const outcome = await candidate.executeJob({
+      requestId: request.requestId,
+      principalId: request.principal.principalId,
+      sessionId: request.principal.sessionId,
+      job,
+      lease: execution.jobLease,
+      timeoutMs,
+      assertAuthority: () => this.ensureActiveAuthority(request, execution.target, execution.additionalTargets ?? [])
+    }, request.principal.principalId);
+    execution.serviceControlJob = outcome.job;
+    return userServiceControlDispatchResult(outcome.job, outcome.result, false);
   }
 
   private async dispatchWrite(
@@ -3218,6 +3568,32 @@ export class Broker {
     }
   }
 
+  /**
+   * A privileged helper command cannot be replayed after an unresolved
+   * outcome. A separate authenticated helper readback may explain the
+   * postcondition, but the Broker Job remains UNKNOWN in every case.
+   */
+  private async inspectPrivilegedPostcondition(job: BrokerJob, request: BrokerRequest): Promise<WriteRecoveryStatus | undefined> {
+    if (job.privilegedPayload === undefined || job.state !== "unknown") return undefined;
+    try {
+      const readback = await this.privilegedHelperExecutor.readback({
+        principalId: request.principal.principalId,
+        sessionId: request.principal.sessionId,
+        job,
+        operation: job.privilegedPayload.operation,
+        timeoutMs: 5_000,
+        assertAuthority: () => this.checkRevocation(request)
+      });
+      return {
+        postcondition: readback.postcondition,
+        resolution: "remains_unknown",
+        observed_at: new Date(this.now()).toISOString()
+      };
+    } catch {
+      return unavailableWriteRecovery(this.now());
+    }
+  }
+
   private async dispatchTask(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -3317,6 +3693,22 @@ export class Broker {
           recordedAtMs
         );
       };
+      const persistGuestResult = (result: TaskExecutionResult): void => {
+        if (!execution.taskJob || !execution.jobLease) {
+          throw new BrokerError("EXECUTION_FAILED", "Guest result cannot be linked to its Job");
+        }
+        this.ensureActiveAuthority(request, execution.target);
+        const validated = validateTaskExecutionResult(result);
+        const recordedAtMs = this.now();
+        execution.taskJob = this.options.store.recordJobGuestResult(
+          execution.taskJob.jobId,
+          request.principal.principalId,
+          execution.taskJob.revision,
+          validated,
+          execution.jobLease,
+          recordedAtMs
+        );
+      };
       const taskControl = this.executionControl(
         request,
         execution.target,
@@ -3326,7 +3718,8 @@ export class Broker {
         execution.jobLease,
         (snapshot) => persistTaskProcessSnapshot(snapshot, true),
         (snapshot) => persistTaskProcessSnapshot(snapshot, false),
-        persistGuestRequest
+        persistGuestRequest,
+        this.taskRunner.mechanism === "virtualization" ? persistGuestResult : undefined
       );
       const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
         resolved,
@@ -3348,7 +3741,10 @@ export class Broker {
       const finished = !outputBudgetExceeded && !timeoutBudgetExceeded && taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
       const terminalState = finished ? "completed" : timeoutBudgetExceeded || taskResult.state === "timed_out" ? "failed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
       const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : timeoutBudgetExceeded || taskResult.state === "timed_out" || outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT" ? "failed" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
-      execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, execution.taskJob.revision, {
+      const currentTaskJob = this.options.store.ownedJob(job.jobId, request.principal.principalId);
+      if (currentTaskJob === undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Task Job disappeared before terminal persistence");
+      execution.taskJob = currentTaskJob;
+      execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, currentTaskJob.revision, {
         state: terminalState,
         resultClass: terminalClass,
         finishedAtMs: this.now(),
@@ -3389,11 +3785,17 @@ export class Broker {
     } catch (error) {
       if (!terminalPersisted) {
         try {
-          execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, execution.taskJob?.revision ?? job.revision, {
-            state: "unknown",
-            resultClass: "unknown",
-            finishedAtMs: this.now()
-          }, execution.jobLease, this.now());
+          const currentTaskJob = this.options.store.ownedJob(job.jobId, request.principal.principalId);
+          if (currentTaskJob !== undefined) {
+            execution.taskJob = currentTaskJob;
+            if (currentTaskJob.state === "running") {
+              execution.taskJob = this.options.store.finishJob(job.jobId, request.principal.principalId, currentTaskJob.revision, {
+                state: "unknown",
+                resultClass: "unknown",
+                finishedAtMs: this.now()
+              }, execution.jobLease, this.now());
+            }
+          }
         } catch {
           // Preserve the original error; the running task has no trusted terminal readback.
         }
@@ -3404,12 +3806,24 @@ export class Broker {
   }
 
   private planExecution(request: BrokerRequest, policy: BrokerPolicy, toolPolicy: ToolPolicy): ExecutionPlan {
+    if (requiresAccessibilityPermission(request.tool) && this.runtimeCapabilityDisabledReason(request.tool) !== undefined) {
+      throw new BrokerError("POLICY_DENIED", "Accessibility-dependent GUI capability is not enabled");
+    }
+    if (requiresDeveloperReadiness(request.tool) && this.runtimeCapabilityDisabledReason(request.tool) !== undefined) {
+      throw new BrokerError("POLICY_DENIED", "Developer mutation capability is not enabled");
+    }
+    validateSemanticResourceBudget(request.tool, request.arguments);
     if (request.tool === "mac_job_status" || request.tool === "mac_job_cancel") {
       assertExactArguments(request.arguments, request.tool === "mac_job_status" ? ["job_id", "tail_bytes"] : ["job_id", "reason"]);
       validateJobArguments(request.tool, request.arguments);
-      const job = this.options.store.ownedJob(request.arguments.job_id as string, request.principal.principalId);
-      if (!job) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
-      return { target: { kind: "job", reference: "owned" }, auditTarget: `job:${job.jobId}`, job };
+      const jobLookup = this.options.store.ownedJobStatus(request.arguments.job_id as string, request.principal.principalId);
+      if (jobLookup.job === undefined && jobLookup.archived === undefined) throw new BrokerError("TARGET_NOT_FOUND", "Broker-owned job was not found");
+      return {
+        target: { kind: "job", reference: "owned" },
+        auditTarget: `job:${jobLookup.job?.jobId ?? jobLookup.archived?.jobId}`,
+        ...(jobLookup.job === undefined ? {} : { job: jobLookup.job }),
+        ...(jobLookup.archived === undefined ? {} : { archivedJob: jobLookup.archived })
+      };
     }
     if (request.tool === "mac_task_run") {
       assertExactArguments(request.arguments, ["profile", "cwd", "args", "async"]);
@@ -3428,6 +3842,27 @@ export class Broker {
           profile: parsed.profile,
           cwd: parsed.cwd,
           args: [...(parsed.args ?? [])]
+        }
+      };
+    }
+    if (request.tool === "mac_service_control") {
+      assertExactArguments(request.arguments, ["action", "expected_state", "idempotency_key", "service_id"]);
+      const candidate = this.userServiceControlCandidate;
+      if (!candidate || !candidate.available || !candidate.isPrincipalAuthorized(request.principal.principalId)) {
+        throw new BrokerError("POLICY_DENIED", "User service-control runtime is not enabled for this principal");
+      }
+      const parsed = parseUserServiceControlArguments(request);
+      const serviceRequest: UserServiceControlRequest = {
+        serviceId: parsed.serviceId,
+        action: parsed.action,
+        expectedState: parsed.expectedState
+      };
+      return {
+        target: { kind: "service", reference: parsed.serviceId },
+        auditTarget: `service:${parsed.serviceId}`,
+        serviceControl: {
+          request: serviceRequest,
+          idempotencyKey: parsed.idempotencyKey
         }
       };
     }
@@ -3708,6 +4143,11 @@ export class Broker {
         ? requestedRoots
         : policy.filesystemRoots.filter((root) => root.metadata === true).map((root) => root.path);
       if (roots.length < 1 || roots.length > 32) throw new BrokerError("POLICY_DENIED", "No metadata filesystem roots are authorized for storage analysis");
+      validateStorageSemanticResourceBudget(
+        roots.length,
+        (request.arguments.top_n ?? 20) as number,
+        (request.arguments.max_depth ?? 4) as number
+      );
       const plans = roots.map((root) => inspector.planPath(root, "metadata"));
       const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
       return {
@@ -4140,11 +4580,29 @@ export class Broker {
     jobLease?: JobLease,
     onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void,
     onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void,
-    onGuestRequestAdmitted?: (admission: VirtualizationGuestTaskAdmission) => void
+    onGuestRequestAdmitted?: (admission: VirtualizationGuestTaskAdmission) => void,
+    onGuestResultVerified?: (result: TaskExecutionResult) => void
   ) {
     let lastLeaseHeartbeatMs = Number.NEGATIVE_INFINITY;
+    const rootHelperRequestAuthority = this.rootHelperSnapshotRequestAuthority === undefined
+      ? undefined
+      : {
+        admit: (requestDigest: string, expiresAtMs: number): void => {
+          // The exact signed helper envelope is admitted only after the
+          // Broker rechecks the current MCP request, target, policy, and
+          // revocation state at the final task execution boundary.
+          this.ensureActiveAuthority(request, target, additionalTargets);
+          this.rootHelperSnapshotRequestAuthority!.admit(requestDigest, expiresAtMs);
+        },
+        release: (requestDigest: string): void => {
+          this.rootHelperSnapshotRequestAuthority!.release(requestDigest);
+        }
+      } satisfies RootHelperSnapshotRequestAdmission;
     return {
       timeoutMs,
+      beforeMutation: () => {
+        this.ensureActiveAuthority(request, target, additionalTargets);
+      },
       shouldCancel: () => {
         try {
           this.ensureActiveAuthority(request, target, additionalTargets);
@@ -4163,7 +4621,9 @@ export class Broker {
       },
       ...(onProcessStarted === undefined ? {} : { onProcessStarted }),
       ...(onProcessOwnershipChanged === undefined ? {} : { onProcessOwnershipChanged }),
-      ...(onGuestRequestAdmitted === undefined ? {} : { onGuestRequestAdmitted })
+      ...(onGuestRequestAdmitted === undefined ? {} : { onGuestRequestAdmitted }),
+      ...(onGuestResultVerified === undefined ? {} : { onGuestResultVerified }),
+      ...(rootHelperRequestAuthority === undefined ? {} : { rootHelperSnapshotRequestAuthority: rootHelperRequestAuthority })
     };
   }
 
@@ -4243,6 +4703,22 @@ export class Broker {
     } catch {
       // The original denial remains authoritative. Audit outage is observable separately.
     }
+  }
+
+  private persistApprovalPreviewOnMissing(
+    request: BrokerRequest,
+    binding: ApprovalConsumptionBinding,
+    createdAtMs: number,
+    error: unknown
+  ): void {
+    if (!(error instanceof BrokerError) || error.errorClass !== "POLICY_DENIED" ||
+        error.message !== "No valid approval matches this mutation") return;
+    this.options.store.createApprovalPreview(
+      request.requestId,
+      binding,
+      createdAtMs,
+      createdAtMs + APPROVAL_PREVIEW_TTL_MS
+    );
   }
 
   private failure(request: BrokerRequest | undefined, error: BrokerError, startedAt: number): BrokerFailure {
@@ -4391,11 +4867,17 @@ interface ExecutionPlan {
     cwd: string;
     args: readonly string[];
   };
+  serviceControl?: {
+    request: UserServiceControlRequest;
+    idempotencyKey: string;
+    precondition?: import("./user-service-control.js").UserServiceControlPrecondition;
+  };
   privileged?: {
     operation: PrivilegedHelperOperation;
     payload: PrivilegedHelperPayload;
   };
   job?: BrokerJob;
+  archivedJob?: ArchivedJobRecord;
   write?: {
     content: Buffer;
     expectedSha256: string | undefined;
@@ -4425,6 +4907,8 @@ interface ExecutionPlan {
   uiActionJobNew?: boolean;
   uiTypeJob?: BrokerJob;
   uiTypeJobNew?: boolean;
+  serviceControlJob?: BrokerJob;
+  serviceControlJobNew?: boolean;
   privilegedJob?: BrokerJob;
   privilegedJobNew?: boolean;
   jobLease?: JobLease;
@@ -4489,6 +4973,70 @@ function parseStoredPrivilegedResponse(value: string): PrivilegedHelperResponse 
   }
   const result = validatePrivilegedHelperExecutionResult(parsed.result as unknown as PrivilegedHelperExecutionResult);
   return { ok: true, commandId: "stored", requestId: "stored", result, responseProof: "" };
+}
+
+function parseStoredUserServiceControlResult(value: string) {
+  if (value.length < 1 || value.length > 262_144) {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored user service-control result is unavailable", true);
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseJsonStrict(value);
+  } catch {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored user service-control result is malformed", true);
+  }
+  try {
+    validateUserServiceControlResult(parsed);
+  } catch {
+    throw new BrokerError("UNKNOWN_OUTCOME", "Stored user service-control result is malformed", true);
+  }
+  return parsed;
+}
+
+function userServiceControlDispatchResult(
+  job: BrokerJob,
+  result: ReturnType<typeof parseStoredUserServiceControlResult>,
+  reused: boolean
+): DispatchResult {
+  if (result.resultClass !== "SUCCEEDED" || result.state !== "completed" || result.verification.status !== "verified") {
+    if (result.resultClass === "VERIFICATION_FAILED") {
+      throw new BrokerError("VERIFICATION_FAILED", "User service-control postcondition verification failed");
+    }
+    throw new BrokerError("UNKNOWN_OUTCOME", "User service-control operation outcome is unresolved", true);
+  }
+  const data = {
+    job_id: job.jobId,
+    service_id: result.serviceId,
+    action: result.action,
+    pre_state: result.preState,
+    post_state: result.postState,
+    source_revision: result.sourceRevision,
+    idempotent: result.idempotent,
+    rollback_status: result.rollback.status
+  };
+  return {
+    data,
+    verification: {
+      required: true,
+      status: "verified",
+      strategy: "service_state_readback",
+      evidence: {
+        summary: reused ? "Reused a completed user service-control Job readback" : result.verification.summary
+      }
+    },
+    auditTarget: `service:${result.serviceId}`,
+    auditEvidence: {
+      jobId: job.jobId,
+      jobRevision: job.revision,
+      reused,
+      action: result.action,
+      preState: result.preState,
+      postState: result.postState,
+      sourceRevision: result.sourceRevision,
+      rollbackStatus: result.rollback.status,
+      verification: result.verification.status
+    }
+  };
 }
 
 function privilegedDispatchResult(
@@ -5376,6 +5924,21 @@ function jobStatusData(
   };
 }
 
+function archivedJobStatusData(job: ArchivedJobRecord) {
+  return {
+    job_id: job.jobId,
+    state: job.state,
+    created_at: new Date(job.createdAtMs).toISOString(),
+    started_at: job.startedAtMs === null ? null : new Date(job.startedAtMs).toISOString(),
+    finished_at: new Date(job.finishedAtMs).toISOString(),
+    exit_code: job.exitCode,
+    result_class: job.resultClass,
+    stdout: "",
+    stderr: "",
+    truncated: true
+  };
+}
+
 const POLICY_QUERY_TARGET_KINDS = new Set<TargetKind>([
   "host", "path", "project", "process", "job", "task_profile", "app_set", "app", "app_window", "ui_element",
   "service", "log_source", "docker_runtime", "docker_object", "package", "power"
@@ -5400,4 +5963,82 @@ export function normalizePolicyQueryTarget(value: unknown): NormalizedTarget {
     throw new BrokerError("PRECONDITION_FAILED", "target kind and reference are malformed for policy lookup");
   }
   return { kind: target.kind as TargetKind, reference: target.reference };
+}
+
+class PersistentlyQuarantinedTaskRunner implements TaskRunner {
+  private poisoned = false;
+  private closed = false;
+  private closePromise: Promise<void> | undefined;
+
+  constructor(
+    private readonly inner: TaskRunner,
+    private readonly hasUnresolvedHostTask: () => boolean
+  ) {}
+
+  get available(): boolean {
+    if (this.closed || this.poisoned) return false;
+    try {
+      if (!this.inner.available) return false;
+      if (this.hasUnresolvedHostTask()) {
+        this.quarantine();
+        return false;
+      }
+      return true;
+    } catch {
+      this.quarantine();
+      return false;
+    }
+  }
+
+  get publicEnablement(): TaskRunner["publicEnablement"] {
+    return this.available ? this.inner.publicEnablement : "unavailable";
+  }
+
+  get mechanism(): TaskRunner["mechanism"] {
+    return this.inner.mechanism;
+  }
+
+  get isolationProof(): TaskRunner["isolationProof"] {
+    return this.inner.isolationProof;
+  }
+
+  async run(
+    profile: Parameters<TaskRunner["run"]>[0],
+    control: Parameters<TaskRunner["run"]>[1]
+  ): ReturnType<TaskRunner["run"]> {
+    if (!this.available) {
+      throw new BrokerError("POLICY_DENIED", "Host task execution is quarantined after an unresolved process outcome");
+    }
+    try {
+      const result = await this.inner.run(profile, control);
+      if (result.state === "unknown" || result.resultClass === "UNKNOWN_OUTCOME") this.quarantine();
+      return result;
+    } catch (error) {
+      if (error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME") this.quarantine();
+      throw error;
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    await this.closeInner();
+  }
+
+  private quarantine(): void {
+    if (this.poisoned) return;
+    this.poisoned = true;
+    void this.closeInner().catch(() => undefined);
+  }
+
+  private closeInner(): Promise<void> {
+    if (this.closePromise === undefined) {
+      this.closePromise = Promise.resolve()
+        .then(async () => { await this.inner.close?.(); })
+        .catch((error: unknown) => {
+          this.closePromise = undefined;
+          throw error;
+        });
+    }
+    return this.closePromise;
+  }
 }

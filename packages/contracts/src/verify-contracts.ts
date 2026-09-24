@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PLANNED_TOOL_NAMES } from "./catalog.js";
+import { validateToolContractSafety } from "./contract-invariants.js";
 import { SCOPES } from "./types.js";
 
 const require = createRequire(import.meta.url);
@@ -15,6 +16,7 @@ const addFormats = require("ajv-formats").default as (ajv: InstanceType<typeof A
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const contractsDirectory = join(repositoryRoot, "tool-contracts");
+const catalogPath = join(repositoryRoot, "TOOL_CATALOG.md");
 const schema = JSON.parse(await readFile(join(contractsDirectory, "tool-contract.schema.json"), "utf8")) as object;
 const failureSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", "broker-failure.schema.json"), "utf8")) as object;
 const policyDocumentSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", "policy-document.schema.json"), "utf8")) as object;
@@ -31,7 +33,7 @@ ajv.compile(approvalIssuanceSchema);
 ajv.compile(ledgerRecordsSchema);
 const files = (await readdir(contractsDirectory)).filter((file) => file.startsWith("mac_") && file.endsWith(".json")).sort();
 
-if (files.length !== 44) throw new Error(`Expected 44 tool contracts, found ${files.length}`);
+if (files.length !== 45) throw new Error(`Expected 45 tool contracts, found ${files.length}`);
 
 const names = new Set<string>();
 const sourceIds = new Set<string>();
@@ -39,6 +41,7 @@ const knownScopes = new Set<string>(SCOPES);
 for (const file of files) {
   const contract = JSON.parse(await readFile(join(contractsDirectory, file), "utf8")) as Record<string, unknown>;
   if (!validate(contract)) throw new Error(`${file}: ${ajv.errorsText(validate.errors)}`);
+  validateToolContractSafety(contract, file);
   const inputSchema = contract.input_schema as Record<string, unknown>;
   const outputSchema = contract.output_schema as Record<string, unknown>;
   ajv.compile(inputSchema);
@@ -73,7 +76,14 @@ if (JSON.stringify(expectedNames) !== JSON.stringify(actualNames)) {
   throw new Error("Runtime catalog and materialized contract names differ");
 }
 
-process.stdout.write(`Validated ${files.length} unique tool contracts and the versioned ledger-record schema.\n`);
+const catalogText = await readFile(catalogPath, "utf8");
+const catalogNames = [...catalogText.matchAll(/\]\(tool-contracts\/(mac_[a-z0-9_]+)\.json\)/gu)].map((match) => match[1]!);
+if (catalogNames.length !== actualNames.length || new Set(catalogNames).size !== catalogNames.length ||
+    JSON.stringify([...catalogNames].sort()) !== JSON.stringify(actualNames)) {
+  throw new Error("Tool catalog links and materialized contract names differ");
+}
+
+process.stdout.write(`Validated ${files.length} unique tool contracts, the catalog links, and the versioned ledger-record schema.\n`);
 
 function recursivePropertyNames(schemaValue: unknown): string[] {
   if (schemaValue === null || typeof schemaValue !== "object") return [];

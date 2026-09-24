@@ -8,13 +8,13 @@ import { tmpdir, userInfo } from "node:os";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
-import { BrokerError } from "@mac-operator/contracts";
+import { BrokerError, sha256 } from "@mac-operator/contracts";
 import { provisionKeychainAuthenticationKey, retireKeychainAuthenticationKey } from "./credentials.js";
 import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
 import { buildSandboxExecArguments, renderTaskSandboxProfile } from "./sandbox-profile.js";
 import { SandboxExecTaskRunner, type TaskIsolationProof } from "./task-runner.js";
 import type { ProcessExecutionRequest } from "./process-supervisor.js";
-import type { ResolvedTaskProfile } from "./task-profile.js";
+import { TaskProfileRegistry, type ResolvedTaskProfile, type TaskProfile } from "./task-profile.js";
 
 function proof(): TaskIsolationProof {
   return {
@@ -82,6 +82,37 @@ test("sandbox profile renderer emits a deterministic deny-default no-network pol
     assert.match(rendered, /com\\.apple\\.TCC/u);
     assert.deepEqual(buildSandboxExecArguments(profile).slice(0, 2), ["-p", rendered]);
     assert.deepEqual(buildSandboxExecArguments(profile).slice(-1), ["sandboxed"]);
+    const scriptContent = "printf '%s\\n' \"$1\"\n";
+    const scriptPath = join(root, "task.sh");
+    const scriptProfile = resolvedProfile(root, {
+      executionKind: "posix-sh-script",
+      scriptPath,
+      scriptContent,
+      scriptContentSha256: sha256(Buffer.from(scriptContent, "utf8")),
+      process: { ...profile.process, executable: "/bin/sh", args: ["approved"] }
+    });
+    const scriptArgs = buildSandboxExecArguments(scriptProfile);
+    assert.deepEqual(scriptArgs.slice(2), ["/bin/sh", "-s", "--", "approved"]);
+    assert.equal(scriptArgs.includes(scriptContent), false);
+    assert.equal(scriptArgs.includes(scriptPath), false);
+    assert.equal(String(scriptArgs[1]).includes("(allow process-fork)"), false);
+    assert.match(String(scriptArgs[1]), /\(allow process-exec \(literal "\/bin\/bash"\)\)/u);
+    assert.throws(() => buildSandboxExecArguments({
+      ...scriptProfile,
+      scriptContentSha256: "a".repeat(64)
+    }), /identity is incomplete or mismatched/u);
+    assert.throws(() => buildSandboxExecArguments({
+      ...scriptProfile,
+      scriptContent: "x".repeat(64 * 1024 + 1),
+      scriptContentSha256: sha256(Buffer.from("x".repeat(64 * 1024 + 1), "utf8"))
+    }), /stdin execution limit/u);
+    assert.throws(() => buildSandboxExecArguments({
+      ...scriptProfile,
+      scriptPath: "/tmp/outside.sh"
+    }), /identity is incomplete or mismatched/u);
+    assert.throws(() => buildSandboxExecArguments(resolvedProfile(root, {
+      process: { ...profile.process, executable: "/bin/sh" }
+    })), /requires a Broker-owned script profile/u);
     const groupProfile = renderTaskSandboxProfile({ ...profile, processTreePolicy: "owned_group" });
     assert.match(groupProfile, /\(allow process-fork\)/u);
     const protectedProfile = renderTaskSandboxProfile(profile, { protectedFilesystemRoots: [root, "/private/var/run/mac-operator-broker"] });
@@ -159,6 +190,185 @@ test("SandboxExecTaskRunner availability includes the host descriptor gate", () 
     isolationProof: proof()
   });
   assert.equal(runner.available, process.platform === "darwin" && inspectProcessDescriptorExecutionCapability().available);
+});
+
+test("SandboxExecTaskRunner rejects dispatch launchers but admits only the fixed shell script interpreter", () => {
+  assert.throws(
+    () => new SandboxExecTaskRunner({
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/usr/bin/env"]
+    }),
+    /interpreters or dispatch launchers/u
+  );
+  assert.doesNotThrow(() => new SandboxExecTaskRunner({
+    executionBoundary: "system-published",
+    systemPublishedExecutableAllowlist: ["/bin/sh"]
+  }));
+});
+
+test("SandboxExecTaskRunner can use an explicit system-published executable allowlist", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("System-published task execution is a macOS boundary");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-system-task-"));
+  const root = await realpath(directory);
+  try {
+    const runner = new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/usr/bin/printf"],
+      systemPublishedExecutablePathAccepted: true,
+      isolationProof: { ...proof(), executableSelection: "system-published-root-owned-v1" },
+      filesystemIdentityObserver: () => ({ rootPath: root, id: "dev:system-task" })
+    });
+    const result = await runner.run(resolvedProfile(root), { timeoutMs: 500, shouldCancel: () => false });
+    assert.equal(runner.available, true);
+    assert.equal(result.resultClass, "SUCCEEDED");
+    assert.equal(result.stdout, "sandboxed");
+    await assert.rejects(
+      runner.run(resolvedProfile(root, { process: { ...resolvedProfile(root).process, executable: "/usr/bin/true" } }), {
+        timeoutMs: 500,
+        shouldCancel: () => false
+      }),
+      /system-published profile allowlist/u
+    );
+    const shellRunner = new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/bin/sh"],
+      systemPublishedExecutablePathAccepted: true,
+      isolationProof: { ...proof(), executableSelection: "system-published-root-owned-v1" }
+    });
+    await assert.rejects(
+      shellRunner.run(resolvedProfile(root, {
+        process: { ...resolvedProfile(root).process, executable: "/bin/sh" }
+      }), { timeoutMs: 500, shouldCancel: () => false }),
+      /requires a Broker-owned script profile/u
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real macOS system-published task path enforces the fixed executable boundary", async (t) => {
+  if (process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX_SYSTEM_PUBLISHED !== "1") {
+    t.skip("Opt-in physical system-published sandbox evidence is disabled");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-real-system-task-"));
+  const root = await realpath(directory);
+  try {
+    const runner = new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/usr/bin/printf"],
+      systemPublishedExecutablePathAccepted: true,
+      isolationProof: { ...proof(), executableSelection: "system-published-root-owned-v1" }
+    });
+    assert.equal(runner.available, true);
+    const result = await runner.run(resolvedProfile(root, {
+      process: { ...resolvedProfile(root).process, args: ["real-system-published"] }
+    }), { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.equal(result.resultClass, "SUCCEEDED");
+    assert.equal(result.stdout, "real-system-published");
+    assert.equal(result.verification.status, "verified");
+    await runner.close?.();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real macOS system-published shell path runs only the Broker-owned script snapshot", async (t) => {
+  if (process.platform !== "darwin" || process.env.MOPS_REAL_SANDBOX_SYSTEM_PUBLISHED !== "1") {
+    t.skip("Opt-in physical system-published sandbox evidence is disabled");
+    return;
+  }
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-real-shell-task-"));
+  const rootPath = join(directory, "task-root");
+  const outsideRoot = join(directory, "outside-root");
+  await mkdir(rootPath, { mode: 0o700 });
+  await mkdir(outsideRoot, { mode: 0o700 });
+  const root = await realpath(rootPath);
+  const successScriptPath = join(root, "success.sh");
+  const hostileScriptPath = join(root, "hostile.sh");
+  const childMarker = join(root, "child-marker");
+  const outsideCanaryPath = join(outsideRoot, "outside-canary.txt");
+  const successScriptContent = [
+    'printf "home:%s:ssh:%s:" "${HOME-unset}" "${SSH_AUTH_SOCK-unset}"',
+    'if [ -r .env ]; then printf secret-leaked; else printf secret-denied; fi',
+    'printf ":"',
+    'if [ -r "$1" ]; then printf outside-leaked; else printf outside-denied; fi',
+    'printf ":"',
+    'printf "allowed\\n" > within-root.txt',
+    'value=',
+    'if read -r value < within-root.txt && [ "$value" = allowed ]; then printf write-allowed; else printf write-denied; fi',
+    'printf ":"',
+    'if : > "/dev/tcp/127.0.0.1/$2" 2>/dev/null; then printf network-leaked; else printf network-denied; fi',
+    ""
+  ].join("\n");
+  const hostileScriptContent = "( printf child > \"$1\" )\n";
+  let networkServer: Awaited<ReturnType<typeof startHttpServer>> | undefined;
+  let runner: SandboxExecTaskRunner | undefined;
+  let networkConnections = 0;
+  try {
+    await writeFile(successScriptPath, successScriptContent, { mode: 0o600 });
+    await writeFile(hostileScriptPath, hostileScriptContent, { mode: 0o600 });
+    await writeFile(join(root, ".env"), "synthetic-secret=never-disclose", { mode: 0o600 });
+    await writeFile(outsideCanaryPath, "outside-root-secret", { mode: 0o600 });
+    networkServer = await startHttpServer("unexpected-network-access");
+    networkServer.server.on("connection", () => { networkConnections += 1; });
+    const resolveScript = (profileId: string, scriptPath: string, fixedArgs: readonly string[]) =>
+      new TaskProfileRegistry([{
+        schemaVersion: "0.1",
+        profile: profileId,
+        executable: "/bin/sh",
+        executionKind: "posix-sh-script",
+        scriptPath,
+        fixedArgs,
+        allowedCwdRoots: [root],
+        allowedArgumentPattern: "^approved$",
+        maxArguments: 0,
+        environment: {},
+        filesystemRoots: [root],
+        networkPolicy: "none",
+        credentialPolicy: "none",
+        processTreePolicy: "single_process",
+        sandboxProfile: "deny-default-v0.1",
+        timeoutMs: 2_000,
+        outputCapBytes: 1_024,
+        verificationStrategy: "exit_status_and_declared_task_verification",
+        enabled: true
+      }]).resolve({ profile: profileId, cwd: root });
+    const successProfile = await resolveScript("tests.system-published-shell", successScriptPath, [outsideCanaryPath, String(networkServer.port)]);
+    const hostileProfile = await resolveScript("tests.system-published-shell-hostile", hostileScriptPath, [childMarker]);
+    const taskRunner = new SandboxExecTaskRunner({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      executionBoundary: "system-published",
+      systemPublishedExecutableAllowlist: ["/bin/sh"],
+      systemPublishedExecutablePathAccepted: true,
+      isolationProof: { ...proof(), executableSelection: "system-published-root-owned-v1" }
+    });
+    runner = taskRunner;
+    assert.equal(taskRunner.available, true);
+    const success = await taskRunner.run(successProfile, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.equal(success.resultClass, "SUCCEEDED", JSON.stringify(success));
+    assert.equal(await readFile(join(root, "within-root.txt"), "utf8"), "allowed\n");
+    assert.equal(success.stdout, "home:unset:ssh:unset:secret-denied:outside-denied:write-allowed:network-denied", JSON.stringify(success));
+    assert.equal(networkConnections, 0);
+    const hostile = await taskRunner.run(hostileProfile, { timeoutMs: 2_000, shouldCancel: () => false });
+    assert.equal(hostile.resultClass, "EXECUTION_FAILED", JSON.stringify(hostile));
+    assert.match(hostile.stderr, /fork: Operation not permitted/u);
+    assert.equal(await readFile(childMarker).then(() => true, () => false), false);
+  } finally {
+    await runner?.close?.();
+    if (networkServer !== undefined) await closeHttpServer(networkServer.server);
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("SandboxExecTaskRunner exposes its supervisor close boundary", async () => {

@@ -5,10 +5,14 @@ import {
   BrokerError,
   ERROR_CLASSES,
   decodeUtf8Strict,
+  isSupportedProtocolVersion,
   parseJsonStrict,
   type AuthenticatedBrokerResponse,
+  type AuthenticatedBrokerRevocationResponse,
   type BrokerRequest,
-  type BrokerResult
+  type BrokerResult,
+  type BrokerRevocationEvent,
+  type BrokerRevocationResult
 } from "@mac-operator/contracts";
 
 const ERROR_CLASS_SET = new Set<string>(ERROR_CLASSES);
@@ -16,6 +20,11 @@ const ERROR_CLASS_SET = new Set<string>(ERROR_CLASSES);
 export type BrokerResponseVerifier = (
   request: BrokerRequest,
   response: AuthenticatedBrokerResponse
+) => boolean;
+
+export type BrokerRevocationResponseVerifier = (
+  event: BrokerRevocationEvent,
+  response: AuthenticatedBrokerRevocationResponse
 ) => boolean;
 
 export class BrokerIpcClient {
@@ -50,6 +59,31 @@ export class BrokerIpcClient {
       parsed.response.tool !== request.tool
     ) {
       throw new BrokerError("AUTH_INVALID", "Broker IPC response identity does not match the request");
+    }
+    return parsed.response;
+  }
+
+  async revokeSession(
+    event: BrokerRevocationEvent,
+    verifyResponse: BrokerRevocationResponseVerifier,
+    signal?: AbortSignal
+  ): Promise<BrokerRevocationResult> {
+    const socketIdentity = await validateBrokerSocketTarget(this.socketPath);
+    const rawResponse = await this.exchange(`${JSON.stringify(event)}\n`, signal, socketIdentity);
+    let parsed: unknown;
+    try {
+      parsed = parseJsonStrict(rawResponse);
+    } catch {
+      throw new BrokerError("AUTH_INVALID", "Broker revocation response is not valid JSON");
+    }
+    if (!isAuthenticatedRevocationResponse(parsed)) {
+      throw new BrokerError("AUTH_INVALID", "Broker revocation response is not authenticated");
+    }
+    if (!verifyResponse(event, parsed)) {
+      throw new BrokerError("AUTH_INVALID", "Broker revocation response authentication failed");
+    }
+    if (parsed.response.request_id !== event.requestId || parsed.response.event_type !== event.eventType) {
+      throw new BrokerError("AUTH_INVALID", "Broker revocation response identity does not match the event");
     }
     return parsed.response;
   }
@@ -130,13 +164,26 @@ export function isAuthenticatedResponse(value: unknown): value is AuthenticatedB
   if (!isPlainDataRecord(value) || !hasExactKeys(value, [
     "protocolVersion", "requestPayloadDigest", "authenticationKeyId", "responseDigest", "authenticationProof", "response"
   ])) return false;
-  if (value.protocolVersion !== "0.1" ||
+  if (!isSupportedProtocolVersion(value.protocolVersion) ||
       !/^[a-f0-9]{64}$/u.test(value.requestPayloadDigest as string) ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.authenticationKeyId as string) ||
       !/^[a-f0-9]{64}$/u.test(value.responseDigest as string) ||
       !/^[a-f0-9]{64}$/u.test(value.authenticationProof as string) ||
       !isPlainDataRecord(value.response)) return false;
   return isBrokerResult(value.response);
+}
+
+export function isAuthenticatedRevocationResponse(value: unknown): value is AuthenticatedBrokerRevocationResponse {
+  if (!isPlainDataRecord(value) || !hasExactKeys(value, [
+    "protocolVersion", "requestPayloadDigest", "authenticationKeyId", "responseDigest", "authenticationProof", "response"
+  ])) return false;
+  if (!isSupportedProtocolVersion(value.protocolVersion) ||
+      !/^[a-f0-9]{64}$/u.test(value.requestPayloadDigest as string) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value.authenticationKeyId as string) ||
+      !/^[a-f0-9]{64}$/u.test(value.responseDigest as string) ||
+      !/^[a-f0-9]{64}$/u.test(value.authenticationProof as string) ||
+      !isPlainDataRecord(value.response)) return false;
+  return isBrokerRevocationResult(value.response);
 }
 
 function isBrokerResult(value: unknown): value is BrokerResult {
@@ -162,6 +209,22 @@ function isBrokerResult(value: unknown): value is BrokerResult {
       !isPlainDataRecord(value.error) || !hasExactKeys(value.error, ["message", "retryable"]) ||
       typeof value.error.message !== "string" || value.error.message.length > 4_096 || typeof value.error.retryable !== "boolean") return false;
   return true;
+}
+
+function isBrokerRevocationResult(value: unknown): value is BrokerRevocationResult {
+  if (!isPlainDataRecord(value) ||
+      typeof value.request_id !== "string" || !/^edge-revoke:[A-Za-z0-9._:-]{16,128}$/u.test(value.request_id) ||
+      value.event_type !== "oauth_authority_revoked" || !Number.isSafeInteger(value.duration_ms) ||
+      (value.duration_ms as number) < 0 || (value.duration_ms as number) > 86_400_000 ||
+      typeof value.ok !== "boolean") return false;
+  if (value.ok === true) {
+    return hasExactKeys(value, ["ok", "request_id", "event_type", "revoked", "duration_ms"]) && value.revoked === true;
+  }
+  return hasExactKeys(value, ["ok", "request_id", "event_type", "result_class", "error", "duration_ms"]) &&
+    typeof value.result_class === "string" && ERROR_CLASS_SET.has(value.result_class) &&
+    isPlainDataRecord(value.error) && hasExactKeys(value.error, ["message", "retryable"]) &&
+    typeof value.error.message === "string" && value.error.message.length <= 4_096 &&
+    typeof value.error.retryable === "boolean";
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, mkdtemp, rm, stat, unlink, rename } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, unlink, rename } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
-import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, recoverOrphanedSocket, removeDetachedSocket, removeStaleSocket, unlinkOwnedSocket } from "./ipc-server.js";
+import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, recoverOrphanedSocket, removeDetachedSocket, removeStaleSocket, unlinkOwnedSocket, validateSocketParent } from "./ipc-server.js";
 import { MacOsPeerCredentialVerifier } from "./peer-credentials.js";
 import { BrokerStore } from "./persistence.js";
 
@@ -158,6 +158,22 @@ test("IPC startup rejects a group-writable socket directory", async () => {
   } finally {
     store.close();
     await chmod(directory, 0o700);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("IPC startup rejects an ancestor socket-directory symlink", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-ancestor-"));
+  try {
+    const realRoot = join(directory, "r");
+    await mkdir(join(realRoot, "u"), { recursive: true, mode: 0o700 });
+    const aliasRoot = join(directory, "a");
+    await symlink(realRoot, aliasRoot);
+    await assert.rejects(
+      validateSocketParent(join(aliasRoot, "u", "broker.sock")),
+      /parent chain|owner-protected/u
+    );
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });

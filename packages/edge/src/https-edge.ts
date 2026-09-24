@@ -11,6 +11,7 @@ import {
 } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import {
+  buildOAuthProtectedResourceMetadata,
   createMcpHandler,
   type McpHttpHandler,
   type OAuthMetadata
@@ -36,6 +37,8 @@ export interface HttpsMcpEdgeOptions extends GovernedMcpServerOptions {
   oauthIssuer: URL;
   tokenVerifier: OAuthTokenVerifier;
   oauthMetadata: OAuthMetadata;
+  /** Scopes required to initialize this MCP endpoint. Individual tools still enforce their own scopes. */
+  requiredScopes?: string[];
   rateLimit?: RateLimitOptions;
 }
 
@@ -54,12 +57,18 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
     jsonLimit: "1mb"
   });
   app.disable("x-powered-by");
-  app.use(mcpAuthMetadataRouter({
+  const metadataOptions = {
     oauthMetadata: options.oauthMetadata,
     resourceServerUrl: options.resourceServerUrl,
-    scopesSupported: [...SCOPES],
+    scopesSupported: options.oauthMetadata.scopes_supported ?? [...SCOPES],
     resourceName: "Mac-Operator-MCP"
-  }));
+  };
+  // Some clients start discovery at the origin instead of following the challenge.
+  app.get("/.well-known/oauth-protected-resource", (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json(buildOAuthProtectedResourceMetadata(metadataOptions));
+  });
+  app.use(mcpAuthMetadataRouter(metadataOptions));
 
   const handler = createMcpHandler(createGovernedMcpServerFactory(options), {
     legacy: "reject",
@@ -68,7 +77,7 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
   const nodeHandler = toNodeHandler(handler);
   const bearerAuth = requireBearerAuth({
     verifier: options.tokenVerifier,
-    requiredScopes: ["mac.control.read"],
+    requiredScopes: validated.requiredScopes,
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(options.resourceServerUrl)
   });
   const rateLimiter = new FixedWindowRateLimiter(options.rateLimit);
@@ -167,6 +176,7 @@ function validateOptions(options: HttpsMcpEdgeOptions): {
   allowedHosts: string[];
   allowedOrigins: string[];
   oauthIssuer: URL;
+  requiredScopes: string[];
 } {
   if (typeof options.bindHost !== "string" || options.bindHost.length === 0 || options.bindHost.includes("\0")) {
     throw new Error("MCP bind host must be a non-empty safe hostname");
@@ -193,7 +203,13 @@ function validateOptions(options: HttpsMcpEdgeOptions): {
   }
   validateHttpsUrl(options.oauthMetadata.authorization_endpoint, "MCP OAuth authorization endpoint");
   validateHttpsUrl(options.oauthMetadata.token_endpoint, "MCP OAuth token endpoint");
-  return { allowedHosts, allowedOrigins, oauthIssuer };
+  const requiredScopes = options.requiredScopes ?? ["mac.control.read"];
+  if (!isPlainDataArray(requiredScopes, SCOPES.length) || requiredScopes.length === 0 ||
+      new Set(requiredScopes).size !== requiredScopes.length ||
+      requiredScopes.some(scope => typeof scope !== "string" || !(SCOPES as readonly string[]).includes(scope))) {
+    throw new Error("MCP required scopes are invalid");
+  }
+  return { allowedHosts, allowedOrigins, oauthIssuer, requiredScopes: [...requiredScopes] };
 }
 
 function validateHttpsUrl(value: unknown, label: string): URL {

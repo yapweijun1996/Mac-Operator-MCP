@@ -58,6 +58,7 @@ test("policy target authority accepts the canonical resource references used by 
   assert.doesNotThrow(() => validateBrokerPolicy(policyWithTarget("mac.control.read", { kind: "host", reference: "local" })));
   assert.doesNotThrow(() => validateBrokerPolicy(policyWithTarget("mac.process.read", { kind: "process", reference: "pid:42" })));
   assert.doesNotThrow(() => validateBrokerPolicy(policyWithTarget("mac.ui.control", { kind: "ui_element", reference: "element:0123456789abcdef0123456789abcdef0123456789abcdef" })));
+  assert.doesNotThrow(() => validateBrokerPolicy(policyWithTarget("mac.service.control", { kind: "service", reference: "gui/501/com.mac-operator.test" })));
   assert.doesNotThrow(() => validateBrokerPolicy(policyWithTarget("mac.priv.power", { kind: "power", reference: "local" })));
 });
 

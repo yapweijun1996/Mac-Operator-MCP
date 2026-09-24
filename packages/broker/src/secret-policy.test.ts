@@ -88,7 +88,13 @@ test("secret policy covers expanded token corpus and preserves safe arguments", 
     "github_pat_aVeryLongSyntheticGitHubFineGrainedToken",
     "cfp_aVeryLongSyntheticCloudflareToken",
     "cf_pat-aVeryLongSyntheticCloudflareToken",
-    "heroku_api_key=aVeryLongSyntheticHerokuToken"
+    "heroku_api_key=aVeryLongSyntheticHerokuToken",
+    "rk_" + "live_aVeryLongSyntheticStripeRestrictedKey",
+    "SG." + "aVeryLongSyntheticSendGridHeader.aVeryLongSyntheticSendGridPayload",
+    "hf_aVeryLongSyntheticHuggingFaceTokenValue",
+    "sntrys_aVeryLongSyntheticSentryToken",
+    "vercel_aVeryLongSyntheticVercelToken",
+    "sb_secret_aVeryLongSyntheticSupabaseToken"
   ];
   for (const value of corpus) {
     assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(value)), /protected secret signature/u, value);
@@ -98,6 +104,44 @@ test("secret policy covers expanded token corpus and preserves safe arguments", 
   }
   assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--format", "json", "ordinary-file"]));
   assert.doesNotThrow(() => assertArgumentsDoNotContainSecrets(["--secretary", "notes"]));
+  const opaqueHighEntropyValue = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0";
+  assert.doesNotThrow(() => assertContentDoesNotContainSecrets(Buffer.from(opaqueHighEntropyValue)));
+  const preserved = redactLogText(`value=${opaqueHighEntropyValue}`);
+  assert.equal(preserved.redacted, false);
+  assert.equal(preserved.text.includes(opaqueHighEntropyValue), true);
+});
+
+test("cloud signed URLs are denied and redacted without treating unrelated signatures as secrets", () => {
+  const awsSignature = "a".repeat(64);
+  const awsSessionToken = "IQoJb3JpZ2luX2VjSyntheticSessionToken%2FMoreBytes%3D";
+  const azureSignature = "c3ludGhldGljLWF6dXJlLXNhcy1zaWduYXR1cmU%3D";
+  const credentials = [
+    `https://objects.example.test/file?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=${awsSignature}`,
+    `X-Amz-Security-Token=${awsSessionToken}`,
+    `https://storage.example.test/blob?sv=2025-01-05&sp=rl&se=2030-01-01T00%3A00%3A00Z&sig=${azureSignature}`
+  ];
+  for (const value of credentials) {
+    assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(value)), /protected secret signature/u);
+    assert.throws(() => assertArgumentsDoNotContainSecrets([value]), /protected secret/u);
+    assert.throws(() => assertEnvironmentValuesDoNotContainSecrets({ PROFILE_DATA: value }), /protected secret/u);
+    const redacted = redactLogText(value);
+    assert.equal(redacted.redacted, true);
+    for (const secret of [awsSignature, awsSessionToken, azureSignature]) {
+      assert.equal(redacted.text.includes(secret), false, value);
+    }
+  }
+
+  const nearMisses = [
+    `unrelated_digest=${awsSignature}`,
+    "https://example.test/file?X-Amz-Signature=0123456789abcdef",
+    "https://example.test/blob?sv=2025-01-05&sp=rl&sig=short",
+    `https://example.test/file?sv=2025&sig=${"b".repeat(64)}`,
+    `https://example.test/file?sig=${"b".repeat(64)}`
+  ];
+  for (const value of nearMisses) {
+    assert.doesNotThrow(() => assertContentDoesNotContainSecrets(Buffer.from(value)), value);
+    assert.equal(redactLogText(value).text.includes(value.slice(value.indexOf("=") + 1)), true, value);
+  }
 });
 
 test("content policy detects conservative encoded credential representations", () => {

@@ -14,7 +14,8 @@ import type {
   VirtualizationGuestVmAdapter,
   VirtualizationGuestVmStartResult,
   VirtualizationGuestVmStatusResult,
-  VirtualizationGuestVmStopResult
+  VirtualizationGuestVmStopResult,
+  VirtualizationGuestVmTaskInstance
 } from "./virtualization-guest-lifecycle.js";
 import type { VirtualizationGuestChannel } from "./virtualization-guest-transport.js";
 import type {
@@ -34,6 +35,7 @@ export interface NativeVirtualizationGuestVmBinding {
   nativeNodeVersion: string;
   nativePlatform: string;
   nativeArch: string;
+  hasVirtualizationEntitlement(): boolean;
   createGuestVm(
     imagePath: string,
     device: string,
@@ -41,6 +43,7 @@ export interface NativeVirtualizationGuestVmBinding {
     sha256: string,
     runtimeVersion: string
   ): unknown;
+  resetStoppedGuestVm(handle: unknown): unknown;
   startGuestVm(handle: unknown): Promise<unknown>;
   stopGuestVm(handle: unknown, bootId: string): Promise<unknown>;
   statusGuestVm(handle: unknown): Promise<unknown>;
@@ -110,7 +113,9 @@ export function loadNativeVirtualizationGuestVmBinding(): NativeVirtualizationGu
         !Number.isSafeInteger(runtimeNapiVersion) || runtimeNapiVersion < MIN_SUPPORTED_NAPI_VERSION ||
         native.nativeNapiVersion > runtimeNapiVersion ||
         typeof native.nativeNodeVersion !== "string" ||
-        typeof native.createGuestVm !== "function" || typeof native.startGuestVm !== "function" ||
+        typeof native.hasVirtualizationEntitlement !== "function" ||
+        typeof native.createGuestVm !== "function" || typeof native.resetStoppedGuestVm !== "function" ||
+        typeof native.startGuestVm !== "function" ||
         typeof native.stopGuestVm !== "function" || typeof native.statusGuestVm !== "function" ||
         typeof native.closeGuestVm !== "function" || typeof native.exchangeGuestFrame !== "function" ||
         typeof native.listenGuestPort !== "function" || typeof native.removeGuestPort !== "function" ||
@@ -153,6 +158,15 @@ export async function createNativeVirtualizationGuestVm(
   }
   const guestIdentity = parseVirtualizationGuestIdentity(image.guestIdentity);
   const native = loadNativeVirtualizationGuestVmBinding();
+  let hasVirtualizationEntitlement = false;
+  try {
+    hasVirtualizationEntitlement = native.hasVirtualizationEntitlement() === true;
+  } catch {
+    hasVirtualizationEntitlement = false;
+  }
+  if (!hasVirtualizationEntitlement) {
+    throw new BrokerError("POLICY_DENIED", "Current Broker process lacks com.apple.security.virtualization");
+  }
   let handle: unknown;
   try {
     handle = native.createGuestVm(
@@ -173,6 +187,7 @@ export async function createNativeVirtualizationGuestVm(
 
 class NativeVirtualizationGuestVmAdapterImpl implements NativeVirtualizationGuestVmAdapter {
   readonly available = true;
+  readonly taskInstanceIsolation = "fresh-vm-object-per-task-v1" as const;
   readonly guestIdentity: VirtualizationGuestIdentity;
   private closed = false;
 
@@ -183,6 +198,19 @@ class NativeVirtualizationGuestVmAdapterImpl implements NativeVirtualizationGues
     private readonly image: LoadedVirtualizationGuestImage
   ) {
     this.guestIdentity = parseVirtualizationGuestIdentity(guestIdentity);
+  }
+
+  async prepareTaskInstance(input: { guestIdentity: VirtualizationGuestIdentity; signal: AbortSignal }): Promise<VirtualizationGuestVmTaskInstance> {
+    this.assertOpen();
+    this.assertIdentity(input.guestIdentity);
+    if (input.signal.aborted) throw new BrokerError("CANCELLED", "Virtualization guest VM reset was cancelled");
+    await this.assertImageStable();
+    try {
+      return parseTaskInstanceResult(this.native.resetStoppedGuestVm(this.handle), this.guestIdentity);
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("UNKNOWN_OUTCOME", "Virtualization guest VM reset outcome is unknown", true);
+    }
   }
 
   async start(input: { guestIdentity: VirtualizationGuestIdentity; signal: AbortSignal }): Promise<VirtualizationGuestVmStartResult> {
@@ -314,6 +342,8 @@ function unavailableAdapter(): NativeVirtualizationGuestVmAdapter {
   return {
     available: false,
     guestIdentity: null,
+    taskInstanceIsolation: "fresh-vm-object-per-task-v1",
+    prepareTaskInstance: reject,
     start: reject,
     stop: reject,
     status: reject,
@@ -323,6 +353,24 @@ function unavailableAdapter(): NativeVirtualizationGuestVmAdapter {
     createConnectionSource: () => {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest VM adapter is not enabled");
     }
+  };
+}
+
+function parseTaskInstanceResult(value: unknown, expectedGuestIdentity: VirtualizationGuestIdentity): VirtualizationGuestVmTaskInstance {
+  if (!isPlainDataRecord(value) || !hasExactFields(value, ["guestIdentity", "instanceId", "state"])) {
+    throw new BrokerError("VERIFICATION_FAILED", "Virtualization guest VM reset result is malformed");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.state !== "stopped" || typeof record.instanceId !== "string" ||
+      !/^vm-[A-Za-z0-9._:-]{7,124}$/u.test(record.instanceId) || record.guestIdentity === null ||
+      typeof record.guestIdentity !== "object" ||
+      !sameVirtualizationGuestIdentity(expectedGuestIdentity, parseVirtualizationGuestIdentity(record.guestIdentity))) {
+    throw new BrokerError("VERIFICATION_FAILED", "Virtualization guest VM reset identity is invalid");
+  }
+  return {
+    state: "stopped",
+    guestIdentity: { ...expectedGuestIdentity },
+    instanceId: record.instanceId
   };
 }
 
@@ -385,15 +433,23 @@ export function createNativeVirtualizationGuestConnectionSource(
   return {
     accept: async (signal): Promise<VirtualizationGuestStream | null> => {
       while (!closed && !signal.aborted) {
-        const pending = native.acceptGuestConnection(handle, options.port, ioTimeoutMs);
-        const nativeConnection = await raceAbortWithCleanup(
-          pending,
-          signal,
-          (value) => {
-            if (value !== null && value !== undefined) native.closeGuestConnection(value);
-          },
-          "Virtualization guest connection accept was cancelled"
-        );
+        let nativeConnection: unknown | null | undefined;
+        try {
+          const pending = native.acceptGuestConnection(handle, options.port, ioTimeoutMs);
+          nativeConnection = await raceAbortWithCleanup(
+            pending,
+            signal,
+            (value) => {
+              if (value !== null && value !== undefined) native.closeGuestConnection(value);
+            },
+            "Virtualization guest connection accept was cancelled"
+          );
+        } catch (error) {
+          if (signal.aborted) throw new BrokerError("CANCELLED", "Virtualization guest connection accept was cancelled");
+          if (closed) return null;
+          if (error instanceof Error && error.message === "Virtualization guest listener is closed") continue;
+          throw error;
+        }
         // A finite native accept deadline is only an observation budget. Keep
         // the listener alive across idle periods; listener close is signalled
         // separately by a rejected native accept after state teardown.

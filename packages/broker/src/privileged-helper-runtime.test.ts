@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { canonicalJson, CONTRACT_VERSION, sha256 } from "@mac-operator/contracts
 import {
   captureLaunchdBrokerProcessIdentity,
   createPrivilegedHelperRuntimeFromKeyMaterial,
+  createPrivilegedHelperRuntimeFromKeyMaterialForLaunchdBroker,
   createPrivilegedHelperRuntimeForLaunchdBroker,
   createPrivilegedHelperRuntimeFromActiveKeyConfig,
   PrivilegedHelperRuntime,
@@ -15,6 +16,7 @@ import {
 } from "./privileged-helper-runtime.js";
 import {
   AllowlistedPrivilegedHelper,
+  BrokerStorePrivilegedHelperReplayGuard,
   authenticatePrivilegedHelperResponse,
   FailClosedPrivilegedHelper,
   readPrivilegedHelperStatus,
@@ -56,11 +58,14 @@ test("privileged helper startup restores an activated key and owns a separate na
   const keyPath = join(root, "helper.key");
   const configPath = join(root, "helper-keys.json");
   const brokerSocketPath = join(root, "broker.sock");
-  const helperSocketPath = join(root, "helper.sock");
+  const helperSocketDirectory = join(root, "run");
+  const helperSocketPath = join(helperSocketDirectory, "helper.sock");
   const store = new BrokerStore(join(root, "broker.sqlite"));
   const now = Date.now();
   let manager: PrivilegedHelperKeyManager | undefined;
   try {
+    await mkdir(helperSocketDirectory, { mode: 0o700 });
+    await chmod(helperSocketDirectory, 0o711);
     const provisioned = await provisionAuthenticationKey(keyPath);
     const key = await loadAuthenticationKey(keyPath);
     const config: PrivilegedHelperKeyConfig = {
@@ -102,6 +107,10 @@ test("privileged helper startup restores an activated key and owns a separate na
     assert.equal(runtime.state, "stopped");
     await runtime.start();
     assert.equal(runtime.state, "running");
+    const helperSocket = await lstat(helperSocketPath);
+    assert.equal(helperSocket.uid, process.geteuid?.());
+    assert.equal(helperSocket.gid, gid);
+    assert.equal(helperSocket.mode & 0o777, 0o600);
     await runtime.close();
     assert.equal(runtime.state, "stopped");
     assert.equal(provisioned.digest, config.keys[0].keyDigest);
@@ -158,7 +167,7 @@ test("privileged helper runtime auto-wires and disposes the Broker authority pol
       brokerSocketPath,
       authoritySocketPath,
       peerPolicy,
-      replayGuard: { admit: () => undefined },
+      replayGuard: new BrokerStorePrivilegedHelperReplayGuard(store),
       adapter: new AllowlistedPrivilegedHelper({
         service_control: async (command, control) => {
           assert.equal(control.shouldCancel(), false);
@@ -268,7 +277,8 @@ test("root-helper key-material startup does not require BrokerStore access", asy
   const root = await mkdtemp(join(tmpdir(), "mops-root-helper-material-"));
   const keyPath = join(root, "helper.key");
   const configPath = join(root, "helper-keys.json");
-  const helperSocketPath = join(root, "helper.sock");
+  const helperSocketDirectory = join(root, "run");
+  const helperSocketPath = join(helperSocketDirectory, "helper.sock");
   const brokerSocketPath = join(root, "broker.sock");
   const authoritySocketPath = join(root, "authority.sock");
   const now = Date.now();
@@ -276,6 +286,8 @@ test("root-helper key-material startup does not require BrokerStore access", asy
   let authority: PrivilegedHelperAuthorityIpcServer | undefined;
   let runtime: Awaited<ReturnType<typeof createPrivilegedHelperRuntimeFromKeyMaterial>> | undefined;
   try {
+    await mkdir(helperSocketDirectory, { mode: 0o700 });
+    await chmod(helperSocketDirectory, 0o711);
     const provisioned = await provisionAuthenticationKey(keyPath);
     const key = await loadAuthenticationKey(keyPath);
     await writePrivilegedHelperKeyConfig(configPath, {
@@ -295,13 +307,22 @@ test("root-helper key-material startup does not require BrokerStore access", asy
       now: () => now
     });
     await authority.listen();
-    runtime = await createPrivilegedHelperRuntimeFromKeyMaterial({
+    const brokerServiceId = `gui/${uid}/com.mac-operator.broker`;
+    runtime = await createPrivilegedHelperRuntimeFromKeyMaterialForLaunchdBroker({
+      helperRoot: await realpath(root),
       helperKeyConfigPath: configPath,
       socketPath: helperSocketPath,
       brokerSocketPath,
       authoritySocketPath,
-      peerPolicy,
-      replayGuard: { admit: () => undefined },
+      brokerServiceId,
+      expectedBrokerUid: uid,
+      expectedBrokerGid: gid,
+      commandExecutor: {
+        async run(command): Promise<ProcessExecutionResult> {
+          assert.deepEqual(command.args, ["print", brokerServiceId]);
+          return success(`${brokerServiceId} = {\n\ttype = LaunchAgent\n\tstate = running\n\tpid = ${process.pid}\n}`);
+        }
+      },
       adapter: new AllowlistedPrivilegedHelper({
         service_control: async (command) => ({
           operation: command.operation,
@@ -336,7 +357,32 @@ test("root-helper key-material startup does not require BrokerStore access", asy
     };
     const response = await sendHelperCommand(helperSocketPath, signPrivilegedHelperCommand(unsigned, key));
     assert.equal(authenticatePrivilegedHelperResponse(response, unsigned, key).ok, true);
+    await runtime.close();
+    await chmod(helperSocketDirectory, 0o710);
+    runtime = await createPrivilegedHelperRuntimeFromKeyMaterial({
+      helperRoot: await realpath(root),
+      helperKeyConfigPath: configPath,
+      socketPath: helperSocketPath,
+      socketGroupGid: gid,
+      brokerSocketPath,
+      authoritySocketPath,
+      peerPolicy,
+      adapter: new AllowlistedPrivilegedHelper({
+        service_control: async () => {
+          throw new Error("replayed helper command must not dispatch");
+        }
+      }),
+      authorizeCommand: () => undefined,
+      serverOptions: { now: () => now }
+    });
+    await runtime.start();
+    const replayResponse = await sendHelperCommand(helperSocketPath, signPrivilegedHelperCommand(unsigned, key));
+    const replayResult = authenticatePrivilegedHelperResponse(replayResponse, unsigned, key);
+    assert.equal(replayResult.ok, false);
+    if (!replayResult.ok) assert.equal(replayResult.resultClass, "REPLAY_DENIED");
+    await runtime.close();
     await assert.rejects(access(join(root, "broker.sqlite")));
+    await access(join(root, "state", "replay-ledger.sqlite"));
     key.fill(0);
   } finally {
     await runtime?.close().catch(() => undefined);
@@ -412,12 +458,12 @@ test("root-helper runtime dispatches the fixed service-control adapter through a
     });
     await authority.listen();
     runtime = await createPrivilegedHelperRuntimeFromKeyMaterial({
+      helperRoot: await realpath(root),
       helperKeyConfigPath: configPath,
       socketPath: helperSocketPath,
       brokerSocketPath,
       authoritySocketPath,
       peerPolicy,
-      replayGuard: { admit: () => undefined },
       adapter: helperAdapter,
       authorizeCommand: () => undefined,
       authorizeStatus: () => undefined,
@@ -495,6 +541,28 @@ test("privileged helper caller capture binds the exact Broker LaunchAgent and re
   });
   assert.equal(identity.pid, process.pid);
   assert.ok(identity.startTimeMicros > 0);
+  let invalidServiceExecutorCalled = false;
+  await assert.rejects(
+    createPrivilegedHelperRuntimeFromKeyMaterialForLaunchdBroker({
+      helperRoot: join(tmpdir(), "must-not-be-opened"),
+      helperKeyConfigPath: join(tmpdir(), "must-not-be-read.json"),
+      socketPath: join(tmpdir(), "invalid-service-helper.sock"),
+      brokerSocketPath: join(tmpdir(), "invalid-service-broker.sock"),
+      brokerServiceId: `gui/${uid}/com.mac-operator.attacker`,
+      expectedBrokerUid: uid,
+      expectedBrokerGid: process.getgid?.() ?? 20,
+      commandExecutor: {
+        async run(): Promise<ProcessExecutionResult> {
+          invalidServiceExecutorCalled = true;
+          return success("");
+        }
+      },
+      adapter: new FailClosedPrivilegedHelper(),
+      authorizeCommand: () => undefined
+    }),
+    (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "INVALID_HELPER_SERVICE"
+  );
+  assert.equal(invalidServiceExecutorCalled, false);
   await assert.rejects(
     captureLaunchdBrokerProcessIdentity({
       brokerServiceId: `gui/${uid}/com.mac-operator.attacker`,
@@ -601,6 +669,29 @@ test("privileged helper startup fails closed before key restore for invalid boun
     );
   } finally {
     store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("root-helper startup fails closed when its durable replay-ledger root is unavailable", async () => {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || uid < 1 || gid === undefined) throw new Error("POSIX non-root identity is unavailable");
+  const root = await mkdtemp(join(tmpdir(), "mac-operator-helper-replay-guard-"));
+  try {
+    await assert.rejects(
+      createPrivilegedHelperRuntimeFromKeyMaterial({
+        helperRoot: join(root, "missing-root"),
+        helperKeyConfigPath: join(root, "missing.json"),
+        socketPath: join(root, "helper.sock"),
+        brokerSocketPath: join(root, "broker.sock"),
+        peerPolicy: { expectedUid: uid, expectedGid: gid, allowedProcessIdentity: capturePeerProcessIdentity(process.pid) },
+        adapter: new AllowlistedPrivilegedHelper({ service_control: async () => { throw new Error("not dispatched"); } }),
+        authorizeCommand: () => undefined
+      }),
+      (error: unknown) => error instanceof PrivilegedHelperStartupError && error.code === "HELPER_REPLAY_GUARD_UNAVAILABLE"
+    );
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

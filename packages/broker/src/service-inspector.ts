@@ -29,6 +29,7 @@ export interface ServiceExecutionControl {
 
 export interface ServiceInspector {
   inspect(serviceId: string, control: ServiceExecutionControl): Promise<SafeServiceStatus>;
+  inspectEnablement?(serviceId: string, control: ServiceExecutionControl): Promise<"enabled" | "disabled">;
 }
 
 export class LaunchdServiceInspector implements ServiceInspector {
@@ -51,6 +52,54 @@ export class LaunchdServiceInspector implements ServiceInspector {
     });
     return parseLaunchctlResult(serviceId, result);
   }
+
+  async inspectEnablement(serviceId: string, control: ServiceExecutionControl): Promise<"enabled" | "disabled"> {
+    validateServiceId(serviceId);
+    const result = await this.supervisor.run({
+      executable: LAUNCHCTL,
+      args: ["print-disabled", "system"],
+      cwd: LAUNCHCTL_CWD,
+      environment: {},
+      timeoutMs: Math.min(control.timeoutMs, 5_000),
+      outputCapBytes: MAX_OUTPUT_BYTES,
+      shouldCancel: control.shouldCancel
+    });
+    if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Launchd enablement readback was cancelled");
+    if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Launchd enablement readback timed out");
+    if (result.resultClass === "OUTPUT_LIMIT" || result.truncated) {
+      throw new BrokerError("OUTPUT_LIMIT", "Launchd enablement readback exceeded its output limit");
+    }
+    if (result.resultClass !== "SUCCEEDED") {
+      throw new BrokerError("EXECUTION_FAILED", "Launchd enablement readback failed");
+    }
+    return parseLaunchdEnablementStatus(serviceId, result.stdout);
+  }
+}
+
+/**
+ * Parses only the bounded `launchctl print-disabled system` dictionary shape.
+ * An absent override means enabled by default; unknown output fails closed.
+ */
+export function parseLaunchdEnablementStatus(serviceId: string, output: string): "enabled" | "disabled" {
+  validateServiceId(serviceId);
+  if (typeof output !== "string" || output.length > MAX_OUTPUT_BYTES) {
+    throw new BrokerError("OUTPUT_LIMIT", "Launchd enablement readback is outside its output limit");
+  }
+  const lines = output.trim().split(/\r?\n/u);
+  if (lines.length < 2 || lines[0]?.trim() !== "disabled services = {" || lines.at(-1)?.trim() !== "}") {
+    throw new BrokerError("EXECUTION_FAILED", "Launchd enablement readback is malformed");
+  }
+  const states = new Map<string, "enabled" | "disabled">();
+  for (const line of lines.slice(1, -1)) {
+    if (line.trim().length === 0) continue;
+    const match = /^\s*"([A-Za-z0-9._:@+-]{1,128})"\s*=>\s*(enabled|disabled)\s*$/u.exec(line);
+    if (!match) throw new BrokerError("EXECUTION_FAILED", "Launchd enablement readback contains an unsupported entry");
+    const label = match[1]!;
+    const state = match[2] as "enabled" | "disabled";
+    if (states.has(label)) throw new BrokerError("EXECUTION_FAILED", "Launchd enablement readback contains a duplicate service");
+    states.set(label, state);
+  }
+  return states.get(serviceId.slice("system/".length)) ?? "enabled";
 }
 
 export function validateServiceId(serviceId: string): void {

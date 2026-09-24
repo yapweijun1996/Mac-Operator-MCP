@@ -2,6 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { FilesystemInspector } from "./filesystem-inspector.js";
 import type { FilesystemWorkerCommand } from "./filesystem-worker-protocol.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
+import { awaitPreMutationAuthority } from "./filesystem-pre-mutation-gate.js";
 
 /**
  * Test-only worker that commits a real write and then exits without returning
@@ -20,7 +21,9 @@ inspector.writePlanned(
   command.content,
   command.expectedSha256,
   command.createOnly,
-  command.tempName
+  command.tempName,
+  undefined,
+  () => awaitPreMutationAuthority(command.preMutationGate, (message) => parentPort!.postMessage(message))
 );
 
 // An uncaught worker exception makes the parent observe an execution failure

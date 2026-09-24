@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { BrokerError, parseJsonStrict } from "@mac-operator/contracts";
-import { captureProcessPathIdentity, ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
+import { captureProcessPathIdentity, ProcessSupervisor, type DescriptorProcessSpawnAdapter, type ProcessExecutionResult } from "./process-supervisor.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { redactBoundedText, redactLogText } from "./secret-policy.js";
 
@@ -122,6 +122,25 @@ export interface DockerInspectorOptions {
   requireCodeSignature?: boolean;
   /** Fixed expected identity for the Docker executable; never caller supplied. */
   codeSignatureExpectation?: DockerCodeSignatureExpectation;
+}
+
+/**
+ * Construct the only process authority permitted for the production Docker
+ * adapter. Docker is a host boundary, so a trusted path/content observation
+ * is not sufficient: the supervisor must require a host-proven descriptor
+ * launcher and must never fall back to pathname spawn.
+ */
+export function createDockerProcessSupervisor(options: {
+  descriptorSpawnAdapter?: DescriptorProcessSpawnAdapter;
+} = {}): ProcessSupervisor {
+  return new ProcessSupervisor({
+    maxConcurrent: 2,
+    requireRootOwnedExecutable: true,
+    trustedUserOwnedExecutablePaths: DOCKER_EXECUTABLE_CANDIDATES,
+    requireDescriptorExecution: true,
+    allowedEnvironmentKeys: Object.keys(SAFE_ENVIRONMENT),
+    ...(options.descriptorSpawnAdapter === undefined ? {} : { descriptorSpawnAdapter: options.descriptorSpawnAdapter })
+  });
 }
 
 export interface DockerCodeSignatureExpectation {

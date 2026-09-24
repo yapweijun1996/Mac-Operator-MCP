@@ -15,6 +15,7 @@ import {
   MacOsPeerCredentialVerifier
 } from "@mac-operator/broker";
 import { BrokerIpcClient, isAuthenticatedResponse } from "./ipc-client.js";
+import { AuthenticatedIpcBrokerGateway } from "./gateway.js";
 import { EdgeRequestFactory } from "./request-factory.js";
 
 test("Edge authenticates a complete Broker IPC round trip", async () => {
@@ -46,7 +47,7 @@ test("Edge authenticates a complete Broker IPC round trip", async () => {
       now: () => now,
       randomId: (() => {
         let value = 0;
-        return () => `edge-id-${++value}`;
+        return () => `edge-id-${String(++value).padStart(16, "0")}`;
       })()
     });
     const request = factory.create("mac_health", {}, {
@@ -64,6 +65,12 @@ test("Edge authenticates a complete Broker IPC round trip", async () => {
     assert.equal(response.ok, true);
     assert.equal(response.request_id, request.requestId);
     assert.equal(response.tool, "mac_health");
+    const gateway = new AuthenticatedIpcBrokerGateway(
+      factory,
+      new BrokerIpcClient(socketPath, (candidate, envelope) => factory.verifyResponse(candidate, envelope))
+    );
+    await gateway.revokeSession("edge-1", "principal-1", "session-1");
+    assert.equal(store.isRevoked("session", "session-1"), true);
   } finally {
     await server.close();
     store.close();

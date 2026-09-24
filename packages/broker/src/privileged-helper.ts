@@ -2,13 +2,15 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { isAbsolute, resolve } from "node:path";
-import { BrokerError, canonicalJson, CONTRACT_VERSION, parseJsonUtf8Strict, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, CONTRACT_VERSION, isCompatibleVersionPair, parseJsonUtf8Strict, PROTOCOL_VERSION, sha256, type ErrorClass } from "@mac-operator/contracts";
 import { MacOsNativePeerIpcServer, type NativePeerPolicy } from "./native-peer-ipc-server.js";
+import type { PeerProcessIdentity } from "./peer-credentials.js";
 import { captureSocketPathIdentity, detachOwnedSocket, removeDetachedSocket, removeStaleSocket, validateSocketParent, type SocketPathIdentity } from "./ipc-server.js";
 import { privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ApprovalRecord, type BrokerJob, type BrokerStore, type PrivilegedHelperPayload, type RequestRecord } from "./persistence.js";
 import { redactLogText } from "./secret-policy.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import type { PrivilegedHelperAuthorityPoller } from "./privileged-helper-authority-ipc.js";
+import { PrivilegedHelperReplayLedger } from "./privileged-helper-replay-ledger.js";
 
 export type { PrivilegedHelperPayload } from "./persistence.js";
 
@@ -16,6 +18,8 @@ const HELPER_COMMAND_DOMAIN = "mac-operator-privileged-helper-command-v0.1\0";
 const HELPER_RESPONSE_DOMAIN = "mac-operator-privileged-helper-response-v0.1\0";
 const HELPER_STATUS_REQUEST_DOMAIN = "mac-operator-privileged-helper-status-request-v0.1\0";
 const HELPER_STATUS_RESPONSE_DOMAIN = "mac-operator-privileged-helper-status-response-v0.1\0";
+const HELPER_READBACK_REQUEST_DOMAIN = "mac-operator-privileged-helper-job-readback-request-v0.1\0";
+const HELPER_READBACK_RESPONSE_DOMAIN = "mac-operator-privileged-helper-job-readback-response-v0.1\0";
 const MAX_COMMAND_AGE_MS = 600_000;
 const MAX_COMMAND_BYTES = 256 * 1024;
 const MAX_RESPONSE_BYTES = 1 * 1024 * 1024;
@@ -109,6 +113,61 @@ export type PrivilegedHelperFailureResponse = {
 
 export type PrivilegedHelperResponse = PrivilegedHelperSuccessResponse | PrivilegedHelperFailureResponse;
 
+export type PrivilegedHelperPostcondition = "matches" | "mismatch" | "unavailable";
+
+export interface PrivilegedHelperJobReadback {
+  operation: PrivilegedHelperOperation;
+  targetRef: string;
+  postcondition: PrivilegedHelperPostcondition;
+  evidence: Readonly<Record<string, string | number | boolean | null>>;
+  warnings: readonly string[];
+  summary?: string;
+  readbackHash?: string;
+}
+
+export interface UnsignedPrivilegedHelperJobReadbackRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  contractVersion: typeof CONTRACT_VERSION;
+  requestId: string;
+  nonce: string;
+  timestampMs: number;
+  expiresAtMs: number;
+  kind: "job_readback";
+  jobId: string;
+  principalId: string;
+  sessionId: string;
+  operation: PrivilegedHelperOperation;
+  targetRef: string;
+  payload: PrivilegedHelperPayload;
+  payloadDigest: string;
+  policyVersion: string;
+}
+
+export interface SignedPrivilegedHelperJobReadbackRequest extends UnsignedPrivilegedHelperJobReadbackRequest {
+  authenticationProof: string;
+}
+
+export type PrivilegedHelperJobReadbackSuccessResponse = {
+  ok: true;
+  kind: "job_readback";
+  requestId: string;
+  jobId: string;
+  readback: PrivilegedHelperJobReadback;
+  responseProof: string;
+};
+
+export type PrivilegedHelperJobReadbackFailureResponse = {
+  ok: false;
+  kind: "job_readback";
+  requestId: string;
+  jobId: string;
+  resultClass: ErrorClass;
+  error: { message: string; retryable: boolean };
+  responseProof: string;
+};
+
+export type PrivilegedHelperJobReadbackResponse = PrivilegedHelperJobReadbackSuccessResponse | PrivilegedHelperJobReadbackFailureResponse;
+
 export interface PrivilegedHelperStatusReadback {
   component: "mac-operator-privileged-helper";
   state: "running";
@@ -162,11 +221,14 @@ export type PrivilegedHelperStatusFailureResponse = {
 export type PrivilegedHelperStatusResponse = PrivilegedHelperStatusSuccessResponse | PrivilegedHelperStatusFailureResponse;
 
 export interface PrivilegedHelperReplayGuard {
+  /** Durable guards survive helper restarts; process-local guards are test-only. */
+  readonly durability?: "durable" | "process-local";
   admit(command: Pick<UnsignedPrivilegedHelperCommand, "requestId" | "nonce" | "timestampMs" | "nonceExpiresAtMs">): void;
 }
 
-/** A bounded test/local fallback. Production helper wiring should use BrokerStore. */
+/** A bounded process-local fallback for tests only; it cannot survive restart. */
 export class InMemoryPrivilegedHelperReplayGuard implements PrivilegedHelperReplayGuard {
+  readonly durability = "process-local" as const;
   private readonly accepted = new Map<string, number>();
 
   constructor(private readonly maxEntries = 4096) {
@@ -193,8 +255,10 @@ export class InMemoryPrivilegedHelperReplayGuard implements PrivilegedHelperRepl
   }
 }
 
-/** Adapter for the durable BrokerStore nonce ledger. */
+/** Reference durable replay guard backed by the BrokerStore nonce ledger. */
 export class BrokerStorePrivilegedHelperReplayGuard implements PrivilegedHelperReplayGuard {
+  readonly durability = "durable" as const;
+
   constructor(private readonly store: BrokerStore) {}
 
   admit(command: Pick<UnsignedPrivilegedHelperCommand, "requestId" | "nonce" | "timestampMs" | "nonceExpiresAtMs">): void {
@@ -246,7 +310,11 @@ export function assertPrivilegedHelperCommandAuthority(
     ? undefined
     : store.ownedJob(request.jobId, request.principalId);
   const binding = request === undefined ? undefined : PRIVILEGED_TOOL_BINDINGS[request.tool as keyof typeof PRIVILEGED_TOOL_BINDINGS];
-  if (!request || !job || !binding || request.approvalId !== approval.approvalId || request.state !== "RUNNING" ||
+  const activeJobLeaseExpiresAtMs = request !== undefined && job !== undefined
+    ? store.activeJobLeaseExpiresAtMs(job.jobId, request.principalId, nowMs)
+    : undefined;
+  if (!request || !job || !binding || activeJobLeaseExpiresAtMs === undefined ||
+      request.approvalId !== approval.approvalId || request.state !== "RUNNING" ||
       request.mutation !== true || request.policyVersion !== command.policyVersion ||
       job.state !== "running" || job.cancelRequested || job.ownerSessionId !== request.sessionId ||
       job.ownerEdgeId !== request.edgeId || job.tool !== request.tool || job.policyVersion !== request.policyVersion ||
@@ -282,6 +350,43 @@ export function assertPrivilegedHelperCommandAuthority(
       command.intentId !== `intent:${intentDigest.slice(0, 48)}`) {
     throw new BrokerError("CONFLICT", "Privileged helper command identity proof is mismatched", true);
   }
+}
+
+/**
+ * Broker-owned authority callback for read-only recovery. This deliberately
+ * accepts only an UNKNOWN Job and never consumes an approval or creates a
+ * command lease; the helper can inspect state but cannot replay the mutation.
+ */
+export function assertPrivilegedHelperReadbackAuthority(
+  store: BrokerStore,
+  request: UnsignedPrivilegedHelperJobReadbackRequest
+): void {
+  if (!store) throw new BrokerError("AUDIT_UNAVAILABLE", "Privileged helper readback authority store is unavailable");
+  validateUnsignedPrivilegedHelperJobReadbackRequest(request);
+  if (store.isSwitchDisabled("global") || store.isSwitchDisabled("mutations") || store.isSwitchDisabled("privileged")) {
+    throw new BrokerError("REVOKED", "Privileged helper readback is disabled by a Broker kill switch");
+  }
+  const job = store.ownedJob(request.jobId, request.principalId);
+  const binding = job === undefined ? undefined : PRIVILEGED_TOOL_BINDINGS[job.tool as keyof typeof PRIVILEGED_TOOL_BINDINGS];
+  if (!job || !binding || job.state !== "unknown" || job.ownerSessionId !== request.sessionId ||
+      job.tool !== toolForPrivilegedOperation(request.operation) || binding.operation !== request.operation ||
+      job.targetRef !== request.targetRef || job.payloadDigest !== request.payloadDigest ||
+      job.policyVersion !== request.policyVersion || job.privilegedPayload === undefined ||
+      sha256(canonicalJson(job.privilegedPayload)) !== request.payloadDigest ||
+      canonicalJson(job.privilegedPayload) !== canonicalJson(request.payload)) {
+    throw new BrokerError("CONFLICT", "Privileged helper readback is not bound to the requested UNKNOWN Job", true);
+  }
+  if ((job.ownerEdgeId !== null && store.isRevoked("edge", job.ownerEdgeId)) ||
+      (job.ownerEdgeKeyId !== null && store.isRevoked("edge_key", job.ownerEdgeKeyId)) ||
+      store.isRevoked("principal", request.principalId) || store.isRevoked("session", request.sessionId)) {
+    throw new BrokerError("REVOKED", "Privileged helper readback identity has been revoked");
+  }
+}
+
+function toolForPrivilegedOperation(operation: PrivilegedHelperOperation): keyof typeof PRIVILEGED_TOOL_BINDINGS {
+  if (operation === "service_control") return "mac_priv_service_control";
+  if (operation === "package_install") return "mac_priv_package_install";
+  return "mac_priv_power";
 }
 
 export interface PrivilegedHelperCommandIssueInput {
@@ -378,7 +483,11 @@ export class BrokerPrivilegedHelperCommandFactory {
     }
 
     const approval = this.requireApproval(request, binding, job, nowMs);
-    const expiresAtMs = Math.min(nowMs + this.maxLifetimeMs, approval.expiresAtMs);
+    const leaseExpiresAtMs = this.options.store.activeJobLeaseExpiresAtMs(input.jobId, input.principalId, nowMs);
+    if (leaseExpiresAtMs === undefined) {
+      throw new BrokerError("CONFLICT", "Privileged helper Job lease is not active", true);
+    }
+    const expiresAtMs = Math.min(nowMs + this.maxLifetimeMs, approval.expiresAtMs, leaseExpiresAtMs);
     if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= nowMs) {
       throw new BrokerError("AUTH_EXPIRED", "Privileged helper approval does not leave an executable lifetime");
     }
@@ -472,6 +581,10 @@ export interface PrivilegedHelperAdapter {
    */
   readonly enabledCapabilities: readonly string[];
   execute(command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperExecutionResult>;
+  readback(
+    request: UnsignedPrivilegedHelperJobReadbackRequest,
+    control: PrivilegedHelperExecutionControl
+  ): Promise<PrivilegedHelperJobReadback>;
 }
 
 /** Default helper adapter. No privileged operation is available implicitly. */
@@ -481,6 +594,10 @@ export class FailClosedPrivilegedHelper implements PrivilegedHelperAdapter {
 
   async execute(_command: UnsignedPrivilegedHelperCommand, _control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperExecutionResult> {
     throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not enabled");
+  }
+
+  async readback(request: UnsignedPrivilegedHelperJobReadbackRequest, _control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperJobReadback> {
+    return unavailablePrivilegedHelperReadback(request, "Privileged helper readback is not enabled");
   }
 }
 
@@ -497,14 +614,25 @@ export class AllowlistedPrivilegedHelper implements PrivilegedHelperAdapter {
     package_install?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
     power?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
   }>;
+  private readonly readbackHandlers: Readonly<{
+    service_control?: (request: UnsignedPrivilegedHelperJobReadbackRequest, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperJobReadback>;
+    package_install?: (request: UnsignedPrivilegedHelperJobReadbackRequest, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperJobReadback>;
+    power?: (request: UnsignedPrivilegedHelperJobReadbackRequest, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperJobReadback>;
+  }>;
 
   constructor(handlers: Readonly<{
     service_control?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
     package_install?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
     power?: (command: UnsignedPrivilegedHelperCommand, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperExecutionResult>;
+    service_control_readback?: (request: UnsignedPrivilegedHelperJobReadbackRequest, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperJobReadback>;
+    package_install_readback?: (request: UnsignedPrivilegedHelperJobReadbackRequest, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperJobReadback>;
+    power_readback?: (request: UnsignedPrivilegedHelperJobReadbackRequest, control: PrivilegedHelperExecutionControl) => Promise<PrivilegedHelperJobReadback>;
   }>) {
     if (!isPlainDataRecord(handlers)) throw new Error("Privileged helper handler map must be a plain data record");
-    const allowed = new Set(["service_control", "package_install", "power"]);
+    const allowed = new Set([
+      "service_control", "package_install", "power",
+      "service_control_readback", "package_install_readback", "power_readback"
+    ]);
     const entries = Object.entries(handlers);
     if (entries.some(([key, handler]) => !allowed.has(key) || (handler !== undefined && typeof handler !== "function"))) {
       throw new Error("Privileged helper handler map contains an unsupported operation");
@@ -513,6 +641,11 @@ export class AllowlistedPrivilegedHelper implements PrivilegedHelperAdapter {
       ...(typeof handlers.service_control === "function" ? { service_control: handlers.service_control } : {}),
       ...(typeof handlers.package_install === "function" ? { package_install: handlers.package_install } : {}),
       ...(typeof handlers.power === "function" ? { power: handlers.power } : {})
+    });
+    this.readbackHandlers = Object.freeze({
+      ...(typeof handlers.service_control_readback === "function" ? { service_control: handlers.service_control_readback } : {}),
+      ...(typeof handlers.package_install_readback === "function" ? { package_install: handlers.package_install_readback } : {}),
+      ...(typeof handlers.power_readback === "function" ? { power: handlers.power_readback } : {})
     });
     const operations = Object.entries(this.handlers)
       .filter(([, handler]) => typeof handler === "function")
@@ -531,6 +664,13 @@ export class AllowlistedPrivilegedHelper implements PrivilegedHelperAdapter {
     if (!handler) throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper operation is not allowlisted");
     return validatePrivilegedHelperExecutionResult(await handler(command, control), command);
   }
+
+  async readback(request: UnsignedPrivilegedHelperJobReadbackRequest, control: PrivilegedHelperExecutionControl): Promise<PrivilegedHelperJobReadback> {
+    validateUnsignedPrivilegedHelperJobReadbackRequest(request);
+    const handler = this.readbackHandlers[request.operation];
+    if (!handler) return unavailablePrivilegedHelperReadback(request, "Operation-specific helper readback is not enabled");
+    return validatePrivilegedHelperJobReadback(await handler(request, control), request);
+  }
 }
 
 export interface PrivilegedHelperIpcServerOptions {
@@ -546,12 +686,20 @@ export interface PrivilegedHelperIpcServerOptions {
   readStatus?: () => PrivilegedHelperStatusReadback;
   /** Final Broker/helper authority gate for status requests. */
   authorizeStatus?: () => void;
+  /** Final Broker/helper authority gate for a read-only UNKNOWN Job readback. */
+  authorizeReadback?: (request: UnsignedPrivilegedHelperJobReadbackRequest) => void | Promise<void>;
   /** Optional separately authenticated Broker authority poll channel. */
   authorityPoller?: PrivilegedHelperAuthorityPoller;
   /** Poll interval used while an allowlisted helper operation is active. */
   authorityPollIntervalMs?: number;
+  /** Optional shared-group access for explicitly configured helper listeners. */
+  socketGroupGid?: number;
+  /** Optional exact-user ACL for the production root-helper command socket. */
+  socketPeerUid?: number;
   peerCredentialVerifier?: { verify(socket: Socket): unknown };
   peerPolicy?: NativePeerPolicy;
+  /** Root-helper lifecycle hook for a bound Broker PID/start-time loss. */
+  onPeerIdentityLost?: (identity: PeerProcessIdentity) => void;
   maxRequestBytes?: number;
   maxRequestAgeMs?: number;
   allowedClockSkewMs?: number;
@@ -580,8 +728,21 @@ export class PrivilegedHelperIpcServer {
     if (!options.peerCredentialVerifier && !options.peerPolicy) {
       throw new Error("Privileged helper IPC requires a peer verifier or native peer policy");
     }
+    if (options.socketGroupGid !== undefined &&
+        (!Number.isSafeInteger(options.socketGroupGid) || options.socketGroupGid < 0 || options.socketGroupGid > 2_147_483_647 ||
+         options.peerPolicy?.expectedGid !== options.socketGroupGid || options.socketPeerUid !== undefined)) {
+      throw new Error("Privileged helper socket group must match the authenticated peer group");
+    }
+    if (options.socketPeerUid !== undefined &&
+        (!Number.isSafeInteger(options.socketPeerUid) || options.socketPeerUid < 1 || options.socketPeerUid > 2_147_483_647 ||
+         options.peerPolicy?.expectedUid !== options.socketPeerUid)) {
+      throw new Error("Privileged helper socket user ACL must match the authenticated peer user");
+    }
     if (options.authenticationKey.byteLength < 32) throw new Error("Privileged helper key must contain at least 32 bytes");
     if (!options.replayGuard) throw new Error("Privileged helper replay guard is required");
+    if (options.adapter.available && !isTrustedDurableReplayGuard(options.replayGuard)) {
+      throw new Error("Enabled privileged helper operations require a durable replay guard");
+    }
     if (typeof options.authorizeCommand !== "function") throw new Error("Privileged helper authority check is required");
     const maxRequestBytes = options.maxRequestBytes ?? MAX_COMMAND_BYTES;
     const maxRequestAgeMs = options.maxRequestAgeMs ?? MAX_COMMAND_AGE_MS;
@@ -607,7 +768,10 @@ export class PrivilegedHelperIpcServer {
       this.nativeTransport = new MacOsNativePeerIpcServer({
         socketPath: this.options.socketPath,
         peerPolicy: this.options.peerPolicy,
+        ...(this.options.socketGroupGid === undefined ? {} : { socketGroupGid: this.options.socketGroupGid }),
+        ...(this.options.socketPeerUid === undefined ? {} : { socketPeerUid: this.options.socketPeerUid }),
         ...(this.options.onError === undefined ? {} : { onError: this.options.onError }),
+        ...(this.options.onPeerIdentityLost === undefined ? {} : { onPeerIdentityLost: this.options.onPeerIdentityLost }),
         onSocket: (socket) => this.handleAuthenticatedSocket(socket)
       });
       try {
@@ -701,6 +865,42 @@ export class PrivilegedHelperIpcServer {
         raw = parseJsonUtf8Strict(combined.subarray(0, newline));
       } catch {
         writeResponse(socket, this.failure("PRECONDITION_FAILED", "Privileged helper request is not valid JSON", "invalid-command", "invalid-request"));
+        return;
+      }
+      if (isJobReadbackRequestEnvelope(raw)) {
+        let readbackRequest: UnsignedPrivilegedHelperJobReadbackRequest | undefined;
+        let readbackResponse: PrivilegedHelperJobReadbackResponse;
+        try {
+          readbackRequest = unsignedPrivilegedHelperJobReadbackCandidate(raw);
+          readbackRequest = authenticatePrivilegedHelperJobReadbackRequest(raw, this.authenticationKey, this.now(), this.maxRequestAgeMs, this.allowedClockSkewMs);
+          if (combined.subarray(newline + 1).some((byte) => !isAsciiWhitespace(byte))) {
+            throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback request contained trailing data");
+          }
+          this.options.keyAuthorityCheck?.();
+          this.options.replayGuard.admit({
+            requestId: readbackRequest.requestId,
+            nonce: readbackRequest.nonce,
+            timestampMs: readbackRequest.timestampMs,
+            nonceExpiresAtMs: readbackRequest.expiresAtMs
+          });
+          if (!this.options.authorizeReadback && !this.options.authorityPoller?.assertReadbackAuthorized) {
+            throw new BrokerError("PRIVILEGE_DENIED", "Privileged helper Job readback authority is not enabled");
+          }
+          if (this.options.authorizeReadback) await this.options.authorizeReadback(readbackRequest);
+          const signedReadback = raw as SignedPrivilegedHelperJobReadbackRequest;
+          if (this.options.authorityPoller?.assertReadbackAuthorized) await this.options.authorityPoller.assertReadbackAuthorized(signedReadback);
+          const control: PrivilegedHelperExecutionControl = {
+            timeoutMs: Math.max(1, readbackRequest.expiresAtMs - this.now()),
+            shouldCancel: () => socket.destroyed || this.now() >= readbackRequest!.expiresAtMs
+          };
+          const readback = await this.options.adapter.readback(readbackRequest, control);
+          readbackResponse = jobReadbackSuccess(readbackRequest, validatePrivilegedHelperJobReadback(readback, readbackRequest), this.authenticationKey);
+        } catch (error) {
+          const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Privileged helper Job readback is invalid");
+          const fallback = readbackRequest ?? fallbackJobReadbackRequest();
+          readbackResponse = this.jobReadbackFailure(brokerError.errorClass, brokerError.message, fallback.requestId, fallback.jobId, brokerError.retryable, readbackRequest);
+        }
+        writeJobReadbackResponse(socket, readbackResponse);
         return;
       }
       if (isStatusRequestEnvelope(raw)) {
@@ -835,6 +1035,18 @@ export class PrivilegedHelperIpcServer {
     const body = { ok: false as const, kind: "status" as const, requestId, resultClass: errorClass, error: { message: boundedMessage(message), retryable } };
     return { ...body, responseProof: statusResponseProof(request, body, this.authenticationKey) };
   }
+
+  private jobReadbackFailure(
+    errorClass: ErrorClass,
+    message: string,
+    requestId: string,
+    jobId: string,
+    retryable = false,
+    request?: UnsignedPrivilegedHelperJobReadbackRequest
+  ): PrivilegedHelperJobReadbackFailureResponse {
+    const body = { ok: false as const, kind: "job_readback" as const, requestId, jobId, resultClass: errorClass, error: { message: boundedMessage(message), retryable } };
+    return { ...body, responseProof: jobReadbackResponseProof(request, body, this.authenticationKey) };
+  }
 }
 
 export function signPrivilegedHelperCommand(command: UnsignedPrivilegedHelperCommand, authenticationKey: Buffer): SignedPrivilegedHelperCommand {
@@ -880,7 +1092,7 @@ export function validateUnsignedPrivilegedHelperStatusRequest(request: UnsignedP
   }
   const keys = Object.keys(request);
   if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
-      request.protocolVersion !== PROTOCOL_VERSION || request.contractVersion !== CONTRACT_VERSION ||
+      !isCompatibleVersionPair("broker_helper", request.protocolVersion, request.contractVersion) ||
       !/^request:status-[A-Za-z0-9._:-]{1,240}$/u.test(request.requestId) || !NONCE_PATTERN.test(request.nonce) ||
       !Number.isSafeInteger(request.timestampMs) || request.timestampMs < 0 ||
       !Number.isSafeInteger(request.expiresAtMs) || request.expiresAtMs <= request.timestampMs ||
@@ -1168,6 +1380,169 @@ export function authenticatePrivilegedHelperCommand(
   return command;
 }
 
+export function signPrivilegedHelperJobReadbackRequest(
+  request: UnsignedPrivilegedHelperJobReadbackRequest,
+  authenticationKey: Buffer
+): SignedPrivilegedHelperJobReadbackRequest {
+  validateUnsignedPrivilegedHelperJobReadbackRequest(request);
+  if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Privileged helper readback key is invalid");
+  return { ...request, authenticationProof: jobReadbackRequestProof(request, authenticationKey) };
+}
+
+export function authenticatePrivilegedHelperJobReadbackRequest(
+  raw: unknown,
+  authenticationKey: Buffer,
+  nowMs: number,
+  maxRequestAgeMs = MAX_COMMAND_AGE_MS,
+  allowedClockSkewMs = 5_000
+): UnsignedPrivilegedHelperJobReadbackRequest {
+  if (authenticationKey.byteLength < 32) throw new BrokerError("AUTH_INVALID", "Privileged helper readback key is invalid");
+  const parsed = parseSignedJobReadbackRequest(raw);
+  const request = parsed.unsigned;
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || request.timestampMs > nowMs + allowedClockSkewMs ||
+      nowMs - request.timestampMs > maxRequestAgeMs || request.expiresAtMs <= nowMs ||
+      request.expiresAtMs <= request.timestampMs ||
+      request.expiresAtMs > request.timestampMs + maxRequestAgeMs + allowedClockSkewMs) {
+    throw new BrokerError("AUTH_EXPIRED", "Privileged helper readback timestamp is outside the accepted window");
+  }
+  if (!safeEqualHex(parsed.authenticationProof, jobReadbackRequestProof(request, authenticationKey))) {
+    throw new BrokerError("AUTH_INVALID", "Privileged helper readback authentication failed");
+  }
+  return request;
+}
+
+export function validateUnsignedPrivilegedHelperJobReadbackRequest(request: UnsignedPrivilegedHelperJobReadbackRequest): void {
+  const allowed = [
+    "protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "jobId",
+    "principalId", "sessionId", "operation", "targetRef", "payload", "payloadDigest", "policyVersion"
+  ];
+  if (!isPlainDataRecord(request)) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback request fields are malformed");
+  const keys = Object.keys(request);
+  if (keys.length !== allowed.length || allowed.some((key) => !keys.includes(key)) ||
+      !isCompatibleVersionPair("broker_helper", request.protocolVersion, request.contractVersion) ||
+      !/^request:readback-[A-Za-z0-9._:-]{1,240}$/u.test(request.requestId) || !NONCE_PATTERN.test(request.nonce) ||
+      !Number.isSafeInteger(request.timestampMs) || request.timestampMs < 0 ||
+      !Number.isSafeInteger(request.expiresAtMs) || request.expiresAtMs <= request.timestampMs ||
+      request.kind !== "job_readback" || !/^job:[A-Za-z0-9._-]{1,240}$/u.test(request.jobId) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(request.principalId) ||
+      !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(request.sessionId) ||
+      !validTarget(request.operation, request.targetRef) || !/^[a-f0-9]{64}$/u.test(request.payloadDigest) ||
+      !POLICY_VERSION_PATTERN.test(request.policyVersion)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback request fields are malformed");
+  }
+  try { validatePrivilegedHelperPayload(request.payload); }
+  catch { throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback payload is malformed"); }
+  if (request.payload.operation !== request.operation || privilegedHelperPayloadTarget(request.payload) !== request.targetRef ||
+      sha256(canonicalJson(request.payload)) !== request.payloadDigest) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback payload binding is invalid");
+  }
+}
+
+export function validatePrivilegedHelperJobReadback(
+  readback: PrivilegedHelperJobReadback,
+  request?: Pick<UnsignedPrivilegedHelperJobReadbackRequest, "operation" | "targetRef">
+): PrivilegedHelperJobReadback {
+  if (!isPlainDataRecord(readback) || !hasExactKeys(readback, ["operation", "targetRef", "postcondition", "evidence", "warnings"], ["summary", "readbackHash"]) ||
+      !["service_control", "package_install", "power"].includes(readback.operation) ||
+      !validTarget(readback.operation, readback.targetRef) ||
+      !["matches", "mismatch", "unavailable"].includes(readback.postcondition) ||
+      !isEvidenceRecord(readback.evidence) || !Array.isArray(readback.warnings) ||
+      readback.warnings.length > MAX_WARNINGS || readback.warnings.some((warning) => typeof warning !== "string" || warning.length < 1 || warning.length > 512 || warning.includes("\0"))) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper Job readback is malformed");
+  }
+  if (request && (readback.operation !== request.operation || readback.targetRef !== request.targetRef)) {
+    throw new BrokerError("VERIFICATION_FAILED", "Privileged helper Job readback identity does not match the request");
+  }
+  if (readback.summary !== undefined && (typeof readback.summary !== "string" || readback.summary.length > 512 || readback.summary.includes("\0"))) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper Job readback summary is malformed");
+  }
+  if (readback.readbackHash !== undefined && !/^[a-f0-9]{64}$/u.test(readback.readbackHash)) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper Job readback hash is malformed");
+  }
+  const evidence = Object.fromEntries(Object.entries(readback.evidence).map(([key, value]) => {
+    if (/(?:access[_-]?token|api[_-]?key|authorization|bearer|client[_-]?secret|cookie|credential|hmac[_-]?key|jwt|password|passwd|passphrase|private[_-]?key|refresh[_-]?token|secret|signing[_-]?key|ssh[_-]?key|token)/iu.test(key)) return [key, "[REDACTED]"] as const;
+    return [key, typeof value === "string" ? redactLogText(value).text : value] as const;
+  }));
+  const warnings = readback.warnings.map((warning) => redactLogText(warning).text);
+  return {
+    ...readback,
+    evidence,
+    warnings,
+    ...(readback.summary === undefined ? {} : { summary: redactLogText(readback.summary).text })
+  };
+}
+
+export function authenticatePrivilegedHelperJobReadbackResponse(
+  raw: unknown,
+  request: UnsignedPrivilegedHelperJobReadbackRequest,
+  authenticationKey: Buffer
+): PrivilegedHelperJobReadbackResponse {
+  validateUnsignedPrivilegedHelperJobReadbackRequest(request);
+  if (authenticationKey.byteLength < 32 || !isPlainDataRecord(raw)) throw new BrokerError("AUTH_INVALID", "Privileged helper readback response is invalid");
+  const response = raw as Record<string, unknown>;
+  if (response.kind !== "job_readback" || response.requestId !== request.requestId || response.jobId !== request.jobId || typeof response.responseProof !== "string") {
+    throw new BrokerError("AUTH_INVALID", "Privileged helper readback response identity is invalid");
+  }
+  const successKeys = ["ok", "kind", "requestId", "jobId", "readback", "responseProof"];
+  const failureKeys = ["ok", "kind", "requestId", "jobId", "resultClass", "error", "responseProof"];
+  const expectedKeys = response.ok === true ? successKeys : response.ok === false ? failureKeys : [];
+  if (expectedKeys.length === 0 || !hasExactKeys(response, expectedKeys)) throw new BrokerError("EXECUTION_FAILED", "Privileged helper readback response fields are malformed");
+  const body = { ...response };
+  delete body.responseProof;
+  if (!safeEqualHex(response.responseProof as string, jobReadbackResponseProof(request, body, authenticationKey))) {
+    throw new BrokerError("AUTH_INVALID", "Privileged helper readback response authentication failed");
+  }
+  if (response.ok === true) {
+    if (!isPlainDataRecord(response.readback)) throw new BrokerError("EXECUTION_FAILED", "Privileged helper Job readback is malformed");
+    return { ...(response as unknown as PrivilegedHelperJobReadbackSuccessResponse), readback: validatePrivilegedHelperJobReadback(response.readback as unknown as PrivilegedHelperJobReadback, request) };
+  }
+  if (response.ok !== false || !isHelperErrorClass(response.resultClass as string) || !isPlainDataRecord(response.error) ||
+      !hasExactKeys(response.error as Record<string, unknown>, ["message", "retryable"]) ||
+      typeof (response.error as Record<string, unknown>).message !== "string" ||
+      typeof (response.error as Record<string, unknown>).retryable !== "boolean" ||
+      !boundedStatusMessage((response.error as Record<string, unknown>).message as string)) {
+    throw new BrokerError("EXECUTION_FAILED", "Privileged helper readback failure is malformed");
+  }
+  return response as unknown as PrivilegedHelperJobReadbackFailureResponse;
+}
+
+export interface PrivilegedHelperJobReadbackClientOptions {
+  socketPath: string;
+  authenticationKey: Buffer;
+  now?: () => number;
+  timeoutMs?: number;
+}
+
+export async function readPrivilegedHelperJobReadback(
+  request: SignedPrivilegedHelperJobReadbackRequest,
+  options: PrivilegedHelperJobReadbackClientOptions
+): Promise<PrivilegedHelperJobReadbackResponse> {
+  if (options === null || typeof options !== "object" || !canonicalStatusPath(options.socketPath) ||
+      !Buffer.isBuffer(options.authenticationKey) || options.authenticationKey.byteLength < 32) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback client options are invalid");
+  }
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_COMMAND_AGE_MS) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback timeout is invalid");
+  }
+  const now = options.now ?? Date.now;
+  const unsigned = authenticatePrivilegedHelperJobReadbackRequest(request, options.authenticationKey, now());
+  const serialized = `${JSON.stringify(request)}\n`;
+  if (Buffer.byteLength(serialized, "utf8") > MAX_COMMAND_BYTES) throw new BrokerError("OUTPUT_LIMIT", "Privileged helper readback request exceeded the byte limit");
+  let before: SocketPathIdentity;
+  try { before = await captureSocketPathIdentity(options.socketPath); }
+  catch { throw new BrokerError("TARGET_NOT_FOUND", "Privileged helper readback socket is unavailable"); }
+  const key = Buffer.from(options.authenticationKey);
+  try {
+    const response = await exchangeHelperSocket(options.socketPath, serialized, timeoutMs);
+    const after = await captureSocketPathIdentity(options.socketPath);
+    if (before.device !== after.device || before.inode !== after.inode) throw new BrokerError("CONFLICT", "Privileged helper readback socket identity changed during readback");
+    return authenticatePrivilegedHelperJobReadbackResponse(response, unsigned, key);
+  } finally {
+    key.fill(0);
+  }
+}
+
 export function validateUnsignedPrivilegedHelperCommand(command: UnsignedPrivilegedHelperCommand): void {
   const expectedKeys = [
     "protocolVersion", "contractVersion", "commandId", "requestId", "nonce", "nonceExpiresAtMs", "timestampMs",
@@ -1179,7 +1554,7 @@ export function validateUnsignedPrivilegedHelperCommand(command: UnsignedPrivile
   if (!isUnsignedShape && !isSignedShape ||
       (isSignedShape && (typeof (command as unknown as Record<string, unknown>).authenticationProof !== "string" ||
        !/^[a-f0-9]{64}$/u.test((command as unknown as Record<string, unknown>).authenticationProof as string))) ||
-      command.protocolVersion !== PROTOCOL_VERSION || command.contractVersion !== CONTRACT_VERSION ||
+      !isCompatibleVersionPair("broker_helper", command.protocolVersion, command.contractVersion) ||
       !/^priv-command:[A-Za-z0-9._:-]{1,240}$/u.test(command.commandId) ||
       !/^request:[A-Za-z0-9._:-]{1,240}$/u.test(command.requestId) || !NONCE_PATTERN.test(command.nonce) ||
       !Number.isSafeInteger(command.nonceExpiresAtMs) || command.nonceExpiresAtMs < 0 ||
@@ -1344,6 +1719,10 @@ function isStatusRequestEnvelope(value: unknown): boolean {
   return isPlainDataRecord(value) && value.kind === "status";
 }
 
+function isJobReadbackRequestEnvelope(value: unknown): boolean {
+  return isPlainDataRecord(value) && value.kind === "job_readback";
+}
+
 function isDenseArray(value: unknown, maxLength: number): value is readonly unknown[] {
   if (!Array.isArray(value) || value.length > maxLength || Object.getOwnPropertySymbols(value).length > 0) return false;
   const names = Object.getOwnPropertyNames(value);
@@ -1363,6 +1742,14 @@ function statusRequestProof(request: UnsignedPrivilegedHelperStatusRequest, key:
     .digest("hex");
 }
 
+function jobReadbackRequestProof(request: UnsignedPrivilegedHelperJobReadbackRequest, key: Buffer): string {
+  if (key.byteLength < 32) throw new Error("Privileged helper readback key must contain at least 32 bytes");
+  return createHmac("sha256", key)
+    .update(HELPER_READBACK_REQUEST_DOMAIN, "utf8")
+    .update(sha256(canonicalJson(request)), "utf8")
+    .digest("hex");
+}
+
 function statusResponseProof(
   request: UnsignedPrivilegedHelperStatusRequest | undefined,
   body: object,
@@ -1376,6 +1763,19 @@ function statusResponseProof(
     .digest("hex");
 }
 
+function jobReadbackResponseProof(
+  request: UnsignedPrivilegedHelperJobReadbackRequest | undefined,
+  body: object,
+  key: Buffer
+): string {
+  if (key.byteLength < 32) throw new Error("Privileged helper readback key must contain at least 32 bytes");
+  return createHmac("sha256", key)
+    .update(HELPER_READBACK_RESPONSE_DOMAIN, "utf8")
+    .update(request ? sha256(canonicalJson(request)) : "invalid-job-readback-request", "utf8")
+    .update(canonicalJson(body), "utf8")
+    .digest("hex");
+}
+
 function statusSuccess(
   request: UnsignedPrivilegedHelperStatusRequest,
   status: PrivilegedHelperStatusReadback,
@@ -1385,7 +1785,24 @@ function statusSuccess(
   return { ...body, responseProof: statusResponseProof(request, body, key) };
 }
 
+function jobReadbackSuccess(
+  request: UnsignedPrivilegedHelperJobReadbackRequest,
+  readback: PrivilegedHelperJobReadback,
+  key: Buffer
+): PrivilegedHelperJobReadbackSuccessResponse {
+  const body = { ok: true as const, kind: "job_readback" as const, requestId: request.requestId, jobId: request.jobId, readback };
+  return { ...body, responseProof: jobReadbackResponseProof(request, body, key) };
+}
+
 function writeStatusResponse(socket: Socket, response: PrivilegedHelperStatusResponse): void {
+  if (!socket.destroyed) {
+    const serialized = `${JSON.stringify(response)}\n`;
+    if (Buffer.byteLength(serialized, "utf8") <= MAX_RESPONSE_BYTES) socket.end(serialized);
+    else socket.destroy();
+  }
+}
+
+function writeJobReadbackResponse(socket: Socket, response: PrivilegedHelperJobReadbackResponse): void {
   if (!socket.destroyed) {
     const serialized = `${JSON.stringify(response)}\n`;
     if (Buffer.byteLength(serialized, "utf8") <= MAX_RESPONSE_BYTES) socket.end(serialized);
@@ -1449,6 +1866,27 @@ function fallbackStatusRequest(): UnsignedPrivilegedHelperStatusRequest {
   };
 }
 
+function fallbackJobReadbackRequest(): UnsignedPrivilegedHelperJobReadbackRequest {
+  const payload = { operation: "power" as const, action: "reboot" as const };
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    contractVersion: CONTRACT_VERSION,
+    requestId: "request:readback-invalid",
+    nonce: "invalid-invalid-invalid",
+    timestampMs: 0,
+    expiresAtMs: 1,
+    kind: "job_readback",
+    jobId: "job:invalid",
+    principalId: "invalid",
+    sessionId: "invalid",
+    operation: "power",
+    targetRef: "host:local",
+    payload,
+    payloadDigest: sha256(canonicalJson(payload)),
+    policyVersion: "policy-invalid"
+  };
+}
+
 function canonicalStatusPath(value: unknown): value is string {
   return typeof value === "string" && isAbsolute(value) && resolve(value) === value && !value.includes("\0");
 }
@@ -1487,6 +1925,38 @@ function parseSignedStatusRequest(value: unknown): { unsigned: UnsignedPrivilege
   return { unsigned, authenticationProof: record.authenticationProof as string };
 }
 
+function parseSignedJobReadbackRequest(value: unknown): { unsigned: UnsignedPrivilegedHelperJobReadbackRequest; authenticationProof: string } {
+  if (!isPlainDataRecord(value)) throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback envelope is malformed");
+  const record = value as Record<string, unknown>;
+  const allowed = [
+    "protocolVersion", "contractVersion", "requestId", "nonce", "timestampMs", "expiresAtMs", "kind", "jobId",
+    "principalId", "sessionId", "operation", "targetRef", "payload", "payloadDigest", "policyVersion", "authenticationProof"
+  ];
+  if (Object.keys(record).length !== allowed.length || allowed.some((key) => !Object.hasOwn(record, key)) ||
+      typeof record.authenticationProof !== "string" || !/^[a-f0-9]{64}$/u.test(record.authenticationProof)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Privileged helper readback envelope is malformed");
+  }
+  const unsigned = {
+    protocolVersion: record.protocolVersion as typeof PROTOCOL_VERSION,
+    contractVersion: record.contractVersion as typeof CONTRACT_VERSION,
+    requestId: record.requestId as string,
+    nonce: record.nonce as string,
+    timestampMs: record.timestampMs as number,
+    expiresAtMs: record.expiresAtMs as number,
+    kind: record.kind as "job_readback",
+    jobId: record.jobId as string,
+    principalId: record.principalId as string,
+    sessionId: record.sessionId as string,
+    operation: record.operation as PrivilegedHelperOperation,
+    targetRef: record.targetRef as string,
+    payload: record.payload as PrivilegedHelperPayload,
+    payloadDigest: record.payloadDigest as string,
+    policyVersion: record.policyVersion as string
+  } satisfies UnsignedPrivilegedHelperJobReadbackRequest;
+  validateUnsignedPrivilegedHelperJobReadbackRequest(unsigned);
+  return { unsigned, authenticationProof: record.authenticationProof as string };
+}
+
 /**
  * Recover a structurally valid unsigned status request before freshness/auth
  * checks so callers can authenticate stable failures. The candidate is never
@@ -1517,9 +1987,28 @@ function unsignedPrivilegedHelperStatusCandidate(raw: unknown): UnsignedPrivileg
   }
 }
 
+function unsignedPrivilegedHelperJobReadbackCandidate(raw: unknown): UnsignedPrivilegedHelperJobReadbackRequest | undefined {
+  try { return parseSignedJobReadbackRequest(raw).unsigned; }
+  catch { return undefined; }
+}
+
 function success(command: UnsignedPrivilegedHelperCommand, result: PrivilegedHelperExecutionResult, key: Buffer): PrivilegedHelperSuccessResponse {
   const body = { ok: true as const, commandId: command.commandId, requestId: command.requestId, result };
   return { ...body, responseProof: responseProof(command, body, key) };
+}
+
+function unavailablePrivilegedHelperReadback(
+  request: Pick<UnsignedPrivilegedHelperJobReadbackRequest, "operation" | "targetRef">,
+  summary: string
+): PrivilegedHelperJobReadback {
+  return {
+    operation: request.operation,
+    targetRef: request.targetRef,
+    postcondition: "unavailable",
+    evidence: { state: "unavailable" },
+    warnings: [summary],
+    summary
+  };
 }
 
 function writeResponse(socket: Socket, response: PrivilegedHelperResponse): void {
@@ -1535,6 +2024,10 @@ function validateReplayInput(input: Pick<UnsignedPrivilegedHelperCommand, "reque
       !Number.isSafeInteger(input.timestampMs) || input.timestampMs < 0 || !Number.isSafeInteger(input.nonceExpiresAtMs) || input.nonceExpiresAtMs <= input.timestampMs) {
     throw new BrokerError("PRECONDITION_FAILED", "Privileged helper replay admission is malformed");
   }
+}
+
+function isTrustedDurableReplayGuard(replayGuard: PrivilegedHelperReplayGuard): boolean {
+  return replayGuard instanceof BrokerStorePrivilegedHelperReplayGuard || replayGuard instanceof PrivilegedHelperReplayLedger;
 }
 
 function validTarget(operation: PrivilegedHelperOperation, targetRef: string): boolean {

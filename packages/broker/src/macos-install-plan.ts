@@ -10,6 +10,7 @@ import { normalizeLaunchdServiceConfig, renderLaunchdPlist, type LaunchdServiceC
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { readBrokerStatus, type BrokerStatusClientOptions } from "./broker-status-ipc.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import { OwnerSocketParentChainError, validateOwnerSocketParentChain } from "./owner-socket-path.js";
 import {
   buildMacOsNotarizationAssessmentCommand,
   readMacOsNotarizationAssessment,
@@ -133,6 +134,14 @@ export interface MacOsInstallPlanInput {
   expectedPreviousSourceRevision?: string;
 }
 
+/** Metadata emitted by the stable owner-domain Authority Control proxy. */
+export interface MacOsAuthorityServiceMetadata {
+  component: "mac-operator-authority";
+  sourceRevision: string;
+  contractVersion: string;
+  policyVersion: string;
+}
+
 /** Metadata emitted by the packaged Edge process. Kept structural here so the
  * Broker package does not depend on the Edge package at runtime. */
 export interface MacOsEdgeServiceMetadata {
@@ -148,10 +157,18 @@ export interface MacOsEdgeInstallPlanInput extends Omit<MacOsInstallPlanInput, "
   bindPort: number;
 }
 
-export type MacOsServiceMetadata = BrokerServiceMetadata | MacOsEdgeServiceMetadata;
+export interface MacOsAuthorityInstallPlanInput extends Omit<MacOsInstallPlanInput, "metadata"> {
+  metadata: MacOsAuthorityServiceMetadata;
+  authorityConfigPath: string;
+  authorityOperatorSocketPath: string;
+}
+
+export type MacOsServiceMetadata = BrokerServiceMetadata | MacOsEdgeServiceMetadata | MacOsAuthorityServiceMetadata;
 
 type MacOsServiceInstallPlanInput = Omit<MacOsInstallPlanInput, "metadata"> & {
   metadata: MacOsServiceMetadata;
+  authorityConfigPath?: string;
+  authorityOperatorSocketPath?: string;
 };
 
 /** Common, component-neutral LaunchAgent plan fields. */
@@ -164,6 +181,8 @@ export interface MacOsServiceInstallPlanBase {
   installRoot: string;
   plistPath: string;
   entrypointPath: string;
+  authorityConfigPath?: string;
+  authorityOperatorSocketPath?: string;
   backupPath: string;
   metadata: MacOsServiceMetadata;
   edgeListener?: { bindHost: string; bindPort: number };
@@ -211,6 +230,13 @@ export interface MacOsInstallPlan extends MacOsServiceInstallPlanBase {
 export type MacOsEdgeInstallPlan = MacOsServiceInstallPlanBase & {
   component: "mac-operator-edge";
   metadata: MacOsEdgeServiceMetadata;
+};
+
+export type MacOsAuthorityInstallPlan = MacOsServiceInstallPlanBase & {
+  component: "mac-operator-authority";
+  metadata: MacOsAuthorityServiceMetadata;
+  authorityConfigPath: string;
+  authorityOperatorSocketPath: string;
 };
 
 export interface MacOsInstallReadback {
@@ -287,6 +313,62 @@ export interface MacOsEdgeInstallReadbackObserver {
   readNotarization?: () => Promise<MacOsNotarizationReadback>;
 }
 
+/** Runtime identity readback for the owner-domain Authority proxy. The proxy
+ * has no MCP status surface; launchd/process/plist/signature identity is the
+ * lifecycle source, while an optional authenticated control probe can supply
+ * the source revision during upgrade, rollback, and uninstall preflight. */
+export interface MacOsAuthorityServiceReadback {
+  component: "mac-operator-authority";
+  state: "running";
+  sourceRevision: string;
+  contractVersion: string;
+  policyVersion: string;
+  operatorSocketPath: string;
+}
+
+export interface MacOsOwnerSocketReadback {
+  path: string;
+  ownerUid: number;
+  mode: number;
+  device: number;
+  inode: number;
+}
+
+export interface MacOsAuthorityInstallReadback {
+  domain: string;
+  label: string;
+  plistPath: string;
+  pid: number;
+  processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
+  launchd: MacOsLaunchdServiceReadback;
+  authority: MacOsAuthorityServiceReadback;
+  operatorSocket: MacOsOwnerSocketReadback;
+  signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
+}
+
+export interface MacOsAuthorityInstallReadbackSources {
+  launchd: LaunchdJobReadback;
+  processIdentity: PeerProcessIdentity;
+  plist: MacOsPlistReadback;
+  operatorSocket: MacOsOwnerSocketReadback;
+  /** Optional authenticated control-channel probe; absent for first install before Broker is running. */
+  authority?: MacOsAuthorityServiceReadback;
+  signature: CodeSignatureReadback;
+  notarization?: MacOsNotarizationReadback;
+}
+
+export interface MacOsAuthorityInstallReadbackObserver {
+  readLaunchd(serviceId: string): Promise<LaunchdJobReadback>;
+  readProcessIdentity(pid: number): Promise<PeerProcessIdentity> | PeerProcessIdentity;
+  readPlist(plan: MacOsAuthorityInstallPlan): Promise<MacOsPlistReadback>;
+  readOperatorSocket(): Promise<MacOsOwnerSocketReadback>;
+  readAuthority?: () => Promise<MacOsAuthorityServiceReadback>;
+  readSignature(): Promise<CodeSignatureReadback>;
+  readNotarization?: () => Promise<MacOsNotarizationReadback>;
+}
+
 export interface MacOsInstallHostObserverOptions {
   /**
    * Must be an authenticated or same-process Broker-owned status source. A
@@ -311,6 +393,18 @@ export interface MacOsEdgeInstallHostObserverOptions {
   processIdentityReader?: (pid: number) => PeerProcessIdentity;
   readPlist?: (plan: MacOsEdgeInstallPlan) => Promise<MacOsPlistReadback>;
   readSignature?: (plan: MacOsEdgeInstallPlan) => Promise<CodeSignatureReadback>;
+  notarizationExecutor?: MacOsInstallCommandExecutor;
+}
+
+export interface MacOsAuthorityInstallHostObserverOptions {
+  /** Optional authenticated Authority Control probe for revision readback. */
+  readAuthority?: () => Promise<MacOsAuthorityServiceReadback>;
+  launchdExecutor?: LaunchdReadbackExecutor;
+  signatureExecutor?: MacOsInstallCommandExecutor;
+  processIdentityReader?: (pid: number) => PeerProcessIdentity;
+  readPlist?: (plan: MacOsAuthorityInstallPlan) => Promise<MacOsPlistReadback>;
+  readOperatorSocket?: (plan: MacOsAuthorityInstallPlan) => Promise<MacOsOwnerSocketReadback>;
+  readSignature?: (plan: MacOsAuthorityInstallPlan) => Promise<CodeSignatureReadback>;
   notarizationExecutor?: MacOsInstallCommandExecutor;
 }
 
@@ -483,9 +577,23 @@ export interface MacOsEdgeInstallExecutionOptions extends MacOsPlistApplyOptions
   readback: () => Promise<MacOsEdgeInstallReadbackSources | null>;
 }
 
+export interface MacOsAuthorityInstallExecutionOptions extends MacOsPlistApplyOptions {
+  confirmOperation: MacOsInstallOperation;
+  existingService?: ExistingServiceReadback;
+  readExistingService: () => Promise<ExistingServiceReadback> | ExistingServiceReadback;
+  commandExecutor?: MacOsInstallCommandExecutor;
+  readback: () => Promise<MacOsAuthorityInstallReadbackSources | null>;
+}
+
 export interface MacOsEdgeInstallExecutionResult {
   operation: MacOsInstallOperation;
   readback: MacOsEdgeInstallReadback | null;
+  plist: MacOsPlistApplyResult;
+}
+
+export interface MacOsAuthorityInstallExecutionResult {
+  operation: MacOsInstallOperation;
+  readback: MacOsAuthorityInstallReadback | null;
   plist: MacOsPlistApplyResult;
 }
 
@@ -506,6 +614,11 @@ export function buildMacOsEdgeInstallPlan(input: MacOsEdgeInstallPlanInput): Mac
   return buildMacOsServiceInstallPlan(input, "mac-operator-edge") as MacOsEdgeInstallPlan;
 }
 
+/** Builds the reviewed LaunchAgent plan for the stable owner Authority proxy. */
+export function buildMacOsAuthorityInstallPlan(input: MacOsAuthorityInstallPlanInput): MacOsAuthorityInstallPlan {
+  return buildMacOsServiceInstallPlan(input, "mac-operator-authority") as MacOsAuthorityInstallPlan;
+}
+
 function buildMacOsServiceInstallPlan(
   input: MacOsServiceInstallPlanInput,
   component: MacOsServiceMetadata["component"]
@@ -519,7 +632,11 @@ function buildMacOsServiceInstallPlan(
     fail("INVALID_USER_DOMAIN", "a positive non-root launchd uid is required");
   }
   const service = normalizeLaunchdServiceConfig(input.service);
-  const expectedLabel = component === "mac-operator-broker" ? "com.mac-operator.broker" : "com.mac-operator.edge";
+  const expectedLabel = component === "mac-operator-broker"
+    ? "com.mac-operator.broker"
+    : component === "mac-operator-edge"
+      ? "com.mac-operator.edge"
+      : "com.mac-operator.authority";
   if (service.label !== expectedLabel) {
     fail("INVALID_METADATA", `service label must be ${expectedLabel} for ${component}`);
   }
@@ -545,9 +662,24 @@ function buildMacOsServiceInstallPlan(
     fail("INVALID_PACKAGE_PATH", "signed artifact must remain inside the install root");
   }
   const entrypoint = service.programArguments[1];
-  if (service.programArguments.length !== 2 || typeof entrypoint !== "string" ||
-      !isDescendant(installRoot, entrypoint) || !/\.(?:c|m)?js$/u.test(entrypoint)) {
+  const authorityConfigPath = component === "mac-operator-authority" ? input.authorityConfigPath : undefined;
+  const authorityOperatorSocketPath = component === "mac-operator-authority" ? input.authorityOperatorSocketPath : undefined;
+  if (component === "mac-operator-authority" &&
+      (typeof authorityConfigPath !== "string" || canonicalPath(authorityConfigPath, "authority config path") !== authorityConfigPath ||
+       !isDescendant(installRoot, authorityConfigPath) || typeof authorityOperatorSocketPath !== "string" ||
+       canonicalPath(authorityOperatorSocketPath, "authority operator socket path") !== authorityOperatorSocketPath ||
+       !isDescendant(installRoot, authorityOperatorSocketPath) || !authorityOperatorSocketPath.endsWith(".sock") ||
+       Buffer.byteLength(authorityOperatorSocketPath, "utf8") >= 104 || service.programArguments.length !== 4 ||
+       service.programArguments[2] !== "--config" || service.programArguments[3] !== authorityConfigPath)) {
+    fail("INVALID_PACKAGE_PATH", "Authority LaunchAgent must use the fixed broker-service.json configuration and operator socket paths");
+  }
+  if ((component !== "mac-operator-authority" && service.programArguments.length !== 2) ||
+      typeof entrypoint !== "string" || !isDescendant(installRoot, entrypoint) || !/\.(?:c|m)?js$/u.test(entrypoint)) {
     fail("INVALID_PACKAGE_PATH", "launchd must invoke exactly one package-owned JavaScript entrypoint");
+  }
+  if (component === "mac-operator-broker" &&
+      (!isDescendant(signedArtifactPath, service.program) || !isDescendant(signedArtifactPath, entrypoint))) {
+    fail("INVALID_PACKAGE_PATH", "Broker executable and JavaScript entrypoint must reside inside the signed Broker artifact");
   }
   const capabilities = normalizeCapabilities(input.enabledCapabilities ?? []);
   const metadata = normalizeServiceMetadata(input.metadata, component);
@@ -555,6 +687,9 @@ function buildMacOsServiceInstallPlan(
   const signaturePolicy = normalizeSignaturePolicy(input.signaturePolicy);
   if (signaturePolicy === "development-ad-hoc" && capabilities.length > 0) {
     fail("INVALID_SIGNATURE_EXPECTATION", "development ad-hoc installs must not enable capabilities");
+  }
+  if (component === "mac-operator-authority" && capabilities.length > 0) {
+    fail("INVALID_METADATA", "Authority LaunchAgent must not advertise MCP capabilities");
   }
   const signature = normalizeSignatureExpectation(input.signature, signaturePolicy, expectedLabel);
   const expectedPreviousSourceRevision = normalizePreviousRevision(input.expectedPreviousSourceRevision, operation);
@@ -598,6 +733,8 @@ function buildMacOsServiceInstallPlan(
     installRoot,
     plistPath,
     entrypointPath: entrypoint,
+    ...(authorityConfigPath === undefined ? {} : { authorityConfigPath }),
+    ...(authorityOperatorSocketPath === undefined ? {} : { authorityOperatorSocketPath }),
     backupPath,
     metadata,
     ...(edgeListener === undefined ? {} : { edgeListener }),
@@ -617,7 +754,7 @@ function buildMacOsServiceInstallPlan(
       operation === "install" ? "verify existing service readback is absent before installation" :
         operation === "uninstall" ? "verify existing service readback matches the approved uninstall target" :
           `verify existing service readback matches prior source revision ${expectedPreviousSourceRevision}`,
-      `write the plist atomically, bootstrap the exact per-user domain, then verify launchd and ${component === "mac-operator-broker" ? "Broker" : "Edge"} readback`,
+      `write the plist atomically, bootstrap the exact per-user domain, then verify launchd and ${component === "mac-operator-broker" ? "Broker" : component === "mac-operator-edge" ? "Edge" : "Authority proxy"} readback`,
       "on any mismatch, bootout the exact label, restore the previous plist, and verify the service is absent or restored"
     ],
     install: { file, bootstrap },
@@ -948,6 +1085,143 @@ export async function observeMacOsEdgeInstallReadback(
   return composeMacOsEdgeInstallReadback(plan, await collectMacOsEdgeInstallReadbackSources(plan, observer));
 }
 
+export function validateMacOsAuthorityInstallReadback(
+  plan: MacOsAuthorityInstallPlan,
+  readback: MacOsAuthorityInstallReadback
+): void {
+  if (plan.component !== "mac-operator-authority" || plan.metadata.component !== "mac-operator-authority" ||
+      typeof plan.authorityOperatorSocketPath !== "string" ||
+      !isRecord(readback) || !isRecord(readback.launchd) || !isRecord(readback.authority) ||
+      !isRecord(readback.operatorSocket) || !isRecord(readback.signature) ||
+      !isRecord(readback.processIdentity) || !isRecord(readback.plist)) {
+    fail("INVALID_READBACK", "Authority service readback is malformed");
+  }
+  const expectedUid = plan.domain.slice("gui/".length);
+  if (readback.domain !== plan.domain || readback.label !== plan.label || readback.plistPath !== plan.plistPath ||
+      !/^\d+$/.test(expectedUid) || !Number.isSafeInteger(readback.pid) || readback.pid < 1 ||
+      !Number.isSafeInteger(readback.processIdentity.pid) || readback.processIdentity.pid < 1 ||
+      !Number.isSafeInteger(readback.processIdentity.startTimeMicros) || readback.processIdentity.startTimeMicros < 1 ||
+      readback.processIdentity.pid !== readback.pid || readback.plist.path !== expectedPlistReadbackPath(plan) ||
+      !Number.isSafeInteger(readback.plist.bytes) || readback.plist.bytes !== Buffer.byteLength(plan.renderedPlist, "utf8") ||
+      typeof readback.plist.sha256 !== "string" || readback.plist.sha256 !== renderedPlistSha256(plan) ||
+      typeof readback.plist.device !== "string" || !/^\d+$/.test(readback.plist.device) ||
+      typeof readback.plist.inode !== "string" || !/^\d+$/.test(readback.plist.inode)) {
+    fail("SERVICE_MISMATCH", "Authority launchd readback does not match the planned per-user service");
+  }
+  if (readback.launchd.domain !== plan.domain || readback.launchd.type !== "LaunchAgent" ||
+      readback.launchd.label !== plan.launchd.label || readback.launchd.program !== plan.launchd.program ||
+      !sameStrings(readback.launchd.programArguments, plan.launchd.programArguments) ||
+      readback.launchd.workingDirectory !== plan.launchd.workingDirectory ||
+      readback.launchd.stdoutPath !== plan.launchd.stdoutPath || readback.launchd.stderrPath !== plan.launchd.stderrPath ||
+      readback.launchd.runsAsUnprivilegedUser !== true || readback.launchd.usesEnvironmentVariables !== false ||
+      readback.launchd.usesShell !== false || readback.launchd.runAtLoad !== plan.launchd.runAtLoad ||
+      readback.launchd.keepAlive !== plan.launchd.keepAlive ||
+      readback.launchd.throttleIntervalSeconds !== plan.launchd.throttleIntervalSeconds) {
+    fail("SERVICE_MISMATCH", "Authority launchd configuration readback does not match the plan");
+  }
+  if (readback.authority.component !== "mac-operator-authority" || readback.authority.state !== "running" ||
+      readback.authority.sourceRevision !== plan.metadata.sourceRevision ||
+      readback.authority.contractVersion !== plan.metadata.contractVersion ||
+      readback.authority.policyVersion !== plan.metadata.policyVersion ||
+      readback.authority.operatorSocketPath !== plan.authorityOperatorSocketPath) {
+    fail("SERVICE_MISMATCH", "Authority service readback does not match the planned identity");
+  }
+  validateMacOsOwnerSocketReadback(readback.operatorSocket, plan.authorityOperatorSocketPath, parseUid(plan.domain));
+  validateCodeSignatureReadback(plan.signature, readback.signature, plan.signedArtifactPath);
+  validateMacOsInstallNotarizationReadback(plan, readback.notarization);
+}
+
+export function composeMacOsAuthorityInstallReadback(
+  plan: MacOsAuthorityInstallPlan,
+  sources: MacOsAuthorityInstallReadbackSources
+): MacOsAuthorityInstallReadback {
+  if (!isRecord(sources) || !isRecord(sources.launchd) || !isRecord(sources.processIdentity) ||
+      !isRecord(sources.plist) || !isRecord(sources.operatorSocket) || !isRecord(sources.signature) ||
+      (sources.authority !== undefined && !isRecord(sources.authority))) {
+    fail("INVALID_READBACK", "Authority install readback sources are malformed");
+  }
+  const expectedServiceId = `${plan.domain}/${plan.label}`;
+  const launchd = sources.launchd;
+  if (launchd.serviceId !== expectedServiceId || launchd.domain !== plan.domain || launchd.label !== plan.label ||
+      launchd.state !== "running" || launchd.type !== "LaunchAgent" || launchd.pid === null ||
+      launchd.program !== plan.launchd.program || launchd.plistPath !== expectedPlistReadbackPath(plan) ||
+      !sameStrings(launchd.arguments ?? [], plan.launchd.programArguments) ||
+      launchd.pid !== sources.processIdentity.pid) {
+    fail("SERVICE_MISMATCH", "launchd readback sources do not match the planned Authority service");
+  }
+  const authority = sources.authority ?? {
+    component: "mac-operator-authority" as const,
+    state: "running" as const,
+    sourceRevision: plan.metadata.sourceRevision,
+    contractVersion: plan.metadata.contractVersion,
+    policyVersion: plan.metadata.policyVersion,
+    operatorSocketPath: plan.authorityOperatorSocketPath
+  };
+  const readback: MacOsAuthorityInstallReadback = {
+    domain: plan.domain,
+    label: plan.label,
+    plistPath: plan.plistPath,
+    pid: launchd.pid,
+    processIdentity: sources.processIdentity,
+    plist: sources.plist,
+    launchd: plan.launchd,
+    authority,
+    operatorSocket: sources.operatorSocket,
+    signature: sources.signature,
+    ...(sources.notarization === undefined ? {} : { notarization: sources.notarization })
+  };
+  validateMacOsAuthorityInstallReadback(plan, readback);
+  return readback;
+}
+
+export async function collectMacOsAuthorityInstallReadbackSources(
+  plan: MacOsAuthorityInstallPlan,
+  observer: MacOsAuthorityInstallReadbackObserver
+): Promise<MacOsAuthorityInstallReadbackSources> {
+  try {
+    if (observer === null || typeof observer !== "object") fail("INVALID_READBACK", "Authority install readback observer is malformed");
+    const serviceId = `${plan.domain}/${plan.label}`;
+    const launchdBefore = await readRunningLaunchd(observer.readLaunchd, serviceId);
+    if (launchdBefore.pid === null) fail("SERVICE_MISMATCH", "Authority launchd readback has no running PID");
+    const processBefore = await observer.readProcessIdentity(launchdBefore.pid);
+    const plistBefore = await observer.readPlist(plan);
+    const operatorSocketBefore = await observer.readOperatorSocket();
+    const authority = observer.readAuthority === undefined ? undefined : await observer.readAuthority();
+    const signature = await observer.readSignature();
+    const launchdAfter = await readRunningLaunchd(observer.readLaunchd, serviceId);
+    if (launchdAfter.pid === null || !sameLaunchdIdentity(launchdBefore, launchdAfter)) {
+      fail("SERVICE_MISMATCH", "Authority launchd identity changed during readback");
+    }
+    const processAfter = await observer.readProcessIdentity(launchdAfter.pid);
+    if (!sameProcessIdentity(processBefore, processAfter)) fail("SERVICE_MISMATCH", "Authority process identity changed during readback");
+    const plistAfter = await observer.readPlist(plan);
+    if (!samePlistIdentity(plistBefore, plistAfter)) fail("FILESYSTEM_MISMATCH", "Authority plist identity changed during readback");
+    const operatorSocketAfter = await observer.readOperatorSocket();
+    if (!sameOwnerSocketIdentity(operatorSocketBefore, operatorSocketAfter)) {
+      fail("SERVICE_MISMATCH", "Authority operator socket identity changed during readback");
+    }
+    return {
+      launchd: launchdAfter,
+      processIdentity: processAfter,
+      plist: plistAfter,
+      operatorSocket: operatorSocketAfter,
+      ...(authority === undefined ? {} : { authority }),
+      signature,
+      ...(observer.readNotarization === undefined ? {} : { notarization: await observer.readNotarization() })
+    };
+  } catch (error) {
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("READBACK_FAILED", "macOS Authority install host readback failed");
+  }
+}
+
+export async function observeMacOsAuthorityInstallReadback(
+  plan: MacOsAuthorityInstallPlan,
+  observer: MacOsAuthorityInstallReadbackObserver
+): Promise<MacOsAuthorityInstallReadback> {
+  return composeMacOsAuthorityInstallReadback(plan, await collectMacOsAuthorityInstallReadbackSources(plan, observer));
+}
+
 /**
  * Creates the production-shaped host observer. Launchd and codesign use the
  * bounded empty-environment supervisor; process identity uses the native
@@ -1029,6 +1303,111 @@ export function createMacOsEdgeInstallExistingServiceReader(
   return createMacOsExistingServiceReader(plan, {
     readLaunchd: observer.readLaunchd,
     readSourceRevision: async () => (await observer.readEdge()).sourceRevision
+  });
+}
+
+/** Creates the host observer for the stable owner-domain Authority proxy.
+ * Unlike Broker and Edge, the proxy has no public status endpoint; launchd,
+ * native process, exact plist, and signature identity are mandatory. A
+ * separately authenticated control probe may be supplied for revision
+ * readback when Broker is already available. */
+export function createMacOsAuthorityInstallHostObserver(
+  plan: MacOsAuthorityInstallPlan,
+  options: MacOsAuthorityInstallHostObserverOptions = {}
+): MacOsAuthorityInstallReadbackObserver {
+  if (options === null || typeof options !== "object") {
+    fail("INVALID_ARGUMENT", "Authority install host observer options are malformed");
+  }
+  const ownerUid = parseUid(plan.domain);
+  return {
+    readLaunchd: async (serviceId) => readLaunchdJobReadback(serviceId, options.launchdExecutor === undefined ? {} : { executor: options.launchdExecutor }),
+    readProcessIdentity: (pid) => options.processIdentityReader?.(pid) ?? readStableProcessIdentity(pid),
+    readPlist: options.readPlist ?? (async (candidate) => readMacOsPlistReadback(candidate, { ownerUid })),
+    readOperatorSocket: options.readOperatorSocket === undefined
+      ? async () => readMacOsOwnerSocketReadback(plan.authorityOperatorSocketPath, ownerUid)
+      : async () => options.readOperatorSocket!(plan),
+    ...(options.readAuthority === undefined ? {} : { readAuthority: options.readAuthority }),
+    readSignature: options.readSignature === undefined
+      ? async () => readMacOsCodeSignature(plan, options.signatureExecutor)
+      : async () => options.readSignature!(plan),
+    ...(plan.notarizationAssess === undefined ? {} : {
+      readNotarization: async () => readMacOsInstallNotarization(plan, options.notarizationExecutor ?? options.signatureExecutor)
+    })
+  };
+}
+
+/** Reads an owner-domain Unix socket without accepting a caller-supplied
+ * identity. The complete parent chain and socket are checked for safe
+ * directory ownership, non-symlink type, and stable device/inode identity. */
+export async function readMacOsOwnerSocketReadback(
+  socketPath: string,
+  ownerUid: number
+): Promise<MacOsOwnerSocketReadback> {
+  if (!canonicalPath(socketPath, "owner socket path").endsWith(".sock") ||
+      Buffer.byteLength(socketPath, "utf8") >= 104 || !Number.isSafeInteger(ownerUid) || ownerUid < 1) {
+    fail("INVALID_ARGUMENT", "owner socket readback binding is invalid");
+  }
+  let first;
+  let second;
+  try {
+    await validateMacOsOwnerSocketParentChain(socketPath, ownerUid);
+  } catch (error) {
+    if (error instanceof OwnerSocketParentChainError && error.code === "UNAVAILABLE") {
+      fail("READBACK_FAILED", "owner socket parent is unavailable");
+    }
+    fail("SERVICE_MISMATCH", "owner socket parent chain is unsafe");
+  }
+  try {
+    first = await lstat(socketPath);
+    second = await lstat(socketPath);
+  } catch {
+    fail("READBACK_FAILED", "owner socket is unavailable");
+  }
+  if (!first.isSocket() || first.isSymbolicLink() || !second.isSocket() || second.isSymbolicLink() ||
+      first.uid !== ownerUid || second.uid !== ownerUid || (first.mode & 0o077) !== 0 || (second.mode & 0o077) !== 0 ||
+      first.mode !== second.mode || first.dev !== second.dev || first.ino !== second.ino) {
+    fail("SERVICE_MISMATCH", "owner socket ownership, mode, type, or identity is unsafe");
+  }
+  return {
+    path: socketPath,
+    ownerUid: first.uid,
+    mode: first.mode & 0o777,
+    device: first.dev,
+    inode: first.ino
+  };
+}
+
+async function validateMacOsOwnerSocketParentChain(socketPath: string, ownerUid: number): Promise<void> {
+  await validateOwnerSocketParentChain(socketPath, ownerUid);
+}
+
+function validateMacOsOwnerSocketReadback(
+  readback: MacOsOwnerSocketReadback,
+  expectedPath: string,
+  expectedOwnerUid: number
+): void {
+  if (!isRecord(readback) || readback.path !== expectedPath ||
+      !Number.isSafeInteger(readback.ownerUid) || readback.ownerUid !== expectedOwnerUid ||
+      !Number.isSafeInteger(readback.mode) || readback.mode < 0 || readback.mode > 0o777 ||
+      (readback.mode & 0o077) !== 0 || !Number.isSafeInteger(readback.device) || readback.device < 0 ||
+      !Number.isSafeInteger(readback.inode) || readback.inode <= 0) {
+    fail("SERVICE_MISMATCH", "owner socket readback does not match the planned identity");
+  }
+}
+
+export function createMacOsAuthorityInstallExistingServiceReader(
+  plan: MacOsAuthorityInstallPlan,
+  options: MacOsAuthorityInstallHostObserverOptions = {}
+): () => Promise<ExistingServiceReadback> {
+  const observer = createMacOsAuthorityInstallHostObserver(plan, options);
+  if (plan.operation !== "install" && observer.readAuthority === undefined) {
+    fail("INVALID_ARGUMENT", "non-install Authority operations require an authenticated source revision reader");
+  }
+  return createMacOsExistingServiceReader(plan, {
+    readLaunchd: observer.readLaunchd,
+    ...(observer.readAuthority === undefined ? {} : {
+      readSourceRevision: async () => (await observer.readAuthority!()).sourceRevision
+    })
   });
 }
 
@@ -1460,6 +1839,81 @@ export async function executeMacOsEdgeInstallPlan(
   return { operation: plan.operation, readback, plist };
 }
 
+/** Executes the host-owned Authority LaunchAgent plan. The operation is
+ * intentionally separate from Broker execution so an Authority readback can
+ * never be mistaken for Broker status. */
+export async function executeMacOsAuthorityInstallPlan(
+  plan: MacOsAuthorityInstallPlan,
+  options: MacOsAuthorityInstallExecutionOptions
+): Promise<MacOsAuthorityInstallExecutionResult> {
+  if (options === null || typeof options !== "object") {
+    fail("INVALID_ARGUMENT", "Authority install execution options are malformed");
+  }
+  if (options.confirmOperation !== plan.operation) {
+    fail("CONFIRMATION_REQUIRED", "installation requires an explicit matching host operation confirmation");
+  }
+  const existingService = await readMacOsExistingServiceSnapshot(options.readExistingService);
+  if (options.existingService !== undefined) {
+    validateExistingServiceSnapshot(options.existingService);
+    if (!sameExistingService(options.existingService, existingService)) {
+      fail("SERVICE_MISMATCH", "caller existing-service hint does not match the host precondition readback");
+    }
+  }
+  validateExistingServicePrecondition(plan, existingService);
+  const executor = options.commandExecutor ?? new ProcessSupervisor({ allowedEnvironmentKeys: [] });
+  if (plan.operation !== "uninstall") {
+    await runInstallCommand(executor, plan.signatureVerify, "code signature verification failed");
+    if (plan.notarizationAssess !== undefined) await readMacOsInstallNotarization(plan, executor);
+  }
+  let bootedOut = false;
+  let plistApplied = false;
+  let bootstrapped = false;
+  let plist: MacOsPlistApplyResult;
+  try {
+    if (plan.operation !== "install") {
+      await runInstallCommand(executor, plan.rollback.bootout, "existing Authority launchd service could not be stopped");
+      bootedOut = true;
+    }
+    plist = await applyMacOsPlistPlan(plan, options);
+    plistApplied = true;
+    if (plan.operation !== "uninstall") {
+      await runInstallCommand(executor, plan.install.bootstrap, "Authority launchd service could not be bootstrapped");
+      bootstrapped = true;
+    }
+  } catch (error) {
+    if (bootedOut && !plistApplied) {
+      try {
+        await runInstallCommand(executor, plan.install.bootstrap, "previous Authority launchd service could not be restored");
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], "Authority installation failed and launchd recovery also failed");
+      }
+    }
+    throw error;
+  }
+  let readback: MacOsAuthorityInstallReadback | null;
+  try {
+    const sources = await options.readback();
+    if (plan.operation === "uninstall") {
+      if (sources !== null) fail("READBACK_FAILED", "uninstall readback still reports an installed Authority service");
+      readback = null;
+    } else {
+      if (sources === null) fail("READBACK_FAILED", "Authority service readback is absent after bootstrap");
+      readback = composeMacOsAuthorityInstallReadback(plan, sources);
+    }
+  } catch (error) {
+    if (bootstrapped) {
+      try {
+        await runInstallCommand(executor, plan.rollback.bootout, "mismatched Authority launchd service could not be stopped");
+      } catch (stopError) {
+        throw new AggregateError([error, stopError], "Authority installation readback failed and launchd recovery also failed");
+      }
+    }
+    if (error instanceof MacOsInstallPlanError) throw error;
+    fail("READBACK_FAILED", "Authority service readback failed after installation");
+  }
+  return { operation: plan.operation, readback, plist };
+}
+
 async function runInstallCommand(
   executor: MacOsInstallCommandExecutor,
   command: LaunchdCommandSpec | CodeSignatureCommandSpec | MacOsNotarizationAssessmentCommand,
@@ -1654,7 +2108,7 @@ function normalizeServiceMetadata(value: MacOsServiceMetadata, component: MacOsS
       !/^[0-9a-f]{7,64}$/u.test(value.sourceRevision) ||
       !/^v?\d+\.\d+(?:\.\d+)?(?:[-+].*)?$/u.test(value.contractVersion) ||
       !/^(?:policy-[1-9][0-9]*|\d+\.\d+(?:\.\d+)?(?:[-+].*)?)$/u.test(value.policyVersion)) {
-    fail("INVALID_METADATA", `${component === "mac-operator-broker" ? "Broker" : "Edge"} service metadata is invalid`);
+    fail("INVALID_METADATA", `${component === "mac-operator-broker" ? "Broker" : component === "mac-operator-edge" ? "Edge" : "Authority"} service metadata is invalid`);
   }
   return { ...value };
 }
@@ -1739,6 +2193,11 @@ function sameProcessIdentity(left: PeerProcessIdentity, right: PeerProcessIdenti
 
 function samePlistIdentity(left: MacOsPlistReadback, right: MacOsPlistReadback): boolean {
   return left.path === right.path && left.bytes === right.bytes && left.sha256 === right.sha256 &&
+    left.device === right.device && left.inode === right.inode;
+}
+
+function sameOwnerSocketIdentity(left: MacOsOwnerSocketReadback, right: MacOsOwnerSocketReadback): boolean {
+  return left.path === right.path && left.ownerUid === right.ownerUid && left.mode === right.mode &&
     left.device === right.device && left.inode === right.inode;
 }
 

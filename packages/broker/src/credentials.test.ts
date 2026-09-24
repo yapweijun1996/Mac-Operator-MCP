@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   createKeychainBrokerBackupKeySource,
+  createKeychainAuditArchiveKeySource,
   createKeychainAuditAnchorKeySource,
   loadAuthenticationKey,
   loadApprovalIssuerKey,
@@ -135,6 +136,16 @@ test("Keychain audit anchor source binds a fixed Broker-owned item", () => {
   assert.throws(
     () => createKeychainAuditAnchorKeySource("com.mac-operator.test", "audit:primary", "../escape"),
     /Audit anchor key ID is invalid/u
+  );
+});
+
+test("Keychain audit archive source requires a separate fixed Broker-owned item", async () => {
+  const source = createKeychainAuditArchiveKeySource("com.mac-operator.test", "audit-export:primary", "audit-export-key-1");
+  assert.equal(source.keyId, "audit-export-key-1");
+  await assert.rejects(async () => source.loadKey(), /Keychain generic password is unavailable/u);
+  assert.throws(
+    () => createKeychainAuditArchiveKeySource("com.mac-operator.test", "audit-export:primary", "../escape"),
+    /Audit archive key ID is invalid/u
   );
 });
 

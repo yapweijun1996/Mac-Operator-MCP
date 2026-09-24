@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { parseJsonUtf8Strict } from "@mac-operator/contracts";
+import { parseJsonUtf8Strict, SCOPES } from "@mac-operator/contracts";
 import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { OAuthMetadata, OAuthTokenVerifier } from "@modelcontextprotocol/server";
 import { BrokerIpcClient } from "./ipc-client.js";
@@ -9,19 +9,27 @@ import { AuthenticatedIpcBrokerGateway } from "./gateway.js";
 import { EdgeRequestFactory } from "./request-factory.js";
 import { ToolContractRegistry } from "./contract-registry.js";
 import { createHttpsMcpEdge, type HttpsMcpEdge } from "./https-edge.js";
-import { createJwtAccessTokenVerifier } from "./jwt-verifier.js";
-import { loadProtectedTlsMaterial } from "./tls-material.js";
+import { createJwtAccessTokenVerifier, type JwtRevocationContext } from "./jwt-verifier.js";
+import { createOAuthGrantRevocationCheck, createOAuthGrantStatusReader, isOAuthGrantRevoked, OAuthGrantRevocationMonitor } from "./oauth-grant-status.js";
+import { createLoopbackOAuthStatusFetch } from "./oauth-status-loopback.js";
+import { loadProtectedEdgeAuthenticationKey } from "./authentication-key.js";
+import { assertTlsCertificateAuthority, loadProtectedTlsCertificate, loadProtectedTlsMaterial } from "./tls-material.js";
 import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 import { readProtectedFileAfterIdentity, sameProtectedFileMetadata } from "./protected-file.js";
+import { EdgeStatusIpcServer } from "./edge-status-ipc.js";
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const CONFIG_KEYS = new Set([
   "schemaVersion", "packageRoot", "dataRoot", "runtimeRoot", "edgeId", "brokerAudience", "brokerSocketPath",
+  "serviceStatusSocketPath", "serviceStatusKeyPath", "serviceStatusKeyDigest",
   "authenticationKeyPath", "authenticationKeyId", "authenticationKeyDigest", "contractsDirectory",
   "tlsCertificatePath", "tlsPrivateKeyPath", "bindHost", "bindPort", "resourceServerUrl", "oauthIssuer",
   "issuerId", "authorizationEndpoint", "tokenEndpoint", "jwksUri", "allowedHosts", "allowedOrigins",
+  "oauthScopes", "requiredScopes",
   "policyVersion", "sourceRevision", "contractVersion", "ipcTimeoutMs", "maxIpcResponseBytes",
-  "rateLimitWindowMs", "rateLimitMaxRequests", "rateLimitMaxKeys"
+  "rateLimitWindowMs", "rateLimitMaxRequests", "rateLimitMaxKeys",
+  "oauthStatusUrl", "oauthStatusKeyPath", "oauthStatusKeyDigest", "oauthStatusLocalUrl",
+  "oauthStatusLocalServerName", "oauthStatusLocalCaPath"
 ]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{7,64}$/u;
@@ -30,6 +38,12 @@ const POLICY_VERSION_PATTERN = /^(?:policy-[1-9][0-9]*|\d+\.\d+(?:\.\d+)?(?:[-+]
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
 
 export interface EdgeServiceStartupConfig {
+  oauthStatusUrl?: string;
+  oauthStatusKeyPath?: string;
+  oauthStatusKeyDigest?: string;
+  oauthStatusLocalUrl?: string;
+  oauthStatusLocalServerName?: string;
+  oauthStatusLocalCaPath?: string;
   schemaVersion: "0.1";
   packageRoot: string;
   dataRoot: string;
@@ -37,6 +51,10 @@ export interface EdgeServiceStartupConfig {
   edgeId: string;
   brokerAudience: string;
   brokerSocketPath: string;
+  /** Optional owner-only lifecycle channel used by host install/readback. */
+  serviceStatusSocketPath?: string;
+  serviceStatusKeyPath?: string;
+  serviceStatusKeyDigest?: string;
   authenticationKeyPath: string;
   authenticationKeyId: string;
   authenticationKeyDigest: string;
@@ -53,6 +71,8 @@ export interface EdgeServiceStartupConfig {
   jwksUri: string;
   allowedHosts: string[];
   allowedOrigins: string[];
+  oauthScopes?: string[];
+  requiredScopes?: string[];
   policyVersion: string;
   sourceRevision: string;
   contractVersion: string;
@@ -79,6 +99,8 @@ export interface EdgeServiceReadback {
 export interface EdgeServiceAssembly {
   readonly service: EdgeServiceEntrypoint;
   readonly edge: HttpsMcpEdge;
+  /** Host-only Auth grant revocation push; this is not an MCP capability. */
+  readonly notifyOAuthGrantRevoked: (context: JwtRevocationContext) => Promise<void>;
   close(): Promise<void>;
 }
 
@@ -235,6 +257,26 @@ export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceSta
     throw new Error("Edge service startup roots must be distinct non-root paths");
   }
   const brokerSocketPath = record.brokerSocketPath as string;
+  const serviceStatusFields = [record.serviceStatusSocketPath, record.serviceStatusKeyPath, record.serviceStatusKeyDigest];
+  if (serviceStatusFields.some((field) => field !== undefined) && serviceStatusFields.some((field) => field === undefined)) {
+    throw new Error("Edge service status channel configuration is incomplete");
+  }
+  let serviceStatusConfig: Pick<EdgeServiceStartupConfig, "serviceStatusSocketPath" | "serviceStatusKeyPath" | "serviceStatusKeyDigest"> = {};
+  if (serviceStatusFields.every((field) => field !== undefined)) {
+    validateCanonicalPath(record.serviceStatusSocketPath, "Edge service status socket path");
+    validateCanonicalPath(record.serviceStatusKeyPath, "Edge service status key path");
+    const serviceStatusSocketPath = record.serviceStatusSocketPath as string;
+    const serviceStatusKeyPath = record.serviceStatusKeyPath as string;
+    if (!isDescendant(runtimeRoot, serviceStatusSocketPath) || !serviceStatusSocketPath.endsWith(".sock") ||
+        !isDescendant(dataRoot, serviceStatusKeyPath)) {
+      throw new Error("Edge service status channel escaped its configured roots");
+    }
+    serviceStatusConfig = {
+      serviceStatusSocketPath,
+      serviceStatusKeyPath,
+      serviceStatusKeyDigest: readDigest(record.serviceStatusKeyDigest)
+    };
+  }
   const authenticationKeyPath = record.authenticationKeyPath as string;
   const contractsDirectory = record.contractsDirectory as string;
   const tlsCertificatePath = record.tlsCertificatePath as string;
@@ -248,16 +290,53 @@ export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceSta
   const brokerAudience = readId(record.brokerAudience, "Broker audience");
   const authenticationKeyId = readId(record.authenticationKeyId, "authentication key identity");
   const issuerId = readId(record.issuerId, "OAuth issuer identity");
+  const oauthIssuer = readHttpsUrl(record.oauthIssuer, "OAuth issuer URL", false);
+  let statusConfig: Pick<EdgeServiceStartupConfig, "oauthStatusUrl" | "oauthStatusKeyPath" | "oauthStatusKeyDigest" |
+    "oauthStatusLocalUrl" | "oauthStatusLocalServerName" | "oauthStatusLocalCaPath"> = {};
+  if (issuerId === "mac-operator-auth" || [record.oauthStatusUrl, record.oauthStatusKeyPath, record.oauthStatusKeyDigest].some(value => value !== undefined)) {
+    const oauthStatusUrl = readHttpsUrl(record.oauthStatusUrl, "OAuth status URL", false);
+    validateCanonicalPath(record.oauthStatusKeyPath, "OAuth status key path");
+    const oauthStatusKeyPath = record.oauthStatusKeyPath as string;
+    if (!isDescendant(dataRoot, oauthStatusKeyPath) || oauthStatusUrl !== new URL("/oauth/status", oauthIssuer).href) {
+      throw new Error("OAuth status configuration escaped issuer or data root");
+    }
+    const localFields = [record.oauthStatusLocalUrl, record.oauthStatusLocalServerName, record.oauthStatusLocalCaPath];
+    if (localFields.some(value => value !== undefined) && localFields.some(value => value === undefined)) {
+      throw new Error("OAuth status loopback configuration is incomplete");
+    }
+    if (issuerId === "mac-operator-auth" && !localFields.every(value => value !== undefined)) {
+      throw new Error("Owner OAuth status requires the loopback channel");
+    }
+    if (localFields.every(value => value !== undefined)) {
+      const oauthStatusLocalUrl = readHttpsUrl(record.oauthStatusLocalUrl, "OAuth status loopback URL", false);
+      const localUrl = new URL(oauthStatusLocalUrl);
+      const oauthStatusLocalServerName = readHost(record.oauthStatusLocalServerName);
+      validateCanonicalPath(record.oauthStatusLocalCaPath, "OAuth status loopback CA path");
+      const oauthStatusLocalCaPath = record.oauthStatusLocalCaPath as string;
+      if (localUrl.hostname !== "127.0.0.1" || localUrl.pathname !== "/oauth/status" || !localUrl.port ||
+          oauthStatusLocalServerName !== new URL(oauthIssuer).hostname || !isDescendant(dataRoot, oauthStatusLocalCaPath)) {
+        throw new Error("OAuth status loopback configuration escaped its fixed local boundary");
+      }
+      statusConfig = { oauthStatusUrl, oauthStatusKeyPath, oauthStatusKeyDigest: readDigest(record.oauthStatusKeyDigest),
+        oauthStatusLocalUrl, oauthStatusLocalServerName, oauthStatusLocalCaPath };
+    } else {
+      statusConfig = { oauthStatusUrl, oauthStatusKeyPath, oauthStatusKeyDigest: readDigest(record.oauthStatusKeyDigest) };
+    }
+  }
   const authenticationKeyDigest = readDigest(record.authenticationKeyDigest);
   const bindHost = readHost(record.bindHost);
   const bindPort = boundedInteger(record.bindPort, 1, 65_535, "Edge bind port");
   const resourceServerUrl = readHttpsUrl(record.resourceServerUrl, "resource server URL", true);
-  const oauthIssuer = readHttpsUrl(record.oauthIssuer, "OAuth issuer URL", false);
   const authorizationEndpoint = readHttpsUrl(record.authorizationEndpoint, "OAuth authorization endpoint", false);
   const tokenEndpoint = readHttpsUrl(record.tokenEndpoint, "OAuth token endpoint", false);
   const jwksUri = readHttpsUrl(record.jwksUri, "OAuth JWKS URL", false);
   const allowedHosts = readHostList(record.allowedHosts, "Host");
   const allowedOrigins = readHostList(record.allowedOrigins, "Origin");
+  const oauthScopes = record.oauthScopes === undefined ? undefined : readScopeList(record.oauthScopes);
+  const requiredScopes = record.requiredScopes === undefined ? undefined : readScopeList(record.requiredScopes);
+  if (oauthScopes !== undefined && requiredScopes !== undefined && requiredScopes.some(scope => !oauthScopes.includes(scope))) {
+    throw new Error("Edge required scope is not advertised by the OAuth profile");
+  }
   if (!allowedHosts.includes(new URL(resourceServerUrl).hostname.toLowerCase())) {
     throw new Error("Edge Host allowlist must include the resource server hostname");
   }
@@ -265,10 +344,13 @@ export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceSta
   const sourceRevision = readPattern(record.sourceRevision, REVISION_PATTERN, "source revision");
   const contractVersion = readPattern(record.contractVersion, VERSION_PATTERN, "contract version");
   return {
+    ...statusConfig,
     schemaVersion: "0.1", packageRoot, dataRoot, runtimeRoot, edgeId, brokerAudience, brokerSocketPath,
+    ...serviceStatusConfig,
     authenticationKeyPath, authenticationKeyId, authenticationKeyDigest, contractsDirectory,
     tlsCertificatePath, tlsPrivateKeyPath, bindHost, bindPort, resourceServerUrl, oauthIssuer, issuerId,
-    authorizationEndpoint, tokenEndpoint, jwksUri, allowedHosts, allowedOrigins, policyVersion,
+    authorizationEndpoint, tokenEndpoint, jwksUri, allowedHosts, allowedOrigins,
+    ...(oauthScopes === undefined ? {} : { oauthScopes }), ...(requiredScopes === undefined ? {} : { requiredScopes }), policyVersion,
     sourceRevision, contractVersion,
     ipcTimeoutMs: boundedInteger(record.ipcTimeoutMs, 100, 30_000, "Edge IPC timeout"),
     maxIpcResponseBytes: boundedInteger(record.maxIpcResponseBytes, 1_024, 8 * 1024 * 1024, "Edge IPC response limit"),
@@ -290,7 +372,17 @@ export async function createEdgeServiceFromStartupConfig(options: {
     expectedHostname: new URL(config.resourceServerUrl).hostname
   });
   let requestFactory: EdgeRequestFactory | undefined;
+  let statusKey: Buffer | undefined;
+  let statusCa: Buffer | undefined;
+  let serviceStatusKey: Buffer | undefined;
+  let serviceStatusChannel: EdgeStatusIpcServer | undefined;
+  let revocationMonitor: OAuthGrantRevocationMonitor | undefined;
   try {
+    if (config.oauthStatusKeyPath) statusKey = await loadProtectedEdgeAuthenticationKey(config.oauthStatusKeyPath, config.oauthStatusKeyDigest!);
+    if (config.oauthStatusLocalCaPath) {
+      statusCa = await loadProtectedTlsCertificate(config.oauthStatusLocalCaPath, "OAuth status loopback CA");
+      assertTlsCertificateAuthority(statusCa);
+    }
     requestFactory = await EdgeRequestFactory.fromProtectedKeyFile({
       authenticationKeyPath: config.authenticationKeyPath,
       expectedAuthenticationKeyDigest: config.authenticationKeyDigest,
@@ -306,17 +398,56 @@ export async function createEdgeServiceFromStartupConfig(options: {
     const gateway = new AuthenticatedIpcBrokerGateway(requestFactory, client);
     const resourceServerUrl = new URL(config.resourceServerUrl);
     const issuer = new URL(config.oauthIssuer);
+    const statusFetch = statusCa && config.oauthStatusLocalUrl && config.oauthStatusLocalServerName
+      ? createLoopbackOAuthStatusFetch({ publicUrl: new URL(config.oauthStatusUrl!), loopbackUrl: new URL(config.oauthStatusLocalUrl),
+        serverName: config.oauthStatusLocalServerName, ca: statusCa })
+      : undefined;
+    const statusReader = statusKey ? createOAuthGrantStatusReader({ url: new URL(config.oauthStatusUrl!), key: statusKey,
+      ...(statusFetch ? { fetch: statusFetch } : {}) }) : undefined;
+    const onRevoked = async (context: JwtRevocationContext): Promise<void> => {
+      if (gateway.revokeSession === undefined) throw new Error("Broker revocation propagation is unavailable");
+      await gateway.revokeSession(config.edgeId, context.subject, context.sessionId);
+    };
+    if (statusReader !== undefined) {
+      revocationMonitor = new OAuthGrantRevocationMonitor({
+        readStatus: statusReader,
+        onRevoked,
+        now: Date.now
+      });
+    }
     const tokenVerifier: OAuthTokenVerifier = createJwtAccessTokenVerifier({
       issuer,
       issuerId: config.issuerId,
       resourceServerUrl,
-      jwksUri: new URL(config.jwksUri)
+      jwksUri: new URL(config.jwksUri),
+      ...(statusKey ? { revocationCheck: createOAuthGrantRevocationCheck({ url: new URL(config.oauthStatusUrl!), key: statusKey,
+        ...(statusFetch ? { fetch: statusFetch } : {}) }) } : {}),
+      ...(revocationMonitor === undefined ? {} : { onAccepted: (context: JwtRevocationContext) => revocationMonitor?.track(context) }),
+      onRevoked
     });
+    // Keep the advertised OAuth grant profile separate from the smaller
+    // bearer scope set required to initialize the MCP endpoint.
+    const oauthScopes = config.oauthScopes ?? [
+      "mac.control.read", "mac.policy.explain", "mac.system.read", "mac.storage.read",
+      "mac.process.read", "mac.log.read", "mac.network.read", "mac.service.read",
+      "mac.package.read", "mac.files.read", "mac.files.search", "mac.files.hash",
+      "mac.project.read", "mac.git.read", "mac.docker.read", "mac.app.read", "mac.job.read"
+    ];
     const oauthMetadata: OAuthMetadata = {
       issuer: issuer.href,
       authorization_endpoint: config.authorizationEndpoint,
       token_endpoint: config.tokenEndpoint,
-      response_types_supported: ["code"]
+      response_types_supported: ["code"],
+      ...(config.issuerId === "mac-operator-auth" ? {
+        authorization_response_iss_parameter_supported: true,
+        registration_endpoint: new URL("/register", issuer).href,
+        revocation_endpoint: new URL("/revoke", issuer).href,
+        jwks_uri: config.jwksUri,
+        token_endpoint_auth_methods_supported: ["none"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
+        code_challenge_methods_supported: ["S256"],
+        scopes_supported: oauthScopes
+      } : {})
     };
     const edge = createHttpsMcpEdge({
       edgeId: config.edgeId,
@@ -332,6 +463,7 @@ export async function createEdgeServiceFromStartupConfig(options: {
       oauthIssuer: issuer,
       tokenVerifier,
       oauthMetadata,
+      ...(config.requiredScopes === undefined ? {} : { requiredScopes: config.requiredScopes }),
       rateLimit: {
         windowMs: config.rateLimitWindowMs,
         maxRequests: config.rateLimitMaxRequests,
@@ -339,21 +471,49 @@ export async function createEdgeServiceFromStartupConfig(options: {
       }
     });
     const service = new EdgeServiceEntrypoint(edge, config);
+    if (config.serviceStatusSocketPath && config.serviceStatusKeyPath && config.serviceStatusKeyDigest) {
+      serviceStatusKey = await loadProtectedEdgeAuthenticationKey(config.serviceStatusKeyPath, config.serviceStatusKeyDigest);
+      serviceStatusChannel = new EdgeStatusIpcServer({
+        socketPath: config.serviceStatusSocketPath,
+        authenticationKey: serviceStatusKey,
+        readStatus: () => service.readback(),
+        authorizeStatus: () => {
+          if (service.state !== "running") throw new Error("Edge service status is not ready");
+        }
+      });
+      await serviceStatusChannel.listen();
+    }
+    const notifyOAuthGrantRevoked = async (context: JwtRevocationContext): Promise<void> => {
+      if (revocationMonitor !== undefined) await revocationMonitor.notifyRevoked(context);
+      else await onRevoked(context);
+    };
+    revocationMonitor?.start();
     return {
       service,
       edge,
+      notifyOAuthGrantRevoked,
       async close() {
+        revocationMonitor?.stop();
         try {
+          await serviceStatusChannel?.close();
           await service.stop();
         } finally {
           requestFactory?.dispose();
+          statusKey?.fill(0);
+          statusCa?.fill(0);
+          serviceStatusKey?.fill(0);
           tls.certificate.fill(0);
           tls.privateKey.fill(0);
         }
       }
     };
   } catch (error) {
+    await serviceStatusChannel?.close().catch(() => undefined);
+    revocationMonitor?.stop();
     requestFactory?.dispose();
+    statusKey?.fill(0);
+    statusCa?.fill(0);
+    serviceStatusKey?.fill(0);
     tls.certificate.fill(0);
     tls.privateKey.fill(0);
     throw error;
@@ -363,10 +523,12 @@ export async function createEdgeServiceFromStartupConfig(options: {
 export async function runEdgeServiceMain(options: {
   configPath?: string;
   signals?: EdgeServiceSignalSource;
+  onReady?: (notifyOAuthGrantRevoked: (context: JwtRevocationContext) => Promise<void>) => void;
 } = {}): Promise<void> {
   const config = await loadEdgeServiceStartupConfig(options.configPath ?? defaultEdgeServiceConfigPath());
   const assembly = await createEdgeServiceFromStartupConfig({ config });
   try {
+    options.onReady?.(assembly.notifyOAuthGrantRevoked);
     await assembly.service.runUntilSignal(options.signals ?? process);
   } finally {
     await assembly.close();
@@ -384,9 +546,12 @@ async function assertStartupDirectories(config: EdgeServiceStartupConfig): Promi
   await assertDirectory(config.contractsDirectory, false);
   for (const [root, target] of [
     [config.runtimeRoot, config.brokerSocketPath],
+    ...(config.serviceStatusSocketPath ? [[config.runtimeRoot, config.serviceStatusSocketPath] as const] : []),
     [config.dataRoot, config.authenticationKeyPath],
+    ...(config.serviceStatusKeyPath ? [[config.dataRoot, config.serviceStatusKeyPath] as const] : []),
     [config.dataRoot, config.tlsCertificatePath],
-    [config.dataRoot, config.tlsPrivateKeyPath]
+    [config.dataRoot, config.tlsPrivateKeyPath],
+    ...(config.oauthStatusLocalCaPath ? [[config.dataRoot, config.oauthStatusLocalCaPath] as const] : [])
   ] as const) {
     await assertStartupTarget(root, target);
   }
@@ -498,6 +663,15 @@ function readHostList(value: unknown, label: string): string[] {
     return parsed.hostname;
   });
   return [...new Set(normalized)].sort();
+}
+
+function readScopeList(value: unknown): string[] {
+  if (!isPlainDataArray(value, SCOPES.length) || value.length === 0 ||
+      value.some(scope => typeof scope !== "string" || !(SCOPES as readonly string[]).includes(scope)) ||
+      new Set(value).size !== value.length) {
+    throw new Error("Edge OAuth scope list is invalid");
+  }
+  return [...value] as string[];
 }
 
 function readPattern(value: unknown, pattern: RegExp, label: string): string {

@@ -376,7 +376,8 @@ export function authorizeTarget(
     rule.target.kind === target.kind &&
     (rule.targetConstraint?.mode === "finite_set"
       ? rule.targetConstraint.references.includes(target.reference)
-      : rule.target.reference === target.reference)
+      : rule.target.reference === target.reference ||
+        (rule.target.kind === "docker_object" && rule.target.reference === "all" && target.kind === "docker_object"))
   );
   if (matchingRules.some((rule) => rule.effect === "deny")) {
     throw new BrokerError("POLICY_DENIED", "Target is explicitly denied");

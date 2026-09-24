@@ -79,6 +79,16 @@ export function assertTlsCertificateMatchesPrivateKey(
   }
 }
 
+/** Reject a leaf certificate when a startup boundary requires a CA bundle. */
+export function assertTlsCertificateAuthority(certificateBytes: Buffer): void {
+  try {
+    if (!new X509Certificate(certificateBytes).ca) throw new Error("TLS certificate is not a certificate authority");
+  } catch (error) {
+    if (error instanceof Error && error.message === "TLS certificate is not a certificate authority") throw error;
+    throw new Error("TLS certificate authority is invalid");
+  }
+}
+
 async function readProtectedTlsFile(path: string, label: string): Promise<Buffer> {
   if (typeof path !== "string" || !isAbsolute(path) || resolve(path) !== path || path.includes("\0")) {
     throw new Error(`${label} path must be canonical and absolute`);
@@ -108,4 +118,9 @@ async function readProtectedTlsFile(path: string, label: string): Promise<Buffer
   } finally {
     await handle.close();
   }
+}
+
+/** Load a protected CA bundle or certificate without treating it as a key pair. */
+export async function loadProtectedTlsCertificate(path: string, label = "TLS certificate"): Promise<Buffer> {
+  return await readProtectedTlsFile(path, label);
 }

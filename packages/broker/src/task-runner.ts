@@ -1,6 +1,11 @@
-import { BrokerError, canonicalJson } from "@mac-operator/contracts";
+import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { isAbsolute, resolve } from "node:path";
 import type { GuestTaskJobMetadata } from "./persistence.js";
+import {
+  type DescriptorSnapshotPreparationInput,
+  type PreparedDescriptorSnapshot,
+  type DescriptorSnapshotHandoff
+} from "./descriptor-snapshot-attestation.js";
 import {
   assertProcessPathIdentityStable,
   captureProcessPathIdentity,
@@ -13,7 +18,14 @@ import { inspectProcessDescriptorExecutionCapability } from "./process-launch-ca
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { buildSandboxExecArguments, normalizeTaskSandboxProfileOptions, type TaskSandboxProfileOptions } from "./sandbox-profile.js";
+import { assertSystemPublishedExecutablePath, inspectSystemPublishedExecutablePath } from "./system-published-executable.js";
 import type { ResolvedTaskProfile } from "./task-profile.js";
+import {
+  RootHelperSnapshotTaskExecutor,
+  validateRootHelperSnapshotTaskRequest,
+  type RootHelperSnapshotRequestAdmission,
+  type RootHelperSnapshotTaskRequest
+} from "./root-helper-snapshot.js";
 import {
   isVirtualizationGuestIdentity,
   parseVirtualizationGuestIdentity,
@@ -26,6 +38,7 @@ import {
   type VirtualizationGuestIdentity
 } from "./virtualization-guest-attestation.js";
 import { verifyVirtualizationGuestImage, type LoadedVirtualizationGuestImage } from "./virtualization-guest-image.js";
+import type { VirtualizationGuestVmLifecycle } from "./virtualization-guest-lifecycle.js";
 import {
   virtualizationGuestProfileDigest,
   virtualizationGuestTaskDigest
@@ -44,6 +57,25 @@ const SANDBOX_PROFILE_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const MAX_TASK_RESULT_OUTPUT_BYTES = 2 * 1024 * 1024;
 const MAX_TASK_RESULT_DURATION_MS = 1_200_000;
 const MAX_TASK_RESULT_SUMMARY_BYTES = 512;
+const SYSTEM_PUBLISHED_TASK_DISPATCH_PATHS = new Set([
+  "/bin/bash",
+  "/bin/dash",
+  "/bin/ksh",
+  "/bin/sh",
+  "/bin/zsh",
+  "/usr/bin/arch",
+  "/usr/bin/env",
+  "/usr/bin/node",
+  "/usr/bin/nodejs",
+  "/usr/bin/osascript",
+  "/usr/bin/perl",
+  "/usr/bin/php",
+  "/usr/bin/python",
+  "/usr/bin/python3",
+  "/usr/bin/ruby",
+  "/usr/bin/swift",
+  "/usr/bin/xcrun"
+]);
 
 export type {
   SignedVirtualizationGuestAttestation,
@@ -53,17 +85,24 @@ export type {
 export { validateVirtualizationGuestAttestation } from "./virtualization-guest-attestation.js";
 
 /** Mechanisms with a governed runner contract; availability remains evidence-gated. */
-export type TaskIsolationMechanism = "sandbox-exec" | "virtualization";
+export type TaskIsolationMechanism = "sandbox-exec" | "app-sandbox" | "virtualization";
+/** Public exposure state; staging evidence must never become a production capability. */
+export type TaskRunnerPublicEnablement = "unavailable" | "staging-only" | "production";
 export type TaskCredentialIsolationProof =
   | "sandbox-exec-empty-env-deny-secret-zones-v1"
+  | "app-sandbox-container-no-host-credentials-v1"
   | "virtualization-no-host-credentials-v1";
 
 export interface TaskExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
+  /** Broker-owned admission for an exact root-helper signed envelope. */
+  rootHelperSnapshotRequestAuthority?: RootHelperSnapshotRequestAdmission;
   onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void;
   onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
   onGuestRequestAdmitted?: (admission: VirtualizationGuestTaskAdmission) => void;
+  /** Called after the guest response is authenticated and mapped, before the runner returns. */
+  onGuestResultVerified?: (result: TaskExecutionResult) => void;
 }
 
 /** Non-secret identity captured immediately before a guest request is sent. */
@@ -117,9 +156,12 @@ export interface TaskIsolationProof {
   persistence: "isolated";
   /** Mechanism-bound proof that host/controller credentials are not inherited. */
   credentialIsolation: TaskCredentialIsolationProof;
-  processTree: "owned";
+  /** App Sandbox currently observes descendants without containing escaped process groups. */
+  processTree: "owned" | "observer-only";
   processTreePolicy: "single_process" | "owned_group";
   evidenceRef: string;
+  /** Explicit executable-selection proof for the selected host boundary. */
+  executableSelection?: "system-published-root-owned-v1" | "descriptor-snapshot-root-helper-v1" | "app-sandbox-helper-v1";
   /** Required for Virtualization.framework guests; absent for host sandboxes. */
   virtualizationGuest?: VirtualizationGuestIdentity;
 }
@@ -131,6 +173,8 @@ export interface TaskIsolationProof {
  */
 export interface TaskRunner {
   readonly available: boolean;
+  /** Host release state used by production startup before public capability exposure. */
+  readonly publicEnablement: TaskRunnerPublicEnablement;
   /** Host-owned mechanism used by this runner; null means no executable boundary. */
   readonly mechanism: TaskIsolationMechanism | null;
   readonly isolationProof: TaskIsolationProof | null;
@@ -140,8 +184,25 @@ export interface TaskRunner {
   recoverUnknownTask?(request: TaskRecoveryRequest): Promise<TaskExecutionResult>;
 }
 
+/**
+ * Production startup must not expose a staging runner as a public task
+ * capability. An unavailable runner remains fail-closed and may be reported
+ * as runtime-unavailable; an available non-production runner is a startup
+ * configuration error because it could otherwise create a false release.
+ */
+export function assertTaskRunnerPublicEnablement(
+  taskToolEnabled: boolean,
+  taskRunner: Pick<TaskRunner, "available" | "publicEnablement"> | undefined
+): void {
+  if (!taskToolEnabled || taskRunner === undefined || !taskRunner.available) return;
+  if (taskRunner.publicEnablement !== "production") {
+    throw new Error("Enabled mac_task_run requires a production task runner release");
+  }
+}
+
 export class FailClosedTaskRunner implements TaskRunner {
   readonly available = false;
+  readonly publicEnablement: TaskRunnerPublicEnablement = "unavailable";
   readonly mechanism = null;
   readonly isolationProof = null;
 
@@ -161,6 +222,16 @@ export interface SandboxExecTaskRunnerOptions {
   protectedFilesystemRoots?: readonly string[];
   /** Test-only override; production reads volume identity from the protected native adapter. */
   filesystemIdentityObserver?: (rootPath: string) => unknown;
+  /**
+   * Host executable-selection boundary. The default remains descriptor-backed
+   * and unavailable on hosts without the native launcher. The system-published
+   * mode is restricted to an explicit Broker-owned executable allowlist.
+   */
+  executionBoundary?: "descriptor" | "system-published";
+  /** Fixed root-owned executables accepted by the system-published boundary. */
+  systemPublishedExecutableAllowlist?: readonly string[];
+  /** Explicit operator acceptance of the host system-published evidence. */
+  systemPublishedExecutablePathAccepted?: boolean;
   supervisor?: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
 }
 
@@ -181,24 +252,54 @@ interface NativeTaskFilesystemIdentityAdapter {
  */
 export class SandboxExecTaskRunner implements TaskRunner {
   readonly available: boolean;
+  readonly publicEnablement: TaskRunnerPublicEnablement;
   readonly mechanism: TaskIsolationMechanism = "sandbox-exec";
   readonly isolationProof: TaskIsolationProof | null;
   private readonly supervisor: Pick<ProcessSupervisor, "run"> & { close?: () => Promise<void> };
   private readonly filesystemIdentityObserver: (rootPath: string) => unknown;
   private readonly sandboxProfileOptions: TaskSandboxProfileOptions;
+  private readonly executionBoundary: "descriptor" | "system-published";
+  private readonly systemPublishedExecutableAllowlist: ReadonlySet<string>;
 
   constructor(options: SandboxExecTaskRunnerOptions = {}) {
     const proof = options.isolationProof === null || options.isolationProof === undefined
       ? null
       : validateTaskIsolationProof(options.isolationProof);
     this.isolationProof = proof;
+    this.executionBoundary = options.executionBoundary ?? "descriptor";
+    if (this.executionBoundary !== "descriptor" && this.executionBoundary !== "system-published") {
+      throw new Error("Task executable-selection boundary is invalid");
+    }
+    const executableAllowlist = options.systemPublishedExecutableAllowlist ?? [];
+    if (!Array.isArray(executableAllowlist) || executableAllowlist.length > 32 ||
+        executableAllowlist.some((path) => !isCanonicalTaskPath(path)) || new Set(executableAllowlist).size !== executableAllowlist.length) {
+      throw new Error("System-published task executable allowlist is invalid");
+    }
+    if (this.executionBoundary === "system-published" && executableAllowlist.some((path) =>
+      SYSTEM_PUBLISHED_TASK_DISPATCH_PATHS.has(path) && path !== "/bin/sh")) {
+      throw new Error("System-published task executable allowlist cannot contain interpreters or dispatch launchers");
+    }
+    if (options.systemPublishedExecutablePathAccepted !== undefined && typeof options.systemPublishedExecutablePathAccepted !== "boolean") {
+      throw new Error("System-published task executable acceptance is invalid");
+    }
+    if (this.executionBoundary === "system-published" && options.supervisor !== undefined) {
+      throw new Error("System-published task execution cannot use an injected supervisor");
+    }
+    this.systemPublishedExecutableAllowlist = new Set(executableAllowlist);
     const usesHostProcessSupervisor = options.supervisor === undefined;
     this.supervisor = options.supervisor ?? new ProcessSupervisor({
       allowedEnvironmentKeys: options.allowedEnvironmentKeys ?? [],
-      // A host sandbox is not a complete executable-selection boundary. Keep
-      // production task admission closed until the native descriptor launcher
-      // is available and independently attested.
-      requireDescriptorExecution: true
+      ...(this.executionBoundary === "system-published"
+        ? {
+          requireRootOwnedExecutable: true,
+          requireSystemPublishedExecutable: true
+        }
+        : {
+          // A host sandbox is not a complete executable-selection boundary.
+          // Keep descriptor-mode task admission closed until the native
+          // descriptor launcher is available and independently attested.
+          requireDescriptorExecution: true
+        })
     });
     this.sandboxProfileOptions = normalizeTaskSandboxProfileOptions({
       ...(options.protectedFilesystemRoots === undefined ? {} : { protectedFilesystemRoots: [...options.protectedFilesystemRoots] })
@@ -210,12 +311,19 @@ export class SandboxExecTaskRunner implements TaskRunner {
     // The current sandbox evidence covers only the no-fork single-process
     // profile. Keep the owned-group variant unavailable until a separate
     // process-tree ownership and escape-resistance proof is accepted.
-    const descriptorExecutionAvailable = !usesHostProcessSupervisor ||
-      inspectProcessDescriptorExecutionCapability().available;
+    const executableSelectionAvailable = !usesHostProcessSupervisor ||
+      (this.executionBoundary === "system-published"
+        ? options.systemPublishedExecutablePathAccepted === true &&
+          this.systemPublishedExecutableAllowlist.size > 0 &&
+          inspectSystemPublishedExecutablePath("/usr/bin/sandbox-exec")
+        : inspectProcessDescriptorExecutionCapability().available);
     this.available = options.enabled === true && options.hostEvidenceAccepted === true &&
       proof?.sandboxMechanism === "sandbox-exec" &&
       proof?.processTreePolicy === "single_process" && process.platform === "darwin" &&
-      descriptorExecutionAvailable;
+      executableSelectionAvailable;
+    // sandbox-exec is deprecated on macOS and remains a staging-only probe;
+    // it must never satisfy the production public-capability gate.
+    this.publicEnablement = this.available ? "staging-only" : "unavailable";
   }
 
   close(): Promise<void> {
@@ -227,6 +335,24 @@ export class SandboxExecTaskRunner implements TaskRunner {
       throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
     }
     requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
+    const executionKind = profile.executionKind ?? "binary";
+    if (executionKind === "posix-sh-script") {
+      if (profile.process.executable !== "/bin/sh" ||
+          (this.executionBoundary === "system-published" && !this.systemPublishedExecutableAllowlist.has("/bin/sh"))) {
+        throw new BrokerError("POLICY_DENIED", "Broker-owned shell script is not admitted by this executable boundary");
+      }
+      await assertSystemPublishedExecutablePath("/bin/sh");
+      await assertSystemPublishedExecutablePath("/bin/bash");
+    } else if (profile.process.executable === "/bin/sh") {
+      throw new BrokerError("POLICY_DENIED", "The shell interpreter requires a Broker-owned script profile");
+    }
+    if (this.executionBoundary === "system-published") {
+      if (this.isolationProof.executableSelection !== "system-published-root-owned-v1" ||
+          !this.systemPublishedExecutableAllowlist.has(profile.process.executable)) {
+        throw new BrokerError("POLICY_DENIED", "Task executable is not in the system-published profile allowlist");
+      }
+      await assertSystemPublishedExecutablePath(profile.process.executable);
+    }
     const taskExecutableIdentity = await captureTaskProcessPathIdentity(profile.process.executable, "executable");
     const taskCwdIdentity = await captureTaskProcessPathIdentity(profile.cwd, "directory");
     const taskFilesystemRootIdentities = await captureTaskFilesystemRootIdentities(profile.filesystemRoots);
@@ -262,6 +388,7 @@ export class SandboxExecTaskRunner implements TaskRunner {
         timeoutMs: Math.min(control.timeoutMs, profile.process.timeoutMs),
         outputCapBytes: profile.process.outputCapBytes,
         requireCleanExitProof: true,
+        ...(executionKind === "posix-sh-script" ? { stdin: profile.scriptContent! } : {}),
         shouldCancel: control.shouldCancel,
         ...(onStarted === undefined ? {} : { onStarted }),
         ...(onOwnershipChanged === undefined ? {} : { onOwnershipChanged })
@@ -275,6 +402,305 @@ export class SandboxExecTaskRunner implements TaskRunner {
     await assertTaskFilesystemRootIdentitiesStable(profile.filesystemRoots, taskFilesystemRootIdentities);
     assertTaskFilesystemIdentityStable(profile, filesystemIdentity, this.filesystemIdentityObserver);
     return mapProcessResult(result);
+  }
+}
+
+/**
+ * Narrow descriptor-registry boundary required by the root-helper runner.
+ * The registry owns the actual descriptors; the runner receives only a
+ * one-shot handoff during the authenticated helper exchange.
+ */
+export interface DescriptorSnapshotTaskRegistry {
+  readonly available: boolean;
+  prepare(input: DescriptorSnapshotPreparationInput): Promise<PreparedDescriptorSnapshot>;
+  withSnapshot<T>(
+    snapshot: PreparedDescriptorSnapshot,
+    callback: (handoff: DescriptorSnapshotHandoff) => Promise<T> | T
+  ): Promise<T>;
+  close(): Promise<void>;
+}
+
+export interface RootHelperSnapshotTaskRunnerOptions {
+  /** Explicit opt-in; production remains disabled until root-domain evidence is accepted. */
+  enabled?: boolean;
+  /** Independent host evidence gate; MCP arguments cannot supply it. */
+  hostEvidenceAccepted?: boolean;
+  isolationProof?: TaskIsolationProof | null;
+  executor?: Pick<RootHelperSnapshotTaskExecutor, "available" | "publicEnablement" | "run" | "close">;
+  snapshotRegistry?: DescriptorSnapshotTaskRegistry;
+}
+
+/**
+ * Broker TaskRunner adapter for the authenticated root-helper snapshot path.
+ * It binds the resolved profile to one-shot descriptors and forwards helper
+ * process-ownership events so the existing Broker Job recovery ledger remains
+ * authoritative. No pathname or caller-selected executable crosses IPC.
+ */
+export class RootHelperSnapshotTaskRunner implements TaskRunner {
+  readonly available: boolean;
+  readonly publicEnablement: TaskRunnerPublicEnablement;
+  readonly mechanism: TaskIsolationMechanism = "sandbox-exec";
+  readonly isolationProof: TaskIsolationProof | null;
+  private readonly executor: Pick<RootHelperSnapshotTaskExecutor, "available" | "run" | "close"> | undefined;
+  private readonly snapshotRegistry: DescriptorSnapshotTaskRegistry | undefined;
+
+  constructor(options: RootHelperSnapshotTaskRunnerOptions = {}) {
+    const proof = options.isolationProof === null || options.isolationProof === undefined
+      ? null
+      : validateTaskIsolationProof(options.isolationProof);
+    this.isolationProof = proof;
+    this.executor = options.executor;
+    this.snapshotRegistry = options.snapshotRegistry;
+    this.available = process.platform === "darwin" &&
+      options.enabled === true &&
+      options.hostEvidenceAccepted === true &&
+      proof?.sandboxMechanism === "sandbox-exec" &&
+      proof.processTreePolicy === "single_process" &&
+      proof.executableSelection === "descriptor-snapshot-root-helper-v1" &&
+      options.executor?.available === true &&
+      options.snapshotRegistry?.available === true;
+    this.publicEnablement = this.available && options.executor?.publicEnablement === "production"
+      ? "production"
+      : this.available
+        ? "staging-only"
+        : "unavailable";
+  }
+
+  async close(): Promise<void> {
+    let firstError: unknown;
+    try {
+      await this.executor?.close();
+    } catch (error) {
+      firstError = error;
+    }
+    try {
+      await this.snapshotRegistry?.close();
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError !== undefined) throw firstError;
+  }
+
+  async run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult> {
+    if (!this.available || this.isolationProof === null || this.executor === undefined || this.snapshotRegistry === undefined) {
+      throw new BrokerError("POLICY_DENIED", "Root helper snapshot task boundary is not enabled");
+    }
+    requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
+    if (this.isolationProof.executableSelection !== "descriptor-snapshot-root-helper-v1") {
+      throw new BrokerError("POLICY_DENIED", "Root helper executable-selection proof is unavailable");
+    }
+    if (control.rootHelperSnapshotRequestAuthority === undefined ||
+        typeof control.rootHelperSnapshotRequestAuthority.admit !== "function" ||
+        typeof control.rootHelperSnapshotRequestAuthority.release !== "function") {
+      throw new BrokerError("PRIVILEGE_DENIED", "Root helper task admission is not bound to the Broker authority");
+    }
+    const environment = { ...(profile.process.environment ?? {}) };
+    const args = [...profile.process.args];
+    const snapshot = await this.snapshotRegistry.prepare({
+      profile: profile.profile,
+      executablePath: profile.process.executable,
+      cwdPath: profile.cwd,
+      taskDescriptorDigest: taskDescriptorDigest(profile),
+      argsDigest: sha256(canonicalJson(args)),
+      environmentDigest: sha256(canonicalJson(environment)),
+      filesystemRootsDigest: sha256(canonicalJson(profile.filesystemRoots)),
+      sandboxProfile: profile.sandboxProfile,
+      networkPolicy: profile.networkPolicy,
+      processTreePolicy: profile.processTreePolicy
+    });
+    const timeoutMs = Math.min(control.timeoutMs, profile.process.timeoutMs);
+    try {
+      return await this.snapshotRegistry.withSnapshot(snapshot, async (handoff) => {
+        const request: RootHelperSnapshotTaskRequest = validateRootHelperSnapshotTaskRequest({
+          schemaVersion: "0.1",
+          signedAttestation: handoff.attestation,
+          executableFd: handoff.executableFd,
+          cwdFd: handoff.cwdFd,
+          args,
+          environment,
+          timeoutMs,
+          outputCapBytes: profile.process.outputCapBytes
+        });
+        const result = await this.executor!.run(request, {
+          timeoutMs,
+          shouldCancel: control.shouldCancel,
+          ...(control.rootHelperSnapshotRequestAuthority === undefined
+            ? {}
+            : { requestAuthority: control.rootHelperSnapshotRequestAuthority }),
+          ...(control.onProcessStarted === undefined ? {} : { onProcessStarted: control.onProcessStarted }),
+          ...(control.onProcessOwnershipChanged === undefined ? {} : { onProcessOwnershipChanged: control.onProcessOwnershipChanged })
+        });
+        return mapProcessResult(result);
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("UNKNOWN_OUTCOME", "Root helper task outcome could not be established", true);
+    }
+  }
+}
+
+export interface AppSandboxTaskExecutionRequest {
+  schemaVersion: "0.1";
+  signedAttestation: DescriptorSnapshotHandoff["attestation"];
+  executableFd: number;
+  cwdFd: number;
+  filesystemRoots: readonly string[];
+  executionKind: "binary" | "posix-sh-script";
+  scriptFd?: number;
+  scriptContentSha256?: string;
+  args: readonly string[];
+  environment: Readonly<Record<string, string>>;
+  networkPolicy: "none" | "allowlist";
+  networkAllowlist: readonly string[];
+  timeoutMs: number;
+  outputCapBytes: number;
+}
+
+export interface AppSandboxTaskExecutor {
+  readonly available: boolean;
+  readonly publicEnablement?: TaskRunnerPublicEnablement;
+  run(
+    request: AppSandboxTaskExecutionRequest,
+    control: Pick<TaskExecutionControl, "timeoutMs" | "shouldCancel" | "onProcessStarted" | "onProcessOwnershipChanged">
+  ): Promise<ProcessExecutionResult>;
+  close?(): Promise<void>;
+}
+
+export interface AppSandboxTaskRunnerOptions {
+  /** Explicit opt-in; production remains disabled until the helper is released. */
+  enabled?: boolean;
+  /** Independent host evidence gate; MCP arguments cannot supply it. */
+  hostEvidenceAccepted?: boolean;
+  isolationProof?: TaskIsolationProof | null;
+  executor?: Pick<AppSandboxTaskExecutor, "available" | "publicEnablement" | "run" | "close">;
+  snapshotRegistry?: DescriptorSnapshotTaskRegistry;
+}
+
+/**
+ * Broker seam for an App Sandbox helper. The native executor is supplied by
+ * the startup assembly only after independent host evidence is accepted; it
+ * materializes the one-shot descriptor handoff inside the helper container and
+ * returns authenticated bounded output. No host pathname crosses this boundary.
+ */
+export class AppSandboxTaskRunner implements TaskRunner {
+  readonly mechanism: TaskIsolationMechanism = "app-sandbox";
+  readonly isolationProof: TaskIsolationProof | null;
+  private readonly configuredAvailable: boolean;
+  private readonly executor: Pick<AppSandboxTaskExecutor, "available" | "run" | "close"> | undefined;
+  private readonly snapshotRegistry: DescriptorSnapshotTaskRegistry | undefined;
+
+  constructor(options: AppSandboxTaskRunnerOptions = {}) {
+    const proof = options.isolationProof === null || options.isolationProof === undefined
+      ? null
+      : validateTaskIsolationProof(options.isolationProof);
+    this.isolationProof = proof;
+    this.executor = options.executor;
+    this.snapshotRegistry = options.snapshotRegistry;
+    this.configuredAvailable = process.platform === "darwin" &&
+      options.enabled === true &&
+      options.hostEvidenceAccepted === true &&
+      proof?.sandboxMechanism === "app-sandbox" &&
+      proof.processTree === "observer-only" &&
+      proof.processTreePolicy === "single_process" &&
+      proof.executableSelection === "app-sandbox-helper-v1" &&
+      options.executor?.available === true &&
+      options.snapshotRegistry?.available === true;
+    // The physical double-fork probe demonstrated that App Sandbox plus the
+    // helper's process-event observer does not enforce the declared
+    // single-process policy. Keep this runner staging-only until an
+    // OS-enforced process-tree boundary replaces that observer.
+  }
+
+  get available(): boolean {
+    return this.configuredAvailable && this.executor?.available === true && this.snapshotRegistry?.available === true;
+  }
+
+  get publicEnablement(): TaskRunnerPublicEnablement {
+    return this.available ? "staging-only" : "unavailable";
+  }
+
+  async close(): Promise<void> {
+    let firstError: unknown;
+    try {
+      await this.executor?.close?.();
+    } catch (error) {
+      firstError = error;
+    }
+    try {
+      await this.snapshotRegistry?.close();
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError !== undefined) throw firstError;
+  }
+
+  async run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult> {
+    if (!this.available || this.isolationProof === null || this.executor === undefined ||
+        this.executor.available !== true || this.snapshotRegistry === undefined) {
+      throw new BrokerError("POLICY_DENIED", "App Sandbox task boundary is not enabled");
+    }
+    requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
+    if (this.isolationProof.executableSelection !== "app-sandbox-helper-v1") {
+      throw new BrokerError("POLICY_DENIED", "App Sandbox helper executable-selection proof is unavailable");
+    }
+    const environment = { ...(profile.process.environment ?? {}) };
+    const args = [...profile.process.args];
+    const executionKind = profile.executionKind ?? "binary";
+    if (executionKind === "posix-sh-script" && profile.scriptPath === undefined) {
+      throw new BrokerError("POLICY_DENIED", "App Sandbox script profile is missing its Broker-owned script");
+    }
+    const snapshot = await this.snapshotRegistry.prepare({
+      audience: "mac-operator-app-sandbox-helper-v0.1",
+      profile: profile.profile,
+      executablePath: profile.process.executable,
+      cwdPath: profile.cwd,
+      ...(profile.scriptPath === undefined ? {} : { scriptPath: profile.scriptPath }),
+      taskDescriptorDigest: taskDescriptorDigest(profile),
+      argsDigest: sha256(canonicalJson(args)),
+      environmentDigest: sha256(canonicalJson(environment)),
+      filesystemRootsDigest: sha256(canonicalJson(profile.filesystemRoots)),
+      sandboxProfile: profile.sandboxProfile,
+      networkPolicy: profile.networkPolicy,
+      processTreePolicy: profile.processTreePolicy
+    });
+    const timeoutMs = Math.min(control.timeoutMs, profile.process.timeoutMs);
+    try {
+      return await this.snapshotRegistry.withSnapshot(snapshot, async (handoff) => {
+        if (handoff.attestation.payload.audience !== "mac-operator-app-sandbox-helper-v0.1") {
+          throw new BrokerError("POLICY_DENIED", "App Sandbox snapshot attestation audience is invalid");
+        }
+        if (executionKind === "posix-sh-script" &&
+            (handoff.scriptFd === undefined || handoff.scriptContentSha256 === undefined)) {
+          throw new BrokerError("POLICY_DENIED", "App Sandbox script descriptor is unavailable");
+        }
+        const result = await this.executor!.run({
+          schemaVersion: "0.1",
+          signedAttestation: handoff.attestation,
+          executableFd: handoff.executableFd,
+          cwdFd: handoff.cwdFd,
+          filesystemRoots: [...profile.filesystemRoots],
+          executionKind,
+          ...(executionKind === "posix-sh-script"
+            ? { scriptFd: handoff.scriptFd!, scriptContentSha256: handoff.scriptContentSha256! }
+            : {}),
+          args,
+          environment,
+          networkPolicy: profile.networkPolicy,
+          networkAllowlist: [...profile.networkAllowlist],
+          timeoutMs,
+          outputCapBytes: profile.process.outputCapBytes
+        }, {
+          timeoutMs,
+          shouldCancel: control.shouldCancel,
+          ...(control.onProcessStarted === undefined ? {} : { onProcessStarted: control.onProcessStarted }),
+          ...(control.onProcessOwnershipChanged === undefined ? {} : { onProcessOwnershipChanged: control.onProcessOwnershipChanged })
+        });
+        return mapProcessResult(result);
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) throw error;
+      throw new BrokerError("UNKNOWN_OUTCOME", "App Sandbox task outcome could not be established", true);
+    }
   }
 }
 
@@ -318,7 +744,16 @@ export function virtualizationTaskDigest(
 
 /** Digest of the exact local task descriptor persisted with a running Job. */
 export function taskDescriptorDigest(profile: ResolvedTaskProfile): string {
-  return virtualizationTaskDigest(profile);
+  const baseDigest = virtualizationTaskDigest(profile);
+  if (profile.executionKind !== "posix-sh-script" || profile.scriptPath === undefined || profile.scriptContentSha256 === undefined) {
+    return baseDigest;
+  }
+  return sha256(canonicalJson({
+    baseDigest,
+    executionKind: profile.executionKind,
+    scriptPath: profile.scriptPath,
+    scriptContentSha256: profile.scriptContentSha256
+  }));
 }
 
 /**
@@ -416,7 +851,9 @@ export class VirtualizationGuestTransportExecutor implements VirtualizationTaskE
         outputCapBytes: admitted.outputCapBytes
       }))
     });
-    return mapVirtualizationGuestResponse(response, this.guestIdentity);
+    const taskResult = mapVirtualizationGuestResponse(response, this.guestIdentity);
+    request.control.onGuestResultVerified?.(taskResult);
+    return taskResult;
   }
 
   async recoverUnknownTask(request: TaskRecoveryRequest): Promise<TaskExecutionResult> {
@@ -456,6 +893,8 @@ export interface VirtualizationTaskRunnerOptions {
   executor?: VirtualizationTaskExecutor;
   /** Host-startup image preflight; caller/MCP arguments cannot supply this. */
   guestImage?: LoadedVirtualizationGuestImage | null;
+  /** Broker-owned lifecycle required to bound each guest operation. */
+  vmLifecycle?: VirtualizationGuestVmLifecycle;
   /** Optional host-owned verifier required when signed guest provenance is enabled. */
   attestationVerifier?: VirtualizationGuestAttestationVerifier;
 }
@@ -463,16 +902,18 @@ export interface VirtualizationTaskRunnerOptions {
 /**
  * Disabled-by-default Virtualization.framework runner boundary.
  *
- * This class deliberately contains no VM implementation. A future native
- * adapter must provide an immutable guest identity and verified result; a
- * missing, malformed, or changed identity keeps the Broker fail closed.
+ * This class deliberately contains no VM implementation. Startup must bind a
+ * Broker-owned lifecycle and native adapter; without that lifecycle or with a
+ * missing, malformed, or changed guest identity, the runner stays unavailable.
  */
 export class VirtualizationTaskRunner implements TaskRunner {
   readonly available: boolean;
+  readonly publicEnablement: TaskRunnerPublicEnablement;
   readonly mechanism: TaskIsolationMechanism = "virtualization";
   readonly isolationProof: TaskIsolationProof | null;
   private readonly executor: VirtualizationTaskExecutor | undefined;
   private readonly guestImage: LoadedVirtualizationGuestImage | undefined;
+  private readonly vmLifecycle: VirtualizationGuestVmLifecycle | undefined;
   private readonly attestationVerifier: VirtualizationGuestAttestationVerifier | undefined;
   private readonly signedAttestation: SignedVirtualizationGuestAttestation | undefined;
 
@@ -485,6 +926,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
     this.guestImage = options.guestImage === null || options.guestImage === undefined
       ? undefined
       : snapshotLoadedGuestImage(options.guestImage);
+    this.vmLifecycle = options.vmLifecycle;
     this.attestationVerifier = options.attestationVerifier;
     this.signedAttestation = options.executor?.signedAttestation === undefined
       ? undefined
@@ -495,7 +937,9 @@ export class VirtualizationTaskRunner implements TaskRunner {
       options.hostEvidenceAccepted === true &&
       options.executor?.available === true &&
       this.guestImage !== undefined &&
+      this.vmLifecycle?.available === true &&
       guest !== undefined &&
+      sameVirtualizationGuestIdentity(guest, this.vmLifecycle.expectedGuestIdentity) &&
       sameVirtualizationGuestIdentity(guest, this.guestImage.guestIdentity) &&
       options.executor.guestIdentity !== null &&
       sameVirtualizationGuestIdentity(guest, options.executor.guestIdentity) &&
@@ -506,6 +950,9 @@ export class VirtualizationTaskRunner implements TaskRunner {
         options.executor.attestation,
         this.attestationVerifier
       ));
+    // The current Virtualization.framework seam is evidence-gated staging
+    // infrastructure; production exposure requires a separate release review.
+    this.publicEnablement = this.available ? "staging-only" : "unavailable";
   }
 
   close(): Promise<void> {
@@ -513,7 +960,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
   }
 
   async run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult> {
-    if (!this.available || this.isolationProof === null || this.executor === undefined) {
+    if (!this.available || this.isolationProof === null || this.executor === undefined || this.vmLifecycle === undefined) {
       throw new BrokerError("POLICY_DENIED", "Virtualization task boundary is not enabled");
     }
     await this.assertGuestImageStable();
@@ -528,7 +975,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
     }
     requireTaskIsolationProof(this.isolationProof, profile, this.mechanism);
     try {
-      return await this.executor.run({ profile, control, guestIdentity });
+      return await this.vmLifecycle.runTask(() => this.executor!.run({ profile, control, guestIdentity }));
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("UNKNOWN_OUTCOME", "Virtualized task outcome could not be established", true);
@@ -536,7 +983,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
   }
 
   async recoverUnknownTask(request: TaskRecoveryRequest): Promise<TaskExecutionResult> {
-    if (!this.available || this.isolationProof === null || this.executor === undefined ||
+    if (!this.available || this.isolationProof === null || this.executor === undefined || this.vmLifecycle === undefined ||
         typeof this.executor.recoverUnknownTask !== "function") {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest status recovery is not enabled");
     }
@@ -549,7 +996,7 @@ export class VirtualizationTaskRunner implements TaskRunner {
       throw new BrokerError("POLICY_DENIED", "Virtualization guest identity is unavailable or changed");
     }
     try {
-      return await this.executor.recoverUnknownTask(request);
+      return await this.vmLifecycle.runTask(() => this.executor!.recoverUnknownTask!(request));
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("UNKNOWN_OUTCOME", "Virtualized task status could not be established", true);
@@ -692,14 +1139,17 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
-  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "persistence", "credentialIsolation", "processTree", "processTreePolicy", "evidenceRef", "virtualizationGuest"]);
+  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "persistence", "credentialIsolation", "processTree", "processTreePolicy", "evidenceRef", "executableSelection", "virtualizationGuest"]);
   const expectedCredentialIsolation = proof.sandboxMechanism === "sandbox-exec"
     ? "sandbox-exec-empty-env-deny-secret-zones-v1"
-    : "virtualization-no-host-credentials-v1";
+    : proof.sandboxMechanism === "app-sandbox"
+      ? "app-sandbox-container-no-host-credentials-v1"
+      : "virtualization-no-host-credentials-v1";
+  const expectedProcessTree = proof.sandboxMechanism === "app-sandbox" ? "observer-only" : "owned";
   if (
     Object.keys(value).some((key) => !allowedKeys.has(key)) ||
     proof.schemaVersion !== "0.1" ||
-    (proof.sandboxMechanism !== "sandbox-exec" && proof.sandboxMechanism !== "virtualization") ||
+    (proof.sandboxMechanism !== "sandbox-exec" && proof.sandboxMechanism !== "app-sandbox" && proof.sandboxMechanism !== "virtualization") ||
     typeof proof.sandboxProfile !== "string" ||
     !SANDBOX_PROFILE_PATTERN.test(proof.sandboxProfile) ||
     proof.filesystem !== "enforced" ||
@@ -707,12 +1157,17 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     proof.credentials !== "isolated" ||
     proof.persistence !== "isolated" ||
     proof.credentialIsolation !== expectedCredentialIsolation ||
-    proof.processTree !== "owned" ||
+    proof.processTree !== expectedProcessTree ||
     (proof.processTreePolicy !== "single_process" && proof.processTreePolicy !== "owned_group") ||
     typeof proof.evidenceRef !== "string" ||
     !EVIDENCE_REFERENCE_PATTERN.test(proof.evidenceRef) ||
-    (proof.sandboxMechanism === "sandbox-exec" && proof.virtualizationGuest !== undefined) ||
-    (proof.sandboxMechanism === "virtualization" && !isVirtualizationGuestIdentity(proof.virtualizationGuest))
+    (proof.executableSelection !== undefined && proof.executableSelection !== "system-published-root-owned-v1" &&
+      proof.executableSelection !== "descriptor-snapshot-root-helper-v1" && proof.executableSelection !== "app-sandbox-helper-v1") ||
+    (proof.sandboxMechanism !== "virtualization" && proof.virtualizationGuest !== undefined) ||
+    (proof.sandboxMechanism === "app-sandbox" && proof.executableSelection !== "app-sandbox-helper-v1") ||
+    (proof.sandboxMechanism !== "app-sandbox" && proof.executableSelection === "app-sandbox-helper-v1") ||
+    (proof.sandboxMechanism === "virtualization" &&
+      (proof.executableSelection !== undefined || !isVirtualizationGuestIdentity(proof.virtualizationGuest)))
   ) {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is not complete");
   }
@@ -725,9 +1180,10 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     credentials: "isolated",
     persistence: "isolated",
     credentialIsolation: proof.credentialIsolation,
-    processTree: "owned",
+    processTree: proof.processTree,
     processTreePolicy: proof.processTreePolicy,
     evidenceRef: proof.evidenceRef,
+    ...(proof.executableSelection === undefined ? {} : { executableSelection: proof.executableSelection }),
     ...(proof.sandboxMechanism === "virtualization"
       ? { virtualizationGuest: parseVirtualizationGuestIdentity(proof.virtualizationGuest) }
       : {})
@@ -824,6 +1280,11 @@ function virtualizationAttestationMatchesProof(
   } catch {
     return false;
   }
+}
+
+function isCanonicalTaskPath(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 4_096 &&
+    isAbsolute(value) && resolve(value) === value && !value.includes("\0") && !value.includes("\n");
 }
 
 export function requireTaskIsolationProof(

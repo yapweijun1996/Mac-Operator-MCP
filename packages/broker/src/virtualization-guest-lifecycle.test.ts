@@ -9,18 +9,26 @@ import {
   type VirtualizationGuestVmStatusResult
 } from "./virtualization-guest-lifecycle.js";
 
-const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "macos-26.2-vz-1" } as const;
+const guestIdentity = { imageSha256: "a".repeat(64), runtimeVersion: "test-generic-efi-vz-1" } as const;
 const bootId = "boot-0123456789abcdef";
 
 function adapterFixture(options: {
   available?: boolean;
+  prepareTaskInstance?: () => Promise<{ state: "stopped"; guestIdentity: typeof guestIdentity; instanceId: string }>;
   start?: () => Promise<VirtualizationGuestVmStartResult>;
   stop?: () => Promise<VirtualizationGuestVmStopResult>;
   status?: () => Promise<VirtualizationGuestVmStatusResult>;
 } = {}): VirtualizationGuestVmAdapter {
+  let taskInstanceNumber = 0;
   return {
     available: options.available ?? true,
     guestIdentity,
+    taskInstanceIsolation: "fresh-vm-object-per-task-v1",
+    prepareTaskInstance: options.prepareTaskInstance ?? (async () => ({
+      state: "stopped",
+      guestIdentity,
+      instanceId: `vm-test-${String(++taskInstanceNumber).padStart(8, "0")}`
+    })),
     start: options.start ?? (async () => ({ state: "running", guestIdentity, bootId })),
     stop: options.stop ?? (async () => ({ state: "stopped", guestIdentity, bootId })),
     status: options.status ?? (async () => ({ state: "stopped", guestIdentity, bootId: null }))
@@ -66,6 +74,10 @@ test("VM lifecycle is disabled unless explicit host gates and identity match", a
     lifecycle.start(),
     (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
   );
+  await assert.rejects(
+    lifecycle.runTask(async () => undefined),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
 });
 
 test("VM lifecycle serializes idempotent start and identity-bound stop", async () => {
@@ -94,6 +106,144 @@ test("VM lifecycle serializes idempotent start and identity-bound stop", async (
   const idempotentStop = await lifecycle.stop();
   assert.equal(idempotentStop.state, "stopped");
   assert.equal(stops, 1);
+});
+
+test("VM lifecycle gives each task an exclusive start-run-stop cycle", async () => {
+  const events: string[] = [];
+  let bootNumber = 0;
+  let instanceNumber = 0;
+  let activeBootId: string | undefined;
+  const lifecycle = enabledLifecycle(adapterFixture({
+    prepareTaskInstance: async () => {
+      instanceNumber += 1;
+      const instanceId = `vm-instance-${String(instanceNumber).padStart(8, "0")}`;
+      events.push(`reset:${instanceId}`);
+      return { state: "stopped", guestIdentity, instanceId };
+    },
+    start: async () => {
+      bootNumber += 1;
+      activeBootId = `boot-${String(bootNumber).padStart(16, "0")}`;
+      events.push(`start:${activeBootId}`);
+      return { state: "running", guestIdentity, bootId: activeBootId };
+    },
+    stop: async () => {
+      assert.ok(activeBootId);
+      events.push(`stop:${activeBootId}`);
+      const stoppedBootId = activeBootId;
+      activeBootId = undefined;
+      return { state: "stopped", guestIdentity, bootId: stoppedBootId };
+    }
+  }));
+
+  const first = lifecycle.runTask(async () => {
+    events.push("task:one");
+    events.push("result-journaled:one");
+    return "one";
+  });
+  const second = lifecycle.runTask(async () => {
+    events.push("task:two");
+    events.push("result-journaled:two");
+    return "two";
+  });
+  assert.deepEqual(await Promise.all([first, second]), ["one", "two"]);
+  assert.deepEqual(events, [
+    "reset:vm-instance-00000001",
+    "start:boot-0000000000000001",
+    "task:one",
+    "result-journaled:one",
+    "stop:boot-0000000000000001",
+    "reset:vm-instance-00000002",
+    "start:boot-0000000000000002",
+    "task:two",
+    "result-journaled:two",
+    "stop:boot-0000000000000002"
+  ]);
+  assert.equal(lifecycle.state, "stopped");
+});
+
+test("VM lifecycle replaces an already-running runtime VM before task dispatch", async () => {
+  const events: string[] = [];
+  let instanceNumber = 0;
+  const lifecycle = enabledLifecycle(adapterFixture({
+    prepareTaskInstance: async () => {
+      instanceNumber += 1;
+      events.push(`reset:${instanceNumber}`);
+      return { state: "stopped", guestIdentity, instanceId: `vm-instance-${String(instanceNumber).padStart(8, "0")}` };
+    },
+    start: async () => {
+      events.push("start");
+      return { state: "running", guestIdentity, bootId };
+    },
+    stop: async () => {
+      events.push("stop");
+      return { state: "stopped", guestIdentity, bootId };
+    }
+  }));
+  await lifecycle.start();
+  await lifecycle.runTask(async () => { events.push("task"); });
+  assert.deepEqual(events, ["start", "stop", "reset:1", "start", "task", "stop"]);
+});
+
+test("VM lifecycle rejects a reused task VM instance identity before dispatch", async () => {
+  let tasks = 0;
+  const lifecycle = enabledLifecycle(adapterFixture({
+    prepareTaskInstance: async () => ({
+      state: "stopped",
+      guestIdentity,
+      instanceId: "vm-instance-reused"
+    })
+  }));
+  await lifecycle.runTask(async () => { tasks += 1; });
+  await assert.rejects(
+    lifecycle.runTask(async () => { tasks += 1; }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
+  assert.equal(tasks, 1);
+  assert.equal(lifecycle.state, "unknown");
+});
+
+test("VM lifecycle requires an explicit fresh-instance adapter capability", () => {
+  const adapter = adapterFixture();
+  (adapter as { taskInstanceIsolation?: string }).taskInstanceIsolation = "reboot-same-vm-object-v1";
+  assert.throws(
+    () => new VirtualizationGuestVmLifecycle({
+      enabled: true,
+      hostEvidenceAccepted: true,
+      expectedGuestIdentity: guestIdentity,
+      adapter
+    }),
+    /options are invalid/u
+  );
+});
+
+test("VM lifecycle stops after task failure and fences later tasks when hard-stop is unknown", async () => {
+  let stopFails = true;
+  let taskCalls = 0;
+  const lifecycle = enabledLifecycle(adapterFixture({
+    stop: async () => {
+      if (stopFails) throw new Error("synthetic hard-stop failure");
+      return { state: "stopped", guestIdentity, bootId };
+    }
+  }));
+
+  await assert.rejects(
+    lifecycle.runTask(async () => {
+      taskCalls += 1;
+      throw new Error("synthetic task failure");
+    }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME"
+  );
+  assert.equal(lifecycle.state, "unknown");
+  await assert.rejects(
+    lifecycle.runTask(async () => { taskCalls += 1; }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "UNKNOWN_OUTCOME"
+  );
+  assert.equal(taskCalls, 1);
+
+  stopFails = false;
+  await lifecycle.status();
+  await assert.rejects(lifecycle.runTask(async () => { throw new Error("task failure"); }), /task failure/u);
+  assert.equal(lifecycle.state, "stopped");
 });
 
 test("VM lifecycle keeps failed start and status identity mismatches unknown", async () => {

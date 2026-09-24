@@ -11,13 +11,13 @@ const PERSISTENCE_TABLES = [
   "nonces", "schema_migrations", "broker_runtime_fence",
   "approval_nonces", "policy_signer_nonces", "authority_control_nonces",
   "privileged_helper_nonces", "broker_status_nonces", "virtualization_guest_nonces",
-  "keychain_delivery_nonces",
+  "keychain_delivery_nonces", "edge_revocation_nonces",
   "policy_history", "active_policy", "approval_key_config_history",
   "active_approval_key_config", "edge_key_config_history", "active_edge_key_config",
   "authority_key_config_history", "active_authority_key_config", "helper_key_config_history",
   "active_helper_key_config", "policy_signer_config_history", "active_policy_signer_config",
   "guest_attestation_key_config_history", "active_guest_attestation_key_config",
-  "requests", "approvals", "jobs", "audit_events", "revocations", "switches"
+  "requests", "request_tombstones", "approvals", "jobs", "job_tombstones", "audit_events", "revocations", "switches"
 ] as const;
 
 test("BrokerStore rejects unknown core authority columns during startup", async () => {

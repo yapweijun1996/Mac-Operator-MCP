@@ -12,6 +12,7 @@ import {
   type VirtualizationGuestIdentity
 } from "./virtualization-guest-attestation.js";
 import { loadVirtualizationGuestImage } from "./virtualization-guest-image.js";
+import { VirtualizationGuestVmLifecycle } from "./virtualization-guest-lifecycle.js";
 import { VirtualizationTaskRunner, type TaskExecutionResult, type TaskIsolationProof, type VirtualizationTaskExecutor } from "./task-runner.js";
 
 const NOW = 1_800_000_000_000;
@@ -65,9 +66,26 @@ function expectDenied(action: () => unknown): void {
   assert.throws(action, (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED");
 }
 
+function guestLifecycle(guestIdentity: VirtualizationGuestIdentity): VirtualizationGuestVmLifecycle {
+  return new VirtualizationGuestVmLifecycle({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    expectedGuestIdentity: guestIdentity,
+    adapter: {
+      available: true,
+      guestIdentity,
+      taskInstanceIsolation: "fresh-vm-object-per-task-v1",
+      async prepareTaskInstance() { return { state: "stopped", guestIdentity, instanceId: "vm-attestation-test-0001" }; },
+      async start() { return { state: "running", guestIdentity, bootId: "boot-attestation-test" }; },
+      async stop(input) { return { state: "stopped", guestIdentity, bootId: input.bootId }; },
+      async status() { return { state: "stopped", guestIdentity, bootId: null }; }
+    }
+  });
+}
+
 test("signed guest attestation binds claims, key, freshness, and payload digest", () => {
   const keys = generateKeyPairSync("ed25519");
-  const payload = guestAttestation({ imageSha256: "a".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const payload = guestAttestation({ imageSha256: "a".repeat(64), runtimeVersion: "test-generic-efi-vz-1" });
   const signed = signedAttestation(payload, "guest-key-1", keys.privateKey);
   const verified = verifier(keys.publicKey).verify(signed);
   assert.equal(Object.isFrozen(verified), true);
@@ -88,7 +106,7 @@ test("signed guest attestation binds claims, key, freshness, and payload digest"
 
 test("signed guest attestation snapshots reject mutation of retained envelope data", () => {
   const keys = generateKeyPairSync("ed25519");
-  const payload = guestAttestation({ imageSha256: "e".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const payload = guestAttestation({ imageSha256: "e".repeat(64), runtimeVersion: "test-generic-efi-vz-1" });
   const signed = signedAttestation(payload, "guest-key-1", keys.privateKey);
   const snapshot = snapshotSignedVirtualizationGuestAttestation(signed);
   assert.notEqual(snapshot, signed);
@@ -110,7 +128,7 @@ test("signed guest attestation snapshots reject mutation of retained envelope da
 
 test("signed guest attestation rejects envelope mutation, expiry, unknown keys, and revocation", () => {
   const keys = generateKeyPairSync("ed25519");
-  const payload = guestAttestation({ imageSha256: "b".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const payload = guestAttestation({ imageSha256: "b".repeat(64), runtimeVersion: "test-generic-efi-vz-1" });
   const signed = signedAttestation(payload, "guest-key-1", keys.privateKey);
   const check = verifier(keys.publicKey);
   expectDenied(() => check.verify({ ...signed, expiresAtMs: NOW + 120_000 }));
@@ -123,7 +141,7 @@ test("signed guest attestation rejects envelope mutation, expiry, unknown keys, 
 
 test("signed guest attestation rejects inherited and accessor authority fields", () => {
   const keys = generateKeyPairSync("ed25519");
-  const payload = guestAttestation({ imageSha256: "d".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const payload = guestAttestation({ imageSha256: "d".repeat(64), runtimeVersion: "test-generic-efi-vz-1" });
   const signed = signedAttestation(payload, "guest-key-1", keys.privateKey);
   const check = verifier(keys.publicKey);
 
@@ -143,7 +161,7 @@ test("signed guest attestation rejects inherited and accessor authority fields",
 
 test("signed guest attestation lifetime must fit the trusted key validity window", () => {
   const keys = generateKeyPairSync("ed25519");
-  const payload = guestAttestation({ imageSha256: "c".repeat(64), runtimeVersion: "macos-26.2-vz-1" });
+  const payload = guestAttestation({ imageSha256: "c".repeat(64), runtimeVersion: "test-generic-efi-vz-1" });
   const signed = signedAttestation(payload, "guest-key-1", keys.privateKey, NOW, NOW + 60_000);
   const keyPem = keys.publicKey.export({ type: "spki", format: "pem" });
   const notBeforeVerifier = VirtualizationGuestAttestationVerifier.create({
@@ -173,7 +191,7 @@ test("VirtualizationTaskRunner revalidates signed guest provenance before dispat
   const directory = await mkdtemp("/tmp/mac-operator-signed-guest-");
   const imagePath = `${directory}/guest.img`;
   const imageBytes = Buffer.from("signed-guest-image\n", "utf8");
-  const guest: VirtualizationGuestIdentity = { imageSha256: sha256(imageBytes), runtimeVersion: "macos-26.2-vz-1" };
+  const guest: VirtualizationGuestIdentity = { imageSha256: sha256(imageBytes), runtimeVersion: "test-generic-efi-vz-1" };
   const attestation = guestAttestation(guest);
   const signed = signedAttestation(attestation, "guest-key-1", keys.privateKey, NOW, NOW + 60_000);
   let currentNow = NOW;
@@ -219,7 +237,17 @@ test("VirtualizationTaskRunner revalidates signed guest provenance before dispat
       return result;
     }
   };
+  const lifecycle = guestLifecycle(guest);
   const runner = new VirtualizationTaskRunner({
+    enabled: true,
+    hostEvidenceAccepted: true,
+    isolationProof: proof,
+    executor,
+    guestImage: image,
+    vmLifecycle: lifecycle,
+    attestationVerifier: guestVerifier
+  });
+  const unscopedRunner = new VirtualizationTaskRunner({
     enabled: true,
     hostEvidenceAccepted: true,
     isolationProof: proof,
@@ -227,6 +255,11 @@ test("VirtualizationTaskRunner revalidates signed guest provenance before dispat
     guestImage: image,
     attestationVerifier: guestVerifier
   });
+  assert.equal(unscopedRunner.available, false);
+  await assert.rejects(
+    unscopedRunner.run({} as never, { timeoutMs: 1_000, shouldCancel: () => false }),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED"
+  );
   const boundSigned = (runner as unknown as { signedAttestation: SignedVirtualizationGuestAttestation }).signedAttestation;
   assert.equal(Object.isFrozen(boundSigned), true);
   assert.equal(Object.isFrozen(boundSigned.payload), true);
@@ -269,6 +302,7 @@ test("VirtualizationTaskRunner revalidates signed guest provenance before dispat
     );
     assert.equal(calls, 1);
   } finally {
+    await lifecycle.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

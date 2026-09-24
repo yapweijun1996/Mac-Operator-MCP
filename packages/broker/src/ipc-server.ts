@@ -2,9 +2,10 @@ import { chmod, lstat, readdir, rename, stat, symlink, unlink } from "node:fs/pr
 import { createHash, randomUUID } from "node:crypto";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { BrokerError, parseJsonUtf8Strict, type AuthenticatedBrokerResponse, type BrokerResult } from "@mac-operator/contracts";
+import { BrokerError, parseJsonUtf8Strict, type AuthenticatedBrokerResponse, type AuthenticatedBrokerRevocationResponse, type BrokerResult, type BrokerRevocationResult } from "@mac-operator/contracts";
 import type { Broker } from "./broker.js";
 import type { PeerCredentialVerifier } from "./peer-credentials.js";
+import { validateOwnerSocketParentChain } from "./owner-socket-path.js";
 
 export interface IpcServerOptions {
   socketPath: string;
@@ -127,7 +128,7 @@ export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestByt
   });
 }
 
-function writeResult(socket: Socket, result: BrokerResult | AuthenticatedBrokerResponse): void {
+function writeResult(socket: Socket, result: BrokerResult | AuthenticatedBrokerResponse | AuthenticatedBrokerRevocationResponse | BrokerRevocationResult): void {
   if (!socket.destroyed) socket.end(`${JSON.stringify(result)}\n`);
 }
 
@@ -401,12 +402,13 @@ function probeSocket(path: string): Promise<boolean> {
 }
 
 export async function validateSocketParent(socketPath: string): Promise<void> {
-  const parent = await stat(dirname(socketPath));
   const currentUid = process.getuid?.();
-  if (currentUid === undefined || parent.uid !== currentUid) {
+  if (currentUid === undefined) {
     throw new Error("IPC socket directory must be owned by the Broker user");
   }
-  if ((parent.mode & 0o022) !== 0) {
-    throw new Error("IPC socket directory must not be writable by group or other users");
+  try {
+    await validateOwnerSocketParentChain(socketPath, currentUid);
+  } catch {
+    throw new Error("IPC socket directory must not be writable by group or other users and its parent chain must be owner-protected and non-symlinked");
   }
 }
