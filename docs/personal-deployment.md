@@ -15,9 +15,11 @@ actions; an older installed app still retains its earlier R0 grant.
 ## W1 personal project write candidate
 
 The source now supports a separate `w1` owner profile for one canonical Git
-repository under the owner's home. It adds `mac_write_file_atomic`,
+repository under the owner's home. It keeps 27 R1 read tools and adds `mac_write_file_atomic`,
 `mac_apply_patch`, `mac_git_stage`, `mac_git_commit`, and `mac_job_cancel` to
-the 30 R1 tools. The signed policy gives write access only to that project;
+form 32 tools total. Docker's three read tools remain on R1 because the newer
+Broker requires a kernel descriptor launcher that this host does not provide.
+The signed policy gives write access only to that project;
 other home paths remain read-only. Each write requires an attended owner browser
 approval bound to the exact tool, target, and payload. W1 does not grant task
 execution, service control, GUI control, privileged operations, or arbitrary

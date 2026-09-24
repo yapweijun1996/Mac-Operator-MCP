@@ -6,6 +6,9 @@ Owner-only W1 candidate (2026-09-24): the source now provisions a separate
 one-project file/Git write profile with attended browser approval. A signed
 policy binds write authority to one canonical Git repository under the owner's
 home; task execution, service control, GUI, and privileged tools are excluded.
+W1 also omits Docker's three read tools because the new Broker requires an
+unavailable kernel descriptor launcher for Docker; the live R1 rollback keeps
+its existing Docker reads.
 The signed-policy, OAuth scope, auth initialization, and temporary personal
 snapshot provisioning tests pass. The full local regression passes 1,226,
 skips 16, fails 0. The live personal service remains R1 read-only; W1 still

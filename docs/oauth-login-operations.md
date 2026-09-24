@@ -100,9 +100,9 @@ then the existing app correctly remains at its original three-tool R0 list.
 
 The Auth initializer accepts `--grant-profile r1|w1|d1`; `r1` is the default.
 The personal supervisor accepts R1 and the owner project write profile W1.
-W1 advertises the R1 scopes plus `mac.files.write`, `mac.project.write`,
+W1 advertises the R1 scopes except `mac.docker.read`, plus `mac.files.write`, `mac.project.write`,
 `mac.git.write`, and `mac.job.cancel`. Its signed policy enables only the four
-file/Git write tools and job cancellation in addition to R1, and requires an
+file/Git write tools and job cancellation in addition to 27 read tools, and requires an
 attended owner approval for each write. The current live snapshot remains R1;
 see [personal deployment](personal-deployment.md) for the W1 rollout boundary.
 

@@ -51,7 +51,9 @@ test("W1 signed policy allows one owner project and rejects widened authority", 
     const policy = verify(document);
     assert.doesNotThrow(() => assertW1Policy(policy, "owner-1", "mac-operator-auth"));
     assert.deepEqual([...policy.tools.values()].filter(tool => tool.enabled).map(tool => tool.tool).sort(), [...W1_TOOLS].sort());
-    for (const tool of ["mac_task_run", "mac_service_control", "mac_gui_click", "mac_root_helper"] as const) {
+    assert.equal((W1_SCOPES as readonly string[]).includes("mac.docker.read"), false);
+    for (const tool of ["mac_task_run", "mac_service_control", "mac_gui_click", "mac_root_helper",
+      "mac_docker_status", "mac_docker_inspect", "mac_docker_logs"] as const) {
       assert.notEqual(policy.tools.get(tool)?.enabled, true);
     }
     const widerRoots = [...roots, { root_id: "extra-write", path: root, metadata: true, content_read: true,

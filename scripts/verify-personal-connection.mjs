@@ -95,7 +95,7 @@ async function run() {
   const call = async (name, argumentsValue) => {
     const result = await client.callTool({ name, arguments: argumentsValue });
     const text = result.content.find(item => item.type === "text")?.text;
-    assert.ok(text); const payload = JSON.parse(text); assert.equal(payload.ok, true, `${name} did not succeed`); return payload.data;
+    assert.ok(text); const payload = JSON.parse(text); assert.equal(payload.ok, true, `${name} failed: ${payload.result_class ?? "unknown"} ${payload.error?.message ?? ""}`); return payload.data;
   };
   const projectRoot = resolve(process.env.MOPS_VERIFY_PROJECT_ROOT ?? process.cwd());
   const homeRoot = homedir();
@@ -113,9 +113,12 @@ async function run() {
     assert.equal(existsSync(outsidePath), false);
     console.log("W1 out-of-project write denied before approval or file creation.");
   }
-  const dockerStatus = await call("mac_docker_status", { include_images: false, include_storage: false });
-  const containerId = dockerStatus.containers?.[0]?.id;
-  assert.ok(containerId, `${profileLabel} Docker verification requires one observed container`);
+  let containerId;
+  if (!writeProfile) {
+    const dockerStatus = await call("mac_docker_status", { include_images: false, include_storage: false });
+    containerId = dockerStatus.containers?.[0]?.id;
+    assert.ok(containerId, "R1 Docker verification requires one observed container");
+  }
   const verificationCalls = new Map([
     ["mac_app_list", { running_only: true, include_installed: false }],
     ["mac_capabilities", {}],
@@ -146,13 +149,17 @@ async function run() {
     ["mac_storage_analysis", { roots: [projectRoot], top_n: 3, max_depth: 2 }],
     ["mac_system_summary", { include_load: false }]
   ]);
+  if (writeProfile) {
+    verificationCalls.delete("mac_docker_inspect");
+    verificationCalls.delete("mac_docker_logs");
+  }
   for (const [name, argumentsValue] of verificationCalls) {
     console.log(`${profileLabel} call start: ${name}`);
     await call(name, argumentsValue);
     console.log(`${profileLabel} call passed: ${name}`);
   }
   assert.equal(READ_TOOLS.includes("mac_job_status"), true);
-  console.log(`${profileLabel} tool discovery verified: ${listed.tools.length} tools listed; ${verificationCalls.size + 1} real read calls succeeded. mac_job_status remains available for owner-owned Job readback only.`);
+  console.log(`${profileLabel} tool discovery verified: ${listed.tools.length} tools listed; ${verificationCalls.size + (writeProfile ? 0 : 1)} real read calls succeeded. mac_job_status remains available for owner-owned Job readback only.`);
   const revoked = await form("/revoke", { client_id: clientId, token: refreshToken }); assert.equal(revoked.status, 200);
   assert.equal((await request("/mcp", { headers: { authorization: `Bearer ${tokens.access_token}` } })).status, 401);
   refreshToken = undefined;

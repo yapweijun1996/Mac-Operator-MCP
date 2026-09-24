@@ -39,7 +39,7 @@ export function buildW1TargetRules(
   projectRoot: string
 ): PolicyDocument["target_rules"] {
   return [
-    ...buildR1TargetRules(principalId, filesystemRoots, projectRoot),
+    ...buildR1TargetRules(principalId, filesystemRoots, projectRoot).filter(rule => rule.scope !== "mac.docker.read"),
     { rule_id: "owner-w1-file-path", effect: "allow", principal_id: principalId, scope: "mac.files.write", target: { kind: "path", reference: "owner-project" } },
     { rule_id: "owner-w1-file-project", effect: "allow", principal_id: principalId, scope: "mac.files.write", target: { kind: "project", reference: projectRoot } },
     { rule_id: "owner-w1-project", effect: "allow", principal_id: principalId, scope: "mac.project.write", target: { kind: "project", reference: projectRoot } },

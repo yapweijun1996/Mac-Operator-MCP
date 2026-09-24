@@ -9,7 +9,8 @@ export const READ_SCOPES = [
 ] as const;
 export const D1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "mac.git.write", "mac.service.control", "mac.task.run", "mac.job.cancel"] as const;
 export const W1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "mac.git.write", "mac.job.cancel"] as const;
-export const W1_SCOPES = [...READ_SCOPES, ...W1_ADDITIONAL_SCOPES] as const;
+export const W1_READ_SCOPES = READ_SCOPES.filter(scope => scope !== "mac.docker.read");
+export const W1_SCOPES = [...W1_READ_SCOPES, ...W1_ADDITIONAL_SCOPES] as const;
 export const D1_SCOPES = [...READ_SCOPES, ...D1_ADDITIONAL_SCOPES] as const;
 export const OAUTH_SCOPES = D1_SCOPES;
 export type GrantProfile = "r1" | "w1" | "d1";
@@ -24,8 +25,9 @@ export const READ_TOOLS = [
   "mac_project_discover", "mac_project_summary", "mac_read_file", "mac_recent_files", "mac_search_text",
   "mac_service_status", "mac_stat_path", "mac_storage_analysis", "mac_system_summary"
 ] as const;
+export const W1_READ_TOOLS = READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_"));
 export const W1_TOOLS = [
-  ...READ_TOOLS,
+  ...W1_READ_TOOLS,
   "mac_write_file_atomic", "mac_apply_patch", "mac_git_stage", "mac_git_commit", "mac_job_cancel"
 ] as const;
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
