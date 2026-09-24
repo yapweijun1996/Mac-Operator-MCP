@@ -710,14 +710,14 @@ test("process supervisor captures a cryptographic executable content identity", 
 });
 
 test("process supervisor binds an expected executable content identity before spawn", async () => {
-  const executable = process.execPath;
+  const executable = "/bin/echo";
   const identity = await captureProcessPathIdentity(executable, "executable");
   const supervisor = new ProcessSupervisor();
   try {
     await assert.rejects(
       supervisor.run({
         executable,
-        args: ["-e", "process.stdout.write('unexpected')"],
+        args: ["unexpected"],
         cwd: CWD,
         timeoutMs: 2_000,
         outputCapBytes: 100,
@@ -727,13 +727,13 @@ test("process supervisor binds an expected executable content identity before sp
     );
     const result = await supervisor.run({
       executable,
-      args: ["-e", "process.stdout.write('bound')"],
+      args: ["bound"],
       cwd: CWD,
       timeoutMs: 2_000,
       outputCapBytes: 100,
       expectedExecutableContentSha256: identity.contentSha256!
     });
-    assert.equal(result.stdout, "bound");
+    assert.equal(result.stdout.trim(), "bound");
   } finally {
     await supervisor.close();
   }

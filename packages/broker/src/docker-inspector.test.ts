@@ -65,7 +65,7 @@ test("Docker status uses fixed local-only commands and omits raw daemon metadata
 });
 
 test("Docker signature policy verifies the fixed executable before daemon access", async () => {
-  const executable = process.execPath;
+  const executable = "/usr/bin/true";
   const supervisor = new FakeSupervisor([
     result(""),
     result("", { stderr: "Identifier=docker\nTeamIdentifier=9BNSXJN65R\nCDHash=56df8f23b2a6bfd9d54bb07516561e3e24805ccd\n" }),
@@ -88,7 +88,7 @@ test("Docker signature policy verifies the fixed executable before daemon access
 });
 
 test("Docker signature policy denies an untrusted executable before daemon access", async () => {
-  const executable = process.execPath;
+  const executable = "/usr/bin/true";
   const supervisor = new FakeSupervisor([
     result(""),
     result("", { stderr: "Identifier=com.attacker.docker\nTeamIdentifier=9BNSXJN65R\n" })
