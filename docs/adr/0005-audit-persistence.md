@@ -66,6 +66,23 @@ cannot be verified. Production Keychain provisioning/rotation, cross-process
 sidecar locking, and a rollback-resistant external anchor remain acceptance
 gates.
 
+The Broker also exposes a bounded `audit-integrity-v1` summary through the
+authenticated owner-only status channel. The summary re-verifies the complete
+local chain and keyed tail and returns only event count, tail sequence, tail
+digest, and keyed-anchor state; raw audit rows and evidence are not part of the
+status or MCP response contract. A publication outage makes this readback, and
+subsequent request admission, fail closed. This is a host readback boundary,
+not an external immutable audit anchor.
+
+The append-only audit store now has an explicit bounded retention guard. It
+accounts for the persisted textual audit fields and rejects the next write when
+either the configured event-count or logical-byte limit would be crossed. It
+does not delete or compact rows; startup rejects a database already beyond the
+selected bound, so recovery requires an explicit operator export/migration
+procedure. The default bound is 100,000 events or 128 MiB. This is a local
+resource and fail-closed retention boundary, not external immutable storage or
+a completed production retention/recovery policy.
+
 The persistence boundary also publishes `schemas/ledger-records.schema.json`,
 a versioned envelope contract for Request, Approval, Job, and Audit records.
 The verifier compiles it with the MCP contracts, while focused tests reject
@@ -123,6 +140,18 @@ lock fails closed rather than being reclaimed by PID or age. This closes the
 same-target cross-process sidecar race while leaving crash recovery to an
 authenticated operator procedure.
 
+The Broker now has a host-only encrypted audit archive operator boundary. A
+separate configured Keychain item supplies the AES-256-GCM archive key; the
+strict startup-config validator rejects partial configuration or reuse of the
+audit-anchor item. `mac-operator-audit export` acquires the Broker instance
+lock, rejects an active Broker socket, re-verifies the local chain/keyed tail,
+and writes only to the fixed owner-only `<dataRoot>/audit-exports` directory.
+`inspect` is metadata-only and validates the archive structure and hash chain
+without returning event rows. The operation is additive and has no delete,
+compact, database replacement, or MCP route. The operator procedure and
+remaining production acceptance gates are recorded in
+`AUDIT_ARCHIVE_RUNBOOK.md`.
+
 The persistence constructor now enforces a monotonic SQLite `user_version`
 gate. Fresh and legacy databases are upgraded through a versioned forward-only
 registry of idempotent revocation, request, and Job migrations inside one
@@ -149,3 +178,5 @@ frozen SQLite tail remains available to the host recovery path.
 BrokerStore now also validates persisted Job state/result/timestamp/lease/cancellation invariants before exposing a row, and a durable cancellation revision prevents a late active-Job success. This closes a local mutation-state consistency gap but does not satisfy the remaining disk-exhaustion, production identity, rollback, or ADR acceptance gates.
 
 BrokerStore also validates persisted Request state/result/timestamp/approval/Job-link invariants before exposing a row. This prevents malformed or partially migrated request rows from influencing authorization or restart recovery, while preserving the existing forward-only migration and fail-closed `AUDIT_UNAVAILABLE` behavior.
+
+Schema version 18 records the authenticating Edge key identity on Requests and their tombstones. Newly admitted Requests must match the linked Job's Edge and Edge-key provenance; legacy rows retain a nullable identity and can still be read, but cannot be newly linked to a Job with different or newly introduced key provenance. Ledger archive validation continues to accept the earlier Request shape as legacy history.

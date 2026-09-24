@@ -62,12 +62,13 @@ Source: KBID `mac-operator-mcp`, item `65554efe-6a0a-404c-af6a-7670777944b4`
 39. [`mac_ui_observe`](tool-contracts/mac_ui_observe.json) — bounded Accessibility-tree snapshot.
 40. [`mac_ui_action`](tool-contracts/mac_ui_action.json) — one supported action on a fresh approved element.
 41. [`mac_ui_type`](tool-contracts/mac_ui_type.json) — bounded input to an approved non-secure target.
+42. [`mac_service_control`](tool-contracts/mac_service_control.json) — owner-domain LaunchAgent lifecycle with fixed actions and readback.
 
 ## L5 Privileged
 
-42. [`mac_priv_service_control`](tool-contracts/mac_priv_service_control.json) — allowlisted service operation through the helper.
-43. [`mac_priv_package_install`](tool-contracts/mac_priv_package_install.json) — approved package identity/version installation.
-44. [`mac_priv_power`](tool-contracts/mac_priv_power.json) — tightly scoped reboot or shutdown.
+43. [`mac_priv_service_control`](tool-contracts/mac_priv_service_control.json) — allowlisted service operation through the helper.
+44. [`mac_priv_package_install`](tool-contracts/mac_priv_package_install.json) — approved package identity/version installation.
+45. [`mac_priv_power`](tool-contracts/mac_priv_power.json) — tightly scoped reboot or shutdown.
 
 ## Excluded interfaces
 
@@ -75,4 +76,4 @@ V0.1 does not provide `run_shell`, `sudo_shell`, raw Keychain or SSH private-key
 
 ## Tool delivery waves
 
-The catalog groups tools into five delivery waves: `wave_1` control and Broker introspection (tools 1-3), `wave_2` L0/L1 inspection (tools 4-20), `wave_3` L2 developer operations and controlled writes (tools 21-35), `wave_4` app and GUI control (tools 36-41), and `wave_5` privileged helper operations (tools 42-44). These waves sequence capability delivery; they are not roadmap lifecycle phases. Contracts remain planned authority until implementation, verification, release gates, and explicit enablement pass.
+The catalog groups tools into five delivery waves: `wave_1` control and Broker introspection (tools 1-3), `wave_2` L0/L1 inspection (tools 4-20), `wave_3` L2 developer operations and controlled writes (tools 21-35), `wave_4` app, GUI, and owner-domain service control (tools 36-42), and `wave_5` privileged helper operations (tools 43-45). These waves sequence capability delivery; they are not roadmap lifecycle phases. Contracts remain planned authority until implementation, verification, release gates, and explicit enablement pass.

@@ -11,6 +11,15 @@ Privileged operations must cross a separate helper IPC channel. The unprivileged
 
 The command carries only the normalized target, the digest of Broker-validated arguments, the active policy version, approval identity, and mutation-intent identity. It never carries shell text, executable paths, arbitrary arguments, filesystem roots, or credential material. Responses are bound to the complete command digest, bounded to flat redacted evidence, and require an allowlisted postcondition status before success is accepted.
 
+The key-material runtime has a LaunchAgent-bound assembly factory. It reads the
+exact `gui/<uid>/com.mac-operator.broker` LaunchAgent through bounded
+`launchctl print`, binds the returned PID to native PID/start-time identity,
+and constructs the Broker peer policy internally before loading helper key
+material. The caller cannot supply that peer identity. This closes the local
+runtime-assembly gap only: a native production helper executable, signed
+artifact, root-domain installation, live helper readback, and enabled
+capability remain unverified.
+
 Revision `54fe71a` hardens the nested helper boundary: command payloads,
 execution results, verification records, evidence, and nested failures must
 be plain data records before canonicalization or redaction. This preserves the
@@ -228,6 +237,16 @@ success publication, mapping post-dispatch authority loss to retryable
 poller. This remains disabled-by-default implementation evidence, not root
 helper release or privilege enablement.
 
+The Broker now also exposes a separate native root-helper snapshot
+transport/server seam. It authenticates the native peer before parsing a
+bounded SCM_RIGHTS frame, verifies HMAC and signed descriptor attestations,
+rejects replay and stale requests, materializes a private root-owned snapshot,
+and drops the child to the authenticated Broker UID/GID. The current physical
+host is non-root, so the server advertises no capability and refuses startup
+with `POLICY_DENIED`; no LaunchDaemon, helper key/socket installation, live
+root-domain round trip, or privileged scope is enabled. Evidence:
+[`evidence/2026-09-21-root-helper-snapshot-transport.md`](../../evidence/2026-09-21-root-helper-snapshot-transport.md).
+
 Revision `e786002` adds `createPrivilegedHelperRuntimeFromKeyMaterial` for the
 root-helper process. It loads a protected helper key config without opening
 `BrokerStore`, performs local validity-window checks, and requires the
@@ -349,6 +368,51 @@ and `power` independently, and an operation outside the allowlist fails before
 command dispatch. This prevents a service-only Helper runtime from advertising
 or admitting package or power work; production Helper startup remains disabled
 until its authenticated status projection is wired to the Broker boundary.
+
+The current root-helper native candidate adds a separate macOS Security
+framework Ed25519 verification provider. Native request admission now loads a
+protected, revisioned public-key configuration, binds its key ID and digest,
+and verifies the canonical unsigned descriptor-attestation envelope before
+snapshot materialization. The cross-process probe accepts a valid Node-signed
+envelope and rejects an HMAC-valid envelope signed by a different Ed25519 key.
+The public-key configuration is now an explicit root-helper package-plan input,
+separate from the HMAC helper key. Dynamic provider resolution fails closed
+when the required native symbols or algorithm are unavailable. This closes the
+native cryptographic-verification sub-gate only; supported production sandbox
+evidence, protected root-domain distribution, Developer ID/notarization,
+LaunchDaemon installation/readback, recovery, and privileged enablement remain
+open.
+
+A local macOS arm64 experiment confirms that the Node.js 24.21.0 legacy SEA
+workflow can inject and run the version-matched native peer adapter when built
+with `postject` and ad-hoc signed for the test. This is packaging feasibility
+evidence only, not an accepted production packaging decision: Node SEA remains
+under active development, the actual helper entrypoint and dependency bundle
+are not yet assembled, and Developer ID signing/notarization plus root-domain
+installation/readback remain open. The downloaded archive checksum matched
+the official HTTPS checksum manifest, but the detached PGP signature was not
+verified on this host. Evidence:
+`evidence/2026-09-23-privileged-helper-sea-probe.md`.
+
+The root-helper command listener uses a per-user macOS ACL because a
+root-owned `0600` socket is not connectable by the non-root Broker, while a
+Broker-GID socket would expose the native accept boundary to every member of
+that shared group. The listener is root:wheel `0600` with exactly one
+non-inheritable ACE for the captured Broker UID. That ACE grants `write`
+(required by macOS `connect(2)`) and `readsecurity` (needed for independent
+ACL readback), but no group access or socket-data read. The immediate parent
+is root:root `0711`; the root helper rejects extended ACLs on path ancestors.
+Native peer UID/GID and exact Broker PID/start-time authorization remains
+mandatory before parsing, and package readback requires the exact socket ACL
+peer UID. The local native build and regression tests pass; root-to-user
+acceptance/denial and root-domain installation remain unverified, so the
+production release gate remains open.
+
+The package plan also binds the LaunchDaemon `Program` to the signed artifact
+itself or a path inside its signed bundle. A separately verified artifact may
+not authorize an unrelated executable elsewhere under the helper root. A
+regression test covers this mismatch; production signing and installed-service
+readback remain open. Evidence: `evidence/2026-09-23-privileged-helper-signed-launch-target.md`.
 
 ## Consequences and rollback
 

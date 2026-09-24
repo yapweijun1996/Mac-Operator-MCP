@@ -59,7 +59,7 @@ The Edge generates or propagates `request_id`. Tool arguments contain task data 
 
 ## Contract envelope versus functional tool schemas
 
-The repository JSON Schema validates the contract envelope: identity, capability, policy, budget, lifecycle, audit, delivery wave, provenance, and summary fields. All 44 contracts also provide per-tool functional `input_schema` and `output_schema` objects with bounded fields, explicit types, and strict model-controlled input properties. These schemas define the planned API surface; runtime compatibility, authorization enforcement, postcondition behavior, and host safety remain separate evidence gates under `MOP-004`, `MOP-007`, and `MOP-085`.
+The repository JSON Schema validates the contract envelope: identity, capability, policy, budget, lifecycle, audit, delivery wave, provenance, and summary fields. All 45 contracts also provide per-tool functional `input_schema` and `output_schema` objects with bounded fields, explicit types, and strict model-controlled input properties. These schemas define the planned API surface; runtime compatibility, authorization enforcement, postcondition behavior, and host safety remain separate evidence gates under `MOP-004`, `MOP-007`, and `MOP-085`.
 
 ## Safety and execution rules
 

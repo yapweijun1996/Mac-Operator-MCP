@@ -101,6 +101,15 @@ files, plaintext SQLite backup names, WAL/SHM sidecars, or secret-bearing logs
 remain outside the protected Broker directory. A rollback is not complete until
 this final readback and the operator audit completion are durable.
 
+## Audit archive evidence
+
+The host-only encrypted audit export and inspection procedure is documented in
+[AUDIT_ARCHIVE_RUNBOOK.md](AUDIT_ARCHIVE_RUNBOOK.md). It uses the fixed
+`<dataRoot>/audit-exports` directory, a separate configured Keychain archive
+key, and the exact stopped-service/instance-lock precondition before opening
+the live database. The archive is evidence only; SQLite cutover still uses
+`backupTo` and `restoreBackup` into a fresh destination.
+
 ## Current implementation boundary
 
 `BrokerStore.backupTo`, `restoreBackup`, `pruneBackups`, the schema-version gate,

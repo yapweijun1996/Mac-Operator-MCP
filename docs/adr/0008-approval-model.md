@@ -24,7 +24,7 @@ Bind `approval_id`, approver principal, requesting principal, tool and contract 
 
 ## Open decisions
 
-Approver authentication strength, protected issuer-key storage, TTLs by safety class, human approval UI/channel, unattended profile ownership, batch approval, cancellation, human-readable preview delivery, and recovery when approval consumption succeeds but execution does not.
+Approver authentication strength, protected issuer-key storage, TTLs by safety class, production browser approval acceptance, unattended profile ownership, batch approval, cancellation, human-readable preview delivery beyond the current local/browser channels, and recovery when approval consumption succeeds but execution does not.
 
 ## Acceptance evidence
 
@@ -41,6 +41,49 @@ post-read descriptor identity check and byte wipe on change. This prevents an
 in-place config mutation from being parsed during the protected read window;
 it does not provide the missing human approval channel or production issuer
 key distribution.
+
+The 2026-09-22 owner-channel addendum adds a reusable `ApprovalIpcClient` and
+the `mac-operator-approval issue` command. The client signs an exact
+single-use, non-unattended approval, checks the local socket device/inode
+before sending, and verifies the server readback. The CLI uses only an active
+protected issuer-key configuration and never accepts raw key material or an
+unattended flag. This closes the local issuance/client boundary only; it does
+not enable R1 mutations, provide a human UI, assemble the approval server into
+the installed personal service, or establish public OAuth/tools-list parity.
+Evidence: `evidence/2026-09-22-owner-approval-channel.md`.
+
+The reusable Broker approval-issuer runtime is now assembled by the personal
+supervisor behind a fixed owner-controlled configuration. Provisioning writes
+the configuration disabled and does not create or activate issuer keys. An
+enabled configuration must use the fixed personal key/socket paths, restore an
+already activated key, bind the local owner UID/GID, and start after the Broker
+IPC channel. Missing, malformed, partial, non-canonical, or misplaced startup
+configuration fails closed. The local CLI now displays the exact bounded
+approval preview and requires a TTY `APPROVE <approvalId>` confirmation before
+transport. This establishes the terminal confirmation and startup boundaries
+only; browser workflow integration and public mutations remain disabled.
+Evidence: `evidence/2026-09-22-owner-approval-channel.md`.
+
+The Broker now also records a short-lived, non-secret `approval_previews` row
+when an authorized mutation has no matching approval. The row binds the
+requesting principal, tool/contract, normalized target, payload digest, policy
+version, approval class, and expiry; startup rejects preview rows whose
+Request linkage drifts. It is a pending owner-review fact, not an approval and
+does not enable public mutation tools or change the R1 deployment.
+The owner CLI can consume that row with `--request-id`; exact issuance moves
+the row through `pending`, `issued`, and `consumed`, and derives a deterministic
+approval ID so a local crash after IPC success does not require a second random
+approval. Public mutation enablement and production browser approval acceptance
+remain open.
+
+The optional browser owner workflow is now assembled at the Auth boundary when
+the protected personal approval runtime is explicitly enabled. It creates a
+separate approval session, requires owner login plus same-origin CSRF, renders
+only the durable non-secret preview, and sends bounded preview/issuance
+messages over supervisor IPC. Auth never loads the issuer key; the supervisor
+keeps the key and performs the local approval-channel issuance and exact
+preview linkage. Provisioned R1 remains disabled-by-default, so this does not
+enable public mutation or change OAuth/tools-list parity.
 
 The disabled-by-default `mac_ui_type` implementation now uses the same
 single-use `trusted_gui` approval binding as `mac_ui_action`. Its bounded text

@@ -9,7 +9,7 @@ Scopes are explicit grants consumed by Broker policy. They identify an action fa
 
 ## Existing scope vocabulary
 
-The runtime vocabulary is the exact union used by the 44 contracts: `mac.control.read`, `mac.policy.explain`, `mac.system.read`, `mac.storage.read`, `mac.process.read`, `mac.log.read`, `mac.network.read`, `mac.service.read`, `mac.package.read`, `mac.files.read`, `mac.files.search`, `mac.files.hash`, `mac.files.write`, `mac.project.read`, `mac.project.write`, `mac.git.read`, `mac.git.write`, `mac.task.run`, `mac.job.read`, `mac.job.cancel`, `mac.docker.read`, `mac.app.read`, `mac.app.control`, `mac.ui.observe`, `mac.ui.control`, `mac.priv.service`, `mac.priv.package`, and `mac.priv.power`. Automated verification rejects a contract scope absent from this runtime list.
+The runtime vocabulary is the exact union used by the 45 contracts: `mac.control.read`, `mac.policy.explain`, `mac.system.read`, `mac.storage.read`, `mac.process.read`, `mac.log.read`, `mac.network.read`, `mac.service.read`, `mac.package.read`, `mac.files.read`, `mac.files.search`, `mac.files.hash`, `mac.files.write`, `mac.project.read`, `mac.project.write`, `mac.git.read`, `mac.git.write`, `mac.task.run`, `mac.job.read`, `mac.job.cancel`, `mac.docker.read`, `mac.app.read`, `mac.app.control`, `mac.ui.observe`, `mac.ui.control`, `mac.service.control`, `mac.priv.service`, `mac.priv.package`, and `mac.priv.power`. Automated verification rejects a contract scope absent from this runtime list.
 
 ## Proposed rules
 
@@ -19,7 +19,7 @@ The runtime vocabulary is the exact union used by the 44 contracts: `mac.control
 4. Tool contracts list every required scope. Multiple scopes use AND unless the contract explicitly defines an alternative set.
 5. Target authority is evaluated separately. Possessing `mac.files.read` does not authorize every path.
 6. Filesystem scope never overrides F0/F1 denial or F2-F5 classification.
-7. Session scopes are an immutable subset of the principal grant and are bounded by issue time, expiry, audience, and policy version.
+7. Session scopes are an immutable subset of the principal grant and are bounded by issue time, expiry, audience, policy version, and a Broker-enforced maximum lifetime of 24 hours.
 8. Revocation may target principal, session, scope grant, approval, tool, or capability switch.
 
 ## Principal model
@@ -28,7 +28,7 @@ A principal record needs a stable opaque ID, issuer, subject, status, grant set,
 
 ## Session model
 
-A session binds principal ID, session ID, audience, issued-at, expiry, projected exact scopes, authentication strength, Edge identity, and policy compatibility. Session concurrency and maximum lifetime remain open. A session cannot add scopes beyond its principal grant.
+A session binds principal ID, session ID, audience, issued-at, expiry, projected exact scopes, authentication strength, Edge identity, and policy compatibility. Broker admission also enforces durable request/session capacity and rejects a principal session whose declared lifetime exceeds 24 hours. A session cannot add scopes beyond its principal grant. Refresh behavior remains an issuer-side policy decision and must not extend a session beyond the Broker maximum.
 
 ## Parameterized authority
 
@@ -43,7 +43,7 @@ The model must define precedence and propagation for principal, session, scope, 
 ## Open decisions
 
 - Principal issuer and stable subject source.
-- Session concurrency and refresh behavior.
+- Session refresh behavior and whether shorter profile-specific lifetimes are required.
 - Revocation storage, propagation latency, and restart persistence.
 - Whether any wildcard form is ever necessary.
 - Delegation and unattended-principal rules.

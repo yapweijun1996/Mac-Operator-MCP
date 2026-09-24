@@ -31,6 +31,27 @@ For each dimension, report `ENFORCED`, `PARTIAL`, `UNAVAILABLE`, or `UNKNOWN`, w
 
 Choose the supported sandbox, restrict `mac_task_run` profiles to proven guarantees, move execution into a stronger isolation boundary, or remove the capability. Document residual risk in ADR-0006 and update the tool contract before enablement.
 
+## 2026-09-24 containment candidate reassessment
+
+The physical double-fork/`setsid` escape is not repaired by the current
+process-group cleanup. The candidate audit found that launchd's
+`AbandonProcessGroup=false` behavior is scoped to the job's process group;
+Endpoint Security exposes fork as a notification, not an authorization event
+that can deny the fork; and the installed SDK explicitly rejects applying a
+second `sandbox_init` profile to a process already in a sandbox. Do not promote
+these as fixes for the App Sandbox escape.
+
+The preferred candidate for untrusted project code is one short-lived
+Virtualization guest per task, with host-approved inputs/outputs staged through
+the existing narrow guest transport, no host credentials or shared host
+directories, and a host-side VM stop plus `stopped` readback on every terminal
+path. This remains a candidate only: the host has not booted a valid guest, the
+Broker host lacks the required signed virtualization entitlement, and the
+physical hostile-descendant test has not been run inside a guest. Keep
+`mac_task_run` disabled until those gates and the full credential/filesystem/
+network/restart acceptance matrix pass. See
+[`evidence/2026-09-24-process-containment-candidate-audit.md`](evidence/2026-09-24-process-containment-candidate-audit.md).
+
 ## 2026-09-12 host evidence
 
 The first hostile boundary probe ran on a Mac mini `Mac16,10` (Apple M4, 16 GB), macOS `26.2` build `25C56`, arm64, Node `v25.5.0`. The complete redacted result is [`evidence/2026-09-12-sandbox-research.json`](evidence/2026-09-12-sandbox-research.json), SHA-256 `3dac37728965894e313dcfa2332ef2dfb3ece3a2e75d407bbe1865f86633f077`. The candidate was `/usr/bin/sandbox-exec`; the platform marks it deprecated, so this is evidence about current behavior, not a production selection.

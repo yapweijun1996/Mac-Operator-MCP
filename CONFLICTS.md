@@ -1,9 +1,9 @@
 # SSOT Conflict Register
 
 Status: Closed representation conflicts; runtime and architecture decisions remain tracked in task/ADR documents
-Last reviewed: 2026-09-12
+Last reviewed: 2026-09-22
 
-No conflict was found with the locked topology, Broker authority, security invariants, F0-F5 filesystem model, excluded interfaces, or 44-tool membership. The two representation conflicts identified during KB materialization are resolved in the canonical repository representation. KB-MCP writeback remains pending orchestration review and is listed in `KB_SYNC.md`.
+No conflict was found with the locked topology, Broker authority, security invariants, F0-F5 filesystem model, excluded interfaces, or the current 45-tool membership. The two representation conflicts identified during KB materialization are resolved in the canonical repository representation; the later owner-domain `mac_service_control` addition is recorded in the current catalog and scope model. KB-MCP writeback remains pending orchestration review and is listed in `KB_SYNC.md`.
 
 ## C-001 — Mandatory tool fields absent from individual KB metadata
 
@@ -19,15 +19,15 @@ Freeze a deterministic repository taxonomy and map every tool exactly once. `aud
 
 ### Affected artifacts
 
-`TOOL_CONTRACT_STANDARD.md`, `tool-contracts/tool-contract.schema.json`, all 44 files under `tool-contracts/`, `tool-contracts/README.md`, `TASK.md`, `VERIFICATION.md`, `KB_SYNC.md`.
+`TOOL_CONTRACT_STANDARD.md`, `tool-contracts/tool-contract.schema.json`, all 45 files under `tool-contracts/`, `tool-contracts/README.md`, `TASK.md`, `VERIFICATION.md`, `KB_SYNC.md`.
 
 ### Migration impact
 
-The 44 contracts no longer contain `null` for either mandatory field. Contract envelope and per-tool functional input/output schema closure are complete; `MOP-084` is `DONE` for documentation/schema work. No tool changed from `planned`, no authority changed, and no runtime implementation was added.
+The 45 contracts no longer contain `null` for either mandatory field. Contract envelope and per-tool functional input/output schema closure are complete; `MOP-084` is `DONE` for documentation/schema work. No tool changed from `planned`, no authority changed, and no runtime implementation was added by this representation fix.
 
 ### Verification evidence
 
-The documentation consistency check confirmed exactly 44 contracts, no null mandatory fields, schema-valid envelope and functional schema objects, one audit class per tool, and semantic strategies for read, write, Git, GUI, execution, and privileged tools. Runtime postcondition behavior, compatibility, and host safety remain unverified and are still governed by the release gates.
+The documentation consistency check confirmed exactly 45 contracts, no null mandatory fields, schema-valid envelope and functional schema objects, one audit class per tool, and semantic strategies for read, write, Git, GUI, execution, service-control, and privileged tools. Runtime postcondition behavior, compatibility, and host safety remain unverified and are still governed by the release gates.
 
 ## C-002 — Two incompatible meanings of phase
 
@@ -43,7 +43,7 @@ Use `tool_delivery_wave` for contract sequencing (`wave_1` through `wave_5`) and
 
 ### Affected artifacts
 
-`TOOL_CONTRACT_STANDARD.md`, `TOOL_CATALOG.md`, `tool-contracts/tool-contract.schema.json`, all 44 files under `tool-contracts/`, `tool-contracts/README.md`, `ROADMAP.md`, `EPIC.md`, `TASK.md`, `VERIFICATION.md`, `README.md`, `KB_SYNC.md`.
+`TOOL_CONTRACT_STANDARD.md`, `TOOL_CATALOG.md`, `tool-contracts/tool-contract.schema.json`, all 45 files under `tool-contracts/`, `tool-contracts/README.md`, `ROADMAP.md`, `EPIC.md`, `TASK.md`, `VERIFICATION.md`, `README.md`, `KB_SYNC.md`.
 
 ### Migration impact
 
@@ -51,7 +51,7 @@ The old contract field `phase: Phase N` maps directly to `tool_delivery_wave: wa
 
 ### Verification evidence
 
-The consistency check confirmed no canonical contract contains a top-level `phase`, every contract has one valid `tool_delivery_wave`, catalog links remain one-to-one with the 44 contracts, and roadmap references now distinguish lifecycle phases from delivery waves.
+The consistency check confirmed no canonical contract contains a top-level `phase`, every contract has one valid `tool_delivery_wave`, catalog links remain one-to-one with the 45 contracts, and roadmap references now distinguish lifecycle phases from delivery waves.
 
 ## Resolution rule
 

@@ -1,8 +1,1527 @@
 # Mac-Operator-MCP Progress
 
-Status: Phase 1 Broker and authenticated MCP Edge foundation in progress
+## Current overall progress: 92%
+
+Linux EFI guest boot (2026-09-24): after an earlier repack lost the leading dot
+from Alpine's `.boot_repository` marker, an xorriso-based derivative preserved
+the original Rock Ridge tree and EFI boot record while replacing only GRUB's
+serial-console configuration. A development-only, ad-hoc-signed probe booted
+Alpine 3.24.2 ARM64 through initramfs, mounted the read-only ISO, installed its
+28 local base packages, and reached `Welcome to Alpine Linux 3.24` plus the
+`localhost login:` prompt. The VM had no network, directory-sharing, or socket
+devices. Host hard-stop read back `stopped`, with zero later serial bytes.
+This verifies real guest userspace startup and host stop, but not hostile-
+descendant containment, per-task reset/isolation, or production signing. Direct-
+kernel Alpine/Fedora attempts still fail before serial output. Production
+`mac_task_run` remains disabled; overall completion remains 92% (2 PASS, 23
+OPEN, 4 BLOCKED). Evidence:
+`evidence/2026-09-24-process-containment-candidate-audit.md`.
+
+Guest process stop canary (2026-09-24): two runs with fresh EFI variable stores
+passed (2/2). After root login over guest serial, a nested background-shell
+command launched a `setsid` descendant; its delayed alive marker arrived after
+the parent command returned. Each host hard-stop read back `stopped`; neither
+run produced a late marker during the 12-second post-stop window, and each had
+zero post-stop serial bytes. This is repeatable development-only stop evidence,
+not full guest isolation, reset/reuse, or production-runner acceptance. Public
+`mac_task_run` remains disabled and overall progress remains 92%. Evidence:
+`evidence/2026-09-24-process-containment-candidate-audit.md`.
+
+Initial Virtualization prerequisite recheck (2026-09-24): at that checkpoint,
+the physical SDK probe reported framework support but did not attempt VM boot.
+Native lifecycle
+source syntax and focused lifecycle/native tests pass (24/24). Installed Node reads back no
+Virtualization entitlement and the host has zero valid signing identities; a
+disposable ad-hoc-signed Node copy with that entitlement passes native readback
+and reaches the native image-validation boundary. This enables local testing
+of the entitlement guard, not framework acceptance or VM boot at that point.
+Later development-only EFI/guest canaries are recorded above. No production
+gate changed: hostile-process containment is unverified, public `mac_task_run`
+stays disabled, and the completion audit remains 2 PASS / 23 OPEN / 4 BLOCKED.
+Evidence:
+`evidence/2026-09-24-process-containment-candidate-audit.md`.
+
+Initial containment candidate review (2026-09-24): current Apple documentation
+and the installed SDK disqualify launchd same-process-group cleanup, Endpoint Security
+fork notifications, and nested `sandbox_init` as fixes for the reproduced
+double-fork/`setsid` escape. A disposable Virtualization guest per untrusted
+task remains the preferred candidate because the host can stop the VM and
+require a `stopped` readback. A development-only, ad-hoc-entitled probe now
+boots Alpine to its login prompt; two fresh-store `setsid` descendant canaries
+did not outlive host VM stop. Broader guest reset/isolation, the production-
+shaped Broker, and production acceptance remain unverified. No
+production gate changed; `mac_task_run` remains disabled and overall progress
+remains 92%. Evidence:
+`evidence/2026-09-24-process-containment-candidate-audit.md`.
+
+Physical App Sandbox quarantine canary (2026-09-24): the hostile D1 task
+confirmed that a double-fork/`setsid` descendant survives the helper response.
+The canary cleaned up only the captured PID/start-time identity, then verified
+that runtime and restart quarantine kept `mac_task_run` unavailable; a new
+approved request was denied without consuming approval or creating a Job. The
+physical canary passes as a quarantine test, not as proof of process
+containment. It also caught and fixed startup ledger validation that wrongly
+compared approval/Job intent targets to a later canonical Request target. Full
+regression passes 1,219, skips 16, fails 0; docs, matrix, process-boundary, and
+whitespace checks pass. The completion audit remains 92%; public task execution
+stays gated. Evidence: `evidence/2026-09-24-app-sandbox-quarantine-canary.md`.
+
+Persistent host-task quarantine now survives Broker restart. Any unresolved
+unknown host `mac_task_run` Job disables the configured host Runner and closes
+it when observed; a runtime `UNKNOWN_OUTCOME` poisons and closes it immediately.
+The quarantine clears only when the Job carries the exact no-fork ownership
+proof, no descendants, and a durable recovery completion audit of
+`PROCESS_ABSENT` or `PROCESS_DRAINED`. Missing or malformed identity and store
+read failures stay denied. Virtualization guest Jobs remain on their separate
+recovery path. Focused quarantine tests pass 5/5; full `npm test` passes
+1,217/1,233 (16 skipped, 0 failed); lint, docs, matrix, process-boundary, and
+diff checks pass. This is an admission/restart guard, not a fix for the proven
+App Sandbox double-fork/`setsid` escape; public `mac_task_run` remains gated and
+overall progress stays 92%. Evidence:
+`evidence/2026-09-24-persistent-host-task-quarantine.md`.
+
+App Sandbox canary re-verification: corrected the two opt-in fixtures to claim
+`observer-only`, matching the current proof contract. The full regression passes
+1,212, skips 16, and fails 0; the fixed-path physical executor probe passes, and
+the authenticated Auth→Edge→Broker App Sandbox canary passes 1/1. The hostile
+double-fork/`setsid` rerun still fails containment: it returned
+`UNKNOWN_OUTCOME` in 27 ms while the escaped process survived the response.
+The probe killed only the recorded PID/start-time identity and verified cleanup.
+This repairs the evidence path, not the isolation boundary; public `mac_task_run`
+remains gated and completion remains 92%. Evidence:
+`evidence/2026-09-23-app-sandbox-executor-rerun.md`.
+
+App Sandbox shared-container admission follow-up: the fixed helper uses one
+App Sandbox container for all task runs, so per-run directory modes cannot
+isolate concurrent tasks sharing that identity. The Broker now permits only
+one run at a time and permanently stops that executor instance after an
+uncertain process outcome or post-spawn transport failure; executor and runner
+availability readback then changes to unavailable. Focused admission tests pass
+2/2, and runner quarantine coverage passes 1/1; the focused App Sandbox suite
+passes 15/15. Full regression passes 1,212, skips 16, fails 0. This does not
+contain escaped descendants or survive Broker restart as a durable quarantine;
+the candidate remains staging-only and overall completion stays 92%. Evidence:
+`evidence/2026-09-23-app-sandbox-shared-container-admission.md`.
+
+System-published Virtualization guest images now fail closed in both the
+TypeScript preflight and native VM-creation boundary if extended ACL readback
+fails or finds an ACL on the image or any canonical ancestor. Both native
+modules share the same ACL reader, which handles regular files/directories and
+rejects symlinks. The Darwin regression adds an allow-write ACL to temporary
+fixtures and detects both. Full `npm test` passes 1,209, skips 16, fails 0.
+This closes a path-integrity gap only: no VM was booted or image acquired,
+production task gates remain closed, and completion stays 92%. Evidence:
+`evidence/2026-09-23-virtualization-image-acl-boundary.md`.
+
+App Sandbox process-tree proof now records the physical macOS result accurately:
+the helper's events are `observer-only`, not proof that a double-fork/`setsid`
+descendant is owned or terminated. `TaskIsolationProof` rejects the false
+`app-sandbox`/`owned` claim, while the runner stays staging-only. The physical
+escape remains unresolved and public `mac_task_run` remains gated. The latest
+full regression passes 1,208 tests, skips 16, and fails 0; the completion audit
+remains partial at 92%. See ADR-0006.
+
+The staged Virtualization task path now serializes guest task/status work as
+fresh VM object → start → operation/result-journal callback → hard-stop. The
+native adapter recreates the `VZVirtualMachine` object from startup-bound
+configuration only after confirmed stop and restores its virtio listener; the
+Broker callback persists authenticated task results before teardown. A failed
+reset or stop leaves VM state unknown and blocks later tasks. The runner
+requires the Broker-owned lifecycle, identity-bound to its task proof, image,
+and executor; without it the runner is unavailable rather than executing
+directly. The image remains read-only and actual guest-state reset remains
+unverified because no native guest VM was booted. A
+timing-sensitive process-supervisor fixture was strengthened after the first
+full suite exposed its 150 ms race. Latest `npm test`: 1,208 passed, 16 skipped,
+0 failed. No native guest VM was booted; `mac_task_run` and VT-SBX gates remain
+closed, so overall completion remains 92%. Evidence:
+`evidence/2026-09-23-virtualization-task-scoped-lifecycle.md`.
+
+The Broker LaunchAgent plan now requires both its executable and JavaScript
+entrypoint to live inside the signed `MacOperatorBroker.app`, closing the gap
+where one artifact could be verified while launchd ran files outside it. The
+negative path tests, app-bundle signature test, filesystem fixtures, and
+three-component handoff tests pass (30/30). This is a plan-level integrity
+boundary only: no production Broker package was built or installed, and no
+Developer ID signing, notarization, VM boot, or capability enablement occurred.
+The full regression captured with that earlier LaunchAgent evidence passed
+1,201/1,217 (16 skipped, 0 failed); lint,
+docs, matrix, process-boundary, and diff checks pass. The read-only completion audit
+remains partial at 92% (2/29 PASS, 23 OPEN, 4 BLOCKED): Developer ID/production
+acceptance, Accessibility authorization, and installed service readback are
+still unavailable. Evidence:
+`evidence/2026-09-23-broker-signed-launch-binding.md`.
+
+The read-only Virtualization.framework host audit confirms that this physical
+Mac mini supports the framework, but no local guest image/boot source was
+found, the current Node host is ad-hoc signed without entitlements, and no VM
+boot was attempted. The existing native lifecycle seam therefore remains a
+candidate only. Any future virtualization entitlement belongs on the
+unprivileged Broker executable that hosts the native bridge, not the privileged
+root helper; obtaining a guest boot source is a separate approval-dependent
+step. No completion gate changed, so the verified overall percentage remains
+92%. Evidence: `evidence/2026-09-23-virtualization-host-prerequisites.md`.
+
+The virtualization bridge now reads the effective entitlement of its current
+process through Security.framework and checks it in both the Broker adapter and
+the native VM-creation entry point. An absent, false, or unreadable entitlement
+is denied before VM configuration. This closes an authorization omission in
+the staged VZ path; it does not sign or entitlement-enable the Broker, provide
+a guest image, or enable task execution. Overall completion remains 92%.
+
+The repository process-boundary verifier now reviews the three previously
+unregistered privileged-helper build/probe scripts. Their child-process calls
+explicitly disable shells and provide bounded execution settings; the verifier
+reports 15 reviewed scripts and zero unreviewed entries. This static audit does
+not establish a signed/installed helper or change the completion gate. Evidence:
+`evidence/2026-09-23-process-boundary-script-audit.md`.
+
+Latest App Sandbox process-tree adversarial rerun found a release-blocking
+containment gap: a double-forked grandchild called `setsid`, escaped the task
+process group, and remained alive after the helper returned `UNKNOWN_OUTCOME`.
+The probe killed that exact PID/start-time identity and verified cleanup, but
+the executor's single-process policy failed. Public task enablement must remain
+disabled until the OS-enforced process boundary is corrected and this fixture
+passes. The read-only machine audit remains partial at 92% (2/29 PASS,
+23 OPEN, 4 BLOCKED, 0 FAIL); Developer ID is absent, Accessibility is denied,
+and the production service labels and acceptance record are absent. Evidence:
+`evidence/2026-09-23-app-sandbox-executor-rerun.md`.
+
+The guest-task restart-loss gap is now addressed at the Broker source level.
+After the virtualization transport returns a mapped, verified response, the
+Broker writes a bounded, redacted result to SQLite with an atomic audit pair;
+schema version 19 validates the journal against its admitted request and audit
+evidence at startup. Restart reconciliation rechecks policy and revocations,
+uses a valid local journal before considering a guest status lookup, and never
+replays execution; unresolved, oversized, truncated, or unverified results
+remain `UNKNOWN`. Encrypted ledger archives retain this recovery evidence.
+Build/typecheck pass, and the four focused suites pass 176 tests with 6
+explicit skips and 0 failures. This does not implement or validate per-task VM
+boot/hard-stop: no approved guest image or VM cycle is available, and public
+`mac_task_run`/VT-SBX gates remain closed. Overall completion remains 92%.
+Evidence: `evidence/2026-09-23-virtualization-guest-result-journal.md`.
+
+A separate fixed-script Seatbelt path now has physical evidence: the Broker
+binds strict UTF-8 script bytes to a digest, delivers the snapshot through
+bounded stdin to the fixed system `/bin/sh` route, and keeps script text/path
+out of argv. The physical probe verified task-root write/read, denied sibling
+root and synthetic `.env` reads, an empty `HOME`/`SSH_AUTH_SOCK` environment,
+denied direct loopback access, and a denied subshell fork with no marker. The
+focused opt-in suite passed 17 tests, skipped 5, and failed 0. The installed
+SDK says nested `sandbox_init` is unsupported for a process already in a
+sandbox, so it cannot be used to repair the App Sandbox helper boundary. This
+does not repair the observed double-fork escape or promote deprecated
+`sandbox-exec`; its runner remains staging-only and overall progress remains
+92%. The full regression passes 1,195/1,211 (16 skipped); lint, docs, matrix,
+and the direct Seatbelt probe pass. Evidence:
+`evidence/2026-09-23-seatbelt-script-runner.md`.
+
+The earlier simple-fork App Sandbox executor baseline ran on macOS arm64 using
+the existing ad-hoc helper bundle without replacing it. The fixed script path
+denied outside-file, direct network, persistence, and credential-zone probes; the combined
+hostile run allowed one Broker-proxied loopback request and returned
+`UNKNOWN_OUTCOME` for a background-fork attempt; the host observed one child
+PID/start-time identity during execution and confirmed that exact identity was
+absent afterward. Probe canaries now use random UUIDs and exclusive creation,
+avoiding deletion or overwrite of pre-existing PID-named files. This remains
+development-probe evidence: VT-SBX-01/02 and production `mac_task_run` remain
+blocked, and overall progress stays 92%.
+Evidence: `evidence/2026-09-23-app-sandbox-executor-rerun.md`.
+
+The privileged-helper runtime now has a signed-app SEA entrypoint and
+checksum-pinned app-bundle builder. Descriptor parsing rejects duplicate JSON
+keys and invalid UTF-8; the builder verifies the official Node.js v24.21.0
+arm64 archive and Node.js Foundation signature, compiles and runtime-smokes
+the peer addon against matching headers, stages the runtime/dependency graph,
+signs/verifies the bundle, and refuses ad-hoc builds with enabled
+capabilities. The temporary macOS arm64 packaging probe passed, including
+dynamic ESM import and code signature readback; typecheck, focused helper tests
+(6/6), and lint pass. No
+Developer ID signing, notarization, install, LaunchDaemon start, or host
+readback was performed. Overall progress remains 92% while those production
+acceptance gates and independent review are open. Evidence:
+`evidence/2026-09-23-privileged-helper-app-builder.md`.
+
+Separate read-only adversarial review found a native-module path race, helper
+authorization that could outlive its Job lease, and an implicit replay-guard
+durability contract. Source mitigations now protect module parent directories,
+cap command expiry at the active Job lease, and recheck lease liveness. The
+root key-material startup now creates its own SQLite replay ledger beneath the
+planned helper root, enforces an owner-only state directory/database, and
+accepts only trusted durable guard implementations. A separate-process
+regression writes a command in one Node process and proves both its request ID
+and nonce are rejected in fresh processes after restart. Focused helper,
+runtime, package, and ledger tests pass 52/52; the full suite passes 1,185/1,200
+with 15 skips and no failures. Typecheck, lint, docs, and matrix checks pass.
+Overall progress remains 92%: the production LaunchDaemon executable
+entrypoint and binary packaging, root-host readback, Developer ID/release
+evidence, and independent review are still open. The completion audit remains
+fail-closed and `partial`: host readiness is blocked, with 2/29 requirement
+rows PASS, 23 OPEN, and 4 BLOCKED.
+Evidence: `evidence/2026-09-23-privileged-helper-replay-ledger.md` and
+`evidence/2026-09-23-privileged-helper-review-remediations.md`.
+
+The production root-helper command socket now uses a per-user macOS ACL rather
+than the shared Broker GID: the socket is root:wheel `0600`, with one
+non-inheritable Broker-UID ACE granting connect/write and ACL-metadata readback
+only. The immediate parent is root:root `0711`; the root helper checks that
+socket ancestors have no extended ACLs before binding. Package readback checks
+the exact socket owner, mode, and ACL peer UID. Native UID/GID/PID-start-time
+checks still reject other peers before request parsing; Broker and authority
+sockets remain `0600`. Typecheck, native build, focused helper/runtime/package
+tests (64/64), and the full suite (1,188/1,203, 15 skipped, 0 failed) pass. A
+real root-to-user connection/denial test and root-domain installation were not
+run; no root service was started. Overall progress remains 92% because
+production packaging, signing, and host acceptance gates remain open. Evidence:
+`evidence/2026-09-23-privileged-helper-cross-uid-socket.md`.
+
+Privileged-helper package planning now binds launchd's actual `Program` to the
+artifact whose signature and notarization are checked: the executable must be
+the signed artifact itself or reside inside its signed bundle. A native
+executable elsewhere under the helper root is rejected, and both unit and CLI
+fixtures use the signed app bundle's `Contents/MacOS` executable. Typecheck,
+lint, and the full suite pass (1,188/1,203; 15 skipped, 0 failed). No helper
+was installed or started. Overall progress remains 92% because Developer ID,
+notarization, production installation/readback, and host acceptance are still
+open. Evidence:
+`evidence/2026-09-23-privileged-helper-signed-launch-target.md`.
+
+A local macOS arm64 packaging probe now passes with the official Node.js
+24.21.0 runtime: it creates a legacy SEA blob, injects it into a copied Node
+binary with pinned `postject`, loads the matching-version native peer adapter,
+and verifies process identity, SQLite, and ignored `NODE_OPTIONS`. The official
+archive SHA-256 matched the HTTPS release checksum manifest, but its detached
+PGP signature could not be checked because this host has no `gpg`/`gpgv`. The
+probe uses only temporary files and an ad-hoc signature; it is not the
+production helper entrypoint, Developer ID signing, notarization, installation,
+or launchd readback. Overall progress remains 92% and production packaging is
+still open. Evidence: `evidence/2026-09-23-privileged-helper-sea-probe.md`.
+
+The key-material helper runtime now has a LaunchAgent-bound assembly factory:
+it captures the exact Broker service PID/start-time identity before opening
+helper key material, then derives the native peer policy internally. Positive
+startup/runtime coverage passes, and an invalid service label is rejected
+before the injected launchctl executor or helper-root path is touched. This is
+not the missing native helper executable or LaunchDaemon deployment; signing,
+root-host installation/readback, and capability enablement remain open.
+Evidence: `evidence/2026-09-23-privileged-helper-launchd-key-material-runtime.md`.
+
+Privileged service control now implements all five actions already declared by
+the Broker and tool contract: start, stop, restart, enable, and disable.
+Enablement changes use fixed `/bin/launchctl` argv and strict bounded
+`print-disabled system` parsing, with state readback before success; malformed
+or truncated output fails closed. Interrupted service commands now become
+`UNKNOWN_OUTCOME` for durable Job reconciliation instead of being mislabeled
+as cancelled or failed. The focused helper/service/contract set passes 51/51;
+the full suite passes 1,185/1,200 with 15 skips and 0 failures. No service
+enablement or other host state was changed. Root-helper release, actual
+privileged capability enablement, and external independent review remain open. Evidence:
+`evidence/2026-09-23-privileged-service-enable-disable.md`.
+
+Native descriptor handoff rejection now collects and closes every delivered
+SCM_RIGHTS descriptor before rejecting malformed or over-limit frames. The
+protocol remains capped at four descriptors; the bounded receive buffer covers
+XNU's 512-descriptor per-mbuf limit so an over-limit peer cannot leak installed
+FDs. Current Darwin regression tests pass 6/6, the full suite passes 1,172 of
+1,187 with 15 skips and 0 failures, and Clang static analysis reports no
+warnings. The current lockfile also has 0 reported npm advisories across 120
+dependencies. This does not close independent security review or production
+helper installation. Evidence: `evidence/2026-09-21-native-descriptor-handoff-frame.md`
+and `evidence/2026-09-23-dependency-audit.md`.
+
+The host-owned LaunchAgent handoff now exposes a separate read-only
+`readback:macos:launchagents` mode for post-restart verification. It reuses
+protected status material and the exact launchd, PID/start-time, plist,
+signature, metadata, and status observers; it performs no bootstrap, bootout,
+authority mutation, or capability change and fails closed on absent material.
+Focused handoff coverage passes 5/5. This improves operator recovery evidence
+but does not close live production installation, Developer ID, active-work
+termination, or final host acceptance. Evidence:
+`evidence/2026-09-23-launchagent-restart-readback-cli.md`.
+
+The LaunchAgent controller now persists an owner-only deployment journal under
+the planned install root. It records only the manifest digest, operation,
+dependency order, bounded component state, and recovery phase; atomic
+same-directory publication and descriptor readback leave an explicit
+`in-progress` marker across a controller crash, while `recovery-required`
+remains fail-closed. Journal coverage passes 4/4, including a symlinked-ancestor
+negative. This is controller-state
+evidence only; physical production crash recovery and installed operator
+acceptance remain open. Evidence:
+`evidence/2026-09-23-launchagent-deployment-journal.md`.
+
+The shared ProcessSupervisor now performs one final Broker-owned cancellation
+check after child close and immediately before terminal result publication.
+This prevents a kill-switch or session revocation that lands between periodic
+polling and final readback from being reported as `SUCCEEDED`; uncertain
+cleanup still remains `UNKNOWN_OUTCOME`. Focused ProcessSupervisor coverage
+passes 47/47, and the latest full regression passes 1,165 of 1,180 tests,
+with 15 skips and 0 failures. Evidence:
+`evidence/2026-09-23-process-final-cancellation-fence.md`.
+
+The durable Job ledger now requires a `cancelled` terminal row to retain the
+Broker-owned cancellation marker that caused it. `BrokerStore.finishJob`
+rejects an unmarked cancellation, and startup validation fails closed on a
+tampered cancelled row before reconciliation can run. Focused persistence,
+state, and row-invariant coverage passes 69/69; the latest full regression
+passes 1,165 of 1,180 tests, with 15 skips and 0 failures. This closes only
+the persisted terminal-state slice; physical termination, broader recovery,
+and production acceptance remain open. Evidence:
+`evidence/2026-09-23-job-terminal-invariants.md`.
+
+Atomic approved-Job idempotency replay now returns `SUCCEEDED` only when the
+existing Job is already a successful terminal Job owned by the same session.
+Cross-session reuse now conflicts without persisting a Request. The general
+Job-creation idempotency path also rejects a different session, and new
+Request-to-Job links require exact Edge identity; legacy rows without Edge
+provenance remain startup-readable but cannot be newly linked. The general
+Job-creation path also refuses queued or running Job reuse, preventing a
+second request from executing active work. Startup validation fails closed if
+a persisted successful Request points to a non-successful Job. Focused
+persistence and Request/Job linkage coverage passes 66/66; the latest full
+regression passes 1,165 of 1,180 tests, with 15 skips and 0 failures. Evidence:
+`evidence/2026-09-23-request-job-idempotency-fence.md`.
+
+Queued Job recovery now clears service-control and privileged-helper metadata
+when work is cancelled before dispatch, including kill-switch, revocation,
+and Broker-restart cancellation. Running Jobs converted to `UNKNOWN` retain
+their recovery metadata. Focused persistence coverage passes 66/66; the
+latest full regression passes 1,165 of 1,180 tests, with 15 skips and 0
+failures. Evidence:
+`evidence/2026-09-23-queued-job-recovery-metadata.md`.
+
+AuthStore revocation delivery now has a bounded, ordered, fail-closed bridge
+through the personal service and authenticated Edge-to-Broker IPC. A notice is
+removed only after transport acknowledgement; send failure or queue overflow
+stops the service instead of silently dropping durable revocation state. A
+post-ready Edge delivery failure also terminates the Edge child so the parent
+supervisor stops. The real macOS AuthStore-to-Broker integration passes, the
+affected Auth/Edge regression passes 39/39, and the latest full regression
+passes 1,165 of 1,180 tests, with 15 skips and 0 failures. Remote issuer
+delivery, installed
+operator recovery, restart readback, and production host acceptance remain
+open. Evidence:
+`evidence/2026-09-23-auth-revocation-bridge-boundary.md`.
+
+Filesystem worker mutations now have a Broker-owned pre-mutation gate. Atomic
+writes and every changed file in a textual patch pause after precondition and
+volume checks, revalidate active authority in the parent, and proceed only
+after explicit release; rollback writes and unlinks use the same gate; a denied gate leaves the target untouched and drains
+worker capacity. The full regression now passes 1,150 of 1,165 tests, with 15
+skips and 0 failures. Physical remount durability, kernel-level behavior,
+production task isolation, and host acceptance remain open. Evidence:
+`evidence/2026-09-23-filesystem-pre-mutation-gate.md`.
+
+The ProcessSupervisor now retains a bounded census of process groups whose
+leaders were observed as owned descendants, so strict exit/recovery sampling
+continues after a detached group leader exits. A real Darwin regression covers
+the observed child -> new session -> grandchild window; the full regression
+passes 1,151 of 1,166 tests, with 15 skips and 0 failures. Arbitrary
+post-snapshot process groups, kernel isolation, production task isolation, and
+installed operator recovery remain open. Evidence:
+`evidence/2026-09-23-process-group-census-expansion.md`.
+
+The Job ledger now closes a cancellation revision race for all worker-backed
+adapters: if cancellation increments the persisted revision before a late
+worker return, only a conservative `UNKNOWN` completion may reconcile against
+the current running row, with lease identity preserved; late success remains
+rejected. Focused build and cancellation/revocation regression passes 88/88
+with 6 skips and 0 failures. Physical process termination, kernel-level
+cancellation, production task isolation, and installed operator recovery remain
+open. Evidence: `evidence/2026-09-23-cancellation-revision-fence.md`.
+
+The local secret-output boundary now adds explicit, explainable signatures for
+Stripe restricted keys, SendGrid, Hugging Face, Sentry, Vercel, and Supabase.
+The same signatures are denied before content/environment/argument publication
+and removed during bounded log redaction; unknown high-entropy values remain
+allowed unless they match an explicit rule. Focused expansion coverage passes
+9/9. Broader opaque-secret coverage, false-positive analysis, and production
+release evidence remain open. Evidence:
+`evidence/2026-09-23-secret-signature-corpus.md`.
+
+The default Broker Docker adapter now uses a separate descriptor-required
+ProcessSupervisor rather than inheriting ordinary pathname execution from the
+shared adapter supervisor. Missing native descriptor-exec capability fails
+before spawn with no pathname fallback; focused Docker and ProcessSupervisor
+coverage passes 61/61 with one real-Docker test skipped. Native launcher and
+production Docker evidence remain open. Evidence:
+`evidence/2026-09-23-docker-descriptor-gate.md`.
+
+Broker authentication now rejects signed principal sessions longer than a
+fixed 24-hour lifetime, preventing a caller from converting a valid key into
+long-lived authority by declaring a distant expiry. The existing expiry
+regression covers the overlong case; refresh behavior and remote issuer
+evidence remain open. Evidence:
+`evidence/2026-09-23-session-lifetime-boundary.md`.
+
+The host-only ledger archive boundary now exposes explicit `ledger-export`,
+`ledger-inspect`, and stopped-service `ledger-rotate` operations. `BrokerStore`
+validates persisted state, writes a bounded owner-only AES-256-GCM
+`mac-operator-ledger-export-v1` snapshot, and verifies the canonical snapshot
+digest before rotation. Schema v17 tombstones retain terminal Job status and
+archive provenance while preserving Request replay rejection and Job
+idempotency rejection; active, queued/running, and `unknown` rows remain live.
+Focused ledger export/rotation plus archive-retention coverage passes 9/9;
+the audit and Ledger archive export suites pass 11/11, and the latest full
+ regression is 1,164 total, 1,149 passed, 15 skipped, and 0 failed. The
+explicit owner-only `archive-prune` operation retains recent artifacts and
+deletes only exact old encrypted archive names after header, symlink,
+owner/mode/size/inode checks. Export and rotation now perform a bounded
+free-space preflight before temporary-file creation. Production archive
+lifecycle, physical disk exhaustion, production Keychain readback, and
+acceptance remain open. Evidence:
+`evidence/2026-09-23-ledger-export-recovery.md` and
+`LEDGER_ARCHIVE_RUNBOOK.md`.
+
+The privileged-helper handoff now has separate `plan:privileged-helper` and
+`apply:privileged-helper` entrypoints. Planning is owner-only and read-only;
+apply requires exact operation confirmation and a root process before host
+mutation, then uses protected-key loading, double service readback,
+authenticated helper status/readback, and inverse recovery. Handoff coverage
+passes 3/3, and no host service or privilege state was changed. Real
+Developer ID/notarization, Keychain provisioning, root-domain installation,
+live readback, and capability enablement remain host-gated. Evidence:
+`evidence/2026-09-23-privileged-helper-handoff.md`.
+
+The latest physical-Darwin recheck confirms the disabled root-helper candidate's
+native peer/FD transport, HMAC response proof, bounded sandbox child,
+attestation rejection, authority polling, and revocation fail-closed behavior;
+the production serve and public task scope remain explicitly disabled. Host
+readiness still reports zero Developer ID identities, Accessibility denied, and
+all target Mac-Operator LaunchAgent/LaunchDaemon labels absent. `npm audit
+--omit=dev --audit-level=high` reports zero vulnerabilities.
+
+The release and production-acceptance file boundaries now share a protected
+parent-chain validator. It rejects user-controlled symlinks and group/other
+writable ancestors while allowing only the fixed macOS `/var`, `/tmp`, and
+`/etc` system aliases. Final evidence reads are descriptor-backed with
+`O_NOFOLLOW`, bounded reads, and post-read inode/metadata stability checks.
+Focused release tests pass 3/3 and acceptance tests pass 6/6; the latest full
+regression is 1,164 total, 1,149 passed, 15 skipped, and 0 failed. This is
+code-level hardening; production signing and host acceptance gates remain
+unchanged.
+
+Tool-contract safety is now enforced consistently at three boundaries: the
+canonical JSON Schema, the build-time verifier, and the Edge registry. The
+approval policy is a closed enum; the shared invariant rejects non-idempotent
+read-only tools, mutation contracts without required postcondition
+verification, all non-read-only contracts using trusted-read approval, and
+privileged contracts without the privileged audit/approval pair. The focused
+Edge registry suite passes 16/16 and all 45 contracts validate.
+Evidence: `evidence/2026-09-23-contract-approval-policy-boundary.md`.
+
+The shared `VERSION_COMPATIBILITY` matrix now governs Edge↔Broker,
+Broker↔Helper, Authority Control, and capability discovery. Runtime parsers
+use the matrix rather than boundary-specific version literals, and unknown or
+cross-domain version pairs fail closed. The focused cross-boundary regression
+passes 40/40; production packaging, upgrade, rollback, and cross-runtime
+evidence remain open.
+Evidence: `evidence/2026-09-23-version-compatibility-boundary.md`.
+
+Broker semantic resource budgets now bound multiplicative adapter work before
+filesystem planning or dispatch: search and project discovery use root-count ×
+result-slot limits, directory trees use depth × entry slots, and storage
+analysis uses resolved-root × ranking-slot × depth limits. Focused coverage
+passes 3/3, and the cross-session process-family Job admission regression
+passes 1/1; physical disk exhaustion, kernel-level cancellation, broader
+adapter resource evidence, and production archive artifact lifecycle remain
+open. Evidence:
+`evidence/2026-09-23-semantic-resource-budgets.md`.
+
+The audit privacy/integrity boundary now has an authenticated bounded
+`audit-integrity-v1` host readback. `BrokerStore` re-verifies the complete
+local chain and keyed tail before returning only count/sequence/digest facts;
+raw evidence is not exposed through MCP or the status response, and a keyed
+publication outage fails closed. Append-only retention now rejects the next
+write at explicit event/byte bounds and rejects over-limit state at startup.
+Focused readback coverage passes 70/70 and retention coverage 4/4. External
+immutable anchoring, production export/recovery policy, installed operator
+authentication, and final release evidence remain. Evidence:
+`evidence/2026-09-22-audit-integrity-readback.md` and
+`evidence/2026-09-22-audit-retention-boundary.md`.
+
+Audit export/recovery now adds an owner-only encrypted
+`mac-operator-audit-export-v1` snapshot path behind the existing authenticated
+chain/keyed-tail readback. It validates strict archive structure, sequence and
+hash continuity, evidence JSON, event hashes, wrong keys, ciphertext tamper,
+symlink substitution, and target-swap publication paths. Archives are bounded,
+mode `0600`, published without overwrite, and fsynced at both file and
+directory boundaries; inspection exposes manifest metadata only. The combined
+export/persistence slice passes 65/65, the focused CLI/config/Keychain-source
+coverage passes 23/24 with one opt-in Keychain skip, and the latest full
+    regression is 1,164 total, 1,149 passed, 15 skipped, and 0 failed. External immutable anchoring,
+deployed archive access control, production Keychain identity, and final
+acceptance evidence remain open. Evidence:
+`evidence/2026-09-23-audit-export-recovery.md`.
+
+The production Broker startup seam now supports an explicit, optional operator
+LaunchAgent authority channel. It requires the fixed owner-domain service ID
+`gui/<uid>/com.mac-operator.authority`, a separate key configuration and Unix
+socket, bounded `launchctl` readback, and native PID/start-time identity before
+constructing the separately authenticated Authority Control runtime. Missing,
+malformed, substituted, or non-running operator identity fails closed; the
+default startup path and live R1 deployment are unchanged. Focused native
+identity coverage passes 10/10 and the service-startup suite passes 10/10.
+This is a code-level boundary only: operator packaging, signed installation,
+Keychain provisioning, persistent lifecycle, direct protocol acceptance, and
+rollback remain open. Evidence:
+`evidence/2026-09-22-operator-launchd-identity-boundary.md`.
+
+The stable operator path now has a code-level `authority-control-service.js`
+proxy and a separate owner-only operator socket. Interactive CLI frames are
+peer-checked and HMAC-verified by the proxy, then forwarded through the
+Broker-owned Authority Control socket; the Broker remains final authority.
+`com.mac-operator.authority.plist.in` and the read-only
+`npm run plan:macos:authority` compiler now emit fixed entrypoint/config and
+inverse lifecycle actions. Authority readback rejects unsafe parent-chain
+symlinks and double-samples the owner-only socket device/inode identity. The
+host-owned coordinator now also has a dedicated Authority readback type and a
+three-component transaction: `Authority -> Edge -> Broker` for
+install/upgrade/rollback because Broker binds both stable peer identities at
+startup, and the exact reverse for uninstall, with reverse-order recovery.
+Authority is never represented as Broker status. Proxy, plan,
+service-config, template, coordinator, and combined handoff coverage passes
+1/1, 4/4, 10/10, 3/3, 12/12, and 4/4 respectively. The combined
+`plan:macos:launchagents`/`apply:macos:launchagents` handoff accepts an
+optional Authority component and exact inverse manifest. No service was
+installed or started, and production signing, live readback, and recovery
+remain open. The shared owner-socket parent-chain validator now protects
+Authority Control, Broker Status, Approval IPC, Virtualization guest sockets,
+and the base Broker IPC listener from ancestor symlink and
+unprotected-directory substitution. The latest full repository regression is
+1,164 total, 1,149 passed, 15 skipped, and 0 failed.
+
+The separately authenticated privileged-helper boundary now has concrete,
+disabled-by-default adapters for all three representable operations:
+`mac_priv_service_control`, `mac_priv_package_install`, and `mac_priv_power`.
+Package installation resolves only a host-owned exact catalog entry, verifies
+root-protected artifact metadata and digest before and after the fixed
+`/usr/sbin/installer` command, and requires exact `pkgutil` receipt readback.
+Power control uses only fixed `/sbin/shutdown` argv, never forwards the caller's
+reason to the child, bounds future schedules, and reports accepted/scheduled
+handoff rather than claiming reboot completion. The composition factory
+publishes only independently available handlers; no helper key, root service,
+privileged capability, package installation, reboot, or shutdown was enabled.
+The Broker dispatch integration now invokes the actual composed adapters through
+approval, Job lease, signed command issuance, authenticated helper IPC with HMAC
+response verification and durable replay guard, fixed command runners, and
+postcondition mapping, with assertions for the fixed installer and shutdown
+boundaries. Recovery coverage also exercises unresolved outcomes, Job-ledger
+cancellation, and authority revocation over the authenticated helper path.
+Focused adapter/composition/dispatch/recovery coverage passes 29/29 and the
+full regression is 1,164 total, 1,149 passed, 15 skipped, and 0 failed. Evidence:
+`evidence/2026-09-22-privileged-operation-adapters.md`.
+
+UNKNOWN privileged Jobs now have an operation-specific, independently
+authenticated `mac_job_status` recovery readback. The request binds the exact
+Job identity, owner session, operation, target, payload digest, and policy
+version; the helper and Broker authority poll both verify that binding. Service,
+package, and power adapters return only `matches`, `mismatch`, or `unavailable`.
+The Broker keeps the Job UNKNOWN and never retries the mutation command.
+BrokerStore restart recovery selects only privileged rows reconciled from
+`BROKER_RESTART` with their persisted payload descriptor. Focused status/restart
+and helper readback coverage passes; production live readback remains open.
+
+Durable replay admission now has capacity and exact-expiry retention coverage
+for all nine Broker ledger families, including approval issuance, plus
+fail-closed malformed-row readback. The focused persistence/replay slice
+passes 74/74; production remote-issuer evidence remains open. Evidence:
+`evidence/2026-09-22-replay-ledger-retention-rerun.md`.
+
+D1 developer mutation exposure now has a uniform production startup gate for
+atomic writes, patches, Git staging/commits, and Broker-owned Job cancellation.
+The gate defaults to unavailable, rejects staging-only readiness before public
+listener publication, and projects the affected tools as runtime-unavailable
+before approval consumption. `mac_task_run` remains behind its separate
+TaskRunner gate. The fixed production service entrypoint now reads the same
+strict readiness enum from the owner-only startup config. The live R1
+deployment is unchanged. Evidence:
+`evidence/2026-09-22-developer-public-exposure-gate.md`.
+
+Production GUI/D1 exposure now also requires a fresh owner-only
+`macos-host-readiness-v1` record matching the current UID/platform/architecture
+and the requested release/GUI readiness. Missing, stale, inconsistent, or
+cross-host records fail startup. The safe recorder is
+`npm run record:host-readiness -- <absolute-path>`. Evidence:
+`packages/broker/src/host-readiness.ts`.
+
+The physical D1 mutation, Git, and named-task canaries were rerun after the
+exposure-gate changes and passed in disposable state. They remain staging-only
+and do not widen the live R1 profile. Evidence:
+`evidence/2026-09-22-d1-physical-canary-rerun.md`.
+
+The opt-in D1 user-service canary now also passes the real Auth -> HTTPS Edge
+-> Broker -> Job -> launchd readback path for `mac_service_control`: missing
+approval is denied, exact owner approval permits disposable LaunchAgent
+start/stop, and exact cleanup leaves no service or plist residue. The canary
+also fixed the Edge request-ID contract mismatch and strict output-schema
+evidence mismatch found during end-to-end execution. This remains staging-only
+and does not widen live R1. Evidence:
+`evidence/2026-09-22-d1-auth-edge-broker-user-service-canary.md`.
+
+G1 now has an explicit production exposure gate for Accessibility-dependent
+tools: `mac_app_focus`, `mac_ui_observe`, `mac_ui_action`, and `mac_ui_type`.
+Production Broker startup defaults this gate to unavailable and rejects any
+non-production readiness state before listener publication; direct staging
+probes remain separate. The current host still reports Accessibility denied,
+so no GUI capability was enabled. Evidence:
+`evidence/2026-09-22-gui-public-exposure-gate.md`.
+
+Production task exposure now has an explicit release-state gate. Every
+TaskRunner reports `unavailable`, `staging-only`, or `production`; deprecated
+`sandbox-exec` and the current Virtualization.framework seam cannot claim
+production, while App Sandbox and Root Helper require their exact released
+native artifact evidence. Production Broker startup refuses to expose an
+enabled `mac_task_run` policy when the selected available runner is staging-only.
+This separates physical canaries from public capability exposure without
+changing the live R1 deployment. Evidence:
+`evidence/2026-09-22-production-task-exposure-gate.md`.
+
+The Root Helper package plan now requires persisted release evidence for the
+exact native executable that LaunchDaemon would run. The plan validates the
+artifact digest/identity, Developer ID signature, notarization, and exact
+program-path equality, then stores a frozen copy so callers cannot mutate the
+evidence after planning. Mismatched artifact and LaunchDaemon program paths
+are covered by focused negative tests. This remains a non-executing release
+boundary; no root-domain installation or live service state changed.
+The companion `create:release:manifest` command now derives artifact identity
+and runs the same preflight before writing an exclusive owner-only manifest;
+the current ad-hoc artifact is rejected without creating output. Evidence:
+`evidence/2026-09-22-release-manifest-generator.md`.
+
+The install-plan lifecycle now has a real disposable Darwin arm64 probe. It
+uses the plan's atomic plist write and fixed launchctl bootstrap/bootout argv,
+verifies running LaunchAgent identity readback, uninstalls the plist, and
+proves the target label is absent afterward. It remains ad-hoc staging evidence
+and does not widen live R1. Evidence:
+`evidence/2026-09-22-install-plan-launchagent-lifecycle.md`.
+
+The packaged startup smoke also passed with real temporary Edge and Broker
+LaunchAgents: TLS readiness, authenticated Unix IPC, owner-only sockets,
+Keychain audit-anchor ACL delivery, Broker status readback, and full bootout
+cleanup all passed. The live R1 snapshot was rechecked afterward. Evidence:
+`evidence/2026-09-22-packaged-launchagent-smoke.md`.
+
+The real temporary Keychain ACL rerun also passed 23/23 focused credential and
+peer/native checks. It verified executable-bound ACL readback, rejection of a
+different executable identity, wrong-digest retirement rejection, exact item
+retirement, and finally-path cleanup without exposing secret bytes. This is
+user-domain staging evidence only; stable signed installed identity,
+production helper material, and rotation remain open. Evidence:
+`evidence/2026-09-22-keychain-acl-readback.md`.
+
+The machine-readable completion audit is now available through
+`npm run verify:completion`. It checks the current owner-only evidence set and
+invokes the read-only host-readiness probe with an explicit no-shell boundary;
+it emits `mac-operator-completion-audit-v1` and exits non-zero until every
+production gate is verified. The current result is intentionally `partial`
+with 92% progress, zero Developer ID identities, Accessibility denied, and
+all target production service labels absent. Evidence:
+`evidence/2026-09-22-completion-audit-command.md`.
+
+The Edge startup boundary now exposes an optional owner-only HMAC-authenticated
+service-status IPC channel with freshness, replay, socket-identity, and
+fail-closed lifecycle checks. The explicit
+`npm run apply:macos:launchagents` handoff consumes primary and exact-inverse
+owner-only manifests, production-only signature policy, authenticated Edge and
+Broker status readback, and authority-gated uninstall; status keys are
+digest-checked and wiped after use. The read-only plan compiler remains
+non-mutating, while the apply command requires explicit `--apply` and never
+changes live R1 by default. Edge/status focused coverage passes 8/8, and the
+latest full regression reports 1,104 total, 1,089 passed, 15 skipped, and 0
+failed.
+Evidence: `evidence/2026-09-22-macos-launchagent-apply-boundary.md`.
+
+The deployment handoff now has a strict, read-only macOS LaunchAgent plan
+compiler: `npm run plan:macos:launchagents -- --manifest <absolute-path>`.
+It validates an owner-only manifest, delegates Edge/Broker invariants to the
+existing plan builders, and emits exact service IDs, plist digests, launchd
+argv, signature policy, metadata, capabilities, and preflight data. The
+compiler remains read-only; a separate explicit apply command consumes a
+primary/recovery pair only after production release, authenticated status, and
+authority gates are present. Development ad-hoc planning requires an explicit
+probe flag, while production planning remains fail-closed until release
+evidence exists. Evidence:
+`evidence/2026-09-22-macos-launchagent-plan-cli.md`.
+
+The root-helper handoff now has a matching strict, read-only plan compiler:
+`npm run plan:root-helper -- --manifest <absolute-path>`. It validates the
+owner-only manifest through the existing native root LaunchDaemon plan builder
+and emits exact release, protected-path, rollback, and four-socket metadata
+with `apply.available: false`. The separate host-only apply handoff requires
+root and exact operation confirmation but was not run; no key material, plist,
+launchd state, live R1, or root-helper state changed. Evidence:
+`evidence/2026-09-22-root-helper-snapshot-plan-cli.md`.
+
+The host-owned deployment boundary now coordinates the two reviewed
+LaunchAgent executors as one transaction. Install, upgrade, and rollback run
+Edge before Broker; uninstall reverses the order after authority shutdown. A
+Broker/Edge failure invokes only the completed component's prebound inverse
+action, and failed recovery returns an explicit `recovery-required` state
+instead of claiming success. The concrete plan-set controller now calls the
+existing component executors, rejects ad-hoc or non-notarized primary/inverse
+plans in production mode, pairs exact inverse operations, and requires the
+authority-gated Broker uninstall path. Focused coordinator/controller coverage
+passes 7/7. This is host-owned staging logic only; it does not enable MCP scope
+or change live R1.
+Evidence: `evidence/2026-09-22-macos-launchagent-coordinator.md`.
+
+The privileged-helper package now requires independent final readback for all
+three local sockets: root-owned helper command, Broker-owned Broker IPC, and
+Broker-owned authority polling. Each socket is sampled twice and binds its
+canonical path, UID/GID, restricted mode, device, and inode; its parent chain
+rejects arbitrary symlinks and permits only fixed macOS `/var` and `/tmp`
+aliases. Path-only helper status cannot claim endpoint identity. Focused
+package coverage passes 21/21,
+including owner/path/mode/symlink drift negatives. This closes the code-level
+three-socket composition boundary only; root installation, production signing,
+and live root readback remain gated. Evidence:
+`evidence/2026-09-22-privileged-helper-three-socket-readback.md`.
+
+The root-helper snapshot package now applies the same independent four-socket
+readback boundary to its root helper, root-helper status, Broker, and Broker
+authority endpoints.
+The executor composes separate socket sources only after launchd/process/plist
+identity checks, and final validation rejects path, owner, mode, device, or
+inode drift before release-evidence validation. A production-shaped host
+observer now independently samples launchd, process identity/credentials,
+plist identity, release evidence, and all four sockets; the executor prefers
+that observer over a generic source callback. Root-helper package coverage
+and authenticated status coverage pass 14/14. The explicit host-only apply
+handoff now binds non-install preconditions to authenticated root-helper status
+readback and retains fixed rollback/absence readback. The service entrypoint
+now binds status metadata before startup and refuses an unbound status socket.
+This remains code-level
+evidence; no root-domain installation or live helper state changed. Evidence:
+`evidence/2026-09-22-root-helper-snapshot-plan-cli.md`.
+
+The owner-only control plane now has a verified Auth-status-to-Edge-to-Broker
+revocation event boundary. A versioned HMAC event crosses real Unix IPC,
+Broker replay protection is durable across restart, and the named session is
+revoked before queued or active work can continue. A bounded Edge watcher also
+polls the existing owner-authenticated status channel for recently accepted
+sessions, so an idle active Job can be revoked without a new MCP request.
+Direct Auth-to-Edge revocation push is now implemented in the working tree:
+durable Auth grant revocation emits a strict non-secret child notice, the owner
+supervisor forwards it only between the fixed Auth and Edge children, and Edge
+reuses its authenticated Broker revocation event. Focused Auth/Edge/parser
+coverage passes 26/26; the live personal R1 snapshot was not restarted. Production
+signed deployment and final scope enablement remain open. Latest full
+regression after this change: 1,076 passed, 15 skipped, 0 failed out of
+1,091.
+
+The current host release/GUI readiness evidence is now reproducible through
+the read-only `npm run probe:host-readiness` command. It emits the versioned
+`macos-host-readiness-v1` record and exits non-zero until the required release,
+GUI, and persistent-install prerequisites are present; it does not change
+permissions, policy, OAuth grants, or service state.
+
+The fixed Auth/Edge supervisor child boundary now explicitly sets
+`shell: false`, matching the Broker process supervisor and App Sandbox helper;
+all three production spawn paths therefore declare the no-shell boundary in
+source rather than relying on a runtime default.
+The same boundary is now a repeatable gate through
+`npm run verify:process-boundaries`; it scans production Auth/Edge/Broker
+sources and repository probe/verification scripts, and currently reports
+three reviewed production files plus eleven reviewed scripts with zero
+unreviewed child-process entries. Evidence:
+`evidence/2026-09-22-script-process-boundary-audit.md`.
+The audit now also fails closed when a reviewed path loses its explicit
+working directory, minimal environment, timeout/output bound, or asynchronous
+termination path.
+The physical Darwin system-published executable probe also passes for the
+fixed `/bin/launchctl`, `/usr/bin/sandbox-exec`, and `/usr/bin/printf` paths.
+This is host readback for the fixed adapter boundary only; it does not close
+the separate production sandbox, signing, or arbitrary executable-selection
+gates. Evidence:
+`evidence/2026-09-22-production-process-boundary-audit.md`.
+
+The Root Helper path now has the same explicit release provenance discipline as
+the App Sandbox helper: server, runtime, Broker task, and transport capability
+assembly require `development-probe` or `production`; production requires the
+exact native artifact plus Developer ID/notarization evidence. Missing or
+incomplete evidence remains fail-closed, and no live root-helper service was
+installed or enabled. Evidence:
+`evidence/2026-09-22-root-helper-release-gate.md`.
+The corresponding read-only verifier is available through
+`npm run build && npm run verify:release:root-helper -- --manifest <canonical-path>`;
+it accepts only an owner-only manifest and regular native artifact.
+
+The requirement-by-requirement completion audit is recorded in
+`evidence/2026-09-22-completion-audit.md`. It confirms the governed R1 path and
+staging boundaries while keeping production signing, Accessibility, supported
+sandbox selection, persistent lifecycle, privileged installation, rollback,
+and independent P0/P1 review explicitly open.
+
+The physical App Sandbox helper and executor reruns now verify the fixed `/bin/sh`
+descriptor-script path together with staged-root read/write, outside-root and
+credential denial, direct network denial, the Broker-owned loopback proxy,
+hostile fork detection, `UNKNOWN_OUTCOME` preservation, and cleanup. This
+includes the standalone helper's descriptor handoff, attestation/HMAC, and
+container/outside-write cases. A native descriptor-lifetime fix now preserves
+the cwd descriptor across helper control-descriptor cleanup. This advances D1
+isolation evidence only; arbitrary executable selection and public task
+enablement remain closed. Evidence:
+`evidence/2026-09-22-d1-app-sandbox-executor-rerun.md`.
+The executor now also requires host-owned SHA-256 identity evidence for the
+exact helper artifact and rechecks that identity after pathname spawn. This
+reduces helper substitution risk while leaving Developer ID, notarization,
+Gatekeeper, and persistent production lifecycle gates open.
+The App Sandbox startup boundary now separates `development-probe` from
+`production`: production construction requires the exact helper bundle's
+Developer ID/CDHash and notarization readback, and each production run
+rechecks the bundle tree identity before spawn. The current host has no valid
+Developer ID identity, so the ad-hoc helper remains probe-only.
+The helper-specific release verifier is now reproducible with
+`npm run build && npm run verify:release:app-sandbox -- --manifest <canonical-path>`;
+it binds the helper binary digest to the exact `.app` tree and emits only
+Developer ID/notarization evidence accepted by the production startup gate.
+
+The current personal deployment readback also passes against the correct
+protected runtime state root: R1f source revision, PM2 online/zero restarts,
+17 required R1 scopes, loopback OAuth status binding, and separate local Auth
+and Edge listeners all match the deployment contract. Evidence:
+`evidence/2026-09-22-personal-r1f-readback.md`.
+
+The latest staging D1 Auth-to-Edge-to-Broker physical canary passes 1/1 with
+the real OAuth grant, MCP tools/list, owner-approved writes/patch/Git, Job
+cancellation, fixed system-published task profiles, active cancellation,
+Edge revocation recovery, and redacted audit/readback. Live R1 remains
+read-only and unchanged. Evidence:
+`evidence/2026-09-22-d1-auth-edge-broker-rerun.md`.
+
+The same canary now has an opt-in App Sandbox execution mode. A physical
+`MOPS_REAL_APP_SANDBOX=1` run passes 1/1 through the real OAuth grant, HTTPS
+Edge, Broker approval/Job admission, fixed `/bin/sh` script descriptor, and
+verified Job readback. It does not fall back to `sandbox-exec`, change live R1,
+or publish `mac_task_run`; active cancellation and hostile-process evidence
+remain in the separate executor probe. Evidence:
+`evidence/2026-09-22-d1-app-sandbox-auth-edge-broker.md`.
+
+The current public HTTPS R1 rerun also passes the protected-resource challenge,
+owner login/consent/S256 exchange, 17/17 claims, exact 30-tool discovery,
+29/29 real read calls, and temporary-grant revocation. This confirms the live
+R1 read-only chain only; no mutation or privileged tool was called. Evidence:
+`evidence/2026-09-22-r1-public-readonly-rerun.md`.
+
+The current host readiness readback is now explicit: Darwin arm64 has zero
+valid code-signing identities, Gatekeeper assessments are enabled but cannot
+prove Developer ID/notarization, Accessibility remains denied with fail-closed
+output, the target LaunchAgent/root-helper labels are absent, and the separate
+personal PM2 R1 service is online with zero restarts. No host state changed;
+production release and G1 enablement remain externally gated. Evidence:
+`evidence/2026-09-22-host-release-gui-readiness.md`.
+
 Version: 0.1
-Last verified: 2026-09-16
+Last verified: 2026-09-22 (personal public deployment)
+
+## Latest native helper boundary progress
+
+The disabled root-helper native candidate and the other native artifact
+builders now publish only after compiling and strict-verifying a unique
+temporary output, then atomically renaming it into `dist`; concurrent native
+build invocations and the native self-test passed with no temporary artifacts
+left behind. The
+cross-process HMAC, descriptor digest, freshness, authority poll, revocation,
+and native Ed25519 signature negative-case probes remain green. Native
+attestation verification is now implemented through a dynamically resolved
+macOS Security framework provider that loads a separate protected public-key
+configuration, verifies the exact canonical envelope, and fails closed when
+the provider is unavailable.
+The root-helper TypeScript boundary now also requires an independent
+supported-production sandbox evidence gate; generic host evidence or the
+probe-only deprecated `sandbox_init` path cannot advertise an available
+capability. The current host therefore remains fail-closed and production
+root-helper execution remains disabled.
+Native cryptographic verification remains an equally independent capability
+gate with its own evidence reference. The local native probe now satisfies
+that verification gate, but production capability remains unavailable until
+supported sandbox, protected key distribution, root-domain package, service
+readback, and enablement evidence are accepted.
+
+The supported-sandbox investigation now has physical host evidence for a
+separately signed App Sandbox helper: on macOS 26.2 arm64, the helper writes
+inside its OS-owned container, cannot read outside it, and its fixed child
+cannot write outside it. The Broker also has a disabled-by-default
+`AppSandboxTaskRunner` seam and a native executor candidate wired through the
+startup assembly seam. A physical executor round-trip now verifies the
+descriptor-only handoff, native peer/helper identity, authenticated process
+event and result, fixed `/bin/sh` script mode, and container write/readback.
+The executor now materializes authorized filesystem roots into a private
+per-run container using native root-bound listing/read operations, rejects
+symlinks and unsupported entries under fixed budgets, passes only the staged
+cwd descriptor, and keeps helper HMAC/key configuration in unlinked
+close-on-exec descriptors. A physical hostile fixture verifies staged
+read/write, outside-root read denial, and absence of the old path-based
+control files.
+macOS 26.2 still returns `EPERM` for executing a freshly materialized
+arbitrary binary, so the fixed-interpreter mode is a compatibility-gated
+candidate rather than generic executable support. Production capability remains
+disabled. The physical executor probe now also denies a unique
+`LaunchAgents` canary write, opening the existing `.ssh` credential zone, and
+a controlled loopback connection through the shell's `/dev/tcp` builtin; the
+separate boundary probe independently denies those paths and loopback. The
+no-network hostile case is now verified at the executor level. A separate
+Broker-owned loopback proxy candidate is now integrated behind an independent
+network-evidence gate: the physical positive probe verifies a token-bound FD 7
+channel, exact loopback allowlist routing, bounded response readback, and
+continued denial of direct child `/dev/tcp` access. Developer ID/notarization,
+full identity/launch readback, rollback, recovery, and public `mac_task_run`
+remain open. An
+optional hostile process-tree fixture now starts a background `/bin/sleep`; a
+native `kqueue` fork monitor behind a pre-exec gate detects the fork, returns an
+authenticated `UNKNOWN_OUTCOME` in about 52 ms, and leaves no helper, sleep, or
+run residue. Evidence:
+[`evidence/2026-09-22-app-sandbox-boundary.md`](evidence/2026-09-22-app-sandbox-boundary.md).
+
+A disabled-by-default Broker-owned network proxy candidate now provides a
+separate loopback TCP boundary. It normalizes `localhost`/`127.0.0.1`, binds
+destinations and request/response/timeout budgets to a policy digest, rejects
+policy drift and known credential-shaped payloads, maps cancellation/timeouts,
+rejects replayed request IDs, and never grants raw network sockets to a task
+child. Its focused proxy/channel suite passes 5/5. The App Sandbox executor
+integrates the channel only behind the independent network-evidence gate; a
+physical positive probe verifies the exact allowlisted loopback fixture while
+direct child `/dev/tcp` remains denied. It is not an MCP tool or production
+network grant. Evidence:
+[`evidence/2026-09-22-network-proxy-candidate.md`](evidence/2026-09-22-network-proxy-candidate.md)
+and [`evidence/2026-09-22-app-sandbox-network-proxy.md`](evidence/2026-09-22-app-sandbox-network-proxy.md).
+
+## Current deployment snapshot (authoritative)
+
+Status: The owner-only personal read-only deployment is accepted and running.
+The broader Phase 1 Broker/Edge foundation and formal signed-release work
+remain in progress.
+
+Current personal deployment: the owner explicitly requested always-on hosting.
+PM2 supervises Auth, Edge and the real native-IPC Broker using the protected
+unsigned `personal-20260921-r1f` snapshot, a signed R1 policy and anchored
+audit store. The public domain and shared tunnel routes are live. R1 grants 17
+exact read scopes and enables 30 bounded read-only tools over two roots:
+owner-home metadata/content read and system metadata only. No root can write;
+system content is not readable. Process and network reads are intentionally
+available in R1, while mutation, GUI, destructive and privileged adapters are
+not enabled. Dynamic Docker objects are matched only through the fixed local
+Docker inspector and the `mac.docker.read` scope.
+
+Public HTTPS verification passed owner login, consent, S256 exchange, exact
+30-tool listing, 29 real read calls, and revocation. The formal Developer
+ID/notarized release remains unaccepted. See [current operations and renewal
+dates](docs/personal-deployment.md).
+The loopback-enabled r1f snapshot was provisioned with source revision
+`6e971c38a660588fbea6bfbfc067896ebbad7aa2a7c46f7220d3f8726989fdf1`. Local
+TLS discovery, PM2 executable/cwd/argument readback, and `pm2 save` passed. The
+public probe then passed discovery, owner login/consent, S256 exchange, exact
+30-tool listing, all 29 read calls, and temporary-grant revocation. The policy
+authorizes only the exact current Git workspace as its finite Git/package
+project target. Evidence:
+[`evidence/2026-09-21-r1-loopback-snapshot-rollout.md`](evidence/2026-09-21-r1-loopback-snapshot-rollout.md).
+
+The owner approval boundary now also has a reusable local client and bounded
+`mac-operator-approval issue` command. It signs exact single-use,
+non-unattended approvals through the owner-only IPC server, validates socket
+identity/readback, loads only an activated protected issuer-key configuration,
+and wipes client-held key bytes on disposal. This does not change R1, public
+OAuth grants, or the tools list. Evidence:
+[`evidence/2026-09-22-owner-approval-channel.md`](evidence/2026-09-22-owner-approval-channel.md).
+
+The approval runtime is now wired into the personal supervisor as a separate,
+disabled-by-default owner channel. Provisioning writes only a fixed protected
+startup document; missing or disabled configuration does not read key material
+or create a socket. An enabled configuration is root-bound to the personal
+data/runtime directories, restores an already activated key, binds owner
+UID/GID, and starts after Broker IPC with ordered shutdown cleanup. The CLI now
+also displays a bounded exact preview and requires a TTY `APPROVE
+<approvalId>` confirmation before transport. This closes the local terminal
+confirmation and server-assembly boundaries but not public OAuth/tools parity
+or mutation enablement. Evidence:
+[`evidence/2026-09-22-owner-approval-channel.md`](evidence/2026-09-22-owner-approval-channel.md).
+
+The Broker now persists a bounded, non-secret `approval_previews` record when
+an authorized mutation reaches the approval boundary without a matching
+single-use approval. It retains only the requesting principal, tool/contract,
+normalized target, payload digest, policy version, approval class, and a
+120-second expiry; startup validates the preview-to-Request linkage and raw
+payload bytes are never stored. This gives the owner workflow a durable exact
+preview source without changing the public R1 policy or tools list. Evidence:
+the Broker and persistence approval-preview regression tests. The owner CLI
+and optional browser workflow both resolve that exact preview by request ID;
+the browser path requires a separate owner approval session, login, CSRF, and
+same-origin decision, then asks the supervisor to issue through the local
+approval IPC without loading issuer keys into Auth. A real staging controller
+test now verifies the durable preview-to-approval linkage over the separate
+owner socket; the provisioned R1 profile does not assemble this route. The
+owner CLI accepts `--request-id`, copies only the pending preview binding,
+derives a deterministic approval ID, and records `pending` → `issued` →
+`consumed` without exposing raw arguments or enabling public mutation tools.
+Evidence:
+[`evidence/2026-09-22-browser-approval-staging.md`](evidence/2026-09-22-browser-approval-staging.md).
+
+## OAuth grant-profile parity progress
+
+Auth now selects an explicit `r1` or staging-only `d1` grant profile. R1
+remains the default and the personal supervisor rejects non-R1 profiles. D1
+contains the exact 17 R1 scopes plus six materialized developer scopes, while the
+generated policy still enables only the existing 30 read-only tools.
+
+The generated Edge fragment carries `oauthScopes` separately from the smaller
+MCP `requiredScopes` initialization gate. Auth discovery, Edge discovery, the
+Broker principal scope input, and the consent boundary now agree on the
+selected profile. The isolated D1 Auth-to-Edge-to-Broker canary also proves
+exact eight-tool `tools/list`, missing-approval previews, owner-approved
+atomic write and bounded patch readbacks, owner-bound queued Job cancellation,
+and explicit local Git staging/commit with staged-digest failure recovery;
+Auth/Edge focused checks pass 26/26. The full repository regression
+passes 1052/1067 with 15 explicit skips and 0 failures. Evidence:
+[`evidence/2026-09-22-d1-oauth-canary.md`](evidence/2026-09-22-d1-oauth-canary.md).
+An explicit `MOPS_REAL_SANDBOX=1` physical-host run also adds the ninth
+temporary task tool with fixed `d1.printf` and `d1.sleep` profiles. It passes
+unapproved denial, exact profile approval, fixed `/usr/bin/printf` output,
+active owner-approved `/bin/sleep` cancellation, host-lifecycle Edge revocation
+to a recovery-preserving `UNKNOWN` Job, terminal Job status, and process
+metadata cleanup; see
+[`evidence/2026-09-22-d1-auth-task-canary.md`](evidence/2026-09-22-d1-auth-task-canary.md).
+The opt-in `MOPS_REAL_USER_SERVICE=1` run additionally verifies the bounded
+owner-domain `mac_service_control` lifecycle, approval denial, Job completion,
+launchd readback, and exact cleanup through the same path; see
+[`evidence/2026-09-22-d1-auth-edge-broker-user-service-canary.md`](evidence/2026-09-22-d1-auth-edge-broker-user-service-canary.md).
+No live
+deployment, public mutation grant, tools-list entry, or ChatGPT mutation call
+changed.
+
+After the cutover, the owner-approved ChatGPT R1 app selected the live R1
+connector and successfully executed a read-only `mac_health` call. The visible
+result was `healthy` with components omitted, no warnings, and no truncation;
+service logs confirmed the authenticated `/mcp` request returned HTTP 200.
+See [`evidence/2026-09-21-chatgpt-r1-post-cutover-smoke.md`](evidence/2026-09-21-chatgpt-r1-post-cutover-smoke.md).
+
+The D1 mutation boundary now has a dedicated Darwin arm64 temporary-root probe:
+the real ApprovalAuthority issued signed preview-bound approvals, an
+unapproved write was denied, an approved atomic write and bounded patch
+completed with verified Job readback, an idempotent retry reused the original
+Job, audit output contained no raw mutation content, and no temporary files
+remained. Public mutation scopes remain disabled while task executable
+selection and complete task isolation are still release gates. Evidence:
+[`evidence/2026-09-21-d1-mutation-boundary.md`](evidence/2026-09-21-d1-mutation-boundary.md).
+
+A companion Darwin arm64 temporary-Git probe now exercises the explicit staging
+and local-commit paths through the real Broker. Signed preview-bound approval,
+unapproved staging denial, explicit-path staged readback, staged-digest
+precondition rejection with preserved index and `UNKNOWN` Job state, verified
+HEAD/index/worktree readback, and audit redaction all pass. The fixture has no
+remote configured; the fixed adapter exposes no push or force-reset operation.
+Public Git mutation scopes remain disabled. Evidence:
+[`evidence/2026-09-21-d1-git-boundary.md`](evidence/2026-09-21-d1-git-boundary.md).
+
+A Broker-level Darwin arm64 task probe now exercises the fixed
+system-published task boundary through signed named-profile requests. An
+unapproved task was denied; `/usr/bin/printf` completed with verified output;
+`/bin/sleep` recorded process identity, accepted an active cancellation request,
+terminated, and reached a verified cancelled Job state. The probe uses a
+single-process/no-network policy, a protected Broker state root, and redacted
+audit output. It also found and fixed a real Job-revision race during active
+cancellation. Generic descriptor-backed executable selection and public task
+scope enablement remain closed. Evidence:
+[`evidence/2026-09-21-d1-task-boundary.md`](evidence/2026-09-21-d1-task-boundary.md).
+
+The focused physical Broker regression now runs the three active-work
+revocation cases through the same explicit system-published `/bin/sleep`
+boundary: durable session revocation, host-lifecycle Edge revocation, and the
+global process kill switch all pass 3/3. Each cancels the Request without a
+late success and leaves the Job as recovery-preserving `UNKNOWN` with the
+non-secret ownership proof retained. This is Broker lifecycle evidence only;
+automatic Auth grant-to-Broker propagation, remote distribution, production
+deployment, and public task enablement remain open. Evidence:
+[`evidence/2026-09-22-d1-broker-revocation-boundary.md`](evidence/2026-09-22-d1-broker-revocation-boundary.md).
+
+A follow-up Darwin arm64 recovery probe now starts the fixed `/bin/sleep` task,
+closes and reopens the BrokerStore, and uses a second Broker instance to drain
+the exact persisted PID/start-time identity. The Job remains `UNKNOWN`, the
+task is not replayed or promoted to success, and the redacted completion audit
+records `PROCESS_DRAINED`. This strengthens restart recovery evidence without
+enabling public task scope or changing the generic descriptor gate. Evidence:
+[`evidence/2026-09-21-d1-task-recovery-boundary.md`](evidence/2026-09-21-d1-task-recovery-boundary.md).
+
+The next protected-helper boundary is now represented by a strict,
+disabled-by-default root-helper snapshot adapter. It requires independently
+accepted evidence for FD identity, immutable selection, root-owned private
+snapshots, close-on-exec, and native peer/HMAC authentication; verifies signed
+argument/environment digests before dispatch; omits executable and cwd paths;
+and treats unobserved termination or transport failure as `UNKNOWN_OUTCOME`.
+This earlier contract entry did not claim a native transport or immutable
+snapshot launch; the transport/server seam is now implemented separately, but
+public task scope, OAuth grant, and policy entry remain disabled.
+Evidence:
+[`evidence/2026-09-21-root-helper-snapshot-contract.md`](evidence/2026-09-21-root-helper-snapshot-contract.md).
+
+The root-helper snapshot transport/server seam is now implemented as a
+separate disabled-by-default native boundary. It uses authenticated
+SCM_RIGHTS descriptor handoff, signed attestations, HMAC-bound requests and
+responses, replay/freshness checks, descriptor/content verification, and a
+root-owned private snapshot path. The physical host probe verifies native FD
+path readback and rejects the current non-root host with `POLICY_DENIED`; no
+root-owned snapshot, production helper, public task scope, OAuth grant, or
+policy entry was enabled. Evidence:
+[`evidence/2026-09-21-root-helper-snapshot-transport.md`](evidence/2026-09-21-root-helper-snapshot-transport.md).
+
+Native root-helper probe progress: HMAC-authenticated descriptor handoff,
+digest-bound owner-only snapshot materialization, forged-proof rejection, and
+probe-only bounded child execution now pass on the physical Darwin arm64 host.
+The child applies a fixed deny-default Seatbelt profile and executes a
+project-built native self-test directly in the managed PID/process group with
+bounded output and termination readback. An independent native-peer/HMAC
+authority poller binds the request digest and turns a denied final poll into
+retryable `UNKNOWN_OUTCOME`. Production root-helper serving,
+supported production sandbox selection, root-owned installation, authority
+polling/cancellation, recovery, signing, and public task enablement remain
+gated. Evidence:
+[`evidence/2026-09-22-root-helper-native-roundtrip.md`](evidence/2026-09-22-root-helper-native-roundtrip.md).
+
+The native descriptor receiver now applies an absolute bounded deadline across
+the initial frame, continuation bytes, and stream-close observation. A physical
+Darwin timeout regression rejects an authenticated peer that sends no frame;
+this reduces bounded-channel blocking risk without changing the disabled
+root-owned capability gate.
+The server lifecycle also tracks active handler promises and waits for socket
+shutdown handlers before wiping its authentication key.
+
+The root-helper TaskRunner now binds the Broker-resolved profile to the
+one-shot descriptor registry, sends only the signed descriptor handoff to the
+authenticated helper, and accepts HMAC-bound process-ownership events for the
+existing Job persistence and restart-recovery path. It remains unavailable
+without root-owned host evidence and an accepted helper capability proof.
+
+The root-helper snapshot boundary now also has an independent runtime factory
+that loads protected root-domain key material without opening `BrokerStore`,
+validates the named non-root Broker peer and distinct socket paths, and keeps
+the listener unavailable until root ownership and host evidence are present.
+It does not install launchd or expose a public capability.
+
+The root-helper boundary now also has a dedicated authenticated Broker
+authority channel. Root-helper polls bind a short-lived HMAC request to the
+snapshot request digest; the Broker-side endpoint authenticates the native
+root-helper peer, durably admits the poll nonce, rechecks Broker authority,
+and returns an authenticated response. The root-helper server requires this
+poller for availability and polls before dispatch, during execution, and
+before publishing a result; authority loss becomes `UNKNOWN_OUTCOME`. Runtime
+close now wipes the server and poller key copies even when startup is refused
+because the host is non-root or the authority channel is unavailable.
+
+The authority boundary now also has a Broker-owned active-request registry.
+The final Broker task admission supplies a one-shot admission/release object
+to the root-helper TaskRunner. The Broker rechecks request, target, policy,
+session, and revocation state before admitting the exact signed envelope
+digest; the executor and transport forward the same object, and the
+root-helper poller denies a digest that is not currently active, expired, or
+revoked. Broker startup has an explicit root-helper authority-channel
+assembly, while the root-helper service entrypoint binds the Broker through
+exact LaunchAgent readback, native PID/start-time identity, and an independent
+native uid-0 ownership check. This remains a startup/test seam: it does not
+install a LaunchDaemon or expose a public task capability.
+
+Broker production startup now explicitly assembles the root-helper TaskRunner
+boundary. Its default branch constructs disabled descriptor-registry,
+executor, and TaskRunner objects without reading root-helper key material or
+querying launchd. The enabled branch is separate and requires independent
+capability evidence, host-owned descriptor signing/verifying keys, protected
+persisted helper-key activation, exact root LaunchDaemon identity readback,
+and a distinct snapshot socket before native transport construction. The same
+Broker-owned active-request registry is passed through the selected task
+runner. No root helper is installed or enabled on the current host. Evidence:
+[`evidence/2026-09-22-root-helper-task-startup.md`](evidence/2026-09-22-root-helper-task-startup.md).
+
+A separate non-executing root-helper snapshot package plan now binds the future
+system LaunchDaemon to `com.mac-operator.root-helper-snapshot`, a native
+Developer ID artifact, protected key/snapshot paths, distinct sockets, the
+named Broker UID/GID, host evidence, fixed signature/notarization commands,
+and explicit install/rollback/uninstall steps. It rejects interpreter or
+script artifacts and never invokes `launchctl` or writes the system plist.
+This closes a packaging-contract gap without claiming a production root
+helper, because the current runtime is still a disabled Node/TS candidate.
+Evidence:
+[`evidence/2026-09-22-root-helper-snapshot-package-plan.md`](evidence/2026-09-22-root-helper-snapshot-package-plan.md).
+
+A native root-helper snapshot candidate now compiles as an ad-hoc-signed
+executable at `packages/broker/dist/root_helper_snapshot`. Its `--self-test`
+performs a real Darwin Unix socketpair round-trip with peer credential
+verification, bounded `MOPH` frame parsing, SCM_RIGHTS descriptor transfer, and
+FD_CLOEXEC readback. The cross-process auth probe starts the candidate, sends a
+signed envelope over the native descriptor handoff, verifies the HMAC-bound
+`POLICY_DENIED` response from native code, and confirms that a forged request
+proof is rejected. The valid path also materializes the executable FD into a
+private owner-only snapshot with digest, atomic-rename, and post-rename
+readback checks before cleanup. The artifact's production serve path remains an
+explicit `POLICY_DENIED`; it does not load production key material, execute a
+task, install a LaunchDaemon, or expose a public scope. This is native
+transport/protocol/snapshot evidence only, not proof of root-domain execution
+or production key distribution. Evidence:
+[`evidence/2026-09-22-root-helper-native-roundtrip.md`](evidence/2026-09-22-root-helper-native-roundtrip.md).
+
+The full repository regression was rerun after the R1 verifier timeout,
+process-capacity test repairs, the user-service-control candidate, the
+descriptor snapshot attestation seam, the native descriptor handoff frame,
+the restricted system-published task boundary, the privileged fixed
+service-control and root-helper TaskRunner boundaries, the root-helper
+authority channel, active-request registry, native root-ownership readback,
+service-startup seam, the root-helper snapshot package plan, and the App
+Sandbox executor candidate. The current serial regression passes 1016 of 1031
+tests with 15 explicit skips and no failures. The earlier capacity failure was
+a timing-sensitive test assumption; the test now waits for authoritative
+active-capacity state, while the production cancellation check remains
+unchanged. The focused process-supervisor suite also passes 44/44.
+
+A direct physical-host Seatbelt probe now also passes the fixed read/write
+boundary: an allowed temporary task root is readable and writable, while a
+separate protected root is denied for both operations. This is stronger host
+evidence for profile behavior, but it does not close the Broker-owned
+descriptor-launch or complete task-isolation gates, so `mac_task_run` remains
+disabled. Evidence:
+[`evidence/2026-09-21-seatbelt-boundary-probe.md`](evidence/2026-09-21-seatbelt-boundary-probe.md).
+
+The first MOP-104 host-control candidate is now implemented as an independent,
+versioned, disabled-by-default user-domain LaunchAgent adapter and isolated
+Broker Job executor. It binds a finite
+`gui/<uid>/com.mac-operator.*` identity to its plist, executable, argument
+vector, and source revision; uses fixed `/bin/launchctl` argv with an empty
+environment; verifies pre/post readback; and attempts inverse-state rollback
+when a postcondition or command outcome is uncertain. Its scope and versioned
+contract are now materialized as planned vocabulary, while the default policy
+records the tool as `implemented: true` and `enabled: false`. The standard
+Broker dispatch path now binds signed request authority, exact approval
+consumption, target normalization, atomic Request/Job/audit state, and
+idempotent execution to the existing adapter/executor, with strict completed
+result validation, readback, host-startup recovery delegation, and explicit
+production startup assembly. The
+candidate, admission, contract, and Job-executor suites pass their focused
+checks, including the separate
+source-revision reader seam, durable precondition metadata,
+cancellation/revocation fencing, conservative restart readback, public
+completed-Job reuse, active-session revocation, and unresolved command/
+rollback outcomes. This is
+not runtime enablement: no OAuth grant or public tools-list enablement was
+added. A bounded physical-host probe now mutates only the fixed disposable
+`gui/501/com.mac-operator.boundary-probe` LaunchAgent, verifies Broker
+start/stop readback, source-revision target-swap rejection, execution-time
+kill-switch UNKNOWN handling, restart readback without mutation replay, and
+exact bootout/plist cleanup. A second physical probe verifies a real stop
+command, a launchd-throttled postcondition mismatch, and inverse rollback with
+readback. Evidence:
+[`evidence/2026-09-22-user-service-mutation-boundary.md`](evidence/2026-09-22-user-service-mutation-boundary.md)
+and [`evidence/2026-09-22-user-service-rollback-boundary.md`](evidence/2026-09-22-user-service-rollback-boundary.md).
+Native production wiring now has a fixed system-published `/bin/launchctl`
+boundary: the executable and every canonical ancestor must be root-owned,
+non-symlink, and not group/other writable, while the Broker remains
+unprivileged. An explicit operator-acceptance gate remains required; injected
+command runners and native launchers are mutually exclusive. This alternative
+is limited to the fixed host adapter and does not change the descriptor-backed
+generic task gate.
+Evidence:
+[`evidence/2026-09-21-user-service-control-candidate.md`](evidence/2026-09-21-user-service-control-candidate.md).
+[`evidence/2026-09-21-system-published-executable-boundary.md`](evidence/2026-09-21-system-published-executable-boundary.md).
+
+The named task profile boundary now captures the canonical executable's
+SHA-256 content identity into the frozen resolved process request. A signed
+profile may declare the expected digest and mismatches fail before runner
+selection; this prepares the future helper/snapshot handoff without claiming
+atomic descriptor execution. The focused task-profile/task-runner suites pass
+20/20 and the production task runner remains unavailable.
+Evidence:
+[`evidence/2026-09-21-task-profile-executable-digest.md`](evidence/2026-09-21-task-profile-executable-digest.md).
+
+The next descriptor handoff seam is now implemented as a separate,
+disabled-by-default `DescriptorSnapshotRegistry`. It opens and retains
+Broker-owned executable/cwd descriptors behind a one-shot opaque reference,
+revalidates the held FDs before callback handoff, and signs only non-secret
+plan and identity digests with a short-lived Ed25519 attestation. The future
+helper callback receives no path, argv, environment, or filesystem root;
+`immutableSelection` remains explicitly `revalidation-only`. The focused
+attestation suite passes 5/5. This is a helper contract and FD lifecycle seam,
+not native descriptor execution, cross-process FD transfer, or task enablement.
+Evidence:
+[`evidence/2026-09-21-descriptor-snapshot-helper-attestation.md`](evidence/2026-09-21-descriptor-snapshot-helper-attestation.md).
+
+The G1 GUI boundary now has a fixed physical-host Accessibility probe. The
+Broker-owned Finder observation returned `POLICY_DENIED` because Accessibility
+permission is not granted, and the probe confirmed `failClosed: true` without
+changing permissions or GUI state. Permission-granted real-app evidence and
+GUI profile enablement remain release gates.
+Evidence:
+[`evidence/2026-09-21-accessibility-boundary-probe.md`](evidence/2026-09-21-accessibility-boundary-probe.md).
+The native addon now also self-tests local `SCM_RIGHTS` descriptor transfer and
+receiving-side `FD_CLOEXEC`, exposed through an independent
+`darwin-scm-rights-v1` capability. A separate disabled-by-default receiver now
+uses a bounded one-shot stream frame and authenticates UID/GID/PID plus optional
+start-time identity before reading the opaque payload. This still does not
+prove immutable executable selection, production helper packaging/launch, or
+task admission; a real spawned child receiver fixture now verifies the
+cross-process boundary and FD identity readback.
+Evidence:
+[`evidence/2026-09-21-native-scm-rights-capability.md`](evidence/2026-09-21-native-scm-rights-capability.md).
+[`evidence/2026-09-21-native-descriptor-handoff-frame.md`](evidence/2026-09-21-native-descriptor-handoff-frame.md).
+The native runtime descriptor-execution probe now records the host's actual
+`fexecve`/`execveat` availability without changing launch admission. On the
+physical Darwin host both are unavailable; the additional fixed `O_EXEC` plus
+`/dev/fd/<fd>` experiment can open but not execute `/usr/bin/true`. Executable
+coverage and immutable selection remain unproven and the task-launch gate
+remains closed.
+Evidence:
+[`evidence/2026-09-21-native-descriptor-exec-probe.md`](evidence/2026-09-21-native-descriptor-exec-probe.md).
+
+The disabled-by-default `SandboxExecTaskRunner` now also supports an explicit
+system-published executable boundary for a Broker-owned allowlist. A physical
+opt-in task run launched `/usr/bin/printf` through `/usr/bin/sandbox-exec` and
+returned verified output; user-owned paths, interpreter paths, and dispatch
+launchers remain rejected, while descriptor mode remains fail-closed. This is
+restricted host evidence, not generic repository script execution or public
+`mac_task_run` enablement.
+Evidence:
+[`evidence/2026-09-21-system-published-task-boundary.md`](evidence/2026-09-21-system-published-task-boundary.md).
+
+The P1 root-helper service-control adapter now uses the same fixed,
+system-published `/bin/launchctl` boundary when the native descriptor launcher
+is unavailable. It still requires explicit host acceptance, authenticated
+Helper IPC, Broker authority polling, approval, and verified launchd readback;
+no privileged scope, LaunchDaemon, or live service mutation was enabled.
+Evidence:
+[`evidence/2026-09-21-privileged-service-published-boundary.md`](evidence/2026-09-21-privileged-service-published-boundary.md).
+
+The latest repository R1 verifier attempt passed public discovery, owner login,
+and the consent-page GET but timed out during consent POST before token issuance
+or any tool call. A follow-up reached token issuance with a freshly issued
+token whose issuer, audience, subject, 17/17 scopes, and required JWT identity
+claims matched; the MCP client sent Authorization on every request; discovery,
+tools/list, and the first tool call returned 200; then the next tool call
+returned 401 invalid_token after about 3000ms. The corresponding PM2 log shows
+the earlier calls reaching `/oauth/status` successfully but no status arrival
+for the failed call, matching the bounded 3000ms revocation check. This is
+strong evidence of an intermittent public HTTPS revocation-channel timeout;
+the verifier fails closed as designed. PM2 remained online. These are recorded
+as failed acceptance attempts, not new full-acceptance evidence; earlier
+successful R1 evidence remains scoped to its own calls.
+Evidence:
+[`evidence/2026-09-21-r1-full-verifier-timeout.md`](evidence/2026-09-21-r1-full-verifier-timeout.md).
+[`evidence/2026-09-21-r1-revocation-channel-timeout.md`](evidence/2026-09-21-r1-revocation-channel-timeout.md).
+The source contains a disabled-by-default loopback HTTPS status channel for
+newly provisioned personal snapshots. The r1f rollout now exercises that
+channel live: it is fixed to `127.0.0.1`, binds Host/SNI to the issuer
+hostname, validates a protected CA under the Edge data root, and retains the
+separate status key. Real TLS loopback, startup-boundary, and full regression
+tests pass, and the public verifier completed without the older public-status
+timeout.
+Evidence:
+[`evidence/2026-09-21-r1-loopback-status-channel.md`](evidence/2026-09-21-r1-loopback-status-channel.md).
+The read-only `verify:personal:snapshot` rollout gate passed against the current
+r1f deployment with `loopbackStatus=bound`. The prior r1e release and data
+root remain retained as the explicit rollback point.
+The owner startup contract is now stricter as well: new code rejects an
+owner-issuer config without the loopback channel, while non-owner compatibility
+profiles retain their explicit public status fallback.
+The shared launchd parser was also exercised against a real owner-domain
+LaunchAgent on the physical host; macOS's `not running` state was conservatively
+normalized to `stopped`, with exact type/program/argument/plist readback and no
+mutation. This remains readback-only evidence and does not close source-
+revision, descriptor-launch, approval, or rollback release gates. Evidence:
+[`evidence/2026-09-21-user-service-readback.md`](evidence/2026-09-21-user-service-readback.md)
+and the current rerun
+[`evidence/2026-09-22-user-service-readback-rerun.md`](evidence/2026-09-22-user-service-readback-rerun.md).
+
+The owner-only full-access expansion plan is documented in
+[`ROADMAP.md`](ROADMAP.md). Profile `R1` is now deployed and API-verified. A
+separate R1 ChatGPT app is connected with the full 17-scope grant and exactly
+30 discovered read-only actions; the older app still holds its earlier R0
+grant. This is a grant-lifecycle distinction, not a reason to widen the R1
+policy or reinterpret existing tokens.
+
+Owner-confirmed reconnect was attempted on September 21. ChatGPT completed the
+authorize/login/consent redirect and created another grant with only the two
+stored R0 scopes, then reported a connection error and retained the three-tool
+app view. The new-app form successfully discovers all 17 R1 scopes and shows
+them selected. A new `Mac Operator MCP R1 Read Only` app was then created and
+appears in ChatGPT's installed list. The R1 management page shows a primary
+connected account and exactly 30 discovered read-only actions. A composer test
+selected the R1 app correctly and executed `mac_health` with
+`include_components=false`; ChatGPT displayed `Healthy`, while the PM2 log
+recorded `/token` 200, `/oauth/status` 200, and MCP `tools/call` 200. This
+proves the R1 ChatGPT invocation path works for the simple health contract.
+The earlier `mac_capabilities` internal-error result is now narrowed to a
+tool-specific schema/output or invocation-compatibility issue. Evidence:
+[`evidence/2026-09-21-chatgpt-r1-mac-health.md`](evidence/2026-09-21-chatgpt-r1-mac-health.md).
+After a second owner-approved R1 reconnect, a fresh composer test selected the
+same app and executed `mac_system_summary` successfully. ChatGPT visibly
+returned bounded Darwin/ARM64/CPU/memory/uptime/load facts; the PM2 log recorded
+`/token` 200, `/oauth/status` 200, and MCP `tools/call` 200. The earlier
+expired-connection evidence remains useful as the failed first attempt:
+[`evidence/2026-09-21-chatgpt-r1-system-summary-reconnect.md`](evidence/2026-09-21-chatgpt-r1-system-summary-reconnect.md).
+The successful acceptance evidence is:
+[`evidence/2026-09-21-chatgpt-r1-system-summary.md`](evidence/2026-09-21-chatgpt-r1-system-summary.md).
+After the owner completed another approved R1 reconnect, ChatGPT visibly
+executed `mac_capabilities` and `mac_storage_analysis` successfully. The
+capability result reported 44 implemented actions, 30 enabled actions, and 14
+actions disabled by policy, with the enabled read-only domains listed. The
+storage result returned bounded capacity and top-consumer metadata for the
+project root with `max_depth=2`. Fresh PM2 evidence recorded `/token` 200,
+`/oauth/status` 200, and MCP `tools/call` 200. Evidence:
+[`evidence/2026-09-21-chatgpt-r1-capabilities-storage.md`](evidence/2026-09-21-chatgpt-r1-capabilities-storage.md).
+The next representative R1 acceptance pass also succeeded in ChatGPT for
+`mac_process_list`, `mac_network_status`, `mac_project_discover`,
+`mac_git_status`, and `mac_docker_status`. The visible results were bounded:
+10 PID-sorted redacted processes; interface metadata with listeners excluded
+and no active probing; five Node project markers without content reads;
+read-only Git branch/status metadata; and Docker daemon availability in the
+local context without image or storage enumeration. PM2 recorded fresh
+`/token`, `/oauth/status`, and MCP `tools/call` HTTP 200 responses for each
+call. Evidence:
+[`evidence/2026-09-21-chatgpt-r1-representative-readonly.md`](evidence/2026-09-21-chatgpt-r1-representative-readonly.md).
+The same live ChatGPT session also accepted `mac_app_list`,
+`mac_project_summary`, `mac_git_branch_list`, and `mac_git_log`. The visible
+results were bounded application inventory metadata, metadata-only project
+summary with a shallow tree, local branch metadata without remote enumeration,
+and bounded commit metadata. The package-inspection prompt reached an expired
+OAuth connection before a tool result and is intentionally not counted as
+accepted evidence. Evidence:
+[`evidence/2026-09-21-chatgpt-r1-additional-readonly.md`](evidence/2026-09-21-chatgpt-r1-additional-readonly.md).
+
+The current deployment snapshot above is the source of truth for the personal
+read-only service. The addenda and status sections below retain earlier
+implementation and preparation evidence; statements such as “no public
+deployment”, “no working ChatGPT connector”, or “0 of 44 enabled tools” refer
+to earlier checkpoints and must not be read as the current personal deployment
+status.
+
+## Historical implementation ledger
+
+Owner OAuth addendum (uncommitted working tree): `packages/auth` provides an
+owner username/password login, explicit consent, S256 authorization-code flow,
+ES256 access tokens, durable rotating refresh grants, local password reset and
+revoke-all. The Edge requires an authenticated, fail-closed grant-state check
+for the `mac-operator-auth` issuer. Local tests verify the issuer-to-Edge-to-Broker
+identity path for exactly three read-only tools. The full default regression
+passes 894 tests with 14 explicit skips (908 total), with typecheck, style,
+documentation and verification-matrix checks passing. Browser inspection
+confirms the login and consent pages render. No real account, public listener,
+tunnel or signed owner policy was provisioned. Subsequent local preparation
+created protected origin TLS material and a standalone tunnel route draft;
+certificate chains, TLS 1.3 handshakes and seven route selections were verified.
+The shared live tunnel was not modified. An interactive owner setup entrypoint
+is ready, pending local password entry. The September 21 connector preparation
+adds RFC 9207 issuer identification to discovery and success/denial callbacks,
+allowing setup to default to ChatGPT's documented stable redirect URI. The
+affected auth/Edge startup suites pass 19/19; no real connector login has run.
+Personal provisioning now supports an owner-only `.env` containing the username
+and password, parsed without shell evaluation. Existing accounts remain protected
+from replacement. This is a local setup change, not public deployment.
+The owner subsequently completed the local `.env`; initialization succeeded
+and the account is now provisioned. A temporary loopback Auth listener passed
+verified-TLS discovery, exact issuer/RFC 9207 and public-only JWKS checks and
+was stopped afterward. No password was printed. Edge/Broker installation and
+public routing remain incomplete; there is still no working ChatGPT connector.
+The selected next step is a supervised, 60-minute, three-tool foreground trial
+using real OAuth and native authenticated Edge/Broker IPC. Its design is in
+`docs/chatgpt-readonly-trial.md`. The existing separate-process test was rerun
+successfully; the trial runner and public route are not implemented yet.
+ChatGPT protocol compatibility, live key rotation and public deployment remain
+unverified. See [OAuth operations](docs/oauth-login-operations.md) and
+[design](docs/oauth-login-design.md); ADR-0003 remains Proposed.
 
 ProcessSupervisor argument-array addendum at source revision `6e3a4dc`: child
 launch now rejects custom-prototype argument vectors before executable checks or
@@ -3331,7 +4850,7 @@ focused Broker and filesystem tests pass. Evidence:
 `evidence/2026-09-14-bounded-patch.md`. Contract enablement, remount and
 crash attribution evidence, and production release gates remain open.
 
-## Current situation
+## Historical foundation situation
 
 Latest transport addendum: commit `18e9103` adds a Darwin-only cross-process
 HTTPS smoke. A separately spawned Edge process loads the compiled Edge package,
@@ -4299,7 +5818,7 @@ This is an enablement guard and partial host evidence, not a production
 selection of deprecated `sandbox-exec`.
 Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
-## Completed work
+## Historical completed work ledger
 
 - Created the Git repository and initial commit.
 - Established LF text normalization through `.gitattributes`.
@@ -4394,7 +5913,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 - Added `BrokerStore.admitApprovedJob`, an atomic future-task admission primitive that links nonce/request admission, authorized decision, exact approval consumption, mutation intent, principal-scoped idempotency reservation and queued Job creation. Added `admitApprovedJobAfterDecision` for the active task path so approval consumption, intent audit, queued Job creation, and request linkage commit together with owner/target/payload/timestamp preconditions. Idempotent retries return the original Job without consuming approval again; conflicting reuse and injected post-decision failures roll back without exposing a partial approval, intent, or Job. Restart reconciliation fails an authorized-but-not-intented request closed without consuming approval.
 - Added a default-off, test-only fault-injection hook for the atomic admission phases. Reopening the SQLite store after failures at request, authorization, approval-consumption, and Job-insert boundaries verified that no request, audit event, approval consumption, or Job half-commits.
 
-## Implementation status
+## Historical implementation status
 
 - Runtime implementation: local foundation only; no meaningful whole-program percentage is claimed.
 - Released tools: 0 of 44 planned.
@@ -4416,7 +5935,7 @@ Evidence: `evidence/2026-09-13-sandbox-profile-runner.md`.
 
 Percentages beyond these objective counts are intentionally omitted because the delivery scope and estimates are not yet baselined.
 
-## Contract schema status
+## Historical contract schema status
 
 - Contract envelope schema: complete and validated for all 44 materialized contracts. This covers identity, capability, policy, budgets, lifecycle, audit, delivery wave, provenance, and summary fields.
 - Per-tool functional input/output schema objects exist and compile for all 44 contracts. Success schemas use `SUCCEEDED`; failures use the shared stable-error schema.
@@ -4424,11 +5943,11 @@ Percentages beyond these objective counts are intentionally omitted because the 
   runtime conformance currently cover all forty-four Broker dispatch paths;
   separately authenticated root-domain helper release gates remain open.
 
-## Current phase
+## Historical phase snapshot
 
 Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Runtime/package selection, signed-policy activation/rollback, HMAC plus macOS UID/GID/PID-authenticated local IPC, authenticated MCP introspection, sanitized system/process/network inspection, descriptor-backed path metadata, bounded regular-file reads, directory listing, depth/entry-bounded trees, metadata-only file discovery, recent-file metadata, bounded secret-filtered text search, bounded project discovery, bounded project summaries, and bounded storage/capacity analysis run in tests. Network listener enumeration remains explicitly limited until a version-pinned native ABI is available. Production key distribution, native-adapter packaging/runtime compatibility, remote issuer integration, operational policy tooling, audit reliability, packaging, configurable secret classification, physical/remount evidence, and enforceable I/O deadlines remain open.
 
-## Decisions recorded
+## Historical decisions recorded
 
 - Keep Edge, Broker, adapters, Job Manager, Audit Store, and Privileged Helper responsibilities explicit.
 - Treat the Broker as the sole final host authorization point.
@@ -4441,7 +5960,7 @@ Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Run
 - Define revocation and kill-switch effects for queued and active work.
 - Defer generic shell, GUI action, and privileged execution until their boundary evidence passes.
 
-## Pending decisions
+## Historical pending decisions
 
 - Remote OAuth issuer and tunnel/provider deployment choice.
 - Native peer-adapter packaging, Node socket-descriptor compatibility, Edge process-ID lifecycle, cross-process/keychain distribution, storage-level erasure limits, cross-process/global session quotas, and broader numeric canonicalization compatibility.
@@ -4453,11 +5972,11 @@ Phase 1 — Broker and Edge foundation with initial L0/L1 inspection slices. Run
 - Runtime compatibility fixtures and host conformance for unimplemented tools.
 - KB-MCP writeback review for the resolved contract and progress changes.
 
-## Blockers
+## Historical blockers snapshot
 
 There is no blocker to continued local implementation. Production enablement is blocked by protected Keychain/cross-process secret distribution, native peer-adapter packaging/compatibility, real OAuth issuer and remote transport integration, audit crash/disk/backup behavior, operational policy tooling, packaging, and clean-revision evidence. `node:sqlite` is prototype-only pending ADR-0005 evidence. Named task execution remains blocked by sandbox and credential-isolation proof. Controlled writes, GUI actions, public access, and the privileged helper remain closed behind their documented gates.
 
-## Verification performed
+## Historical verification ledger
 
 - Confirmed accepted documentation baseline `2e389b8` and implementation baseline `10ef33a`; the exact-revision evidence record is refreshed after the governed HTTPS Edge configuration, contract-loader, rate-limit/failure, Docker, process, hash, directory-listing, directory-tree, file-discovery, recent-file, text-search, project-discovery, project-summary, storage-analysis, network-status, process-inspect, service-status, log-tail, Git-status, Git-branch-list, Git-log, Git-diff, package-inspect, signed JWT/JWKS verifier, OAuth metadata consistency, rotated-key refresh, official MCP client HTTPS discovery, HTTP-level OAuth failure-boundary, fail-closed task-runner Job/approval, active-revocation, profile-budget, atomic post-decision task-admission, policy signer lifecycle, authenticated operator-channel, restart-persistent operator-command replay, and fail-closed local Broker runtime lifecycle slices.
 - Confirmed all 44 catalog tools have one valid JSON materialization, a unique tool name, a unique KB item ID, preserved source text, and a catalog link.
@@ -4490,7 +6009,7 @@ There is no blocker to continued local implementation. Production enablement is 
 
 The passing tests prove only the local foundation, bounded filesystem workers/search, and initial persistent Request/Approval/Job Ledgers on the recorded clean revision. They do not satisfy a release gate or prove protected Keychain-backed secret storage, installed cross-process code identity, a human approval UI/channel, production unattended profiles, remote deployment, removable-volume remount identity, process-tree ownership/termination, credential isolation, sandbox, GUI, helper, packaging, or whole-service rollback.
 
-## Next steps
+## Historical next steps (superseded by current deployment)
 
 1. Close native peer-adapter packaging/runtime compatibility and cross-process/keychain distribution under `MOP-081`.
 2. Integrate a real OAuth issuer and test MCP metadata, expiry, revocation, scope reduction, rate limits, and Broker outage without exposing the Broker publicly.
@@ -4502,7 +6021,7 @@ The passing tests prove only the local foundation, bounded filesystem workers/se
 
 See `README.md`, `TASK.md`, `VERIFICATION.md`, and `docs/adr/README.md`.
 
-## Latest helper status addendum
+## Historical helper status addendum
 
 Source revisions `2240870` and `86a99ca` add and harden a helper-owned,
 read-only status boundary. The
@@ -4522,7 +6041,7 @@ enabled. The full suite now reports 398 tests (395 passed, 3 opt-in sandbox
 tests skipped), with typecheck, contract verification, audit, and diff checks
 passing.
 
-## Latest real-Mac sandbox addendum
+## Historical real-Mac sandbox addendum
 
 On source revision `a8d9007`, `MOPS_REAL_SANDBOX=1 npm test` passed 398/398 on
 the Mac mini host, including the focused sandbox suite at 9/9. The run covers
@@ -4533,7 +6052,7 @@ isolation, remount identity, owned-group semantics, post-snapshot descendants,
 UDP, external allowlisted networking, and production packaging remain open.
 Evidence: `evidence/2026-09-13-real-sandbox-regression.md`.
 
-## Latest helper signature addendum
+## Historical helper signature addendum
 
 Source revision `46a3167` makes the root-domain helper package reject any
 signature expectation without the exact helper identifier, a ten-character
@@ -4543,7 +6062,7 @@ incomplete/ad-hoc identity path but does not claim a Developer ID-signed or
 notarized artifact, installed root helper, or live launchd evidence.
 Evidence: `evidence/2026-09-13-helper-signature-gate.md`.
 
-## Latest helper observer integration addendum
+## Historical helper observer integration addendum
 
 Source revision `3b24604` wires the authenticated helper status client into the
 production-shaped package observer. Callers must select either the explicit
@@ -4556,7 +6075,7 @@ reads immediately after helper-key revocation. The latest suite is now 400
 tests, 397 passed, 3 opt-in sandbox tests skipped. Evidence:
 `evidence/2026-09-13-helper-observer-ipc-integration.md`.
 
-## Latest helper command client addendum
+## Historical helper command client addendum
 
 Source revision `6d6087d` adds the Broker-side bounded client for already-signed
 helper commands. It authenticates the complete response, caps bytes and time,
@@ -4564,7 +6083,7 @@ fences socket device/inode identity, returns stable helper failures, and maps
 transport loss to retryable `UNKNOWN_OUTCOME` without inferring privileged
 success. Evidence: `evidence/2026-09-13-helper-command-client.md`.
 
-## Latest helper Job executor addendum
+## Historical helper Job executor addendum
 
 The disabled-by-default `PrivilegedHelperJobExecutor` now binds the existing
 Broker command factory/client to a running Job lease. It rechecks authority

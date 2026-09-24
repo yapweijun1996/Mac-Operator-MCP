@@ -14,6 +14,8 @@ Version: 0.1
 | Idempotency | `(principal_id, tool, idempotency_key)` | Retry reconciliation | At least maximum client retry horizon |
 | Approval | `approval_id` | Bound authorization evidence | TTL plus audit retention |
 | Job | `job_id` | Broker-owned process state | Operational retention plus evidence reference |
+| Request tombstone | `request_id` | Archived terminal Request identity and replay barrier | Archive digest plus bounded tombstone retention |
+| Job tombstone | `job_id` | Archived terminal Job status and idempotency barrier | Archive digest plus bounded tombstone retention |
 | Audit event | `(request_id, sequence)` | Append-oriented intent/result history | Policy-defined; value open |
 | Policy version | `policy_version` | Reproducible decision input | Current plus rollback and evidence history |
 
@@ -73,6 +75,15 @@ Approval records bind the approver and requesting principals, tool and contract 
 The local SQLite prototype persists Broker-generated job identity, owner principal/session, source tool, normalized target, policy version, canonical payload digest, principal-scoped idempotency key, revisioned state, timestamps, terminal result, bounded output, and cancellation state. Reusing an idempotency key with the same payload returns the existing job; a different payload returns `CONFLICT`. State transitions require the expected revision and enforce monotonic timestamps plus compatible terminal state/result pairs.
 
 Job output is bounded before persistence and secret-shaped output is replaced rather than stored. On BrokerStore startup, queued records that cannot be safely resumed become `cancelled`; running records whose external outcome cannot be proven become `unknown`. Each recovery transition appends hash-linked audit evidence. `mac_job_status` and `mac_job_cancel` expose only jobs owned by the authenticated principal through the Broker-resolved `job:owned` policy target.
+
+The stopped-service `ledger-rotate` path first publishes an encrypted,
+archive-digest-bound terminal Request/Job snapshot, then atomically replaces
+only sufficiently old known-terminal rows with validated Request/Job
+tombstones. Tombstones preserve replay rejection, Job status readback, and
+idempotency-key rejection without retaining raw Job output. Active, queued,
+running, and `unknown` rows are never rotation candidates. Tombstone capacity
+is bounded and fail-closed; archive artifact retention and physical disk
+exhaustion remain operational gates.
 
 Authority changes now share one SQLite transaction with queued-job reconciliation:
 disabling `global` or `mutations` cancels all queued Jobs, while `process` and

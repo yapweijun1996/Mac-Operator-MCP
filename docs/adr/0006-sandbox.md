@@ -20,6 +20,31 @@ Initial host evidence is recorded in `SANDBOX_RESEARCH.md` and [`evidence/2026-0
 
 Evaluate macOS sandbox profiles and current platform support, dedicated users, containers or lightweight VMs, process wrappers, endpoint/security controls, filesystem ACLs, Keychain access groups, network filtering, and combinations. Do not treat environment filtering alone as credential isolation.
 
+### 2026-09-24 process-boundary candidate review
+
+The latest physical escape changes which candidates are credible:
+
+| Candidate | Documented boundary | Assessment for double-fork/`setsid` |
+|---|---|---|
+| launchd process-group cleanup | `AbandonProcessGroup=false` kills remaining processes with the job's same process-group ID. | Rejected as sufficient containment: the hostile child creates a new session/process group and is already observed to survive the helper. |
+| Endpoint Security | The public event catalogue has `NOTIFY_FORK`; its authorization events include `AUTH_EXEC`, but no `AUTH_FORK`. | Cannot deny a bare fork at the fork boundary. It also requires Apple's Endpoint Security entitlement and a signed system extension; activation can require owner approval. Notifications may help observation but are not containment. |
+| Nested Seatbelt | The installed SDK marks `sandbox_init` unsupported/deprecated and says a second profile is ignored when the process is already sandboxed. | Rejected as an App Sandbox helper layering fix. The separate `sandbox-exec` no-fork runner remains experimental and deprecated. |
+| One Virtualization guest per task | The host controls VM start/stop and can require the VM to reach `stopped` before completing teardown. | Preferred candidate for arbitrary untrusted code because a stopped guest cannot continue executing descendants. Still unproven on this host: no valid guest has booted and no hostile escape canary has run inside one. |
+
+Keep fixed host operations in explicit Broker adapters. Route untrusted repository
+code only through a disposable guest with bounded, staged inputs and outputs;
+do not mount host credential areas or give the guest direct network access by
+default. A stop timeout, identity mismatch, Broker crash, or uncertain VM state
+must remain `UNKNOWN_OUTCOME` and quarantine subsequent task admission. This is
+a candidate direction, not an accepted sandbox or a capability enablement.
+Evidence and primary sources:
+[`process-containment candidate audit`](../../evidence/2026-09-24-process-containment-candidate-audit.md),
+[Apple launchd process-group semantics](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5),
+[Apple Endpoint Security event catalogue](https://developer.apple.com/documentation/endpointsecurity/es_event_type_t),
+[Apple Endpoint Security entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.endpoint-security.client),
+[Apple System Extensions](https://developer.apple.com/documentation/systemextensions), and
+[Apple Virtualization VM stop API](https://developer.apple.com/documentation/virtualization/vzvirtualmachine/stop%28completionhandler%3A%29).
+
 ## Acceptance evidence
 
 A hostile fixture must fail to read controller and user credentials, escape allowed roots, reach denied network targets, detach unowned processes, access Docker/root-equivalent interfaces, persist launch items, or survive cancellation. Results must identify exact macOS/hardware/runtime versions.
@@ -30,6 +55,29 @@ The `TaskRunner` interface also declares its host mechanism. Broker admission
 and dispatch require that declaration to match the proof before approval is
 consumed or a child process is launched; an absent or mismatched declaration
 fails closed.
+
+### 2026-09-23 process-tree evidence update
+
+The physical macOS arm64 double-fork/`setsid` fixture escaped the App Sandbox
+helper's observed process group and remained alive after the task returned
+`UNKNOWN_OUTCOME`. The probe killed the exact PID/start-time identity only
+after the task response, so this is evidence of a containment failure, not a
+successful cleanup boundary. The `AppSandboxTaskRunner` therefore remains
+staging-only, and its proof records process-tree handling as `observer-only`;
+it may not claim that App Sandbox process events own or terminate every task
+descendant. The fixture and result are recorded in
+[`evidence/2026-09-23-app-sandbox-executor-rerun.md`](../../evidence/2026-09-23-app-sandbox-executor-rerun.md).
+
+Apple documents that child processes inherit their parent's App Sandbox and
+recommends XPC services over child processes for privilege separation. That
+does not establish task-scoped descendant termination. The experimental
+`sandbox-exec` runner has a separate physical no-fork result, but remains
+staging-only because the interface is deprecated. Continue toward a
+supported OS-enforced task boundary (currently the per-task Virtualization
+candidate) and keep public `mac_task_run` disabled until its hostile-descendant
+and hard-stop evidence passes on the physical host. Sources:
+[Apple App Sandbox inheritance](https://developer.apple.com/library/archive/documentation/Miscellaneous/Reference/EntitlementKeyReference/Chapters/EnablingAppSandbox.html),
+[Apple XPC privilege separation guidance](https://developer.apple.com/documentation/security/protecting-user-data-with-app-sandbox).
 
 ## Experimental implementation addendum
 
@@ -66,6 +114,27 @@ control rather than atomic executable selection. This ADR must not be accepted
 until a supported descriptor primitive or an immutable, code-signed executable
 snapshot is proven on the target host.
 
+The runtime native probe is recorded in
+[`evidence/2026-09-21-native-descriptor-exec-probe.md`](../../evidence/2026-09-21-native-descriptor-exec-probe.md).
+On the current physical host, `fexecve` and `execveat` are absent, so the
+probe remains `unproven` and does not alter the existing launch gate. The
+additional fixed `O_EXEC` plus `/dev/fd/<fd>` experiment can open the binary
+but fails to execute it, so it is not a supported fallback on this host. A
+future host where a fixed `/usr/bin/true` probe passes would still require an
+independent all-child executable proof, immutable selection proof, and
+close-on-exec proof before any task launch could be enabled.
+
+The fixed-adapter path now has a separate `darwin-system-published-executable-v1`
+boundary. It permits pathname launch only when the executable and every
+canonical ancestor are root-owned, non-symlink, and not group/other writable,
+the target has no setuid/setgid bits, and the Broker is unprivileged. This
+blocks unprivileged same-user
+replacement for Broker-owned fixed commands such as `/bin/launchctl`; it does
+not authorize user-owned binaries, repository scripts, or generic
+`mac_task_run`. The user-domain service-control candidate may use this path
+only with explicit operator acceptance and remains outside public policy. The
+descriptor-backed task gate is unchanged.
+
 Commit `b228089` adds a Broker-owned descriptor launcher seam to
 `ProcessSupervisor`. Descriptor-required admission now requires both the
 attested host capability and a concrete launcher adapter; capability metadata
@@ -89,6 +158,89 @@ the supervisor opens and validates both executable and cwd descriptors and
 passes neither pathname to the adapter. This removes the corresponding cwd
 reopen ambiguity, while native descriptor execution, close-on-exec, immutable
 selection, remount resistance, and production task enablement remain unproven.
+
+The task-profile resolver now captures the observed SHA-256 content identity of
+each canonical profile-owned executable and carries it into the frozen resolved
+process request. A signed profile may additionally declare the expected digest;
+the resolver rejects a mismatch before a runner is selected. This strengthens
+the future helper/snapshot handoff and closes a profile-to-process identity gap,
+but it remains a pathname/content revalidation control rather than atomic
+descriptor execution or an immutable snapshot. Evidence:
+[`evidence/2026-09-21-task-profile-executable-digest.md`](../../evidence/2026-09-21-task-profile-executable-digest.md).
+
+The disabled-by-default `DescriptorSnapshotRegistry` now provides the next
+handoff seam. It retains Broker-opened executable and cwd descriptors behind a
+one-shot opaque reference and signs only plan digests plus descriptor identity
+digests with a short-lived Ed25519 attestation. The future helper callback sees
+borrowed FDs and the attestation, never a pathname, argv, environment, or
+filesystem root. Its identity check is deliberately labelled
+`revalidation-only`; native immutable selection and close-on-exec remain
+separate host capability gates. Evidence:
+[`evidence/2026-09-21-descriptor-snapshot-helper-attestation.md`](../../evidence/2026-09-21-descriptor-snapshot-helper-attestation.md).
+
+The native adapter separately self-tests local `SCM_RIGHTS` transfer and
+receiving-side `FD_CLOEXEC` setup. The disabled-by-default receiver adds a
+bounded one-shot stream frame and authenticates UID/GID/PID plus optional
+start-time identity before reading it. This remains a transport and ordering
+boundary only; immutable executable selection, production helper packaging, and
+actual helper launch remain separate release gates. Evidence:
+[`evidence/2026-09-21-native-scm-rights-capability.md`](../../evidence/2026-09-21-native-scm-rights-capability.md).
+[`evidence/2026-09-21-native-descriptor-handoff-frame.md`](../../evidence/2026-09-21-native-descriptor-handoff-frame.md).
+
+The Broker now also contains a separate, disabled-by-default root-helper
+snapshot adapter and native transport/server seam. It accepts only a complete
+host capability proving FD identity, immutable selection, root-owned private
+snapshot ownership, close-on-exec, and native peer/HMAC helper authentication.
+It verifies the short-lived signed plan's argument/environment digests before
+dispatch and passes no executable or cwd pathname. Incomplete evidence,
+transport failure, or unobserved termination fails closed; no pathname or
+system-published fallback is used. The physical host is non-root, so the
+transport probe rejects startup with `POLICY_DENIED`; production helper
+installation, immutable launch, and task enablement remain unproven.
+Evidence:
+[`evidence/2026-09-21-root-helper-snapshot-contract.md`](../../evidence/2026-09-21-root-helper-snapshot-contract.md).
+[`evidence/2026-09-21-root-helper-snapshot-transport.md`](../../evidence/2026-09-21-root-helper-snapshot-transport.md).
+
+## App Sandbox candidate boundary
+
+The physical host now has a separately signed App Sandbox probe with the
+`com.apple.security.app-sandbox` entitlement. On macOS 26.2 arm64, the probe
+successfully writes inside its OS-owned container, is denied a read outside
+that container, and its fixed `/usr/bin/touch` child is also denied an outside
+write. This is the first current-host evidence for a supported macOS sandbox
+mechanism; it does not promote the deprecated `sandbox-exec` runner.
+
+The probe is intentionally not a public task capability. The Broker now has a
+disabled-by-default `AppSandboxTaskRunner` seam and a native executor candidate
+wired through the startup assembly seam. A physical round-trip proves the
+distinct App Sandbox audience, Ed25519 attestation, request/response HMACs,
+SCM_RIGHTS handoff, native helper identity, authenticated process events,
+fixed `/bin/sh` interpreter selection, script materialization, and container
+readback. The helper uses fixed system-published `/usr/bin/touch` from the
+script because macOS 26.2 returns `EPERM` for executing a freshly materialized
+arbitrary binary from the container. This is a compatibility finding, not a
+generic executor claim. The current candidate now materializes authorized
+regular files through native root-bound listing/read operations into a private
+per-run container, rejects symlinks and unsupported entries under fixed
+budgets, passes only the staged cwd descriptor, and transfers helper HMAC/key
+configuration through unlinked close-on-exec descriptors. A physical fixture
+verifies staged read/write, outside-root read denial, and absence of the old
+path-based control files. A production implementation must still resolve the
+executable-selection strategy, use a bounded protocol for admission/result/
+status recovery, bind the helper identity and signed artifact, and prove
+hostile network, credential, persistence, and process-tree behavior. Ad-hoc
+signing proves host behavior only; Developer ID, notarization, launch identity,
+rollback, and readback remain open.
+Evidence:
+[`evidence/2026-09-22-app-sandbox-boundary.md`](../../evidence/2026-09-22-app-sandbox-boundary.md).
+
+A separate disabled-by-default `BrokerNetworkProxy` candidate now provides a
+loopback-only TCP exchange seam with a digest-bound destination/limit policy,
+bounded request and response bytes, cancellation, timeout, and secret-shaped
+content rejection. It is intentionally not connected to the App Sandbox task
+child or public MCP surface: granting the helper's broad network entitlement
+would not prove an allowlist. Positive task networking still requires a
+child-facing authenticated protocol and independent host evidence.
 
 Commits `d68176b` and `28007cf` harden the virtualization startup seam's
 shutdown recovery: `VirtualizationGuestRuntimeImpl` clears a rejected close
@@ -125,6 +277,27 @@ The checked-in native Objective-C probe links the framework and constructs a
 `VZVirtualMachineConfiguration` without booting a VM; Swift compilation remains
 unverified because the installed Command Line Tools compiler reports an
 SDK/interface-version mismatch.
+
+The 2026-09-23 physical-host audit confirms framework support only: the
+guest-less configuration is intentionally invalid, no VM boot was attempted,
+and no local boot image was found. The active Node host is ad-hoc signed with
+no entitlements. Apple requires `com.apple.security.virtualization` for VM
+creation and guest-specific boot inputs. Since the N-API bridge runs inside its
+Node host, any future entitlement belongs on the unprivileged Broker host
+executable; it must not be added to the privileged root helper. This is a
+boundary decision, not a claim that entitlement validation or guest boot has
+passed. Evidence and source links:
+[`evidence/2026-09-23-virtualization-host-prerequisites.md`](../../evidence/2026-09-23-virtualization-host-prerequisites.md).
+
+The native VM-creation path now queries the current process's effective
+virtualization entitlement through Security.framework before native image
+identity inspection and VM configuration. TypeScript performs the same
+preflight after its protected image readback and before native creation, and
+maps missing/unreadable entitlement to `POLICY_DENIED`; native creation
+independently denies bypass attempts. This makes the entitlement a runtime
+authorization prerequisite, not a caller-controlled flag. It does not
+establish that the shipped Broker signature carries the entitlement, nor does
+it constitute a valid-guest boot or isolation result.
 
 This change adds a disabled-by-default `VirtualizationTaskRunner` seam.
 It accepts only a native-adapter executor, requires an externally reviewed
@@ -352,3 +525,48 @@ independent guest isolation evidence are accepted. This is manifest-binding
 and executor semantics evidence only; it does not claim a bootable image,
 guest isolation, attestation production, or `mac_task_run` enablement. Evidence:
 [`evidence/2026-09-15-virtualization-guest-executor.md`](../../evidence/2026-09-15-virtualization-guest-executor.md).
+
+## App Sandbox Broker network channel candidate
+
+The App Sandbox executor now contains a disabled-by-default, independently
+gated network candidate. For a probe-approved allowlist, the Broker creates a
+per-run Unix socket channel and passes only one endpoint through the
+authenticated descriptor handoff. The native helper gives the fixed `/bin/sh`
+child FD 7 plus a run-bound token; the child does not receive a network
+entitlement or raw network socket. The Broker validates strict framed JSON,
+canonical base64, bounded request/response/timeout budgets, token binding,
+single-use request IDs, and the digest-bound loopback destination before
+opening the numeric loopback connection.
+
+On the physical macOS 26.2 arm64 host, the positive probe verified the exact
+allowlisted fixture response and direct child `/dev/tcp` denial in the same run.
+This is transport-boundary evidence only. The helper is ad-hoc signed, the
+network evidence gate is not accepted by production startup, and Developer ID,
+notarization, installed identity readback, rollback/recovery, and public
+`mac_task_run` enablement remain separate release gates. Evidence:
+[`evidence/2026-09-22-app-sandbox-network-proxy.md`](../../evidence/2026-09-22-app-sandbox-network-proxy.md).
+
+## Fixed-script Seatbelt rerun
+
+The experimental `SandboxExecTaskRunner` now has a narrow Broker-resolved
+script mode. The registry snapshots strict UTF-8 source and its SHA-256; the
+runner rechecks the digest and passes source through bounded stdin to
+`/bin/sh -s --`, never through argv or a script pathname. On the current
+physical host, `/bin/sh` reads the protected `/private/var/select/sh` selector
+and dispatches to root-owned `/bin/bash`; the rendered profile permits only
+that fixed system implementation while continuing to deny `process-fork`.
+A harmless script succeeds and a hostile subshell receives
+`fork: Operation not permitted` with no child marker. This strengthens only
+the Seatbelt staging evidence. The runner remains staging-only because the
+API is deprecated, and it does not repair the App Sandbox double-fork escape
+or authorize `mac_task_run`. Evidence:
+[`evidence/2026-09-23-seatbelt-script-runner.md`](../../evidence/2026-09-23-seatbelt-script-runner.md).
+
+The expanded physical probe also verified task-root write/read, denial of
+sibling-root and synthetic `.env` reads, absence of `HOME` and `SSH_AUTH_SOCK`,
+and denial of direct loopback access. The installed SDK header states that
+`sandbox_init` is deprecated and ignores a new profile with an error when the
+current process is already sandboxed; nested Seatbelt is therefore not a
+supported repair for the App Sandbox helper's process boundary. This does not
+alter the separate App Sandbox double-fork/`setsid` failure or any release
+gate.
