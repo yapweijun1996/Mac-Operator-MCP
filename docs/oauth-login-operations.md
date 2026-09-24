@@ -81,9 +81,9 @@ Initialization is exclusive and does not overwrite an account. If interrupted,
 inspect the partial protected directory locally; do not rerun with overwrite
 or delete an existing database as a recovery shortcut.
 
-## Assemble the current R1 connection
+## Historical R1 connection
 
-The live personal supervisor provisions the signed R1 policy. It grants the 17
+The preserved R1 personal supervisor provisions the signed R1 policy. It grants the 17
 scopes listed in [personal deployment](personal-deployment.md), enables the
 exact 30 read-only tools, and binds filesystem, project, service, log, process,
 Docker, app and job targets before the Broker accepts requests. The provisioning
@@ -103,8 +103,10 @@ The personal supervisor accepts R1 and the owner project write profile W1.
 W1 advertises the R1 scopes except `mac.docker.read`, plus `mac.files.write`, `mac.project.write`,
 `mac.git.write`, and `mac.job.cancel`. Its signed policy enables only the four
 file/Git write tools and job cancellation in addition to 27 read tools, and requires an
-attended owner approval for each write. The current live snapshot remains R1;
-see [personal deployment](personal-deployment.md) for the W1 rollout boundary.
+attended owner approval for each write. The live personal snapshot is W1; its
+public 20-scope discovery, 32-tool list, 26 real reads, out-of-project denial,
+and grant revocation passed. ChatGPT reconnect and an attended in-project write
+remain open; see [personal deployment](personal-deployment.md).
 
 The staging-only D1 profile advertises
 the 17 R1 scopes plus `mac.files.write`, `mac.project.write`, `mac.git.write`,
@@ -115,9 +117,8 @@ initialization gate. These fields must not be conflated.
 
 D1 initialization remains a scope and contract-parity check only: generated
 Broker policy input still enables the 30 read-only tools, and the personal
-supervisor refuses the D1 profile. Public W1 deployment additionally requires
-real-Mac readback and recovery evidence, and an end-to-end ChatGPT mutation
-probe before claiming live acceptance.
+supervisor refuses the D1 profile. W1 still requires an attended in-project
+write and an end-to-end ChatGPT mutation probe before claiming full acceptance.
 
 ## Historical R0 policy assembly
 
