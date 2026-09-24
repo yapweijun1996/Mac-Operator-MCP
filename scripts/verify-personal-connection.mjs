@@ -3,10 +3,11 @@ import { createHash, randomBytes } from "node:crypto";
 import { parseEnv } from "node:util";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { readAuthFile } from "../packages/auth/dist/cli.js";
 import { AuthStore } from "../packages/auth/dist/store.js";
-import { configSchema, READ_SCOPES, READ_TOOLS } from "../packages/auth/dist/contracts.js";
+import { configSchema, READ_SCOPES, READ_TOOLS, W1_SCOPES, W1_TOOLS } from "../packages/auth/dist/contracts.js";
 import { configureIssuerNetwork } from "../packages/auth/dist/issuer-network.js";
 import { decodeJwt } from "jose";
 
@@ -18,6 +19,11 @@ let client; let transport; let network;
 async function run() {
   if (process.argv.length !== 4) throw new Error("Expected protected root and env path");
   const config = configSchema.parse(JSON.parse(readAuthFile(`${root}/auth/auth-config.json`).toString()));
+  if (config.grantProfile !== "r1" && config.grantProfile !== "w1") throw new Error("Unsupported personal verification profile");
+  const writeProfile = config.grantProfile === "w1";
+  const expectedScopes = writeProfile ? W1_SCOPES : READ_SCOPES;
+  const expectedTools = writeProfile ? W1_TOOLS : READ_TOOLS;
+  const profileLabel = writeProfile ? "W1" : "R1";
   network = configureIssuerNetwork(new URL(config.issuer).hostname);
   const bytes = readAuthFile(envPath, 8192, false);
   try { credentials = parseEnv(bytes.toString()); } finally { bytes.fill(0); }
@@ -32,12 +38,12 @@ async function run() {
   const rootMetadata = await request("/.well-known/oauth-protected-resource");
   assert.equal(rootMetadata.status, 200);
   assert.deepEqual(await rootMetadata.json(), metadata);
-  assert.deepEqual(metadata.scopes_supported, [...READ_SCOPES]);
+  assert.deepEqual(metadata.scopes_supported, [...expectedScopes]);
   console.log("Public OAuth discovery and unauthenticated MCP challenge verified.");
   const registered = await request("/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Mac Operator deployment verification", redirect_uris: [config.allowedRedirectUris[0]], token_endpoint_auth_method: "none" }) });
   assert.equal(registered.status, 201); clientId = (await registered.json()).client_id;
   const verifier = randomBytes(32).toString("base64url");
-  const query = new URLSearchParams({ client_id: clientId, redirect_uri: config.allowedRedirectUris[0], response_type: "code", state: randomBytes(20).toString("hex"), code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256", resource: config.resource, scope: READ_SCOPES.join(" ") });
+  const query = new URLSearchParams({ client_id: clientId, redirect_uri: config.allowedRedirectUris[0], response_type: "code", state: randomBytes(20).toString("hex"), code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256", resource: config.resource, scope: expectedScopes.join(" ") });
   const authorization = await request(`/authorize?${query}`); assert.equal(authorization.status, 303);
   let cookie = cookieOf(authorization); assert.ok(cookie);
   let csrf = await csrfOf(await request("/oauth/login", { headers: { cookie } }));
@@ -52,7 +58,8 @@ async function run() {
   const claims = decodeJwt(tokens.access_token);
   const nowSeconds = Math.floor(Date.now() / 1_000);
   const claimScope = typeof claims.scope === "string" ? claims.scope.split(" ").filter(Boolean) : [];
-  console.log(`Access-token claim boundary: issuer_match=${claims.iss === config.issuer} audience_match=${claims.aud === config.resource} subject_match=${claims.sub === config.principalId} required_scope_count=${READ_SCOPES.filter(scope => claimScope.includes(scope)).length}/${READ_SCOPES.length} has_sid=${typeof claims.sid === "string"} has_azp=${typeof claims.azp === "string"} has_jti=${typeof claims.jti === "string"} age_seconds=${typeof claims.iat === "number" ? nowSeconds - claims.iat : "invalid"} remaining_seconds=${typeof claims.exp === "number" ? claims.exp - nowSeconds : "invalid"}`);
+  assert.deepEqual([...claimScope].sort(), [...expectedScopes].sort());
+  console.log(`Access-token claim boundary: issuer_match=${claims.iss === config.issuer} audience_match=${claims.aud === config.resource} subject_match=${claims.sub === config.principalId} required_scope_count=${expectedScopes.filter(scope => claimScope.includes(scope)).length}/${expectedScopes.length} has_sid=${typeof claims.sid === "string"} has_azp=${typeof claims.azp === "string"} has_jti=${typeof claims.jti === "string"} age_seconds=${typeof claims.iat === "number" ? nowSeconds - claims.iat : "invalid"} remaining_seconds=${typeof claims.exp === "number" ? claims.exp - nowSeconds : "invalid"}`);
   console.log("Real owner login, explicit consent and S256 token exchange verified over public HTTPS.");
   client = new Client({ name: "mac-operator-live-verifier", version: "1.0.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
   const diagnosticFetch = async (input, init = {}) => {
@@ -84,7 +91,7 @@ async function run() {
     console.log(`Raw MCP initialize authorization probe: status=${rawHandshake.status}`);
     throw error;
   }
-  const listed = await client.listTools(); assert.deepEqual(listed.tools.map(t => t.name).sort(), [...READ_TOOLS].sort());
+  const listed = await client.listTools(); assert.deepEqual(listed.tools.map(t => t.name).sort(), [...expectedTools].sort());
   const call = async (name, argumentsValue) => {
     const result = await client.callTool({ name, arguments: argumentsValue });
     const text = result.content.find(item => item.type === "text")?.text;
@@ -92,9 +99,23 @@ async function run() {
   };
   const projectRoot = resolve(process.env.MOPS_VERIFY_PROJECT_ROOT ?? process.cwd());
   const homeRoot = homedir();
+  if (writeProfile) {
+    const outsidePath = join(homeRoot, `.mac-operator-w1-denied-${randomBytes(8).toString("hex")}.txt`);
+    assert.equal(existsSync(outsidePath), false);
+    const denied = await client.callTool({ name: "mac_write_file_atomic", arguments: {
+      path: outsidePath, content: "denied-probe", idempotency_key: `w1-denied-${randomBytes(8).toString("hex")}`, create_only: true
+    } });
+    const deniedText = denied.content.find(item => item.type === "text")?.text;
+    assert.ok(deniedText);
+    const deniedPayload = JSON.parse(deniedText);
+    assert.equal(deniedPayload.ok, false);
+    assert.equal(deniedPayload.result_class, "POLICY_DENIED");
+    assert.equal(existsSync(outsidePath), false);
+    console.log("W1 out-of-project write denied before approval or file creation.");
+  }
   const dockerStatus = await call("mac_docker_status", { include_images: false, include_storage: false });
   const containerId = dockerStatus.containers?.[0]?.id;
-  assert.ok(containerId, "R1 Docker verification requires one observed container");
+  assert.ok(containerId, `${profileLabel} Docker verification requires one observed container`);
   const verificationCalls = new Map([
     ["mac_app_list", { running_only: true, include_installed: false }],
     ["mac_capabilities", {}],
@@ -126,12 +147,12 @@ async function run() {
     ["mac_system_summary", { include_load: false }]
   ]);
   for (const [name, argumentsValue] of verificationCalls) {
-    console.log(`R1 call start: ${name}`);
+    console.log(`${profileLabel} call start: ${name}`);
     await call(name, argumentsValue);
-    console.log(`R1 call passed: ${name}`);
+    console.log(`${profileLabel} call passed: ${name}`);
   }
   assert.equal(READ_TOOLS.includes("mac_job_status"), true);
-  console.log(`R1 tool discovery verified: ${listed.tools.length} tools listed; ${verificationCalls.size + 1} real read calls succeeded. mac_job_status remains available for owner-owned Job readback only.`);
+  console.log(`${profileLabel} tool discovery verified: ${listed.tools.length} tools listed; ${verificationCalls.size + 1} real read calls succeeded. mac_job_status remains available for owner-owned Job readback only.`);
   const revoked = await form("/revoke", { client_id: clientId, token: refreshToken }); assert.equal(revoked.status, 200);
   assert.equal((await request("/mcp", { headers: { authorization: `Bearer ${tokens.access_token}` } })).status, 401);
   refreshToken = undefined;
