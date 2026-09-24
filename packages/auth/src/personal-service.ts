@@ -76,7 +76,7 @@ async function provision(root: string, revision: string) {
       oauthStatusLocalUrl: `https://127.0.0.1:${auth.port}/oauth/status`, oauthStatusLocalServerName: new URL(auth.issuer).hostname,
       oauthStatusLocalCaPath: join(data, "auth-status-ca.crt"),
       allowedHosts: [new URL(auth.issuer).hostname], allowedOrigins: ["chatgpt.com", new URL(auth.issuer).hostname],
-      requiredScopes: [...scopes],
+      oauthScopes: [...scopes], requiredScopes: [...READ_SCOPES],
       policyVersion: "policy-1", sourceRevision: revision, contractVersion: "0.1", ipcTimeoutMs: 5000, maxIpcResponseBytes: 1048576,
       rateLimitWindowMs: 60000, rateLimitMaxRequests: 100, rateLimitMaxKeys: 100 });
     save(join(data, "edge-service.json"), json(edge));

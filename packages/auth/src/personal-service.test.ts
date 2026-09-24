@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { PolicyBundleVerifier } from "@mac-operator/broker";
 import { runAuthCli } from "./cli.js";
-import { W1_SCOPES } from "./contracts.js";
+import { READ_SCOPES, W1_SCOPES } from "./contracts.js";
 import { assertW1Policy } from "./w1-policy.js";
 
 const execFileAsync = promisify(execFile);
@@ -51,8 +51,9 @@ test("personal W1 provisioning signs a project-bound policy and attended approva
     const auth = JSON.parse(await readFile(join(authDirectory, "auth-config.json"), "utf8")) as { principalId: string; issuerId: string };
     assert.doesNotThrow(() => assertW1Policy(policy, auth.principalId, auth.issuerId));
     assert.equal(policy.filesystemRoots.find(root => root.rootId === "owner-project")?.path, project);
-    const edge = JSON.parse(await readFile(join(personal, "edge-service.json"), "utf8")) as { requiredScopes: string[] };
-    assert.deepEqual(edge.requiredScopes, [...W1_SCOPES]);
+    const edge = JSON.parse(await readFile(join(personal, "edge-service.json"), "utf8")) as { oauthScopes: string[]; requiredScopes: string[] };
+    assert.deepEqual(edge.oauthScopes, [...W1_SCOPES]);
+    assert.deepEqual(edge.requiredScopes, [...READ_SCOPES]);
     const approval = JSON.parse(await readFile(join(personal, "approval-issuer.json"), "utf8")) as { enabled: boolean };
     assert.equal(approval.enabled, true);
     const keyConfig = JSON.parse(await readFile(join(personal, "approval-keys.json"), "utf8")) as {
