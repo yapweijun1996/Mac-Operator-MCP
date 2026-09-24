@@ -100,9 +100,8 @@ private struct JSONParser {
             let byte = bytes[index]
             index += 1
             if byte == 0x22 {
-                guard let value = String(validating: output, as: UTF8.self) else {
-                    throw ProbeError.invalidInput("string is not valid UTF-8")
-                }
+                let value = String(decoding: output, as: UTF8.self)
+                guard Array(value.utf8) == output else { throw ProbeError.invalidInput("string is not valid UTF-8") }
                 return value
             }
             if byte == 0x5c {
