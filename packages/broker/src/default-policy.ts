@@ -76,7 +76,7 @@ const tools: ToolPolicy[] = [
     targetType: "app_window",
     mutation: false,
     approvalPolicy: "trusted_gui",
-    outputCapBytes: 524_288,
+    outputCapBytes: 786_432,
     timeoutMs: 10_000,
     implemented: true,
     enabled: false
@@ -89,7 +89,7 @@ const tools: ToolPolicy[] = [
     targetType: "ui_element",
     mutation: true,
     approvalPolicy: "trusted_gui",
-    outputCapBytes: 262_144,
+    outputCapBytes: 786_432,
     timeoutMs: 15_000,
     implemented: true,
     enabled: false

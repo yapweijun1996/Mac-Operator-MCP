@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MacUiInspectorImpl, UiSnapshotRegistry, opaqueElementId, opaqueWindowId, parseUiActionResult, parseUiObserveResult, parseUiTypeResult, uiActionExecutableForTesting, uiActionScriptForTesting, uiObserveExecutableForTesting, uiObserveScriptForTesting, uiTypeExecutableForTesting, uiTypeScriptForTesting, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest } from "./ui-inspector.js";
+import { assertRetainedUiTargetMatches, MacUiInspectorImpl, UiSnapshotRegistry, guiVisionExecutableForTesting, opaqueElementId, opaqueWindowId, parseUiActionResult, parseUiObserveResult, parseUiScreenshotResult, parseUiTypeResult, uiActionExecutableForTesting, uiActionScriptForTesting, uiObserveExecutableForTesting, uiObserveScriptForTesting, uiTypeExecutableForTesting, uiTypeScriptForTesting, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, validateUiVisualActionRequest } from "./ui-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 const appId = "bundle:com.example.Accessible";
@@ -47,6 +47,7 @@ test("Accessibility observation fails closed for permission, app, and window err
   for (const [error, expected] of [
     ["accessibility_permission", "POLICY_DENIED"],
     ["app_not_running", "TARGET_NOT_FOUND"],
+    ["app_not_frontmost", "TARGET_NOT_FOUND"],
     ["window_not_found", "TARGET_NOT_FOUND"]
   ] as const) {
     assert.throws(
@@ -264,4 +265,337 @@ test("Accessibility type rejects secret-like text, secure snapshots, and postcon
     ownerPrincipalId: "principal-1", ownerSessionId: "session-1", observedAtMs: 1_000
   } as const;
   assert.throws(() => parseUiTypeResult(success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0, window_title: "Example", element_index: 0, role: "AXTextField", characters_accepted: 4, keys_accepted: [], submitted: false, focus_confirmed: true, secure: false })), { snapshot, text: "Alice", keys: [], submit: false }), /postcondition/u);
+});
+
+test("visual observation returns a bounded JPEG and a session-owned action reference", async () => {
+  const browserApp = "bundle:com.google.Chrome";
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100, 0), Buffer.from([0xff, 0xd9])]).toString("base64");
+  const calls: { executable: string; args: readonly string[]; allowUserOwnedExecutable: boolean | undefined }[] = [];
+  const inspector = new MacUiInspectorImpl({
+    run: async request => {
+      calls.push({ executable: request.executable, args: request.args, allowUserOwnedExecutable: request.allowUserOwnedExecutable });
+      if (calls.length === 1) return success(JSON.stringify({
+        status: "ok", app_id: browserApp, window_index: 0, window_title: "Example Domain",
+        focused: true, nodes: [{ index: 0, role: "AXWindow", label: "Example Domain", enabled: true, focused: true, secure: false }], truncated: false
+      }));
+      return success(JSON.stringify({
+        status: "ok", mode: "active_window", app_id: browserApp, window_title: "Example Domain",
+        screen_width: 800, screen_height: 600, window_x: 0, window_y: 0,
+        window_width: 800, window_height: 600, capture_width: 1600, capture_height: 1200,
+        image_width: 1600, image_height: 1200, image_base64: jpeg
+      }));
+    }
+  });
+  const observed = await inspector.observe(browserApp, undefined, 10, { timeoutMs: 10_000, shouldCancel: () => false }, "active_window");
+  assert.deepEqual(calls.map(call => call.allowUserOwnedExecutable), [true, true]);
+  assert.equal(observed.screenshot?.base64, jpeg);
+  assert.match(observed.visualRef ?? "", /^element:[a-f0-9]{48}$/u);
+  assert.equal(calls[0]?.executable, guiVisionExecutableForTesting);
+  assert.deepEqual(calls[0]?.args, ["inspect", "visual", "com.google.Chrome", "", "10"]);
+  assert.equal(calls[1]?.executable, guiVisionExecutableForTesting);
+  assert.deepEqual(calls[1]?.args, ["capture", "active_window", "com.google.Chrome", ""]);
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation(observed, "owner", "session", 1_000);
+  assert.equal(registry.resolve(observed.visualRef!, "owner", "session", 1_001).role, "VisualWindow");
+  assert.throws(() => registry.resolve(observed.visualRef!, "other", "session", 1_001), /not available/u);
+  assert.throws(() => registry.resolve(observed.visualRef!, "owner", "session", 31_001), /stale/u);
+});
+
+test("truncated Accessibility-only observations do not create actionable element references", () => {
+  const appId = "bundle:com.google.Chrome";
+  const windowId = opaqueWindowId(appId, 0, "Example Domain");
+  const elementRef = opaqueElementId(windowId, 0, "AXTextField", "Text input", false);
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation({ appId, windowId, windowIndex: 0, windowTitle: "Example Domain",
+    focused: true, nodes: [{ elementRef, role: "AXTextField", label: "Text input",
+      enabled: true, focused: true, secure: false }], truncated: true, warnings: [] },
+  "owner", "session", 1_000);
+  assert.throws(() => registry.resolve(elementRef, "owner", "session", 1_001), /not available/u);
+});
+
+test("visual typing uses the app-owned helper and keeps text on stdin", async () => {
+  const appId = "bundle:com.google.Chrome";
+  const windowId = opaqueWindowId(appId, 0, "Example Domain");
+  const snapshot = {
+    elementRef: opaqueElementId(windowId, 0, "AXTextField", "Text input", false),
+    appId, windowId, windowIndex: 0, windowTitle: "Example Domain", elementIndex: 0,
+    role: "AXTextField", label: "Text input", enabled: true, focused: true, secure: false,
+    ownerPrincipalId: "owner", ownerSessionId: "session", observedAtMs: 1_000, nativeVisual: true
+  } as const;
+  let command: { executable: string; args: readonly string[]; stdin: string | undefined } | undefined;
+  const inspector = new MacUiInspectorImpl({ run: async request => {
+    command = { executable: request.executable, args: request.args, stdin: request.stdin };
+    return success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0,
+      window_title: "Example Domain", element_index: 0, role: "AXTextField",
+      characters_accepted: 4, keys_accepted: [], submitted: false,
+      focus_confirmed: true, secure: false }));
+  } });
+  const typed = await inspector.type({ snapshot, text: "Test", keys: [], submit: false },
+    { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(typed.charactersAccepted, 4);
+  assert.equal(command?.executable, guiVisionExecutableForTesting);
+  assert.deepEqual(command?.args, ["type", "visual", "com.google.Chrome", "Example Domain", "AXTextField", "Text input"]);
+  assert.equal(command?.stdin, '{"keys":[],"submit":false,"text":"Test"}');
+});
+
+test("visual actions validate bounds and reject secure or mismatched readback", () => {
+  const ref = "element:0123456789abcdef0123456789abcdef0123456789abcdef";
+  assert.doesNotThrow(() => validateUiVisualActionRequest(ref, "click", { x: 100, y: 200 }));
+  assert.doesNotThrow(() => validateUiVisualActionRequest(ref, "shortcut", { key: "COMMAND_L" }));
+  assert.throws(() => validateUiVisualActionRequest(ref, "click", { x: -1, y: 200 }), /bounded screen coordinates/u);
+  assert.throws(() => validateUiVisualActionRequest(ref, "shortcut", { key: "COMMAND_Q" }), /not allowed/u);
+  assert.throws(() => validateUiVisualActionRequest(ref, "wait", { waitMs: 2001 }), /at most two seconds/u);
+  const observed = {
+    appId: "bundle:com.google.Chrome", windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+    windowTitle: "Example Domain", focused: true, nodes: [], truncated: false, warnings: []
+  };
+  assert.throws(() => parseUiScreenshotResult(success(JSON.stringify({ status: "error", error: "other_window_visible" })), observed, "screen"), /window-boundary restriction/u);
+});
+
+test("visual click dispatch stays inside an observed browser window", async () => {
+  const browserApp = "bundle:com.google.Chrome";
+  const snapshot = {
+    elementRef: "element:0123456789abcdef0123456789abcdef0123456789abcdef",
+    appId: browserApp, windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+    windowIndex: 0, windowTitle: "Example Domain", elementIndex: -1, role: "VisualWindow",
+    enabled: true, focused: true, secure: false, ownerPrincipalId: "owner", ownerSessionId: "session",
+    observedAtMs: 1000, screenWidth: 800, screenHeight: 600,
+    windowX: 0, windowY: 0, windowWidth: 800, windowHeight: 600
+  } as const;
+  let command: { executable: string; args: readonly string[] } | undefined;
+  const inspector = new MacUiInspectorImpl({ run: async request => {
+    command = { executable: request.executable, args: request.args };
+    return success(JSON.stringify({ status: "ok", app_id: browserApp, window_title: "Example Domain",
+      action: "click", accepted: true, focused: true }));
+  } });
+  const acted = await inspector.action({ snapshot, action: "click", options: { x: 200, y: 150 } },
+    { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(acted.reobserved.role, "VisualWindow");
+  assert.equal(command?.executable, guiVisionExecutableForTesting);
+  assert.deepEqual(command?.args, ["action", "visual", "com.google.Chrome", "Example Domain", "click", "200", "150", "0", "0", "", "0"]);
+  await assert.rejects(inspector.action({ snapshot, action: "click", options: { x: 801, y: 150 } },
+    { timeoutMs: 10_000, shouldCancel: () => false }), /within the observed window/u);
+});
+
+test("focused typing selects only a fresh text field from the latest observation", () => {
+  const browserApp = "bundle:com.google.Chrome";
+  const oldWindow = opaqueWindowId(browserApp, 0, "Old");
+  const newWindow = opaqueWindowId(browserApp, 0, "New");
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation({ appId: browserApp, windowId: oldWindow, windowIndex: 0, windowTitle: "Old",
+    focused: true, nodes: [{ elementRef: opaqueElementId(oldWindow, 0, "AXTextField", "Search", false),
+      role: "AXTextField", label: "Search", enabled: true, focused: true, secure: false }],
+    truncated: false, warnings: [] }, "owner", "session", 1000);
+  registry.recordObservation({ appId: browserApp, windowId: newWindow, windowIndex: 0, windowTitle: "New",
+    focused: true, nodes: [{ elementRef: opaqueElementId(newWindow, 0, "AXButton", "Browse", false),
+      role: "AXButton", label: "Browse", enabled: true, focused: true, secure: false }],
+    truncated: false, warnings: [] }, "owner", "session", 2000);
+  assert.throws(() => registry.resolveFocused("owner", "session", 2001), /focused text field/u);
+  registry.recordObservation({ appId: browserApp, windowId: newWindow, windowIndex: 0, windowTitle: "New",
+    focused: true, nodes: [{ elementRef: opaqueElementId(newWindow, 0, "AXTextField", "Address", false),
+      role: "AXTextField", label: "Address", enabled: true, focused: true, secure: false }],
+    truncated: false, warnings: [] }, "owner", "session", 3000);
+  assert.equal(registry.resolveFocused("owner", "session", 3001).label, "Address");
+  assert.throws(() => registry.resolveFocused("owner", "session", 33_001), /stale/u);
+});
+
+test("browser address input rejects executable and local URL schemes", async () => {
+  const browserApp = "bundle:com.google.Chrome";
+  const windowId = opaqueWindowId(browserApp, 0, "Example Domain");
+  const snapshot = {
+    elementRef: opaqueElementId(windowId, 0, "AXTextField", "Address and search bar", false),
+    appId: browserApp, windowId, windowIndex: 0, windowTitle: "Example Domain", elementIndex: 0,
+    role: "AXTextField", label: "Address and search bar", enabled: true, focused: true, secure: false,
+    ownerPrincipalId: "owner", ownerSessionId: "session", observedAtMs: 1000
+  } as const;
+  let called = false;
+  const inspector = new MacUiInspectorImpl({ run: async () => { called = true; throw new Error("unexpected execution"); } });
+  for (const value of ["javascript:alert(1)", "file:///etc/passwd", "http://127.0.0.1:8080/"]) {
+    await assert.rejects(inspector.type({ snapshot, text: value, keys: [], submit: false },
+      { timeoutMs: 10_000, shouldCancel: () => false }), /HTTPS URL/u);
+  }
+  assert.equal(called, false);
+});
+
+test("native observation accepts only the installed adapter's numeric truncation flag", () => {
+  const result = (truncated: unknown) => success(JSON.stringify({
+    status: "ok", app_id: appId, window_index: 0, window_title: "Example", focused: true, nodes: [], truncated
+  }));
+  for (const value of [0, 1]) {
+    assert.equal(parseUiObserveResult(result(value), appId, 10, true).truncated, value === 1);
+    assert.throws(() => parseUiObserveResult(result(value), appId, 10), /malformed metadata/u);
+  }
+  for (const value of [2, -1, "1", null]) {
+    assert.throws(() => parseUiObserveResult(result(value), appId, 10, true), /malformed metadata/u);
+  }
+});
+
+function approvalTestObservation() {
+  const appId = "bundle:com.google.Chrome";
+  return {
+    appId, windowId: opaqueWindowId(appId, 0, "Web form"), windowIndex: 0,
+    windowTitle: "Web form", focused: true, nodes: [], truncated: true, warnings: [],
+    visualRef: "element:0123456789abcdef0123456789abcdef0123456789abcdef",
+    screenshot: { mode: "active_window" as const, mimeType: "image/jpeg" as const, base64: "original-image",
+      screenWidth: 800, screenHeight: 600, windowX: 10, windowY: 20, windowWidth: 600, windowHeight: 400,
+      captureWidth: 600, captureHeight: 400, imageWidth: 600, imageHeight: 400 }
+  };
+}
+
+test("approval retention preserves evidence and expiry without extending ordinary snapshots", () => {
+  const observation = approvalTestObservation();
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation(observation, "owner", "session", 1000);
+  assert.throws(() => registry.retainForApproval(observation.visualRef, "other", "session", 2000, 122000, "first-input"), /not available/u);
+  registry.retainForApproval(observation.visualRef, "owner", "session", 2000, 122000, "first-input");
+  const retained = registry.resolve(observation.visualRef, "owner", "session", 32000, "first-input");
+  assert.equal(retained.observedAtMs, 1000);
+  assert.equal(retained.revalidationRequired, true);
+  registry.retainForApproval(observation.visualRef, "owner", "session", 32000, 152000, "first-input");
+  registry.recordObservation({ ...observation, visualRef: "element:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, "owner", "session", 40000);
+  assert.equal(registry.resolve(observation.visualRef, "owner", "session", 80000, "first-input").approvalRetainUntilMs, 122000);
+  assert.throws(() => registry.resolve(observation.visualRef, "other", "session", 80000, "first-input"), /not available/u);
+  assert.throws(() => registry.resolve(observation.visualRef, "owner", "session", 122000, "first-input"), /stale/u);
+});
+
+test("retained visual click reobserves before dispatch and rejects changed pixels, geometry, or focus", async () => {
+  const observation = approvalTestObservation();
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation(observation, "owner", "session", 1000);
+  registry.retainForApproval(observation.visualRef, "owner", "session", 2000, 122000, "first-input");
+  const snapshot = registry.resolve(observation.visualRef, "owner", "session", 32000, "first-input");
+  let dispatches = 0;
+  let fresh = observation;
+  class ReobservingInspector extends MacUiInspectorImpl {
+    override async observe() { return fresh; }
+  }
+  const inspector = new ReobservingInspector({ run: async () => {
+    dispatches++;
+    return success(JSON.stringify({ status: "ok", app_id: observation.appId, window_title: "Web form", action: "click", accepted: true, focused: true }));
+  } });
+  const execute = () => inspector.action({ snapshot, action: "click", options: { x: 100, y: 100 } }, { timeoutMs: 10000, shouldCancel: () => false });
+  for (const changed of [
+    { ...observation, focused: false },
+    { ...observation, screenshot: { ...observation.screenshot, base64: "changed-image" } },
+    { ...observation, screenshot: { ...observation.screenshot, windowX: 11 } }
+  ]) {
+    fresh = changed;
+    await assert.rejects(execute(), /Approved UI target changed/u);
+    assert.equal(dispatches, 0);
+  }
+  fresh = observation;
+  assert.equal((await execute()).accepted, true);
+  assert.equal(dispatches, 1);
+});
+
+test("retained typing refuses a changed focused field even when the screenshot matches", async () => {
+  const base = approvalTestObservation();
+  const node = { elementRef: opaqueElementId(base.windowId, 0, "AXTextField", "Text input", false),
+    role: "AXTextField", label: "Text input", focused: true, enabled: true, secure: false };
+  const observation = { ...base, nodes: [node] };
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation(observation, "owner", "session", 1000);
+  registry.retainForApproval(node.elementRef, "owner", "session", 2000, 122000, "first-input");
+  const snapshot = registry.resolve(node.elementRef, "owner", "session", 32000, "first-input");
+  class ChangedFieldInspector extends MacUiInspectorImpl {
+    override async observe() { return { ...observation, nodes: [{ ...node, secure: true }] }; }
+  }
+  const inspector = new ChangedFieldInspector({ run: async () => { throw new Error("Input must not be dispatched"); } });
+  await assert.rejects(inspector.type({ snapshot, text: "Mac Operator test", keys: [], submit: false },
+    { timeoutMs: 10000, shouldCancel: () => false }), /Approved focused input changed/u);
+});
+
+test("successive input approvals preserve old evidence while accepting a new observation", async () => {
+  const base = approvalTestObservation();
+  const node = { elementRef: opaqueElementId(base.windowId, 0, "AXTextField", "Text input", false),
+    role: "AXTextField", label: "Text input", focused: true, enabled: true, secure: false };
+  const first = { ...base, nodes: [node] };
+  const second = { ...first, visualRef: "element:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    screenshot: { ...base.screenshot, base64: "after-first-input" } };
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation(first, "owner", "session", 1000);
+  registry.retainForApproval(node.elementRef, "owner", "session", 2000, 122000, "first-input");
+  registry.recordObservation(second, "owner", "session", 10000);
+  assert.equal(registry.resolve(node.elementRef, "owner", "session", 10001).observedAtMs, 10000);
+  assert.equal(registry.resolveFocused("owner", "session", 10001).observedAtMs, 10000);
+  const original = registry.resolve(node.elementRef, "owner", "session", 10001, "first-input");
+  assert.equal(original.observedAtMs, 1000);
+  assert.equal(registry.resolveFocused("owner", "session", 10001, "first-input").observedAtMs, 1000);
+  assert.throws(() => assertRetainedUiTargetMatches(original, second), /target changed/u);
+  registry.retainForApproval(node.elementRef, "owner", "session", 10001, 130001, "second-input");
+  assertRetainedUiTargetMatches(registry.resolve(node.elementRef, "owner", "session", 10002, "second-input"), second);
+  registry.releaseApproval("other", "session", "first-input");
+  assert.equal(registry.resolve(node.elementRef, "owner", "session", 10002, "first-input").observedAtMs, 1000);
+  registry.releaseApproval("owner", "session", "first-input");
+  assert.equal(registry.resolve(node.elementRef, "owner", "session", 10002, "first-input").observedAtMs, 10000);
+  assert.equal(registry.resolve(node.elementRef, "owner", "session", 10002, "second-input").revalidationRequired, true);
+  // Repeating the same input after completion starts with the new evidence.
+  registry.retainForApproval(node.elementRef, "owner", "session", 10003, 130003, "first-input");
+  assertRetainedUiTargetMatches(registry.resolve(node.elementRef, "owner", "session", 10004, "first-input"), second);
+});
+
+test("retained visual revalidation waits for an exact caret phase and dispatches only once", async () => {
+  const observation = approvalTestObservation();
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation(observation, "owner", "session", 1000);
+  registry.retainForApproval(observation.visualRef, "owner", "session", 2000, 122000, "caret-input");
+  const snapshot = registry.resolve(observation.visualRef, "owner", "session", 32000, "caret-input");
+  let observations = 0;
+  let dispatches = 0;
+  class CaretInspector extends MacUiInspectorImpl {
+    override async observe() {
+      observations++;
+      assert.equal(dispatches, 0);
+      return observations < 3
+        ? { ...observation, screenshot: { ...observation.screenshot, base64: "other-caret-phase" } }
+        : observation;
+    }
+  }
+  const inspector = new CaretInspector({ run: async () => {
+    dispatches++;
+    return success(JSON.stringify({ status: "ok", app_id: observation.appId, window_title: "Web form", action: "click", accepted: true, focused: true }));
+  } });
+  assert.equal((await inspector.action({ snapshot, action: "click", options: { x: 100, y: 100 } },
+    { timeoutMs: 10000, shouldCancel: () => false })).accepted, true);
+  assert.equal(observations, 3);
+  assert.equal(dispatches, 1);
+});
+
+test("visual retries stay bounded and stop on identity changes, cancellation, or deadline", async () => {
+  const observation = approvalTestObservation();
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation(observation, "owner", "session", 1000);
+  registry.retainForApproval(observation.visualRef, "owner", "session", 2000, 122000, "bounded-input");
+  const snapshot = registry.resolve(observation.visualRef, "owner", "session", 32000, "bounded-input");
+  for (const scenario of ["pixels", "identity", "cancel", "timeout"]) {
+    let observations = 0;
+    class RetryInspector extends MacUiInspectorImpl {
+      override async observe() {
+        observations++;
+        return { ...observation, focused: scenario !== "identity",
+          screenshot: { ...observation.screenshot, base64: "changed-content" } };
+      }
+    }
+    const inspector = new RetryInspector({ run: async () => { throw new Error("Changed evidence must never dispatch"); } });
+    await assert.rejects(inspector.action({ snapshot, action: "click", options: { x: 100, y: 100 } },
+      { timeoutMs: scenario === "timeout" ? 40 : 10000,
+        shouldCancel: () => scenario === "cancel" && observations > 0 }),
+      scenario === "cancel" ? /cancelled/u : scenario === "timeout" ? /timed out/u : /target changed/u);
+    assert.equal(observations, scenario === "pixels" ? 4 : 1);
+  }
+});
+
+test("screen capture failures distinguish geometry from sensitive window rules", () => {
+  const observed = {
+    appId: "bundle:com.google.Chrome", windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef",
+    windowTitle: "Web form", focused: true, nodes: [], truncated: false, warnings: []
+  };
+  for (const [reason, message] of [
+    ["screen_window_occluded", /window above the browser/u],
+    ["screen_other_window_visible", /another visible window/u],
+    ["sensitive_window_visible", /known sensitive application/u],
+    ["target_denied", /screenshot contents were not inspected/u]
+  ] as const) {
+    assert.throws(() => parseUiScreenshotResult(success(JSON.stringify({ status: "error", error: reason })), observed, "screen"), message);
+  }
 });

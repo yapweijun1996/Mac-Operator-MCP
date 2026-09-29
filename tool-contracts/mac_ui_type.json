@@ -22,9 +22,9 @@
   },
   "audit_class": "gui_control",
   "tool_delivery_wave": "wave_4",
-    "implementation_status": "planned",
-  "purpose": "send bounded text/keys only to an approved focused UI target.",
-  "input_summary": "element_ref:string, text:string<=10000, keys?:bounded enum[], submit?:boolean.",
+  "implementation_status": "planned",
+  "purpose": "Send bounded text to an approved focused non-secure text field in the most recent authorized browser observation.",
+  "input_summary": "text:string<=10000, element_ref?:recent observed text field, keys?:bounded enum[], submit?:boolean.",
   "output_summary": "characters accepted and postcondition state, never echoed from secure fields.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -67,7 +67,6 @@
       }
     },
     "required": [
-      "element_ref",
       "text"
     ]
   },
@@ -96,7 +95,9 @@
       "tool": {
         "const": "mac_ui_type"
       },
-      "result_class": { "const": "SUCCEEDED" },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
       "data": {
         "type": "object",
         "additionalProperties": false,
@@ -163,6 +164,10 @@
               "focused",
               "secure"
             ]
+          },
+          "job_id": {
+            "type": "string",
+            "pattern": "^job:ui-type-[a-f0-9]{48}$"
           }
         },
         "required": [

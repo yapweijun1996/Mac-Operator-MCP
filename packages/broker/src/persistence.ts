@@ -103,6 +103,11 @@ const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
  */
 export const BROKER_SCHEMA_VERSION = 19;
 export const APPROVAL_PREVIEW_TTL_MS = 120_000;
+export const GUI_SESSION_PREVIEW_TTL_MS = 600_000;
+/** Reserved IDs bind delegated GUI approvals to one authenticated Broker request. */
+export function guiSessionApprovalId(requestId: string): string {
+  return `approval:gui-session-${sha256(requestId)}`;
+}
 const MAX_REPLAY_LEDGER_ROWS = 4096;
 const MAX_LEDGER_TOMBSTONE_ROWS = 100_000;
 const MAX_LEDGER_ROTATION_RETAIN_ROWS = 1_000_000;
@@ -1243,14 +1248,24 @@ export class BrokerStore {
             .get(preview.approvalId) as ApprovalRow | undefined;
           if (!approvalRow) throw new BrokerError("AUDIT_UNAVAILABLE", "Stored approval preview approval is missing");
           const approval = mapApproval(approvalRow);
+          const execution = approval.lastRequestId === null ? undefined : this.requestRecord(approval.lastRequestId);
+          // A retry has its own request ID. Request-ledger verification above binds
+          // this execution to the approval and its audited intent, not to the preview ID.
+          const consumed = approval.usedCount === 1 && execution?.approvalId === approval.approvalId &&
+            execution.principalId === preview.requestingPrincipalId && execution.tool === preview.tool &&
+            execution.policyVersion === preview.policyVersion;
+          const unused = approval.usedCount === 0 && approval.lastRequestId === null;
+          // Older releases left the preview issued when a different request consumed
+          // it. Accept that historical state only with the verified execution backlink.
+          const validLifecycle = preview.status === "issued"
+            ? unused || (approval.lastRequestId !== preview.requestId && consumed)
+            : preview.status === "consumed" && consumed;
           if (approval.requestingPrincipalId !== preview.requestingPrincipalId ||
               approval.tool !== preview.tool || approval.contractVersion !== preview.contractVersion ||
               approval.targetKind !== preview.targetKind || approval.targetRef !== preview.targetRef ||
               approval.payloadDigest !== preview.payloadDigest || approval.policyVersion !== preview.policyVersion ||
               approval.approvalClass !== preview.approvalClass || approval.unattended !== preview.unattended ||
-              approval.useLimit !== 1 || (preview.status === "issued"
-                ? approval.usedCount !== 0 || approval.lastRequestId !== null
-                : approval.usedCount !== 1 || approval.lastRequestId !== preview.requestId)) {
+              approval.useLimit !== 1 || !validLifecycle) {
             throw new BrokerError("AUDIT_UNAVAILABLE", "Stored approval preview approval linkage is inconsistent");
           }
         }
@@ -1608,13 +1623,14 @@ export class BrokerStore {
   ): ApprovalPreviewRecord {
     if (!validRequestId(requestId) || !validAuditTimestamp(createdAtMs) ||
         !validAuditTimestamp(expiresAtMs) || expiresAtMs <= createdAtMs ||
-        expiresAtMs - createdAtMs > APPROVAL_PREVIEW_TTL_MS) {
+        expiresAtMs - createdAtMs > GUI_SESSION_PREVIEW_TTL_MS) {
       throw malformedApproval();
     }
     validateApprovalBinding(binding);
     try {
       return this.runTransaction(() => {
         const request = this.requireRequest(requestId);
+        if (expiresAtMs - createdAtMs > (request.tool === "mac_app_focus" ? GUI_SESSION_PREVIEW_TTL_MS : APPROVAL_PREVIEW_TTL_MS)) throw malformedApproval();
         if (!request.mutation || !["AUTHORIZED", "FAILED"].includes(request.state) ||
             request.targetRef !== binding.targetRef) {
           throw new BrokerError("CONFLICT", "Approval preview does not match the authorized mutation");
@@ -1801,7 +1817,7 @@ export class BrokerStore {
         assertJobTombstoneAbsent(this.database, input.job.jobId, input.job.ownerPrincipalId, input.job.idempotencyKey);
 
         const approvalRow = this.findConsumableApproval(input.request.principalId, input.request.tool,
-          input.request.policyVersion, input.approval, input.intent.timestampMs);
+          input.request.policyVersion, input.approval, input.intent.timestampMs, input.request.requestId);
         if (!approvalRow) throw new BrokerError("POLICY_DENIED", "No valid approval matches this mutation");
         const approval = mapApproval(approvalRow);
         const consumed = this.database.prepare(`
@@ -2056,7 +2072,7 @@ export class BrokerStore {
         throw new BrokerError("CONFLICT", "Request state changed or approval target does not match authorization");
       }
       assertAuditMatchesRequest(event, current);
-      const row = this.findConsumableApproval(current.principalId, current.tool, current.policyVersion, binding, event.timestampMs);
+      const row = this.findConsumableApproval(current.principalId, current.tool, current.policyVersion, binding, event.timestampMs, current.requestId);
       if (!row) throw new BrokerError("POLICY_DENIED", "No valid approval matches this mutation");
       const approval = mapApproval(row);
       const consumed = this.database.prepare(`
@@ -2100,7 +2116,7 @@ export class BrokerStore {
           throw new BrokerError("CONFLICT", "Request state or approved Job identity changed");
         }
         assertAuditMatchesRequest(input.intent, current);
-        const row = this.findConsumableApproval(current.principalId, current.tool, current.policyVersion, input.approval, input.intent.timestampMs);
+        const row = this.findConsumableApproval(current.principalId, current.tool, current.policyVersion, input.approval, input.intent.timestampMs, current.requestId);
         if (!row) throw new BrokerError("POLICY_DENIED", "No valid approval matches this mutation");
         const approval = mapApproval(row);
         const consumed = this.database.prepare(`
@@ -4221,7 +4237,8 @@ export class BrokerStore {
     tool: string,
     policyVersion: string,
     binding: ApprovalConsumptionBinding,
-    timestampMs: number
+    timestampMs: number,
+    requestId: string
   ): ApprovalRow | undefined {
     return this.database.prepare(`
       SELECT * FROM approvals
@@ -4229,12 +4246,13 @@ export class BrokerStore {
         AND target_kind = ? AND target_ref = ? AND payload_digest = ? AND policy_version = ?
         AND approval_class = ? AND issued_at_ms <= ? AND expires_at_ms > ?
         AND unattended = ?
+        AND (approval_id NOT GLOB 'approval:gui-session-*' OR approval_id = ?)
         AND revoked_at_ms IS NULL AND used_count < use_limit
       ORDER BY issued_at_ms, approval_id LIMIT 1
     `).get(
       requestingPrincipalId, tool, binding.contractVersion, binding.targetKind,
       binding.targetRef, binding.payloadDigest, policyVersion, binding.approvalClass,
-      timestampMs, timestampMs, binding.unattended ? 1 : 0
+      timestampMs, timestampMs, binding.unattended ? 1 : 0, guiSessionApprovalId(requestId)
     ) as ApprovalRow | undefined;
   }
 
@@ -4259,17 +4277,20 @@ export class BrokerStore {
   }
 
   private markApprovalPreviewConsumed(approvalId: string, requestId: string): void {
-    const row = this.database.prepare(
-      "SELECT * FROM approval_previews WHERE request_id = ? AND approval_id = ?"
-    ).get(requestId, approvalId) as ApprovalPreviewRow | undefined;
-    if (!row) return;
-    const preview = mapApprovalPreview(row);
+    const rows = this.database.prepare(
+      "SELECT * FROM approval_previews WHERE approval_id = ?"
+    ).all(approvalId) as unknown as ApprovalPreviewRow[];
+    if (rows.length === 0) return;
+    if (rows.length !== 1 || this.requireApproval(approvalId).lastRequestId !== requestId) {
+      throw new BrokerError("CONFLICT", "Approval preview consumption linkage is inconsistent");
+    }
+    const preview = mapApprovalPreview(rows[0]!);
     if (preview.status === "consumed") return;
     if (preview.status !== "issued") throw new BrokerError("CONFLICT", "Approval preview lifecycle is inconsistent");
     const updated = this.database.prepare(`
       UPDATE approval_previews SET status = 'consumed', revision = revision + 1
       WHERE request_id = ? AND approval_id = ? AND status = 'issued' AND revision = ?
-    `).run(requestId, approvalId, preview.revision);
+    `).run(preview.requestId, approvalId, preview.revision);
     if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Approval preview changed concurrently");
   }
 
@@ -5564,7 +5585,7 @@ function validateStoredApprovalPreview(row: ApprovalPreviewRow): void {
       (row.approval_id !== null && !validApprovalId(row.approval_id)) ||
       !validAuditTimestamp(row.created_at_ms) || !validAuditTimestamp(row.expires_at_ms) ||
       row.expires_at_ms <= row.created_at_ms ||
-      row.expires_at_ms - row.created_at_ms > APPROVAL_PREVIEW_TTL_MS ||
+      row.expires_at_ms - row.created_at_ms > (row.tool === "mac_app_focus" ? GUI_SESSION_PREVIEW_TTL_MS : APPROVAL_PREVIEW_TTL_MS) ||
       !Number.isSafeInteger(row.revision) || row.revision < 0) {
     fail();
   }

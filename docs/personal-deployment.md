@@ -1,6 +1,6 @@
 # Personal always-on deployment
 
-Status: W1 running on the owner's Mac mini as of September 24, 2026. This is an
+Status: W1 running on the owner's Mac mini as of September 25, 2026. This is an
 owner-managed, unsigned personal deployment, not a Developer ID/notarized
 package or acceptance of the formal production installer.
 
@@ -29,10 +29,13 @@ The preserved R1 snapshot and state are the immediate rollback path.
 The public OAuth discovery advertises 20 W1 scopes and the MCP endpoint lists
 32 tools. A real owner OAuth grant completed 26 read calls; a project-external
 write returned `POLICY_DENIED` without creating a file, and revocation blocked
-the next request. The live PM2 process had zero restarts at this check. An
-in-project write with attended browser approval and ChatGPT app reconnect are
-still pending. Existing R1 ChatGPT grants do not expand into W1; the owner
-must reconnect and consent to the new scope set.
+the next request. The live PM2 process had zero restarts at this check. A new
+ChatGPT app connection and owner OAuth grant completed on September 25. Its
+management page listed the 32 W1 tools, and a real ChatGPT conversation called
+`mac_health` successfully. The origin recorded the authenticated `tools/call`
+with HTTP 200 in 145 ms at 2026-09-24 22:20:40 UTC. An in-project write with
+attended browser approval remains pending. Existing R1 grants did not expand
+into W1; this acceptance used a fresh connection and grant.
 
 ## Historical R1 rollback state
 
@@ -366,3 +369,25 @@ default or action scopes. Refreshing tools cannot add a missing OAuth scope.
 Create or reconfigure the app, authorize again, then require both a real UI call
 and an origin-side `tools/call` success for acceptance. See OpenAI's
 [OAuth guidance](https://developers.openai.com/plugins/build/auth).
+
+### Persistent browser control
+
+G1 owners can select **Allow this browser until revoked** on a focus approval
+page. This permits focus, click/scroll/key and input for the same browser, owner
+account and policy version without a time or use limit. The grant survives
+service restart and owner reconnection, and is stored in the protected AuthStore.
+Existing temporary consent is not automatically upgraded.
+
+`/approval/access` provides independent owner login to view and revoke grants.
+Management login expiry does not revoke persistent browser access. OAuth
+sessions, policy and macOS permissions remain required; file writes and system
+operations remain outside the grant. An explicitly authorized local owner can
+also enable this using the stopped-service `browser-access` setup command.
+See [persistent browser access](gui-computer-use.md#persistent-browser-access)
+for the exact command, validation, revocation and rollback constraints.
+
+The tunnel Auth ingress allowlist must include `/approval/access`,
+`/approval/gui-session` and `/approval/gui-session/revoke`, in addition to the
+existing login/review/decision routes. Validate ingress before restarting the
+connector. Otherwise local route tests pass but the public management UI returns
+404. These paths still require owner authentication and CSRF checks in Auth.

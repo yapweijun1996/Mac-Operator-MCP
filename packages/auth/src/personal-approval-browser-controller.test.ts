@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  guiSessionApprovalId,
   ApprovalIssuerKeyManager,
   BrokerStore,
   createApprovalIssuerRuntime,
@@ -104,6 +105,23 @@ test("personal browser approval controller binds a real preview through owner IP
     assert.equal(store.approvalRecord(issued.approvalId)?.approverPrincipalId, "owner-browser-issuer");
     assert.equal(controller.preview(requestId), undefined);
     await assert.rejects(controller.issue(requestId), /no longer pending/u);
+    const focusTarget = "app_window:window:bundle:com.google.Chrome";
+    store.admitRequest({ requestId: "focus-consent", edgeId: "edge-1", nonce: "focus-nonce", nonceExpiresAtMs: NOW + 60000,
+      principalId: "owner-1", sessionId: "session-1", tool: "mac_app_focus", policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64), mutation: true, receivedAtMs: NOW });
+    store.recordRequestDecision({ requestId: "focus-consent", principalId: "owner-1", tool: "mac_app_focus", eventType: "decision",
+      decision: "allow", resultClass: "AUTHORIZED", targetRef: focusTarget, policyVersion: "policy-0.1", evidence: {}, timestampMs: NOW + 1 });
+    store.createApprovalPreview("focus-consent", { contractVersion: "0.1", targetKind: "app_window", targetRef: focusTarget,
+      payloadDigest: "a".repeat(64), approvalClass: "trusted_gui", unattended: false }, NOW + 2, NOW + 600000);
+    assert.equal(controller.preview("focus-consent")?.sessionEligible, true);
+    const grant = controller.sessions.start("focus-consent");
+    assert.equal(await controller.authorizeGuiSession({ requestId: "session-focus", principalId: "owner-1", sessionId: "session-1",
+      appId: "bundle:com.google.Chrome", tool: "mac_app_focus", contractVersion: "0.1", policyVersion: "policy-0.1",
+      targetKind: "app_window", targetRef: focusTarget, payloadDigest: "a".repeat(64), expiresAtMs: NOW + 60000 }), true);
+    const childId = guiSessionApprovalId("session-focus");
+    assert.equal(store.approvalRecord(childId)?.approverPrincipalId, "owner-browser-issuer");
+    controller.sessions.revoke(grant.id);
+    assert.notEqual(store.approvalRecord(childId)?.revokedAtMs, null);
   } finally {
     await runtime?.close().catch(() => undefined);
     keyManager?.dispose();

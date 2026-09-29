@@ -23,8 +23,8 @@
   "audit_class": "app_control",
   "tool_delivery_wave": "wave_4",
   "implementation_status": "planned",
-  "purpose": "focus an allowlisted running app/window by normalized identity.",
-  "input_summary": "app_id:string, window_hint?:string.",
+  "purpose": "Focus an allowlisted running app/window by bundle ID, such as com.google.Chrome.",
+  "input_summary": "app_id:bundle ID (for Chrome, com.google.Chrome), window_hint?:string.",
   "output_summary": "resolved app/window and focus verification.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -34,9 +34,10 @@
     "properties": {
       "app_id": {
         "type": "string",
+        "description": "Use com.google.Chrome for Chrome or com.apple.Safari for Safari. A bundle: prefix is also accepted.",
         "minLength": 1,
         "maxLength": 256,
-        "pattern": "^[A-Za-z0-9._:/-]+$"
+        "pattern": "^(bundle:)?[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$"
       },
       "window_hint": {
         "type": "string",

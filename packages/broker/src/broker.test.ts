@@ -12,7 +12,7 @@ import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { WorkerFilesystemExecutor, type FilesystemExecutor } from "./filesystem-executor.js";
 import { FilesystemInspector } from "./filesystem-inspector.js";
-import { APPROVAL_PREVIEW_TTL_MS, BrokerStore, redactEvidence, type BrokerJob, type GuestTaskJobMetadata, type JobLease } from "./persistence.js";
+import { guiSessionApprovalId, APPROVAL_PREVIEW_TTL_MS, BrokerStore, redactEvidence, type BrokerJob, type GuestTaskJobMetadata, type JobLease } from "./persistence.js";
 import type { DockerInspector } from "./docker-inspector.js";
 import { inspectProcessDescriptorExecutionCapability } from "./process-launch-capability.js";
 import { BrokerPrivilegedHelperCommandFactory } from "./privileged-helper.js";
@@ -1849,7 +1849,7 @@ test("mac_ui_observe binds an independent app-window scope and returns redacted 
       requestId: "ui-observe-request",
       nonce: "ui-observe-nonce",
       tool: "mac_ui_observe",
-      arguments: { app_id: appId, window_hint: "Example", max_nodes: 25 }
+      arguments: { app_id: "com.example.Accessible", window_hint: "Example", max_nodes: 25 }
     }, ["mac.ui.observe"]);
     const result = await broker.handle(signRequest(request, key));
     assert.equal(result.ok, true, JSON.stringify(result));
@@ -1965,6 +1965,59 @@ test("mac_ui_action binds a short-lived owned snapshot, GUI approval, and reobse
   }
 });
 
+test("visual UI action returns a fresh screenshot without persisting image bytes in its Job", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-visual-action-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const appId = "bundle:com.google.Chrome";
+  const windowId = "window:0123456789abcdef0123456789abcdef0123456789abcdef";
+  const visualRef = "element:0123456789abcdef0123456789abcdef0123456789abcdef";
+  const nextRef = "element:abcdef0123456789abcdef0123456789abcdef0123456789";
+  const imageData = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100, 0), Buffer.from([0xff, 0xd9])]).toString("base64");
+  const screenshot = { mode: "active_window" as const, mimeType: "image/jpeg" as const, base64: imageData,
+    screenWidth: 800, screenHeight: 600, windowX: 0, windowY: 0, windowWidth: 800, windowHeight: 600,
+    captureWidth: 1600, captureHeight: 1200, imageWidth: 1600, imageHeight: 1200 };
+  const registry = new UiSnapshotRegistry();
+  registry.recordObservation({ appId, windowId, windowIndex: 0, windowTitle: "Example Domain", focused: true,
+    nodes: [], truncated: false, warnings: [], screenshot, visualRef }, "principal-1", "session-1", NOW);
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.ui.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const uiTool = basePolicy.tools.get("mac_ui_action")!;
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_ui_action", { ...uiTool, enabled: true }) };
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), uiSnapshotRegistry: registry,
+    uiInspector: {
+      async observe() { return { appId, windowId, windowIndex: 0, windowTitle: "Example Domain", focused: true,
+        nodes: [], truncated: false, warnings: [], screenshot, visualRef: nextRef }; },
+      async action(execution) { assert.deepEqual(execution.options, { x: 200, y: 150 });
+        return { elementRef: visualRef, action: "click", accepted: true, appId, windowId,
+          reobserved: { role: "VisualWindow", enabled: true, focused: true, secure: false },
+          warnings: [], truncated: false, verified: true }; }
+    }, now: () => NOW });
+  const argumentsValue = { element_ref: visualRef, action: "click", x: 200, y: 150 };
+  const request = unsigned({ requestId: "visual-action-request", nonce: "visual-action-nonce",
+    tool: "mac_ui_action", arguments: argumentsValue }, ["mac.ui.control"]);
+  try {
+    const preview = await broker.handle(signRequest({ ...request, requestId: "visual-preview-request", nonce: "visual-preview-nonce" }, key));
+    assert.equal(preview.result_class, "POLICY_DENIED", JSON.stringify(preview));
+    store.issueApproval({ approvalId: "approval:visual-action", approverPrincipalId: "operator-1",
+      requestingPrincipalId: "principal-1", tool: "mac_ui_action", contractVersion: "0.1",
+      targetKind: "ui_element", targetRef: `ui_element:${visualRef}`,
+      payloadDigest: sha256(canonicalJson(argumentsValue)), policyVersion: "policy-0.1",
+      approvalClass: "trusted_gui", unattended: false, issuedAtMs: NOW - 1000, expiresAtMs: NOW + 1000 });
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (result.ok) {
+      const data = result.data as { visual_ref: string; screenshot: { image_base64: string } };
+      assert.equal(data.visual_ref, nextRef);
+      assert.equal(data.screenshot.image_base64, imageData);
+    }
+    assert.equal(store.ownedJobByIdempotencyKey("ui-action:visual-action-request", "principal-1")?.stdout.includes(imageData), false);
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_ui_action never publishes success after active session revocation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-ui-action-revoke-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -2069,7 +2122,7 @@ test("mac_app_open binds GUI approval, app target, Job lease, and launch readbac
     },
     now: () => NOW
   });
-  const argumentsValue = { app_id: appId };
+  const argumentsValue = { app_id: "com.example.Editor" };
   const request = unsigned({
     requestId: "app-open-request",
     nonce: "app-open-nonce",
@@ -2149,7 +2202,7 @@ test("mac_app_focus binds GUI approval, app-window target, Job lease, and focus 
     },
     now: () => NOW
   });
-  const argumentsValue = { app_id: appId, window_hint: "Example" };
+  const argumentsValue = { app_id: "com.example.Editor", window_hint: "Example" };
   const request = unsigned({
     requestId: "app-focus-request",
     nonce: "app-focus-nonce",
@@ -5383,3 +5436,118 @@ function testKeyring(key: Buffer): EdgeKeyring {
     notBeforeMs: NOW - 60_000, expiresAtMs: NOW + 60_000
   }]);
 }
+
+for (const explicitTarget of [true, false]) {
+  test(`consecutive approved typing refreshes evidence (${explicitTarget ? "explicit" : "focused"} target)`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mac-operator-ui-retention-"));
+    const store = new BrokerStore(join(directory, "broker.sqlite"));
+    const key = randomBytes(32);
+    const appId = "bundle:com.google.Chrome";
+    const windowId = "window:" + "a".repeat(48);
+    const elementRef = "element:" + "b".repeat(48);
+    const registry = new UiSnapshotRegistry();
+    let now = NOW;
+    let dispatched = 0;
+    const observation = (version: number) => ({ appId, windowId, windowIndex: 0, windowTitle: "Web form", focused: true,
+      nodes: [{ elementRef, role: "AXTextField", label: "Text input", enabled: true, focused: true, secure: false }],
+      truncated: true, warnings: [], visualRef: "element:" + String(version).repeat(48),
+      screenshot: { mode: "active_window" as const, mimeType: "image/jpeg" as const, base64: `image-${version}`,
+        screenWidth: 800, screenHeight: 600, windowX: 0, windowY: 0, windowWidth: 800, windowHeight: 600,
+        captureWidth: 800, captureHeight: 600, imageWidth: 800, imageHeight: 600 } });
+    const basePolicy = createDefaultPolicy("edge-1", true, ["mac.ui.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+    const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_ui_type", { ...basePolicy.tools.get("mac_ui_type")!, enabled: true }) };
+    let expectedObservedAt = now;
+    const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), uiSnapshotRegistry: registry,
+      uiInspector: {
+        async observe() { throw new Error("unused"); },
+        async type({ snapshot, text, keys, submit }) {
+          assert.equal(snapshot.observedAtMs, expectedObservedAt);
+          assert.equal(snapshot.revalidationRequired, true);
+          dispatched++;
+          if (dispatched === 3) throw new Error("Simulated input failure");
+          return { elementRef, appId, windowId, charactersAccepted: text.length, keysAccepted: keys, submitted: submit,
+            focusConfirmed: true, reobserved: { role: "AXTextField", focused: true, secure: false },
+            warnings: [], truncated: false, verified: true };
+        }
+      }, now: () => now });
+    const args = { ...(explicitTarget ? { element_ref: elementRef } : {}), text: "Repeat", keys: [], submit: false };
+    const binding = sha256(canonicalJson({ tool: "mac_ui_type", arguments: args }));
+    const run = (id: string) => broker.handle(signRequest(unsigned({ requestId: id, nonce: `nonce-${id}`,
+      timestampMs: now, tool: "mac_ui_type", arguments: args }, ["mac.ui.control"]), key));
+    try {
+      for (const version of [1, 2, 3, 4]) {
+        expectedObservedAt = now;
+        registry.recordObservation(observation(version), "principal-1", "session-1", now);
+        const denied = await run(`type-preview-${version}`);
+        assert.equal(denied.result_class, "POLICY_DENIED", JSON.stringify(denied));
+        now += 1000;
+        // A later observation must not replace the pending operation's evidence.
+        registry.recordObservation(observation(version), "principal-1", "session-1", now);
+        assert.equal(registry.resolve(elementRef, "principal-1", "session-1", now).observedAtMs, now);
+        store.issueApproval({ approvalId: `approval:repeat-${version}`, approverPrincipalId: "operator-1",
+          requestingPrincipalId: "principal-1", tool: "mac_ui_type", contractVersion: "0.1",
+          targetKind: "ui_element", targetRef: `ui_element:${elementRef}`, payloadDigest: sha256(canonicalJson(args)),
+          policyVersion: "policy-0.1", approvalClass: "trusted_gui", unattended: false,
+          issuedAtMs: now, expiresAtMs: now + 10000 });
+        if (version === 4) registry.releaseApproval("principal-1", "session-1", binding);
+        const result = await run(`type-execute-${version}`);
+        assert.equal(result.ok, version < 3, JSON.stringify(result));
+        if (version === 4) assert.equal(result.result_class, "TARGET_NOT_FOUND");
+        assert.equal(registry.resolve(elementRef, "principal-1", "session-1", now, binding).revalidationRequired, undefined);
+        now += 1000;
+      }
+      assert.equal(dispatched, 3);
+    } finally {
+      await broker.close();
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test("owner GUI session issuer admits consecutive exact inputs without per-operation previews", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-session-input-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32), registry = new UiSnapshotRegistry();
+  const appId = "bundle:com.google.Chrome", windowId = "window:" + "a".repeat(48), elementRef = "element:" + "b".repeat(48);
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.ui.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_ui_type", { ...basePolicy.tools.get("mac_ui_type")!, enabled: true }) };
+  let calls = 0, dispatches = 0;
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), uiSnapshotRegistry: registry, now: () => NOW,
+    async authorizeGuiSession(operation) {
+      calls++;
+      assert.equal(operation.appId, appId);
+      assert.equal(operation.sessionId, "session-1");
+      store.issueApproval({ approvalId: guiSessionApprovalId(operation.requestId), approverPrincipalId: "operator-1", requestingPrincipalId: operation.principalId,
+        tool: operation.tool, contractVersion: operation.contractVersion, targetKind: operation.targetKind, targetRef: operation.targetRef,
+        payloadDigest: operation.payloadDigest, policyVersion: operation.policyVersion, approvalClass: "trusted_gui", unattended: false,
+        issuedAtMs: NOW, expiresAtMs: NOW + 30000, useLimit: 1 });
+      return true;
+    },
+    uiInspector: { async observe() { throw new Error("unused"); }, async type({ snapshot, text, keys, submit }) {
+      dispatches++;
+      assert.equal(snapshot.revalidationRequired, true);
+      return { elementRef, appId, windowId, charactersAccepted: text.length, keysAccepted: keys, submitted: submit,
+        focusConfirmed: true, reobserved: { role: "AXTextField", focused: true, secure: false }, warnings: [], truncated: false, verified: true };
+    } } });
+  try {
+    for (const version of [1, 2]) {
+      registry.recordObservation({ appId, windowId, windowTitle: "Web form", focused: true,
+        nodes: [{ elementRef, role: "AXTextField", label: "Text input", enabled: true, focused: true, secure: false }], truncated: true, warnings: [],
+        visualRef: "element:" + String(version).repeat(48), screenshot: { mode: "active_window", mimeType: "image/jpeg", base64: `image-${version}`,
+          screenWidth: 800, screenHeight: 600, windowX: 0, windowY: 0, windowWidth: 800, windowHeight: 600,
+          captureWidth: 800, captureHeight: 600, imageWidth: 800, imageHeight: 600 } }, "principal-1", "session-1", NOW);
+      const requestId = `session-input-${version}`;
+      const result = await broker.handle(signRequest(unsigned({ requestId, nonce: `nonce-${version}`, tool: "mac_ui_type",
+        arguments: { text: "Repeat", keys: [], submit: false } }, ["mac.ui.control"]), key));
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(store.approvalPreview(requestId, NOW), undefined);
+    }
+    assert.equal(calls, 2);
+    assert.equal(dispatches, 2);
+    const denied = await broker.handle(signRequest(unsigned({ requestId: "bad-session-input", nonce: "bad-session-input", tool: "mac_ui_type",
+      arguments: { element_ref: elementRef, text: "denied" } }, []), key));
+    assert.equal(denied.ok, false);
+    assert.equal(calls, 2, "Session issuance must not precede the policy checks");
+  } finally { await broker.close(); store.close(); await rm(directory, { recursive: true, force: true }); }
+});

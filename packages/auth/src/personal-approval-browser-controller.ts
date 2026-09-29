@@ -4,12 +4,17 @@ import {
   type BrokerStore,
   type IssueApprovalInput
 } from "@mac-operator/broker";
+import type { AuthStore } from "./store.js";
+import { GuiSessionApprovals } from "./gui-session-approval.js";
+import type { GuiSessionOperation } from "@mac-operator/broker";
 import { sha256 } from "@mac-operator/contracts";
 import type { ApprovalBrowserIssuanceResult, ApprovalBrowserPreview } from "./approval-browser-bridge.js";
 
 export interface PersonalApprovalBrowserController {
   preview(requestId: string): ApprovalBrowserPreview | undefined;
   issue(requestId: string): Promise<ApprovalBrowserIssuanceResult>;
+  sessions: GuiSessionApprovals;
+  authorizeGuiSession(operation: GuiSessionOperation): Promise<boolean>;
 }
 
 /**
@@ -19,11 +24,22 @@ export interface PersonalApprovalBrowserController {
  */
 export function createPersonalApprovalBrowserController(options: {
   store: BrokerStore;
+  authStore?: AuthStore;
   approvalIssuerRuntime: ApprovalIssuerRuntimeAssembly;
   socketPath: string;
   now?: () => number;
 }): PersonalApprovalBrowserController {
   const now = options.now ?? Date.now;
+  const issueExact = async (approval: Omit<IssueApprovalInput, "approverPrincipalId">): Promise<void> => {
+    const loaded = options.approvalIssuerRuntime.keyManager.current();
+    if (loaded.keys.length !== 1 || loaded.keys[0]!.allowUnattended) throw new Error("Browser approval requires one attended issuer key");
+    const issuer = loaded.keys[0]!;
+    const client = new ApprovalIpcClient({ socketPath: options.socketPath, issuerId: issuer.issuerId,
+      keyId: issuer.keyId, authenticationKey: issuer.key, timeoutMs: 15_000, now });
+    try { await client.issue({ ...approval, approverPrincipalId: issuer.issuerId }); }
+    finally { client.dispose(); }
+  };
+  const sessions = new GuiSessionApprovals(options.store, issueExact, now, options.authStore);
   const flights = new Map<string, Promise<ApprovalBrowserIssuanceResult>>();
   const preview = (requestId: string): ApprovalBrowserPreview | undefined => {
     const record = options.store.approvalPreview(requestId, now());
@@ -39,7 +55,9 @@ export function createPersonalApprovalBrowserController(options: {
       policyVersion: record.policyVersion,
       approvalClass: record.approvalClass,
       unattended: record.unattended,
-      expiresAtMs: record.expiresAtMs
+      expiresAtMs: record.expiresAtMs,
+      sessionEligible: record.tool === "mac_app_focus" && record.approvalClass === "trusted_gui" &&
+        ["app_window:window:bundle:com.google.Chrome", "app_window:window:bundle:com.apple.Safari"].includes(record.targetRef)
     };
   };
   const issue = (requestId: string): Promise<ApprovalBrowserIssuanceResult> => {
@@ -104,5 +122,5 @@ export function createPersonalApprovalBrowserController(options: {
     void flight.then(() => flights.delete(requestId), () => flights.delete(requestId));
     return flight;
   };
-  return { preview, issue };
+  return { preview, issue, sessions, authorizeGuiSession: operation => sessions.authorize(operation) };
 }

@@ -1,3 +1,4 @@
+import { GuiProcessSupervisor, guiLauncherExecutable } from "./gui-process-supervisor.js";
 import {
   BrokerError,
   CAPABILITY_FAMILIES,
@@ -22,7 +23,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
-import { APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
+import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -58,8 +59,8 @@ import { TaskProfileRegistry, validateTaskProfileRegistry, validateTaskRunArgume
 import type { RootHelperSnapshotRequestAdmission } from "./root-helper-snapshot.js";
 import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-authority.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
-import { AppControlInspectorImpl, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
-import { MacUiInspectorImpl, UiSnapshotRegistry, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, type UiActionName, type UiInputKey, type UiInspector, type UiSnapshotRecord } from "./ui-inspector.js";
+import { AppControlInspectorImpl, normalizeAppId, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
+import { MacUiInspectorImpl, UiSnapshotRegistry, VISUAL_ACTION_NAMES, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, validateUiVisualActionRequest, type UiActionName, type UiCaptureMode, type UiInputKey, type UiInspector, type UiSnapshotRecord, type UiVisualActionOptions } from "./ui-inspector.js";
 import { requiresAccessibilityPermission, type GuiPublicEnablement } from "./gui-readiness.js";
 import { requiresDeveloperReadiness, type DeveloperPublicEnablement } from "./developer-readiness.js";
 import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
@@ -68,6 +69,20 @@ import { parseUserServiceControlArguments, UserServiceControlBrokerCandidate, ty
 import { UserServiceControlAdapter, validateUserServiceControlResult, type UserServiceControlRequest } from "./user-service-control.js";
 import { createServiceControlJobMetadata, UserServiceControlJobExecutor } from "./user-service-control-executor.js";
 import { validateSemanticResourceBudget, validateStorageSemanticResourceBudget } from "./resource-budget.js";
+
+export interface GuiSessionOperation {
+  requestId: string;
+  principalId: string;
+  sessionId: string;
+  appId: string;
+  tool: string;
+  contractVersion: string;
+  policyVersion: string;
+  targetKind: string;
+  targetRef: string;
+  payloadDigest: string;
+  expiresAtMs: number;
+}
 
 export interface BrokerOptions {
   store: BrokerStore;
@@ -103,6 +118,8 @@ export interface BrokerOptions {
   /** Production startup evidence gate for D1 mutation tools. */
   developerPublicEnablement?: DeveloperPublicEnablement;
   uiSnapshotRegistry?: UiSnapshotRegistry;
+  /** Owner-consented GUI session issuer; ordinary policy checks still apply. */
+  authorizeGuiSession?: (operation: GuiSessionOperation) => Promise<boolean>;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
   /** Optional Broker-owned active-request authority for root-helper tasks. */
@@ -221,7 +238,7 @@ export class Broker {
         "DOCKER_CONFIG", "DOCKER_HOST", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_SYSTEM", "GIT_NO_REPLACE_OBJECTS", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "HOME"
       ],
-      trustedUserOwnedExecutablePaths: DOCKER_EXECUTABLE_CANDIDATES
+      trustedUserOwnedExecutablePaths: [...DOCKER_EXECUTABLE_CANDIDATES, guiLauncherExecutable]
     });
     this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector(this.processSupervisor);
     this.logInspector = options.logInspector ?? new MacLogInspector(this.processSupervisor);
@@ -243,8 +260,8 @@ export class Broker {
       });
     }
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl(this.processSupervisor);
-    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, this.processSupervisor);
-    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(this.processSupervisor);
+    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, new GuiProcessSupervisor(this.processSupervisor));
+    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(new GuiProcessSupervisor(this.processSupervisor));
     this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     validateTaskProfileRegistry(this.taskProfileRegistry);
@@ -983,6 +1000,7 @@ export class Broker {
     let request: BrokerRequest | undefined;
     let admitted = false;
     let authorized = false;
+    let uiApprovalConsumed = false;
     let plannedAuditTarget: string | undefined;
     let sessionReserved = false;
     try {
@@ -1038,7 +1056,8 @@ export class Broker {
           elementRef,
           request.principal.principalId,
           request.principal.sessionId,
-          this.now()
+          this.now(),
+          uiApprovalBinding(request)
         );
         authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, {
           kind: "app_window",
@@ -1084,6 +1103,26 @@ export class Broker {
         timestampMs: startedAt
       });
       authorized = true;
+      if (toolPolicy.mutation && ["mac_app_focus", "mac_ui_action", "mac_ui_type"].includes(request.tool) && this.options.authorizeGuiSession) {
+        const snapshot = execution.uiAction?.snapshot ?? execution.uiType?.snapshot;
+        const appId = snapshot?.appId ?? execution.appFocus?.appId;
+        if (appId && await this.options.authorizeGuiSession({
+          requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
+          appId, tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
+          targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
+          expiresAtMs: request.principal.expiresAtMs
+        })) {
+          if (snapshot?.screenshotFingerprint) {
+            this.uiSnapshotRegistry.retainForApproval(snapshot.elementRef, request.principal.principalId,
+              request.principal.sessionId, this.now(), this.now() + APPROVAL_PREVIEW_TTL_MS, uiApprovalBinding(request));
+            const retained = this.uiSnapshotRegistry.resolve(snapshot.elementRef, request.principal.principalId,
+              request.principal.sessionId, this.now(), uiApprovalBinding(request));
+            if (execution.uiAction) execution.uiAction.snapshot = retained;
+            if (execution.uiType) execution.uiType.snapshot = retained;
+          }
+          this.checkRevocation(request);
+        }
+      }
       if (toolPolicy.mutation) {
         if (request.tool === "mac_task_run") {
           const admissionAt = this.now();
@@ -1162,6 +1201,11 @@ export class Broker {
               },
               timestampMs: intentAt
             }, approvalBinding);
+            uiApprovalConsumed = request.tool === "mac_ui_action" || request.tool === "mac_ui_type";
+            const uiSnapshot = execution.uiAction?.snapshot ?? execution.uiType?.snapshot;
+            if (uiApprovalConsumed && uiSnapshot?.screenshotFingerprint && !uiSnapshot.revalidationRequired) {
+              throw new BrokerError("TARGET_NOT_FOUND", "Approved UI evidence is unavailable; observe and request a new approval");
+            }
           } catch (error) {
             this.persistApprovalPreviewOnMissing(request, approvalBinding, intentAt, error);
             throw error;
@@ -1468,6 +1512,9 @@ export class Broker {
       }
       return this.failure(request, brokerError, startedAt);
     } finally {
+      if (uiApprovalConsumed && request !== undefined) {
+        this.uiSnapshotRegistry.releaseApproval(request.principal.principalId, request.principal.sessionId, uiApprovalBinding(request));
+      }
       if (sessionReserved && request !== undefined) {
         this.releaseSessionRequest(request.principal.principalId, request.principal.sessionId);
       }
@@ -1781,7 +1828,8 @@ export class Broker {
           execution.uiObserve.appId,
           execution.uiObserve.windowHint,
           execution.uiObserve.maxNodes,
-          this.executionControl(request, execution.target, toolPolicy.timeoutMs)
+          this.executionControl(request, execution.target, toolPolicy.timeoutMs),
+          execution.uiObserve.captureMode
         );
         this.ensureActiveAuthority(request, execution.target);
         this.uiSnapshotRegistry.recordObservation(
@@ -1795,6 +1843,7 @@ export class Broker {
           window_id: observed.windowId,
           ...(observed.windowTitle !== undefined ? { window_title: observed.windowTitle } : {}),
           focused: observed.focused,
+          ...(observed.visualRef === undefined ? {} : { visual_ref: observed.visualRef }),
           nodes: observed.nodes.map((node) => ({
             element_ref: node.elementRef,
             role: node.role,
@@ -1803,7 +1852,22 @@ export class Broker {
             focused: node.focused,
             secure: node.secure
           })),
-          truncated: observed.truncated
+          truncated: observed.truncated,
+          ...(observed.screenshot === undefined ? {} : { screenshot: {
+            mode: observed.screenshot.mode,
+            mime_type: observed.screenshot.mimeType,
+            image_base64: observed.screenshot.base64,
+            screen_width: observed.screenshot.screenWidth,
+            screen_height: observed.screenshot.screenHeight,
+            window_x: observed.screenshot.windowX,
+            window_y: observed.screenshot.windowY,
+            window_width: observed.screenshot.windowWidth,
+            window_height: observed.screenshot.windowHeight,
+            capture_width: observed.screenshot.captureWidth,
+            capture_height: observed.screenshot.captureHeight,
+            image_width: observed.screenshot.imageWidth,
+            image_height: observed.screenshot.imageHeight
+          } })
         };
         return {
           data,
@@ -3251,6 +3315,43 @@ export class Broker {
     }
   }
 
+  private async visualActionReadback(request: BrokerRequest, execution: ExecutionPlan, timeoutMs: number) {
+    if (!execution.uiActionJob || !execution.uiAction?.snapshot) {
+      throw new BrokerError("EXECUTION_FAILED", "Visual action readback has no approved target");
+    }
+    const observed = await this.uiInspector.observe(
+      execution.uiAction.snapshot.appId,
+      undefined,
+      100,
+      this.executionControl(request, execution.target, timeoutMs, execution.uiActionJob.jobId, [], execution.jobLease),
+      "active_window"
+    );
+    this.ensureActiveAuthority(request, execution.target);
+    if (!observed.focused || observed.screenshot === undefined || observed.visualRef === undefined) {
+      throw new BrokerError("VERIFICATION_FAILED", "Visual action did not produce a verified screenshot");
+    }
+    this.uiSnapshotRegistry.recordObservation(observed, request.principal.principalId, request.principal.sessionId, this.now());
+    return {
+      visual_ref: observed.visualRef,
+      window_title: observed.windowTitle ?? "",
+      screenshot: {
+        mode: observed.screenshot.mode,
+        mime_type: observed.screenshot.mimeType,
+        image_base64: observed.screenshot.base64,
+        screen_width: observed.screenshot.screenWidth,
+        screen_height: observed.screenshot.screenHeight,
+        window_x: observed.screenshot.windowX,
+        window_y: observed.screenshot.windowY,
+        window_width: observed.screenshot.windowWidth,
+        window_height: observed.screenshot.windowHeight,
+        capture_width: observed.screenshot.captureWidth,
+        capture_height: observed.screenshot.captureHeight,
+        image_width: observed.screenshot.imageWidth,
+        image_height: observed.screenshot.imageHeight
+      }
+    };
+  }
+
   private async dispatchUiAction(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -3268,7 +3369,8 @@ export class Broker {
     if (!this.uiInspector.action) throw new BrokerError("UNSUPPORTED_CAPABILITY", "UI action adapter is not enabled");
     try {
       const acted = await this.uiInspector.action(
-        { snapshot: execution.uiAction.snapshot, action: execution.uiAction.action },
+        { snapshot: execution.uiAction.snapshot, action: execution.uiAction.action,
+          ...(execution.uiAction.options === undefined ? {} : { options: execution.uiAction.options }) },
         this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
       );
       this.ensureActiveAuthority(request, execution.target);
@@ -3289,23 +3391,30 @@ export class Broker {
           enabled: acted.reobserved.enabled,
           focused: acted.reobserved.focused,
           ...(acted.reobserved.state !== undefined ? { state: acted.reobserved.state } : {})
-        }
+        },
+        ...(execution.uiAction.snapshot.role === "VisualWindow" ? await this.visualActionReadback(request, execution, timeoutMs) : {})
+      };
+      const storedData = {
+        element_ref: data.element_ref, action: data.action, accepted: data.accepted,
+        job_id: data.job_id, reobserved: { ...data.reobserved, secure: false as const }
       };
       execution.uiActionJob = this.options.store.finishJob(job.jobId, request.principal.principalId, job.revision, {
         state: "completed",
         resultClass: "success",
         finishedAtMs: this.now(),
-        stdout: canonicalJson(data)
+        stdout: canonicalJson(storedData)
       }, execution.jobLease, this.now());
       return {
         data,
         verification: {
           required: true,
           status: "verified",
-          strategy: "accessibility_reobservation",
+          strategy: execution.uiAction.snapshot.role === "VisualWindow" ? "visual_action_dispatch" : "accessibility_reobservation",
           evidence: {
-            summary: "The approved Accessibility element was re-resolved before and after one fixed action",
-            readback_hash: sha256(canonicalJson(data)),
+            summary: execution.uiAction.snapshot.role === "VisualWindow"
+              ? "A bounded event was sent to the observed browser window; inspect a fresh screenshot to verify the page effect"
+              : "The approved Accessibility element was re-resolved before and after one fixed action",
+            readback_hash: sha256(canonicalJson(storedData)),
             observed_at: new Date(this.now()).toISOString()
           }
         },
@@ -3965,7 +4074,7 @@ export class Broker {
     }
     if (request.tool === "mac_app_open") {
       assertExactArguments(request.arguments, ["app_id", "document_path", "url"]);
-      const appId = request.arguments.app_id;
+      const appId = normalizeAppId(request.arguments.app_id);
       const documentPath = request.arguments.document_path;
       const url = request.arguments.url;
       validateAppOpenRequest(appId, documentPath, url);
@@ -3981,7 +4090,7 @@ export class Broker {
     }
     if (request.tool === "mac_app_focus") {
       assertExactArguments(request.arguments, ["app_id", "window_hint"]);
-      const appId = request.arguments.app_id;
+      const appId = normalizeAppId(request.arguments.app_id);
       const windowHint = request.arguments.window_hint;
       validateAppFocusRequest(appId, windowHint);
       validateSensitiveUiTarget(appId, windowHint as string | undefined);
@@ -3995,19 +4104,35 @@ export class Broker {
       };
     }
     if (request.tool === "mac_ui_action") {
-      assertExactArguments(request.arguments, ["element_ref", "action"]);
+      assertExactArguments(request.arguments, ["element_ref", "action", "x", "y", "dx", "dy", "key", "wait_ms"]);
       const elementRef = request.arguments.element_ref;
       const action = request.arguments.action;
-      validateUiActionRequest(elementRef, action);
+      const visual = typeof action === "string" && (VISUAL_ACTION_NAMES as readonly string[]).includes(action);
+      const options: UiVisualActionOptions = {
+        ...(request.arguments.x === undefined ? {} : { x: request.arguments.x as number }),
+        ...(request.arguments.y === undefined ? {} : { y: request.arguments.y as number }),
+        ...(request.arguments.dx === undefined ? {} : { dx: request.arguments.dx as number }),
+        ...(request.arguments.dy === undefined ? {} : { dy: request.arguments.dy as number }),
+        ...(request.arguments.key === undefined ? {} : { key: request.arguments.key as string }),
+        ...(request.arguments.wait_ms === undefined ? {} : { waitMs: request.arguments.wait_ms as number })
+      };
+      if (visual) validateUiVisualActionRequest(elementRef, action, options);
+      else {
+        if (Object.keys(options).length > 0) throw new BrokerError("PRECONDITION_FAILED", "Accessibility actions do not accept visual coordinates");
+        validateUiActionRequest(elementRef, action);
+      }
       return {
         target: { kind: "ui_element", reference: elementRef as string },
         auditTarget: `ui_element:${elementRef as string}`,
-        uiAction: { elementRef: elementRef as string, action }
+        uiAction: { elementRef: elementRef as string, action: action as UiActionName,
+          ...(visual ? { options } : {}) }
       };
     }
     if (request.tool === "mac_ui_type") {
       assertExactArguments(request.arguments, ["element_ref", "text", "keys", "submit"]);
-      const elementRef = request.arguments.element_ref;
+      const elementRef = request.arguments.element_ref ?? this.uiSnapshotRegistry.resolveFocused(
+        request.principal.principalId, request.principal.sessionId, this.now(), uiApprovalBinding(request)
+      ).elementRef;
       const inputText = request.arguments.text;
       const keys = request.arguments.keys ?? [];
       const submit = request.arguments.submit ?? false;
@@ -4030,11 +4155,16 @@ export class Broker {
       };
     }
     if (request.tool === "mac_ui_observe") {
-      assertExactArguments(request.arguments, ["app_id", "window_hint", "max_nodes"]);
-      const appId = request.arguments.app_id;
+      assertExactArguments(request.arguments, ["app_id", "window_hint", "max_nodes", "capture_mode"]);
+      const appId = normalizeAppId(request.arguments.app_id);
       const windowHint = request.arguments.window_hint;
       const maxNodes = request.arguments.max_nodes ?? 200;
+      const captureMode = request.arguments.capture_mode ?? "active_window";
       validateUiObserveRequest(appId, windowHint, maxNodes as number);
+      if (typeof captureMode !== "string" || !["none", "screen", "active_window", "selected_window"].includes(captureMode) ||
+          (captureMode === "selected_window" && windowHint === undefined)) {
+        throw new BrokerError("PRECONDITION_FAILED", "capture_mode is invalid for this window");
+      }
       validateSensitiveUiTarget(appId, windowHint as string | undefined);
       return {
         target: { kind: "app_window", reference: `window:${appId}` },
@@ -4042,7 +4172,8 @@ export class Broker {
         uiObserve: {
           appId,
           ...(windowHint !== undefined ? { windowHint: windowHint as string } : {}),
-          maxNodes: maxNodes as number
+          maxNodes: maxNodes as number,
+          captureMode: captureMode as UiCaptureMode
         }
       };
     }
@@ -4664,7 +4795,8 @@ export class Broker {
           elementRef,
           request.principal.principalId,
           request.principal.sessionId,
-          this.now()
+          this.now(),
+          uiApprovalBinding(request)
         );
         authorizeTarget(currentPolicy, request.principal.principalId, tool.requiredScopes, {
           kind: "app_window",
@@ -4713,12 +4845,19 @@ export class Broker {
   ): void {
     if (!(error instanceof BrokerError) || error.errorClass !== "POLICY_DENIED" ||
         error.message !== "No valid approval matches this mutation") return;
+    const previewTtl = request.tool === "mac_app_focus" ? GUI_SESSION_PREVIEW_TTL_MS : APPROVAL_PREVIEW_TTL_MS;
     this.options.store.createApprovalPreview(
       request.requestId,
       binding,
       createdAtMs,
-      createdAtMs + APPROVAL_PREVIEW_TTL_MS
+      createdAtMs + previewTtl
     );
+    if ((request.tool === "mac_ui_action" || request.tool === "mac_ui_type") && binding.targetRef.startsWith("ui_element:")) {
+      this.uiSnapshotRegistry.retainForApproval(
+        binding.targetRef.slice("ui_element:".length), request.principal.principalId,
+        request.principal.sessionId, createdAtMs, createdAtMs + APPROVAL_PREVIEW_TTL_MS, uiApprovalBinding(request)
+      );
+    }
   }
 
   private failure(request: BrokerRequest | undefined, error: BrokerError, startedAt: number): BrokerFailure {
@@ -4840,6 +4979,7 @@ interface ExecutionPlan {
     appId: string;
     windowHint?: string;
     maxNodes: number;
+    captureMode: UiCaptureMode;
   };
   appOpen?: {
     appId: string;
@@ -4854,6 +4994,7 @@ interface ExecutionPlan {
     elementRef: string;
     action: UiActionName;
     snapshot?: UiSnapshotRecord;
+    options?: UiVisualActionOptions;
   };
   uiType?: {
     elementRef: string;
@@ -5301,14 +5442,17 @@ function uiTypeDispatchResult(job: BrokerJob, data: UiTypeResultData, reused: bo
 
 function uiActionDispatchResult(job: BrokerJob, data: UiActionResultData, reused: boolean): DispatchResult {
   if (data.job_id !== job.jobId) throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action Job identity is inconsistent");
+  const { secure: _secure, ...reobserved } = data.reobserved;
   return {
-    data: { ...data },
+    data: { ...data, reobserved },
     verification: {
       required: true,
       status: "verified",
-      strategy: "accessibility_reobservation",
+      strategy: data.reobserved.role === "VisualWindow" ? "visual_action_dispatch" : "accessibility_reobservation",
       evidence: {
-        summary: reused ? "Reused a completed UI action Job readback" : "The approved Accessibility element was re-resolved before and after one fixed action",
+        summary: reused ? "Reused a completed UI action Job readback" : data.reobserved.role === "VisualWindow"
+          ? "A bounded event was sent to the observed browser window; inspect a fresh screenshot to verify the page effect"
+          : "The approved Accessibility element was re-resolved before and after one fixed action",
         readback_hash: sha256(canonicalJson(data)),
         observed_at: new Date().toISOString()
       }
@@ -5393,7 +5537,7 @@ export function parseStoredUiActionResult(value: string): UiActionResultData {
   const record = parsed as Record<string, unknown>;
   const reobserved = record.reobserved;
   if (typeof record.element_ref !== "string" || !/^element:[a-f0-9]{48}$/u.test(record.element_ref) ||
-      typeof record.action !== "string" || !["press", "select", "increment", "decrement", "show_menu", "focus"].includes(record.action) ||
+      typeof record.action !== "string" || !["press", "select", "increment", "decrement", "show_menu", "focus", ...VISUAL_ACTION_NAMES].includes(record.action) ||
       record.accepted !== true || typeof record.job_id !== "string" || !/^job:ui-action-[a-f0-9]{48}$/u.test(record.job_id) ||
       !isPlainDataRecord(reobserved) || !hasExactStoredFields(reobserved, ["role", "enabled", "focused", "secure"], ["state"])) {
     throw new BrokerError("UNKNOWN_OUTCOME", "Stored UI action result is malformed");
@@ -6041,4 +6185,8 @@ class PersistentlyQuarantinedTaskRunner implements TaskRunner {
     }
     return this.closePromise;
   }
+}
+
+function uiApprovalBinding(request: BrokerRequest): string {
+  return sha256(canonicalJson({ tool: request.tool, arguments: request.arguments }));
 }

@@ -121,6 +121,20 @@ async function executeTool(
       content: [{ type: "text" as const, text: JSON.stringify(result) }]
     };
   }
+  if ((toolName === "mac_ui_observe" || toolName === "mac_ui_action") && isPlainDataRecord(result.data) && isPlainDataRecord(result.data.screenshot)) {
+    const screenshot = result.data.screenshot;
+    if (screenshot.mime_type === "image/jpeg" && typeof screenshot.image_base64 === "string") {
+      const { image_base64: imageData, ...metadata } = screenshot;
+      const safeResult = { ...result, data: { ...result.data, screenshot: metadata } };
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify(safeResult) },
+          { type: "image" as const, data: imageData, mimeType: "image/jpeg" as const }
+        ],
+        structuredContent: safeResult as BrokerSuccess & Record<string, unknown>
+      };
+    }
+  }
   return {
     content: [{ type: "text" as const, text: JSON.stringify(result) }],
     structuredContent: result as BrokerSuccess & Record<string, unknown>

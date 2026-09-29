@@ -36,6 +36,7 @@ See `PROGRESS.md` for current Git evidence, implementation and enablement state,
 - [Deployment](DEPLOYMENT.md)
 - [Owner OAuth login and local setup](docs/oauth-login-operations.md)
 - [Running personal deployment](docs/personal-deployment.md)
+- [Browser Computer Use (G1)](docs/gui-computer-use.md)
 - [macOS packaging boundary](packaging/macos/README.md)
 - [Operations](OPERATIONS.md)
 - [Kill switch](KILL_SWITCH.md)

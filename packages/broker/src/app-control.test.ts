@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AppControlInspectorImpl, appFocusExecutableForTesting, appFocusScriptForTesting, appOpenExecutableForTesting, parseAppFocusResult, validateAppFocusRequest, validateAppOpenRequest } from "./app-control.js";
+import { AppControlInspectorImpl, appFocusExecutableForTesting, appOpenExecutableForTesting, normalizeAppId, parseAppFocusResult, validateAppFocusRequest, validateAppOpenRequest } from "./app-control.js";
 import type { SafeAppInventory } from "./app-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -28,6 +28,13 @@ test("app open validates stable bundle identity and rejects unscoped targets", (
   assert.throws(() => validateAppOpenRequest("bundle:../bad"), /stable bundle identity/u);
   assert.throws(() => validateAppOpenRequest("bundle:com.example.Editor", "/tmp/file.txt"), /not enabled/u);
   assert.throws(() => validateAppOpenRequest("bundle:com.example.Editor", undefined, "https://example.test"), /not enabled/u);
+});
+
+test("app ID normalization accepts common bundle IDs without changing policy identities", () => {
+  assert.equal(normalizeAppId("com.google.Chrome"), "bundle:com.google.Chrome");
+  assert.equal(normalizeAppId("bundle:com.google.Chrome"), "bundle:com.google.Chrome");
+  assert.throws(() => normalizeAppId("bundle\\:com.google.Chrome"), /stable bundle identity/u);
+  assert.throws(() => normalizeAppId("../Chrome"), /stable bundle identity/u);
 });
 
 test("app open uses fixed /usr/bin/open and verifies the running target", async () => {
@@ -133,14 +140,15 @@ test("app focus validates stable app-window inputs and fixed focus command outpu
   assert.doesNotThrow(() => validateAppFocusRequest("bundle:com.example.Editor", "Main"));
   assert.throws(() => validateAppFocusRequest("com.example.Editor"), /stable bundle identity/u);
   assert.throws(() => validateAppFocusRequest("bundle:com.example.Editor", "bad\nwindow"), /bounded visible text/u);
-  const observed: { executable: string; args: readonly string[]; cwd: string; environment?: Readonly<Record<string, string>> } = {
-    executable: "", args: [], cwd: ""
+  const observed: { executable: string; args: readonly string[]; cwd: string; allowUserOwnedExecutable: boolean | undefined; environment?: Readonly<Record<string, string>> } = {
+    executable: "", args: [], cwd: "", allowUserOwnedExecutable: undefined
   };
   const inspector = new AppControlInspectorImpl({ async list() { return inventory([]); } }, {
     async run(request) {
       observed.executable = request.executable;
       observed.args = request.args;
       observed.cwd = request.cwd;
+      observed.allowUserOwnedExecutable = request.allowUserOwnedExecutable;
       if (request.environment !== undefined) observed.environment = request.environment;
       return successWithOutput(JSON.stringify({
         status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
@@ -153,9 +161,8 @@ test("app focus validates stable app-window inputs and fixed focus command outpu
   assert.equal(result.verified, true);
   assert.match(result.windowId, /^window:[a-f0-9]{48}$/u);
   assert.equal(observed.executable, appFocusExecutableForTesting);
-  assert.deepEqual(observed.args.slice(0, 3), ["-l", "JavaScript", "-e"]);
-  assert.equal(observed.args[3], appFocusScriptForTesting);
-  assert.deepEqual(observed.args.slice(-2), ["bundle:com.example.Editor", "Main"]);
+  assert.equal(observed.allowUserOwnedExecutable, true);
+  assert.deepEqual(observed.args, ["focus", "visual", "com.example.Editor", "Main"]);
   assert.equal(observed.cwd, "/");
   assert.deepEqual(observed.environment, {});
 });

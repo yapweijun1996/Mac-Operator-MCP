@@ -5,16 +5,16 @@ import { resolve, join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createServer } from "node:https";
 import { parseEnv } from "node:util";
-import { configSchema, READ_TOOLS, W1_TOOLS, scopesForGrantProfile, type AuthConfig, type GrantProfile } from "./contracts.js";
+import { configSchema, G1_TOOLS, READ_TOOLS, W1_TOOLS, scopesForGrantProfile, type AuthConfig, type GrantProfile } from "./contracts.js";
 import { assertPrivateDirectory, assertPrivateFile, AuthStore, type GrantRevocationListener } from "./store.js";
 import { createPassword } from "./password.js";
 import { createAuthApp } from "./app.js";
 import type { ApprovalBrowserBridge } from "./approval-browser-bridge.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
-import { buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
+import { buildG1TargetRules, buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
 
-export const usage = `mac-operator-auth init --dir PATH --username NAME --redirect-uri HTTPS_URL [--issuer HTTPS_ORIGIN] [--port 3444] [--grant-profile r1|w1|d1]
-mac-operator-auth init --dir PATH --env-file PATH --redirect-uri HTTPS_URL [--issuer HTTPS_ORIGIN] [--port 3444] [--grant-profile r1|w1|d1]
+export const usage = `mac-operator-auth init --dir PATH --username NAME --redirect-uri HTTPS_URL [--issuer HTTPS_ORIGIN] [--port 3444] [--grant-profile r1|w1|g1|d1]
+mac-operator-auth init --dir PATH --env-file PATH --redirect-uri HTTPS_URL [--issuer HTTPS_ORIGIN] [--port 3444] [--grant-profile r1|w1|g1|d1]
 mac-operator-auth serve --dir PATH --tls-cert PATH --tls-key PATH
 mac-operator-auth reset-password --dir PATH
 mac-operator-auth revoke-all --dir PATH
@@ -109,7 +109,7 @@ export async function runAuthCli(args: string[], runtime: { approvalBridge?: App
     const username = envCredentials?.MAC_OPERATOR_USERNAME ?? options.get("--username") ?? "";
     if (!/^[A-Za-z0-9._-]{1,64}$/u.test(username)) throw new Error("Valid username required");
     const grantProfileValue = options.get("--grant-profile") ?? "r1";
-    if (grantProfileValue !== "r1" && grantProfileValue !== "w1" && grantProfileValue !== "d1") throw new Error("Grant profile must be r1, w1, or d1");
+    if (grantProfileValue !== "r1" && grantProfileValue !== "w1" && grantProfileValue !== "g1" && grantProfileValue !== "d1") throw new Error("Grant profile must be r1, w1, g1, or d1");
     const grantProfile = grantProfileValue as GrantProfile;
     const issuer = new URL(options.get("--issuer") ?? "https://mac.yapweijun1996.com/").href;
     const config: AuthConfig = configSchema.parse({ version: 1, issuer, resource: new URL("/mcp", issuer).href,
@@ -119,7 +119,7 @@ export async function runAuthCli(args: string[], runtime: { approvalBridge?: App
     try { password = envCredentials ? await createPassword(envCredentials.MAC_OPERATOR_PASSWORD ?? "") : await newPassword(); }
     finally { if (envCredentials) { for (const key of Object.keys(envCredentials)) delete envCredentials[key]; } }
     const projectRoot = realpathSync(process.env.MAC_OPERATOR_PROJECT_ROOT ?? process.cwd());
-    const filesystemRoots = grantProfile === "w1" ? w1FilesystemRoots(w1ProjectRoot(projectRoot)) : r1FilesystemRoots();
+    const filesystemRoots = grantProfile === "w1" || grantProfile === "g1" ? w1FilesystemRoots(w1ProjectRoot(projectRoot)) : r1FilesystemRoots();
     // mkdir without recursive/exist-ok prevents accidental account replacement.
     mkdirSync(directory, { mode: 0o700 });
     assertPrivateDirectory(directory);
@@ -142,10 +142,10 @@ export async function runAuthCli(args: string[], runtime: { approvalBridge?: App
       }, null, 2) + "\n");
       saveExclusive(join(directory, "broker-policy-input.json"), JSON.stringify({
         principal: { principal_id: config.principalId, issuer: config.issuerId, scopes: scopesForGrantProfile(config.grantProfile), enabled: true },
-        target_rules: grantProfile === "w1"
-          ? buildW1TargetRules(config.principalId, filesystemRoots, projectRoot)
+        target_rules: grantProfile === "w1" || grantProfile === "g1"
+          ? grantProfile === "g1" ? buildG1TargetRules(config.principalId, filesystemRoots, projectRoot) : buildW1TargetRules(config.principalId, filesystemRoots, projectRoot)
           : buildR1TargetRules(config.principalId, filesystemRoots, projectRoot),
-        enabled_tools: grantProfile === "w1" ? W1_TOOLS : READ_TOOLS,
+        enabled_tools: grantProfile === "g1" ? G1_TOOLS : grantProfile === "w1" ? W1_TOOLS : READ_TOOLS,
         filesystem_roots: filesystemRoots
       }, null, 2) + "\n");
     } finally { statusKey.fill(0); }

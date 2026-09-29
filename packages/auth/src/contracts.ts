@@ -11,11 +11,13 @@ export const D1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "ma
 export const W1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "mac.git.write", "mac.job.cancel"] as const;
 export const W1_READ_SCOPES = READ_SCOPES.filter(scope => scope !== "mac.docker.read");
 export const W1_SCOPES = [...W1_READ_SCOPES, ...W1_ADDITIONAL_SCOPES] as const;
+export const G1_GUI_SCOPES = ["mac.app.control", "mac.ui.observe", "mac.ui.control"] as const;
+export const G1_SCOPES = [...W1_SCOPES, ...G1_GUI_SCOPES] as const;
 export const D1_SCOPES = [...READ_SCOPES, ...D1_ADDITIONAL_SCOPES] as const;
-export const OAUTH_SCOPES = D1_SCOPES;
-export type GrantProfile = "r1" | "w1" | "d1";
+export const OAUTH_SCOPES = [...D1_SCOPES, ...G1_GUI_SCOPES] as const;
+export type GrantProfile = "r1" | "w1" | "g1" | "d1";
 export function scopesForGrantProfile(profile: GrantProfile): readonly string[] {
-  return profile === "d1" ? D1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
+  return profile === "d1" ? D1_SCOPES : profile === "g1" ? G1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
 }
 export const READ_TOOLS = [
   "mac_app_list", "mac_capabilities", "mac_directory_tree", "mac_docker_inspect", "mac_docker_logs",
@@ -30,6 +32,8 @@ export const W1_TOOLS = [
   ...W1_READ_TOOLS,
   "mac_write_file_atomic", "mac_apply_patch", "mac_git_stage", "mac_git_commit", "mac_job_cancel"
 ] as const;
+export const G1_GUI_TOOLS = ["mac_app_open", "mac_app_focus", "mac_ui_observe", "mac_ui_action", "mac_ui_type"] as const;
+export const G1_TOOLS = [...W1_TOOLS, ...G1_GUI_TOOLS] as const;
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
 const hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const time = z.number().int().nonnegative().safe();
@@ -50,7 +54,7 @@ export const configSchema = z.object({
   keyId: id,
   port: z.number().int().min(1024).max(65535),
   allowedRedirectUris: z.array(httpsUrl).min(1).max(16),
-  grantProfile: z.enum(["r1", "w1", "d1"]).default("r1")
+  grantProfile: z.enum(["r1", "w1", "g1", "d1"]).default("r1")
 }).strict().refine(value => value.resource === new URL("/mcp", value.issuer).href);
 export type AuthConfig = z.infer<typeof configSchema>;
 
@@ -59,7 +63,10 @@ export const recordSchemas = {
   client: z.object({ id, name: z.string().min(1).max(100), redirectUris: z.array(httpsUrl).min(1).max(8), expiresAt: time }).strict(),
   transaction: z.object({ clientId: id, redirectUri: httpsUrl, state: z.string().min(1).max(512), challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u), scopes, expiresAt: time }).strict(),
   session: z.object({ transactionId: hash, csrf: hash, authenticated: z.boolean(), expiresAt: time }).strict(),
-  approval_session: z.object({ requestId: z.string().regex(/^[A-Za-z0-9._:@/+-]{1,128}$/u), csrf: hash, authenticated: z.boolean(), expiresAt: time }).strict(),
+  approval_session: z.object({ guiGrantId: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u).optional(), requestId: z.string().regex(/^[A-Za-z0-9._:@/+-]{1,128}$/u), csrf: hash, authenticated: z.boolean(), expiresAt: time }).strict(),
+  browser_grant: z.object({ id: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u), principalId: id, sessionId: id,
+    appId: z.enum(["bundle:com.google.Chrome", "bundle:com.apple.Safari"]), policyVersion: id,
+    consentRequestId: id, createdAt: time, revoked: z.boolean() }).strict(),
   code: z.object({ clientId: id, redirectUri: httpsUrl, challenge: z.string(), scopes, grantId: id, principalId: id, expiresAt: time }).strict(),
   grant: z.object({ clientId: id, principalId: id, scopes, expiresAt: time, revoked: z.boolean() }).strict(),
   refresh: z.object({ clientId: id, grantId: id, expiresAt: time, consumed: z.boolean() }).strict()

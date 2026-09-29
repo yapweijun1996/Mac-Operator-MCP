@@ -1,6 +1,8 @@
+import type { GuiSessionView } from "./gui-session-approval.js";
 import { BrokerError } from "@mac-operator/contracts";
 
 export interface ApprovalBrowserPreview {
+  sessionEligible?: boolean;
   requestId: string;
   requestingPrincipalId: string;
   tool: string;
@@ -23,12 +25,17 @@ export interface ApprovalBrowserIssuanceResult {
 export interface ApprovalBrowserBridge {
   preview(requestId: string): Promise<ApprovalBrowserPreview | undefined>;
   issue(requestId: string): Promise<ApprovalBrowserIssuanceResult>;
+  startSession?(requestId: string): Promise<GuiSessionView>;
+  startPersistentSession?(requestId: string): Promise<GuiSessionView>;
+  listSessions?(): Promise<GuiSessionView[]>;
+  sessionStatus?(id: string): Promise<GuiSessionView | undefined>;
+  revokeSession?(id: string): Promise<void>;
 }
 
 interface BrowserBridgeRequest {
   type: "approval-browser-request";
   id: string;
-  operation: "preview" | "issue";
+  operation: "preview" | "issue" | "session-start" | "session-persistent-start" | "session-list" | "session-status" | "session-revoke";
   requestId: string;
 }
 
@@ -37,6 +44,8 @@ interface BrowserBridgeResponse {
   id: string;
   ok: boolean;
   preview?: ApprovalBrowserPreview;
+  session?: GuiSessionView;
+  sessions?: GuiSessionView[];
   approvalId?: string;
   expiresAtMs?: number;
   revision?: number;
@@ -100,6 +109,29 @@ export function createProcessApprovalBrowserBridge(): ApprovalBrowserBridge & { 
       }
       return { approvalId: response.approvalId, expiresAtMs: response.expiresAtMs, revision: response.revision };
     },
+    async startSession(requestId) {
+      const response = await call("session-start", requestId);
+      if (!response.ok || !response.session) throw new BrokerError("POLICY_DENIED", "GUI session was not granted");
+      return response.session;
+    },
+    async startPersistentSession(requestId) {
+      const response = await call("session-persistent-start", requestId);
+      if (!response.ok || !response.session?.persistent) throw new BrokerError("POLICY_DENIED", "Persistent browser access was not granted");
+      return response.session;
+    },
+    async listSessions() {
+      const response = await call("session-list", "owner");
+      if (!response.ok || !response.sessions) throw new BrokerError("EXECUTION_FAILED", "Browser access is unavailable");
+      return response.sessions;
+    },
+    async sessionStatus(id) {
+      const response = await call("session-status", id);
+      return response.ok ? response.session : undefined;
+    },
+    async revokeSession(id) {
+      const response = await call("session-revoke", id);
+      if (!response.ok) throw new BrokerError("EXECUTION_FAILED", "GUI session could not be ended");
+    },
     close() {
       if (closed) return;
       closed = true;
@@ -117,7 +149,7 @@ export function parseApprovalBrowserRequest(value: unknown): BrowserBridgeReques
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (record.type !== "approval-browser-request" || typeof record.id !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(record.id) ||
-      !["preview", "issue"].includes(String(record.operation)) || typeof record.requestId !== "string" ||
+      !["preview", "issue", "session-start", "session-persistent-start", "session-list", "session-status", "session-revoke"].includes(String(record.operation)) || typeof record.requestId !== "string" ||
       !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(record.requestId) || Object.keys(record).some(key => !["type", "id", "operation", "requestId"].includes(key))) return undefined;
   return record as unknown as BrowserBridgeRequest;
 }

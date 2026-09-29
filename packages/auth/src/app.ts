@@ -7,7 +7,7 @@ import { configSchema, OAUTH_SCOPES, scopesForGrantProfile, type AuthConfig } fr
 import { AuthStore, type GrantRevocationListener } from "./store.js";
 import { AuthProvider, fingerprint, nonce } from "./provider.js";
 import { verifyPassword } from "./password.js";
-import { approvalLoginPage, approvalResultPage, approvalReviewPage, consentPage, loginPage, expiredRequestPage, stylesheet } from "./pages.js";
+import { guiSessionPage, approvalLoginPage, approvalResultPage, approvalReviewPage, consentPage, loginPage, expiredRequestPage, expiredApprovalPage, stylesheet } from "./pages.js";
 import type { ApprovalBrowserBridge, ApprovalBrowserPreview } from "./approval-browser-bridge.js";
 
 const contentSecurityPolicy = (callbackOrigin?: string): string =>
@@ -20,7 +20,8 @@ const sessionMs = 10 * 60 * 1000;
 const loginBody = z.object({ csrf: z.string().length(64), username: z.string().max(64), password: z.string().max(1024) }).strict();
 const consentBody = z.object({ csrf: z.string().length(64), decision: z.enum(["allow", "deny"]) }).strict();
 const approvalLoginBody = loginBody;
-const approvalDecisionBody = consentBody;
+const approvalDecisionBody = z.object({ csrf: z.string().length(64), decision: z.enum(["allow", "deny", "allow-session", "allow-permanent"]) }).strict();
+const approvalSessionMs = 30 * 60 * 1000;
 const approvalRequestId = z.string().regex(/^[A-Za-z0-9._:@/+-]{1,128}$/u);
 
 export async function createAuthApp(input: { config: AuthConfig; store: AuthStore; signingKey: KeyObject; statusKey: Buffer; approvalBridge?: ApprovalBrowserBridge; onGrantRevoked?: GrantRevocationListener }) {
@@ -45,7 +46,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       "Content-Security-Policy": contentSecurityPolicy() });
     // Native form POSTs use Origin: null under no-referrer. Preserve the
     // same-origin signal for CSRF checks without sending referrers off-site.
-    if (["/oauth/login", "/oauth/consent", "/approval/login", "/approval/decision"].includes(req.path)) {
+    if (["/oauth/login", "/oauth/consent", "/approval/login", "/approval/access", "/approval/review", "/approval/decision", "/approval/gui-session", "/approval/gui-session/revoke"].includes(req.path)) {
       res.set("Referrer-Policy", "same-origin");
     }
     if (req.headers.host !== new URL(config.issuer).host) { res.status(403).end(); return; }
@@ -110,16 +111,21 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     res.cookie(COOKIE, value, { secure: true, httpOnly: true, sameSite: "lax", path: "/", maxAge: sessionMs });
   };
   const setApprovalSession = (res: Response, value: string): void => {
-    res.cookie(APPROVAL_COOKIE, value, { secure: true, httpOnly: true, sameSite: "lax", path: "/", maxAge: sessionMs });
-  };
-  const clearApprovalSession = (res: Response): void => {
-    res.clearCookie(APPROVAL_COOKIE, { secure: true, httpOnly: true, sameSite: "lax", path: "/" });
+    res.cookie(APPROVAL_COOKIE, value, { secure: true, httpOnly: true, sameSite: "lax", path: "/", maxAge: approvalSessionMs });
   };
   const approvalBrowser = (req: Request) => {
     const key = cookieId(req, APPROVAL_COOKIE);
     const session = store.get("approval_session", key);
     if (!session || session.expiresAt <= Date.now()) throw new BrowserSessionError("Expired approval session");
     return { key, session };
+  };
+  const rotateApprovalSession = (key: string, session: ReturnType<typeof approvalBrowser>["session"], res: Response) => {
+    const id = nonce();
+    store.transaction(() => {
+      if (!store.delete("approval_session", key)) throw new BrowserSessionError("Approval session already consumed");
+      store.put("approval_session", fingerprint(id), { ...session, csrf: nonce() });
+    });
+    setApprovalSession(res, id);
   };
 
   app.get("/authorize", async (req, res) => {
@@ -175,7 +181,9 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     // Chromium applies form-action to the final redirect after a form POST.
     // Only this validated transaction's callback origin is allowed here.
     res.set("Content-Security-Policy", contentSecurityPolicy(new URL(transaction.redirectUri).origin));
-    res.type("html").send(consentPage(session.csrf, client.name, transaction.redirectUri, transaction.scopes.includes("mac.system.read"), config.grantProfile !== "r1"));
+    res.type("html").send(consentPage(session.csrf, client.name, transaction.redirectUri,
+      transaction.scopes.includes("mac.system.read"), config.grantProfile !== "r1",
+      transaction.scopes.includes("mac.ui.control")));
   });
   app.post("/oauth/consent", async (req, res) => {
     const body = consentBody.parse(req.body);
@@ -201,19 +209,53 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     res.redirect(303, redirect.href);
   });
 
-  app.get("/approval", (req, res) => {
+  app.get("/approval", async (req, res) => {
     if (!input.approvalBridge) { res.status(404).end(); return; }
     const requestId = approvalRequestId.parse(req.query.request_id);
+    const preview = await input.approvalBridge.preview(requestId);
+    if (!preview || preview.expiresAtMs <= Date.now()) { res.status(410).type("html").send(expiredApprovalPage()); return; }
+    let previous: ReturnType<typeof approvalBrowser> | undefined;
+    try { previous = approvalBrowser(req); }
+    catch (error) { if (!(error instanceof BrowserSessionError)) throw error; }
     const sessionId = nonce();
-    store.put("approval_session", fingerprint(sessionId), { requestId, csrf: nonce(), authenticated: false, expiresAt: Date.now() + sessionMs });
+    // Reuse owner authentication, never an operation approval or its CSRF token.
+    const authenticated = previous?.session.authenticated === true;
+    store.transaction(() => {
+      if (previous) store.delete("approval_session", previous.key);
+      store.put("approval_session", fingerprint(sessionId), { requestId, csrf: nonce(), authenticated,
+        expiresAt: authenticated ? previous!.session.expiresAt : Date.now() + sessionMs,
+        ...(authenticated && previous?.session.guiGrantId ? { guiGrantId: previous.session.guiGrantId } : {}) });
+    });
     setApprovalSession(res, sessionId);
-    res.redirect(303, "/approval/login");
+    res.redirect(303, authenticated ? "/approval/review" : "/approval/login");
   });
-  app.get("/approval/login", (req, res) => {
+  // Owner access management is independent of a short-lived operation preview.
+  app.get("/approval/access", async (req, res) => {
+    if (!input.approvalBridge?.listSessions) { res.status(404).end(); return; }
+    let previous: ReturnType<typeof approvalBrowser> | undefined;
+    try { previous = approvalBrowser(req); }
+    catch (error) { if (!(error instanceof BrowserSessionError)) throw error; }
+    const sessionId = nonce();
+    const authenticated = previous?.session.authenticated === true;
+    store.transaction(() => {
+      if (previous) store.delete("approval_session", previous.key);
+      store.put("approval_session", fingerprint(sessionId), { requestId: "manage-browser-access", csrf: nonce(), authenticated,
+        expiresAt: authenticated ? previous!.session.expiresAt : Date.now() + sessionMs });
+    });
+    setApprovalSession(res, sessionId);
+    res.redirect(303, authenticated ? "/approval/gui-session" : "/approval/login");
+  });
+  app.get("/approval/login", async (req, res) => {
     if (!input.approvalBridge) { res.status(404).end(); return; }
     const { session } = approvalBrowser(req);
+    if (session.requestId === "manage-browser-access") {
+      if (session.authenticated) { res.redirect(303, "/approval/gui-session"); return; }
+      res.type("html").send(approvalLoginPage(session.csrf, false, undefined, true)); return;
+    }
+    const preview = await input.approvalBridge.preview(session.requestId);
+    if (!preview || preview.expiresAtMs <= Date.now()) { res.status(410).type("html").send(expiredApprovalPage()); return; }
     if (session.authenticated) { res.redirect(303, "/approval/review"); return; }
-    res.type("html").send(approvalLoginPage(session.csrf));
+    res.type("html").send(approvalLoginPage(session.csrf, false, preview.expiresAtMs));
   });
   app.post("/approval/login", async (req, res) => {
     if (!input.approvalBridge) { res.status(404).end(); return; }
@@ -227,21 +269,21 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       const current = store.get("account", "owner")!;
       valid = await verifyPassword(body.password, current.salt, current.passwordHash) && body.username === current.username;
     } finally { activePasswords--; }
-    if (!valid) { res.status(401).type("html").send(approvalLoginPage(session.csrf, true)); return; }
+    if (!valid) { res.status(401).type("html").send(approvalLoginPage(session.csrf, true, undefined, session.requestId === "manage-browser-access")); return; }
     const newId = nonce();
     store.transaction(() => {
       if (!store.delete("approval_session", key)) throw new BrowserSessionError("Invalid approval session");
-      store.put("approval_session", fingerprint(newId), { ...session, csrf: nonce(), authenticated: true });
+      store.put("approval_session", fingerprint(newId), { ...session, csrf: nonce(), authenticated: true, expiresAt: Date.now() + approvalSessionMs });
     });
     setApprovalSession(res, newId);
-    res.redirect(303, "/approval/review");
+    res.redirect(303, session.requestId === "manage-browser-access" ? "/approval/gui-session" : "/approval/review");
   });
   app.get("/approval/review", async (req, res) => {
     if (!input.approvalBridge) { res.status(404).end(); return; }
     const { session } = approvalBrowser(req);
     if (!session.authenticated) { res.redirect(303, "/approval/login"); return; }
     const preview = await input.approvalBridge.preview(session.requestId);
-    if (!preview) { res.status(410).type("html").send(expiredRequestPage()); return; }
+    if (!preview || preview.expiresAtMs <= Date.now()) { res.status(410).type("html").send(expiredApprovalPage()); return; }
     res.type("html").send(approvalReviewPage(session.csrf, preview));
   });
   app.post("/approval/decision", async (req, res) => {
@@ -251,18 +293,54 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     csrfCheck(req, session.csrf, body.csrf);
     if (!session.authenticated) { res.status(403).end(); return; }
     if (body.decision === "deny") {
-      store.delete("approval_session", key); clearApprovalSession(res);
+      rotateApprovalSession(key, session, res);
       res.type("html").send(approvalResultPage(false)); return;
     }
     try {
+      if (body.decision === "allow-session" || body.decision === "allow-permanent") {
+        const preview = await input.approvalBridge.preview(session.requestId);
+        const start = body.decision === "allow-permanent" ? input.approvalBridge.startPersistentSession : input.approvalBridge.startSession;
+        if (!preview?.sessionEligible || !start) { res.status(403).end(); return; }
+        if (session.guiGrantId) await input.approvalBridge.revokeSession?.(session.guiGrantId);
+        const grant = await start(session.requestId);
+        rotateApprovalSession(key, { ...session, guiGrantId: grant.id, expiresAt: grant.persistent ? session.expiresAt : Math.max(session.expiresAt, grant.expiresAtMs) }, res);
+        res.redirect(303, "/approval/gui-session"); return;
+      }
       const result = await input.approvalBridge.issue(session.requestId);
-      store.delete("approval_session", key); clearApprovalSession(res);
+      rotateApprovalSession(key, session, res);
       res.type("html").send(approvalResultPage(true, result.approvalId));
     } catch {
       const preview = await input.approvalBridge.preview(session.requestId);
-      if (!preview) { store.delete("approval_session", key); clearApprovalSession(res); res.status(410).type("html").send(expiredRequestPage()); return; }
+      if (!preview || preview.expiresAtMs <= Date.now()) { res.status(410).type("html").send(expiredApprovalPage()); return; }
       res.status(409).type("html").send(approvalReviewPage(session.csrf, preview, true));
     }
+  });
+  app.get("/approval/gui-session", async (req, res) => {
+    let session: ReturnType<typeof approvalBrowser>["session"];
+    try { session = approvalBrowser(req).session; }
+    catch (error) {
+      if (!(error instanceof BrowserSessionError)) throw error;
+      res.redirect(303, "/approval/access"); return;
+    }
+    if (!session.authenticated) { res.status(403).end(); return; }
+    const grant = session.guiGrantId ? await input.approvalBridge?.sessionStatus?.(session.guiGrantId) : undefined;
+    res.type("html").send(guiSessionPage(session.csrf, grant, await input.approvalBridge?.listSessions?.()));
+  });
+  app.post("/approval/gui-session/revoke", async (req, res) => {
+    const body = z.object({ csrf: z.string().length(64), grant_id: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u).optional() }).strict().parse(req.body);
+    const { key, session } = approvalBrowser(req);
+    csrfCheck(req, session.csrf, body.csrf);
+    if (!session.authenticated || !input.approvalBridge?.revokeSession) { res.status(403).end(); return; }
+    const grantId = body.grant_id ?? session.guiGrantId;
+    if (grantId) {
+      if (grantId !== session.guiGrantId && !(await input.approvalBridge.listSessions?.())?.some(grant => grant.id === grantId)) {
+        res.status(403).end(); return;
+      }
+      await input.approvalBridge.revokeSession(grantId);
+    }
+    const { guiGrantId: _ended, ...remaining } = session;
+    rotateApprovalSession(key, remaining, res);
+    res.redirect(303, "/approval/gui-session");
   });
   app.post("/token", async (req, res) => {
     if (!req.is("application/x-www-form-urlencoded")) { res.status(400).json({ error: "invalid_request" }); return; }
@@ -305,7 +383,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
   app.use((_req, res) => { res.status(404).end(); });
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof BrowserSessionError) {
-      res.status(400).type("html").send(expiredRequestPage());
+      res.status(400).type("html").send(_req.path.startsWith("/approval") ? expiredApprovalPage(true) : expiredRequestPage());
     } else if (error instanceof OAuth2Server.OAuthError) {
       res.status(error.code >= 400 && error.code < 500 ? error.code : 503).json({ error: error.code < 500 ? error.name : "temporarily_unavailable" });
     } else if (error instanceof z.ZodError) res.status(400).json({ error: "invalid_request" });

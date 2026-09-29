@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
-import { BROKER_SCHEMA_VERSION, BrokerStore, type CreateJobInput, type JobState, type SwitchName } from "./persistence.js";
+import { guiSessionApprovalId, BROKER_SCHEMA_VERSION, BrokerStore, type CreateJobInput, type JobState, type SwitchName } from "./persistence.js";
 
 const testBackupKeySource = {
   keyId: "backup-test-1",
@@ -1350,7 +1350,8 @@ test("approval consumption rejects every bound-field substitution and single-use
   }
 });
 
-test("missing approval creates a durable non-secret owner preview with bounded expiry", async () => {
+for (const mode of ["same-request", "fresh-request", "legacy-issued"] as const) {
+test(`approval preview survives restart after ${mode} consumption`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-preview-"));
   const databasePath = join(directory, "broker.sqlite");
   let store = new BrokerStore(databasePath);
@@ -1401,8 +1402,10 @@ test("missing approval creates a durable non-secret owner preview with bounded e
     });
     assert.equal(store.markApprovalPreviewIssued("request-preview", "approval:preview", 4).status, "issued");
     assert.equal(store.approvalPreview("request-preview", 4), undefined);
+    const executionRequestId = mode === "same-request" ? "request-preview" : "request-execution";
+    if (executionRequestId !== "request-preview") authorizeMutationRequest(store, executionRequestId, "nonce-execution");
     store.recordRequestIntent(
-      requestEvent("request-preview", "intent", "INTENT_RECORDED", 5),
+      requestEvent(executionRequestId, "intent", "INTENT_RECORDED", 5),
       approvalBinding()
     );
     const lifecycleDatabase = new DatabaseSync(databasePath);
@@ -1412,6 +1415,7 @@ test("missing approval creates a durable non-secret owner preview with bounded e
       ).get("request-preview") as { status?: unknown; approval_id?: unknown };
       assert.equal(lifecycle.status, "consumed");
       assert.equal(lifecycle.approval_id, "approval:preview");
+      if (mode === "legacy-issued") lifecycleDatabase.prepare("UPDATE approval_previews SET status = 'issued' WHERE request_id = ?").run("request-preview");
     } finally {
       lifecycleDatabase.close();
     }
@@ -1424,6 +1428,7 @@ test("missing approval creates a durable non-secret owner preview with bounded e
     await rm(directory, { recursive: true, force: true });
   }
 });
+}
 
 test("competing request admissions cannot consume one approval twice", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-approval-race-"));
@@ -3073,3 +3078,19 @@ function atomicJobAdmissionInput(
     }
   };
 }
+
+
+test("session-delegated approvals cannot be consumed by an identical competing request", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mop-session-request-binding-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    authorizeMutationRequest(store, "intended-request", "nonce-intended");
+    authorizeMutationRequest(store, "competing-request", "nonce-competing");
+    const id = guiSessionApprovalId("intended-request");
+    store.issueApproval(approvalInput(id));
+    assert.throws(() => store.recordRequestIntent(requestEvent("competing-request", "intent", "INTENT_RECORDED", 3), approvalBinding()), /No valid approval/u);
+    assert.equal(store.approvalRecord(id)?.usedCount, 0);
+    store.recordRequestIntent(requestEvent("intended-request", "intent", "INTENT_RECORDED", 3), approvalBinding());
+    assert.equal(store.approvalRecord(id)?.lastRequestId, "intended-request");
+  } finally { store.close(); await rm(directory, { recursive: true, force: true }); }
+});

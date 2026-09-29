@@ -9,7 +9,7 @@
   ],
   "normalized_target_type": "ui_element",
   "timeout_ms": 15000,
-  "output_cap_bytes": 262144,
+  "output_cap_bytes": 786432,
   "network_policy": "none",
   "filesystem_policy": "none",
   "secret_policy": "deny_sensitive_targets",
@@ -23,9 +23,9 @@
   "audit_class": "gui_control",
   "tool_delivery_wave": "wave_4",
   "implementation_status": "planned",
-  "purpose": "perform one supported Accessibility action on a previously resolved approved element.",
-  "input_summary": "element_ref:string, action:press|select|increment|decrement|show_menu|focus.",
-  "output_summary": "action result plus re-observed postcondition.",
+  "purpose": "Perform one bounded Accessibility or visual mouse, scroll, or keyboard action on an authorized observed browser window.",
+  "input_summary": "element_ref:string, action:bounded enum, x/y?:global macOS screen points, dx/dy?:scroll pixels, key?:allowlisted key, wait_ms?:0..2000.",
+  "output_summary": "Accepted bounded action, browser focus readback, and for visual actions a fresh screenshot returned as MCP image content.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_ui_action input",
@@ -45,8 +45,63 @@
           "increment",
           "decrement",
           "show_menu",
-          "focus"
+          "focus",
+          "click",
+          "double_click",
+          "right_click",
+          "move_pointer",
+          "scroll",
+          "key_press",
+          "shortcut",
+          "wait"
         ]
+      },
+      "x": {
+        "description": "Global macOS screen point. Use an active_window or selected_window capture, then convert image pixel ix with floor(window_x + ix * window_width / image_width).",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20000
+      },
+      "y": {
+        "description": "Global macOS screen point. Use an active_window or selected_window capture, then convert image pixel iy with floor(window_y + iy * window_height / image_height).",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20000
+      },
+      "dx": {
+        "type": "integer",
+        "minimum": -1000,
+        "maximum": 1000
+      },
+      "dy": {
+        "type": "integer",
+        "minimum": -1000,
+        "maximum": 1000
+      },
+      "key": {
+        "enum": [
+          "ENTER",
+          "TAB",
+          "ESCAPE",
+          "BACKSPACE",
+          "ARROW_UP",
+          "ARROW_DOWN",
+          "ARROW_LEFT",
+          "ARROW_RIGHT",
+          "HOME",
+          "END",
+          "PAGE_UP",
+          "PAGE_DOWN",
+          "SPACE",
+          "COMMAND_L",
+          "COMMAND_R",
+          "COMMAND_F"
+        ]
+      },
+      "wait_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2000
       }
     },
     "required": [
@@ -79,7 +134,9 @@
       "tool": {
         "const": "mac_ui_action"
       },
-      "result_class": { "const": "SUCCEEDED" },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
       "data": {
         "type": "object",
         "additionalProperties": false,
@@ -97,7 +154,15 @@
               "increment",
               "decrement",
               "show_menu",
-              "focus"
+              "focus",
+              "click",
+              "double_click",
+              "right_click",
+              "move_pointer",
+              "scroll",
+              "key_press",
+              "shortcut",
+              "wait"
             ]
           },
           "accepted": {
@@ -126,6 +191,9 @@
                 "type": "string",
                 "minLength": 0,
                 "maxLength": 512
+              },
+              "secure": {
+                "const": false
               }
             },
             "required": [
@@ -133,6 +201,100 @@
               "enabled",
               "focused"
             ]
+          },
+          "visual_ref": {
+            "type": "string",
+            "pattern": "^element:[a-f0-9]{48}$"
+          },
+          "window_title": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "screenshot": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode",
+              "mime_type",
+              "screen_width",
+              "screen_height",
+              "window_x",
+              "window_y",
+              "window_width",
+              "window_height",
+              "capture_width",
+              "capture_height",
+              "image_width",
+              "image_height"
+            ],
+            "properties": {
+              "mode": {
+                "enum": [
+                  "screen",
+                  "active_window",
+                  "selected_window"
+                ]
+              },
+              "mime_type": {
+                "const": "image/jpeg"
+              },
+              "image_base64": {
+                "type": "string",
+                "minLength": 100,
+                "maxLength": 640000,
+                "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+              },
+              "screen_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "screen_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "window_x": {
+                "type": "integer",
+                "minimum": -20000,
+                "maximum": 20000
+              },
+              "window_y": {
+                "type": "integer",
+                "minimum": -20000,
+                "maximum": 20000
+              },
+              "window_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "window_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "capture_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "capture_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "image_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "image_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              }
+            }
           }
         },
         "required": [
@@ -179,7 +341,10 @@
             ]
           },
           "strategy": {
-            "const": "accessibility_reobservation"
+            "enum": [
+              "accessibility_reobservation",
+              "visual_action_dispatch"
+            ]
           },
           "evidence": {
             "type": "object",

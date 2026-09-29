@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BrokerPolicy, PolicyDocument } from "@mac-operator/broker";
 import { canonicalJson } from "@mac-operator/contracts";
-import { W1_SCOPES, W1_TOOLS } from "./contracts.js";
+import { G1_SCOPES, G1_TOOLS, W1_SCOPES, W1_TOOLS } from "./contracts.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
 
 export function w1ProjectRoot(path: string): string {
@@ -48,14 +48,41 @@ export function buildW1TargetRules(
   ];
 }
 
+export function buildG1TargetRules(
+  principalId: string,
+  filesystemRoots: PolicyDocument["filesystem_roots"],
+  projectRoot: string
+): PolicyDocument["target_rules"] {
+  const rules = buildW1TargetRules(principalId, filesystemRoots, projectRoot);
+  for (const appId of ["bundle:com.google.Chrome", "bundle:com.apple.Safari"]) {
+    rules.push(
+      { rule_id: `owner-g1-open-${appId}`, effect: "allow", principal_id: principalId, scope: "mac.app.control", target: { kind: "app", reference: appId } },
+      { rule_id: `owner-g1-focus-${appId}`, effect: "allow", principal_id: principalId, scope: "mac.app.control", target: { kind: "app_window", reference: `window:${appId}` } },
+      { rule_id: `owner-g1-observe-${appId}`, effect: "allow", principal_id: principalId, scope: "mac.ui.observe", target: { kind: "app_window", reference: `window:${appId}` } },
+      { rule_id: `owner-g1-control-${appId}`, effect: "allow", principal_id: principalId, scope: "mac.ui.control", target: { kind: "app_window", reference: `window:${appId}` } }
+    );
+  }
+  return rules;
+}
+
 export function assertW1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
+  assertPersonalWritePolicy(policy, principalId, issuerId, false);
+}
+
+export function assertG1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
+  assertPersonalWritePolicy(policy, principalId, issuerId, true);
+}
+
+function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, issuerId: string, guiProfile: boolean): void {
+  const expectedScopes = guiProfile ? G1_SCOPES : W1_SCOPES;
+  const expectedTools = guiProfile ? G1_TOOLS : W1_TOOLS;
   const grants = [...policy.principalGrants.values()];
   if (grants.length !== 1 || grants[0]?.principalId !== principalId || grants[0]?.issuer !== issuerId || !grants[0]?.enabled ||
-      canonicalJson([...grants[0].scopes].sort()) !== canonicalJson([...W1_SCOPES].sort())) {
+      canonicalJson([...grants[0].scopes].sort()) !== canonicalJson([...expectedScopes].sort())) {
     throw new Error("Personal write principal grant mismatch");
   }
   const enabled = [...policy.tools.values()].filter(tool => tool.enabled).map(tool => tool.tool).sort();
-  if (canonicalJson(enabled) !== canonicalJson([...W1_TOOLS].sort())) {
+  if (canonicalJson(enabled) !== canonicalJson([...expectedTools].sort())) {
     throw new Error("Personal write tool set mismatch");
   }
   const projectRoot = policy.filesystemRoots.find(root => root.rootId === "owner-project")?.path;
@@ -68,7 +95,7 @@ export function assertW1Policy(policy: BrokerPolicy, principalId: string, issuer
   if (canonicalJson(actualRoots) !== canonicalJson(expectedRoots)) {
     throw new Error("Personal write filesystem roots mismatch");
   }
-  const expectedRules = buildW1TargetRules(principalId, expectedRoots, projectRoot);
+  const expectedRules = guiProfile ? buildG1TargetRules(principalId, expectedRoots, projectRoot) : buildW1TargetRules(principalId, expectedRoots, projectRoot);
   const actualRules = policy.targetRules.map(rule => ({ rule_id: rule.ruleId, effect: rule.effect,
     principal_id: rule.principalId, scope: rule.scope, target: rule.target,
     ...(rule.targetConstraint === undefined ? {} : { target_constraint: rule.targetConstraint }) }));
@@ -77,7 +104,7 @@ export function assertW1Policy(policy: BrokerPolicy, principalId: string, issuer
   }
   const switches = policy.killSwitches;
   if (switches.global || switches.mutations || switches.process || switches.network ||
-      !switches.gui || !switches.destructive || !switches.privileged) {
+      switches.gui === guiProfile || !switches.destructive || !switches.privileged) {
     throw new Error("Personal write kill-switch boundary mismatch");
   }
 }

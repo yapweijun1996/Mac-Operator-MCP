@@ -9,7 +9,7 @@
   ],
   "normalized_target_type": "app_window",
   "timeout_ms": 10000,
-  "output_cap_bytes": 524288,
+  "output_cap_bytes": 786432,
   "network_policy": "none",
   "filesystem_policy": "none",
   "secret_policy": "deny_sensitive_targets_and_mask_secure_ui",
@@ -23,9 +23,9 @@
   "audit_class": "gui_control",
   "tool_delivery_wave": "wave_4",
   "implementation_status": "planned",
-  "purpose": "bounded Accessibility-tree snapshot for an approved app/window.",
-  "input_summary": "app_id:string, window_hint?:string, max_nodes?:1..2000.",
-  "output_summary": "stable opaque element refs, roles, labels and safe states; secure nodes masked.",
+  "purpose": "Observe a bounded Accessibility snapshot and an inspectable screenshot of an authorized browser window or screen.",
+  "input_summary": "app_id:bundle ID (for Chrome, com.google.Chrome), window_hint?:string, max_nodes?:1..2000, capture_mode?:none|screen|active_window|selected_window.",
+  "output_summary": "Safe Accessibility metadata, screen/window dimensions, and a JPEG screenshot returned as MCP image content.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_ui_observe input",
@@ -34,9 +34,10 @@
     "properties": {
       "app_id": {
         "type": "string",
+        "description": "Use com.google.Chrome for Chrome or com.apple.Safari for Safari. A bundle: prefix is also accepted.",
         "minLength": 1,
         "maxLength": 256,
-        "pattern": "^[A-Za-z0-9._:/-]+$"
+        "pattern": "^(bundle:)?[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$"
       },
       "window_hint": {
         "type": "string",
@@ -47,6 +48,14 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 2000
+      },
+      "capture_mode": {
+        "enum": [
+          "none",
+          "screen",
+          "active_window",
+          "selected_window"
+        ]
       }
     },
     "required": [
@@ -78,7 +87,9 @@
       "tool": {
         "const": "mac_ui_observe"
       },
-      "result_class": { "const": "SUCCEEDED" },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
       "data": {
         "type": "object",
         "additionalProperties": false,
@@ -149,6 +160,96 @@
           },
           "truncated": {
             "type": "boolean"
+          },
+          "screenshot": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode",
+              "mime_type",
+              "screen_width",
+              "screen_height",
+              "window_x",
+              "window_y",
+              "window_width",
+              "window_height",
+              "capture_width",
+              "capture_height",
+              "image_width",
+              "image_height"
+            ],
+            "properties": {
+              "mode": {
+                "enum": [
+                  "screen",
+                  "active_window",
+                  "selected_window"
+                ]
+              },
+              "mime_type": {
+                "const": "image/jpeg"
+              },
+              "image_base64": {
+                "type": "string",
+                "minLength": 100,
+                "maxLength": 640000,
+                "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+              },
+              "screen_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "screen_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "window_x": {
+                "type": "integer",
+                "minimum": -20000,
+                "maximum": 20000
+              },
+              "window_y": {
+                "type": "integer",
+                "minimum": -20000,
+                "maximum": 20000
+              },
+              "window_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "window_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "capture_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "capture_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "image_width": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "image_height": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              }
+            }
+          },
+          "visual_ref": {
+            "type": "string",
+            "pattern": "^element:[a-f0-9]{48}$"
           }
         },
         "required": [

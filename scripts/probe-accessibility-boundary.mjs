@@ -9,7 +9,7 @@ if (process.platform !== "darwin") {
 } else {
   try {
     const result = await new MacUiInspectorImpl().observe(TARGET_APP, undefined, MAX_NODES, {
-      timeoutMs: 5_000,
+      timeoutMs: 15_000,
       shouldCancel: () => false
     });
     console.log(JSON.stringify({

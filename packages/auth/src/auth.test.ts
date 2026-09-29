@@ -1225,22 +1225,79 @@ test("owner browser approval reviews a durable non-secret preview and issues thr
   const cookie = f.cookieFrom(loggedIn);
   const review = await f.request("/approval/review", undefined, cookie);
   assert.equal(review.status, 200);
+  assert.equal(review.headers.get("referrer-policy"), "same-origin",
+    "The review form must preserve its origin on native browser submission");
   const html = await review.text();
   assert.match(html, /mac_service_control/u);
   assert.match(html, /service:gui\/501\/com\.example\.agent/u);
   assert.match(html, /b{64}/u);
   assert.doesNotMatch(html, /payloadValue/u);
   const reviewCsrf = await f.csrfFrom(new Response(html, { status: 200, headers: { "content-type": "text/html" } }));
+  for (const origin of ["null", "https://attacker.test"]) {
+    assert.equal((await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow" }, cookie, { origin })).status, 400);
+    assert.equal(issued, 0);
+  }
   const approved = await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow" }, cookie, { origin: new URL(issuer).origin });
   assert.equal(approved.status, 200);
   assert.match(await approved.text(), /approval:browser-preview-1/u);
   assert.equal(issued, 1);
+  const nextApproval = await f.request(`/approval?request_id=${preview.requestId}`, undefined, f.cookieFrom(approved));
+  assert.equal(nextApproval.headers.get("location"), "/approval/review", "Successful approval must not log the owner out");
   assert.equal((await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow" }, cookie, { origin: new URL(issuer).origin })).status, 400);
 });
 
 test("approval browser route is absent when the owner bridge is not assembled", async t => {
   const f = await fixture(t);
   assert.equal((await f.request("/approval?request_id=browser-preview-1")).status, 404);
+});
+
+test("approval expiry keeps owner authentication for a fresh exact request without extending the session", async t => {
+  const preview: ApprovalBrowserPreview = {
+    requestId: "approval-old", requestingPrincipalId: "owner-1", tool: "mac_app_focus", contractVersion: "0.1",
+    targetKind: "app_window", targetRef: "window:com.google.Chrome", payloadDigest: "b".repeat(64),
+    policyVersion: "policy-g1", approvalClass: "trusted_gui", unattended: false, expiresAtMs: Date.now() + 60_000
+  };
+  let issued = 0;
+  const f = await fixture(t, {
+    async preview(id) { return id === preview.requestId ? preview : undefined; },
+    async issue(id) { assert.equal(id, preview.requestId); issued++; return { approvalId: "approval:new", expiresAtMs: preview.expiresAtMs, revision: 1 }; }
+  });
+  const initial = await f.request("/approval?request_id=approval-old");
+  const initialCookie = f.cookieFrom(initial);
+  const csrf = await f.csrfFrom(await f.request("/approval/login", undefined, initialCookie));
+  const login = await f.request("/approval/login", { username: "owner", password, csrf }, initialCookie);
+  const cookie = f.cookieFrom(login);
+  const keyOf = (value: string) => createHash("sha256").update(value.split("=")[1]!).digest("hex");
+  const expiresAt = f.store().get("approval_session", keyOf(cookie))!.expiresAt;
+  preview.expiresAtMs = Date.now() - 1;
+  const expired = await f.request("/approval/review", undefined, cookie);
+  assert.equal(expired.status, 410);
+  assert.match(await expired.text(), /You do not need to reconnect the MCP app/u);
+  preview.requestId = "approval-new";
+  preview.expiresAtMs = Date.now() + 60_000;
+  const next = await f.request("/approval?request_id=approval-new", undefined, cookie);
+  assert.equal(next.headers.get("location"), "/approval/review");
+  const nextCookie = f.cookieFrom(next);
+  assert.notEqual(nextCookie, cookie);
+  assert.equal(f.store().get("approval_session", keyOf(cookie)), undefined);
+  assert.equal(f.store().get("approval_session", keyOf(nextCookie))!.expiresAt, expiresAt);
+  assert.equal(issued, 0);
+  assert.equal((await f.request("/approval/decision", { csrf, decision: "allow" }, nextCookie)).status, 400);
+  assert.equal(issued, 0);
+  const reviewCsrf = await f.csrfFrom(await f.request("/approval/review", undefined, nextCookie));
+  assert.equal((await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow" }, nextCookie)).status, 200);
+  assert.equal(issued, 1);
+});
+
+test("approval entry rejects unavailable previews before login and distinguishes missing sign-in", async t => {
+  const f = await fixture(t, { async preview() { return undefined; }, async issue() { throw new Error("Must not issue"); } });
+  const entry = await f.request("/approval?request_id=missing");
+  assert.equal(entry.status, 410);
+  assert.equal(entry.headers.get("set-cookie"), null);
+  assert.match(await entry.text(), /Operation approval unavailable/u);
+  const review = await f.request("/approval/review");
+  assert.equal(review.status, 400);
+  assert.match(await review.text(), /Approval sign-in expired/u);
 });
 
 test("consent CSP permits only its validated callback origin and repeated submission shows recovery", async t => {
@@ -1443,3 +1500,91 @@ function createCanaryFetch(port: number): FetchLike {
     });
   };
 }
+
+test("owner GUI session consent preserves sign-in and exposes a CSRF-protected stop control", async t => {
+  const preview: ApprovalBrowserPreview = { requestId: "session-preview", requestingPrincipalId: "owner-1",
+    tool: "mac_app_focus", contractVersion: "0.1", targetKind: "app_window", targetRef: "app_window:window:bundle:com.google.Chrome",
+    payloadDigest: "b".repeat(64), policyVersion: "policy-1", approvalClass: "trusted_gui", unattended: false,
+    expiresAtMs: Date.now() + 600000, sessionEligible: true };
+  let starts = 0, revoked = false;
+  const grant = { id: "gui-session:12345678-1234-1234-1234-123456789abc", appId: "bundle:com.google.Chrome", expiresAtMs: Date.now() + 1800000, remainingOperations: 500 };
+  const f = await fixture(t, { async preview() { return preview; }, async issue() { throw new Error("Not per-operation consent"); },
+    async startSession(id) { assert.equal(id, preview.requestId); starts++; return grant; },
+    async sessionStatus(id) { assert.equal(id, grant.id); return revoked ? undefined : grant; },
+    async revokeSession(id) { assert.equal(id, grant.id); revoked = true; } });
+  const entry = await f.request("/approval?request_id=session-preview");
+  const initial = f.cookieFrom(entry);
+  const csrf = await f.csrfFrom(await f.request("/approval/login", undefined, initial));
+  assert.equal((await f.request("/approval/decision", { csrf, decision: "allow-session" }, initial)).status, 403);
+  const login = await f.request("/approval/login", { username: "owner", password, csrf }, initial);
+  const cookie = f.cookieFrom(login);
+  const review = await f.request("/approval/review", undefined, cookie);
+  const reviewCsrf = await f.csrfFrom(review);
+  assert.equal((await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow-session" }, cookie, { origin: "https://other.test" })).status, 400);
+  const approved = await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow-session" }, cookie);
+  assert.equal(approved.status, 303);
+  assert.equal(starts, 1);
+  const activeCookie = f.cookieFrom(approved);
+  const status = await f.request("/approval/gui-session", undefined, activeCookie);
+  const html = await status.text();
+  assert.match(html, /Browser session active/u);
+  const stopCsrf = await f.csrfFrom(new Response(html));
+  assert.equal((await f.request("/approval/gui-session/revoke", { csrf: "0".repeat(64) }, activeCookie)).status, 400);
+  assert.equal(revoked, false);
+  const stopped = await f.request("/approval/gui-session/revoke", { csrf: stopCsrf }, activeCookie);
+  assert.equal(stopped.status, 303);
+  assert.equal(revoked, true);
+  const next = await f.request("/approval?request_id=session-preview", undefined, f.cookieFrom(stopped));
+  assert.equal(next.headers.get("location"), "/approval/review");
+});
+
+
+test("persistent consent and management login do not depend on a live operation preview", async t => {
+  const preview: ApprovalBrowserPreview = { requestId: "persistent-preview", requestingPrincipalId: "owner-1",
+    tool: "mac_app_focus", contractVersion: "0.1", targetKind: "app_window", targetRef: "app_window:window:bundle:com.google.Chrome",
+    payloadDigest: "b".repeat(64), policyVersion: "policy-1", approvalClass: "trusted_gui", unattended: false,
+    expiresAtMs: Date.now() + 600000, sessionEligible: true };
+  let started = false, revoked = false, previewAvailable = true;
+  const grant = { id: "gui-session:12345678-1234-1234-1234-123456789abc", appId: "bundle:com.google.Chrome",
+    persistent: true, expiresAtMs: Number.MAX_SAFE_INTEGER, remainingOperations: Number.MAX_SAFE_INTEGER };
+  const f = await fixture(t, { async preview() { return previewAvailable ? preview : undefined; }, async issue() { throw new Error("Unexpected single approval"); },
+    async startPersistentSession(id) { assert.equal(id, preview.requestId); started = true; return grant; },
+    async listSessions() { return started && !revoked ? [grant] : []; },
+    async sessionStatus() { return revoked ? undefined : grant; },
+    async revokeSession(id) { assert.equal(id, grant.id); revoked = true; } });
+  const entry = await f.request("/approval?request_id=persistent-preview");
+  const initial = f.cookieFrom(entry);
+  const csrf = await f.csrfFrom(await f.request("/approval/login", undefined, initial));
+  assert.equal((await f.request("/approval/decision", { csrf, decision: "allow-permanent" }, initial)).status, 403);
+  const login = await f.request("/approval/login", { username: "owner", password, csrf }, initial);
+  const cookie = f.cookieFrom(login);
+  const reviewHtml = await (await f.request("/approval/review", undefined, cookie)).text();
+  assert.match(reviewHtml, /Allow this browser until revoked/u);
+  assert.doesNotMatch(reviewHtml, /Allow this browser for 30 minutes/u);
+  const reviewCsrf = await f.csrfFrom(new Response(reviewHtml));
+  const approved = await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow-permanent" }, cookie);
+  assert.equal(approved.status, 303);
+  assert.equal(started, true);
+  const activeCookie = f.cookieFrom(approved);
+  const activeKey = createHash("sha256").update(activeCookie.split("=")[1]!).digest("hex");
+  assert.ok(f.store().get("approval_session", activeKey)!.expiresAt < Date.now() + 31 * 60000);
+  assert.match(await (await f.request("/approval/gui-session", undefined, activeCookie)).text(), /Until revoked/u);
+  previewAvailable = false;
+  // A fresh management login remains available even after every preview and cookie expires.
+  assert.equal((await f.request("/approval/gui-session")).headers.get("location"), "/approval/access");
+  const manage = await f.request("/approval/access");
+  const managementCookie = f.cookieFrom(manage);
+  const page = await f.request("/approval/login", undefined, managementCookie);
+  assert.equal(page.status, 200);
+  const managementCsrf = await f.csrfFrom(page);
+  const loggedIn = await f.request("/approval/login", { username: "owner", password, csrf: managementCsrf }, managementCookie);
+  assert.equal(loggedIn.headers.get("location"), "/approval/gui-session");
+  const manageCookie = f.cookieFrom(loggedIn);
+  const status = await f.request("/approval/gui-session", undefined, manageCookie);
+  const stopCsrf = await f.csrfFrom(status);
+  assert.equal((await f.request("/approval/gui-session/revoke", { csrf: "0".repeat(64), grant_id: grant.id }, manageCookie)).status, 400);
+  assert.equal((await f.request("/approval/gui-session/revoke", { csrf: stopCsrf, grant_id: "gui-session:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }, manageCookie)).status, 403);
+  const stop = await f.request("/approval/gui-session/revoke", { csrf: stopCsrf, grant_id: grant.id }, manageCookie);
+  assert.equal(stop.status, 303);
+  assert.equal(revoked, true);
+});

@@ -1,9 +1,10 @@
+import { GuiProcessSupervisor } from "./gui-process-supervisor.js";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { redactLogText } from "./secret-policy.js";
 import type { AppExecutionControl, AppInventoryInspector, SafeAppInventory } from "./app-inspector.js";
-import { opaqueWindowId, validateSensitiveUiTarget } from "./ui-inspector.js";
+import { guiVisionExecutableForTesting, opaqueWindowId, validateSensitiveUiTarget } from "./ui-inspector.js";
 
 const OPEN_EXECUTABLE = "/usr/bin/open";
 const OPEN_CWD = "/";
@@ -13,20 +14,8 @@ const MAX_TIMEOUT_MS = 30_000;
 const MAX_POLL_ATTEMPTS = 20;
 const POLL_INTERVAL_MS = 100;
 const APP_ID_PATTERN = /^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
+const BARE_APP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
 const MAX_WINDOW_HINT_LENGTH = 256;
-
-/** Broker-owned focus adapter; callers cannot provide AppleScript/JXA code. */
-const APP_FOCUS_SCRIPT = String.raw`
-ObjC.import("Foundation"); ObjC.import("ApplicationServices");
-const argv = (() => { try { return ObjC.unwrap($.NSProcessInfo.processInfo.arguments).map((value) => String(ObjC.unwrap(value))); } catch (_) { return []; } })();
-const marker = argv.lastIndexOf("--"); const supplied = marker >= 0 ? argv.slice(marker + 1) : argv.slice(-2);
-const appId = String(supplied[0] || ""); const windowHint = String(supplied[1] || ""); const bundleId = appId.startsWith("bundle:") ? appId.slice("bundle:".length) : "";
-let emitted = null; const result = (value) => { emitted = value; }; const text = (call, fallback = "") => { try { const value = call(); return value === null || value === undefined ? fallback : String(value); } catch (_) { return fallback; } };
-if (!/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/.test(appId)) result({ status: "error", error: "invalid_app_identity" });
-else if (!$.AXIsProcessTrusted()) result({ status: "error", error: "accessibility_permission" });
-else { try { const systemEvents = Application("System Events"); let process = null; for (const candidate of systemEvents.processes()) { if (text(() => candidate.bundleIdentifier()) === bundleId) { process = candidate; break; } } if (!process) result({ status: "error", error: "app_not_running" }); else { const windows = (() => { try { return process.windows(); } catch (_) { return []; } })(); let selected = null; let selectedIndex = -1; for (let index = 0; index < windows.length; index += 1) { const candidate = windows[index]; const title = text(() => candidate.name()); const focused = Boolean((() => { try { return candidate.focused(); } catch (_) { return false; } })()); if ((windowHint.length > 0 && title === windowHint) || (windowHint.length === 0 && focused && selected === null)) { selected = candidate; selectedIndex = index; if (windowHint.length > 0) break; } } if (selected === null && windowHint.length === 0 && windows.length > 0) { selected = windows[0]; selectedIndex = 0; } if (selected === null) result({ status: "error", error: "window_not_found" }); else { process.frontmost = true; try { selected.focused = true; } catch (_) {} const title = text(() => selected.name()); const focused = Boolean((() => { try { return selected.focused(); } catch (_) { return false; } })()); result({ status: "ok", app_id: appId, window_index: selectedIndex, window_title: title, focused }); } } } catch (error) { const message = text(() => error && error.message); result({ status: "error", error: /not authorized|not permitted|assistive|accessibility|-1743/iu.test(message) ? "accessibility_permission" : "execution_failed" }); } }
-JSON.stringify(emitted);
-`.replace(/\s+/gu, " ").trim();
 
 export interface SafeAppOpen {
   appId: string;
@@ -59,7 +48,7 @@ export class AppControlInspectorImpl implements AppControlInspector {
 
   constructor(
     inventory: AppInventoryInspector,
-    supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({ maxConcurrent: 1, allowedEnvironmentKeys: [] })
+    supervisor: Pick<ProcessSupervisor, "run"> = new GuiProcessSupervisor()
   ) {
     this.inventory = inventory;
     this.supervisor = supervisor;
@@ -116,8 +105,9 @@ export class AppControlInspectorImpl implements AppControlInspector {
     validateAppFocusRequest(appId, windowHint);
     validateSensitiveUiTarget(appId, windowHint);
     const result = await this.supervisor.run({
-      executable: "/usr/bin/osascript",
-      args: ["-l", "JavaScript", "-e", APP_FOCUS_SCRIPT, "--", appId, windowHint ?? ""],
+      executable: guiVisionExecutableForTesting,
+      allowUserOwnedExecutable: true,
+      args: ["focus", "visual", appId.slice("bundle:".length), windowHint ?? ""],
       cwd: OPEN_CWD,
       environment: {},
       timeoutMs: Math.min(control.timeoutMs, 10_000),
@@ -157,6 +147,17 @@ export function validateAppOpenRequest(appId: unknown, documentPath?: unknown, u
   if (documentPath !== undefined || url !== undefined) {
     throw new BrokerError("UNSUPPORTED_CAPABILITY", "Document and URL app-open targets are not enabled");
   }
+}
+
+export function normalizeAppId(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new BrokerError("PRECONDITION_FAILED", "app_id must be a stable bundle identity");
+  }
+  const appId = value.startsWith("bundle:") ? value : `bundle:${value}`;
+  if (!APP_ID_PATTERN.test(appId) || (!value.startsWith("bundle:") && !BARE_APP_ID_PATTERN.test(value))) {
+    throw new BrokerError("PRECONDITION_FAILED", "app_id must be a stable bundle identity");
+  }
+  return appId;
 }
 
 export function validateAppFocusRequest(appId: unknown, windowHint?: unknown): asserts appId is string {
@@ -224,8 +225,7 @@ function assertOpenResult(result: ProcessExecutionResult): void {
 }
 
 export const appOpenExecutableForTesting = OPEN_EXECUTABLE;
-export const appFocusExecutableForTesting = "/usr/bin/osascript";
-export const appFocusScriptForTesting = APP_FOCUS_SCRIPT;
+export const appFocusExecutableForTesting = guiVisionExecutableForTesting;
 
 function hasExactFields(value: Record<string, unknown>, required: readonly string[]): boolean {
   const keys = Object.keys(value);
