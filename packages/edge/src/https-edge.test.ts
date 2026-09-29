@@ -170,7 +170,7 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
       { method: "GET" }
     );
     assert.equal(metadataResponse.status, 200);
-    const metadata = await metadataResponse.json() as { resource?: string; authorization_servers?: string[] };
+    const metadata = await metadataResponse.json() as { resource?: string; authorization_servers?: string[]; scopes_supported?: string[] };
     assert.equal(metadata.resource, edgeOptions.resourceServerUrl.href);
     assert.deepEqual(metadata.authorization_servers, ["https://issuer.example.test"]);
     const rootMetadataResponse = await fetch(
@@ -206,6 +206,9 @@ test("official MCP client discovers Broker-enabled tools over HTTPS", async () =
     );
     assert.equal(invalidTokenResponse.status, 401);
     assert.match(invalidTokenResponse.headers.get("www-authenticate") ?? "", /invalid_token/u);
+    const challengedScope = /scope="([^"]*)"/u.exec(invalidTokenResponse.headers.get("www-authenticate") ?? "")?.[1]?.split(" ");
+    assert.ok(metadata.scopes_supported && metadata.scopes_supported.length > 0);
+    assert.deepEqual(challengedScope, metadata.scopes_supported);
 
     const scopeReducedToken = await createAccessToken(privateKey, issuer, edgeOptions.resourceServerUrl, "mac.control.read", "scope-reduced-token");
     const scopeResponse = await fetch(

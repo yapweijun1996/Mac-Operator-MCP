@@ -84,6 +84,9 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
   app.all(options.resourceServerUrl.pathname, (_request: Request, response: Response, next: NextFunction) => {
     response.setHeader("Cache-Control", "no-store");
     next();
+  }, (_request: Request, response: Response, next: NextFunction) => {
+    advertiseFullScopesOnChallenge(response, metadataOptions.scopesSupported);
+    next();
   }, bearerAuth, (request: Request, response: Response, next: NextFunction) => {
     const auth = (request as Request & { auth?: AuthInfo }).auth;
     const identity = auth?.clientId ?? readPrincipalId(auth) ?? "authenticated";
@@ -154,6 +157,23 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
       });
     }
   };
+}
+
+/**
+ * The SDK derives the 401 challenge scope from requiredScopes, the minimum needed to
+ * initialize. Clients such as Claude request exactly the challenged scope, so a profile
+ * above the minimum (W1/G1) would never be offered its write or GUI scopes. Rewrite only
+ * missing/invalid-token challenges; insufficient_scope keeps the minimum.
+ */
+function advertiseFullScopesOnChallenge(response: Response, scopesSupported: readonly string[]): void {
+  if (scopesSupported.length === 0) return;
+  const setHeader = response.setHeader.bind(response);
+  response.setHeader = ((name: string, value: number | string | readonly string[]) => {
+    if (name.toLowerCase() === "www-authenticate" && typeof value === "string" && !value.includes('error="insufficient_scope"')) {
+      return setHeader(name, value.replace(/scope="[^"]*"/u, `scope="${scopesSupported.join(" ")}"`));
+    }
+    return setHeader(name, value);
+  }) as Response["setHeader"];
 }
 
 function hasMcpSessionId(request: Request): boolean {
