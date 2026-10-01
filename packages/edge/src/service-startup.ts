@@ -352,7 +352,7 @@ export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceSta
     authorizationEndpoint, tokenEndpoint, jwksUri, allowedHosts, allowedOrigins,
     ...(oauthScopes === undefined ? {} : { oauthScopes }), ...(requiredScopes === undefined ? {} : { requiredScopes }), policyVersion,
     sourceRevision, contractVersion,
-    ipcTimeoutMs: boundedInteger(record.ipcTimeoutMs, 100, 30_000, "Edge IPC timeout"),
+    ipcTimeoutMs: boundedInteger(record.ipcTimeoutMs, 100, 180_000, "Edge IPC timeout"),
     maxIpcResponseBytes: boundedInteger(record.maxIpcResponseBytes, 1_024, 8 * 1024 * 1024, "Edge IPC response limit"),
     rateLimitWindowMs: boundedInteger(record.rateLimitWindowMs, 1_000, 86_400_000, "Edge rate-limit window"),
     rateLimitMaxRequests: boundedInteger(record.rateLimitMaxRequests, 1, 100_000, "Edge rate-limit request limit"),

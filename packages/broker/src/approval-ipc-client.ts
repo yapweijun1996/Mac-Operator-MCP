@@ -24,6 +24,8 @@ export interface ApprovalIpcClientOptions {
   issuerId: string;
   keyId: string;
   authenticationKey: Buffer;
+  /** Only an explicit owner-delegated issuer may request unattended profile approvals. */
+  allowUnattended?: boolean;
   timeoutMs?: number;
   maxResponseBytes?: number;
   maxRequestAgeMs?: number;
@@ -51,6 +53,7 @@ export class ApprovalIpcClient {
       throw new Error("Approval issuer identity is malformed");
     }
     if (options.authenticationKey.byteLength < 32) throw new Error("Approval IPC key must contain at least 32 bytes");
+    if (options.allowUnattended !== undefined && typeof options.allowUnattended !== "boolean") throw new Error("Approval delegation flag is invalid");
     const timeoutMs = options.timeoutMs ?? 15_000;
     const maxResponseBytes = options.maxResponseBytes ?? 64 * 1024;
     const maxRequestAgeMs = options.maxRequestAgeMs ?? 60_000;
@@ -78,7 +81,7 @@ export class ApprovalIpcClient {
     if (approval.approverPrincipalId !== this.options.issuerId) {
       throw new BrokerError("POLICY_DENIED", "Approval approver does not match the configured issuer");
     }
-    validateOwnerApproval(approval, this.now(), this.maxRequestAgeMs);
+    validateOwnerApproval(approval, this.now(), this.maxRequestAgeMs, this.options.allowUnattended === true);
     const timestampMs = approval.issuedAtMs;
     const unsigned: UnsignedApprovalIssuance = {
       protocolVersion: "0.1",
@@ -156,7 +159,7 @@ export class ApprovalIpcClient {
   }
 }
 
-function validateOwnerApproval(approval: IssueApprovalInput, nowMs: number, maxRequestAgeMs: number): void {
+function validateOwnerApproval(approval: IssueApprovalInput, nowMs: number, maxRequestAgeMs: number, allowUnattended: boolean): void {
   if (!/^approval:[A-Za-z0-9._:-]{1,240}$/u.test(approval.approvalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(approval.approverPrincipalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(approval.requestingPrincipalId) ||
@@ -165,7 +168,7 @@ function validateOwnerApproval(approval: IssueApprovalInput, nowMs: number, maxR
       !validApprovalTarget(approval.targetKind, approval.targetRef) ||
       !/^[a-f0-9]{64}$/u.test(approval.payloadDigest) ||
       !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(approval.policyVersion) ||
-      !APPROVAL_CLASSES.includes(approval.approvalClass) || approval.unattended !== false ||
+      !APPROVAL_CLASSES.includes(approval.approvalClass) || (typeof approval.unattended !== "boolean" || (approval.unattended && (!allowUnattended || approval.approvalClass !== "trusted_profile"))) ||
       !Number.isSafeInteger(approval.issuedAtMs) || approval.issuedAtMs < 0 ||
       !Number.isSafeInteger(approval.expiresAtMs) || approval.expiresAtMs <= approval.issuedAtMs ||
       approval.useLimit !== undefined && approval.useLimit !== 1 ||

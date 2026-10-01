@@ -1,0 +1,217 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_terminal_exec",
+  "capability_level": "L2",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.terminal.exec"
+  ],
+  "normalized_target_type": "broker",
+  "timeout_ms": 120000,
+  "output_cap_bytes": 262144,
+  "network_policy": "profile_defined",
+  "filesystem_policy": "profile_defined",
+  "secret_policy": "deny_secret_env",
+  "approval_policy": "trusted_profile",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "exit_status_and_declared_task_verification",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "execution",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "Execute an explicit shell command as the personal macOS owner. Unsandboxed owner mode requires a separate signed owner policy and delegated approval; never runs the Broker as root.",
+  "input_summary": "command:string, cwd:absolute path, idempotency_key:string, timeout_ms?:100..120000.",
+  "output_summary": "Owner-bound job, observed exit code and bounded redacted stdout/stderr; no isolation or rollback guarantee.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_terminal_exec input",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "command",
+      "cwd",
+      "idempotency_key"
+    ],
+    "properties": {
+      "command": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32768
+      },
+      "cwd": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "idempotency_key": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 120000
+      }
+    }
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_terminal_exec result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_terminal_exec"
+      },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cwd",
+          "job_id",
+          "state",
+          "exit_code",
+          "stdout",
+          "stderr",
+          "truncated",
+          "reused",
+          "execution_mode"
+        ],
+        "properties": {
+          "cwd": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "completed",
+              "failed"
+            ]
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stdout": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "stderr": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "reused": {
+            "type": "boolean"
+          },
+          "execution_mode": {
+            "const": "personal_owner_terminal"
+          }
+        }
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "exit_status_and_declared_task_verification"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 180000
+      }
+    }
+  },
+  "source": {
+    "kind": "local_owner_request",
+    "request_date": "2026-10-01",
+    "source_text": "The owner explicitly requested terminal and CLI control of their Mac. This opt-in mode executes arbitrary shell commands as the macOS owner without claiming task isolation."
+  }
+}

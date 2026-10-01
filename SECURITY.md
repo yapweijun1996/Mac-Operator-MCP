@@ -6,7 +6,7 @@ Source: KBID `mac-operator-mcp`, item `2ea82306-ed68-4ad2-b647-1a5937107320`
 
 ## Security objective
 
-Grant broad Mac-operating capability without granting the model direct possession of credentials, unrestricted root, arbitrary public exposure, or silent privilege expansion.
+Governed profiles grant bounded Mac-operating capability. The owner may explicitly select O1 for arbitrary owner-account commands; its different trust boundary is documented in [Owner terminal](docs/owner-terminal.md). O1 does not grant unrestricted root or bypass macOS permissions.
 
 ## Core invariants
 
@@ -28,7 +28,7 @@ Use authenticated HTTPS/OAuth or equivalent for the remote MCP Edge. Bind the Lo
 
 ## Command and process policy
 
-Prefer structured task profiles. Generic process execution, if ever introduced, remains policy checked and depends on proven isolation. Block privilege escalation, credential-helper extraction, unrestricted Docker-socket access, arbitrary launchd persistence, and bypasses of Broker path or network policy.
+Governed `mac_task_run` requires named profiles and proven isolation. O1 is a separate owner-delegated shell capability, bound to `mac.terminal.exec`, signed policy and exact single-use approvals. It is not an isolation implementation. Its commands can access files, credentials, networks, Docker, applications and persistence that the owner account can access. Structured-tool filesystem denials and destructive/privileged switches do not constrain arbitrary O1 shell commands. Disable terminal authority through its tool enablement, owner OAuth grant, or global/mutation/process/network switches.
 
 ## GUI and app policy
 
@@ -46,7 +46,7 @@ Record actor or principal reference, tool, normalized target reference, policy d
 
 Stopping or locking the Broker and revoking connector credentials remove remote execution authority according to the request and job lifecycle contract. Maintain emergency disables for mutating, GUI, and privileged capabilities. Failed mutation verification returns `VERIFICATION_FAILED`, never success.
 
-## Explicitly excluded from v0.1
+## Excluded from governed profiles
 
 `run_shell`, `sudo_shell`, raw Keychain reads, SSH private-key reads, raw Docker socket proxying, arbitrary AppleScript/JXA execution, generic click-anywhere, credential autofill, Git push, force reset, destructive disk operations, and security-setting bypass.
 

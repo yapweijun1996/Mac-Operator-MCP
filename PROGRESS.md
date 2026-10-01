@@ -2,6 +2,14 @@
 
 ## Current overall progress: 92%
 
+V2/O1 source integration (2026-10-02): verified for the owner-authorized
+personal rollout. Standard npm test: 1313 PASS, 17 SKIP, 0 FAIL; 57 contracts
+verify; dependency audit reports zero vulnerabilities. Independent review
+accepted the canonical native-write authorization fix with 55 related tests
+passing and no unresolved P0/P1. The signed O1 policy remains 24 scopes/38 tools;
+V2/task execution stays disabled. Live readback is recorded separately after
+cutover; production Codex isolation and YAP-MCP acceptance remain at 55%.
+
 V2 safe development gateway (2026-10-01): PARTIAL, 55% acceptance completion
 (6 of 11 gates verified). Additive worktrees, gateway admission, asynchronous
 managed jobs, registered validation, Git review and audit are implemented;
@@ -12,6 +20,16 @@ Design: `docs/MAC_OPERATOR_V2_DESIGN.md`; operator runbook:
 `docs/MAC_OPERATOR_V2_RUNBOOK.md`; exact evidence and remaining gates:
 `evidence/2026-10-01-v2-gateway-validation.md` and
 `docs/MAC_OPERATOR_V2_CHANGE_REPORT.md`.
+
+Personal owner terminal (2026-10-01): O1 is live under explicit owner opt-in
+and OAuth consent, with 38 tools and 24 scopes. The public verifier passed
+31-second terminal/CLI/network/file execution, idempotency, timeout, durable
+cancellation after grant revocation, and 26 existing read calls. Old read
+scope grants still expose only 27 tools. Full regression: 1,274 passed,
+17 explicitly skipped, 0 failed. The previous G1 release/state is preserved
+for rollback. This completes the requested owner-account terminal capability;
+formal signing, installer and isolated-task acceptance remain separate at 92%.
+Evidence: [owner terminal verification](evidence/2026-10-01-owner-terminal-control.md).
 
 Owner-only W1 deployment (2026-09-24): the source provisions a separate
 one-project file/Git write profile with attended browser approval. A signed
@@ -6608,3 +6626,7 @@ total (576 passed, 6 explicitly skipped, 0 failed). Crash ownership, real
 clock/rollback behavior, production Keychain, installed recovery, external
 rollback detection, and ADR acceptance remain open. Evidence:
 `evidence/2026-09-15-reconciliation-clock-order.md`.
+
+## Personal owner terminal expansion (2026-10-01)
+
+The owner explicitly requested terminal and CLI control of their Mac. O1 adds the independently enabled `mac_terminal_exec` capability under `mac.terminal.exec`, with authenticated owner grants, exact delegated approvals, durable Jobs, bounded output, cancellation and audit. This mode executes arbitrary commands under the macOS owner account and makes no isolation claim. R1/W1/G1 and isolated task-run acceptance remain unchanged. Online O1 enablement and public OAuth verification passed at runtime source revision `fa215d61ba553c306127a0f0a676dffd39bd6cc3`. Implementation and operating limits are recorded in [Owner terminal operations](docs/owner-terminal.md); final results are in [verification evidence](evidence/2026-10-01-owner-terminal-control.md).

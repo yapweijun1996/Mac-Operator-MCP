@@ -10,16 +10,18 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { Broker, BrokerStore, BrokerServiceInstanceLock, EdgeKeyring, MacOsNativeBrokerIpcServer,
   capturePeerProcessIdentity, PolicyBundleVerifier, PolicyManager, createDefaultPolicy,
-  ApprovalIssuerKeyManager, provisionAuthenticationKey, writeApprovalIssuerKeyConfig,
+  ApprovalIssuerKeyManager, PersonalOwnerTerminalExecutor, provisionAuthenticationKey, writeApprovalIssuerKeyConfig,
   type SignedPolicyBundle, type PolicyDocument } from "@mac-operator/broker";
 import { runEdgeServiceMain, validateEdgeServiceStartupConfig, type JwtRevocationContext } from "@mac-operator/edge";
 import { assertPrivateDirectory } from "./store.js";
 import { readAuthFile, runAuthCli } from "./cli.js";
-import { configSchema, G1_SCOPES, G1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS } from "./contracts.js";
+import { configSchema, O1_SCOPES, O1_TOOLS, G1_SCOPES, G1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS } from "./contracts.js";
 import { configureIssuerNetwork } from "./issuer-network.js";
 import { enableConnectionDiagnostics } from "./connection-diagnostics.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
-import { assertG1Policy, assertW1Policy, buildG1TargetRules, buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
+import { assertO1Policy, assertG1Policy, assertW1Policy, buildO1TargetRules, buildG1TargetRules, buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
+import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
+import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
 import { createProcessApprovalBrowserBridge, parseApprovalBrowserRequest } from "./approval-browser-bridge.js";
 import { createPersonalApprovalBrowserController } from "./personal-approval-browser-controller.js";
@@ -36,8 +38,9 @@ const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 async function provision(root: string, revision: string) {
   assertPrivateDirectory(root);
   const auth = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
-  if (auth.grantProfile === "d1") throw new Error("Personal service accepts only r1, w1, or g1 OAuth grants");
-  const guiProfile = auth.grantProfile === "g1";
+  if (auth.grantProfile === "d1") throw new Error("Personal service accepts only r1, w1, g1, or o1 OAuth grants");
+  const terminalProfile = auth.grantProfile === "o1";
+  const guiProfile = auth.grantProfile === "g1" || terminalProfile;
   const writeProfile = auth.grantProfile === "w1" || guiProfile;
   const data = join(root, "personal"); const runtime = join(data, "run");
   if (Buffer.byteLength(join(runtime, "broker.sock")) >= 104) throw new Error("Runtime socket path is too long");
@@ -48,13 +51,13 @@ async function provision(root: string, revision: string) {
   const now = Date.now();
   const projectRoot = realpathSync(process.env.MAC_OPERATOR_PROJECT_ROOT ?? packageRoot);
   const filesystemRoots = writeProfile ? w1FilesystemRoots(w1ProjectRoot(projectRoot)) : r1FilesystemRoots();
-  const scopes = guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
-  const enabledTools = guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
+  const scopes = terminalProfile ? O1_SCOPES : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
+  const enabledTools = terminalProfile ? O1_TOOLS : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
   const policy: PolicyDocument = { schema_version: "0.1", revision: 1, audience: "mac-operator-broker", issued_at_ms: now,
     trusted_edge_keys: [{ edge_id: "personal-edge", key_id: "personal-edge-1", not_before_ms: now - 5000, expires_at_ms: now + 365 * 86400000 }],
     principal_grants: [{ principal_id: auth.principalId, issuer: auth.issuerId, scopes: [...scopes], enabled: true }],
     target_rules: writeProfile
-      ? guiProfile ? buildG1TargetRules(auth.principalId, filesystemRoots, projectRoot) : buildW1TargetRules(auth.principalId, filesystemRoots, projectRoot)
+      ? terminalProfile ? buildO1TargetRules(auth.principalId, filesystemRoots, projectRoot) : guiProfile ? buildG1TargetRules(auth.principalId, filesystemRoots, projectRoot) : buildW1TargetRules(auth.principalId, filesystemRoots, projectRoot)
       : buildR1TargetRules(auth.principalId, filesystemRoots, projectRoot),
     filesystem_roots: filesystemRoots, tool_enablement: enabledTools.map(tool => ({ tool, enabled: true })),
     kill_switches: { global: false, mutations: !writeProfile, process: false, network: false, gui: !guiProfile, destructive: true, privileged: true } };
@@ -80,18 +83,21 @@ async function provision(root: string, revision: string) {
       oauthStatusLocalCaPath: join(data, "auth-status-ca.crt"),
       allowedHosts: [new URL(auth.issuer).hostname], allowedOrigins: ["chatgpt.com", new URL(auth.issuer).hostname],
       oauthScopes: [...scopes], requiredScopes: [...(writeProfile ? W1_READ_SCOPES : READ_SCOPES)],
-      policyVersion: "policy-1", sourceRevision: revision, contractVersion: "0.1", ipcTimeoutMs: guiProfile ? 30_000 : 5000, maxIpcResponseBytes: 1048576,
+      policyVersion: "policy-1", sourceRevision: revision, contractVersion: "0.1", ipcTimeoutMs: terminalProfile ? 180_000 : guiProfile ? 30_000 : 5000, maxIpcResponseBytes: 1048576,
       rateLimitWindowMs: 60000, rateLimitMaxRequests: 100, rateLimitMaxKeys: 100 });
     save(join(data, "edge-service.json"), json(edge));
     if (writeProfile) {
       const approvalKeyPath = join(data, "approval.key");
       await provisionAuthenticationKey(approvalKeyPath);
+      if (terminalProfile) await provisionAuthenticationKey(join(data, "terminal-approval.key"));
       await writeApprovalIssuerKeyConfig(join(data, "approval-keys.json"), {
         schemaVersion: "0.1",
         revision: 1,
         // Browser consent is a separate authority from the MCP requesting principal.
         keys: [{ issuerId: `browser-approver-${sha256(auth.principalId).slice(0, 32)}`, keyId: "personal-approval-1", path: approvalKeyPath,
-          notBeforeMs: now - 5_000, expiresAtMs: now + 365 * 86_400_000, allowUnattended: false }]
+          notBeforeMs: now - 5_000, expiresAtMs: now + 365 * 86_400_000, allowUnattended: false },
+          ...(terminalProfile ? [{ issuerId: `terminal-approver-${sha256(auth.principalId).slice(0, 32)}`, keyId: "personal-terminal-1",
+            path: join(data, "terminal-approval.key"), notBeforeMs: now - 5_000, expiresAtMs: now + 365 * 86_400_000, allowUnattended: true }] : [])]
       });
     }
     save(join(data, "approval-issuer.json"), json({ schemaVersion: "0.1", enabled: writeProfile,
@@ -136,19 +142,21 @@ async function start(root: string) {
   const key = readAuthFile(join(data, "edge.key"), 32);
   try {
     const config = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
-    if (config.grantProfile === "d1") throw new Error("Personal service accepts only r1, w1, or g1 OAuth grants");
-    const guiProfile = config.grantProfile === "g1";
+    if (config.grantProfile === "d1") throw new Error("Personal service accepts only r1, w1, g1, or o1 OAuth grants");
+    const terminalProfile = config.grantProfile === "o1";
+    const guiProfile = config.grantProfile === "g1" || terminalProfile;
     const writeProfile = config.grantProfile === "w1" || guiProfile;
     store = openStore(data);
     const verified = await (await policyVerifier(data)).verifyFile(join(data, "policy.json"));
     new PolicyManager(verified.policy, store).restore(verified);
     const granted = [...verified.policy.principalGrants.values()];
     if (granted.length !== 1 || granted[0]?.principalId !== config.principalId || granted[0]?.issuer !== config.issuerId ||
-        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...(guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES)].sort())) throw new Error("Owner policy mismatch");
+        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...(terminalProfile ? O1_SCOPES : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES)].sort())) throw new Error("Owner policy mismatch");
     const enabled = [...verified.policy.tools.values()].filter(t => t.enabled).map(t => t.tool).sort();
     const roots = verified.policy.filesystemRoots;
     if (writeProfile) {
-      if (guiProfile) assertG1Policy(verified.policy, config.principalId, config.issuerId);
+      if (terminalProfile) assertO1Policy(verified.policy, config.principalId, config.issuerId);
+      else if (guiProfile) assertG1Policy(verified.policy, config.principalId, config.issuerId);
       else assertW1Policy(verified.policy, config.principalId, config.issuerId);
     } else {
       if (JSON.stringify(enabled) !== JSON.stringify([...READ_TOOLS].sort()) ||
@@ -164,15 +172,21 @@ async function start(root: string) {
     const bundle = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const validity = bundle.payload.trusted_edge_keys[0]!;
     broker = new Broker({ store, policy: verified.policy,
+      ...(terminalProfile ? { ownerTerminalExecutor: new PersonalOwnerTerminalExecutor({ enabled: true }),
+        authorizeOwnerTerminal: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
+          createPersonalTerminalApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock") })(operation) } : {}),
       ...(guiProfile ? { authorizeGuiSession: operation => browserApprovalController?.authorizeGuiSession(operation) ?? Promise.resolve(false) } : {}), edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "personal-edge", keyId: "personal-edge-1", key,
       notBeforeMs: validity.not_before_ms, expiresAtMs: validity.expires_at_ms }]) });
-    const expectedTools = guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
+    const expectedTools = terminalProfile ? O1_TOOLS : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
     if (JSON.stringify([...broker.enabledRuntimeCapabilityNames()].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error("Unexpected runtime capability");
     approvalIssuerRuntime = await createPersonalApprovalIssuerRuntime({
       configPath: join(data, "approval-issuer.json"), dataRoot: data, runtimeRoot: runtime, store,
       uid: process.getuid!(), ...(process.getgid === undefined ? {} : { gid: process.getgid() })
     });
     if (writeProfile !== (approvalIssuerRuntime !== undefined)) throw new Error("Personal approval boundary mismatch");
+    if (approvalIssuerRuntime && !terminalProfile && approvalIssuerRuntime.keyManager.current().keys.some(key => key.allowUnattended)) throw new Error("Unexpected terminal delegation");
+    if (terminalProfile && approvalIssuerRuntime?.keyManager.current().keys.filter(key => key.allowUnattended).length !== 1) throw new Error("Terminal delegation is missing");
+    if (terminalProfile) await broker.reconcileRestartedTaskProcesses();
     if (guiProfile) browserAuthStore = new AuthStore(join(root, "auth"));
     browserApprovalController = approvalIssuerRuntime === undefined ? undefined : createPersonalApprovalBrowserController({
       store, ...(browserAuthStore ? { authStore: browserAuthStore } : {}), approvalIssuerRuntime, socketPath: join(runtime, "approval.sock")
@@ -269,11 +283,11 @@ async function grantPersistentBrowserAccess(root: string, requestId: string): Pr
   let authStore: AuthStore | undefined;
   try {
     const config = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
-    if (config.grantProfile !== "g1") throw new Error("Persistent browser access requires G1");
+    if (config.grantProfile !== "g1" && config.grantProfile !== "o1") throw new Error("Persistent browser access requires G1 or O1");
     store = openStore(data);
     const verified = await (await policyVerifier(data)).verifyFile(join(data, "policy.json"));
     new PolicyManager(verified.policy, store).restore(verified);
-    assertG1Policy(verified.policy, config.principalId, config.issuerId);
+    (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(verified.policy, config.principalId, config.issuerId);
     if (store.requestRecord(requestId)?.principalId !== config.principalId) throw new Error("Owner preview required");
     authStore = new AuthStore(join(root, "auth"));
     const sessions = new GuiSessionApprovals(store, async () => { throw new Error("Setup cannot issue operations"); }, Date.now, authStore);
@@ -288,6 +302,11 @@ async function main() {
   const root = await realpath(rootArg);
   if (mode === "init") { if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail)) throw new Error("Snapshot identity required"); await provision(root, detail); }
   else if (mode === "start") await start(root);
+  else if (mode === "owner-terminal") {
+    if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || process.argv[5] !== "--enable") throw new Error("Snapshot identity and explicit --enable required");
+    await upgradePersonalOwnerTerminal(root, packageRoot, detail);
+    console.log("Personal owner terminal enabled in offline state; reconnect OAuth to grant mac.terminal.exec.");
+  }
   else if (mode === "browser-access") {
     if (!detail || !/^[A-Za-z0-9._:-]{1,128}$/u.test(detail) || process.argv[5] !== "--until-revoked") {
       throw new Error("Explicit preview ID and --until-revoked required");

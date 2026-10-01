@@ -2363,11 +2363,46 @@ napi_value HashFileWithinRoot(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// Authorize the pinned parent, rather than its possibly aliased request path.
+// Recheck descriptor paths after the synchronous callback before mutating.
+bool AuthorizeWriteTarget(napi_env env, napi_value authorizer, int root_descriptor,
+    int parent_descriptor, const char* resolved_root, const char* resolved_parent,
+    const char* base_name) {
+  char current_root[PATH_MAX];
+  char current_parent[PATH_MAX];
+  char canonical_target[PATH_MAX];
+  if (!DescriptorPath(root_descriptor, current_root) || strcmp(current_root, resolved_root) != 0 ||
+      !DescriptorPath(parent_descriptor, current_parent) || strcmp(current_parent, resolved_parent) != 0 ||
+      !IsWithinRoot(current_root, current_parent) || strcmp(base_name, ".") == 0 || strcmp(base_name, "..") == 0 ||
+      snprintf(canonical_target, sizeof(canonical_target), "%s%s%s", current_parent,
+        strcmp(current_parent, "/") == 0 ? "" : "/", base_name) >= static_cast<int>(sizeof(canonical_target))) {
+    ThrowSystemError(env, "Filesystem write canonical target changed before authorization");
+    return false;
+  }
+  napi_value global;
+  napi_value target;
+  napi_value result;
+  if (napi_get_global(env, &global) != napi_ok ||
+      napi_create_string_utf8(env, canonical_target, NAPI_AUTO_LENGTH, &target) != napi_ok ||
+      napi_call_function(env, global, authorizer, 1, &target, &result) != napi_ok) return false;
+  napi_valuetype result_type;
+  if (napi_typeof(env, result, &result_type) != napi_ok || result_type != napi_undefined) {
+    napi_throw_type_error(env, nullptr, "Filesystem write authorizer must return synchronously without a value");
+    return false;
+  }
+  if (!DescriptorPath(root_descriptor, current_root) || strcmp(current_root, resolved_root) != 0 ||
+      !DescriptorPath(parent_descriptor, current_parent) || strcmp(current_parent, resolved_parent) != 0) {
+    ThrowSystemError(env, "Filesystem write canonical target changed during authorization");
+    return false;
+  }
+  return true;
+}
+
 napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
-  size_t argc = 8;
-  napi_value args[8];
-  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 8) {
-    napi_throw_type_error(env, nullptr, "writeFileAtomicWithinRoot requires root, target, content, createOnly, expectedPresent, expectedDevice, expectedInode, and temporaryName");
+  size_t argc = 9;
+  napi_value args[9];
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 9) {
+    napi_throw_type_error(env, nullptr, "writeFileAtomicWithinRoot requires root, target, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName, and authorizer");
     return nullptr;
   }
 
@@ -2379,6 +2414,7 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   bool create_only = false;
   bool expected_present = false;
   bool is_buffer = false;
+  napi_valuetype authorizer_type;
   if (!ReadString(env, args[0], configured_root, sizeof(configured_root)) ||
       !ReadString(env, args[1], requested_target, sizeof(requested_target)) ||
       napi_is_buffer(env, args[2], &is_buffer) != napi_ok || !is_buffer ||
@@ -2386,7 +2422,8 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
       napi_get_value_bool(env, args[4], &expected_present) != napi_ok ||
       !ReadComponent(env, args[5], expected_device, sizeof(expected_device)) ||
       !ReadComponent(env, args[6], expected_inode, sizeof(expected_inode)) ||
-      !ReadComponent(env, args[7], temporary_name, sizeof(temporary_name), ".mac-operator-write-")) {
+      !ReadComponent(env, args[7], temporary_name, sizeof(temporary_name), ".mac-operator-write-") ||
+      napi_typeof(env, args[8], &authorizer_type) != napi_ok || authorizer_type != napi_function) {
     napi_throw_type_error(env, nullptr, "Filesystem write arguments are malformed");
     return nullptr;
   }
@@ -2478,6 +2515,12 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
     return nullptr;
   }
 
+  if (!AuthorizeWriteTarget(env, args[8], root_descriptor, parent_descriptor, resolved_root, resolved_parent, base_name)) {
+    close(parent_descriptor);
+    close(root_descriptor);
+    return nullptr;
+  }
+
   struct stat existing_stat;
   bool existing = false;
   if (fstatat(parent_descriptor, base_name, &existing_stat, AT_SYMLINK_NOFOLLOW) == 0) {
@@ -2561,6 +2604,13 @@ napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   }
   MaybeInjectWriteCrash("after_temp_fsync");
   close(temporary_descriptor);
+
+  if (!AuthorizeWriteTarget(env, args[8], root_descriptor, parent_descriptor, resolved_root, resolved_parent, base_name)) {
+    unlinkat(parent_descriptor, temporary_name, 0);
+    close(parent_descriptor);
+    close(root_descriptor);
+    return nullptr;
+  }
 
   int rename_result = create_only
       ? renameatx_np(parent_descriptor, temporary_name, parent_descriptor, base_name, RENAME_EXCL)
@@ -3847,6 +3897,7 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_value native_arch;
   napi_create_string_utf8(env, kNativeArch, NAPI_AUTO_LENGTH, &native_arch);
   napi_set_named_property(env, exports, "nativeArch", native_arch);
+  SetNumber(env, exports, "nativeCanonicalWriteAuthorizationVersion", 1);
   napi_create_function(env, "sha256Utf8", NAPI_AUTO_LENGTH, Sha256Utf8, nullptr, &function);
   napi_set_named_property(env, exports, "sha256Utf8", function);
   napi_create_function(env, "getPeerCredentials", NAPI_AUTO_LENGTH, GetPeerCredentials, nullptr, &function);

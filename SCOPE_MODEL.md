@@ -49,3 +49,7 @@ The model must define precedence and propagation for principal, session, scope, 
 - Delegation and unattended-principal rules.
 
 These decisions are tracked by the Identity/IPC and Approval ADRs and must close before remote mutation capabilities are enabled.
+
+## Personal owner terminal authority
+
+`mac.terminal.exec` authorizes arbitrary commands under the personal macOS owner account, through `mac_terminal_exec`. Its exact normalized target is `host:owner-terminal`. It is issued only by the explicit O1 owner profile and is independent from the isolated `mac.task.run` scope. O1 commands are not confined by structured-tool path or operation allowlists. See [Owner terminal](docs/owner-terminal.md).

@@ -224,6 +224,7 @@ interface NativeStorageVolume extends SafeStorageVolume {
 }
 
 export interface FilesystemNativeAdapter {
+  readonly nativeCanonicalWriteAuthorizationVersion?: number;
   statPathWithinRoot(rootPath: string, targetPath: string, followSymlink: boolean): unknown;
   statStorageVolumeWithinRoot(rootPath: string): unknown;
   listDirectoryWithinRoot(
@@ -255,7 +256,8 @@ export interface FilesystemNativeAdapter {
     expectedPresent: boolean,
     expectedDevice: string,
     expectedInode: string,
-    temporaryName: string
+    temporaryName: string,
+    authorizeCanonicalPath: (path: string) => void
   ): unknown;
   unlinkFileWithinRoot(
     rootPath: string,
@@ -1090,6 +1092,9 @@ export class FilesystemInspector {
     device: string;
     inode: string;
   } {
+    if (this.native.nativeCanonicalWriteAuthorizationVersion !== 1) {
+      throw new BrokerError("POLICY_DENIED", "Filesystem canonical write authorization is unavailable");
+    }
     assertSourceWritePathAllowed(plan.requestedPath);
     assertContentDoesNotContainSecrets(content);
     let existing: SafePathMetadata | undefined;
@@ -1131,7 +1136,15 @@ export class FilesystemInspector {
         expectedIdentity?.present ?? (existing !== undefined),
         expectedIdentity?.device ?? existing?.device ?? "0",
         expectedIdentity?.inode ?? existing?.inode ?? "0",
-        temporaryName
+        temporaryName,
+        (canonicalPath) => {
+          assertSourceWritePathAllowed(canonicalPath);
+          const canonicalRelative = relative(plan.rootIdentity.rootPath, canonicalPath);
+          if (!isContained(plan.rootIdentity.rootPath, canonicalPath) ||
+              plan.root.denyRelativePaths.some((denied) => isRelativeContained(denied, canonicalRelative))) {
+            throw new BrokerError("POLICY_DENIED", "Filesystem write target is inside a denied zone");
+          }
+        }
       );
     } catch {
       throw new BrokerError("POLICY_DENIED", "Filesystem write target escaped its authorized root or changed during the write");
@@ -1144,6 +1157,7 @@ export class FilesystemInspector {
       throw new BrokerError("POLICY_DENIED", "Filesystem write result escaped its authorized root or deny zone");
     }
     assertContentPathAllowed(write.path);
+    assertSourceWritePathAllowed(write.path);
     if (write.bytesWritten !== content.length) {
       throw new BrokerError("VERIFICATION_FAILED", "Filesystem write byte count did not match the request");
     }

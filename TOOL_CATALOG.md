@@ -95,3 +95,7 @@ These additive source contracts do not enable the live personal deployment. Prod
 | [mac_git_push](tool-contracts/mac_git_push.json) | Reserved high-risk push boundary, denied until a separate explicit approval workflow is supported; never force-push. |
 | [mac_pr_prepare](tool-contracts/mac_pr_prepare.json) | Prepare a bounded review summary from changed paths, commits, and managed-job test evidence without publishing a pull request. |
 | [mac_execution_audit](tool-contracts/mac_execution_audit.json) | Read bounded redacted audit events for an authorized project; never expose sensitive file contents or credentials. |
+
+## Personal owner terminal mode
+
+- [mac_terminal_exec](tool-contracts/mac_terminal_exec.json): explicit opt-in owner-account shell and CLI execution; separate from isolated task profiles.

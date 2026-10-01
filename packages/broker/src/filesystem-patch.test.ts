@@ -93,10 +93,10 @@ test("patch rolls back files already written when a later target fails", async (
     let writes = 0;
     const failingNative: FilesystemNativeAdapter = {
       ...native,
-      writeFileAtomicWithinRoot: (rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName) => {
+      writeFileAtomicWithinRoot: (rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName, authorizer) => {
         writes += 1;
         if (writes === 2) throw new Error("injected second-write failure");
-        return native.writeFileAtomicWithinRoot(rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName);
+        return native.writeFileAtomicWithinRoot(rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName, authorizer);
       }
     };
     const inspector = new FilesystemInspector([writeRoot(project)], failingNative);
@@ -136,10 +136,10 @@ test("patch reports UNKNOWN_OUTCOME when rollback itself cannot be verified", as
     let writes = 0;
     const failingNative: FilesystemNativeAdapter = {
       ...native,
-      writeFileAtomicWithinRoot: (rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName) => {
+      writeFileAtomicWithinRoot: (rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName, authorizer) => {
         writes += 1;
         if (writes >= 2) throw new Error("injected write and rollback failure");
-        return native.writeFileAtomicWithinRoot(rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName);
+        return native.writeFileAtomicWithinRoot(rootPath, targetPath, content, createOnly, expectedPresent, expectedDevice, expectedInode, temporaryName, authorizer);
       }
     };
     const inspector = new FilesystemInspector([writeRoot(project)], failingNative);

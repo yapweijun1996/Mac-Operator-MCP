@@ -1,5 +1,5 @@
-import { PLANNED_TOOL_NAMES } from "@mac-operator/contracts";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
-import { canonicalJson, sha256, signBrokerRevocationEvent, verifyBrokerRevocationResponse, signRequest, type AuthenticatedBrokerRevocationResponse, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
+import { PLANNED_TOOL_NAMES, canonicalJson, sha256, signBrokerRevocationEvent, verifyBrokerRevocationResponse, signRequest, type AuthenticatedBrokerRevocationResponse, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
@@ -1134,7 +1134,7 @@ test("mac_git_status requires an exact project target and returns bounded status
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-status-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
-  const projectRoot = await realpath(process.cwd());
+  const projectRoot = await testGitProject(directory);
   const broker = new Broker({
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
@@ -1187,7 +1187,7 @@ test("mac_git_branch_list returns bounded local branch metadata without network"
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-branches-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
-  const projectRoot = await realpath(process.cwd());
+  const projectRoot = await testGitProject(directory);
   const broker = new Broker({
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
@@ -1220,7 +1220,7 @@ test("mac_git_log returns bounded redacted commit metadata", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-log-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
-  const projectRoot = await realpath(process.cwd());
+  const projectRoot = await testGitProject(directory);
   const broker = new Broker({
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
@@ -1254,7 +1254,7 @@ test("mac_git_diff returns bounded sanitized diff metadata for an authorized pro
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-git-diff-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
-  const projectRoot = await realpath(process.cwd());
+  const projectRoot = await testGitProject(directory);
   const broker = new Broker({
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.git.read"], ["edge-key-1"], [], [], [], [projectRoot]),
@@ -1309,7 +1309,7 @@ test("mac_package_inspect returns bounded manifest metadata without executing sc
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-package-broker-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
-  const projectRoot = await realpath(process.cwd());
+  const projectRoot = await testGitProject(directory);
   const broker = new Broker({
     store,
     policy: createDefaultPolicy("edge-1", true, ["mac.package.read"], ["edge-key-1"], [], [], [], [projectRoot]),
@@ -5552,3 +5552,9 @@ test("owner GUI session issuer admits consecutive exact inputs without per-opera
     assert.equal(calls, 2, "Session issuance must not precede the policy checks");
   } finally { await broker.close(); store.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+async function testGitProject(directory: string): Promise<string> {
+  const project = join(directory, "project");
+  execFileSync("/usr/bin/git", ["clone", "--quiet", "--no-hardlinks", process.cwd(), project], { timeout: 10000, stdio: "pipe" });
+  return realpath(project);
+}

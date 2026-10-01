@@ -121,6 +121,9 @@ export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestByt
         return;
       }
       const request = parseJsonUtf8Strict(combined.subarray(0, newline));
+      // Input framing stays short; admitted tools have their own execution budgets.
+      // Allow the longest 600-second tool plus bounded completion/readback time.
+      socket.setTimeout(660_000);
       writeResult(socket, await broker.handleForIpc(request));
     } catch {
       writeResult(socket, failure("AUTH_INVALID", "IPC request is not valid JSON"));

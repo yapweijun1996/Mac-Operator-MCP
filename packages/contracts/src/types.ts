@@ -9,7 +9,7 @@ export const SCOPES = [
   "mac.package.read", "mac.files.read", "mac.files.search", "mac.files.hash", "mac.files.write",
   "mac.project.read", "mac.project.write", "mac.git.read", "mac.git.write", "mac.git.push",
   "mac.agent.read", "mac.agent.run", "mac.audit.read",
-  "mac.task.run", "mac.job.read", "mac.job.cancel", "mac.docker.read",
+  "mac.terminal.exec", "mac.task.run", "mac.job.read", "mac.job.cancel", "mac.docker.read",
   "mac.app.read", "mac.app.control", "mac.ui.observe", "mac.ui.control",
   "mac.service.control",
   "mac.priv.service", "mac.priv.package", "mac.priv.power"

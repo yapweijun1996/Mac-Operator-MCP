@@ -35,7 +35,7 @@
           "principal_id": { "$ref": "#/$defs/id" },
           "issuer": { "$ref": "#/$defs/id" },
           "scopes": {
-            "type": "array", "minItems": 1, "maxItems": 33, "uniqueItems": true,
+            "type": "array", "minItems": 1, "maxItems": 34, "uniqueItems": true,
             "items": { "$ref": "#/$defs/scope" }
           },
           "enabled": { "type": "boolean" }
@@ -136,7 +136,7 @@
         },
         {
           "if": { "properties": { "kind": { "const": "host" } }, "required": ["kind"] },
-          "then": { "properties": { "reference": { "type": "string", "enum": ["broker", "local"] } } }
+          "then": { "properties": { "reference": { "type": "string", "enum": ["broker", "local", "owner-terminal"] } } }
         },
         {
           "if": { "properties": { "kind": { "const": "path" } }, "required": ["kind"] },

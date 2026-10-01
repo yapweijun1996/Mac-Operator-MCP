@@ -1,15 +1,15 @@
 # Mac-Operator-MCP
 
-Mac-Operator-MCP provides a governed MCP Edge and local macOS Broker for operating a physical Mac mini. The Local Broker performs final authorization. This checkout's R1/G1 and V2 scoped interfaces preserve the secret, shell, and privilege boundaries described in `SECURITY.md`.
+Mac-Operator-MCP provides a governed MCP Edge and local macOS Broker for operating a physical Mac mini. The Local Broker performs final authorization. Scoped R1/G1 and V2 interfaces preserve the boundaries in `SECURITY.md`; the separately authorized [personal owner terminal profile (O1)](docs/owner-terminal.md) executes arbitrary commands with the owner's permissions.
 
 ## Current status
 
 See `PROGRESS.md` for current Git evidence, implementation and enablement state, verification, blockers, and next work.
 
-A separate O1 owner-terminal release is live with broader owner-account
-authority. Its implementation is on another branch; this checkout's V2 gateway
-remains undeployed and PARTIAL (55%). O1 shell/CLI checks do not establish V2
-isolation or coding E2E. See the
+O1 owner-terminal execution retains its separate explicit owner authority.
+This source integrates its existing implementation with the disabled V2
+gateway for the next personal rollout. V2 acceptance remains PARTIAL (55%);
+O1 shell/CLI checks do not establish V2 isolation or coding E2E. See the
 [verified deployment distinction](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md).
 
 ## Start here
@@ -45,6 +45,7 @@ isolation or coding E2E. See the
 - [Browser Computer Use (G1)](docs/gui-computer-use.md)
 - [V2 development gateway design and threat model](docs/MAC_OPERATOR_V2_DESIGN.md)
 - [V2 development gateway operator runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md)
+- [Personal owner terminal (O1)](docs/owner-terminal.md)
 - [macOS packaging boundary](packaging/macos/README.md)
 - [Operations](OPERATIONS.md)
 - [Kill switch](KILL_SWITCH.md)

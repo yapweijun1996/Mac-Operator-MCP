@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, stat, symlink, unlink, rename } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
@@ -9,7 +10,7 @@ import { signRequest, type UnsignedBrokerRequest } from "@mac-operator/contracts
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
-import { BrokerIpcServer, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, recoverOrphanedSocket, removeDetachedSocket, removeStaleSocket, unlinkOwnedSocket, validateSocketParent } from "./ipc-server.js";
+import { BrokerIpcServer, handleBrokerSocket, assertSocketNotActive, captureSocketPathIdentity, detachOwnedSocket, recoverOrphanedSocket, removeDetachedSocket, removeStaleSocket, unlinkOwnedSocket, validateSocketParent } from "./ipc-server.js";
 import { MacOsPeerCredentialVerifier } from "./peer-credentials.js";
 import { BrokerStore } from "./persistence.js";
 
@@ -381,3 +382,14 @@ function listenServer(server: ReturnType<typeof createServer>, socketPath: strin
 function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
   return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }
+
+test("framed IPC processing outlives the 15-second input deadline", { timeout: 20000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-long-ipc-"));
+  const socketPath = join(directory, "broker.sock");
+  const response = { ok: true, request_id: "long-ipc", tool: "mac_terminal_exec", result_class: "SUCCEEDED" };
+  const broker = { handleForIpc: async () => { await delay(16000); return response; } } as unknown as Broker;
+  const server = createServer(socket => handleBrokerSocket(socket, broker, 4096));
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  try { assert.deepEqual(JSON.parse(await send(socketPath, "{}\n")), response); }
+  finally { await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});

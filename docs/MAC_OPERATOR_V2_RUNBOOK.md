@@ -226,3 +226,31 @@ restart evidence, and an actual isolated development E2E. Record PASS/FAIL and
 source revision in [PROGRESS.md](../PROGRESS.md). Current missing production
 coding provisioning and any unavailable project grant remain explicit
 acceptance dependencies, never implicit waivers.
+
+## Personal O1 source-only upgrade
+
+After explicit owner deployment authorization, the combined O1/V2 source can
+replace the personal release while all V2 authority stays disabled. Keep the
+exact O1 signed policy, OAuth and approval configuration, protected state root,
+TLS and loopback status channel. Do not inject DevelopmentGateway into the
+broad O1 roots; V2 enablement needs a separate narrow profile.
+
+1. Verify the combined source, matching native artifacts and all 57 contracts.
+2. Create a fresh protected immutable release; never overwrite the prior one.
+3. Stop the supervisor, confirm no queued/running jobs or live listeners, and
+   preserve a complete consistent protected state backup and prior launch args.
+4. Atomically update only `packageRoot`, `contractsDirectory` and `sourceRevision`
+   in the unsigned `personal/edge-service.json`, keeping the same state root.
+   Do not run `init`/`provision`; the O1 upgrade command intentionally returns
+   early for an already-O1 installation and cannot rebind this source.
+5. Run snapshot preflight, start the new release through the existing PM2
+   supervisor, and verify public OAuth, exact 38 tools/24 scopes, legacy read
+   grants, revocation, and all V2/task gates. Save PM2 only after acceptance.
+6. If readback fails, stop the new supervisor, restore the prior Edge config and
+   prior release launch arguments. Restore the consistent full backup if any
+   incompatible ledger change occurred. Keep the previous release and backup.
+
+The upgraded native write adapter requires canonical authorization version 1;
+copy its newly built native binary together with the matching JavaScript.
+Older binaries fail source writes closed. O1 terminal smoke evidence continues
+to belong to the separate owner authority, not to V2 isolation acceptance.

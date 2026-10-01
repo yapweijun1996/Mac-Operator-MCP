@@ -42,6 +42,7 @@ export * from "./root-helper-snapshot-package-executor.js";
 export * from "./root-helper-snapshot-task-startup.js";
 export * from "./task-profile.js";
 export * from "./task-runner.js";
+export * from "./owner-terminal.js";
 export * from "./app-sandbox-task-executor.js";
 export * from "./app-sandbox-helper-release.js";
 export * from "./app-sandbox-task-startup.js";

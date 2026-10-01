@@ -11,6 +11,7 @@ import {
   provisionAuthenticationKey,
   writeApprovalIssuerKeyConfig
 } from "@mac-operator/broker";
+import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalBrowserController } from "./personal-approval-browser-controller.js";
 
 const NOW = 1_700_000_000_000;
@@ -29,6 +30,8 @@ test("personal browser approval controller binds a real preview through owner IP
   let runtime: Awaited<ReturnType<typeof createApprovalIssuerRuntime>> | undefined;
   try {
     await provisionAuthenticationKey(keyPath);
+    const terminalKeyPath = join(dataRoot, "terminal.key");
+    await provisionAuthenticationKey(terminalKeyPath);
     await writeApprovalIssuerKeyConfig(keyConfigPath, {
       schemaVersion: "0.1",
       revision: 1,
@@ -39,7 +42,8 @@ test("personal browser approval controller binds a real preview through owner IP
         notBeforeMs: NOW - 1_000,
         expiresAtMs: NOW + 60_000,
         allowUnattended: false
-      }]
+      }, { issuerId: "owner-terminal-issuer", keyId: "owner-terminal-key", path: terminalKeyPath,
+        notBeforeMs: NOW - 1000, expiresAtMs: NOW + 60000, allowUnattended: true }]
     });
     keyManager = new ApprovalIssuerKeyManager(keyConfigPath, store, () => NOW);
     await keyManager.activate();
@@ -94,6 +98,17 @@ test("personal browser approval controller binds a real preview through owner IP
       unattended: false
     }, NOW + 2, NOW + 60_000);
 
+    const terminal = createPersonalTerminalApprover({ principalId: "owner-1", runtime, socketPath, now: () => NOW + 3 });
+    const operation = { requestId: "terminal-delegation", principalId: "owner-1", sessionId: "session-1",
+      tool: "mac_terminal_exec", contractVersion: "0.1", policyVersion: "policy-0.1", targetKind: "host",
+      targetRef: "host:owner-terminal", payloadDigest: "b".repeat(64), expiresAtMs: NOW + 300000, timeoutMs: 120000 };
+    assert.equal(await terminal({ ...operation, principalId: "other-owner" }), false);
+    assert.equal(await terminal({ ...operation, tool: "mac_task_run" }), false);
+    assert.equal(await terminal(operation), true);
+    const terminalApproval = store.approvalRecord(`approval:owner-terminal-${(await import("@mac-operator/contracts")).sha256(operation.requestId).slice(0, 48)}`);
+    assert.ok(terminalApproval);
+    assert.equal(terminalApproval.expiresAtMs, NOW + 150003);
+    assert.equal(terminalApproval.unattended, true);
     const controller = createPersonalApprovalBrowserController({ store, approvalIssuerRuntime: runtime, socketPath, now: () => NOW + 3 });
     const preview = controller.preview(requestId);
     assert.equal(preview?.requestId, requestId);

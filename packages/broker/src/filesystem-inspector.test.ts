@@ -44,7 +44,8 @@ const nativeFaultChildSource = `
     configuration.expectedPresent,
     configuration.expectedDevice,
     configuration.expectedInode,
-    configuration.tempName
+    configuration.tempName,
+    () => {}
   );
 `;
 
@@ -1225,5 +1226,85 @@ test("source-write plans reject Git metadata while ordinary source writes remain
     assert.throws(() => inspector.planPath(join(directory, ".git", "HEAD"), "write"), /GIT_METADATA_WRITE_DENIED/u);
     assert.throws(() => inspector.planPath(join(directory, ".git"), "write"), /GIT_METADATA_WRITE_DENIED/u);
     assert.equal(inspector.planPath(join(directory, "source.txt"), "write").requestedPath, join(directory, "source.txt"));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("native source writes reject canonical Git and denied-directory aliases before mutation", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-source-write-alias-")));
+  try {
+    const git = join(directory, ".git");
+    const denied = join(directory, "private");
+    const secrets = join(directory, ".ssh");
+    await mkdir(git);
+    await mkdir(denied);
+    await mkdir(secrets);
+    await writeFile(join(git, "HEAD"), "original-head");
+    await writeFile(join(denied, "value.txt"), "original-private");
+    await writeFile(join(secrets, "value.txt"), "synthetic-private");
+    await symlink(git, join(directory, "git-alias"));
+    await symlink(denied, join(directory, "private-alias"));
+    await symlink(secrets, join(directory, "secret-alias"));
+    const inspector = new FilesystemInspector([{ ...writeRoot(directory), denyRelativePaths: ["private"] }]);
+    for (const [alias, name, destination, original] of [
+      ["git-alias", "HEAD", git, "original-head"],
+      ["private-alias", "value.txt", denied, "original-private"],
+      ["secret-alias", "value.txt", secrets, "synthetic-private"]
+    ]) {
+      const plan = inspector.planPath(join(directory, alias!, name!), "write");
+      assert.throws(() => inspector.writePlanned(plan, Buffer.from("changed"), undefined, false,
+        ".mac-operator-write-denied-alias"), /Filesystem write/u);
+      assert.equal(await readFile(join(destination!, name!), "utf8"), original);
+      assert.deepEqual(await readdir(destination!), [name]);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("native source write reauthorizes a parent retargeted after planning", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-source-write-retarget-")));
+  try {
+    const git = join(directory, ".git");
+    const source = join(directory, "source");
+    await mkdir(git);
+    await mkdir(source);
+    await writeFile(join(git, "HEAD"), "original-head");
+    const inspector = new FilesystemInspector([writeRoot(directory)]);
+    const alias = join(directory, "active");
+    await symlink(source, alias);
+    const plan = inspector.planPath(join(alias, "new-ref"), "write");
+    assert.throws(() => inspector.writePlanned(plan, Buffer.from("changed"), undefined, false,
+      ".mac-operator-write-retarget", undefined, () => {
+        require("node:fs").unlinkSync(alias);
+        require("node:fs").symlinkSync(git, alias);
+      }), /Filesystem write/u);
+    assert.equal(await readFile(join(git, "HEAD"), "utf8"), "original-head");
+    assert.deepEqual(await readdir(git), ["HEAD"]);
+    assert.deepEqual(await readdir(source), []);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("native write requires synchronous authorization before temporary creation and commit", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-source-write-authorizer-")));
+  try {
+    const target = join(directory, "source.txt");
+    await writeFile(target, "original");
+    const identity = await lstat(target);
+    const native = require("./peer_credentials.node") as FilesystemNativeAdapter;
+    const legacyNative = { ...native };
+    delete legacyNative.nativeCanonicalWriteAuthorizationVersion;
+    const inspector = new FilesystemInspector([writeRoot(directory)], legacyNative);
+    assert.throws(() => inspector.writePlanned(inspector.planPath(target, "write"), Buffer.from("changed"),
+      undefined, false, ".mac-operator-write-legacy"), /canonical write authorization is unavailable/u);
+    const args = [directory, target, Buffer.from("changed"), false, true, String(identity.dev),
+      String(identity.ino), ".mac-operator-write-authorization"] as const;
+    assert.throws(() => (native.writeFileAtomicWithinRoot as (...args: unknown[]) => unknown)(...args), /authorizer/u);
+    assert.throws(() => native.writeFileAtomicWithinRoot(...args, async () => {}), /synchronously/u);
+    let checks = 0;
+    assert.throws(() => native.writeFileAtomicWithinRoot(...args, () => {
+      checks += 1;
+      if (checks === 2) throw new Error("authorization revoked before commit");
+    }), /authorization revoked/u);
+    assert.equal(checks, 2);
+    assert.equal(await readFile(target, "utf8"), "original");
+    assert.deepEqual(await readdir(directory), ["source.txt"]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

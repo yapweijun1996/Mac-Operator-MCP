@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFile, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -30,6 +31,9 @@ test("implemented broker results conform to versioned success and failure schema
   const samplePath = join(directory, "sample.txt");
   const writePath = join(directory, "contract-write.txt");
   await writeFile(samplePath, "hello");
+  const gitCandidate = join(directory, "git-project");
+  execFileSync("/usr/bin/git", ["clone", "--quiet", "--no-hardlinks", repositoryRoot, gitCandidate], { timeout: 10000, stdio: "pipe" });
+  const gitProjectRoot = await realpath(gitCandidate);
   const keyring = new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: now - 1_000, expiresAtMs: now + 60_000 }]);
   const basePolicy = createDefaultPolicy(
     "edge-1",
@@ -39,7 +43,7 @@ test("implemented broker results conform to versioned success and failure schema
     [{ rootId: "test-root", path: directory, metadata: true, contentRead: true, write: true, denyRelativePaths: [] }],
     ["system/com.apple.logd"],
     ["system"],
-    [repositoryRoot],
+    [gitProjectRoot],
     ["contract-container"],
     [],
     [appId]
@@ -161,11 +165,11 @@ test("implemented broker results conform to versioned success and failure schema
       { tool: "mac_search_text", arguments: { roots: [directory], query: "hello", glob: "*.txt", max_results: 20 } },
       { tool: "mac_project_discover", arguments: { roots: [directory], types: ["node"], max_results: 20 } },
       { tool: "mac_project_summary", arguments: { project_root: directory, include_tree: true, tree_depth: 1 } },
-      { tool: "mac_git_status", arguments: { project_root: repositoryRoot, include_untracked: false } },
-      { tool: "mac_git_branch_list", arguments: { project_root: repositoryRoot, include_remote: false } },
-      { tool: "mac_git_log", arguments: { project_root: repositoryRoot, limit: 5, ref: "HEAD" } },
-      { tool: "mac_git_diff", arguments: { project_root: repositoryRoot, paths: ["packages/broker/src/git-inspector.ts"], staged: false, max_bytes: 65_536 } },
-      { tool: "mac_package_inspect", arguments: { project_root: repositoryRoot, manager: "npm", check_outdated: false } },
+      { tool: "mac_git_status", arguments: { project_root: gitProjectRoot, include_untracked: false } },
+      { tool: "mac_git_branch_list", arguments: { project_root: gitProjectRoot, include_remote: false } },
+      { tool: "mac_git_log", arguments: { project_root: gitProjectRoot, limit: 5, ref: "HEAD" } },
+      { tool: "mac_git_diff", arguments: { project_root: gitProjectRoot, paths: ["packages/broker/src/git-inspector.ts"], staged: false, max_bytes: 65_536 } },
+      { tool: "mac_package_inspect", arguments: { project_root: gitProjectRoot, manager: "npm", check_outdated: false } },
       { tool: "mac_docker_status", arguments: { include_images: false, include_storage: false } },
       { tool: "mac_docker_inspect", arguments: { object_type: "container", id: "contract-container" } },
       { tool: "mac_docker_logs", arguments: { container_id: "contract-container", tail: 5, since_seconds: 1 } },
@@ -261,6 +265,7 @@ test("implemented broker results conform to versioned success and failure schema
     });
     for (const [index, item] of cases.entries()) {
       const result = await broker.handle(signRequest(makeRequest(now, index, item.tool, item.arguments), key));
+      assert.equal(result.ok, true, `${item.tool}: ${JSON.stringify(result)}`);
       const contract = JSON.parse(await readFile(join(repositoryRoot, "tool-contracts", `${item.tool}.json`), "utf8")) as {
         approval_policy: string;
         output_schema: object;

@@ -50,6 +50,38 @@ worktree, secret, readonly or descendant containment. O1 must not serve as a
 fallback for V2 agent/test/build admission, and ordinary V2 coding approval
 must not confer owner-terminal authority. V2 completion remains PARTIAL/55%.
 
+## Verified source integration (2026-10-02)
+
+The owner subsequently authorized testing, committing, merging to local main
+and live deployment. The integration combines this V2 source with the existing
+O1 branch to preserve the already deployed owner-terminal capability. The
+October 1 separate-branch observations above remain historical evidence.
+The personal rollout retains the exact O1 signed policy, 24 scopes and 38
+runtime tools; no DevelopmentGateway is provisioned and all 11 V2 tools plus
+`mac_task_run` stay disabled. Deployment does not advance V2 isolation/E2E
+acceptance or confer new authority on existing OAuth grants.
+
+Integration validation: **1330 tests, 1313 PASS, 17 SKIP, 0 FAIL** using the
+standard `npm test`; native/TypeScript build and 57 strict tool contracts pass.
+Style, documentation, verification matrix, process boundaries and native
+canonical JSON checks pass. `npm audit` reports zero vulnerabilities after the
+compatible `fast-uri` patch from 3.1.7 to 3.1.8.
+
+Independent review found a P1 canonical-write alias bypass. It was reproduced
+before fixing: a source directory alias to `.git` could rewrite metadata.
+Native writes now require synchronous canonical-path authorization from a
+pinned parent descriptor before temporary creation and again before commit;
+callbacks deny Git metadata, secret zones and configured denied paths. Paths
+are rechecked after callbacks; rejected writes leave no temporary remnants.
+A native capability-version gate rejects writes through an older binary that
+would ignore the new callback. Independent review accepted the fix, with
+55 related regression tests passing and no unresolved P0/P1 findings.
+
+O1 clone fixtures were changed from shared object stores to independent clones
+so they respect the V2 metadata boundary. Duplicate test imports were removed.
+The rollout record will identify the deployed source, health and rollback
+readback; source-level validation is not a claim of a completed live cutover.
+
 ## Tools
 
 Added 11 contracts and Broker policies:
@@ -127,7 +159,7 @@ for exact limits, commands, 25 required cases and mock-versus-physical evidence.
 | Codex writes only inside isolated worktree | PENDING: admission verified; real agent enforcement not exercised |
 | Tests/builds run through production managed jobs | PENDING: lifecycle fixture verified; production executor absent |
 | V2/R1 scoped APIs preserve secret and unauthorized path denials | PASS: native/file authorization regressions; O1 owner authority is a separate boundary |
-| Unrestricted sudo/shell unavailable through V2 tool contracts | PASS: this source gateway has no owner-terminal endpoint |
+| Unrestricted sudo/shell unavailable through V2 tool contracts | PASS: separate existing O1 authority is preserved; V2 never uses it as a fallback |
 | Git push gated | PASS: implementation always denies |
 | Audit evidence exists | PASS |
 | Policy tests pass | PASS |
@@ -170,8 +202,9 @@ for exact limits, commands, 25 required cases and mock-versus-physical evidence.
 7. PR preparation and audit views are intentionally bounded. They are review
    evidence, not exhaustive ancestry or per-system-call filesystem tracing.
    Failed/unknown tasks require additional Git/status inspection before review.
-8. Independent review produced confirmed fixes, but its final follow-up was
-   unavailable. This delivery is not an independent security certification.
+8. Independent source-integration review accepted the confirmed fixes and
+   independently reran 55 related tests. This is not a production coding
+   isolation certification.
 
 The recommended next step is to supply an accepted production execution and
 credential-free inference boundary, then configure one staging project and run
