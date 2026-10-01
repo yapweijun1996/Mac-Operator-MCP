@@ -43,8 +43,15 @@ export async function dispatchOwnerTerminal(options: {
       onProcessStarted: snapshot => persist(snapshot, true), onProcessOwnershipChanged: snapshot => persist(snapshot, false) });
     const stdout = redactBoundedText(result.stdout, 65_536);
     const stderr = redactBoundedText(result.stderr, 65_536);
-    const current = store.ownedJob(job.jobId, request.principal.principalId);
+    let current = store.ownedJob(job.jobId, request.principal.principalId);
     if (!current) throw new BrokerError("AUDIT_UNAVAILABLE", "Terminal Job disappeared before exit readback");
+    if (result.state === "cancelled") {
+      if (!result.terminationObserved) throw new BrokerError("UNKNOWN_OUTCOME", "Terminal cancellation could not be observed");
+      if (!current.cancelRequested) {
+        if (!options.control.shouldCancel()) throw new BrokerError("UNKNOWN_OUTCOME", "Terminal cancellation authority could not be confirmed");
+        current = store.requestJobCancellation(job.jobId, request.principal.principalId, "OWNER_TERMINAL_AUTHORITY_CANCELLED", now()).job;
+      }
+    }
     job = store.finishJob(job.jobId, request.principal.principalId, current.revision, {
       state: result.state === "unknown" ? "unknown" : result.state === "cancelled" ? "cancelled" : result.state === "completed" ? "completed" : "failed",
       resultClass: result.state === "unknown" ? "unknown" : result.state === "cancelled" ? "denied" : result.state === "completed" ? "success" : "failed",

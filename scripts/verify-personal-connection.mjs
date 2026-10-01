@@ -12,6 +12,7 @@ import { AuthStore } from "../packages/auth/dist/store.js";
 import { configSchema, O1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, scopesForGrantProfile } from "../packages/auth/dist/contracts.js";
 import { configureIssuerNetwork } from "../packages/auth/dist/issuer-network.js";
 import { decodeJwt } from "jose";
+import { DatabaseSync } from "node:sqlite";
 
 // Values from .env and bearer responses are never emitted or written to disk.
 const root = resolve(process.argv[2] ?? "");
@@ -186,18 +187,26 @@ async function run() {
     assert.equal(timeoutPayload.ok, false); assert.equal(timeoutPayload.result_class, "TIMEOUT");
     assert.equal(existsSync(join(terminalDirectory, "timed-out-marker")), false);
     console.log("Owner terminal verified over public OAuth: 31-second shell, local CLI, network, file write/read, idempotency, Job status and timeout.");
+    const revokedKey = `owner-revoke-${randomBytes(8).toString("hex")}`;
     const active = client.callTool({ name: "mac_terminal_exec", arguments: {
       command: "printf started > revocation-started; sleep 20; printf late > revoked-marker", cwd: terminalDirectory,
-      idempotency_key: `owner-revoke-${randomBytes(8).toString("hex")}`, timeout_ms: 30000
+      idempotency_key: revokedKey, timeout_ms: 30000
     } }).then(value => value, () => undefined);
     for (let attempt = 0; attempt < 100 && !existsSync(join(terminalDirectory, "revocation-started")); attempt += 1) await delay(100);
     assert.equal(existsSync(join(terminalDirectory, "revocation-started")), true);
     const revoked = await form("/revoke", { client_id: clientId, token: refreshToken }); assert.equal(revoked.status, 200);
     refreshToken = undefined;
     const ended = await active;
-    if (ended) assert.equal(JSON.parse(ended.content.find(item => item.type === "text").text).ok, false);
+    assert.ok(ended);
+    const cancelled = JSON.parse(ended.content.find(item => item.type === "text").text);
+    assert.equal(cancelled.ok, false); assert.equal(cancelled.result_class, "CANCELLED");
+    const brokerDatabase = new DatabaseSync(join(root, "personal/broker.sqlite"), { readOnly: true });
+    try {
+      const job = brokerDatabase.prepare("SELECT state, cancel_requested, process_metadata_json FROM jobs WHERE idempotency_key = ?").get(revokedKey);
+      assert.equal(job?.state, "cancelled"); assert.equal(job?.cancel_requested, 1); assert.equal(job?.process_metadata_json, "");
+    } finally { brokerDatabase.close(); }
     assert.equal(existsSync(join(terminalDirectory, "revoked-marker")), false);
-    console.log("Active terminal command stopped after its owner OAuth grant was revoked.");
+    console.log("Active terminal command stopped after its owner OAuth grant was revoked; durable cancellation and cleared process ownership verified.");
   }
   if (refreshToken) { const revoked = await form("/revoke", { client_id: clientId, token: refreshToken }); assert.equal(revoked.status, 200); }
   assert.equal((await request("/mcp", { headers: { authorization: `Bearer ${tokens.access_token}` } })).status, 401);

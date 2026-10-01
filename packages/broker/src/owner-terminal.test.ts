@@ -84,10 +84,10 @@ test("Broker owner terminal requires scope and delegation, audits before executi
     } });
   let sequence = 0;
   const args = { command: "printf once >> counter; printf verified", cwd: root, idempotency_key: "same-operation" };
-  const call = (argumentsValue = args, scopes: UnsignedBrokerRequest["principal"]["scopes"] = ["mac.terminal.exec"]) => {
+  const call = (argumentsValue = args, scopes: UnsignedBrokerRequest["principal"]["scopes"] = ["mac.terminal.exec"], sessionId = "session-1") => {
     const now = Date.now(); sequence += 1;
     const request: UnsignedBrokerRequest = { protocolVersion: "0.1", requestId: `terminal-${sequence}`, contractVersion: "0.1",
-      tool: "mac_terminal_exec", arguments: argumentsValue, principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer",
+      tool: "mac_terminal_exec", arguments: argumentsValue, principal: { principalId: "principal-1", sessionId, issuer: "test-issuer",
         audience: "mac-operator-broker", scopes, issuedAtMs: now - 1000, expiresAtMs: now + 120000, edgeId: "edge-1" },
       timestampMs: now, nonce: `terminal-nonce-${sequence}`, policyAudience: "mac-operator-broker", policyVersion: policy.version, authenticationKeyId: "edge-key-1" };
     return broker.handle(signRequest(request, key));
@@ -146,6 +146,21 @@ test("Broker owner terminal requires scope and delegation, audits before executi
     assert.equal(cancelled.ok, false);
     assert.equal(store.ownedJob(active.jobId, "principal-1")?.state, "cancelled");
     await assert.rejects(readFile(join(root, "cancel-late")), { code: "ENOENT" });
+    const revoked = call({ command: "printf started > revocation-started; sleep 5; printf late > revocation-late", cwd: root,
+      idempotency_key: "revoked-operation" }, ["mac.terminal.exec"], "revoked-session");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try { if (await readFile(join(root, "revocation-started"), "utf8") === "started") break; } catch {}
+      await delay(10);
+    }
+    assert.equal(await readFile(join(root, "revocation-started"), "utf8"), "started");
+    store.revoke("session", "revoked-session", "OAUTH_AUTHORITY_REVOKED");
+    const revokedResult = await revoked;
+    assert.equal(revokedResult.result_class, "CANCELLED", JSON.stringify(revokedResult));
+    const revokedJob = store.ownedJobByIdempotencyKey("revoked-operation", "principal-1");
+    assert.equal(revokedJob?.state, "cancelled");
+    assert.equal(revokedJob?.cancelRequested, true);
+    assert.equal(revokedJob?.processMetadata, undefined);
+    await assert.rejects(readFile(join(root, "revocation-late")), { code: "ENOENT" });
     const archiveKey = randomBytes(32);
     try {
       await store.rotateLedgerArchive(root, { keySource: { keyId: "terminal-test-archive", loadKey: () => Buffer.from(archiveKey) },
