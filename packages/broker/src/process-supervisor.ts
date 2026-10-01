@@ -399,14 +399,6 @@ export class ProcessSupervisor {
         if (cwdDescriptor !== undefined) await cwdDescriptor.close().catch(() => undefined);
       }
       const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes);
-      if (safeRequest.stdin !== undefined && child.stdin !== null) {
-        try {
-          child.stdin.end(safeRequest.stdin, "utf8");
-        } catch {
-          child.kill("SIGKILL");
-          throw new BrokerError("EXECUTION_FAILED", "Process stdin could not be delivered");
-        }
-      }
       const childPid = child.pid;
       if (typeof childPid !== "number" || !Number.isSafeInteger(childPid) || childPid <= 0) {
         child.kill("SIGKILL");
@@ -467,6 +459,14 @@ export class ProcessSupervisor {
         const drained = await this.abortUnownedProcess(child, processId, processTree);
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
         throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
+      }
+      if (safeRequest.stdin !== undefined && child.stdin !== null) {
+        try {
+          child.stdin.end(safeRequest.stdin, "utf8");
+        } catch {
+          child.kill("SIGKILL");
+          throw new BrokerError("EXECUTION_FAILED", "Process stdin could not be delivered");
+        }
       }
       this.activeProcesses += 1;
       const currentActiveForExecutable = this.activeProcessesByExecutable.get(executableKey) ?? 0;

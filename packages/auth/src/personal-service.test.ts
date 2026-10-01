@@ -9,8 +9,8 @@ import { readFileSync } from "node:fs";
 import { AuthStore } from "./store.js";
 import { BrokerStore, PolicyBundleVerifier } from "@mac-operator/broker";
 import { runAuthCli } from "./cli.js";
-import { G1_SCOPES, G1_TOOLS, W1_READ_SCOPES, W1_SCOPES } from "./contracts.js";
-import { assertG1Policy, assertW1Policy } from "./w1-policy.js";
+import { O1_SCOPES, O1_TOOLS, G1_SCOPES, G1_TOOLS, W1_READ_SCOPES, W1_SCOPES } from "./contracts.js";
+import { assertO1Policy, assertG1Policy, assertW1Policy } from "./w1-policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,7 +25,7 @@ test("personal W1 provisioning signs a project-bound policy and attended approva
     await mkdir(join(project, ".git"), { mode: 0o700 });
     await mkdir(tlsDirectory, { mode: 0o700 });
     await writeFile(credentialsPath, "MAC_OPERATOR_USERNAME=owner\nMAC_OPERATOR_PASSWORD=test-only-long-owner-passphrase\n", { mode: 0o600 });
-    await runAuthCli(["init", "--dir", authDirectory, "--env-file", credentialsPath,
+    await initAuthForProject(project, ["init", "--dir", authDirectory, "--env-file", credentialsPath,
       "--redirect-uri", "https://client.example.test/callback", "--issuer", "https://mac.example.test/",
       "--grant-profile", "w1"]);
     await execFileAsync("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
@@ -70,7 +70,7 @@ test("personal W1 provisioning signs a project-bound policy and attended approva
   }
 });
 
-test("personal G1 provisioning enables browser GUI scopes without task execution", async () => {
+for (const profile of ["g1", "o1"] as const) test(`personal ${profile.toUpperCase()} provisioning binds its exact owner authority`, async () => {
   if (process.platform !== "darwin" || process.getuid?.() === 0) return;
   const root = await realpath(await mkdtemp("/tmp/mac-g1-service-"));
   const project = await realpath(await mkdtemp(join(homedir(), ".mac-g1-project-")));
@@ -81,9 +81,9 @@ test("personal G1 provisioning enables browser GUI scopes without task execution
     await mkdir(join(project, ".git"), { mode: 0o700 });
     await mkdir(tlsDirectory, { mode: 0o700 });
     await writeFile(credentialsPath, "MAC_OPERATOR_USERNAME=owner\nMAC_OPERATOR_PASSWORD=test-only-long-owner-passphrase\n", { mode: 0o600 });
-    await runAuthCli(["init", "--dir", authDirectory, "--env-file", credentialsPath,
+    await initAuthForProject(project, ["init", "--dir", authDirectory, "--env-file", credentialsPath,
       "--redirect-uri", "https://client.example.test/callback", "--issuer", "https://mac.example.test/",
-      "--grant-profile", "g1"]);
+      "--grant-profile", profile]);
     await execFileAsync("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
       "-keyout", join(tlsDirectory, "edge.key"), "-out", join(tlsDirectory, "edge.crt"), "-days", "1",
       "-subj", "/CN=mac.example.test", "-addext", "subjectAltName=DNS:mac.example.test",
@@ -101,19 +101,19 @@ test("personal G1 provisioning enables browser GUI scopes without task execution
       expectedKeyId: "personal-policy-1", publicKeyPath: join(personal, "policy-public.pem") });
     const policy = (await verifier.verifyFile(join(personal, "policy.json"))).policy;
     const auth = JSON.parse(await readFile(join(authDirectory, "auth-config.json"), "utf8")) as { principalId: string; issuerId: string };
-    assert.doesNotThrow(() => assertG1Policy(policy, auth.principalId, auth.issuerId));
-    assert.deepEqual([...policy.tools.values()].filter(tool => tool.enabled).map(tool => tool.tool).sort(), [...G1_TOOLS].sort());
+    assert.doesNotThrow(() => (profile === "o1" ? assertO1Policy : assertG1Policy)(policy, auth.principalId, auth.issuerId));
+    assert.deepEqual([...policy.tools.values()].filter(tool => tool.enabled).map(tool => tool.tool).sort(), [...(profile === "o1" ? O1_TOOLS : G1_TOOLS)].sort());
     assert.equal(policy.tools.get("mac_task_run")?.enabled, false);
     assert.equal(policy.killSwitches.gui, false);
     const edge = JSON.parse(await readFile(join(personal, "edge-service.json"), "utf8")) as { oauthScopes: string[]; ipcTimeoutMs: number };
-    assert.deepEqual(edge.oauthScopes, [...G1_SCOPES]);
-    assert.equal(edge.ipcTimeoutMs, 30_000);
+    assert.deepEqual(edge.oauthScopes, [...(profile === "o1" ? O1_SCOPES : G1_SCOPES)]);
+    assert.equal(edge.ipcTimeoutMs, profile === "o1" ? 180_000 : 30_000);
     const keyConfig = JSON.parse(await readFile(join(personal, "approval-keys.json"), "utf8")) as {
       keys: { issuerId: string; allowUnattended: boolean }[]
     };
     assert.notEqual(keyConfig.keys[0]?.issuerId, auth.principalId,
       "The browser approver must be distinct from the MCP requester");
-    assert.deepEqual(keyConfig.keys.map(key => key.allowUnattended), [false]);
+    assert.deepEqual(keyConfig.keys.map(key => key.allowUnattended), profile === "o1" ? [false, true] : [false]);
     const entrypoint = join(process.cwd(), "packages/auth/dist/personal-service.js");
     const store = new BrokerStore(join(personal, "broker.sqlite"), { runtimeFence: true,
       auditAnchor: { path: join(personal, "audit.anchor"), keySource: {
@@ -139,8 +139,29 @@ test("personal G1 provisioning enables browser GUI scopes without task execution
       assert.equal(authStore.browserGrants()[0]?.principalId, auth.principalId);
       assert.equal(authStore.browserGrants()[0]?.revoked, false);
     } finally { authStore.close(); }
+    if (profile === "g1") {
+      await assert.rejects(execFileAsync(process.execPath, [entrypoint, "owner-terminal", root, "abcdef1"], { timeout: 10000 }));
+      await execFileAsync(process.execPath, [entrypoint, "owner-terminal", root, "abcdef1", "--enable"], { timeout: 10000 });
+      const upgraded = (await verifier.verifyFile(join(personal, "policy.json"))).policy;
+      assert.doesNotThrow(() => assertO1Policy(upgraded, auth.principalId, auth.issuerId));
+      assert.equal(upgraded.version, "policy-2");
+      assert.equal(JSON.parse(await readFile(join(authDirectory, "auth-config.json"), "utf8")).grantProfile, "o1");
+      const retained = new AuthStore(authDirectory);
+      try { assert.equal(retained.browserGrants().length, 1); assert.equal(retained.browserGrants()[0]?.policyVersion, upgraded.version); } finally { retained.close(); }
+    }
+
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(project, { recursive: true, force: true });
   }
 });
+
+async function initAuthForProject(project: string, argumentsValue: string[]): Promise<void> {
+  const previous = process.env.MAC_OPERATOR_PROJECT_ROOT;
+  process.env.MAC_OPERATOR_PROJECT_ROOT = project;
+  try { await runAuthCli(argumentsValue); }
+  finally {
+    if (previous === undefined) delete process.env.MAC_OPERATOR_PROJECT_ROOT;
+    else process.env.MAC_OPERATOR_PROJECT_ROOT = previous;
+  }
+}

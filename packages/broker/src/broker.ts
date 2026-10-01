@@ -68,6 +68,8 @@ import { validatePrivilegedHelperExecutionResult, type PrivilegedHelperExecution
 import { parseUserServiceControlArguments, UserServiceControlBrokerCandidate, type UserServiceControlCandidateExecution } from "./user-service-control-admission.js";
 import { UserServiceControlAdapter, validateUserServiceControlResult, type UserServiceControlRequest } from "./user-service-control.js";
 import { createServiceControlJobMetadata, UserServiceControlJobExecutor } from "./user-service-control-executor.js";
+import { parseOwnerTerminalRequest, type OwnerTerminalExecutor, type OwnerTerminalRequest } from "./owner-terminal.js";
+import { dispatchOwnerTerminal } from "./owner-terminal-dispatch.js";
 import { validateSemanticResourceBudget, validateStorageSemanticResourceBudget } from "./resource-budget.js";
 
 export interface GuiSessionOperation {
@@ -82,6 +84,10 @@ export interface GuiSessionOperation {
   targetRef: string;
   payloadDigest: string;
   expiresAtMs: number;
+}
+
+export interface OwnerTerminalOperation extends Omit<GuiSessionOperation, "appId"> {
+  timeoutMs: number;
 }
 
 export interface BrokerOptions {
@@ -120,6 +126,9 @@ export interface BrokerOptions {
   uiSnapshotRegistry?: UiSnapshotRegistry;
   /** Owner-consented GUI session issuer; ordinary policy checks still apply. */
   authorizeGuiSession?: (operation: GuiSessionOperation) => Promise<boolean>;
+  /** Explicit personal owner authority; omitted and disabled by default. */
+  ownerTerminalExecutor?: OwnerTerminalExecutor;
+  authorizeOwnerTerminal?: (operation: OwnerTerminalOperation) => Promise<boolean>;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
   /** Optional Broker-owned active-request authority for root-helper tasks. */
@@ -312,6 +321,7 @@ export class Broker {
   }
 
   private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
+    if (toolName === "mac_terminal_exec" && (!this.options.ownerTerminalExecutor?.available || !this.options.authorizeOwnerTerminal)) return "runtime_unavailable";
     if (toolName === "mac_task_run" && !this.taskRunner.available) return "runtime_unavailable";
     if (requiresAccessibilityPermission(toolName) && this.options.guiPublicEnablement !== undefined &&
         this.options.guiPublicEnablement !== "production") return "runtime_unavailable";
@@ -335,7 +345,7 @@ export class Broker {
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closing = true;
-    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.dockerProcessSupervisor, this.taskRunner];
+    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.dockerProcessSupervisor, this.taskRunner, this.options.ownerTerminalExecutor];
     this.closePromise = (async () => {
       let firstError: unknown;
       for (const resource of resources) {
@@ -1090,6 +1100,14 @@ export class Broker {
           throw new BrokerError("CONFLICT", "Idempotency key was already used for a different write operation");
         }
       }
+      if (execution.ownerTerminal) {
+        const existing = this.options.store.ownedJobByIdempotencyKey(execution.ownerTerminal.idempotencyKey, request.principal.principalId);
+        if (existing && (existing.tool !== request.tool || existing.payloadDigest !== sha256(canonicalJson(request.arguments)) ||
+            existing.targetRef !== plannedAuditTarget || existing.policyVersion !== request.policyVersion)) {
+          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different terminal command");
+        }
+        if (existing) execution.taskJob = existing;
+      }
       this.options.store.recordRequestDecision({
         requestId: request.requestId,
         principalId: request.principal.principalId,
@@ -1123,8 +1141,42 @@ export class Broker {
           this.checkRevocation(request);
         }
       }
+      if (execution.ownerTerminal) {
+        const delegated = await this.options.authorizeOwnerTerminal!({
+          requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
+          tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
+          targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
+          expiresAtMs: request.principal.expiresAtMs, timeoutMs: execution.ownerTerminal.timeoutMs
+        });
+        if (!delegated) throw new BrokerError("POLICY_DENIED", "Owner terminal delegation is unavailable");
+        this.checkRevocation(request);
+      }
       if (toolPolicy.mutation) {
-        if (request.tool === "mac_task_run") {
+        if (execution.ownerTerminal) {
+          const admissionAt = this.now();
+          const approval: ApprovalConsumptionBinding = {
+            contractVersion: request.contractVersion, targetKind: target.kind, targetRef: plannedAuditTarget,
+            payloadDigest: sha256(canonicalJson(request.arguments)), approvalClass: "trusted_profile", unattended: true
+          };
+          const intent = { requestId: request.requestId, principalId: request.principal.principalId, tool: request.tool,
+            eventType: "intent" as const, decision: "allow" as const, resultClass: "INTENT_RECORDED",
+            targetRef: plannedAuditTarget, policyVersion: policy.version,
+            evidence: { argumentDigest: approval.payloadDigest }, timestampMs: admissionAt };
+          if (execution.taskJob) {
+            this.options.store.recordRequestIntent(intent, approval);
+            this.options.store.linkRequestJob(request.requestId, execution.taskJob.jobId, admissionAt);
+          } else {
+            const admitted = this.options.store.admitApprovedJobAfterDecision({ intent, approval, job: {
+              jobId: `job:terminal-${sha256(canonicalJson({ principalId: request.principal.principalId, key: execution.ownerTerminal.idempotencyKey })).slice(0, 48)}`,
+              edgeId: request.principal.edgeId, edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
+              ownerPrincipalId: request.principal.principalId, ownerSessionId: request.principal.sessionId,
+              tool: request.tool, targetRef: plannedAuditTarget, policyVersion: request.policyVersion,
+              payloadDigest: approval.payloadDigest, idempotencyKey: execution.ownerTerminal.idempotencyKey, createdAtMs: admissionAt
+            } });
+            execution.taskJob = admitted.job;
+            execution.taskJobNew = true;
+          }
+        } else if (request.tool === "mac_task_run") {
           const admissionAt = this.now();
           const jobInput = {
             jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
@@ -2855,6 +2907,14 @@ export class Broker {
       case "mac_apply_patch": {
         return this.dispatchPatch(request, execution, toolPolicy.timeoutMs);
       }
+      case "mac_terminal_exec": {
+        if (!execution.ownerTerminal || !execution.taskJob || !this.options.ownerTerminalExecutor) throw new BrokerError("POLICY_DENIED", "Owner terminal runtime is unavailable");
+        return dispatchOwnerTerminal({ store: this.options.store, executor: this.options.ownerTerminalExecutor,
+          request, terminal: execution.ownerTerminal, job: execution.taskJob,
+          ...(execution.jobLease ? { lease: execution.jobLease } : {}),
+          control: this.executionControl(request, execution.target, toolPolicy.timeoutMs, execution.taskJob.jobId, [], execution.jobLease),
+          assertAuthority: () => this.ensureActiveAuthority(request, execution.target), now: this.now });
+      }
       case "mac_task_run": {
         return this.dispatchTask(request, execution, toolPolicy.timeoutMs, toolPolicy.outputCapBytes);
       }
@@ -3933,6 +3993,11 @@ export class Broker {
         ...(jobLookup.job === undefined ? {} : { job: jobLookup.job }),
         ...(jobLookup.archived === undefined ? {} : { archivedJob: jobLookup.archived })
       };
+    }
+    if (request.tool === "mac_terminal_exec") {
+      if (this.runtimeCapabilityDisabledReason(request.tool)) throw new BrokerError("POLICY_DENIED", "Owner terminal runtime is not enabled");
+      return { target: { kind: "host", reference: "owner-terminal" }, auditTarget: "host:owner-terminal",
+        ownerTerminal: parseOwnerTerminalRequest(request.arguments) };
     }
     if (request.tool === "mac_task_run") {
       assertExactArguments(request.arguments, ["profile", "cwd", "args", "async"]);
@@ -5035,6 +5100,7 @@ interface ExecutionPlan {
   writeJobNew?: boolean;
   patchJob?: BrokerJob;
   patchJobNew?: boolean;
+  ownerTerminal?: OwnerTerminalRequest;
   taskJob?: BrokerJob;
   taskJobNew?: boolean;
   gitStageJob?: BrokerJob;

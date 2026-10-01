@@ -142,15 +142,56 @@
     "input_schema": { "$ref": "#/$defs/functional_schema" },
     "output_schema": { "$ref": "#/$defs/functional_schema" },
     "source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kbid", "kb_id", "kb_item_id", "source_text"],
-      "properties": {
-        "kbid": { "const": "mac-operator-mcp" },
-        "kb_id": { "const": "90f1df58-87f6-4f47-aa9a-2881c478f8a0" },
-        "kb_item_id": { "type": "string", "format": "uuid" },
-        "source_text": { "type": "string", "minLength": 1 }
-      }
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kbid",
+            "kb_id",
+            "kb_item_id",
+            "source_text"
+          ],
+          "properties": {
+            "kbid": {
+              "const": "mac-operator-mcp"
+            },
+            "kb_id": {
+              "const": "90f1df58-87f6-4f47-aa9a-2881c478f8a0"
+            },
+            "kb_item_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "source_text": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "request_date",
+            "source_text"
+          ],
+          "properties": {
+            "kind": {
+              "const": "local_owner_request"
+            },
+            "request_date": {
+              "type": "string",
+              "format": "date"
+            },
+            "source_text": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
     }
   },
   "allOf": [

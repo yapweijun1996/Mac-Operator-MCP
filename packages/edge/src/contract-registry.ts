@@ -193,8 +193,8 @@ function parseContract(value: unknown, file: string): EdgeToolContract {
   }
   validateFunctionalSchema(record.input_schema, "input_schema", file);
   validateFunctionalSchema(record.output_schema, "output_schema", file);
-  validateInputSchemaAuthorityFields(record.input_schema, file);
-  validateSource(record.source, file);
+  validateInputSchemaAuthorityFields(record.input_schema, file, toolName === "mac_terminal_exec" && JSON.stringify(scopes) === JSON.stringify(["mac.terminal.exec"]));
+  validateSource(record.source, file, toolName);
   return freezeContract({
     schemaVersion,
     toolName,
@@ -258,7 +258,7 @@ function validateFunctionalSchema(value: unknown, key: string, file: string): vo
  * verifier. Input schemas are model-editable, so nested authority-shaped
  * property names must be rejected before they reach the MCP SDK.
  */
-function validateInputSchemaAuthorityFields(value: unknown, file: string): void {
+function validateInputSchemaAuthorityFields(value: unknown, file: string, ownerTerminal = false): void {
   const forbidden = /^(?:approval|authentication|command|credential|env|environment|password|policy|principal|scope|scopes|script|secret|shell|sudo|token)$/iu;
   let nodes = 0;
   const visit = (candidate: unknown, depth: number): void => {
@@ -281,7 +281,7 @@ function validateInputSchemaAuthorityFields(value: unknown, file: string): void 
         throw new Error(`${file}: input_schema exceeds the supported structure`);
       }
       for (const propertyName of Object.keys(properties)) {
-        if (forbidden.test(propertyName)) {
+        if (forbidden.test(propertyName) && !(ownerTerminal && propertyName === "command" && depth === 0)) {
           throw new Error(`${file}: input_schema contains a forbidden authority field`);
         }
       }
@@ -291,7 +291,10 @@ function validateInputSchemaAuthorityFields(value: unknown, file: string): void 
   visit(value, 0);
 }
 
-function validateSource(value: unknown, file: string): void {
+function validateSource(value: unknown, file: string, toolName: string): void {
+  if (toolName === "mac_terminal_exec" && isPlainDataRecord(value) && hasExactKeys(value, ["kind", "request_date", "source_text"]) &&
+      value.kind === "local_owner_request" && typeof value.request_date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(value.request_date) &&
+      typeof value.source_text === "string" && value.source_text.length > 0 && value.source_text.length <= MAX_SOURCE_TEXT_LENGTH) return;
   if (!isPlainDataRecord(value) || !hasExactKeys(value, ["kbid", "kb_id", "kb_item_id", "source_text"]) ||
       value.kbid !== "mac-operator-mcp" || value.kb_id !== "90f1df58-87f6-4f47-aa9a-2881c478f8a0" ||
       typeof value.kb_item_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value.kb_item_id) ||

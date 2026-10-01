@@ -77,3 +77,7 @@ V0.1 does not provide `run_shell`, `sudo_shell`, raw Keychain or SSH private-key
 ## Tool delivery waves
 
 The catalog groups tools into five delivery waves: `wave_1` control and Broker introspection (tools 1-3), `wave_2` L0/L1 inspection (tools 4-20), `wave_3` L2 developer operations and controlled writes (tools 21-35), `wave_4` app, GUI, and owner-domain service control (tools 36-42), and `wave_5` privileged helper operations (tools 43-45). These waves sequence capability delivery; they are not roadmap lifecycle phases. Contracts remain planned authority until implementation, verification, release gates, and explicit enablement pass.
+
+## Personal owner terminal mode
+
+- [mac_terminal_exec](tool-contracts/mac_terminal_exec.json): explicit opt-in owner-account shell and CLI execution; separate from isolated task profiles.

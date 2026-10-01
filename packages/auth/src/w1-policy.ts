@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BrokerPolicy, PolicyDocument } from "@mac-operator/broker";
 import { canonicalJson } from "@mac-operator/contracts";
-import { G1_SCOPES, G1_TOOLS, W1_SCOPES, W1_TOOLS } from "./contracts.js";
+import { G1_SCOPES, G1_TOOLS, O1_SCOPES, O1_TOOLS, W1_SCOPES, W1_TOOLS } from "./contracts.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
 
 export function w1ProjectRoot(path: string): string {
@@ -65,6 +65,16 @@ export function buildG1TargetRules(
   return rules;
 }
 
+export function buildO1TargetRules(principalId: string, filesystemRoots: PolicyDocument["filesystem_roots"], projectRoot: string): PolicyDocument["target_rules"] {
+  return [...buildG1TargetRules(principalId, filesystemRoots, projectRoot),
+    { rule_id: "owner-terminal", effect: "allow", principal_id: principalId, scope: "mac.terminal.exec",
+      target: { kind: "host", reference: "owner-terminal" } }];
+}
+
+export function assertO1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
+  assertPersonalWritePolicy(policy, principalId, issuerId, true, true);
+}
+
 export function assertW1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
   assertPersonalWritePolicy(policy, principalId, issuerId, false);
 }
@@ -73,9 +83,9 @@ export function assertG1Policy(policy: BrokerPolicy, principalId: string, issuer
   assertPersonalWritePolicy(policy, principalId, issuerId, true);
 }
 
-function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, issuerId: string, guiProfile: boolean): void {
-  const expectedScopes = guiProfile ? G1_SCOPES : W1_SCOPES;
-  const expectedTools = guiProfile ? G1_TOOLS : W1_TOOLS;
+function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, issuerId: string, guiProfile: boolean, ownerTerminal = false): void {
+  const expectedScopes = ownerTerminal ? O1_SCOPES : guiProfile ? G1_SCOPES : W1_SCOPES;
+  const expectedTools = ownerTerminal ? O1_TOOLS : guiProfile ? G1_TOOLS : W1_TOOLS;
   const grants = [...policy.principalGrants.values()];
   if (grants.length !== 1 || grants[0]?.principalId !== principalId || grants[0]?.issuer !== issuerId || !grants[0]?.enabled ||
       canonicalJson([...grants[0].scopes].sort()) !== canonicalJson([...expectedScopes].sort())) {
@@ -95,7 +105,7 @@ function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, is
   if (canonicalJson(actualRoots) !== canonicalJson(expectedRoots)) {
     throw new Error("Personal write filesystem roots mismatch");
   }
-  const expectedRules = guiProfile ? buildG1TargetRules(principalId, expectedRoots, projectRoot) : buildW1TargetRules(principalId, expectedRoots, projectRoot);
+  const expectedRules = ownerTerminal ? buildO1TargetRules(principalId, expectedRoots, projectRoot) : guiProfile ? buildG1TargetRules(principalId, expectedRoots, projectRoot) : buildW1TargetRules(principalId, expectedRoots, projectRoot);
   const actualRules = policy.targetRules.map(rule => ({ rule_id: rule.ruleId, effect: rule.effect,
     principal_id: rule.principalId, scope: rule.scope, target: rule.target,
     ...(rule.targetConstraint === undefined ? {} : { target_constraint: rule.targetConstraint }) }));

@@ -13,11 +13,12 @@ export const W1_READ_SCOPES = READ_SCOPES.filter(scope => scope !== "mac.docker.
 export const W1_SCOPES = [...W1_READ_SCOPES, ...W1_ADDITIONAL_SCOPES] as const;
 export const G1_GUI_SCOPES = ["mac.app.control", "mac.ui.observe", "mac.ui.control"] as const;
 export const G1_SCOPES = [...W1_SCOPES, ...G1_GUI_SCOPES] as const;
+export const O1_SCOPES = [...G1_SCOPES, "mac.terminal.exec"] as const;
 export const D1_SCOPES = [...READ_SCOPES, ...D1_ADDITIONAL_SCOPES] as const;
-export const OAUTH_SCOPES = [...D1_SCOPES, ...G1_GUI_SCOPES] as const;
-export type GrantProfile = "r1" | "w1" | "g1" | "d1";
+export const OAUTH_SCOPES = [...D1_SCOPES, ...G1_GUI_SCOPES, "mac.terminal.exec"] as const;
+export type GrantProfile = "r1" | "w1" | "g1" | "o1" | "d1";
 export function scopesForGrantProfile(profile: GrantProfile): readonly string[] {
-  return profile === "d1" ? D1_SCOPES : profile === "g1" ? G1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
+  return profile === "o1" ? O1_SCOPES : profile === "d1" ? D1_SCOPES : profile === "g1" ? G1_SCOPES : profile === "w1" ? W1_SCOPES : READ_SCOPES;
 }
 export const READ_TOOLS = [
   "mac_app_list", "mac_capabilities", "mac_directory_tree", "mac_docker_inspect", "mac_docker_logs",
@@ -34,6 +35,7 @@ export const W1_TOOLS = [
 ] as const;
 export const G1_GUI_TOOLS = ["mac_app_open", "mac_app_focus", "mac_ui_observe", "mac_ui_action", "mac_ui_type"] as const;
 export const G1_TOOLS = [...W1_TOOLS, ...G1_GUI_TOOLS] as const;
+export const O1_TOOLS = [...G1_TOOLS, "mac_terminal_exec"] as const;
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
 const hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const time = z.number().int().nonnegative().safe();
@@ -54,7 +56,7 @@ export const configSchema = z.object({
   keyId: id,
   port: z.number().int().min(1024).max(65535),
   allowedRedirectUris: z.array(httpsUrl).min(1).max(16),
-  grantProfile: z.enum(["r1", "w1", "g1", "d1"]).default("r1")
+  grantProfile: z.enum(["r1", "w1", "g1", "o1", "d1"]).default("r1")
 }).strict().refine(value => value.resource === new URL("/mcp", value.issuer).href);
 export type AuthConfig = z.infer<typeof configSchema>;
 

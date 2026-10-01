@@ -29,3 +29,7 @@ Local HMAC key files can be provisioned only with exclusive creation inside an o
 ## Pending decisions
 
 Crash-injection evidence across file/database activation, installed startup/operator runbook, secret-reference provider, production filesystem root/deny classification, a general versioned migration framework, Keychain/cross-process operator-key distribution, and cross-runtime canonicalization evidence. The specific legacy revocation-table migrations for `edge_key`, `approval_key`, and `policy_signer` support are implemented and tested.
+
+## Personal owner terminal opt-in
+
+`--grant-profile o1` adds `mac.terminal.exec` and `mac_terminal_exec` to G1. Existing R1/W1/G1 installations retain their existing tool and scope sets. O1 requires the exact signed owner-terminal host rule, a non-root macOS executor and one distinct delegated approval issuer key with `allowUnattended: true`; the browser issuer remains attended. These issuers share one versioned key configuration and authenticated local channel. The Edge timeout is 180 seconds; commands are bounded to 120 seconds. See [Owner terminal operations](docs/owner-terminal.md) for offline upgrade and rollback.

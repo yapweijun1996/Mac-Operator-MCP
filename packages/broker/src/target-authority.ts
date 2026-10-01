@@ -16,7 +16,7 @@ const PROCESS_PATTERN = /^all$|^pid:[1-9][0-9]{0,7}$/u;
 export function isPolicyQueryTargetReference(kind: TargetKind, reference: string): boolean {
   if (!isBoundedReference(reference)) return false;
   switch (kind) {
-    case "host": return reference === "broker" || reference === "local";
+    case "host": return reference === "broker" || reference === "local" || reference === "owner-terminal";
     case "path": return isCanonicalAbsolutePath(reference) || SAFE_ID_PATTERN.test(reference);
     case "project": return isCanonicalAbsolutePath(reference);
     case "process": return PROCESS_PATTERN.test(reference);
@@ -40,7 +40,7 @@ export function isSignedPolicyTargetReference(target: NormalizedTarget): boolean
   const { kind, reference } = target;
   if (!isBoundedReference(reference)) return false;
   switch (kind) {
-    case "host": return reference === "broker" || reference === "local";
+    case "host": return reference === "broker" || reference === "local" || reference === "owner-terminal";
     case "path": return SAFE_ID_PATTERN.test(reference);
     case "project": return isCanonicalAbsolutePath(reference);
     case "process": return PROCESS_PATTERN.test(reference);

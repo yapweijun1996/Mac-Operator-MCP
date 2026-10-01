@@ -136,7 +136,7 @@
         },
         {
           "if": { "properties": { "kind": { "const": "host" } }, "required": ["kind"] },
-          "then": { "properties": { "reference": { "type": "string", "enum": ["broker", "local"] } } }
+          "then": { "properties": { "reference": { "type": "string", "enum": ["broker", "local", "owner-terminal"] } } }
         },
         {
           "if": { "properties": { "kind": { "const": "path" } }, "required": ["kind"] },

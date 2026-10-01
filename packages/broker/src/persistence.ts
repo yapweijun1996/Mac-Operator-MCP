@@ -2116,6 +2116,7 @@ export class BrokerStore {
           throw new BrokerError("CONFLICT", "Request state or approved Job identity changed");
         }
         assertAuditMatchesRequest(input.intent, current);
+        assertJobTombstoneAbsent(this.database, input.job.jobId, input.job.ownerPrincipalId, input.job.idempotencyKey);
         const row = this.findConsumableApproval(current.principalId, current.tool, current.policyVersion, input.approval, input.intent.timestampMs, current.requestId);
         if (!row) throw new BrokerError("POLICY_DENIED", "No valid approval matches this mutation");
         const approval = mapApproval(row);
@@ -2779,7 +2780,7 @@ export class BrokerStore {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
     const rows = this.database.prepare(`
       SELECT * FROM jobs
-      WHERE tool = 'mac_task_run'
+      WHERE tool IN ('mac_task_run', 'mac_terminal_exec')
         AND state = 'unknown'
         AND guest_metadata_json = ''
         AND process_metadata_json <> ''
@@ -2938,7 +2939,7 @@ export class BrokerStore {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
     validateJobLease(lease, nowMs, false);
     return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
-      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+      if (!["mac_task_run", "mac_terminal_exec"].includes(current.tool) || current.startedAtMs === null ||
           metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Task process ownership metadata is outside the active Job window");
       }
@@ -2969,7 +2970,7 @@ export class BrokerStore {
         throw new BrokerError("CONFLICT", "Job state or revision changed concurrently");
       }
       assertActiveJobLease(currentRow, lease, nowMs);
-      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+      if (!["mac_task_run", "mac_terminal_exec"].includes(current.tool) || current.startedAtMs === null ||
           current.processMetadata === undefined ||
           metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs ||
           metadata.pid !== current.processMetadata.pid ||
@@ -3099,6 +3100,7 @@ export class BrokerStore {
       exitCode?: number | null;
       stdout?: string;
       stderr?: string;
+      truncated?: boolean;
     },
     lease?: JobLease,
     leaseNowMs = Date.now()
@@ -3139,7 +3141,7 @@ export class BrokerStore {
         WHERE job_id = ? AND owner_principal_id = ?
       `).run(
         outcome.state, outcome.resultClass, outcome.finishedAtMs, exitCode,
-        stdout.value, stderr.value, stdout.truncated || stderr.truncated ? 1 : 0,
+        stdout.value, stderr.value, outcome.truncated === true || stdout.truncated || stderr.truncated ? 1 : 0,
         outcome.state, outcome.state, outcome.state, outcome.state, jobId, principalId
       );
     };
@@ -5791,7 +5793,7 @@ function validateStoredJobState(row: JobRow): void {
   const hasGuestResult = row.guest_result_json.length > 0;
   const hasServiceMetadata = row.service_metadata_json.length > 0;
   if (hasWriteMetadata && row.tool !== "mac_write_file_atomic") fail();
-  if ((hasProcessMetadata || hasGuestMetadata) && row.tool !== "mac_task_run") fail();
+  if (hasProcessMetadata && !["mac_task_run", "mac_terminal_exec"].includes(row.tool) || hasGuestMetadata && row.tool !== "mac_task_run") fail();
   if (hasProcessMetadata && hasGuestMetadata) fail();
   if ((hasProcessMetadata || hasGuestMetadata) && row.state !== "running" && row.state !== "unknown") fail();
   if (hasGuestResult && (!hasGuestMetadata || row.tool !== "mac_task_run" || row.state !== "running" && row.state !== "unknown")) fail();
@@ -6508,7 +6510,7 @@ function validTerminalOutcome(
 function queuedJobAffectedBySwitch(name: SwitchName, tool: string): boolean {
   if (name === "global") return true;
   if (name === "mutations") return !READ_ONLY_JOB_TOOLS.has(tool);
-  if (name === "process" || name === "network") return tool === "mac_task_run";
+  if (name === "process" || name === "network") return tool === "mac_task_run" || tool === "mac_terminal_exec";
   if (name === "gui") return tool === "mac_app_open" || tool === "mac_app_focus" || tool.startsWith("mac_ui_");
   if (name === "destructive") return tool === "mac_apply_patch";
   if (name === "privileged") return tool.startsWith("mac_priv_");

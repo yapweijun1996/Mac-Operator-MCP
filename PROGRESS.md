@@ -6597,3 +6597,7 @@ total (576 passed, 6 explicitly skipped, 0 failed). Crash ownership, real
 clock/rollback behavior, production Keychain, installed recovery, external
 rollback detection, and ADR acceptance remain open. Evidence:
 `evidence/2026-09-15-reconciliation-clock-order.md`.
+
+## Personal owner terminal expansion (2026-10-01)
+
+The owner explicitly requested terminal and CLI control of their Mac. O1 adds the independently enabled `mac_terminal_exec` capability under `mac.terminal.exec`, with authenticated owner grants, exact delegated approvals, durable Jobs, bounded output, cancellation and audit. This mode executes arbitrary commands under the macOS owner account and makes no isolation claim. R1/W1/G1 and isolated task-run acceptance remain unchanged. Implementation and verification are recorded in [Owner terminal operations](docs/owner-terminal.md). Online enablement is pending verification and release switch.

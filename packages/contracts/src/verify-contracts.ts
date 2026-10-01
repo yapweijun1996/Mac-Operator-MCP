@@ -33,7 +33,7 @@ ajv.compile(approvalIssuanceSchema);
 ajv.compile(ledgerRecordsSchema);
 const files = (await readdir(contractsDirectory)).filter((file) => file.startsWith("mac_") && file.endsWith(".json")).sort();
 
-if (files.length !== 45) throw new Error(`Expected 45 tool contracts, found ${files.length}`);
+if (files.length !== PLANNED_TOOL_NAMES.length) throw new Error(`Expected ${PLANNED_TOOL_NAMES.length} tool contracts, found ${files.length}`);
 
 const names = new Set<string>();
 const sourceIds = new Set<string>();
@@ -51,14 +51,18 @@ for (const file of files) {
     throw new Error(`${file}: output_schema must describe only the SUCCEEDED envelope`);
   }
   const name = String(contract.tool_name);
-  const sourceId = String((contract.source as Record<string, unknown>).kb_item_id);
+  const source = contract.source as Record<string, unknown>;
+  if (source.kind === "local_owner_request" && name !== "mac_terminal_exec") throw new Error(`${file}: local owner provenance is not allowed for this tool`);
+  const sourceId = source.kind === "local_owner_request" ? `local:${name}:${source.request_date}` : String(source.kb_item_id);
   if (names.has(name)) throw new Error(`Duplicate tool_name: ${name}`);
   if (file !== `${name}.json`) throw new Error(`${file}: filename does not match tool_name ${name}`);
   if (sourceIds.has(sourceId)) throw new Error(`Duplicate source kb_item_id: ${sourceId}`);
   names.add(name);
   sourceIds.add(sourceId);
 
-  const forbiddenInputFields = recursivePropertyNames(inputSchema).filter((property) =>
+  const authoritySchema = name === "mac_terminal_exec" && JSON.stringify(contract.required_scopes) === JSON.stringify(["mac.terminal.exec"])
+    ? { ...inputSchema, properties: Object.fromEntries(Object.entries(inputSchema.properties as Record<string, unknown>).filter(([key]) => key !== "command")) } : inputSchema;
+  const forbiddenInputFields = recursivePropertyNames(authoritySchema).filter((property) =>
     /^(?:approval|authentication|command|credential|env|environment|password|policy|principal|scope|scopes|script|secret|shell|sudo|token)$/iu.test(property)
   );
   if (forbiddenInputFields.length > 0) {

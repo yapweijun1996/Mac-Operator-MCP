@@ -31,7 +31,7 @@ export function createPersonalApprovalBrowserController(options: {
 }): PersonalApprovalBrowserController {
   const now = options.now ?? Date.now;
   const issueExact = async (approval: Omit<IssueApprovalInput, "approverPrincipalId">): Promise<void> => {
-    const loaded = options.approvalIssuerRuntime.keyManager.current();
+    const loaded = { keys: options.approvalIssuerRuntime.keyManager.current().keys.filter(key => !key.allowUnattended) };
     if (loaded.keys.length !== 1 || loaded.keys[0]!.allowUnattended) throw new Error("Browser approval requires one attended issuer key");
     const issuer = loaded.keys[0]!;
     const client = new ApprovalIpcClient({ socketPath: options.socketPath, issuerId: issuer.issuerId,
@@ -67,7 +67,7 @@ export function createPersonalApprovalBrowserController(options: {
       const issuedAtMs = now();
       const record = options.store.approvalPreview(requestId, issuedAtMs);
       if (!record) throw new Error("Approval preview is no longer pending");
-      const loaded = options.approvalIssuerRuntime.keyManager.current();
+      const loaded = { keys: options.approvalIssuerRuntime.keyManager.current().keys.filter(key => !key.allowUnattended) };
       if (loaded.keys.length !== 1 || loaded.keys[0]!.allowUnattended) {
         throw new Error("Browser approval requires one attended issuer key");
       }
