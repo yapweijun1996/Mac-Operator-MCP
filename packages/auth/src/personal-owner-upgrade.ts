@@ -46,23 +46,38 @@ export async function upgradePersonalOwnerTerminal(root: string, packageRoot: st
     finally { privateBytes.fill(0); }
     const verified = verifier.verify(bundle);
     assertO1Policy(verified.policy, config.principalId, config.issuerId);
-    const edge = validateEdgeServiceStartupConfig({ ...JSON.parse(readAuthFile(join(data, "edge-service.json")).toString()),
+    const previousEdge = validateEdgeServiceStartupConfig(JSON.parse(readAuthFile(join(data, "edge-service.json")).toString()));
+    const rebased: Record<string, unknown> = { ...previousEdge, dataRoot: data, runtimeRoot: join(data, "run") };
+    for (const field of ["brokerSocketPath", "authenticationKeyPath", "tlsCertificatePath", "tlsPrivateKeyPath",
+      "oauthStatusKeyPath", "oauthStatusLocalCaPath", "serviceStatusSocketPath", "serviceStatusKeyPath"] as const) {
+      const path = previousEdge[field];
+      if (path === undefined) continue;
+      if (!path.startsWith(`${previousEdge.dataRoot}/`)) throw new Error("Personal state path is outside its protected data root");
+      rebased[field] = `${data}${path.slice(previousEdge.dataRoot.length)}`;
+    }
+    const edge = validateEdgeServiceStartupConfig({ ...rebased,
       packageRoot, contractsDirectory: join(packageRoot, "tool-contracts"), sourceRevision,
       oauthScopes: [...O1_SCOPES], policyVersion: verified.policy.version, ipcTimeoutMs: 180000 });
+    const issuer = JSON.parse(readAuthFile(join(data, "approval-issuer.json")).toString());
+    if (issuer.enabled !== true || issuer.keyConfigPath !== join(previousEdge.dataRoot, "approval-keys.json") ||
+        issuer.socketPath !== join(previousEdge.runtimeRoot, "approval.sock")) throw new Error("Existing approval startup paths mismatch");
     const keyConfig = JSON.parse(readAuthFile(join(data, "approval-keys.json")).toString()) as {
       schemaVersion: "0.1"; revision: number; keys: Record<string, unknown>[];
     };
     if (keyConfig.keys.length !== 1 || keyConfig.keys[0]!.allowUnattended !== false) throw new Error("Existing attended issuer boundary mismatch");
+    if (keyConfig.keys[0]!.path !== join(previousEdge.dataRoot, "approval.key")) throw new Error("Existing attended issuer key path mismatch");
     const terminalKeyPath = join(data, "terminal-approval.key");
     await provisionAuthenticationKey(terminalKeyPath);
     await replaceJson(join(data, "approval-keys.json"), { ...keyConfig, revision: keyConfig.revision + 1,
-      keys: [...keyConfig.keys, { issuerId: `terminal-approver-${sha256(config.principalId).slice(0, 32)}`, keyId: "personal-terminal-1",
+      keys: [{ ...keyConfig.keys[0]!, path: join(data, "approval.key") }, { issuerId: `terminal-approver-${sha256(config.principalId).slice(0, 32)}`, keyId: "personal-terminal-1",
         path: terminalKeyPath, notBeforeMs: now - 5000, expiresAtMs: now + 365 * 86400000, allowUnattended: true }] });
     keyManager = new ApprovalIssuerKeyManager(join(data, "approval-keys.json"), store);
     await keyManager.activate();
     policyManager.activate(verified);
     await replaceJson(join(data, "policy.json"), bundle);
     await replaceJson(join(data, "edge-service.json"), edge);
+    await replaceJson(join(data, "approval-issuer.json"), { schemaVersion: "0.1", enabled: true,
+      keyConfigPath: join(data, "approval-keys.json"), socketPath: join(data, "run/approval.sock") });
     await replaceJson(join(root, "auth/edge-auth-settings.json"), { ...JSON.parse(readAuthFile(join(root, "auth/edge-auth-settings.json")).toString()),
       grantProfile: "o1", oauthScopes: [...O1_SCOPES] });
     await replaceJson(join(root, "auth/broker-policy-input.json"), { principal: payload.principal_grants[0], target_rules: payload.target_rules,

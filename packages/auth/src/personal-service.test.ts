@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -141,13 +141,27 @@ for (const profile of ["g1", "o1"] as const) test(`personal ${profile.toUpperCas
     } finally { authStore.close(); }
     if (profile === "g1") {
       await assert.rejects(execFileAsync(process.execPath, [entrypoint, "owner-terminal", root, "abcdef1"], { timeout: 10000 }));
-      await execFileAsync(process.execPath, [entrypoint, "owner-terminal", root, "abcdef1", "--enable"], { timeout: 10000 });
-      const upgraded = (await verifier.verifyFile(join(personal, "policy.json"))).policy;
-      assert.doesNotThrow(() => assertO1Policy(upgraded, auth.principalId, auth.issuerId));
-      assert.equal(upgraded.version, "policy-2");
-      assert.equal(JSON.parse(await readFile(join(authDirectory, "auth-config.json"), "utf8")).grantProfile, "o1");
-      const retained = new AuthStore(authDirectory);
-      try { assert.equal(retained.browserGrants().length, 1); assert.equal(retained.browserGrants()[0]?.policyVersion, upgraded.version); } finally { retained.close(); }
+      const copyRoot = await realpath(await mkdtemp("/tmp/mac-o1-copy-"));
+      try {
+        await cp(root, copyRoot, { recursive: true });
+        const copiedPersonal = join(copyRoot, "personal");
+        await execFileAsync(process.execPath, [entrypoint, "owner-terminal", copyRoot, "abcdef1", "--enable"], { timeout: 10000 });
+        const upgraded = (await verifier.verifyFile(join(copiedPersonal, "policy.json"))).policy;
+        assert.doesNotThrow(() => assertO1Policy(upgraded, auth.principalId, auth.issuerId));
+        assert.equal(upgraded.version, "policy-2");
+        assert.equal(JSON.parse(await readFile(join(copyRoot, "auth/auth-config.json"), "utf8")).grantProfile, "o1");
+        const retained = new AuthStore(join(copyRoot, "auth"));
+        try { assert.equal(retained.browserGrants().length, 1); assert.equal(retained.browserGrants()[0]?.policyVersion, upgraded.version); } finally { retained.close(); }
+        const copiedEdge = JSON.parse(await readFile(join(copiedPersonal, "edge-service.json"), "utf8"));
+        assert.equal(copiedEdge.dataRoot, copiedPersonal);
+        assert.equal(copiedEdge.brokerSocketPath, join(copiedPersonal, "run/broker.sock"));
+        assert.equal(copiedEdge.authenticationKeyPath, join(copiedPersonal, "edge.key"));
+        const copiedIssuer = JSON.parse(await readFile(join(copiedPersonal, "approval-issuer.json"), "utf8"));
+        assert.equal(copiedIssuer.keyConfigPath, join(copiedPersonal, "approval-keys.json"));
+        assert.equal(copiedIssuer.socketPath, join(copiedPersonal, "run/approval.sock"));
+        await execFileAsync(process.execPath, [join(process.cwd(), "scripts/verify-personal-snapshot.mjs"), copyRoot], { timeout: 10000 });
+        assert.equal(JSON.parse(await readFile(join(authDirectory, "auth-config.json"), "utf8")).grantProfile, "g1");
+      } finally { await rm(copyRoot, { recursive: true, force: true }); }
     }
 
   } finally {

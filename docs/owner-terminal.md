@@ -40,7 +40,7 @@ For an existing G1 installation:
    node packages/auth/dist/personal-service.js owner-terminal /absolute/protected/state SOURCE_REVISION --enable
    ```
 
-3. This preserves owner identity, TLS material, registered OAuth clients and browser grants; it increments signed policy and approval-key revisions and adds the terminal issuer.
+3. This preserves owner identity, TLS material, registered OAuth clients and browser grants; it increments signed policy and approval-key revisions, rebases fixed socket/key/TLS paths to the selected state directory, migrates retained browser consent to the new policy revision, and adds the terminal issuer.
 4. Start the new release against the upgraded state and reconnect the MCP client to consent to the new scope. Existing grants retain their original scopes.
 
 The offline upgrade changes several files and database activation identities; an interrupted upgrade fails startup validation. Preserve the original state until readback succeeds. Roll back by stopping the new supervisor and selecting the complete previous release/state pair, rather than decreasing a policy revision in the upgraded database.
