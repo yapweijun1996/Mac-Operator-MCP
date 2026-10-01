@@ -1,93 +1,58 @@
 {
   "$schema": "./tool-contract.schema.json",
   "schema_version": "0.1",
-  "tool_name": "mac_policy_explain",
-  "capability_level": "L0",
+  "tool_name": "mac_codex_preflight",
+  "capability_level": "L1",
   "safety_class": "read_only",
   "required_scopes": [
-    "mac.policy.explain"
+    "mac.project.read",
+    "mac.agent.read"
   ],
-  "normalized_target_type": "policy_request",
-  "timeout_ms": 3000,
+  "normalized_target_type": "project_root",
+  "timeout_ms": 30000,
   "output_cap_bytes": 131072,
   "network_policy": "none",
-  "filesystem_policy": "metadata_only",
-  "secret_policy": "deny_secret_content",
+  "filesystem_policy": "read_allowed_project",
+  "secret_policy": "deny_secret_paths_and_env",
   "approval_policy": "trusted_read",
   "idempotent": true,
   "postcondition_verification": {
-    "required": false,
-    "strategy": "policy_decision_result_validation",
+    "required": true,
+    "strategy": "bounded_result_validation",
     "failure_class": "VERIFICATION_FAILED"
   },
-  "audit_class": "observe",
-  "tool_delivery_wave": "wave_1",
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "dry-run Broker policy for a proposed tool/target/arguments; MUST NOT execute it.",
-  "input_summary": "proposed_tool:string, target?:{kind,reference}, argument_digest?:sha256.",
-  "output_summary": "allow/deny, normalized target summary, required/missing scopes, reason codes; sensitive values redacted.",
+  "purpose": "Inspect coding-agent and project readiness without executing a development task or returning credentials.",
+  "input_summary": "project_root, worktree",
+  "output_summary": "project_root, worktree, installed, version, authentication, supported_models, permission, reason_codes, available_commands, git_dirty, environment_ready",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "mac_policy_explain input",
+    "title": "mac_codex_preflight input",
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "proposed_tool": {
+      "project_root": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^[A-Za-z0-9._:@/+-]+$"
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
       },
-      "target": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "kind": {
-            "enum": [
-              "host",
-              "path",
-              "project",
-              "process",
-              "job",
-              "app",
-              "app_window",
-              "ui_element",
-              "service",
-              "package",
-              "power"
-            ]
-          },
-          "reference": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 4096,
-            "pattern": "^[A-Za-z0-9._:/-]+$"
-          }
-        },
-        "required": [
-          "kind",
-          "reference"
-        ]
-      },
-      "argument_digest": {
+      "worktree": {
         "type": "string",
-        "minLength": 64,
-        "maxLength": 64,
-        "pattern": "^[A-Fa-f0-9]{64}$"
-      },
-      "proposed_arguments": {
-        "type": "object",
-        "maxProperties": 16,
-        "additionalProperties": true
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
       }
     },
     "required": [
-      "proposed_tool"
+      "project_root"
     ]
   },
   "output_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "mac_policy_explain result",
+    "title": "mac_codex_preflight result",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -108,7 +73,7 @@
         "maxLength": 128
       },
       "tool": {
-        "const": "mac_policy_explain"
+        "const": "mac_codex_preflight"
       },
       "result_class": {
         "const": "SUCCEEDED"
@@ -117,57 +82,67 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "decision": {
+          "project_root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "worktree": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "authentication": {
+            "enum": [
+              "ready",
+              "unknown",
+              "unavailable"
+            ]
+          },
+          "supported_models": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 64,
+            "uniqueItems": false,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "permission": {
             "enum": [
               "allow",
               "deny"
             ]
           },
-          "normalized_target": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "kind": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
-              },
-              "reference": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 4096
-              }
-            },
-            "required": [
-              "kind",
-              "reference"
-            ]
-          },
-          "required_scopes": {
-            "type": "array",
-            "minItems": 0,
-            "maxItems": 32,
-            "uniqueItems": false,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
-            }
-          },
-          "missing_scopes": {
-            "type": "array",
-            "minItems": 0,
-            "maxItems": 32,
-            "uniqueItems": false,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
-            }
-          },
           "reason_codes": {
             "type": "array",
-            "minItems": 1,
+            "minItems": 0,
             "maxItems": 32,
             "uniqueItems": false,
             "items": {
@@ -176,19 +151,56 @@
               "maxLength": 128
             }
           },
-          "policy_version": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
+          "available_commands": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 64,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "enum": [
+                    "test",
+                    "build",
+                    "lint",
+                    "typecheck",
+                    "package_script"
+                  ]
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:@/+-]+$"
+                }
+              },
+              "required": [
+                "type",
+                "profile"
+              ]
+            }
+          },
+          "git_dirty": {
+            "type": "boolean"
+          },
+          "environment_ready": {
+            "type": "boolean"
           }
         },
         "required": [
-          "decision",
-          "normalized_target",
-          "required_scopes",
-          "missing_scopes",
+          "project_root",
+          "worktree",
+          "installed",
+          "version",
+          "authentication",
+          "supported_models",
+          "permission",
           "reason_codes",
-          "policy_version"
+          "available_commands",
+          "git_dirty",
+          "environment_ready"
         ]
       },
       "warnings": {
@@ -215,18 +227,19 @@
         ],
         "properties": {
           "required": {
-            "const": false
+            "const": true
           },
           "status": {
             "enum": [
-              "not_required",
+              "accepted",
               "verified",
               "failed",
-              "unknown"
+              "unknown",
+              "not_run"
             ]
           },
           "strategy": {
-            "const": "policy_decision_result_validation"
+            "const": "bounded_result_validation"
           },
           "evidence": {
             "type": "object",
@@ -264,7 +277,7 @@
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
-    "kb_item_id": "2556a4e2-01c5-40fe-a045-9b5f75ad12c7",
-    "source_text": "Purpose: dry-run Broker policy for a proposed tool/target/arguments; MUST NOT execute it. Input: proposed_tool:string, target?:object, arguments?:object. Output: allow/deny, normalized target summary, required/missing scopes, reason codes; sensitive values redacted. Contract: L0 read_only; scope mac.policy.explain; timeout 3000ms; cap 128KiB; network none; filesystem metadata-only; deny secret content; approval trusted_read; idempotent yes. Phase 1 planned."
+    "kb_item_id": "93c0bb11-7f5b-47e5-b229-ae8a4f52f547",
+    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Inspect coding-agent and project readiness without executing a development task or returning credentials."
   }
 }

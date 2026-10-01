@@ -1,8 +1,10 @@
+import { developmentToolPolicies, DEVELOPMENT_TOOL_NAMES } from "./development-policy.js";
 import type { Scope } from "@mac-operator/contracts";
 import type { BrokerPolicy, PrincipalGrant, TargetRule, ToolPolicy } from "./policy.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 
 const tools: ToolPolicy[] = [
+  ...developmentToolPolicies,
   {
     tool: "mac_health",
     contractVersion: "0.1",
@@ -788,7 +790,7 @@ export function createDefaultPolicy(
     },
     tools: new Map(tools.map((tool) => [tool.tool, {
       ...tool,
-      enabled: enableReadTools && (tool.tool === "mac_job_cancel" || !tool.mutation)
+      enabled: enableReadTools && !DEVELOPMENT_TOOL_NAMES.includes(tool.tool) && (tool.tool === "mac_job_cancel" || !tool.mutation)
     }]))
   };
 }

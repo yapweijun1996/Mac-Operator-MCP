@@ -77,3 +77,21 @@ V0.1 does not provide `run_shell`, `sudo_shell`, raw Keychain or SSH private-key
 ## Tool delivery waves
 
 The catalog groups tools into five delivery waves: `wave_1` control and Broker introspection (tools 1-3), `wave_2` L0/L1 inspection (tools 4-20), `wave_3` L2 developer operations and controlled writes (tools 21-35), `wave_4` app, GUI, and owner-domain service control (tools 36-42), and `wave_5` privileged helper operations (tools 43-45). These waves sequence capability delivery; they are not roadmap lifecycle phases. Contracts remain planned authority until implementation, verification, release gates, and explicit enablement pass.
+
+## V2 development gateway (disabled by default)
+
+These additive source contracts do not enable the live personal deployment. Production coding-agent execution remains gated on accepted isolation and credential-free inference.
+
+| Tool | Purpose |
+| --- | --- |
+| [mac_git_worktree_create](tool-contracts/mac_git_worktree_create.json) | Create one Broker-owned isolated worktree using a task-bound idempotency key. |
+| [mac_git_worktree_list](tool-contracts/mac_git_worktree_list.json) | List only Broker-owned worktrees for one authorized project. |
+| [mac_git_worktree_remove](tool-contracts/mac_git_worktree_remove.json) | Remove a clean Broker-owned worktree with ownership checks and read-back verification; never delete the primary repository. |
+| [mac_git_branch_create](tool-contracts/mac_git_branch_create.json) | Create a task branch together with a Broker-owned worktree without switching the primary working copy. |
+| [mac_codex_preflight](tool-contracts/mac_codex_preflight.json) | Inspect coding-agent and project readiness without executing a development task or returning credentials. |
+| [mac_codex_run](tool-contracts/mac_codex_run.json) | Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries. |
+| [mac_test_run](tool-contracts/mac_test_run.json) | Submit one approved existing test profile as a bounded Broker-managed worktree job; never accept an arbitrary shell command. |
+| [mac_build_run](tool-contracts/mac_build_run.json) | Submit one approved existing build profile as a bounded Broker-managed worktree job; never accept an arbitrary shell command. |
+| [mac_git_push](tool-contracts/mac_git_push.json) | Reserved high-risk push boundary, denied until a separate explicit approval workflow is supported; never force-push. |
+| [mac_pr_prepare](tool-contracts/mac_pr_prepare.json) | Prepare a bounded review summary from changed paths, commits, and managed-job test evidence without publishing a pull request. |
+| [mac_execution_audit](tool-contracts/mac_execution_audit.json) | Read bounded redacted audit events for an authorized project; never expose sensitive file contents or credentials. |

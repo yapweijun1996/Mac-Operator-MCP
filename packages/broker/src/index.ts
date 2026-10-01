@@ -117,3 +117,6 @@ export * from "./user-service-control-contract.js";
 export * from "./user-service-control-executor.js";
 export * from "./user-service-control-admission.js";
 export * from "./resource-budget.js";
+export * from "./managed-worktrees.js";
+export * from "./development-policy.js";
+export * from "./development-gateway.js";

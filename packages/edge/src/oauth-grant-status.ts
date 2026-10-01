@@ -1,3 +1,4 @@
+import { SCOPES } from "@mac-operator/contracts";
 import type { JwtRevocationContext } from "./jwt-verifier.js";
 
 export interface OAuthGrantStatus {
@@ -40,7 +41,7 @@ export function createOAuthGrantStatusReader(options: { url: URL; key: Buffer; f
     if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("OAuth grant status response is malformed");
     const record = value as { active?: unknown; scopes?: unknown };
     if (Object.keys(record).sort().join(",") !== "active,scopes" || typeof record.active !== "boolean" ||
-        !Array.isArray(record.scopes) || record.scopes.length > 32 || record.scopes.some(scope => typeof scope !== "string" || scope.length > 128)) {
+        !Array.isArray(record.scopes) || record.scopes.length > SCOPES.length || record.scopes.some(scope => typeof scope !== "string" || scope.length > 128)) {
       throw new Error("OAuth grant status response is malformed");
     }
     return { active: record.active, scopes: Object.freeze([...record.scopes] as string[]) };

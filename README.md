@@ -37,6 +37,8 @@ See `PROGRESS.md` for current Git evidence, implementation and enablement state,
 - [Owner OAuth login and local setup](docs/oauth-login-operations.md)
 - [Running personal deployment](docs/personal-deployment.md)
 - [Browser Computer Use (G1)](docs/gui-computer-use.md)
+- [V2 development gateway design and threat model](docs/MAC_OPERATOR_V2_DESIGN.md)
+- [V2 development gateway operator runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md)
 - [macOS packaging boundary](packaging/macos/README.md)
 - [Operations](OPERATIONS.md)
 - [Kill switch](KILL_SWITCH.md)
@@ -57,6 +59,31 @@ The optional stable operator proxy is built as
 reviewed owner-domain LaunchAgent plan, accepts owner-only CLI traffic on a
 separate socket, and forwards authenticated authority commands to the Broker;
 it is not installed or enabled by default.
+
+## V2 Safe AI Development Gateway
+
+V2 adds 11 project-scoped contracts for managed Git worktrees, coding-agent
+preflight and job admission, registered test/build execution, worktree-based
+branch creation, review preparation, and bounded audit retrieval. It reuses the
+existing Edge authorization, Local Broker policies, operation approvals, Git
+safety controls, and durable job ledger. Protocol version remains `0.1`; existing
+R1 and G1 contracts and grants remain compatible.
+
+All 11 new tools are disabled by default. Enabling a policy entry alone cannot
+provision the gateway or an execution boundary. Host-owned startup assembly must
+provide `DevelopmentGateway`, protected `ManagedWorktrees` storage, and any
+approved command registrations. Test/build commands resolve through an existing
+`TaskProfileRegistry`; execution requires a production-enabled isolated
+`TaskRunner` with accepted process ownership evidence. No production coding
+adapter ships in this change, and `mac_git_push` always denies execution.
+
+This is an additive implementation, not a claim that production Codex execution
+or the YAP-MCP development E2E has passed. Coding enablement still requires a
+verified credential-free agent runtime, enforced execution profiles, and an
+explicit inference network route. No live policy, OAuth grant, or service must be
+changed merely to try this source-level integration. Follow the
+[V2 operator runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md) for staged provisioning,
+approval, job recovery, and worktree reconciliation.
 
 ## Source-of-truth rules
 

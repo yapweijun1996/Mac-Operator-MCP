@@ -1,3 +1,5 @@
+import { DevelopmentGateway, worktreeResult, type DevelopmentPlan } from "./development-gateway.js";
+import { DEVELOPMENT_TOOL_NAMES, DEVELOPMENT_EXECUTION_TOOLS } from "./development-policy.js";
 import { GuiProcessSupervisor, guiLauncherExecutable } from "./gui-process-supervisor.js";
 import {
   BrokerError,
@@ -23,7 +25,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
-import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
+import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, TASK_JOB_TOOLS, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -120,6 +122,7 @@ export interface BrokerOptions {
   uiSnapshotRegistry?: UiSnapshotRegistry;
   /** Owner-consented GUI session issuer; ordinary policy checks still apply. */
   authorizeGuiSession?: (operation: GuiSessionOperation) => Promise<boolean>;
+  developmentGateway?: DevelopmentGateway;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
   /** Optional Broker-owned active-request authority for root-helper tasks. */
@@ -189,6 +192,7 @@ export class Broker {
   private readonly staticPolicy: BrokerPolicy | undefined;
   private readonly jobLeaseOwnerId: string;
   private readonly activeRequestsBySession = new Map<string, number>();
+  private readonly activeAsyncTasks = new Map<string, Promise<void>>();
   private closing = false;
   private closePromise: Promise<void> | undefined;
 
@@ -242,11 +246,11 @@ export class Broker {
     });
     this.serviceInspector = options.serviceInspector ?? new LaunchdServiceInspector(this.processSupervisor);
     this.logInspector = options.logInspector ?? new MacLogInspector(this.processSupervisor);
-    this.gitInspector = options.gitInspector ?? new GitStatusInspector(this.processSupervisor);
-    this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector(this.processSupervisor);
-    this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl(this.processSupervisor);
-    this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl(this.processSupervisor);
-    this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl(this.processSupervisor);
+    this.gitInspector = options.gitInspector ?? new GitStatusInspector(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
+    this.gitBranchInspector = options.gitBranchInspector ?? new GitBranchListInspector(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
+    this.gitLogInspector = options.gitLogInspector ?? new GitLogInspectorImpl(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
+    this.gitDiffInspector = options.gitDiffInspector ?? new GitDiffInspectorImpl(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
+    this.gitWriteInspector = options.gitWriteInspector ?? new GitWriteInspectorImpl(this.processSupervisor, options.developmentGateway?.worktrees.resolveGitMetadata);
     this.packageInspector = options.packageInspector ?? new PackageInspectorImpl();
     if (options.dockerInspector !== undefined) {
       this.dockerProcessSupervisor = undefined;
@@ -312,7 +316,15 @@ export class Broker {
   }
 
   private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
-    if (toolName === "mac_task_run" && !this.taskRunner.available) return "runtime_unavailable";
+    if (TASK_JOB_TOOLS.has(toolName) && !this.taskRunner.available) return "runtime_unavailable";
+    if (DEVELOPMENT_TOOL_NAMES.includes(toolName)) {
+      const gateway = this.options.developmentGateway;
+      if (!gateway || toolName === "mac_git_push" || toolName === "mac_codex_run" && !gateway.codingAgentReady()) return "runtime_unavailable";
+      try {
+        gateway.assertProtectedStorage(this.currentPolicy().filesystemRoots);
+        if (DEVELOPMENT_EXECUTION_TOOLS.includes(toolName)) gateway.assertRunner(this.taskRunner);
+      } catch { return "runtime_unavailable"; }
+    }
     if (requiresAccessibilityPermission(toolName) && this.options.guiPublicEnablement !== undefined &&
         this.options.guiPublicEnablement !== "production") return "runtime_unavailable";
     if (requiresDeveloperReadiness(toolName) && this.options.developerPublicEnablement !== undefined &&
@@ -344,6 +356,10 @@ export class Broker {
         try { await resource.close.call(resource); }
         catch (error) { firstError ??= error; }
       }
+      // Background Jobs retain BrokerStore authority until their terminal
+      // persistence and audit settle. Never close the store around a child.
+      await Promise.allSettled([...this.activeAsyncTasks.values()]);
+      await this.options.developmentGateway?.close();
       if (firstError !== undefined) {
         // Keep the Broker fenced against new work, but permit an explicit
         // shutdown retry after a resource reports a recoverable close failure.
@@ -789,7 +805,7 @@ export class Broker {
           timestampMs: this.now()
         });
       }
-      const tool = policy.tools.get("mac_task_run");
+      const tool = policy.tools.get(job.tool);
       if (policy.killSwitches.global || policy.killSwitches.process || tool?.implemented !== true || tool.enabled !== true ||
           job.policyVersion !== policy.version || this.options.store.isRevoked("principal", job.ownerPrincipalId) ||
           this.options.store.isRevoked("session", job.ownerSessionId) ||
@@ -814,7 +830,7 @@ export class Broker {
       }
       const authorizeStatusLookup = (input: Parameters<NonNullable<TaskRecoveryRequest["authorizeStatusLookup"]>>[0]): void => {
         const currentPolicy = this.currentPolicy();
-        const currentTool = currentPolicy.tools.get("mac_task_run");
+        const currentTool = currentPolicy.tools.get(job.tool);
         if (input.originalRequestId !== metadata.requestId || input.originalNonce !== metadata.nonce ||
             input.originalRequestDigest !== metadata.requestDigest || input.timeoutMs !== metadata.timeoutMs ||
             input.outputCapBytes !== metadata.outputCapBytes ||
@@ -1049,6 +1065,14 @@ export class Broker {
       );
       const execution = this.planExecution(request, policy, toolPolicy);
       const target = execution.target;
+      if (target.kind === "project" && this.options.developmentGateway && typeof request.arguments.project_root === "string" &&
+          request.arguments.project_root !== target.reference) {
+        const record = this.options.developmentGateway.worktrees.require(request.arguments.project_root, target.reference, request.principal.principalId);
+        execution.auditContext = { project: target.reference, worktree: record.worktree, taskId: record.taskId };
+        if (["mac_git_stage", "mac_git_commit"].includes(request.tool) && this.options.store.hasActiveWorktreeJobs(record.worktree, "job:git-preview")) {
+          throw new BrokerError("CONFLICT", "Git mutation must wait for the worktree job to settle");
+        }
+      }
       if (request.tool === "mac_ui_action" || request.tool === "mac_ui_type") {
         const elementRef = request.tool === "mac_ui_action" ? execution.uiAction?.elementRef : execution.uiType?.elementRef;
         if (!elementRef) throw new BrokerError("EXECUTION_FAILED", "UI execution plan is unavailable");
@@ -1071,6 +1095,13 @@ export class Broker {
       }
       for (const additionalTarget of execution.additionalTargets ?? []) {
         authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, additionalTarget);
+      }
+      if (execution.development?.execution) {
+        const resolved = await this.options.developmentGateway!.prepareExecution(request, execution.development, this.taskProfileRegistry, this.taskRunner);
+        this.checkRevocation(request);
+        execution.taskRun = { profile: resolved.profile, cwd: resolved.cwd, args: [], asynchronous: true,
+          idempotencyKey: request.arguments.idempotency_key as string, taskId: execution.development.taskId!,
+          maxRuntimeMs: request.arguments.max_runtime as number, resolvedProfile: resolved };
       }
       // Preserve the Broker-normalized target for any later failure. Raw tool
       // arguments are never copied into audit records.
@@ -1099,7 +1130,10 @@ export class Broker {
         resultClass: "AUTHORIZED",
         targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
         policyVersion: policy.version,
-        evidence: {},
+        evidence: { scopes: [...toolPolicy.requiredScopes], ...execution.auditContext,
+          ...(execution.development === undefined ? {} : { project: execution.development.projectRoot,
+            ...(execution.development.worktree === undefined ? {} : { worktree: execution.development.worktree }),
+            ...(execution.development.taskId === undefined ? {} : { taskId: execution.development.taskId }) }) },
         timestampMs: startedAt
       });
       authorized = true;
@@ -1124,10 +1158,10 @@ export class Broker {
         }
       }
       if (toolPolicy.mutation) {
-        if (request.tool === "mac_task_run") {
+        if (execution.taskRun !== undefined) {
           const admissionAt = this.now();
           const jobInput = {
-            jobId: `job:task-${sha256(canonicalJson({ principalId: request.principal.principalId, requestId: request.requestId })).slice(0, 48)}`,
+            jobId: `job:task-${sha256(canonicalJson(execution.taskRun.idempotencyKey === undefined ? { principalId: request.principal.principalId, requestId: request.requestId } : { principalId: request.principal.principalId, idempotencyKey: execution.taskRun.idempotencyKey })).slice(0, 48)}`,
             edgeId: request.principal.edgeId,
             edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
             ownerPrincipalId: request.principal.principalId,
@@ -1136,7 +1170,9 @@ export class Broker {
             targetRef: `${target.kind}:${target.reference}`,
             policyVersion: request.policyVersion,
             payloadDigest: sha256(canonicalJson(request.arguments)),
-            idempotencyKey: `task:${request.requestId}`,
+            idempotencyKey: execution.taskRun.idempotencyKey === undefined
+              ? `task:${request.requestId}`
+              : `task-key:${sha256(execution.taskRun.idempotencyKey)}`,
             createdAtMs: admissionAt
           } as const;
           const approvalBinding: ApprovalConsumptionBinding = {
@@ -1148,6 +1184,11 @@ export class Broker {
             unattended: false
           };
           let admitted: ReturnType<BrokerStore["admitApprovedJobAfterDecision"]>;
+          if (execution.development) this.options.developmentGateway!.worktrees.require(execution.taskRun.cwd,
+            execution.development.projectRoot, request.principal.principalId, execution.taskRun.taskId);
+          if (execution.development && this.options.store.hasActiveWorktreeJobs(execution.taskRun.cwd, jobInput.jobId)) {
+            throw new BrokerError("CONFLICT", "An active or unresolved job already owns this worktree");
+          }
           try {
             admitted = this.options.store.admitApprovedJobAfterDecision({
               intent: {
@@ -1159,7 +1200,14 @@ export class Broker {
                 resultClass: "INTENT_RECORDED",
                 targetRef: approvalBinding.targetRef,
                 policyVersion: policy.version,
-                evidence: { argumentDigest: sha256(canonicalJson(request.arguments)) },
+                evidence: {
+                  argumentDigest: sha256(canonicalJson(request.arguments)),
+                  ...(execution.taskRun.taskId === undefined ? {} : { taskId: execution.taskRun.taskId }),
+                  scopes: [...toolPolicy.requiredScopes],
+                  project: execution.development?.projectRoot ?? execution.taskRun.cwd,
+                  worktree: execution.taskRun.cwd,
+                  jobId: jobInput.jobId
+                },
                 timestampMs: admissionAt
               },
               approval: approvalBinding,
@@ -1170,7 +1218,8 @@ export class Broker {
             throw error;
           }
           execution.taskJob = admitted.job;
-          execution.taskJobNew = true;
+          execution.taskJobNew = !admitted.reused;
+          if (admitted.reused) return this.taskJobReceipt(request, execution, startedAt, true);
         } else {
           const mutationPayloadDigest = execution.privileged === undefined
             ? sha256(canonicalJson(request.arguments))
@@ -1196,6 +1245,11 @@ export class Broker {
               policyVersion: policy.version,
               evidence: {
                 argumentDigest: sha256(canonicalJson(request.arguments)),
+                ...execution.auditContext,
+                scopes: [...toolPolicy.requiredScopes],
+                ...(execution.development === undefined ? {} : { project: execution.development.projectRoot,
+                  ...(execution.development.worktree === undefined ? {} : { worktree: execution.development.worktree }),
+                  ...(execution.development.taskId === undefined ? {} : { taskId: execution.development.taskId }) }),
                 ...(execution.privileged === undefined ? {} : { privilegedPayloadDigest: mutationPayloadDigest }),
                 ...(request.tool === "mac_write_file_atomic" ? { idempotencyKey: execution.write!.idempotencyKey } : {})
               },
@@ -1316,7 +1370,7 @@ export class Broker {
               ownerPrincipalId: request.principal.principalId,
               ownerSessionId: request.principal.sessionId,
               tool: request.tool,
-              targetRef: `${target.kind}:${target.reference}`,
+              targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
               policyVersion: request.policyVersion,
               payloadDigest: sha256(canonicalJson(request.arguments)),
               idempotencyKey: `git:${request.tool}:${request.requestId}`,
@@ -1471,6 +1525,42 @@ export class Broker {
         else if (pendingJob.kind === "service_control") execution.serviceControlJob = started;
         else execution.privilegedJob = started;
       }
+      if (execution.taskRun?.asynchronous === true) {
+        // No await separates authority confirmation, continuation tracking,
+        // and admission readback. Shutdown therefore sees every admitted Job.
+        this.ensureActiveAuthority(request, execution.target, execution.additionalTargets ?? []);
+        const receipt = this.taskJobReceipt(request, execution, startedAt, false);
+        const continuation = Promise.resolve().then(async () => {
+          try {
+            const dispatched = await this.dispatchTask(request!, execution, toolPolicy.timeoutMs, toolPolicy.outputCapBytes);
+            this.ensureActiveAuthority(request!, execution.target, execution.additionalTargets ?? []);
+            this.options.store.completeRequest({
+              requestId: request!.requestId,
+              principalId: request!.principal.principalId,
+              tool: request!.tool,
+              eventType: "completion",
+              decision: "allow",
+              resultClass: "SUCCEEDED",
+              targetRef: execution.auditTarget ?? `${execution.target.kind}:${execution.target.reference}`,
+              policyVersion: policy.version,
+              evidence: {
+                outputClass: "bounded_structured",
+                scopes: [...toolPolicy.requiredScopes],
+                ...dispatched.auditEvidence,
+                ...(execution.development ? { project: execution.development.projectRoot, worktree: execution.development.worktree!, scope: [...toolPolicy.requiredScopes] } : {}),
+                ...(execution.taskRun?.taskId === undefined ? {} : { taskId: execution.taskRun.taskId }),
+                durationMs: Math.max(0, this.now() - startedAt)
+              },
+              timestampMs: this.now()
+            });
+          } catch (error) {
+            const brokerError = error instanceof BrokerError ? error : new BrokerError("UNKNOWN_OUTCOME", "Managed task completion could not be persisted", true);
+            this.auditFailure(request!, brokerError, this.now(), true, plannedAuditTarget);
+          }
+        }).finally(() => { this.activeAsyncTasks.delete(execution.taskJob!.jobId); });
+        this.activeAsyncTasks.set(execution.taskJob!.jobId, continuation);
+        return receipt;
+      }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       // Re-check every normalized target immediately before publishing a
       // success. Multi-root inspections keep additional targets in the
@@ -1499,7 +1589,8 @@ export class Broker {
         resultClass: "SUCCEEDED",
         targetRef: dispatched.auditTarget ?? `${target.kind}:${target.reference}`,
         policyVersion: policy.version,
-        evidence: { outputClass: "bounded_structured", ...dispatched.auditEvidence },
+        evidence: { outputClass: "bounded_structured", scopes: [...toolPolicy.requiredScopes], durationMs: Math.max(0, this.now() - startedAt), ...execution.auditContext, ...dispatched.auditEvidence,
+          ...(execution.development ? { project: execution.development.projectRoot, worktree: execution.development.worktree ?? null, taskId: execution.development.taskId ?? null, scope: [...toolPolicy.requiredScopes], durationMs: Math.max(0, this.now() - startedAt) } : {}) },
         timestampMs: this.now()
       });
       return result;
@@ -1698,6 +1789,7 @@ export class Broker {
     execution: ExecutionPlan,
     toolPolicy: ToolPolicy
   ): Promise<DispatchResult> {
+    if (execution.development && !execution.development.execution) return this.dispatchDevelopment(request, execution, toolPolicy);
     switch (request.tool) {
       case "mac_health": {
         assertExactArguments(request.arguments, ["include_components"]);
@@ -2408,7 +2500,7 @@ export class Broker {
         };
       }
       case "mac_policy_explain": {
-        assertExactArguments(request.arguments, ["proposed_tool", "target", "argument_digest"]);
+        assertExactArguments(request.arguments, ["proposed_tool", "target", "argument_digest", "proposed_arguments"]);
         const candidate = request.arguments.proposed_tool;
         if (typeof candidate !== "string" || !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(candidate)) {
           throw new BrokerError("PRECONDITION_FAILED", "proposed_tool is malformed");
@@ -2422,6 +2514,19 @@ export class Broker {
           const tool = authorizeTool(this.options.store, policy, candidate, request.contractVersion, request.principal.scopes);
           let authorizationTarget = target;
           let reportedTarget = target;
+          if (request.arguments.proposed_arguments !== undefined) {
+            if (!isPlainDataRecord(request.arguments.proposed_arguments) || Buffer.byteLength(canonicalJson(request.arguments.proposed_arguments)) > 32_768) {
+              throw new BrokerError("PRECONDITION_FAILED", "Proposed arguments are malformed or oversized");
+            }
+            const proposed = { ...request, tool: candidate, arguments: request.arguments.proposed_arguments };
+            const planned = this.planExecution(proposed, policy, tool);
+            if (planned.target.kind !== target.kind || planned.target.reference !== target.reference) {
+              throw new BrokerError("PRECONDITION_FAILED", "Proposed arguments and target differ");
+            }
+            authorizationTarget = planned.target;
+            reportedTarget = planned.target;
+          }
+
           if (tool.targetType === "path" || tool.targetType === "filesystem_roots") {
             if (target.kind !== "path") throw new BrokerError("PRECONDITION_FAILED", "Filesystem policy query requires a path target");
             const capability = candidate === "mac_read_file" || candidate === "mac_list_directory" || candidate === "mac_directory_tree" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
@@ -2439,6 +2544,9 @@ export class Broker {
             validateGitStatusRequest(target.reference, true);
           }
           authorizeTarget(policy, request.principal.principalId, tool.requiredScopes, authorizationTarget);
+          if (DEVELOPMENT_TOOL_NAMES.includes(candidate) && this.runtimeCapabilityDisabledReason(candidate) !== undefined) {
+            throw new BrokerError("POLICY_DENIED", "DEVELOPMENT_RUNTIME_UNAVAILABLE");
+          }
           return {
             data: {
               decision: "allow", normalized_target: reportedTarget, required_scopes: [...tool.requiredScopes],
@@ -2454,7 +2562,10 @@ export class Broker {
             data: {
               decision: "deny", normalized_target: target, required_scopes: requiredScopes,
               missing_scopes: requiredScopes.filter((scope) => !request.principal.scopes.includes(scope)),
-              reason_codes: [error.errorClass], policy_version: policy.version
+              reason_codes: DEVELOPMENT_TOOL_NAMES.includes(candidate) ? [error.errorClass,
+                ...(error.message.includes("protected secret zone") ? ["SECRET_PATH_ACCESS"] :
+                  error.message.includes("escapes the worktree") ? ["WORKTREE_ESCAPE_DENIED"] :
+                  /^[A-Z_]+(?::|$)/u.test(error.message) ? [error.message.split(":")[0]!] : [])] : [error.errorClass], policy_version: policy.version
             },
             verification: { required: false, status: "not_required", strategy: "policy_decision_result_validation" }
           };
@@ -2855,7 +2966,10 @@ export class Broker {
       case "mac_apply_patch": {
         return this.dispatchPatch(request, execution, toolPolicy.timeoutMs);
       }
-      case "mac_task_run": {
+      case "mac_task_run":
+      case "mac_test_run":
+      case "mac_build_run":
+      case "mac_codex_run": {
         return this.dispatchTask(request, execution, toolPolicy.timeoutMs, toolPolicy.outputCapBytes);
       }
       case "mac_service_control": {
@@ -3556,6 +3670,7 @@ export class Broker {
         auditTarget: `project:${stage.projectRoot}`,
         auditEvidence: {
           stagedPathCount: stage.stagedPaths.length,
+          changedPaths: [...stage.stagedPaths],
           skippedPathCount: stage.skippedPaths.length,
           indexChanged: stage.indexChanged,
           stagedDiffSha256: stage.stagedDiffSha256,
@@ -3703,6 +3818,110 @@ export class Broker {
     }
   }
 
+  private async dispatchDevelopment(request: BrokerRequest, execution: ExecutionPlan, toolPolicy: ToolPolicy): Promise<DispatchResult> {
+    const gateway = this.options.developmentGateway!;
+    const plan = execution.development!;
+    const args = request.arguments;
+    const authority = () => this.ensureActiveAuthority(request, execution.target);
+    const control = this.executionControl(request, execution.target, toolPolicy.timeoutMs);
+    const read = (data: unknown, evidence: Record<string, unknown> = {}): DispatchResult => ({ data,
+      verification: { required: true, status: "verified", strategy: "bounded_result_validation" }, auditEvidence: evidence });
+    if (request.tool === "mac_git_worktree_create" || request.tool === "mac_git_branch_create") {
+      const result = await gateway.worktrees.create({ projectRoot: plan.projectRoot, branchName: args.branch_name as string,
+        baseRef: args.base_ref as string, taskId: args.task_id as string, idempotencyKey: args.idempotency_key as string,
+        owner: request.principal.principalId }, control, authority);
+      return { data: worktreeResult(result.record, result.reused),
+        verification: { required: true, status: "verified", strategy: "changed_paths_and_hash_readback" },
+        auditEvidence: { project: plan.projectRoot, worktree: result.record.worktree, taskId: result.record.taskId,
+          branch: result.record.branchName, reused: result.reused, changedPaths: [result.record.worktree] } };
+    }
+    if (request.tool === "mac_git_worktree_list") {
+      return read({ project_root: plan.projectRoot, worktrees: gateway.worktrees.list(plan.projectRoot, request.principal.principalId)
+        .map((record) => ({ worktree: record.worktree, branch_name: record.branchName, base_ref: record.baseRef, task_id: record.taskId })) });
+    }
+    if (request.tool === "mac_git_worktree_remove") {
+      await gateway.worktrees.remove(plan.projectRoot, plan.worktree!, request.principal.principalId, plan.taskId!, control,
+        authority, () => this.options.store.hasActiveProjectJobs(plan.projectRoot) || this.options.store.hasActiveProjectJobs(plan.worktree!), args.idempotency_key as string);
+      return { data: { project_root: plan.projectRoot, worktree: plan.worktree!, removed: true },
+        verification: { required: true, status: "verified", strategy: "changed_paths_and_hash_readback" },
+        auditEvidence: { project: plan.projectRoot, worktree: plan.worktree!, taskId: plan.taskId!, changedPaths: [plan.worktree!] } };
+    }
+    if (request.tool === "mac_codex_preflight") {
+      const status = await this.gitInspector.status(plan.worktree ?? plan.projectRoot, true, control);
+      const data = gateway.preflightData(plan, status.dirty, this.taskRunner);
+      try {
+        const agentPolicy = authorizeTool(this.options.store, this.currentPolicy(), "mac_codex_run", request.contractVersion, request.principal.scopes);
+        authorizeTarget(this.currentPolicy(), request.principal.principalId, agentPolicy.requiredScopes, execution.target);
+      } catch { data.reason_codes.push("AGENT_EXECUTION_AUTHORITY_UNAVAILABLE"); data.permission = "deny"; data.environment_ready = false; }
+      return read(data);
+    }
+    if (request.tool === "mac_execution_audit") {
+      const rows = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: (args.limit ?? 50) as number });
+      return read({ project_root: plan.projectRoot, events: rows.map((row) => ({ timestamp: new Date(row.timestamp_ms as number).toISOString(),
+        request_id: row.request_id, tool: row.tool, actor: request.principal.principalId, decision: row.decision, result: row.result_class,
+        scope: isPlainDataRecord(row.evidence) && Array.isArray(row.evidence.scopes) ? row.evidence.scopes : [],
+        target: row.target_ref,
+        ...(isPlainDataRecord(row.evidence) ? {
+          ...(typeof row.evidence.taskId === "string" ? { task_id: row.evidence.taskId } : {}),
+          ...(typeof row.evidence.worktree === "string" ? { worktree: row.evidence.worktree } : {}),
+          ...(typeof row.evidence.durationMs === "number" ? { duration_ms: row.evidence.durationMs } : {}),
+          ...(Array.isArray(row.evidence.changedPaths) ? { changed_paths: row.evidence.changedPaths.slice(0, 256) } : {}),
+          ...(typeof row.evidence.commitId === "string" ? { commit_hash: row.evidence.commitId } : {})
+        } : {}) })),
+        truncated: rows.length >= ((args.limit ?? 50) as number) });
+    }
+    if (request.tool === "mac_pr_prepare") {
+      const record = gateway.worktrees.require(plan.worktree!, plan.projectRoot, request.principal.principalId);
+      const requestedBase = (args.base_ref ?? record.baseCommit) as string;
+      const baseMetadata = await this.gitLogInspector.log(plan.worktree!, 1, requestedBase, control);
+      const base = baseMetadata.commits[0]?.id;
+      if (!base) throw new BrokerError("PRECONDITION_FAILED", "Review base did not resolve to a commit");
+      const diff = await this.gitDiffInspector.diff(plan.worktree!, [], false, base, 32_768, control);
+      const status = await this.gitInspector.status(plan.worktree!, true, control);
+      const log = await this.gitLogInspector.log(plan.worktree!, 50, undefined, control);
+      // Bounded ancestry metadata: stop at base when present; never call a publishing CLI.
+      const commits = log.commits.filter((commit, index, all) => {
+        const baseIndex = all.findIndex((entry) => entry.id === base);
+        return baseIndex >= 0 ? index < baseIndex : commit.id !== base;
+      }).map(({ id, subject }) => ({ id, subject }));
+      const evidence = this.options.store.executionAudit(request.principal.principalId, { project: plan.projectRoot, limit: 100 })
+        .filter((row) => ["mac_test_run", "mac_build_run", "mac_task_run"].includes(row.tool as string) &&
+          isPlainDataRecord(row.evidence) && row.evidence.worktree === plan.worktree && row.evidence.taskId === record.taskId)
+        .map((row) => `${row.tool}: ${row.result_class}`).slice(0, 32);
+      const changed = [...new Set([...diff.changedPaths, ...status.untrackedPaths])].slice(0, 256);
+      const title = `Development task ${record.taskId}`;
+      return read({ project_root: plan.projectRoot, worktree: plan.worktree!, changed_files: changed, commits, title,
+        description: `${title}\n\nChanged files: ${changed.length}\nLocal commits: ${commits.length}\nValidation: ${evidence.length ? evidence.join(", ") : "No verified task evidence recorded"}`, test_evidence: evidence });
+    }
+    throw new BrokerError("UNSUPPORTED_CAPABILITY", "Development operation is unavailable");
+  }
+
+  private taskJobReceipt(request: BrokerRequest, execution: ExecutionPlan, startedAt: number, reused: boolean): BrokerResult {
+    if (!execution.taskJob || !execution.taskRun) throw new BrokerError("EXECUTION_FAILED", "Task admission readback is unavailable");
+    return {
+      ok: true,
+      request_id: request.requestId,
+      tool: request.tool,
+      result_class: "SUCCEEDED",
+      data: execution.development ? { job_id: execution.taskJob.jobId, state: execution.taskJob.state,
+        task_id: execution.taskRun.taskId!, worktree: execution.taskRun.cwd,
+        ...(request.tool === "mac_codex_run" ? {} : { profile: execution.taskRun.profile }) } : {
+        profile: execution.taskRun.profile,
+        cwd: execution.taskRun.cwd,
+        state: execution.taskJob.state,
+        job_id: execution.taskJob.jobId,
+        accepted: true,
+        reused,
+        ...(execution.taskRun.taskId === undefined ? {} : { task_id: execution.taskRun.taskId })
+      },
+      warnings: [],
+      truncated: false,
+      verification: execution.development ? { required: true, status: "accepted", strategy: "exit_status_and_declared_task_verification" } :
+        { required: true, status: "accepted", strategy: "exit_status_and_declared_task_verification" },
+      duration_ms: Math.max(0, this.now() - startedAt)
+    };
+  }
+
   private async dispatchTask(
     request: BrokerRequest,
     execution: ExecutionPlan,
@@ -3720,10 +3939,11 @@ export class Broker {
     if (job.state !== "running") throw new BrokerError("EXECUTION_FAILED", "Task job is not running");
     let resolved: ResolvedTaskProfile;
     try {
-      resolved = await this.taskProfileRegistry.resolve({
+      resolved = execution.taskRun.resolvedProfile ?? await this.taskProfileRegistry.resolve({
         profile: execution.taskRun.profile,
         cwd: execution.taskRun.cwd,
-        args: execution.taskRun.args
+        args: execution.taskRun.args,
+        ...(execution.taskRun.maxRuntimeMs === undefined ? {} : { maxRuntimeMs: execution.taskRun.maxRuntimeMs })
       });
     } catch (error) {
       const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Task profile resolution failed");
@@ -3821,7 +4041,7 @@ export class Broker {
       const taskControl = this.executionControl(
         request,
         execution.target,
-        timeoutMs,
+        execution.taskRun.maxRuntimeMs === undefined ? timeoutMs : Math.min(timeoutMs, resolved.process.timeoutMs),
         job.jobId,
         [],
         execution.jobLease,
@@ -3915,6 +4135,7 @@ export class Broker {
   }
 
   private planExecution(request: BrokerRequest, policy: BrokerPolicy, toolPolicy: ToolPolicy): ExecutionPlan {
+    this.options.developmentGateway?.assertProtectedStorage(policy.filesystemRoots);
     if (requiresAccessibilityPermission(request.tool) && this.runtimeCapabilityDisabledReason(request.tool) !== undefined) {
       throw new BrokerError("POLICY_DENIED", "Accessibility-dependent GUI capability is not enabled");
     }
@@ -3922,6 +4143,13 @@ export class Broker {
       throw new BrokerError("POLICY_DENIED", "Developer mutation capability is not enabled");
     }
     validateSemanticResourceBudget(request.tool, request.arguments);
+    if (DEVELOPMENT_TOOL_NAMES.includes(request.tool)) {
+      if (!this.options.developmentGateway) throw new BrokerError("POLICY_DENIED", "DEVELOPMENT_GATEWAY_UNCONFIGURED");
+      const development = this.options.developmentGateway.plan(request);
+      if (development.execution) this.options.developmentGateway.assertRunner(this.taskRunner);
+      return { target: { kind: "project", reference: development.projectRoot },
+        auditTarget: `project:${development.projectRoot}`, development };
+    }
     if (request.tool === "mac_job_status" || request.tool === "mac_job_cancel") {
       assertExactArguments(request.arguments, request.tool === "mac_job_status" ? ["job_id", "tail_bytes"] : ["job_id", "reason"]);
       validateJobArguments(request.tool, request.arguments);
@@ -3935,7 +4163,7 @@ export class Broker {
       };
     }
     if (request.tool === "mac_task_run") {
-      assertExactArguments(request.arguments, ["profile", "cwd", "args", "async"]);
+      assertExactArguments(request.arguments, ["profile", "cwd", "args", "async", "idempotency_key", "task_id", "max_runtime"]);
       const parsed = validateTaskRunArguments(request.arguments);
       if (!this.taskRunner.available) {
         throw new BrokerError("POLICY_DENIED", "Task isolation boundary is not enabled");
@@ -3950,7 +4178,11 @@ export class Broker {
         taskRun: {
           profile: parsed.profile,
           cwd: parsed.cwd,
-          args: [...(parsed.args ?? [])]
+          args: [...(parsed.args ?? [])],
+          asynchronous: parsed.asynchronous ?? false,
+          ...(parsed.idempotencyKey === undefined ? {} : { idempotencyKey: parsed.idempotencyKey }),
+          ...(parsed.taskId === undefined ? {} : { taskId: parsed.taskId }),
+          ...(parsed.maxRuntimeMs === undefined ? {} : { maxRuntimeMs: parsed.maxRuntimeMs })
         }
       };
     }
@@ -4348,7 +4580,7 @@ export class Broker {
       validateGitStatusRequest(projectRoot, includeUntracked);
       const normalizedProjectRoot = projectRoot;
       return {
-        target: { kind: "project", reference: normalizedProjectRoot },
+        target: { kind: "project", reference: this.options.developmentGateway?.worktrees.originalProject(projectRoot, request.principal.principalId) ?? normalizedProjectRoot },
         auditTarget: `project:${normalizedProjectRoot}`,
         gitStatus: { projectRoot: normalizedProjectRoot, includeUntracked }
       };
@@ -4360,7 +4592,7 @@ export class Broker {
       if (typeof projectRoot !== "string") throw new BrokerError("PRECONDITION_FAILED", "project_root must be a string");
       validateGitBranchRequest(projectRoot, includeRemote);
       return {
-        target: { kind: "project", reference: projectRoot },
+        target: { kind: "project", reference: this.options.developmentGateway?.worktrees.originalProject(projectRoot, request.principal.principalId) ?? projectRoot },
         auditTarget: `project:${projectRoot}`,
         gitBranches: { projectRoot, includeRemote }
       };
@@ -4373,7 +4605,7 @@ export class Broker {
       if (typeof projectRoot !== "string") throw new BrokerError("PRECONDITION_FAILED", "project_root must be a string");
       validateGitLogRequest(projectRoot, limit, ref);
       return {
-        target: { kind: "project", reference: projectRoot },
+        target: { kind: "project", reference: this.options.developmentGateway?.worktrees.originalProject(projectRoot, request.principal.principalId) ?? projectRoot },
         auditTarget: `project:${projectRoot}`,
         gitLog: { projectRoot, limit, ...(ref !== undefined ? { ref } : {}) }
       };
@@ -4390,7 +4622,7 @@ export class Broker {
       }
       validateGitDiffRequest(projectRoot, paths as readonly string[], staged, base, maxBytes);
       return {
-        target: { kind: "project", reference: projectRoot },
+        target: { kind: "project", reference: this.options.developmentGateway?.worktrees.originalProject(projectRoot, request.principal.principalId) ?? projectRoot },
         auditTarget: `project:${projectRoot}`,
         gitDiff: { projectRoot, paths: [...paths] as string[], staged, ...(base !== undefined ? { base } : {}), maxBytes }
       };
@@ -4404,7 +4636,7 @@ export class Broker {
       }
       validateGitStageRequest(projectRoot, paths as readonly string[]);
       return {
-        target: { kind: "project", reference: projectRoot },
+        target: { kind: "project", reference: this.options.developmentGateway?.worktrees.originalProject(projectRoot, request.principal.principalId) ?? projectRoot },
         auditTarget: `project:${projectRoot}`,
         gitStage: { projectRoot, paths: [...paths] as string[] }
       };
@@ -4419,7 +4651,7 @@ export class Broker {
       }
       validateGitCommitRequest(projectRoot, message, expectedStagedDiffSha256);
       return {
-        target: { kind: "project", reference: projectRoot },
+        target: { kind: "project", reference: this.options.developmentGateway?.worktrees.originalProject(projectRoot, request.principal.principalId) ?? projectRoot },
         auditTarget: `project:${projectRoot}`,
         gitCommit: { projectRoot, message, ...(expectedStagedDiffSha256 !== undefined ? { expectedStagedDiffSha256 } : {}) }
       };
@@ -4829,7 +5061,7 @@ export class Broker {
         resultClass: error.errorClass,
         targetRef: targetRef ?? "unresolved",
         policyVersion: request.policyVersion,
-        evidence: {},
+        evidence: { scopes: [...(this.currentPolicy().tools.get(request.tool)?.requiredScopes ?? [])] },
         timestampMs
       });
     } catch {
@@ -4873,6 +5105,8 @@ export class Broker {
 }
 
 interface ExecutionPlan {
+  auditContext?: { project: string; worktree: string; taskId: string };
+  development?: DevelopmentPlan;
   target: NormalizedTarget;
   additionalTargets?: readonly NormalizedTarget[];
   auditTarget?: string;
@@ -5007,6 +5241,11 @@ interface ExecutionPlan {
     profile: string;
     cwd: string;
     args: readonly string[];
+    asynchronous?: boolean;
+    idempotencyKey?: string;
+    taskId?: string;
+    maxRuntimeMs?: number;
+    resolvedProfile?: ResolvedTaskProfile;
   };
   serviceControl?: {
     request: UserServiceControlRequest;

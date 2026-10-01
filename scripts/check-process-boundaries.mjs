@@ -23,7 +23,9 @@ const ALLOWED_SCRIPT_FILES = new Set([
   "scripts/probe-privileged-helper-app.mjs",
   "scripts/probe-privileged-helper-sea.mjs",
   "scripts/record-host-readiness.mjs",
-  "scripts/privileged-helper-handoff.test.mjs"
+  "scripts/privileged-helper-handoff.test.mjs",
+  "scripts/gui-hit-testing.test.mjs",
+  "scripts/gui-transport.test.mjs"
 ]);
 const CHILD_PROCESS_IMPORT = /from\s+["']node:child_process["']/u;
 const CHILD_PROCESS_CALL = /\b(?:spawn|spawnSync|execFile|execFileSync|fork)\s*\(/u;
@@ -55,6 +57,8 @@ const SCRIPT_BOUNDARY_REQUIREMENTS = new Map([
   ["scripts/probe-privileged-helper-app.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bshell\s*:\s*false\b/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
   ["scripts/probe-privileged-helper-sea.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bshell\s*:\s*false\b/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
   ["scripts/record-host-readiness.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/gui-hit-testing.test.mjs", [/\bcwd\s*(?::|,)/u, /\benv\s*:/u, /\bshell\s*:\s*false\b/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]],
+  ["scripts/gui-transport.test.mjs", [/\bcwd\s*(?::|,)/u, /\benv\s*:/u, /\bshell\s*:\s*false\b/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u, /stderrBytes/u, /\.kill\(/u]],
   ["scripts/privileged-helper-handoff.test.mjs", [/\bcwd\s*:/u, /\benv\s*:/u, /\bshell\s*:\s*false\b/u, /\bmaxBuffer\s*:/u, /\btimeout\s*:/u]]
 ]);
 

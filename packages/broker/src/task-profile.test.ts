@@ -283,3 +283,38 @@ test("task profile resolution snapshots caller arguments before asynchronous tar
     assert.deepEqual(resolved.process.args, ["hello"]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("task requests admit async execution and strict caller idempotency metadata", () => {
+  assert.deepEqual(validateTaskRunArguments({
+    profile: "tests.echo", cwd: "/tmp/task", args: ["safe"], async: true,
+    idempotency_key: "request-key", task_id: "task-1", max_runtime: 500
+  }), {
+    profile: "tests.echo", cwd: "/tmp/task", args: ["safe"], asynchronous: true,
+    idempotencyKey: "request-key", taskId: "task-1", maxRuntimeMs: 500
+  });
+  assert.equal(validateTaskRunArguments({ profile: "tests.echo", cwd: "/tmp/task" }).asynchronous, false);
+  for (const metadata of [
+    { max_runtime: 0 }, { max_runtime: 600_001 }, { max_runtime: 1.5 },
+    { idempotency_key: "../key" }, { idempotency_key: "a".repeat(129) }, { task_id: "" }, { task_id: "with space" }
+  ]) {
+    assert.throws(() => validateTaskRunArguments({ profile: "tests.echo", cwd: "/tmp/task", ...metadata }), /malformed/u);
+  }
+});
+
+test("caller runtime can narrow but cannot extend the registered task budget", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-task-profile-budget-")));
+  try {
+    const registry = new TaskProfileRegistry([profile(root)]);
+    const resolved = await registry.resolve({ profile: "tests.echo", cwd: root, maxRuntimeMs: 500 });
+    assert.equal(resolved.process.timeoutMs, 500);
+    await assert.rejects(registry.resolve({ profile: "tests.echo", cwd: root, maxRuntimeMs: 1_001 }), /exceeds the registered profile budget/u);
+    await assert.rejects(registry.resolve({ profile: "tests.echo", cwd: root, maxRuntimeMs: 0 }), /malformed/u);
+    await assert.rejects(registry.resolve({ profile: "tests.echo", cwd: root, maxRuntimeMs: 600_001 }), /malformed/u);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("registered task profiles reject privileged executables", () => {
+  for (const executable of ["/usr/bin/sudo", "/bin/su", "/usr/bin/su", "/usr/local/bin/doas"]) {
+    assert.throws(() => new TaskProfileRegistry([profile("/tmp", { executable })]), /privilege escalation/u);
+  }
+});

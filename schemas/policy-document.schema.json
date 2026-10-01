@@ -35,7 +35,7 @@
           "principal_id": { "$ref": "#/$defs/id" },
           "issuer": { "$ref": "#/$defs/id" },
           "scopes": {
-            "type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true,
+            "type": "array", "minItems": 1, "maxItems": 33, "uniqueItems": true,
             "items": { "$ref": "#/$defs/scope" }
           },
           "enabled": { "type": "boolean" }

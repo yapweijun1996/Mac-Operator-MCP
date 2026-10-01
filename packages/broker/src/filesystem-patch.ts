@@ -8,7 +8,7 @@ import {
   type FilesystemPathPlan,
   type SafePathMetadata
 } from "./filesystem-inspector.js";
-import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, assertSourceWritePathAllowed } from "./secret-policy.js";
 
 const MAX_PATCH_BYTES = 524_288;
 const MAX_PATCH_FILES = 64;
@@ -95,7 +95,7 @@ export function applyFilesystemPatch(
     if (next.byteLength > MAX_PATCH_FILE_BYTES) {
       throw new BrokerError("OUTPUT_LIMIT", "Patched file exceeds the supported size");
     }
-    assertContentPathAllowed(path);
+    assertSourceWritePathAllowed(path);
     assertContentDoesNotContainSecrets(next);
     totalBytes += next.byteLength;
     if (totalBytes > MAX_PATCH_TOTAL_BYTES) {

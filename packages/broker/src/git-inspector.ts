@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync, readdirSync, existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { BrokerError } from "@mac-operator/contracts";
 import {
@@ -25,7 +25,7 @@ const MAX_COMMIT_MESSAGE_BYTES = 4 * 1024;
 const MAX_WRITE_PROCESS_OUTPUT_BYTES = 1_200_000;
 const MAX_WRITE_TIMEOUT_MS = 30_000;
 const PROJECT_ROOT_PATTERN = /^\/[^\u0000\n]*$/u;
-const SAFE_GIT_ENVIRONMENT = {
+export const SAFE_GIT_ENVIRONMENT = {
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
@@ -46,6 +46,14 @@ export interface SafeGitStatus {
   warnings: readonly string[];
   truncated: boolean;
 }
+
+export interface ManagedGitMetadata {
+  gitDirectory: string;
+  commonDirectory: string;
+  identity: string;
+}
+
+export type GitMetadataResolver = (projectRoot: string) => ManagedGitMetadata;
 
 export interface GitExecutionControl {
   timeoutMs: number;
@@ -151,17 +159,17 @@ export class GitStatusInspector implements GitInspector {
   constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
     maxConcurrent: 2,
     allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
-  })) {
+  }), private readonly managedMetadata?: GitMetadataResolver) {
     this.supervisor = supervisor;
   }
 
   async status(projectRoot: string, includeUntracked: boolean, control: GitExecutionControl): Promise<SafeGitStatus> {
     validateGitStatusRequest(projectRoot, includeUntracked);
-    const identity = canonicalProjectRoot(projectRoot);
+    const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const args = [
       "--no-pager",
       "--no-optional-locks",
-      "--git-dir=.git",
+      `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
       "--work-tree=.",
       "-c", "core.fsmonitor=false",
       "-c", "core.hooksPath=/dev/null",
@@ -180,7 +188,7 @@ export class GitStatusInspector implements GitInspector {
       outputCapBytes: MAX_OUTPUT_BYTES,
       shouldCancel: control.shouldCancel
     });
-    assertProjectIdentity(identity.path, identity.identity);
+    assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     return parseGitStatusOutput(identity.path, result);
   }
 }
@@ -191,20 +199,20 @@ export class GitBranchListInspector implements GitBranchInspector {
   constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
     maxConcurrent: 2,
     allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
-  })) {
+  }), private readonly managedMetadata?: GitMetadataResolver) {
     this.supervisor = supervisor;
   }
 
   async branches(projectRoot: string, includeRemote: boolean, control: GitExecutionControl): Promise<SafeGitBranches> {
     validateGitBranchRequest(projectRoot, includeRemote);
-    const identity = canonicalProjectRoot(projectRoot);
+    const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const refs = includeRemote ? ["refs/heads", "refs/remotes"] : ["refs/heads"];
     const result = await this.supervisor.run({
       executable: GIT_EXECUTABLE,
       args: [
         "--no-pager",
         "--no-optional-locks",
-        "--git-dir=.git",
+        `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
         "--work-tree=.",
         "-c", "core.fsmonitor=false",
         "-c", "core.hooksPath=/dev/null",
@@ -219,7 +227,7 @@ export class GitBranchListInspector implements GitBranchInspector {
       outputCapBytes: MAX_OUTPUT_BYTES,
       shouldCancel: control.shouldCancel
     });
-    assertProjectIdentity(identity.path, identity.identity);
+    assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     return parseGitBranchResult(identity.path, result);
   }
 }
@@ -230,17 +238,17 @@ export class GitLogInspectorImpl implements GitLogInspector {
   constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
     maxConcurrent: 2,
     allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
-  })) {
+  }), private readonly managedMetadata?: GitMetadataResolver) {
     this.supervisor = supervisor;
   }
 
   async log(projectRoot: string, limit: number, ref: string | undefined, control: GitExecutionControl): Promise<SafeGitLog> {
     validateGitLogRequest(projectRoot, limit, ref);
-    const identity = canonicalProjectRoot(projectRoot);
+    const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const args = [
       "--no-pager",
       "--no-optional-locks",
-      "--git-dir=.git",
+      `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
       "--work-tree=.",
       "-c", "core.fsmonitor=false",
       "-c", "core.hooksPath=/dev/null",
@@ -263,7 +271,7 @@ export class GitLogInspectorImpl implements GitLogInspector {
       outputCapBytes: MAX_OUTPUT_BYTES,
       shouldCancel: control.shouldCancel
     });
-    assertProjectIdentity(identity.path, identity.identity);
+    assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     return parseGitLogResult(identity.path, result);
   }
 }
@@ -274,7 +282,7 @@ export class GitDiffInspectorImpl implements GitDiffInspector {
   constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
     maxConcurrent: 2,
     allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
-  })) {
+  }), private readonly managedMetadata?: GitMetadataResolver) {
     this.supervisor = supervisor;
   }
 
@@ -287,12 +295,12 @@ export class GitDiffInspectorImpl implements GitDiffInspector {
     control: GitExecutionControl
   ): Promise<SafeGitDiff> {
     validateGitDiffRequest(projectRoot, paths, staged, base, maxBytes);
-    const identity = canonicalProjectRoot(projectRoot);
+    const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const args = [
       "--no-pager",
       "--no-optional-locks",
       "--literal-pathspecs",
-      "--git-dir=.git",
+      `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
       "--work-tree=.",
       "-c", "core.fsmonitor=false",
       "-c", "core.hooksPath=/dev/null",
@@ -319,7 +327,7 @@ export class GitDiffInspectorImpl implements GitDiffInspector {
       outputCapBytes: Math.min(MAX_DIFF_PROCESS_OUTPUT_BYTES, maxBytes + 64_000),
       shouldCancel: control.shouldCancel
     });
-    assertProjectIdentity(identity.path, identity.identity);
+    assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     return parseGitDiffResult(identity.path, paths, staged, base, maxBytes, result);
   }
 }
@@ -335,20 +343,20 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
   constructor(supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({
     maxConcurrent: 1,
     allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT)
-  })) {
+  }), private readonly managedMetadata?: GitMetadataResolver) {
     this.supervisor = supervisor;
   }
 
   async stage(projectRoot: string, paths: readonly string[], control: GitExecutionControl): Promise<SafeGitStage> {
     validateGitStageRequest(projectRoot, paths);
-    const identity = canonicalProjectRoot(projectRoot);
+    const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const pathIdentities = captureGitWritePathIdentities(identity.path, paths);
     const before = await this.readStagedSnapshot(identity.path, identity.identity, control);
     const result = await this.runGit(identity.path, [
       "--no-pager",
       "--no-optional-locks",
       "--literal-pathspecs",
-      "--git-dir=.git",
+      `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
       "--work-tree=.",
       "-c", "core.fsmonitor=false",
       "-c", "core.hooksPath=/dev/null",
@@ -357,7 +365,7 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
       ...paths
     ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
     assertGitMutationResult(result, "Git staging");
-    assertProjectIdentity(identity.path, identity.identity);
+    assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     assertGitWritePathIdentitiesUnchanged(identity.path, pathIdentities);
     const after = await this.readStagedSnapshot(identity.path, identity.identity, control);
     const stagedPathSet = new Set(after.paths);
@@ -381,7 +389,7 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
     control: GitExecutionControl
   ): Promise<SafeGitCommitResult> {
     validateGitCommitRequest(projectRoot, message, expectedStagedDiffSha256);
-    const identity = canonicalProjectRoot(projectRoot);
+    const identity = canonicalProjectRoot(projectRoot, this.managedMetadata);
     const beforeHead = await this.readHead(identity.path, control);
     const before = await this.readStagedSnapshot(identity.path, identity.identity, control);
     if (before.paths.length === 0) throw new BrokerError("PRECONDITION_FAILED", "Git commit requires staged content");
@@ -392,7 +400,7 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
     const result = await this.runGit(identity.path, [
       "--no-pager",
       "--no-optional-locks",
-      "--git-dir=.git",
+      `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`,
       "--work-tree=.",
       "-c", "core.fsmonitor=false",
       "-c", "core.hooksPath=/dev/null",
@@ -403,7 +411,7 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
       "-m", message
     ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
     assertGitMutationResult(result, "Git commit");
-    assertProjectIdentity(identity.path, identity.identity);
+    assertProjectIdentity(identity.path, identity.identity, this.managedMetadata);
     const afterHead = await this.readHead(identity.path, control);
     if (afterHead.commitId === beforeHead.commitId) {
       throw new BrokerError("VERIFICATION_FAILED", "Git commit did not advance HEAD");
@@ -430,21 +438,21 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
   }
 
   private async readStagedSnapshot(projectRoot: string, expectedIdentity: string, control: GitExecutionControl): Promise<GitStagedSnapshot> {
-    assertProjectIdentity(projectRoot, expectedIdentity);
+    assertProjectIdentity(projectRoot, expectedIdentity, this.managedMetadata);
     const raw = await this.runGit(projectRoot, [
-      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "--no-pager", "--no-optional-locks", `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.",
       "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
       "diff", "--cached", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv", "--"
     ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
     assertGitMutationResult(raw, "Git staged snapshot");
     const text = await this.runGit(projectRoot, [
-      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "--no-pager", "--no-optional-locks", `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.",
       "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=false",
       "diff", "--cached", "--text", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--full-index", "--"
     ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
     assertGitMutationResult(text, "Git staged content snapshot");
     const names = await this.runGit(projectRoot, [
-      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "--no-pager", "--no-optional-locks", `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.",
       "diff", "--cached", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--"
     ], control, MAX_WRITE_PROCESS_OUTPUT_BYTES);
     assertGitMutationResult(names, "Git staged path snapshot");
@@ -468,16 +476,16 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
       .update("\0", "utf8")
       .update(text.stdout, "utf8")
       .digest("hex");
-    assertProjectIdentity(projectRoot, expectedIdentity);
+    assertProjectIdentity(projectRoot, expectedIdentity, this.managedMetadata);
     return { sha256: digest, paths, warnings, truncated: false };
   }
 
   private async readHead(projectRoot: string, control: GitExecutionControl): Promise<GitHeadIdentity> {
-    const head = await this.runGit(projectRoot, ["--git-dir=.git", "--work-tree=.", "rev-parse", "--verify", "--end-of-options", "HEAD"], control, 16_384);
+    const head = await this.runGit(projectRoot, [`--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.", "rev-parse", "--verify", "--end-of-options", "HEAD"], control, 16_384);
     assertGitMutationResult(head, "Git HEAD readback");
     const commitId = head.stdout.trim();
     if (!/^[A-Fa-f0-9]{40,64}$/u.test(commitId)) throw new BrokerError("VERIFICATION_FAILED", "Git HEAD readback was malformed");
-    const parents = await this.runGit(projectRoot, ["--git-dir=.git", "--work-tree=.", "rev-list", "--parents", "-n", "1", "--end-of-options", "HEAD"], control, 16_384);
+    const parents = await this.runGit(projectRoot, [`--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.", "rev-list", "--parents", "-n", "1", "--end-of-options", "HEAD"], control, 16_384);
     assertGitMutationResult(parents, "Git parent readback");
     const fields = parents.stdout.trim().split(/\s+/u).filter((field) => field.length > 0);
     if (fields.length < 1 || fields[0]!.toLowerCase() !== commitId.toLowerCase() || fields.slice(1).some((field) => !/^[A-Fa-f0-9]{40,64}$/u.test(field)) || fields.length > 3) {
@@ -488,12 +496,12 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
 
   private async readStatus(projectRoot: string, expectedIdentity: string, control: GitExecutionControl): Promise<SafeGitStatus> {
     const result = await this.runGit(projectRoot, [
-      "--no-pager", "--no-optional-locks", "--git-dir=.git", "--work-tree=.",
+      "--no-pager", "--no-optional-locks", `--git-dir=${canonicalProjectRoot(projectRoot, this.managedMetadata).gitArgument}`, "--work-tree=.",
       "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
       "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"
     ], control, MAX_OUTPUT_BYTES);
     assertGitMutationResult(result, "Git working-tree readback");
-    assertProjectIdentity(projectRoot, expectedIdentity);
+    assertProjectIdentity(projectRoot, expectedIdentity, this.managedMetadata);
     return parseGitStatusOutput(projectRoot, result);
   }
 
@@ -1044,46 +1052,49 @@ export function parseGitStatusOutput(projectRoot: string, result: ProcessExecuti
   };
 }
 
-function canonicalProjectRoot(projectRoot: string): { path: string; identity: string } {
-  let canonical: string;
+export function canonicalProjectRoot(projectRoot: string, managedMetadata?: GitMetadataResolver): { path: string; identity: string; gitArgument: string } {
   try {
-    const lexicalStat = lstatSync(projectRoot);
-    if (!lexicalStat.isDirectory() || lexicalStat.isSymbolicLink()) {
-      throw new BrokerError("POLICY_DENIED", "Git project root must be a non-symlink directory");
+    validateGitStatusRequest(projectRoot);
+    const stat = lstatSync(projectRoot);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync.native(projectRoot) !== projectRoot) {
+      throw new BrokerError("POLICY_DENIED", "Git project root must be a canonical non-symlink directory");
     }
-    canonical = realpathSync.native(projectRoot);
-    if (canonical !== projectRoot || resolve(canonical) !== canonical) {
-      throw new BrokerError("POLICY_DENIED", "Git project root must be canonical");
+    const gitPath = join(projectRoot, ".git");
+    const gitStat = lstatSync(gitPath);
+    if (gitStat.isSymbolicLink()) throw new BrokerError("POLICY_DENIED", "Git metadata cannot be a symlink");
+    if (gitStat.isFile() && managedMetadata) {
+      const managed = managedMetadata(projectRoot);
+      assertSafeGitMetadata(managed.commonDirectory);
+      const configIdentity = validateRepositoryConfig(managed.commonDirectory);
+      const localConfig = join(managed.gitDirectory, "config.worktree");
+      try {
+        lstatSync(localConfig);
+        throw new BrokerError("POLICY_DENIED", "Worktree-specific Git configuration is not enabled");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      return { path: projectRoot, gitArgument: managed.gitDirectory,
+        identity: `${stat.dev}:${stat.ino}:${gitStat.dev}:${gitStat.ino}:${managed.identity}:${configIdentity}` };
     }
-    const stat = statSync(canonical);
-    const gitDirectory = join(canonical, ".git");
-    const gitStat = lstatSync(gitDirectory);
-    if (!gitStat.isDirectory() || gitStat.isSymbolicLink() || realpathSync.native(gitDirectory) !== gitDirectory) {
-      throw new BrokerError("POLICY_DENIED", "Git metadata must be a canonical non-symlink directory");
+    if (!gitStat.isDirectory() || realpathSync.native(gitPath) !== gitPath) {
+      throw new BrokerError("POLICY_DENIED", "Git metadata must be a canonical directory or a managed worktree");
     }
-    const configIdentity = validateRepositoryConfig(gitDirectory);
-    return { path: canonical, identity: `${stat.dev}:${stat.ino}:${gitStat.dev}:${gitStat.ino}:${configIdentity}` };
+    assertSafeGitMetadata(gitPath);
+    return { path: projectRoot, gitArgument: ".git",
+      identity: `${stat.dev}:${stat.ino}:${gitStat.dev}:${gitStat.ino}:${validateRepositoryConfig(gitPath)}` };
   } catch (error) {
     if (error instanceof BrokerError) throw error;
     throw new BrokerError("TARGET_NOT_FOUND", "Git project root was not found");
   }
 }
 
-function assertProjectIdentity(projectRoot: string, expectedIdentity: string): void {
+export function assertProjectIdentity(projectRoot: string, expectedIdentity: string, managedMetadata?: GitMetadataResolver): void {
   try {
-    const canonical = realpathSync.native(projectRoot);
-    const stat = statSync(canonical);
-    const gitDirectory = join(canonical, ".git");
-    const gitStat = lstatSync(gitDirectory);
-    const configIdentity = validateRepositoryConfig(gitDirectory);
-    if (canonical !== projectRoot || !gitStat.isDirectory() || gitStat.isSymbolicLink() ||
-        realpathSync.native(gitDirectory) !== gitDirectory ||
-        `${stat.dev}:${stat.ino}:${gitStat.dev}:${gitStat.ino}:${configIdentity}` !== expectedIdentity) {
-      throw new BrokerError("POLICY_DENIED", "Git project root changed during inspection");
+    if (canonicalProjectRoot(projectRoot, managedMetadata).identity !== expectedIdentity) {
+      throw new BrokerError("POLICY_DENIED", "Git project root changed during operation");
     }
-  } catch (error) {
-    if (error instanceof BrokerError) throw error;
-    throw new BrokerError("POLICY_DENIED", "Git project root changed during inspection");
+  } catch {
+    throw new BrokerError("POLICY_DENIED", "Git project root changed during operation");
   }
 }
 
@@ -1122,5 +1133,31 @@ function validateRepositoryConfig(gitDirectory: string): string {
       throw new BrokerError("POLICY_DENIED", "Git repository configuration contains an executable integration");
     }
   }
-  return `${configStat.dev}:${configStat.ino}`;
+  return `${configStat.dev}:${configStat.ino}:${createHash("sha256").update(config).digest("hex")}`;
+}
+
+/** Git must never follow metadata aliases or external object/config sources. */
+export function assertSafeGitMetadata(gitDirectory: string): void {
+  for (const name of ["commondir", "gitdir", "config.worktree", "objects/info/alternates", "objects/info/http-alternates"]) {
+    if (existsSync(join(gitDirectory, name))) {
+      throw new BrokerError("POLICY_DENIED", "Primary Git metadata contains an external integration");
+    }
+  }
+  const queue = [gitDirectory];
+  let count = 0;
+  while (queue.length) {
+    const directory = queue.pop()!;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      // Hooks are disabled in every adapter and are never traversed or executed.
+      if (directory === gitDirectory && entry.name === "hooks") continue;
+      if (++count > 50_000) throw new BrokerError("OUTPUT_LIMIT", "Git metadata exceeds the safety inspection budget");
+      const path = join(directory, entry.name);
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink() || realpathSync.native(path) !== path || (!stat.isDirectory() && (!stat.isFile() || stat.nlink !== 1))) {
+        throw new BrokerError("POLICY_DENIED", "Git metadata contains a symlink, hardlink or special file");
+      }
+      // Linked worktree metadata has expected pointer files validated by provenance.
+      if (stat.isDirectory()) queue.push(path);
+    }
+  }
 }

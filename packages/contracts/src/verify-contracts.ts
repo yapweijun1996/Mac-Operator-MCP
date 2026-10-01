@@ -33,7 +33,7 @@ ajv.compile(approvalIssuanceSchema);
 ajv.compile(ledgerRecordsSchema);
 const files = (await readdir(contractsDirectory)).filter((file) => file.startsWith("mac_") && file.endsWith(".json")).sort();
 
-if (files.length !== 45) throw new Error(`Expected 45 tool contracts, found ${files.length}`);
+if (files.length !== PLANNED_TOOL_NAMES.length) throw new Error(`Expected ${PLANNED_TOOL_NAMES.length} tool contracts, found ${files.length}`);
 
 const names = new Set<string>();
 const sourceIds = new Set<string>();

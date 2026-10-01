@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter } from "./peer-credentials.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { assertContentDoesNotContainSecrets, assertContentPathAllowed } from "./secret-policy.js";
+import { assertContentDoesNotContainSecrets, assertContentPathAllowed, assertSourceWritePathAllowed } from "./secret-policy.js";
 
 export interface FilesystemRootPolicy {
   rootId: string;
@@ -348,6 +348,7 @@ export class FilesystemInspector {
     }
     const lexicalPath = resolve(requestedPath);
     if (capability === "content_read" || capability === "write") assertContentPathAllowed(lexicalPath);
+    if (capability === "write") assertSourceWritePathAllowed(lexicalPath);
     const candidates = this.roots
       .filter((root) => (capability === "metadata" ? root.metadata : capability === "content_read" ? root.contentRead === true : root.write === true) && isContained(root.path, lexicalPath))
       .sort((left, right) => right.path.length - left.path.length);
@@ -1089,7 +1090,7 @@ export class FilesystemInspector {
     device: string;
     inode: string;
   } {
-    assertContentPathAllowed(plan.requestedPath);
+    assertSourceWritePathAllowed(plan.requestedPath);
     assertContentDoesNotContainSecrets(content);
     let existing: SafePathMetadata | undefined;
     try {

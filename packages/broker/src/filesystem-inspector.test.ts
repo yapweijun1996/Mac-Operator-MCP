@@ -1217,3 +1217,13 @@ function rootPolicy(path: string) {
 function writeRoot(path: string) {
   return { rootId: "test-root", path, metadata: true, contentRead: true, write: true, denyRelativePaths: [] } as const;
 }
+
+test("source-write plans reject Git metadata while ordinary source writes remain allowed", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-source-git-metadata-")));
+  try {
+    const inspector = new FilesystemInspector([{ rootId: "test-root", path: directory, metadata: true, contentRead: true, write: true, denyRelativePaths: [] }]);
+    assert.throws(() => inspector.planPath(join(directory, ".git", "HEAD"), "write"), /GIT_METADATA_WRITE_DENIED/u);
+    assert.throws(() => inspector.planPath(join(directory, ".git"), "write"), /GIT_METADATA_WRITE_DENIED/u);
+    assert.equal(inspector.planPath(join(directory, "source.txt"), "write").requestedPath, join(directory, "source.txt"));
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

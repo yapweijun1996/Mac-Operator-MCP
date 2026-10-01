@@ -2,6 +2,17 @@
 
 ## Current overall progress: 92%
 
+V2 safe development gateway (2026-10-01): PARTIAL, 55% acceptance completion
+(6 of 11 gates verified). Additive worktrees, gateway admission, asynchronous
+managed jobs, registered validation, Git review and audit are implemented;
+1305 tests pass, 17 skip, and 56 contracts verify. Production coding isolation,
+credential-free inference and the actual YAP-MCP E2E remain pending. V2 tools
+stay default-disabled; no live V2 policy/service migration or push occurred.
+Design: `docs/MAC_OPERATOR_V2_DESIGN.md`; operator runbook:
+`docs/MAC_OPERATOR_V2_RUNBOOK.md`; exact evidence and remaining gates:
+`evidence/2026-10-01-v2-gateway-validation.md` and
+`docs/MAC_OPERATOR_V2_CHANGE_REPORT.md`.
+
 Owner-only W1 deployment (2026-09-24): the source provisions a separate
 one-project file/Git write profile with attended browser approval. A signed
 policy binds write authority to one canonical Git repository under the owner's

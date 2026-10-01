@@ -1,3 +1,4 @@
+import { PLANNED_TOOL_NAMES } from "@mac-operator/contracts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Scope } from "@mac-operator/contracts";
@@ -17,7 +18,7 @@ test("default Broker policy represents every planned tool and keeps privileged t
     ["mac_priv_package_install", "mac.priv.package", "package", 600_000, 1_048_576],
     ["mac_priv_power", "mac.priv.power", "broker", 30_000, 262_144]
   ] as const;
-  assert.equal(policy.tools.size, 45);
+  assert.equal(policy.tools.size, PLANNED_TOOL_NAMES.length);
   assert.deepEqual(policy.tools.get("mac_service_control"), {
     tool: "mac_service_control",
     contractVersion: "0.1",

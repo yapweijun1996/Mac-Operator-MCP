@@ -1,3 +1,4 @@
+import { PLANNED_TOOL_NAMES } from "@mac-operator/contracts";
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
@@ -1581,7 +1582,7 @@ test("capability discovery separates planned, implemented, and enabled", async (
     assert.equal(result.ok, true);
     if (result.ok) {
       const capabilities = (result.data as { capabilities: Array<{ name: string; planned: boolean; implemented: boolean; enabled: boolean; reason: string }> }).capabilities;
-      assert.equal(capabilities.length, 45);
+      assert.equal(capabilities.length, PLANNED_TOOL_NAMES.length);
       assert.deepEqual(capabilities.find((tool) => tool.name === "mac_health"), {
         name: "mac_health", planned: true, implemented: true, enabled: true, scopes: ["mac.control.read"], contract_version: "0.1", reason: "enabled"
       });
@@ -2415,7 +2416,7 @@ test("mac_app_focus never publishes success after active session revocation", as
 test("production-default policy enables no tool or filesystem root", () => {
   const policy = createDefaultPolicy("edge-1");
   assert.equal([...policy.tools.values()].filter((tool) => tool.enabled).length, 0);
-  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, 45);
+  assert.equal([...policy.tools.values()].filter((tool) => tool.implemented).length, PLANNED_TOOL_NAMES.length);
   assert.deepEqual(policy.filesystemRoots, []);
 });
 

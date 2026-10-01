@@ -1,0 +1,278 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_execution_audit",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.project.read",
+    "mac.audit.read"
+  ],
+  "normalized_target_type": "project_root",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_project",
+  "secret_policy": "deny_secret_paths_and_env",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "bounded_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "Read bounded redacted audit events for an authorized project; never expose sensitive file contents or credentials.",
+  "input_summary": "project_root, limit",
+  "output_summary": "project_root, events, truncated",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_execution_audit input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "project_root": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": [
+      "project_root"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_execution_audit result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_execution_audit"
+      },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "events": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 100,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "timestamp": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "format": "date-time"
+                },
+                "request_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                "tool": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^mac_[a-z0-9_]+$"
+                },
+                "actor": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                },
+                "decision": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "result": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "scope": {
+                  "type": "array",
+                  "minItems": 0,
+                  "maxItems": 64,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^mac\\.[a-z0-9_.-]+$"
+                  }
+                },
+                "target": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "worktree": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "duration_ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1200000
+                },
+                "changed_paths": {
+                  "type": "array",
+                  "maxItems": 256,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  }
+                },
+                "commit_hash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{40,64}$"
+                }
+              },
+              "required": [
+                "timestamp",
+                "request_id",
+                "tool",
+                "actor",
+                "decision",
+                "result",
+                "scope",
+                "target"
+              ]
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project_root",
+          "events",
+          "truncated"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "bounded_result_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "b20d2762-e48d-4fa5-9c4d-bcb2b2db60e3",
+    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Read bounded redacted audit events for an authorized project; never expose sensitive file contents or credentials."
+  }
+}

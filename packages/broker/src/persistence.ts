@@ -24,6 +24,8 @@ const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "
 export type RevocationKind = "principal" | "session" | "edge" | "edge_key" | "approval_key" | "policy_signer" | "authority_key" | "helper_key" | "guest_attestation_key";
 const REVOCATION_KINDS: readonly RevocationKind[] = ["principal", "session", "edge", "edge_key", "approval_key", "policy_signer", "authority_key", "helper_key", "guest_attestation_key"];
 
+export const TASK_JOB_TOOLS: ReadonlySet<string> = new Set(["mac_task_run", "mac_test_run", "mac_build_run", "mac_codex_run"]);
+
 export interface AuditEvent {
   requestId: string;
   principalId: string;
@@ -1213,9 +1215,21 @@ export class BrokerStore {
               !matchingEdgeKeyIdentity(request.edgeKeyId ?? null, job.ownerEdgeKeyId)) {
             throw new BrokerError("AUDIT_UNAVAILABLE", "Stored Request Job linkage is inconsistent");
           }
+          const taskReuse = request.resultClass === "IDEMPOTENT_REUSE" && request.approvalId === null && TASK_JOB_TOOLS.has(request.tool);
+          if (taskReuse) {
+            const completion = this.database.prepare(`
+              SELECT result_class, evidence_json FROM audit_events
+              WHERE request_id = ? AND event_type = 'completion' ORDER BY sequence DESC LIMIT 1
+            `).get(request.requestId) as { result_class?: unknown; evidence_json?: unknown } | undefined;
+            const reuseEvidence = completion === undefined ? undefined : parseJsonStrict(String(completion.evidence_json));
+            if (completion?.result_class !== "IDEMPOTENT_REUSE" || !isPlainDataRecord(reuseEvidence) ||
+                reuseEvidence.reused !== true || reuseEvidence.jobId !== job.jobId) {
+              throw new BrokerError("AUDIT_UNAVAILABLE", "Stored task reuse does not have matching audit evidence");
+            }
+          }
           if (request.state === "SUCCEEDED" &&
               (request.resultClass !== "SUCCEEDED" && request.resultClass !== "IDEMPOTENT_REUSE" ||
-               job.state !== "completed" || job.resultClass !== "success")) {
+               !taskReuse && (job.state !== "completed" || job.resultClass !== "success"))) {
             throw new BrokerError("AUDIT_UNAVAILABLE", "Stored successful Request does not have a successful terminal Job");
           }
         }
@@ -2094,7 +2108,7 @@ export class BrokerStore {
     }));
   }
 
-  admitApprovedJobAfterDecision(input: ApprovedJobAdmissionInput): { request: RequestRecord; job: BrokerJob } {
+  admitApprovedJobAfterDecision(input: ApprovedJobAdmissionInput): { request: RequestRecord; job: BrokerJob; reused: boolean } {
     if (input.intent.eventType !== "intent" || input.intent.decision !== "allow" || input.intent.resultClass !== "INTENT_RECORDED" ||
         !validAuditTimestamp(input.intent.timestampMs) || !validAuditTarget(input.intent.targetRef) ||
         input.approval.targetRef !== input.intent.targetRef || input.job.payloadDigest !== input.approval.payloadDigest ||
@@ -2116,6 +2130,34 @@ export class BrokerStore {
           throw new BrokerError("CONFLICT", "Request state or approved Job identity changed");
         }
         assertAuditMatchesRequest(input.intent, current);
+        // Task retries read the original admitted Job, including pending or
+        // failed Jobs. They cannot consume another approval or execute again.
+        if (TASK_JOB_TOOLS.has(current.tool)) {
+          const existing = this.database.prepare(
+            "SELECT * FROM jobs WHERE owner_principal_id = ? AND idempotency_key = ?"
+          ).get(input.job.ownerPrincipalId, input.job.idempotencyKey) as JobRow | undefined;
+          if (existing !== undefined) {
+            const reused = mapJob(existing);
+            if (reused.tool !== current.tool || reused.targetRef !== input.job.targetRef ||
+                reused.payloadDigest !== input.job.payloadDigest || reused.policyVersion !== current.policyVersion ||
+                reused.ownerSessionId !== current.sessionId || reused.ownerEdgeId !== current.edgeId ||
+                !matchingEdgeKeyIdentity(current.edgeKeyId ?? null, reused.ownerEdgeKeyId)) {
+              throw new BrokerError("CONFLICT", "Idempotency key was already used for a different task identity or payload");
+            }
+            this.insertAudit({
+              ...input.intent,
+              eventType: "completion",
+              resultClass: "IDEMPOTENT_REUSE",
+              evidence: { jobId: reused.jobId, reused: true, jobState: reused.state }
+            });
+            this.database.prepare(`
+              UPDATE requests SET state = 'SUCCEEDED', result_class = 'IDEMPOTENT_REUSE',
+                job_id = ?, updated_at_ms = ?, revision = revision + 1 WHERE request_id = ? AND revision = ?
+            `).run(reused.jobId, input.intent.timestampMs, current.requestId, current.revision);
+            return { request: this.requireRequest(current.requestId), job: reused, reused: true };
+          }
+        }
+        assertJobTombstoneAbsent(this.database, input.job.jobId, input.job.ownerPrincipalId, input.job.idempotencyKey);
         const row = this.findConsumableApproval(current.principalId, current.tool, current.policyVersion, input.approval, input.intent.timestampMs, current.requestId);
         if (!row) throw new BrokerError("POLICY_DENIED", "No valid approval matches this mutation");
         const approval = mapApproval(row);
@@ -2156,7 +2198,8 @@ export class BrokerStore {
         if (transitioned.changes !== 1) throw new BrokerError("CONFLICT", "Request revision changed concurrently");
         return {
           request: this.requireRequest(current.requestId),
-          job: this.requireOwnedJob(input.job.jobId, input.job.ownerPrincipalId)
+          job: this.requireOwnedJob(input.job.jobId, input.job.ownerPrincipalId),
+          reused: false
         };
       });
     } catch (error) {
@@ -2709,6 +2752,35 @@ export class BrokerStore {
     return row ? mapJob(row) : undefined;
   }
 
+  /** Removal safety is global: another owner's unresolved Job also pins a project. */
+  hasActiveProjectJobs(project: string): boolean {
+    if (typeof project !== "string" || !isAbsolute(project) || resolve(project) !== project ||
+        project.length > 4096 || project.includes("\0")) {
+      throw new BrokerError("PRECONDITION_FAILED", "Project Job query is malformed");
+    }
+    const row = this.database.prepare(`
+      SELECT 1 FROM jobs AS job WHERE job.state IN ('queued', 'running', 'unknown')
+        AND (job.target_ref = ? OR EXISTS (
+          SELECT 1 FROM audit_events AS intent WHERE intent.event_type = 'intent'
+            AND json_extract(intent.evidence_json, '$.jobId') = job.job_id
+            AND json_extract(intent.evidence_json, '$.project') = ?
+        )) LIMIT 1
+    `).get(`project:${project}`, project);
+    return row !== undefined;
+  }
+
+  /** Exact checkout pin; unrelated task worktrees may run concurrently. */
+  hasActiveWorktreeJobs(worktree: string, exceptJobId: string): boolean {
+    if (!isAbsolute(worktree) || resolve(worktree) !== worktree || worktree.includes("\0") || worktree.length > 4096 ||
+        !/^job:[A-Za-z0-9._-]{1,240}$/u.test(exceptJobId)) throw malformedJob();
+    return this.database.prepare(`
+      SELECT 1 FROM jobs AS job WHERE job.state IN ('queued', 'running', 'unknown') AND job.job_id <> ?
+        AND (job.target_ref = ? OR EXISTS (SELECT 1 FROM audit_events AS intent WHERE intent.event_type = 'intent'
+          AND json_extract(intent.evidence_json, '$.jobId') = job.job_id
+          AND json_extract(intent.evidence_json, '$.worktree') = ?)) LIMIT 1
+    `).get(exceptJobId, `project:${worktree}`, worktree) !== undefined;
+  }
+
   /**
    * Return only restart-reconciled unknown write jobs with persisted
    * descriptors. This is intentionally narrower than a prefix scan: callers
@@ -2779,7 +2851,7 @@ export class BrokerStore {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
     const rows = this.database.prepare(`
       SELECT * FROM jobs
-      WHERE tool = 'mac_task_run'
+      WHERE tool IN ('mac_task_run', 'mac_test_run', 'mac_build_run', 'mac_codex_run')
         AND state = 'unknown'
         AND guest_metadata_json = ''
         AND process_metadata_json <> ''
@@ -2800,7 +2872,7 @@ export class BrokerStore {
       const row = this.database.prepare(`
         SELECT 1
         FROM jobs AS job
-        WHERE job.tool = 'mac_task_run'
+        WHERE job.tool IN ('mac_task_run', 'mac_test_run', 'mac_build_run', 'mac_codex_run')
           AND job.state = 'unknown'
           AND job.guest_metadata_json = ''
           AND (
@@ -2832,7 +2904,7 @@ export class BrokerStore {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
     const rows = this.database.prepare(`
       SELECT * FROM jobs
-      WHERE tool = 'mac_task_run'
+      WHERE tool IN ('mac_task_run', 'mac_test_run', 'mac_build_run', 'mac_codex_run')
         AND state = 'unknown'
         AND cancel_reason = 'BROKER_RESTART'
         AND guest_metadata_json <> ''
@@ -2938,7 +3010,7 @@ export class BrokerStore {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
     validateJobLease(lease, nowMs, false);
     return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
-      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+      if (!TASK_JOB_TOOLS.has(current.tool) || current.startedAtMs === null ||
           metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Task process ownership metadata is outside the active Job window");
       }
@@ -2969,7 +3041,7 @@ export class BrokerStore {
         throw new BrokerError("CONFLICT", "Job state or revision changed concurrently");
       }
       assertActiveJobLease(currentRow, lease, nowMs);
-      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+      if (!TASK_JOB_TOOLS.has(current.tool) || current.startedAtMs === null ||
           current.processMetadata === undefined ||
           metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs ||
           metadata.pid !== current.processMetadata.pid ||
@@ -3015,7 +3087,7 @@ export class BrokerStore {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
     validateJobLease(lease, nowMs, false);
     return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
-      if (current.tool !== "mac_task_run" || current.startedAtMs === null ||
+      if (!TASK_JOB_TOOLS.has(current.tool) || current.startedAtMs === null ||
           metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Guest request metadata is outside the active Job window");
       }
@@ -3045,7 +3117,7 @@ export class BrokerStore {
     const normalizedResult = normalizeGuestTaskResult(result);
     return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
       const admission = current.guestMetadata;
-      if (current.tool !== "mac_task_run" || current.startedAtMs === null || admission === undefined ||
+      if (!TASK_JOB_TOOLS.has(current.tool) || current.startedAtMs === null || admission === undefined ||
           current.guestResultJournal !== undefined || nowMs < admission.recordedAtMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Guest result is outside its admitted Job boundary");
       }
@@ -3196,7 +3268,7 @@ export class BrokerStore {
       const currentRow = this.requireOwnedJobRow(jobId, principalId);
       const current = mapJob(currentRow);
       if (current.revision !== expectedRevision || current.state !== "unknown" ||
-          current.tool !== "mac_task_run" || current.guestMetadata === undefined ||
+          !TASK_JOB_TOOLS.has(current.tool) || current.guestMetadata === undefined ||
           currentRow.cancel_requested !== 1 || currentRow.cancel_reason !== "BROKER_RESTART" ||
           currentRow.lease_token !== null || current.startedAtMs === null ||
           outcome.finishedAtMs < current.startedAtMs) {
@@ -4053,6 +4125,60 @@ export class BrokerStore {
       previousSequence = row.sequence;
     }
     return rows as unknown as Array<Record<string, unknown>>;
+  }
+
+  /** Bounded, owner-filtered audit readback; raw content is never recorded. */
+  executionAudit(principalId: string, filters: {
+    limit?: number;
+    requestId?: string;
+    taskId?: string;
+    project?: string;
+    jobId?: string;
+  } = {}): Array<Record<string, unknown>> {
+    if (!isPlainDataRecord(filters) || Object.keys(filters).some((key) => !["limit", "requestId", "taskId", "project", "jobId"].includes(key))) {
+      throw new BrokerError("PRECONDITION_FAILED", "Execution audit filters are malformed");
+    }
+    const limit = filters.limit ?? 50;
+    if (typeof principalId !== "string" || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(principalId) ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+        (filters.requestId !== undefined && (typeof filters.requestId !== "string" || !/^[A-Za-z0-9._:@/+-]{1,128}$/u.test(filters.requestId))) ||
+        (filters.taskId !== undefined && (typeof filters.taskId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(filters.taskId))) ||
+        (filters.jobId !== undefined && (typeof filters.jobId !== "string" || !/^job:[A-Za-z0-9._-]{1,240}$/u.test(filters.jobId))) ||
+        (filters.project !== undefined && (typeof filters.project !== "string" || !isAbsolute(filters.project) || resolve(filters.project) !== filters.project || filters.project.length > 4096 || filters.project.includes("\0")))) {
+      throw new BrokerError("PRECONDITION_FAILED", "Execution audit filters are malformed");
+    }
+    const rows = this.database.prepare(`
+      SELECT * FROM audit_events WHERE principal_id = ?
+        AND (? IS NULL OR request_id = ?)
+        AND (? IS NULL OR json_extract(evidence_json, '$.taskId') = ?)
+        AND (? IS NULL OR target_ref = 'project:' || ? OR json_extract(evidence_json, '$.project') = ?)
+        AND (? IS NULL OR json_extract(evidence_json, '$.jobId') = ?)
+      ORDER BY sequence DESC LIMIT ?
+    `).all(
+      principalId, filters.requestId ?? null, filters.requestId ?? null,
+      filters.taskId ?? null, filters.taskId ?? null, filters.project ?? null, filters.project ?? null, filters.project ?? null,
+      filters.jobId ?? null, filters.jobId ?? null, limit
+    ) as unknown as AuditRow[];
+    let outputBytes = 0;
+    const output: Array<Record<string, unknown>> = [];
+    for (const row of rows) {
+      validateStoredAuditRow(row);
+      const event = {
+        sequence: row.sequence,
+        timestamp_ms: row.timestamp_ms,
+        request_id: row.request_id,
+        tool: row.tool,
+        decision: row.decision,
+        result_class: row.result_class,
+        target_ref: row.target_ref,
+        policy_version: row.policy_version,
+        evidence: parseJsonStrict(row.evidence_json)
+      };
+      outputBytes += Buffer.byteLength(JSON.stringify(event), "utf8");
+      if (outputBytes > 64 * 1024) break;
+      output.push(event);
+    }
+    return output;
   }
 
   auditEventExists(requestId: string, eventType: AuditEvent["eventType"]): boolean {
@@ -5791,10 +5917,10 @@ function validateStoredJobState(row: JobRow): void {
   const hasGuestResult = row.guest_result_json.length > 0;
   const hasServiceMetadata = row.service_metadata_json.length > 0;
   if (hasWriteMetadata && row.tool !== "mac_write_file_atomic") fail();
-  if ((hasProcessMetadata || hasGuestMetadata) && row.tool !== "mac_task_run") fail();
+  if ((hasProcessMetadata || hasGuestMetadata) && !TASK_JOB_TOOLS.has(row.tool)) fail();
   if (hasProcessMetadata && hasGuestMetadata) fail();
   if ((hasProcessMetadata || hasGuestMetadata) && row.state !== "running" && row.state !== "unknown") fail();
-  if (hasGuestResult && (!hasGuestMetadata || row.tool !== "mac_task_run" || row.state !== "running" && row.state !== "unknown")) fail();
+  if (hasGuestResult && (!hasGuestMetadata || !TASK_JOB_TOOLS.has(row.tool) || row.state !== "running" && row.state !== "unknown")) fail();
   if (hasServiceMetadata && row.tool !== "mac_service_control") fail();
   if (hasServiceMetadata && row.state !== "queued" && row.state !== "running" && row.state !== "unknown") fail();
 }
@@ -6508,7 +6634,7 @@ function validTerminalOutcome(
 function queuedJobAffectedBySwitch(name: SwitchName, tool: string): boolean {
   if (name === "global") return true;
   if (name === "mutations") return !READ_ONLY_JOB_TOOLS.has(tool);
-  if (name === "process" || name === "network") return tool === "mac_task_run";
+  if (name === "process" || name === "network") return TASK_JOB_TOOLS.has(tool);
   if (name === "gui") return tool === "mac_app_open" || tool === "mac_app_focus" || tool.startsWith("mac_ui_");
   if (name === "destructive") return tool === "mac_apply_patch";
   if (name === "privileged") return tool.startsWith("mac_priv_");

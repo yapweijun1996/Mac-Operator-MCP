@@ -19,9 +19,10 @@ const GLOBAL_SECRET_ZONE_PATTERNS = [
 ] as const;
 const DOCKER_SOCKET_PATHS = ["/var/run/docker.sock", "/private/var/run/docker.sock"] as const;
 const PROJECT_SECRET_DIRECTORIES = [
-  ".aws", ".codex", ".config", ".docker", ".gnupg", ".kube", ".openai", ".ssh",
+  ".aws", ".codex", ".claude", ".mozilla", ".config", ".docker", ".gnupg", ".kube", ".openai", ".ssh",
   "Library/Keychains", "Library/Application Support/Google/Chrome", "Library/Application Support/com.apple.TCC",
-  "Library/Application Support/com.apple.tcc", "Library/Safari", "Library/Mail", "Library/Messages"
+  "Library/Application Support/com.apple.tcc", "Library/Application Support/Firefox", "Library/Application Support/MacOperator",
+  "Library/Safari", "Library/Mail", "Library/Messages"
 ] as const;
 const PROJECT_SECRET_FILES = [
   ".env", ".env.local", ".env.production", ".env.development", ".env.test", ".git-credentials", ".npmrc"
@@ -126,7 +127,7 @@ export function renderTaskSandboxProfile(profile: ResolvedTaskProfile, options: 
   }
   for (const base of secretRegexBases(roots)) {
     const names = [...PROJECT_SECRET_DIRECTORIES, ...PROJECT_SECRET_FILES].map(escapeRegex).join("|");
-    const pattern = `^${escapeRegex(base)}\\/.*(${names})(\\/|$)`;
+    const pattern = `^${escapeRegex(base)}\\/.*(${names}|\\.env(?:\\.[^/]+)?)(\\/|$)`;
     lines.push(`(deny file-read* (regex #"${pattern}"))`);
     lines.push(`(deny file-write* (regex #"${pattern}"))`);
   }

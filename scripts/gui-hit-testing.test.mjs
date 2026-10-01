@@ -3,6 +3,9 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 
+const environment = { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', LANG: 'C' };
+const processOptions = (cwd) => ({ cwd, env: environment, shell: false, timeout: 30000, maxBuffer: 1024 * 1024 });
+
 test('Dock overlay exception requires system hit ownership and preserves other overlays', {skip: process.platform !== 'darwin'}, async () => {
   const directory = await mkdtemp('/tmp/mop-hit-test-');
   try {
@@ -36,7 +39,7 @@ int main(void) { @autoreleasepool {
 } return 0; }
 `);
     const executable = join(directory, 'fixture');
-    execFileSync('clang', ['-fobjc-arc', '-fblocks', '-Wno-deprecated-declarations', '-framework', 'AppKit', '-framework', 'ApplicationServices', '-framework', 'ScreenCaptureKit', source, '-o', executable]);
-    execFileSync(executable, [], {timeout: 10000});
+    execFileSync('/usr/bin/clang', ['-fobjc-arc', '-fblocks', '-Wno-deprecated-declarations', '-framework', 'AppKit', '-framework', 'ApplicationServices', '-framework', 'ScreenCaptureKit', source, '-o', executable], processOptions(directory));
+    execFileSync(executable, [], { ...processOptions(directory), timeout: 10000 });
   } finally { await rm(directory, {recursive:true, force:true}); }
 });

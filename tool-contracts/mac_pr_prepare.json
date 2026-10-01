@@ -1,0 +1,253 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_pr_prepare",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.project.read",
+    "mac.git.read",
+    "mac.job.read"
+  ],
+  "normalized_target_type": "project_root",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_project",
+  "secret_policy": "deny_secret_paths_and_env",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "bounded_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "Prepare a bounded review summary from changed paths, commits, and managed-job test evidence without publishing a pull request.",
+  "input_summary": "project_root, worktree, base_ref",
+  "output_summary": "project_root, worktree, changed_files, commits, title, description, test_evidence",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_pr_prepare input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "project_root": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      },
+      "worktree": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      },
+      "base_ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._/@~-]*$"
+      }
+    },
+    "required": [
+      "project_root",
+      "worktree"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_pr_prepare result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_pr_prepare"
+      },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "worktree": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "changed_files": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 256,
+            "uniqueItems": false,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^[^\\u0000]+$"
+            }
+          },
+          "commits": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 100,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 7,
+                  "maxLength": 64,
+                  "pattern": "^[A-Fa-f0-9]+$"
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 0,
+                  "maxLength": 512
+                }
+              },
+              "required": [
+                "id",
+                "subject"
+              ]
+            }
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "description": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 16384
+          },
+          "test_evidence": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 64,
+            "uniqueItems": false,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          }
+        },
+        "required": [
+          "project_root",
+          "worktree",
+          "changed_files",
+          "commits",
+          "title",
+          "description",
+          "test_evidence"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "bounded_result_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "1f9e7e66-ae0b-4b60-8887-a47f941dff28",
+    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Prepare a bounded review summary from changed paths, commits, and managed-job test evidence without publishing a pull request."
+  }
+}

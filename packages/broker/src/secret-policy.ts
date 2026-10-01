@@ -21,6 +21,8 @@ const DENIED_NAME_SUFFIXES = [
 ];
 
 const DENIED_PATH_FRAGMENTS = [
+  "/.codex/", "/.claude/", "/.openai/", "/.mozilla/", "/.config/claude/", "/.config/opencode/", "/.codex/automations/",
+  "/library/application support/firefox/", "/library/application support/macoperator",
   "/.ssh/", "/.gnupg/", "/.aws/", "/.azure/", "/.config/gcloud/", "/.config/gh/", "/.kube/", "/.docker/",
   "/private/var/root/", "/var/root/",
   "/private/var/db/tcc/", "/var/db/tcc/", "/private/var/db/dslocal/", "/var/db/dslocal/",
@@ -147,6 +149,14 @@ export function assertContentPathAllowed(path: string): void {
       DENIED_NAME_SUFFIXES.some((suffix) => name.endsWith(suffix)) ||
       DENIED_PATH_FRAGMENTS.some((fragment) => `${normalized}/`.includes(fragment))) {
     throw new BrokerError("POLICY_DENIED", "Filesystem content is inside a protected secret zone");
+  }
+}
+
+/** Git metadata writes belong to the governed Git tools, never source writes. */
+export function assertSourceWritePathAllowed(path: string): void {
+  assertContentPathAllowed(path);
+  if (path.normalize("NFKC").toLocaleLowerCase("en-US").split("/").includes(".git")) {
+    throw new BrokerError("POLICY_DENIED", "GIT_METADATA_WRITE_DENIED");
   }
 }
 

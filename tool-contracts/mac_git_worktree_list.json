@@ -1,0 +1,210 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_git_worktree_list",
+  "capability_level": "L1",
+  "safety_class": "read_only",
+  "required_scopes": [
+    "mac.project.read",
+    "mac.git.read"
+  ],
+  "normalized_target_type": "project_root",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "read_allowed_project",
+  "secret_policy": "deny_secret_paths_and_env",
+  "approval_policy": "trusted_read",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "bounded_result_validation",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "developer_read",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "List only Broker-owned worktrees for one authorized project.",
+  "input_summary": "project_root",
+  "output_summary": "project_root, worktrees",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_git_worktree_list input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "project_root": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      }
+    },
+    "required": [
+      "project_root"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_git_worktree_list result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_git_worktree_list"
+      },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "worktrees": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 128,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "worktree": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096,
+                  "pattern": "^[^\\u0000]+$"
+                },
+                "branch_name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+                },
+                "base_ref": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._/@~-]*$"
+                },
+                "task_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+                }
+              },
+              "required": [
+                "worktree",
+                "branch_name",
+                "base_ref",
+                "task_id"
+              ]
+            }
+          }
+        },
+        "required": [
+          "project_root",
+          "worktrees"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "bounded_result_validation"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "0d0b9d9d-aaa3-45bd-9b45-b57144fe2f53",
+    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. List only Broker-owned worktrees for one authorized project."
+  }
+}

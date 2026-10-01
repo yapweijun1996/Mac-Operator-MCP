@@ -80,6 +80,9 @@ export interface TaskRunRequest {
   cwd: string;
   args?: readonly string[];
   asynchronous?: boolean;
+  idempotencyKey?: string;
+  taskId?: string;
+  maxRuntimeMs?: number;
 }
 
 export function validateTaskProfileRegistry(value: unknown): asserts value is TaskProfileRegistry {
@@ -91,30 +94,33 @@ export function validateTaskProfileRegistry(value: unknown): asserts value is Ta
 }
 
 export function validateTaskRunArguments(argumentsValue: unknown): TaskRunRequest {
-  if (!isPlainDataRecord(argumentsValue) || !hasAllowedKeys(argumentsValue, ["profile", "cwd", "args", "async"])) {
+  if (!isPlainDataRecord(argumentsValue) || !hasAllowedKeys(argumentsValue, ["profile", "cwd", "args", "async", "idempotency_key", "task_id", "max_runtime"])) {
     throw new BrokerError("PRECONDITION_FAILED", "Task run arguments are malformed");
   }
   const keys = Object.keys(argumentsValue);
-  if (keys.some((key) => !["profile", "cwd", "args", "async"].includes(key)) ||
+  if (keys.some((key) => !["profile", "cwd", "args", "async", "idempotency_key", "task_id", "max_runtime"].includes(key)) ||
       typeof argumentsValue.profile !== "string" || !PROFILE_ID_PATTERN.test(argumentsValue.profile) ||
       typeof argumentsValue.cwd !== "string" || argumentsValue.cwd.length < 1 || argumentsValue.cwd.length > 4_096 ||
       argumentsValue.cwd.includes("\0") ||
       (argumentsValue.args !== undefined && !isStringArray(argumentsValue.args, MAX_PROFILE_ARGUMENTS)) ||
-      (argumentsValue.async !== undefined && typeof argumentsValue.async !== "boolean")) {
+      (argumentsValue.async !== undefined && typeof argumentsValue.async !== "boolean") ||
+      (argumentsValue.idempotency_key !== undefined && (typeof argumentsValue.idempotency_key !== "string" || !PROFILE_ID_PATTERN.test(argumentsValue.idempotency_key))) ||
+      (argumentsValue.task_id !== undefined && (typeof argumentsValue.task_id !== "string" || !PROFILE_ID_PATTERN.test(argumentsValue.task_id))) ||
+      (argumentsValue.max_runtime !== undefined && (!Number.isSafeInteger(argumentsValue.max_runtime) || (argumentsValue.max_runtime as number) < 1 || (argumentsValue.max_runtime as number) > MAX_TIMEOUT_MS))) {
     throw new BrokerError("PRECONDITION_FAILED", "Task run arguments are malformed");
   }
   const args = argumentsValue.args as readonly string[] | undefined;
   if (args && args.some((argument) => argument.length > MAX_ARGUMENT_LENGTH || argument.includes("\0") || argument.includes("\n"))) {
     throw new BrokerError("PRECONDITION_FAILED", "Task argument is malformed");
   }
-  if (argumentsValue.async === true) {
-    throw new BrokerError("UNSUPPORTED_CAPABILITY", "Asynchronous task dispatch is not enabled");
-  }
   return {
     profile: argumentsValue.profile,
     cwd: argumentsValue.cwd,
     ...(args === undefined ? {} : { args: [...args] }),
-    asynchronous: argumentsValue.async ?? false
+    asynchronous: argumentsValue.async ?? false,
+    ...(argumentsValue.idempotency_key === undefined ? {} : { idempotencyKey: argumentsValue.idempotency_key as string }),
+    ...(argumentsValue.task_id === undefined ? {} : { taskId: argumentsValue.task_id as string }),
+    ...(argumentsValue.max_runtime === undefined ? {} : { maxRuntimeMs: argumentsValue.max_runtime as number })
   };
 }
 
@@ -162,6 +168,9 @@ export class TaskProfileRegistry {
     const profile = this.profiles.get(safeRequest.profile);
     if (!profile) throw new BrokerError("TARGET_NOT_FOUND", "Named task profile was not found");
     if (!profile.enabled) throw new BrokerError("POLICY_DENIED", "Named task profile is disabled");
+    if (safeRequest.maxRuntimeMs !== undefined && safeRequest.maxRuntimeMs > profile.timeoutMs) {
+      throw new BrokerError("POLICY_DENIED", "Task runtime exceeds the registered profile budget");
+    }
     if (!isCanonicalAbsolutePath(safeRequest.cwd)) {
       throw new BrokerError("PRECONDITION_FAILED", "Task cwd must be a canonical absolute path");
     }
@@ -212,7 +221,7 @@ export class TaskProfileRegistry {
         args,
         cwd,
         environment,
-        timeoutMs: profile.timeoutMs,
+        timeoutMs: safeRequest.maxRuntimeMs ?? profile.timeoutMs,
         outputCapBytes: profile.outputCapBytes
       },
       ...(executionKind === "posix-sh-script"
@@ -277,6 +286,7 @@ function validateProfileDocument(profile: TaskProfile): void {
       (executionKind === "binary" && profile.scriptPath !== undefined)) {
     throw new Error("Task profile script binding is malformed");
   }
+  if (["/usr/bin/sudo", "/bin/su", "/usr/bin/su", "/usr/local/bin/doas"].includes(profile.executable)) throw new Error("Task profile cannot invoke privilege escalation");
   validateArguments(profile.fixedArgs ?? [], MAX_PROFILE_ARGUMENTS, /[\s\S]*/u, true);
   assertArgumentsDoNotContainSecrets(profile.fixedArgs ?? []);
   if (profile.maxArguments !== undefined &&
@@ -426,7 +436,7 @@ function cloneProfile(profile: TaskProfile): TaskProfile {
  * Freeze the complete data graph so adapters cannot widen targets, budgets, or
  * environment after the Broker has completed admission.
  */
-function freezeResolvedTaskProfile(profile: ResolvedTaskProfile): ResolvedTaskProfile {
+export function freezeResolvedTaskProfile(profile: ResolvedTaskProfile): ResolvedTaskProfile {
   const seen = new Set<object>();
   const freeze = (value: unknown): void => {
     if (value === null || typeof value !== "object" || seen.has(value)) return;
@@ -443,15 +453,21 @@ function freezeResolvedTaskProfile(profile: ResolvedTaskProfile): ResolvedTaskPr
 }
 
 function snapshotTaskRunRequest(value: unknown): TaskRunRequest {
-  if (!isPlainDataRecord(value) || !hasAllowedKeys(value, ["profile", "cwd", "args", "asynchronous"]) ||
+  if (!isPlainDataRecord(value) || !hasAllowedKeys(value, ["profile", "cwd", "args", "asynchronous", "idempotencyKey", "taskId", "maxRuntimeMs"]) ||
       typeof value.profile !== "string" || !PROFILE_ID_PATTERN.test(value.profile) ||
       typeof value.cwd !== "string" || (value.args !== undefined && !isStringArray(value.args, MAX_PROFILE_ARGUMENTS)) ||
-      (value.asynchronous !== undefined && typeof value.asynchronous !== "boolean")) {
+      (value.asynchronous !== undefined && typeof value.asynchronous !== "boolean") ||
+      (value.idempotencyKey !== undefined && (typeof value.idempotencyKey !== "string" || !PROFILE_ID_PATTERN.test(value.idempotencyKey))) ||
+      (value.taskId !== undefined && (typeof value.taskId !== "string" || !PROFILE_ID_PATTERN.test(value.taskId))) ||
+      (value.maxRuntimeMs !== undefined && (!Number.isSafeInteger(value.maxRuntimeMs) || (value.maxRuntimeMs as number) < 1 || (value.maxRuntimeMs as number) > MAX_TIMEOUT_MS))) {
     throw new BrokerError("PRECONDITION_FAILED", "Task profile request is malformed");
   }
   const snapshot: TaskRunRequest = { profile: value.profile, cwd: value.cwd };
   if (value.args !== undefined) snapshot.args = [...value.args];
   if (value.asynchronous !== undefined) snapshot.asynchronous = value.asynchronous;
+  if (value.idempotencyKey !== undefined) snapshot.idempotencyKey = value.idempotencyKey;
+  if (value.taskId !== undefined) snapshot.taskId = value.taskId;
+  if (value.maxRuntimeMs !== undefined) snapshot.maxRuntimeMs = value.maxRuntimeMs as number;
   return snapshot;
 }
 

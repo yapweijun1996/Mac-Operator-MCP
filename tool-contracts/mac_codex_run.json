@@ -1,20 +1,22 @@
 {
   "$schema": "./tool-contract.schema.json",
   "schema_version": "0.1",
-  "tool_name": "mac_task_run",
+  "tool_name": "mac_codex_run",
   "capability_level": "L2",
   "safety_class": "writes_local",
   "required_scopes": [
-    "mac.task.run"
+    "mac.project.read",
+    "mac.project.write",
+    "mac.agent.run"
   ],
-  "normalized_target_type": "task_profile",
+  "normalized_target_type": "project_root",
   "timeout_ms": 600000,
-  "output_cap_bytes": 2097152,
-  "network_policy": "profile_defined",
-  "filesystem_policy": "profile_defined",
-  "secret_policy": "deny_secret_env",
+  "output_cap_bytes": 65536,
+  "network_policy": "explicit_provisioned_allowlist",
+  "filesystem_policy": "isolated_worktree",
+  "secret_policy": "deny_secret_paths_and_env",
   "approval_policy": "trusted_profile",
-  "idempotent": false,
+  "idempotent": true,
   "postcondition_verification": {
     "required": true,
     "strategy": "exit_status_and_declared_task_verification",
@@ -23,67 +25,105 @@
   "audit_class": "execution",
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "execute one allowlisted named task profile such as test/build; no arbitrary command string.",
-  "input_summary": "profile, cwd, args?, async?, idempotency_key?, task_id?, max_runtime?; only named approved profiles",
-  "output_summary": "result or broker job_id, bounded stdout/stderr, exit class, verification.",
+  "purpose": "Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries.",
+  "input_summary": "project_root, worktree, task, task_id, execution_profile, max_runtime, idempotency_key, network_policy, model, allowed_paths, validation_plan",
+  "output_summary": "job_id, state, task_id, worktree",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "mac_task_run input",
+    "title": "mac_codex_run input",
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "profile": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^[A-Za-z0-9._:@/+-]+$"
-      },
-      "cwd": {
+      "project_root": {
         "type": "string",
         "minLength": 1,
         "maxLength": 4096,
         "pattern": "^[^\\u0000]+$"
       },
-      "args": {
-        "type": "array",
-        "minItems": 0,
-        "maxItems": 64,
-        "uniqueItems": false,
-        "items": {
-          "type": "string",
-          "minLength": 0,
-          "maxLength": 1024
-        }
-      },
-      "async": {
-        "type": "boolean"
-      },
-      "idempotency_key": {
+      "worktree": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 128,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      },
+      "task": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16384
       },
       "task_id": {
         "type": "string",
         "minLength": 1,
         "maxLength": 128,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "execution_profile": {
+        "enum": [
+          "readonly",
+          "workspace-write",
+          "test-only"
+        ]
       },
       "max_runtime": {
         "type": "integer",
         "minimum": 1,
         "maximum": 600000
+      },
+      "idempotency_key": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "network_policy": {
+        "enum": [
+          "none",
+          "allowlist"
+        ]
+      },
+      "model": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "allowed_paths": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 128,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000]+$"
+        }
+      },
+      "validation_plan": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
       }
     },
     "required": [
-      "profile",
-      "cwd"
+      "project_root",
+      "worktree",
+      "task",
+      "task_id",
+      "execution_profile",
+      "max_runtime",
+      "idempotency_key",
+      "network_policy"
     ]
   },
   "output_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "title": "mac_task_run result",
+    "title": "mac_codex_run result",
     "type": "object",
     "additionalProperties": false,
     "required": [
@@ -104,7 +144,7 @@
         "maxLength": 128
       },
       "tool": {
-        "const": "mac_task_run"
+        "const": "mac_codex_run"
       },
       "result_class": {
         "const": "SUCCEEDED"
@@ -113,17 +153,11 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "profile": {
+          "job_id": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 128,
-            "pattern": "^[A-Za-z0-9._:@/+-]+$"
-          },
-          "cwd": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 4096,
-            "pattern": "^[^\\u0000]+$"
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:/-]+$"
           },
           "state": {
             "enum": [
@@ -135,62 +169,24 @@
               "unknown"
             ]
           },
-          "job_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 256,
-                "pattern": "^[A-Za-z0-9._:/-]+$"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "exit_code": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": -2147483648,
-                "maximum": 2147483647
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "stdout": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 2097152
-          },
-          "stderr": {
-            "type": "string",
-            "minLength": 0,
-            "maxLength": 2097152
-          },
-          "truncated": {
-            "type": "boolean"
-          },
-          "accepted": {
-            "type": "boolean"
-          },
-          "reused": {
-            "type": "boolean"
-          },
           "task_id": {
             "type": "string",
             "minLength": 1,
             "maxLength": 128,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "worktree": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
           }
         },
         "required": [
-          "profile",
-          "cwd",
+          "job_id",
           "state",
-          "job_id"
+          "task_id",
+          "worktree"
         ]
       },
       "warnings": {
@@ -267,7 +263,7 @@
   "source": {
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
-    "kb_item_id": "d1c6a0c1-266c-488c-884b-86b3ae381986",
-    "source_text": "Purpose: execute one allowlisted named task profile such as test/build; no arbitrary command string. Input: profile:string, cwd:string, args?:string[], async?:boolean. Output: result or broker job_id, bounded stdout/stderr, exit class, verification. Contract: L2 writes_local; scope mac.task.run; target task_profile; timeout max 600000ms; cap 2MiB; network/profile-defined; filesystem/profile-defined; minimal env and secret-env denial; approval trusted_profile; non-idempotent unless profile declares otherwise. Phase 3 planned."
+    "kb_item_id": "4c554c44-a4c2-4890-b972-533d5e4f07e9",
+    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries."
   }
 }

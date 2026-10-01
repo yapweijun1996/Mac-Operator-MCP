@@ -1,3 +1,5 @@
+import type { DevelopmentGateway } from "./development-gateway.js";
+import { DEVELOPMENT_EXECUTION_TOOLS } from "./development-policy.js";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -479,6 +481,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
   /** Explicit host startup seam; default root-helper assembly is disabled. */
   rootHelperSnapshotTaskRunner?: RootHelperSnapshotTaskRunnerStartupOptions;
   /** Explicit host-owned task profiles paired with an isolated runner. */
+  developmentGateway?: DevelopmentGateway;
   taskProfileRegistry?: TaskProfileRegistry;
   /** Host-owned gate for active root-helper snapshot request digests. */
   authorizeRootHelperSnapshotRequest?: (requestDigest: string) => void;
@@ -723,6 +726,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
           edgeAuthenticationKeys,
           now,
           ...(options.taskProfileRegistry === undefined ? {} : { taskProfileRegistry: options.taskProfileRegistry }),
+          ...(options.developmentGateway === undefined ? {} : { developmentGateway: options.developmentGateway }),
                   ...(options.rootHelperSnapshotRequestAuthority === undefined ? {} : { rootHelperSnapshotRequestAuthority: options.rootHelperSnapshotRequestAuthority }),
                   guiPublicEnablement,
                   developerPublicEnablement,
@@ -817,7 +821,7 @@ export async function createBrokerServiceFromStartupConfig(options: {
     const selectedTaskRunner = virtualizationGuestRuntime?.taskRunner ??
       rootHelperSnapshotTaskRunner ?? appSandboxTaskRunner ?? sandboxTaskRunner;
     assertTaskRunnerPublicEnablement(
-      verifiedPolicy.policy.tools.get("mac_task_run")?.enabled === true,
+      ["mac_task_run", ...DEVELOPMENT_EXECUTION_TOOLS].some((tool) => verifiedPolicy.policy.tools.get(tool)?.enabled === true),
       selectedTaskRunner
     );
     for (const toolName of ACCESSIBILITY_BOUND_GUI_TOOLS) {
@@ -975,6 +979,7 @@ export async function runBrokerServiceMain(options: {
   sandboxTaskRunner?: SandboxExecTaskRunnerOptions;
   appSandboxTaskRunner?: AppSandboxTaskRunnerStartupOptions;
   rootHelperSnapshotTaskRunner?: RootHelperSnapshotTaskRunnerStartupOptions;
+  developmentGateway?: DevelopmentGateway;
   taskProfileRegistry?: TaskProfileRegistry;
   authorizeRootHelperSnapshotRequest?: (requestDigest: string) => void;
   rootHelperSnapshotRequestAuthority?: RootHelperSnapshotRequestAuthority;
@@ -990,6 +995,7 @@ export async function runBrokerServiceMain(options: {
     ...(options.appSandboxTaskRunner === undefined ? {} : { appSandboxTaskRunner: options.appSandboxTaskRunner }),
     ...(options.rootHelperSnapshotTaskRunner === undefined ? {} : { rootHelperSnapshotTaskRunner: options.rootHelperSnapshotTaskRunner }),
     ...(options.taskProfileRegistry === undefined ? {} : { taskProfileRegistry: options.taskProfileRegistry }),
+    ...(options.developmentGateway === undefined ? {} : { developmentGateway: options.developmentGateway }),
     ...(options.authorizeRootHelperSnapshotRequest === undefined ? {} : { authorizeRootHelperSnapshotRequest: options.authorizeRootHelperSnapshotRequest }),
     ...(options.rootHelperSnapshotRequestAuthority === undefined ? {} : { rootHelperSnapshotRequestAuthority: options.rootHelperSnapshotRequestAuthority }),
     ...(options.approvalIssuer === undefined ? {} : { approvalIssuer: options.approvalIssuer })

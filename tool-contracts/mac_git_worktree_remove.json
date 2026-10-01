@@ -1,0 +1,199 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_git_worktree_remove",
+  "capability_level": "L2",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.project.write",
+    "mac.git.write"
+  ],
+  "normalized_target_type": "project_root",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 131072,
+  "network_policy": "none",
+  "filesystem_policy": "write_allowed_project",
+  "secret_policy": "deny_secret_paths_and_env",
+  "approval_policy": "trusted_write",
+  "idempotent": true,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "changed_paths_and_hash_readback",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "git_write",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "Remove a clean Broker-owned worktree with ownership checks and read-back verification; never delete the primary repository.",
+  "input_summary": "project_root, worktree, task_id, idempotency_key",
+  "output_summary": "project_root, worktree, removed",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_git_worktree_remove input",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "project_root": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      },
+      "worktree": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^\\u0000]+$"
+      },
+      "task_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "idempotency_key": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      }
+    },
+    "required": [
+      "project_root",
+      "worktree",
+      "task_id",
+      "idempotency_key"
+    ]
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_git_worktree_remove result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_git_worktree_remove"
+      },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "project_root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "worktree": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\u0000]+$"
+          },
+          "removed": {
+            "const": true
+          }
+        },
+        "required": [
+          "project_root",
+          "worktree",
+          "removed"
+        ]
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "changed_paths_and_hash_readback"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 600000
+      }
+    }
+  },
+  "source": {
+    "kbid": "mac-operator-mcp",
+    "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
+    "kb_item_id": "428e62de-1b0c-48dc-9add-c24b563439fe",
+    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Remove a clean Broker-owned worktree with ownership checks and read-back verification; never delete the primary repository."
+  }
+}
