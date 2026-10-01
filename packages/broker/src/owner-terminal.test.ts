@@ -64,10 +64,10 @@ test("Broker owner terminal requires scope and delegation, audits before executi
   const root = await realpath(await mkdtemp("/tmp/owner-terminal-broker-"));
   const store = new BrokerStore(join(root, "broker.sqlite"), { runtimeFence: true });
   const key = randomBytes(32);
-  const base = createDefaultPolicy("edge-1", true, ["mac.terminal.exec"], ["edge-key-1"]);
+  const base = createDefaultPolicy("edge-1", true, ["mac.terminal.exec", "mac.control.read"], ["edge-key-1"]);
   const policy = { ...base, killSwitches: { ...base.killSwitches, mutations: false },
     tools: new Map(base.tools).set("mac_terminal_exec", { ...base.tools.get("mac_terminal_exec")!, enabled: true }),
-    targetRules: [{ ruleId: "owner-terminal", effect: "allow" as const, principalId: "principal-1",
+    targetRules: [...base.targetRules, { ruleId: "owner-terminal", effect: "allow" as const, principalId: "principal-1",
       scope: "mac.terminal.exec" as const, target: { kind: "host" as const, reference: "owner-terminal" } }] };
   let delegate = true;
   const broker = new Broker({ store, policy, ownerTerminalExecutor: new PersonalOwnerTerminalExecutor({ enabled: true }),
@@ -93,6 +93,23 @@ test("Broker owner terminal requires scope and delegation, audits before executi
     return broker.handle(signRequest(request, key));
   };
   try {
+    for (const terminalScopeGranted of [true, false]) {
+      const now = Date.now();
+      const request: UnsignedBrokerRequest = { protocolVersion: "0.1", requestId: `capabilities-${terminalScopeGranted}`, contractVersion: "0.1",
+        tool: "mac_capabilities", arguments: {}, principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer",
+          audience: "mac-operator-broker", scopes: terminalScopeGranted ? ["mac.control.read", "mac.terminal.exec"] : ["mac.control.read"],
+          issuedAtMs: now - 1000, expiresAtMs: now + 120000, edgeId: "edge-1" },
+        timestampMs: now, nonce: `capabilities-nonce-${terminalScopeGranted}`, policyAudience: "mac-operator-broker",
+        policyVersion: policy.version, authenticationKeyId: "edge-key-1" };
+      const capabilities = await broker.handle(signRequest(request, key));
+      assert.equal(capabilities.ok, true, JSON.stringify(capabilities));
+      if (capabilities.ok) {
+        const terminal = (capabilities.data as { capabilities: { name: string; enabled: boolean; reason: string }[] }).capabilities
+          .find(capability => capability.name === "mac_terminal_exec");
+        assert.equal(terminal?.enabled, terminalScopeGranted);
+        assert.equal(terminal?.reason, terminalScopeGranted ? "enabled" : "scope_not_granted");
+      }
+    }
     assert.equal((await call(args, ["mac.control.read"])).ok, false);
     delegate = false; assert.equal((await call()).ok, false);
     await assert.rejects(readFile(join(root, "counter")), { code: "ENOENT" });

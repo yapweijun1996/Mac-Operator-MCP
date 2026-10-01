@@ -4608,6 +4608,10 @@ export class Broker {
   }
 
   private authorizeCapabilityTarget(policy: BrokerPolicy, principalId: string, tool: ToolPolicy): void {
+    if (tool.tool === "mac_terminal_exec") {
+      authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "host", reference: "owner-terminal" });
+      return;
+    }
     if (tool.targetType === "job") {
       authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "job", reference: "owned" });
       return;
