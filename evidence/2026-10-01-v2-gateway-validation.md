@@ -120,3 +120,15 @@ coding agent has exercised that boundary.
 4. Staged signed-policy and OAuth migration, followed by the actual synthetic
    YAP-MCP workflow and primary comparison. Ordinary coding approval never
    authorizes push, package installation or service/system mutation.
+
+## Later independent O1 state
+
+After V2 source delivery, another authorized task deployed its independent O1
+release. Its committed rollout record was read in the separate owner-terminal
+worktree. A fresh live capability read confirmed 46 registered contracts, the
+owner-terminal contract with `scope_not_granted` for this caller, the task-run
+contract with `disabled_by_policy`, and no V2 Codex/worktree contracts. No owner
+terminal execution was performed during this follow-up. The O1 rollout did not
+change the V2 source test counts or complete its production/YAP acceptance.
+The [change report](../docs/MAC_OPERATOR_V2_CHANGE_REPORT.md) records its source
+commits and the distinction between owner authority and isolated execution.

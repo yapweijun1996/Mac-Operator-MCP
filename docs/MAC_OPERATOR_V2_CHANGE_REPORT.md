@@ -6,8 +6,9 @@ Overall completion: **55%**, based on 6 of 11 Definition of Done gates verified;
 estimate, not a claim that 55% of engineering effort remains.
 
 Branch: `codex/safe-development-gateway-v2`.
-Baseline commit: `0be86f5`. The resulting focused local commit is recorded in the
-final delivery response; this report is part of that commit. No push or PR.
+Baseline commit: `0be86f5`. Implementation commit:
+`d43d4f5fc423d3ecd73d9357515def61b3d496b1`. A later documentation-only commit
+records the independent O1 rollout below. No push or PR.
 
 ## Architecture before and after
 
@@ -21,6 +22,33 @@ final delivery response; this report is part of that commit. No push or PR.
 
 No unrestricted shell, sudo, credential mount, automatic push or PR publishing
 was added. No live deployment was migrated as part of this V2 work.
+
+## Independent live O1 deployment (later on 2026-10-01)
+
+The owner-terminal work was implemented and deployed independently from this
+V2 checkout. Its rollout evidence is
+`evidence/2026-10-01-owner-terminal-control.md` on
+`codex/owner-terminal-control` (runtime source
+`fa215d61ba553c306127a0f0a676dffd39bd6cc3`, evidence commit
+`463388cfd4b2fb210fb1d9321dc26ee5a1e79780`). It records release
+`personal-20261001-o1a`, state `MacOperator-o1-20261001a`, 38 runtime tools and
+24 scopes. This is source-backed handoff evidence; this V2 task did not perform
+that rollout or merge its code.
+
+A subsequent live `mac_capabilities` read confirmed a 46-contract catalog,
+`mac_terminal_exec` implemented but `scope_not_granted` for this caller,
+`mac_task_run` still `disabled_by_policy`, and no V2 Codex/worktree entries.
+Thus the current live mode is independent O1, while this branch remains the
+undeployed bounded V2 implementation. Earlier G1 observations in the audit are
+historical baseline evidence, not a statement that live deployment stayed G1.
+
+O1 intentionally executes arbitrary owner-account commands, with owner-file
+and network authority. Its own evidence explicitly excludes isolated-task
+acceptance and warns that output redaction cannot guarantee secret protection.
+Successful shell/CLI, timeout or cancellation checks are not evidence of V2
+worktree, secret, readonly or descendant containment. O1 must not serve as a
+fallback for V2 agent/test/build admission, and ordinary V2 coding approval
+must not confer owner-terminal authority. V2 completion remains PARTIAL/55%.
 
 ## Tools
 
@@ -98,8 +126,8 @@ for exact limits, commands, 25 required cases and mock-versus-physical evidence.
 | Codex safely operates an authorized project | PENDING: accepted adapter/runtime/inference route |
 | Codex writes only inside isolated worktree | PENDING: admission verified; real agent enforcement not exercised |
 | Tests/builds run through production managed jobs | PENDING: lifecycle fixture verified; production executor absent |
-| Current secrets and unauthorized path boundaries remain inaccessible | PASS: current fail-closed execution and native/file authorization regressions |
-| Unrestricted sudo/shell unavailable through this gateway | PASS |
+| V2/R1 scoped APIs preserve secret and unauthorized path denials | PASS: native/file authorization regressions; O1 owner authority is a separate boundary |
+| Unrestricted sudo/shell unavailable through V2 tool contracts | PASS: this source gateway has no owner-terminal endpoint |
 | Git push gated | PASS: implementation always denies |
 | Audit evidence exists | PASS |
 | Policy tests pass | PASS |

@@ -1,10 +1,16 @@
 # Mac-Operator-MCP
 
-Mac-Operator-MCP is a planned governed MCP Edge and local macOS Broker for operating a physical Mac mini with high capability and bounded authority. The Local Broker performs final authorization; secret content, unrestricted shell, unrestricted root, and the interfaces excluded by `SECURITY.md` remain unavailable.
+Mac-Operator-MCP provides a governed MCP Edge and local macOS Broker for operating a physical Mac mini. The Local Broker performs final authorization. This checkout's R1/G1 and V2 scoped interfaces preserve the secret, shell, and privilege boundaries described in `SECURITY.md`.
 
 ## Current status
 
 See `PROGRESS.md` for current Git evidence, implementation and enablement state, verification, blockers, and next work.
+
+A separate O1 owner-terminal release is live with broader owner-account
+authority. Its implementation is on another branch; this checkout's V2 gateway
+remains undeployed and PARTIAL (55%). O1 shell/CLI checks do not establish V2
+isolation or coding E2E. See the
+[verified deployment distinction](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md).
 
 ## Start here
 

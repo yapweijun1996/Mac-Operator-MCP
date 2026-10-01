@@ -6,7 +6,8 @@ Source baseline: `0be86f5`, wire/protocol version `0.1`, application `0.1.0`.
 Physical host: macOS arm64 Mac mini. Live `mac_health` reported healthy;
 `mac_capabilities` reported `mac_task_run` disabled by policy. Codex CLI
 `0.153.4` and Docker Engine `29.1.3` are installed. Installation is not isolation
-or authentication evidence. No live policy or service has been changed.
+or authentication evidence. This V2 task changed no live policy or service.
+The later independent O1 rollout is distinguished in the change report.
 
 ### Current architecture and ownership
 
@@ -172,3 +173,13 @@ The final evidence and exact acceptance limits are in
 [the validation record](../evidence/2026-10-01-v2-gateway-validation.md) and
 [the change report](MAC_OPERATOR_V2_CHANGE_REPORT.md). A real production coding
 adapter and YAP-MCP E2E remain pending; this is a partial delivery, not a release.
+
+## Later live-deployment distinction
+
+A separate owner-terminal branch deployed O1 later on 2026-10-01. Live capability
+readback now exposes its implemented owner-terminal contract (not granted to
+this caller), keeps `mac_task_run` policy-disabled, and contains no V2 entries.
+This does not repair production task isolation or establish Codex/YAP E2E.
+Treat owner-shell access as separate HIGH_RISK authority, never an AGENT_RUN
+fallback. See the [verified rollout distinction](MAC_OPERATOR_V2_CHANGE_REPORT.md)
+for source references and the unchanged V2 acceptance limits.
