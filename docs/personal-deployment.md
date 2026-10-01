@@ -1,10 +1,38 @@
 # Personal always-on deployment
 
-Status: W1 running on the owner's Mac mini as of September 25, 2026. This is an
+Status: O1 running on the owner's Mac mini as of October 1, 2026. This is an
 owner-managed, unsigned personal deployment, not a Developer ID/notarized
 package or acceptance of the formal production installer.
 
-## Current W1 personal project deployment
+## Current O1 owner terminal deployment
+
+The public MCP URL remains `https://mac.yapweijun1996.com/mcp`. O1 retains G1's
+37 tools and adds `mac_terminal_exec` under `mac.terminal.exec`: 38 tools and
+24 OAuth scopes in total. The terminal executes shell commands and local CLIs
+with the macOS owner's permissions. Its exact delegated approval is enabled
+by the owner's local opt-in and OAuth consent; each command has a durable Job.
+Existing OAuth grants retain their original scopes. Reconnect the MCP client
+and consent to the additional terminal scope to use the new tool.
+
+PM2 process `mac-operator-personal` runs
+`~/Library/Application Support/MacOperator/releases/personal-20261001-o1a`
+with state at `~/Library/Application Support/MacOperator-o1-20261001a`.
+Runtime source revision is `fa215d61ba553c306127a0f0a676dffd39bd6cc3`.
+The preserved G1 release/state pair is the rollback point:
+`personal-20260925-g1a` and `MacOperator-g1-20260925a`. The new state contains
+protected `rollback-launch.json` supervisor arguments without credentials.
+The selected supervisor configuration is saved in PM2.
+
+Public verification passed owner OAuth login and consent, exact tool discovery,
+26 read calls, a 31-second command, Git/Node/Codex CLI invocation, HTTPS access,
+file writes, idempotent replay, Job readback, timeout and active grant revocation.
+Revocation returned `CANCELLED`, persisted a cancelled Job and cleared process
+ownership. A separate grant restricted to the old read scopes listed 27 tools,
+passed 26 reads and did not expose the terminal. The loopback snapshot preflight
+also passed. See [verification evidence](../evidence/2026-10-01-owner-terminal-control.md)
+and [terminal operations](owner-terminal.md) for limits and rollback details.
+
+## Historical W1 personal project deployment
 
 The live service uses a separate `w1` owner profile for one canonical Git
 repository under the owner's home. It keeps 27 R1 read tools and adds `mac_write_file_atomic`,

@@ -2,6 +2,16 @@
 
 ## Current overall progress: 92%
 
+Personal owner terminal (2026-10-01): O1 is live under explicit owner opt-in
+and OAuth consent, with 38 tools and 24 scopes. The public verifier passed
+31-second terminal/CLI/network/file execution, idempotency, timeout, durable
+cancellation after grant revocation, and 26 existing read calls. Old read
+scope grants still expose only 27 tools. Full regression: 1,274 passed,
+17 explicitly skipped, 0 failed. The previous G1 release/state is preserved
+for rollback. This completes the requested owner-account terminal capability;
+formal signing, installer and isolated-task acceptance remain separate at 92%.
+Evidence: [owner terminal verification](evidence/2026-10-01-owner-terminal-control.md).
+
 Owner-only W1 deployment (2026-09-24): the source provisions a separate
 one-project file/Git write profile with attended browser approval. A signed
 policy binds write authority to one canonical Git repository under the owner's
@@ -6600,4 +6610,4 @@ rollback detection, and ADR acceptance remain open. Evidence:
 
 ## Personal owner terminal expansion (2026-10-01)
 
-The owner explicitly requested terminal and CLI control of their Mac. O1 adds the independently enabled `mac_terminal_exec` capability under `mac.terminal.exec`, with authenticated owner grants, exact delegated approvals, durable Jobs, bounded output, cancellation and audit. This mode executes arbitrary commands under the macOS owner account and makes no isolation claim. R1/W1/G1 and isolated task-run acceptance remain unchanged. Implementation and verification are recorded in [Owner terminal operations](docs/owner-terminal.md). Online enablement is pending verification and release switch.
+The owner explicitly requested terminal and CLI control of their Mac. O1 adds the independently enabled `mac_terminal_exec` capability under `mac.terminal.exec`, with authenticated owner grants, exact delegated approvals, durable Jobs, bounded output, cancellation and audit. This mode executes arbitrary commands under the macOS owner account and makes no isolation claim. R1/W1/G1 and isolated task-run acceptance remain unchanged. Online O1 enablement and public OAuth verification passed at runtime source revision `fa215d61ba553c306127a0f0a676dffd39bd6cc3`. Implementation and operating limits are recorded in [Owner terminal operations](docs/owner-terminal.md); final results are in [verification evidence](evidence/2026-10-01-owner-terminal-control.md).
