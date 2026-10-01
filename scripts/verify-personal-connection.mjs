@@ -168,11 +168,11 @@ async function run() {
   console.log(`${profileLabel} tool discovery verified: ${listed.tools.length} tools listed; ${verificationCalls.size + (writeProfile ? 0 : 1)} real read calls succeeded. mac_job_status remains available for owner-owned Job readback only.`);
   if (terminalProbe) {
     terminalDirectory = await mkdtemp("/tmp/mop-owner-live-");
-    const command = "printf once >> counter; sleep 31; pwd; git --version; node --version; if command -v codex >/dev/null; then codex --version; fi; curl -fsS --max-time 10 -o /dev/null https://mac.yapweijun1996.com/.well-known/oauth-protected-resource/mcp; printf '\nnetwork-ok'";
+    const command = "printf once >> counter && sleep 31 && pwd && git --version && node --version && if command -v codex >/dev/null; then codex --version; fi && curl -fsS --max-time 10 -o /dev/null https://mac.yapweijun1996.com/.well-known/oauth-protected-resource/mcp && printf '\nnetwork-ok'";
     const args = { command, cwd: terminalDirectory, idempotency_key: `owner-live-${randomBytes(8).toString("hex")}`, timeout_ms: 45000 };
     const first = await call("mac_terminal_exec", args);
     assert.equal(first.state, "completed"); assert.equal(first.exit_code, 0);
-    assert.match(first.stdout, /git version/u); assert.match(first.stdout, /network-ok/u);
+    assert.match(first.stdout, /git version/u); assert.match(first.stdout, /^v[0-9]+\./mu); assert.match(first.stdout, /network-ok/u);
     const replay = await call("mac_terminal_exec", args);
     assert.equal(replay.reused, true);
     assert.equal(await readFile(join(terminalDirectory, "counter"), "utf8"), "once");
