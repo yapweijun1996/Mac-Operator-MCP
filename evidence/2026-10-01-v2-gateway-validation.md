@@ -6,6 +6,11 @@ Baseline: `0be86f5`; branch: `codex/safe-development-gateway-v2`.
 No live service, signed policy, OAuth grant or production project was changed by
 this V2 implementation. No push or PR publication occurred.
 
+This is historical October 1 evidence. The subsequent integration and live
+source deployment are recorded in the [October 2 rollout record](2026-10-02-v2-o1-personal-rollout.md).
+The newer 1330-test suite passed 1313, skipped 17 and failed zero. Real V2
+coding isolation and YAP-MCP E2E remain unverified.
+
 ## Verification results
 
 | Check | Result | Evidence limits |

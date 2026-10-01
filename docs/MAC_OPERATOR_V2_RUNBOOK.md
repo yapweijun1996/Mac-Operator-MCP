@@ -13,8 +13,9 @@ coding-agent adapter, no automatic service migration, and no claimed production
 Codex or YAP-MCP coding E2E. Source tests and mock providers do not establish an
 accepted macOS execution boundary.
 
-A separately deployed O1 owner-terminal mode is now live; see the
-[rollout distinction](MAC_OPERATOR_V2_CHANGE_REPORT.md). Its CLI/shell checks do
+A combined O1/V2 source snapshot is now live under the existing O1 policy; see
+the [October 2 rollout and rollback record](../evidence/2026-10-02-v2-o1-personal-rollout.md).
+V2 tools remain disabled. Its CLI/shell checks do
 not qualify as V2 isolation evidence. Do not use that terminal authority to
 bypass V2 job/worktree/profile admission or bundle it into coding approval.
 

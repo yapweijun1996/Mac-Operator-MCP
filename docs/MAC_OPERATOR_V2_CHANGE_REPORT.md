@@ -1,11 +1,14 @@
 # Mac Operator V2 change report
 
-Date: 2026-10-01. Status: PARTIAL. Source regression: PASS.
+Updated: 2026-10-02. V2 acceptance: PARTIAL. Source regression and personal
+deployment: PASS.
 Overall completion: **55%**, based on 6 of 11 Definition of Done gates verified;
 5 require a real production coding/runtime workflow. This is an acceptance
 estimate, not a claim that 55% of engineering effort remains.
 
-Branch: `codex/safe-development-gateway-v2`.
+Current branch: `main` (local merge; no push). Integration source commit:
+`2c37194d9bd822e78ad088f61d79a5f91061e152`.
+Original implementation branch: `codex/safe-development-gateway-v2`.
 Baseline commit: `0be86f5`. Implementation commit:
 `d43d4f5fc423d3ecd73d9357515def61b3d496b1`. A later documentation-only commit
 records the independent O1 rollout below. No push or PR.
@@ -20,8 +23,9 @@ records the independent O1 rollout below. No push or PR.
 | Durable SQLite jobs/audit with conservative restart | Same ledger, with agent/test/build ownership/recovery and bounded execution-audit view |
 | No accepted local Codex runtime | Trusted provisioning interface/preflight; execution still denied without accepted adapter/runtime |
 
-No unrestricted shell, sudo, credential mount, automatic push or PR publishing
-was added. No live deployment was migrated as part of this V2 work.
+The V2 interfaces add no unrestricted shell, sudo, credential mount, automatic
+push or PR publishing. The original October 1 implementation did not migrate
+the service. The separately authorized October 2 source rollout is recorded below.
 
 ## Independent live O1 deployment (later on 2026-10-01)
 
@@ -38,8 +42,8 @@ that rollout or merge its code.
 A subsequent live `mac_capabilities` read confirmed a 46-contract catalog,
 `mac_terminal_exec` implemented but `scope_not_granted` for this caller,
 `mac_task_run` still `disabled_by_policy`, and no V2 Codex/worktree entries.
-Thus the current live mode is independent O1, while this branch remains the
-undeployed bounded V2 implementation. Earlier G1 observations in the audit are
+At that time the live mode was independent O1, while the V2 implementation
+remained undeployed. Earlier G1 observations in the audit are
 historical baseline evidence, not a statement that live deployment stayed G1.
 
 O1 intentionally executes arbitrary owner-account commands, with owner-file
@@ -79,8 +83,19 @@ would ignore the new callback. Independent review accepted the fix, with
 
 O1 clone fixtures were changed from shared object stores to independent clones
 so they respect the V2 metadata boundary. Duplicate test imports were removed.
-The rollout record will identify the deployed source, health and rollback
-readback; source-level validation is not a claim of a completed live cutover.
+The [personal rollout record](../evidence/2026-10-02-v2-o1-personal-rollout.md)
+confirms live cutover to `personal-20261002-v2a` at integration commit `2c37194`.
+The signed policy is byte-identical to the offline backup. Only unsigned source
+binding fields changed. Public OAuth checks passed exact 38-tool owner and
+27-tool read-only discovery, 26 reads for each grant, denied out-of-project
+writes, terminal idempotency, timeout, durable cancellation and revocation.
+`mac_health` is healthy; `mac_capabilities` reports all 57 contracts and disabled
+V2/task tools. The tested native binary hash matches the release record. PM2
+configuration is saved. No push or PR publication occurred.
+
+This completes the authorized source deployment and local main merge. V2
+production coding acceptance remains PARTIAL/55%; the O1 checks above cannot
+substitute for it.
 
 ## Tools
 
@@ -212,7 +227,11 @@ its actual synthetic E2E. Keep current V2 execution disabled until that passes.
 
 ## Changed files
 
-This focused delivery contains 51 files. Only the V2 progress entry in `PROGRESS.md` is staged; unrelated existing progress/evidence edits are preserved outside the task commit.
+The original V2 implementation changed 51 files. The combined integration
+changed 84 files relative to baseline `0be86f5`; the later rollout record is a
+documentation-only commit. Unrelated existing progress/evidence edits remain
+outside the task commits. The integration delta is available with
+`git diff --stat 0be86f5 2c37194`.
 
 - `PROGRESS.md`
 - `README.md`

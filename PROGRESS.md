@@ -2,13 +2,18 @@
 
 ## Current overall progress: 92%
 
-V2/O1 source integration (2026-10-02): verified for the owner-authorized
-personal rollout. Standard npm test: 1313 PASS, 17 SKIP, 0 FAIL; 57 contracts
+V2/O1 source integration (2026-10-02): deployed and merged to local main at
+`2c37194d9bd822e78ad088f61d79a5f91061e152`. Standard npm test: 1313 PASS,
+17 SKIP, 0 FAIL; 57 contracts
 verify; dependency audit reports zero vulnerabilities. Independent review
 accepted the canonical native-write authorization fix with 55 related tests
 passing and no unresolved P0/P1. The signed O1 policy remains 24 scopes/38 tools;
-V2/task execution stays disabled. Live readback is recorded separately after
-cutover; production Codex isolation and YAP-MCP acceptance remain at 55%.
+V2/task execution stays disabled. Release `personal-20261002-v2a` is healthy;
+public OAuth checks passed 38-tool owner discovery, 27-tool read-only discovery,
+26 reads for each grant, terminal idempotency/timeout/revocation cancellation
+and denied writes outside the project. PM2 configuration is saved. No push.
+Deployment evidence: `evidence/2026-10-02-v2-o1-personal-rollout.md`.
+Production Codex isolation and YAP-MCP acceptance remain at 55%.
 
 V2 safe development gateway (2026-10-01): PARTIAL, 55% acceptance completion
 (6 of 11 gates verified). Additive worktrees, gateway admission, asynchronous

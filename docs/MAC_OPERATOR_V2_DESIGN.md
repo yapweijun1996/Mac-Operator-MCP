@@ -6,8 +6,10 @@ Source baseline: `0be86f5`, wire/protocol version `0.1`, application `0.1.0`.
 Physical host: macOS arm64 Mac mini. Live `mac_health` reported healthy;
 `mac_capabilities` reported `mac_task_run` disabled by policy. Codex CLI
 `0.153.4` and Docker Engine `29.1.3` are installed. Installation is not isolation
-or authentication evidence. This V2 task changed no live policy or service.
-The later independent O1 rollout is distinguished in the change report.
+or authentication evidence. This October 1 audit/implementation changed no
+live policy or service. The October 2 authorized source rollout preserves the
+existing O1 signed policy and leaves V2 tools disabled; see the
+[deployment record](../evidence/2026-10-02-v2-o1-personal-rollout.md).
 
 ### Current architecture and ownership
 

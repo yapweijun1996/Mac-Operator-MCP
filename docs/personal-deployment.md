@@ -1,6 +1,7 @@
 # Personal always-on deployment
 
-Status: O1 running on the owner's Mac mini as of October 1, 2026. This is an
+Status: combined O1/V2 source running under the existing O1 policy as of
+October 2, 2026. V2 tools remain disabled. This is an
 owner-managed, unsigned personal deployment, not a Developer ID/notarized
 package or acceptance of the formal production installer.
 
@@ -15,10 +16,17 @@ Existing OAuth grants retain their original scopes. Reconnect the MCP client
 and consent to the additional terminal scope to use the new tool.
 
 PM2 process `mac-operator-personal` runs
-`~/Library/Application Support/MacOperator/releases/personal-20261001-o1a`
+`~/Library/Application Support/MacOperator/releases/personal-20261002-v2a`
 with state at `~/Library/Application Support/MacOperator-o1-20261001a`.
-Runtime source revision is `fa215d61ba553c306127a0f0a676dffd39bd6cc3`.
-The preserved G1 release/state pair is the rollback point:
+Runtime source revision is `2c37194d9bd822e78ad088f61d79a5f91061e152`, merged to
+local `main`. The 57-contract catalog includes the disabled V2 interfaces;
+enabled owner tools and scopes remain 38 and 24. The signed policy is unchanged.
+The immediate source rollback uses preserved release `personal-20261001-o1a`
+and the protected offline backup `MacOperator/backups/o1-before-20261002-v2a`.
+Only `packageRoot`, `contractsDirectory` and `sourceRevision` in unsigned
+`personal/edge-service.json` were changed. PM2 configuration is saved.
+See the [October 2 rollout record](../evidence/2026-10-02-v2-o1-personal-rollout.md)
+for validation and exact rollback steps. The older G1 release/state pair remains:
 `personal-20260925-g1a` and `MacOperator-g1-20260925a`. The new state contains
 protected `rollback-launch.json` supervisor arguments without credentials.
 The selected supervisor configuration is saved in PM2.
@@ -29,7 +37,8 @@ file writes, idempotent replay, Job readback, timeout and active grant revocatio
 Revocation returned `CANCELLED`, persisted a cancelled Job and cleared process
 ownership. A separate grant restricted to the old read scopes listed 27 tools,
 passed 26 reads and did not expose the terminal. The loopback snapshot preflight
-also passed. See [verification evidence](../evidence/2026-10-01-owner-terminal-control.md)
+also passed. The October 2 source rollout repeated the public owner and old-read
+grant checks successfully. See [original verification evidence](../evidence/2026-10-01-owner-terminal-control.md)
 and [terminal operations](owner-terminal.md) for limits and rollback details.
 
 ## Historical W1 personal project deployment

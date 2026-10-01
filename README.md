@@ -7,10 +7,12 @@ Mac-Operator-MCP provides a governed MCP Edge and local macOS Broker for operati
 See `PROGRESS.md` for current Git evidence, implementation and enablement state, verification, blockers, and next work.
 
 O1 owner-terminal execution retains its separate explicit owner authority.
-This source integrates its existing implementation with the disabled V2
-gateway for the next personal rollout. V2 acceptance remains PARTIAL (55%);
+The combined O1/V2 source is deployed on the personal Mac mini as of October 2,
+2026, with the existing signed policy preserved and V2 tools disabled.
+Public OAuth and existing-tool verification passed. V2 acceptance remains PARTIAL (55%);
 O1 shell/CLI checks do not establish V2 isolation or coding E2E. See the
-[verified deployment distinction](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md).
+[live rollout evidence](evidence/2026-10-02-v2-o1-personal-rollout.md) and
+[remaining acceptance gates](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md).
 
 ## Start here
 
