@@ -25,7 +25,7 @@ Authority revocation, job cancellation, shutdown and timeout terminate observed 
 
 ## Interactive sessions (`mac_terminal_session`)
 
-`mac_terminal_session` adds a PTY-backed interactive shell to O1. It reuses the `mac.terminal.exec` scope, the `host:owner-terminal` target, the delegated terminal issuer and the same owner-account authority as `mac_terminal_exec`; it adds no scope. Reconnecting is only needed when the grant predates the policy revision that lists the tool (rerun the `owner-terminal` offline upgrade described below).
+`mac_terminal_session` adds a PTY-backed interactive shell to O1. It reuses the `mac.terminal.exec` scope, the `host:owner-terminal` target, the delegated terminal issuer and the same owner-account authority as `mac_terminal_exec`; it adds no scope. The tool is disabled in the default policy, and an already-signed live O1 or V2 policy does not list it. **No upgrade path exists yet:** `owner-terminal` returns without change for an existing O1 state, and a service running this code against a policy that lacks the tool fails its startup capability check. A policy re-signing step must be added before this can be deployed; until then do not run this build against live state.
 
 Actions (one tool, exact per-action arguments):
 
@@ -34,7 +34,7 @@ Actions (one tool, exact per-action arguments):
 - `read` — `session_id`, `cursor`, optional `max_bytes` (at most 32 KiB), `wait_ms` (at most 5 s). Returns redacted output, `next_cursor`, and `dropped_bytes` when the 256 KiB ring buffer overwrote unread output.
 - `stop` — hangs up the shell and waits for the session to end; if the shell ignores the hangup the Job is cancelled and the process tree drained. `mac_job_cancel` on the session Job does the same.
 
-Limits and behaviour: sessions are in memory and bound to the starting principal; another principal receives not-found. Revocation, Job cancellation, idle timeout, the absolute lifetime and Broker shutdown terminate the observed process tree. A Broker restart never resumes a session; the recorded process identity is recovered like any other terminal Job. Output redaction is signature-based and applied per read, so a secret split across two reads may not be recognised. Output is never persisted. The PTY is created by `/usr/bin/python3`, a root-owned system executable, so no native Node dependency is added. The same disclaimers as one-shot O1 apply: no isolation, no rollback, daemonized descendants can escape observation.
+Limits and behaviour: sessions are in memory and bound to the starting principal; another principal receives not-found. Revocation, Job cancellation, idle timeout, the absolute lifetime and Broker shutdown terminate the observed process tree. A Broker restart never resumes a session. The Job uses the generic terminal-Job process-identity recovery (the tool is covered by those queries), but no session-specific restart test exists yet. The session lifetime is also capped by the OAuth token: the start approval and the request authority end at the principal's expiry, which cancels the session. Output redaction is signature-based and applied per read, so a secret split across two reads may not be recognised. Output is never persisted. The PTY is created by `/usr/bin/python3`, a root-owned system executable, so no native Node dependency is added. The same disclaimers as one-shot O1 apply: no isolation, no rollback, daemonized descendants can escape observation.
 
 ## Permissions and disablement
 

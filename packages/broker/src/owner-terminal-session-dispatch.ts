@@ -91,6 +91,7 @@ export async function startOwnerTerminalSession(options: {
     const { sessionId } = await manager.start(principalId, { cwd: session.cwd, rows: session.rows, cols: session.cols,
       lifetimeMs: session.lifetimeMs, idleTimeoutMs: session.idleTimeoutMs, tag: job.jobId,
       shouldCancel: options.control.shouldCancel,
+      onIdleTimeout: () => { store.requestJobCancellation(job.jobId, principalId, "OWNER_TERMINAL_IDLE_TIMEOUT", now()); },
       onProcessStarted: snapshot => persist(snapshot, true), onProcessOwnershipChanged: snapshot => persist(snapshot, false), onFinished });
     return { finished, result: wrap({ action: "start", session_id: sessionId, job_id: job.jobId, state: "running", reused: false },
       "accepted", "The PTY shell started and its process identity was persisted; use read, write and stop with the session id",

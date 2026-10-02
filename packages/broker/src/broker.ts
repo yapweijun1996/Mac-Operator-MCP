@@ -1252,7 +1252,9 @@ export class Broker {
           requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
           tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
           targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
-          expiresAtMs: request.principal.expiresAtMs, timeoutMs: execution.ownerTerminal?.timeoutMs ?? 30_000
+          expiresAtMs: request.principal.expiresAtMs, timeoutMs: execution.ownerTerminal?.timeoutMs ??
+            // A session's start approval must stay active for the whole session (see assertRequestApprovalActive).
+            (execution.ownerTerminalSession?.action === "start" ? execution.ownerTerminalSession.lifetimeMs : 30_000)
         });
         if (!delegated) throw new BrokerError("POLICY_DENIED", "Owner terminal delegation is unavailable");
         this.checkRevocation(request);

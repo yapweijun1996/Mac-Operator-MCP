@@ -171,6 +171,11 @@ test("terminal and coding approvals remain separate when both unattended issuers
     assert.equal(f.store.approvalRecord(`approval:owner-terminal-${sha256(operation.requestId).slice(0, 48)}`)?.approverPrincipalId, TERMINAL_ISSUER);
     assert.equal(f.store.approvalRecord(`approval:development-${sha256("development-request-1").slice(0, 48)}`)?.approverPrincipalId, DEVELOPMENT_ISSUER);
     assert.equal(await terminal({ ...operation, tool: "mac_codex_run" }), false);
+    // A session start approval must outlive the whole session; only the session tool may ask for it.
+    const session = { ...operation, requestId: "session-request", tool: "mac_terminal_session", timeoutMs: 300_000 };
+    assert.equal(await terminal(session), true);
+    assert.equal(await terminal({ ...session, requestId: "session-request-2", timeoutMs: 600_001 }), false);
+    assert.equal(await terminal({ ...operation, requestId: "exec-request-2", timeoutMs: 300_000 }), false);
     assert.equal(await approve({ ...f.operation(), tool: "mac_terminal_exec" }), false);
   } finally { await f.close(); }
 });

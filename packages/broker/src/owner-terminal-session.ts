@@ -69,6 +69,8 @@ export interface OwnerTerminalSessionStart {
   /** Opaque caller label (the Broker stores its Job id) returned by describe(). */
   tag?: string;
   shouldCancel: () => boolean;
+  /** Called once, before the cancellation it causes, when the idle limit is reached. */
+  onIdleTimeout?: () => void;
   onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
   onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
   onFinished?: (result: ProcessExecutionResult) => void;
@@ -96,6 +98,7 @@ interface Session {
   lastActivityMs: number;
   idleTimeoutMs: number;
   stopRequested: boolean;
+  idleNotified?: boolean;
   result?: ProcessExecutionResult;
   retainTimer?: NodeJS.Timeout;
 }
@@ -151,8 +154,15 @@ export class OwnerTerminalSessionManager {
       keepStdinOpen: true, streamOutput: true,
       onOutputChunk: chunk => this.append(session, chunk),
       onStdinReady: sink => { session.sink = sink; markReady(); },
-      shouldCancel: () => request.shouldCancel() || session.stopRequested ||
-        this.now() - session.lastActivityMs > session.idleTimeoutMs,
+      shouldCancel: () => {
+        if (request.shouldCancel() || session.stopRequested) return true;
+        if (this.now() - session.lastActivityMs <= session.idleTimeoutMs) return false;
+        if (!session.idleNotified) {
+          session.idleNotified = true;
+          try { request.onIdleTimeout?.(); } catch { /* The supervisor still cancels; the Job outcome is then unresolved. */ }
+        }
+        return true;
+      },
       ...(request.onProcessStarted ? { onStarted: request.onProcessStarted } : {}),
       ...(request.onProcessOwnershipChanged ? { onOwnershipChanged: request.onProcessOwnershipChanged } : {})
     });

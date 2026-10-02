@@ -35,12 +35,14 @@ test("Broker owner terminal sessions: delegated per-call authority, owner bindin
     tools: new Map(base.tools).set("mac_terminal_session", { ...base.tools.get("mac_terminal_session")!, enabled: true }),
     targetRules: [...base.targetRules, rule("principal-1"), rule("principal-2")] };
   let delegations = 0;
+  const operations: { tool: string; timeoutMs: number }[] = [];
   let delegate = true;
   const broker = new Broker({ store, policy, ownerTerminalSessions: new OwnerTerminalSessionManager({ enabled: true }),
     edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key, notBeforeMs: Date.now() - 60000, expiresAtMs: Date.now() + 300000 }]),
     authorizeOwnerTerminal: async operation => {
       if (!delegate) return false;
       delegations += 1;
+      operations.push({ tool: operation.tool, timeoutMs: operation.timeoutMs });
       const now = Date.now();
       store.issueApproval({ approvalId: `approval:${operation.requestId}`, approverPrincipalId: "owner-delegate",
         requestingPrincipalId: operation.principalId, tool: operation.tool, contractVersion: operation.contractVersion,
@@ -77,6 +79,9 @@ test("Broker owner terminal sessions: delegated per-call authority, owner bindin
     const started = data(await call({ action: "start", cwd: root, idempotency_key: "interactive", rows: 30, cols: 100 }));
     const sessionId = started.session_id as string;
     assert.equal(started.state, "running");
+    // The start approval is consumed by assertRequestApprovalActive for the whole session, so it must
+    // be issued for the session lifetime rather than the short per-call window.
+    assert.equal(operations.at(-1)!.timeoutMs, 300_000);
     const job = store.ownedJobByIdempotencyKey("interactive", "principal-1")!;
     assert.equal(job.jobId, started.job_id); assert.equal(job.state, "running"); assert.ok(job.processMetadata);
 
@@ -87,6 +92,7 @@ test("Broker owner terminal sessions: delegated per-call authority, owner bindin
     data(await call({ action: "write", session_id: sessionId, data: "stty size; read -r word; echo got:$word; printf marker > written\n" }));
     data(await call({ action: "write", session_id: sessionId, data: "hello\n" }));
     assert.equal(delegations, before + 2, "every write needs its own delegated approval");
+    assert.equal(operations.at(-1)!.timeoutMs, 30_000);
     let cursor = 0; let output = "";
     await until(async () => {
       const read = data(await call({ action: "read", session_id: sessionId, cursor, wait_ms: 500 }));
@@ -125,5 +131,20 @@ test("Broker owner terminal sessions: delegated per-call authority, owner bindin
     store.requestJobCancellation(cancelJob.jobId, "principal-1", "OWNER_CANCELLED", Date.now());
     await until(() => store.ownedJob(cancelJob.jobId, "principal-1")?.state === "cancelled", 20_000);
     assert.equal(typeof cancelled.session_id, "string");
+
+    const idle = data(await call({ action: "start", cwd: root, idempotency_key: "idle", idle_timeout_ms: 1000, lifetime_ms: 60_000 }));
+    const idleStart = `session-req-${sequence}`;
+    const idleJob = store.ownedJobByIdempotencyKey("idle", "principal-1")!;
+    await until(() => store.ownedJob(idleJob.jobId, "principal-1")?.state === "cancelled", 20_000);
+    assert.equal(store.ownedJob(idleJob.jobId, "principal-1")?.processMetadata, undefined);
+    assert.equal(store.ownedJob(idleJob.jobId, "principal-1")?.cancelRequested, true);
+    await until(() => store.requestRecord(idleStart)?.state === "CANCELLED" || store.requestRecord(idleStart)?.state === "FAILED", 5_000);
+    assert.equal((await call({ action: "read", session_id: idle.session_id, cursor: 0 })).ok, true);
+
+    const lifetime = data(await call({ action: "start", cwd: root, idempotency_key: "lifetime", lifetime_ms: 1500, idle_timeout_ms: 1500 }));
+    const lifetimeJob = store.ownedJobByIdempotencyKey("lifetime", "principal-1")!;
+    for (let i = 0; i < 2; i += 1) { await delay(500); data(await call({ action: "write", session_id: lifetime.session_id, data: " \n" })); }
+    await until(() => store.ownedJob(lifetimeJob.jobId, "principal-1")?.state === "failed", 20_000);
+    assert.equal(store.ownedJob(lifetimeJob.jobId, "principal-1")?.processMetadata, undefined);
   } finally { await broker.close(); store.close(); key.fill(0); await rm(root, { recursive: true, force: true }); }
 });
