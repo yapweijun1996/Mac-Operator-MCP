@@ -61,3 +61,29 @@ Removing a previously accepted scope ends that Broker session so active work
 using the removed authority can be cancelled. Start a fresh OAuth authorization
 for continued access after a scope reduction. Revoking terminal authorization
 does not revoke the separate V2 grant.
+
+## Codex native OAuth connection
+
+Codex uses a native loopback OAuth callback. Pin a free unprivileged port rather
+than accepting arbitrary redirect ports. While the service is stopped, add the
+exact callback `http://127.0.0.1:61989/callback` to the protected Auth
+`allowedRedirectUris`; retain the existing HTTPS callbacks. This requires the
+release that supports canonical IPv4 loopback redirect records. Issuer and MCP
+resource URLs still require HTTPS, and PKCE S256 and exact redirect checks remain
+mandatory. Back up the complete stopped Auth state before rollout: older
+releases cannot read HTTP callback records.
+
+Add the terminal server with `codex mcp add mac-terminal --url
+https://mac.yapweijun1996.com/terminal/mcp`. Set its OAuth listener and callback
+in the existing user configuration, then run `codex mcp login mac-terminal
+--oauth-client-registration dcr`:
+
+```toml
+[mcp_servers.mac-terminal.oauth]
+callback_url = "http://127.0.0.1:61989/callback"
+callback_port = 61989
+```
+
+The listener binds only to loopback. Registering or exchanging a code with a
+different port or path is rejected. A successful login is reported by
+`codex mcp list`; a fresh Codex session loads the newly connected tools.

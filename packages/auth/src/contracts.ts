@@ -36,6 +36,14 @@ const httpsUrl = z.string().max(2048).refine(value => {
     return url.protocol === "https:" && !url.username && !url.password && !url.hash;
   } catch { return false; }
 });
+const redirectUrl = z.union([httpsUrl, z.string().max(2048).refine(value => {
+  try {
+    const url = new URL(value);
+    // Native clients may use a pinned IPv4 loopback callback; registration still requires an exact allowlist match.
+    return url.protocol === "http:" && url.hostname === "127.0.0.1" && Number(url.port) >= 1024 &&
+      Number(url.port) <= 65535 && !url.username && !url.password && !value.includes("?") && !value.includes("#") && url.href === value;
+  } catch { return false; }
+})]);
 
 export const configSchema = z.object({
   version: z.literal(1),
@@ -45,7 +53,7 @@ export const configSchema = z.object({
   principalId: id,
   keyId: id,
   port: z.number().int().min(1024).max(65535),
-  allowedRedirectUris: z.array(httpsUrl).min(1).max(16),
+  allowedRedirectUris: z.array(redirectUrl).min(1).max(16),
   grantProfile: z.enum(["r1", "w1", "g1", "o1", "d1", "v2"]).default("r1"),
   ownerTerminalConnection: z.boolean().optional()
 }).strict().refine(value => value.resource === new URL("mcp", value.issuer).href &&
@@ -61,14 +69,14 @@ export function ownerTerminalAuthConfig(config: AuthConfig): AuthConfig {
 
 export const recordSchemas = {
   account: z.object({ username: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/u), salt: hash, passwordHash: hash, principalId: id }).strict(),
-  client: z.object({ id, name: z.string().min(1).max(100), redirectUris: z.array(httpsUrl).min(1).max(8), expiresAt: time, resource: httpsUrl.optional() }).strict(),
-  transaction: z.object({ clientId: id, redirectUri: httpsUrl, state: z.string().min(1).max(512), challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u), scopes, expiresAt: time, resource: httpsUrl.optional() }).strict(),
+  client: z.object({ id, name: z.string().min(1).max(100), redirectUris: z.array(redirectUrl).min(1).max(8), expiresAt: time, resource: httpsUrl.optional() }).strict(),
+  transaction: z.object({ clientId: id, redirectUri: redirectUrl, state: z.string().min(1).max(512), challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u), scopes, expiresAt: time, resource: httpsUrl.optional() }).strict(),
   session: z.object({ transactionId: hash, csrf: hash, authenticated: z.boolean(), expiresAt: time }).strict(),
   approval_session: z.object({ guiGrantId: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u).optional(), requestId: z.string().regex(/^[A-Za-z0-9._:@/+-]{1,128}$/u), csrf: hash, authenticated: z.boolean(), expiresAt: time }).strict(),
   browser_grant: z.object({ id: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u), principalId: id, sessionId: id,
     appId: z.enum(["bundle:com.google.Chrome", "bundle:com.apple.Safari"]), policyVersion: id,
     consentRequestId: id, createdAt: time, revoked: z.boolean() }).strict(),
-  code: z.object({ clientId: id, redirectUri: httpsUrl, challenge: z.string(), scopes, grantId: id, principalId: id, expiresAt: time, resource: httpsUrl.optional() }).strict(),
+  code: z.object({ clientId: id, redirectUri: redirectUrl, challenge: z.string(), scopes, grantId: id, principalId: id, expiresAt: time, resource: httpsUrl.optional() }).strict(),
   grant: z.object({ clientId: id, principalId: id, scopes, expiresAt: time, revoked: z.boolean(), resource: httpsUrl.optional() }).strict(),
   refresh: z.object({ clientId: id, grantId: id, expiresAt: time, consumed: z.boolean() }).strict()
 };

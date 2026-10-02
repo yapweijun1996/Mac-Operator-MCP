@@ -102,8 +102,9 @@ async function terminateExactCanaryProcess(native: CanaryNativeProcessAdapter, i
   throw new Error("Exact canary process identity remained alive after targeted cleanup");
 }
 
-async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, grantProfile: GrantProfile = "r1", onGrantRevoked?: GrantRevocationListener, ownerTerminalConnection = false) {
+async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, grantProfile: GrantProfile = "r1", onGrantRevoked?: GrantRevocationListener, ownerTerminalConnection = false, callbackUri = redirectUri) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-auth-")));
+  const redirectUri = callbackUri;
   const config = configSchema.parse({ version: 1, issuer, resource: resource.href, issuerId: "mac-operator-auth", principalId: "owner-1", keyId: "key-1", port: 3444, allowedRedirectUris: [redirectUri], grantProfile, ...(ownerTerminalConnection ? { ownerTerminalConnection } : {}) });
   let store = new AuthStore(directory, true);
   store.put("account", "owner", { username: "owner", ...passwordRecord, principalId: config.principalId });
@@ -128,9 +129,11 @@ async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, g
     headers: { host: "mac.example.test", ...(body ? { "content-type": "application/x-www-form-urlencoded" } : {}), ...(cookie ? { cookie } : {}), ...extra },
     ...(body ? { body: new URLSearchParams(body) } : {})
   });
+  const registerResponse = (callback = redirectUri, prefix = "") => localFetch(`http://127.0.0.1:${port}${prefix}/register`, {
+    method: "POST", headers: { host: "mac.example.test", "content-type": "application/json" },
+    body: JSON.stringify({ client_name: "ChatGPT test <script>", redirect_uris: [callback], token_endpoint_auth_method: "none" }) });
   const register = async (prefix = "") => {
-    const response = await localFetch(`http://127.0.0.1:${port}${prefix}/register`, { method: "POST", headers: { host: "mac.example.test", "content-type": "application/json" },
-      body: JSON.stringify({ client_name: "ChatGPT test <script>", redirect_uris: [redirectUri], token_endpoint_auth_method: "none" }) });
+    const response = await registerResponse(redirectUri, prefix);
     assert.equal(response.status, 201); return (await response.json() as { client_id: string }).client_id;
   };
   const begin = async (clientId: string, overrides: Record<string, string> = {}) => request(`/authorize?${new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri,
@@ -172,7 +175,7 @@ async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, g
     revocationCheck: createOAuthGrantRevocationCheck({ url: new URL("/oauth/status", issuer), key: statusKey,
       fetch: async (_url, init) => request("/oauth/status", JSON.parse(String(init?.body)), undefined, { authorization: String((init?.headers as Record<string, string>).authorization) }) })
   });
-  return { directory, statusKey, signingKey, request, register, begin, login, authorize, exchange, issue, cookieFrom, csrfFrom, edgeVerifier, config,
+  return { directory, statusKey, signingKey, request, register, registerResponse, begin, login, authorize, exchange, issue, cookieFrom, csrfFrom, edgeVerifier, config,
     store: () => store, provider: () => provider,
     restart: async () => { await stop(); store.close(); store = new AuthStore(directory); provider = await start(); } };
 }
@@ -223,6 +226,55 @@ test("discovery, host checks, redirect allowlist and S256 scope/resource boundar
     assert.equal((await f.begin(client, overrides)).status, 400);
   }
   assert.equal((await f.request("/token", { grant_type: "password", username: "owner", password })).status, 400);
+});
+
+test("native loopback callbacks require a canonical explicit port and preserve HTTPS issuer/resource", async t => {
+  const callback = "http://127.0.0.1:61989/callback";
+  const f = await fixture(t, undefined, "r1", undefined, false, callback);
+  for (const uri of ["http://127.0.0.1/callback", "http://127.0.0.1:80/callback", "http://127.0.0.1:1023/callback",
+    "http://localhost:61989/callback", "http://[::1]:61989/callback", "http://192.168.1.1:61989/callback",
+    "http://127.0.0.1.attacker.test:61989/callback", "http://2130706433:61989/callback", "http://127.1:61989/callback",
+    "http://user@127.0.0.1:61989/callback", "http://127.0.0.1:61989/callback?next=other", "http://127.0.0.1:61989/callback#fragment",
+    "http://127.0.0.1:61989/callback?", "http://127.0.0.1:61989/callback#"]) {
+    assert.equal(configSchema.safeParse({ ...f.config, allowedRedirectUris: [uri] }).success, false, uri);
+  }
+  assert.equal(configSchema.safeParse({ ...f.config, issuer: "http://127.0.0.1:61989/", resource: "http://127.0.0.1:61989/mcp" }).success, false);
+  assert.equal(configSchema.safeParse({ ...f.config, resource: callback }).success, false);
+  const httpsOnly = await fixture(t);
+  assert.equal((await httpsOnly.registerResponse(callback)).status, 400);
+});
+
+test("native loopback login survives restart while redirect and S256 exchange remain exact", async t => {
+  const callback = "http://127.0.0.1:61989/callback";
+  const f = await fixture(t, undefined, "r1", undefined, false, callback);
+  for (const uri of [redirectUri, "http://127.0.0.1:61990/callback", "http://127.0.0.1:61989/other", "http://localhost:61989/callback"]) {
+    const registered = await f.registerResponse(uri);
+    assert.equal(registered.status, 400);
+  }
+  const clientId = await f.register();
+  for (const uri of ["http://127.0.0.1:61990/callback", "http://127.0.0.1:61989/other"]) {
+    assert.equal((await f.begin(clientId, { redirect_uri: uri })).status, 400);
+  }
+  const session = await f.login(clientId);
+  await f.restart();
+  const consent = await f.request("/oauth/consent", { csrf: session.csrf, decision: "allow" }, session.cookie, { origin: new URL(issuer).origin });
+  assert.equal(consent.status, 303);
+  const location = new URL(consent.headers.get("location")!);
+  assert.equal(location.origin + location.pathname, callback);
+  assert.equal(location.searchParams.get("iss"), issuer);
+  const code = location.searchParams.get("code")!;
+  await f.restart();
+  const exchanged = await f.exchange(clientId, code);
+  assert.equal(exchanged.status, 200);
+  const tokens = await exchanged.json() as { access_token: string };
+  assert.deepEqual((await (await f.edgeVerifier()).verifyAccessToken(tokens.access_token)).scopes, [...READ_SCOPES]);
+  const wrongRedirectCode = await f.authorize(clientId);
+  assert.equal((await f.request("/token", { grant_type: "authorization_code", client_id: clientId, code: wrongRedirectCode,
+    code_verifier: verifier, redirect_uri: "http://127.0.0.1:61990/callback", resource: resource.href })).status, 400);
+  assert.equal((await f.exchange(clientId, wrongRedirectCode)).status, 400);
+  const wrongVerifierCode = await f.authorize(clientId);
+  assert.equal((await f.exchange(clientId, wrongVerifierCode, "b".repeat(43))).status, 400);
+  assert.equal((await f.exchange(clientId, wrongVerifierCode)).status, 400);
 });
 
 test("D1 staging grant profile exposes only its explicit scope set", async t => {

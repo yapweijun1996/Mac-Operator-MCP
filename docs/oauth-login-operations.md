@@ -71,8 +71,11 @@ The database stores the password hash and salted-password parameters, hashed
 browser/code/refresh bearer values, public client metadata, and grant state.
 The signing private key never belongs in the Edge or Broker configuration.
 
-Only HTTPS callback URLs explicitly listed in `allowedRedirectUris` are
-accepted, with exact matching and no wildcard. Obtain the actual callback from
+Callback URLs must use HTTPS, or canonical `http://127.0.0.1` with an explicit
+unprivileged port for a native client. HTTP callbacks cannot contain credentials,
+query strings or fragments; DNS names, other addresses and implicit ports are
+rejected. Every callback must be explicitly listed in `allowedRedirectUris`,
+with exact matching and no wildcard or variable-port exception. Obtain the actual callback from
 the client setup. If more callbacks are required, edit this protected config
 while stopped and restart. Client registrations do not expire automatically;
 grants expire after seven days even when refreshed.
