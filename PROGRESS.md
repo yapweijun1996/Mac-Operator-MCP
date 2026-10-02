@@ -6,8 +6,10 @@
 read, stop) as an interactive PTY shell under the existing `mac.terminal.exec` scope and
 delegated issuer, with a per-call approval for every write. ProcessSupervisor gained opt-in
 streaming stdin/output. The tool is in the O1 tool list (O1 39, V2 50) but disabled in the
-default policy and absent from existing signed policies; no re-signing upgrade path exists yet,
-so this build must not be run against live O1/V2 state. Not merged or deployed. Design and limits: `docs/owner-terminal.md`,
+default policy and absent from existing signed policies. `personal-service.js terminal-sessions
+<state> <revision> --enable` re-signs a pre-session O1 or V2 state with only that tool added (no
+reconnect needed; see `docs/owner-terminal.md`); it is tested on a provisioned O1 state, not yet run
+against the live service. Not merged or deployed. Design and limits: `docs/owner-terminal.md`,
 `docs/FULL_ACCESS_DESIGN.md`.
 
 ## Current Chrome GUI repair: PASS — production verified

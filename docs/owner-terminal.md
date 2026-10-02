@@ -25,7 +25,7 @@ Authority revocation, job cancellation, shutdown and timeout terminate observed 
 
 ## Interactive sessions (`mac_terminal_session`)
 
-`mac_terminal_session` adds a PTY-backed interactive shell to O1. It reuses the `mac.terminal.exec` scope, the `host:owner-terminal` target, the delegated terminal issuer and the same owner-account authority as `mac_terminal_exec`; it adds no scope. The tool is disabled in the default policy, and an already-signed live O1 or V2 policy does not list it. **No upgrade path exists yet:** `owner-terminal` returns without change for an existing O1 state, and a service running this code against a policy that lacks the tool fails its startup capability check. A policy re-signing step must be added before this can be deployed; until then do not run this build against live state.
+`mac_terminal_session` adds a PTY-backed interactive shell to O1. It reuses the `mac.terminal.exec` scope, the `host:owner-terminal` target, the delegated terminal issuer and the same owner-account authority as `mac_terminal_exec`; it adds no scope. The tool is disabled in the default policy, and an O1 or V2 policy signed by an earlier release does not list it. A service running this build against such state fails its startup capability check, so run the re-signing upgrade below first.
 
 Actions (one tool, exact per-action arguments):
 
@@ -35,6 +35,20 @@ Actions (one tool, exact per-action arguments):
 - `stop` — hangs up the shell and waits for the session to end; if the shell ignores the hangup the Job is cancelled and the process tree drained. `mac_job_cancel` on the session Job does the same.
 
 Limits and behaviour: sessions are in memory and bound to the starting principal; another principal receives not-found. Revocation, Job cancellation, idle timeout, the absolute lifetime and Broker shutdown terminate the observed process tree. A Broker restart never resumes a session. The Job uses the generic terminal-Job process-identity recovery (the tool is covered by those queries), but no session-specific restart test exists yet. The session lifetime is also capped by the OAuth token: the start approval and the request authority end at the principal's expiry, which cancels the session. Output redaction is signature-based and applied per read, so a secret split across two reads may not be recognised. Output is never persisted. The PTY is created by `/usr/bin/python3`, a root-owned system executable, so no native Node dependency is added. The same disclaimers as one-shot O1 apply: no isolation, no rollback, daemonized descendants can escape observation.
+
+### Enabling sessions on an existing O1 or V2 installation
+
+1. Stop the personal supervisor and keep a complete protected copy of its state and the previous release (do not copy a live SQLite file).
+2. Using the new release, run against the stopped state:
+
+   ```sh
+   node packages/auth/dist/personal-service.js terminal-sessions /absolute/protected/state SOURCE_REVISION --enable
+   ```
+
+3. The command accepts only an O1 or V2 state whose enabled tool set is exactly the previous signed set, and refuses anything else without changing state. It signs one new policy revision that appends `mac_terminal_session` and nothing else, so scopes, targets, grants, approval keys and OAuth consent are unchanged: existing OAuth grants keep working and **no reconnect is needed**. It then verifies the full O1 or V2 policy, rebinds `edge-service.json` to the new release and policy version, updates `broker-policy-input.json`, moves retained browser grants to the new policy version, and writes intent and completion audit records. Re-running it is a no-op.
+4. Start the new release against the upgraded state. Roll back by stopping it and restoring the complete previous release/state pair; an interrupted upgrade fails startup validation, so keep the backup until readback succeeds.
+
+`owner-terminal` still only upgrades G1 to O1; for an O1 state that predates this tool it refuses and the error points to `terminal-sessions`.
 
 ## Permissions and disablement
 

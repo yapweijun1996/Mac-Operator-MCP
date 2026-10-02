@@ -26,6 +26,7 @@ import { assertO1Policy, assertG1Policy, assertW1Policy, buildO1TargetRules, bui
 import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
 import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
+import { upgradePersonalTerminalSessions } from "./personal-terminal-session-upgrade.js";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
 import { createProcessApprovalBrowserBridge, parseApprovalBrowserRequest } from "./approval-browser-bridge.js";
@@ -336,6 +337,11 @@ async function main() {
     if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || process.argv[5] !== "--enable") throw new Error("Snapshot identity and explicit --enable required");
     await upgradePersonalOwnerTerminal(root, packageRoot, detail);
     console.log("Personal owner terminal enabled in offline state; reconnect OAuth to grant mac.terminal.exec.");
+  }
+  else if (mode === "terminal-sessions") {
+    if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");
+    await upgradePersonalTerminalSessions(root, packageRoot, detail);
+    console.log("Owner terminal sessions enabled in offline state; existing OAuth grants keep their scopes and need no reconnect.");
   }
   else if (mode === "terminal-connection") {
     if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");

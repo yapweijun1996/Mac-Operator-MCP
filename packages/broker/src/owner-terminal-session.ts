@@ -19,7 +19,7 @@ const FINISHED_RETENTION_MS = 60_000;
  * native Node dependency is needed. Window size arrives as argv.
  */
 const PTY_SHIM = `
-import fcntl, os, select, struct, sys, termios, pty
+import fcntl, os, select, signal, struct, sys, termios, time, pty
 rows, cols, cwd = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
@@ -49,10 +49,28 @@ while True:
             os.close(fd)
             break
         os.write(fd, data)
-try:
-    status = os.waitpid(pid, 0)[1]
-except ChildProcessError:
-    status = 0
+def reap(hung):
+    # After the hangup, a shell that was still starting may never see it; escalate so stop always ends.
+    if hung:
+        for sig, wait in ((signal.SIGHUP, 2.0), (signal.SIGKILL, 2.0)):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                break
+            deadline = time.monotonic() + wait
+            while time.monotonic() < deadline:
+                try:
+                    done, status = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    return 0
+                if done:
+                    return status
+                time.sleep(0.05)
+    try:
+        return os.waitpid(pid, 0)[1]
+    except ChildProcessError:
+        return 0
+status = reap(hung_up)
 if hung_up:
     sys.exit(0)
 sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
