@@ -476,7 +476,7 @@ export async function createEdgeServiceFromStartupConfig(options: {
         serverName: config.oauthStatusLocalServerName, ca: statusCa });
       terminalMonitor = new OAuthGrantRevocationMonitor({
         readStatus: createOAuthGrantStatusReader({ url: statusUrl, key: statusKey, fetch: terminalFetch }), onRevoked, now: Date.now });
-      additionalEndpoints.push({ resourceServerUrl: terminal.resource, oauthIssuer: terminal.issuer,
+      additionalEndpoints.push({ resourceServerUrl: terminal.resource, oauthIssuer: terminal.issuer, legacyProtocol: "stateless",
         tokenVerifier: createJwtAccessTokenVerifier({ issuer: terminal.issuer, issuerId: config.issuerId,
           resourceServerUrl: terminal.resource, jwksUri: new URL("jwks", terminal.issuer),
           revocationCheck: createOAuthGrantRevocationCheck({ url: statusUrl, key: statusKey, fetch: terminalFetch }),

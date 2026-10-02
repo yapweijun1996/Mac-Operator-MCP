@@ -60,6 +60,7 @@ test("HTTPS Edge rejects malformed transport and policy configuration before sta
     ...baseOptions(),
     requiredScopes: ["mac.unknown.read"]
   }), /required scopes are invalid/u);
+  assert.throws(() => createHttpsMcpEdge({ ...baseOptions(), legacyProtocol: "allow" as "reject" }), /legacy protocol policy is invalid/u);
 });
 
 test("HTTPS Edge normalizes case and rejects host-list syntax smuggling", () => {
@@ -441,7 +442,7 @@ function baseOptions(): HttpsMcpEdgeOptions {
 }
 
 
-test("two OAuth MCP resources publish exact discovery and reject each other's token", async () => {
+test("two OAuth MCP resources isolate tokens and serve native legacy requests only at the terminal resource", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-edge-two-oauth-"));
   const options = baseOptions();
   const rootIssuer = new URL("https://issuer.example.test/");
@@ -453,11 +454,23 @@ test("two OAuth MCP resources publish exact discovery and reject each other's to
   options.oauthIssuer = rootIssuer;
   options.oauthMetadata = { ...options.oauthMetadata, issuer: rootIssuer.href, scopes_supported: ["mac.control.read"] };
   options.tokenVerifier = createJwtAccessTokenVerifier({ issuer: rootIssuer, issuerId: "issuer-1", resourceServerUrl: options.resourceServerUrl, jwks });
-  options.additionalEndpoints = [{ oauthIssuer: terminalIssuer, resourceServerUrl: terminalResource,
+  options.additionalEndpoints = [{ oauthIssuer: terminalIssuer, resourceServerUrl: terminalResource, legacyProtocol: "stateless",
     tokenVerifier: createJwtAccessTokenVerifier({ issuer: terminalIssuer, issuerId: "issuer-1", resourceServerUrl: terminalResource, jwks }),
     oauthMetadata: { ...options.oauthMetadata, issuer: terminalIssuer.href,
       authorization_endpoint: new URL("authorize", terminalIssuer).href, token_endpoint: new URL("token", terminalIssuer).href,
       scopes_supported: ["mac.control.read", "mac.terminal.exec"] } }];
+  const observedScopes = new Set<string>();
+  options.gateway = {
+    async execute(tool, _arguments, principal, signal): Promise<BrokerResult> {
+      observedScopes.add([...principal.scopes].sort().join(","));
+      if (tool === "mac_health") assert.ok(signal instanceof AbortSignal);
+      return { ok: true, request_id: `native-${tool}`, tool, result_class: "SUCCEEDED",
+        data: tool === "mac_capabilities" ? { protocol_version: "0.1", contract_version: "0.1", capabilities: [
+          { name: "mac_health", scopes: ["mac.control.read"], planned: true, implemented: true, enabled: true, contract_version: "0.1" }
+        ] } : { overall: "healthy", components: [] }, warnings: [], truncated: false,
+        verification: { required: false, status: "not_required", strategy: "component_health_result_validation" }, duration_ms: 1 };
+    }
+  };
   const { certificatePath, keyPath } = await createTestCertificate(directory);
   options.tlsCertificate = await readFile(certificatePath);
   options.tlsPrivateKey = await readFile(keyPath);
@@ -487,5 +500,37 @@ test("two OAuth MCP resources publish exact discovery and reject each other's to
     // Accepted bearer requests reach the same Broker gateway with their own projected resource.
     assert.notEqual((await request("/terminal/mcp", createMcpAuthRequest(terminalToken))).status, 401);
     assert.notEqual((await request("/mcp", createMcpAuthRequest(rootToken))).status, 401);
+    const initialize = { jsonrpc: "2.0", id: "native-initialize", method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "native-client", version: "1.0" } } };
+    const legacyRequest = (token?: string): RequestInit => ({ method: "POST", headers: {
+      "content-type": "application/json", accept: "application/json, text/event-stream", ...(token ? { authorization: `Bearer ${token}` } : {})
+    }, body: JSON.stringify(initialize) });
+    assert.equal((await request("/terminal/mcp", legacyRequest())).status, 401);
+    assert.equal((await request("/terminal/mcp", legacyRequest(rootToken))).status, 401);
+    const defaultLegacy = await request("/mcp", legacyRequest(rootToken));
+    assert.equal((await defaultLegacy.json() as { error: { code: number } }).error.code, -32022);
+    const malformedModern = await request("/terminal/mcp", { ...legacyRequest(terminalToken), headers: {
+      ...(legacyRequest(terminalToken).headers as Record<string, string>), "MCP-Protocol-Version": "2026-07-28", "MCP-Method": "initialize"
+    } });
+    assert.equal((await malformedModern.json() as { error: { code: number } }).error.code, -32020);
+    const missingEnvelope = await request("/terminal/mcp", { ...legacyRequest(terminalToken), headers: {
+      ...(legacyRequest(terminalToken).headers as Record<string, string>), "MCP-Protocol-Version": "2026-07-28", "MCP-Method": "tools/list"
+    }, body: JSON.stringify({ jsonrpc: "2.0", id: "missing-envelope", method: "tools/list", params: {} }) });
+    assert.equal((await missingEnvelope.json() as { error: { code: number } }).error.code, -32602);
+    const insufficientToken = await createAccessToken(privateKey, terminalIssuer, terminalResource, "mac.system.read", "native-insufficient");
+    assert.equal((await request("/terminal/mcp", legacyRequest(insufficientToken))).status, 403);
+    const nativeClient = new Client({ name: "native-client", version: "1.0" }, {
+      versionNegotiation: { mode: "legacy" }, supportedProtocolVersions: ["2025-06-18"] });
+    const transport = new StreamableHTTPClientTransport(new URL(`https://edge.example.test:${address.port}/terminal/mcp`), {
+      authProvider: { token: async () => terminalToken }, fetch, onInsufficientScope: "throw" });
+    try {
+      await nativeClient.connect(transport);
+      assert.equal(nativeClient.getNegotiatedProtocolVersion(), "2025-06-18");
+      assert.deepEqual((await nativeClient.listTools()).tools.map(tool => tool.name), ["mac_health"]);
+      const result = await nativeClient.callTool({ name: "mac_health", arguments: {} });
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+      assert.equal((result.structuredContent as { ok: boolean }).ok, true);
+      assert.deepEqual(observedScopes, new Set(["mac.control.read", "mac.control.read,mac.terminal.exec"]));
+    } finally { await nativeClient.close(); }
   } finally { await edge.close(); await rm(directory, { recursive: true, force: true }); }
 });

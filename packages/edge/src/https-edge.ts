@@ -39,8 +39,10 @@ export interface HttpsMcpEdgeOptions extends GovernedMcpServerOptions {
   /** Scopes required to initialize this MCP endpoint. Individual tools still enforce their own scopes. */
   requiredScopes?: string[];
   rateLimit?: RateLimitOptions;
+  /** Keep modern-only serving by default; native clients may use the SDK's authenticated stateless fallback. */
+  legacyProtocol?: "stateless" | "reject";
   /** Separate OAuth resources use separate SDK handlers and bearer verifiers. */
-  additionalEndpoints?: Array<Pick<HttpsMcpEdgeOptions, "resourceServerUrl" | "oauthIssuer" | "tokenVerifier" | "oauthMetadata">>;
+  additionalEndpoints?: Array<Pick<HttpsMcpEdgeOptions, "resourceServerUrl" | "oauthIssuer" | "tokenVerifier" | "oauthMetadata" | "legacyProtocol">>;
 }
 
 export interface HttpsMcpEdge {
@@ -88,7 +90,7 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
     });
 
     const handler = createMcpHandler(createGovernedMcpServerFactory(options), {
-      legacy: "reject",
+      legacy: options.legacyProtocol ?? "reject",
       responseMode: "json"
     });
     handlers.push(handler);
@@ -243,6 +245,9 @@ function validateOptions(options: HttpsMcpEdgeOptions): {
   validateHttpsUrl(options.oauthMetadata.authorization_endpoint, "MCP OAuth authorization endpoint");
   validateHttpsUrl(options.oauthMetadata.token_endpoint, "MCP OAuth token endpoint");
   const requiredScopes = options.requiredScopes ?? ["mac.control.read"];
+  if (options.legacyProtocol !== undefined && !["stateless", "reject"].includes(options.legacyProtocol)) {
+    throw new Error("MCP legacy protocol policy is invalid");
+  }
   if (!isPlainDataArray(requiredScopes, SCOPES.length) || requiredScopes.length === 0 ||
       new Set(requiredScopes).size !== requiredScopes.length ||
       requiredScopes.some(scope => typeof scope !== "string" || !(SCOPES as readonly string[]).includes(scope))) {

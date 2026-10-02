@@ -79,6 +79,10 @@ in the existing user configuration, then run `codex mcp login mac-terminal
 --oauth-client-registration dcr`:
 
 ```toml
+[mcp_servers.mac-terminal]
+url = "https://mac.yapweijun1996.com/terminal/mcp"
+tool_timeout_sec = 150
+
 [mcp_servers.mac-terminal.oauth]
 callback_url = "http://127.0.0.1:61989/callback"
 callback_port = 61989
@@ -87,3 +91,17 @@ callback_port = 61989
 The listener binds only to loopback. Registering or exchanging a code with a
 different port or path is rejected. A successful login is reported by
 `codex mcp list`; a fresh Codex session loads the newly connected tools.
+
+The independent terminal endpoint accepts MCP 2025 clients through the official
+SDK's stateless compatibility handler, using the same bearer validation, resource
+binding and Broker-governed tools as MCP 2026 requests. Default V2 remains
+modern-only. Requests claiming MCP 2026 must satisfy its envelope/header checks
+and cannot fall back to the legacy handler. No session ID substitutes for OAuth
+authorization, and every terminal command retains its Job, deadline and grant
+revocation checks.
+
+HTTP disconnects and protocol cancellation reach the Broker through combined
+request/tool abort signals, including requests already cancelled before factory
+assembly. Legacy cancellation notifications on a separate stateless POST cannot
+refer to an earlier request; close its active HTTP request or use
+`mac_job_cancel` with an observed Job ID.

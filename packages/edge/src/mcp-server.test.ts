@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { BrokerError, type BrokerResult, type PrincipalContext } from "@mac-operator/contracts";
-import { InMemoryTransport, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
+import { createMcpHandler, InMemoryTransport, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { Client } from "@modelcontextprotocol/client";
 import { ToolContractRegistry } from "./contract-registry.js";
 import type { BrokerGateway } from "./gateway.js";
@@ -384,4 +384,67 @@ test("MCP gateway errors map to the stable Broker failure envelope", () => {
     error: { message: "Edge-to-Broker execution failed", retryable: true },
     duration_ms: 0
   });
+});
+
+test("native stateless serving prevents terminal delivery across every factory cancellation window", async () => {
+  const resourceServerUrl = new URL("https://edge.example.test/terminal/mcp");
+  const authInfo: AuthInfo = { token: "test-token", clientId: "client-1", scopes: ["mac.control.read", "mac.terminal.exec"],
+    expiresAt: Math.floor(Date.now() / 1000) + 60, resource: resourceServerUrl,
+    extra: { principalId: "owner", issuer: "issuer-1", sessionId: "session-1", issuedAtMs: Date.now() - 1000 } };
+  let controller = new AbortController();
+  let abortDuringCapabilities = false;
+  let abortAfterFactory = false;
+  let capabilityQueries = 0;
+  let executions = 0;
+  const factory = createGovernedMcpServerFactory({ edgeId: "edge-1", brokerAudience: "mac-operator-broker", resourceServerUrl,
+    contracts: await ToolContractRegistry.load(resolve(repositoryRoot, "tool-contracts")), gateway: {
+      async execute(tool): Promise<BrokerResult> {
+        if (tool === "mac_capabilities") {
+          capabilityQueries++;
+          if (abortDuringCapabilities) controller.abort();
+          return { ok: true, request_id: "capabilities", tool, result_class: "SUCCEEDED",
+            data: { protocol_version: "0.1", contract_version: "0.1", capabilities: [
+              { name: "mac_terminal_exec", scopes: ["mac.terminal.exec"], planned: true, implemented: true, enabled: true, contract_version: "0.1" }
+            ] }, warnings: [], truncated: false, verification: {}, duration_ms: 1 };
+        }
+        assert.equal(tool, "mac_terminal_exec");
+        executions++;
+        return { ok: false, request_id: "delivered", tool, result_class: "EXECUTION_FAILED",
+          error: { message: "Test gateway reached", retryable: false }, duration_ms: 0 };
+      }
+    } });
+  const handler = createMcpHandler(async context => {
+    const server = await factory(context);
+    if (abortAfterFactory) controller.abort();
+    return server;
+  }, { legacy: "stateless", responseMode: "json" });
+  const call = async () => {
+    const response = await handler.fetch(new Request(resourceServerUrl, { method: "POST", signal: controller.signal,
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "cancelled-terminal", method: "tools/call", params: {
+        name: "mac_terminal_exec", arguments: { command: "true", cwd: "/tmp", idempotency_key: "cancelled-native-test" }
+      } }) }), { authInfo });
+    await response.text();
+  };
+  try {
+    controller.abort();
+    await call();
+    assert.equal(capabilityQueries, 0);
+    assert.equal(executions, 0);
+    controller = new AbortController();
+    abortDuringCapabilities = true;
+    await call();
+    assert.equal(capabilityQueries, 1);
+    assert.equal(executions, 0);
+    controller = new AbortController();
+    abortDuringCapabilities = false;
+    abortAfterFactory = true;
+    await call();
+    assert.equal(capabilityQueries, 1);
+    assert.equal(executions, 0);
+    controller = new AbortController();
+    abortAfterFactory = false;
+    await call();
+    assert.equal(executions, 1);
+  } finally { await handler.close(); }
 });

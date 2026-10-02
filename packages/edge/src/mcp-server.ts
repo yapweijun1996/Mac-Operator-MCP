@@ -40,6 +40,8 @@ export function createGovernedMcpServerFactory(options: GovernedMcpServerOptions
    */
   const capabilityCache = new Map<string, { enabledTools: readonly string[]; expiresAtMs: number }>();
   return async (requestContext) => {
+    const requestSignal = requestContext.requestInfo?.signal;
+    requestSignal?.throwIfAborted();
     if (!requestContext.authInfo) throw new Error("Authenticated MCP context is required");
     const principal = projectPrincipal(requestContext.authInfo, options);
     const cacheKey = capabilityCacheKey(principal);
@@ -68,6 +70,7 @@ export function createGovernedMcpServerFactory(options: GovernedMcpServerOptions
         throw new Error(`Broker capability discovery failed: ${capabilities.result_class}`);
       }
     }
+    requestSignal?.throwIfAborted();
     const server = new McpServer({ name: "Mac-Operator-MCP", version: "0.1.0" });
     for (const toolName of enabledTools) {
       const contract = options.contracts.get(toolName);
@@ -90,7 +93,8 @@ export function createGovernedMcpServerFactory(options: GovernedMcpServerOptions
           toolName,
           argumentsValue,
           principal,
-          toolContext
+          toolContext,
+          requestSignal
         )
       );
     }
@@ -107,11 +111,15 @@ async function executeTool(
   toolName: string,
   argumentsValue: Record<string, unknown>,
   principal: PrincipalContext,
-  context: ServerContext
+  context: ServerContext,
+  requestSignal?: AbortSignal
 ) {
   let result: BrokerResult;
   try {
-    result = await gateway.execute(toolName, argumentsValue, principal, context.mcpReq.signal);
+    // The legacy SDK can attach its abort listener after the HTTP signal already fired.
+    const signal = requestSignal === undefined ? context.mcpReq.signal : AbortSignal.any([requestSignal, context.mcpReq.signal]);
+    if (signal.aborted) throw new BrokerError("CANCELLED", "MCP request was cancelled");
+    result = await gateway.execute(toolName, argumentsValue, principal, signal);
   } catch (error) {
     result = mapGatewayError(toolName, error);
   }
