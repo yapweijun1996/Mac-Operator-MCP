@@ -175,6 +175,15 @@ test("Container Engine pins identity, ignores ambient contexts and creates the f
   } finally { await f.close(); }
 });
 
+test("Container Engine discloses only a fixed transport errno after an authenticated peer resets", async () => {
+  const f = await fixture();
+  try {
+    f.responseOverride = (req) => { req.socket.destroy(); return true; };
+    await assert.rejects(f.engine.version(), error => error instanceof Error && error.message === "Container Engine request transport failed (ECONNRESET)");
+    assert.equal(f.verifiedConnections, 1);
+  } finally { await f.close(); }
+});
+
 test("Container Engine readonly workspace uses root ownership and executes all tasks under a separate nonroot user", async () => {
   const f = await fixture();
   try {

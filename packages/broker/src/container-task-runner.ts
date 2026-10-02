@@ -386,6 +386,8 @@ function safeFailureDetail(error: unknown): string {
   };
   const fixed = messages[error.message];
   if (fixed) return `/${fixed}`;
+  const transport = /^Container Engine request transport failed \((ECONNRESET|EPIPE|EMFILE|ENFILE|ENOBUFS|EACCES|ENOENT|ECONNREFUSED)\)$/u.exec(error.message)?.[1];
+  if (transport !== undefined) return `/ENGINE_REQUEST_${transport}`;
   const status = /^Container Engine operation failed with status ([1-5][0-9]{2})$/u.exec(error.message)?.[1];
   return status === undefined ? "" : `/ENGINE_HTTP_${status}`;
 }

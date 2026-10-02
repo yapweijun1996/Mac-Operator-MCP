@@ -462,7 +462,11 @@ export class DockerContainerEngine {
           } else finish(undefined, { status, bytes: Buffer.concat(chunks, size) });
         });
       });
-      req.once("error", (error) => finish(error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", "Container Engine request transport failed")));
+      req.once("error", (error) => {
+        const code = (error as NodeJS.ErrnoException).code;
+        const knownCode = ["ECONNRESET", "EPIPE", "EMFILE", "ENFILE", "ENOBUFS", "EACCES", "ENOENT", "ECONNREFUSED"].includes(code ?? "") ? ` (${code})` : "";
+        finish(error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", `Container Engine request transport failed${knownCode}`));
+      });
       if (body !== undefined) req.write(body);
       req.end();
     });
