@@ -212,6 +212,23 @@ test("Registered command failure diagnostics disclose the fixed error class and 
   assert.ok(engine.events.includes("remove"));
 });
 
+test("Staging diagnostics classify only fixed Engine failures and exact HTTP status messages", async () => {
+  for (const [message, diagnostic] of [
+    ["Container Engine response transport failed", "ENGINE_RESPONSE_TRANSPORT"],
+    ["Container Engine response ended unexpectedly", "ENGINE_RESPONSE_ABORTED"],
+    ["Container Engine request transport failed", "ENGINE_REQUEST_TRANSPORT"],
+    ["Container Engine operation failed with status 500", "ENGINE_HTTP_500"],
+    ["Container Engine operation failed with status 500 token=synthetic-private-value", ""]
+  ]) {
+    const engine = new FakeEngine();
+    engine.uploadArchive = async () => { throw new BrokerError("EXECUTION_FAILED", message!); };
+    const result = await runner(engine).run(profile(), control());
+    assert.equal(result.stderr, `Container task failed a validation or execution check [EXECUTION_FAILED/stage${diagnostic ? `/${diagnostic}` : ""}]`);
+    assert.ok(!JSON.stringify(result).includes("synthetic-private-value"));
+    assert.equal(result.containerCleanupVerified, true);
+  }
+});
+
 test("Unclassified backend exceptions retain UNKNOWN and never expose an exception message", async () => {
   const engine = new FakeEngine();
   engine.uploadArchive = async () => { throw new Error("private-engine-exception api_key=synthetic-opaque-credential"); };

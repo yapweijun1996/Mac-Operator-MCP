@@ -373,7 +373,21 @@ function mapError(error: unknown, aborted?: "timeout" | "cancel", phase?: string
   if (name === "CANCELLED") return outcome("cancelled", "CANCELLED", null, "", "Container task was cancelled", 0);
   if (name === "OUTPUT_LIMIT") return outcome("failed", "OUTPUT_LIMIT", null, "", "Container task exceeded its output limit", 0);
   if (name === "UNKNOWN_OUTCOME" || name === "AUDIT_UNAVAILABLE") return outcome("unknown", "UNKNOWN_OUTCOME", null, "", "Container task outcome could not be verified", 0);
-  return outcome("failed", "EXECUTION_FAILED", null, "", `Container task failed a validation or execution check [${name}${phase === undefined ? "" : `/${phase}`}]`, 0);
+  return outcome("failed", "EXECUTION_FAILED", null, "", `Container task failed a validation or execution check [${name}${phase === undefined ? "" : `/${phase}`}${safeFailureDetail(error)}]`, 0);
+}
+function safeFailureDetail(error: unknown): string {
+  if (!(error instanceof BrokerError)) return "";
+  const messages: Record<string, string> = {
+    "Container Engine response transport failed": "ENGINE_RESPONSE_TRANSPORT",
+    "Container Engine response ended unexpectedly": "ENGINE_RESPONSE_ABORTED",
+    "Container Engine request transport failed": "ENGINE_REQUEST_TRANSPORT",
+    "Fixed workspace staging did not verify": "STAGING_ACK_DENIED",
+    "Task exec identity, user or exit state did not verify": "EXEC_READBACK_DENIED"
+  };
+  const fixed = messages[error.message];
+  if (fixed) return `/${fixed}`;
+  const status = /^Container Engine operation failed with status ([1-5][0-9]{2})$/u.exec(error.message)?.[1];
+  return status === undefined ? "" : `/ENGINE_HTTP_${status}`;
 }
 async function raceAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw new BrokerError("CANCELLED", "Container coding request was cancelled");
