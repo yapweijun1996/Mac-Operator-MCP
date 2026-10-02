@@ -1139,7 +1139,12 @@ test("login rate limits cannot be bypassed by forwarded addresses", async t => {
     assert.equal((await f.request("/oauth/login", { csrf, username: "unknown", password: "wrong" }, cookie,
       { "x-forwarded-for": `192.0.2.${index}` })).status, 401);
   }
-  assert.equal((await f.request("/oauth/login", { csrf, username: "owner", password }, cookie)).status, 429);
+  const locked = await f.request("/oauth/login", { csrf, username: "owner", password }, cookie);
+  assert.equal(locked.status, 429);
+  assert.equal(locked.headers.get("retry-after"), "120");
+  const stillLocked = await f.request("/oauth/login", { csrf, username: "owner", password }, cookie);
+  assert.equal(stillLocked.status, 429);
+  assert.ok(Number(stillLocked.headers.get("retry-after")) <= 120);
 });
 
 test("local revocation command persists and refuses password arguments and weak files", async t => {

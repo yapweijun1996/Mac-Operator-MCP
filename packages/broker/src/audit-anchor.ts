@@ -102,7 +102,7 @@ export class AuditAnchorManager {
       if (current === undefined) throw new Error("Audit anchor is missing for a non-empty audit database");
       if (current.keyId !== this.options.keySource.keyId ||
           current.sequence !== tail.sequence || current.eventHash !== tail.eventHash ||
-          !timingSafeEqual(Buffer.from(current.mac, "hex"), Buffer.from(anchorMac(this.key, current.keyId, current.sequence, current.eventHash), "hex"))) {
+          !macEquals(current.mac, anchorMac(this.key, current.keyId, current.sequence, current.eventHash))) {
         throw new Error("Audit anchor does not match the persisted audit tail");
       }
     });
@@ -508,4 +508,10 @@ function isNativeLockRecoveryResult(value: unknown): value is {
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value);
   return keys.length === expected.length && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function macEquals(actual: string, expected: string): boolean {
+  const left = Buffer.from(actual, "hex");
+  const right = Buffer.from(expected, "hex");
+  return left.byteLength === right.byteLength && timingSafeEqual(left, right);
 }
