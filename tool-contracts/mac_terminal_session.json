@@ -1,0 +1,271 @@
+{
+  "$schema": "./tool-contract.schema.json",
+  "schema_version": "0.1",
+  "tool_name": "mac_terminal_session",
+  "capability_level": "L2",
+  "safety_class": "writes_local",
+  "required_scopes": [
+    "mac.terminal.exec"
+  ],
+  "normalized_target_type": "broker",
+  "timeout_ms": 30000,
+  "output_cap_bytes": 262144,
+  "network_policy": "profile_defined",
+  "filesystem_policy": "profile_defined",
+  "secret_policy": "deny_secret_env",
+  "approval_policy": "trusted_profile",
+  "idempotent": false,
+  "postcondition_verification": {
+    "required": true,
+    "strategy": "exit_status_and_declared_task_verification",
+    "failure_class": "VERIFICATION_FAILED"
+  },
+  "audit_class": "execution",
+  "tool_delivery_wave": "wave_3",
+  "implementation_status": "planned",
+  "purpose": "Start, write to, read from and stop an interactive PTY shell session as the personal macOS owner. Uses the same separately signed owner policy and delegated approval as mac_terminal_exec; never runs the Broker as root.",
+  "input_summary": "action:start|write|read|stop; start: cwd, idempotency_key, rows?, cols?, lifetime_ms?, idle_timeout_ms?; write: session_id, data; read: session_id, cursor, max_bytes?, wait_ms?; stop: session_id.",
+  "output_summary": "Owner-bound session Job and bounded redacted terminal output with a byte cursor; no isolation or rollback guarantee.",
+  "input_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_terminal_session input",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "action"
+    ],
+    "properties": {
+      "action": {
+        "enum": [
+          "start",
+          "write",
+          "read",
+          "stop"
+        ]
+      },
+      "cwd": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "idempotency_key": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+      },
+      "rows": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 200
+      },
+      "cols": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500
+      },
+      "lifetime_ms": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 600000
+      },
+      "idle_timeout_ms": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 600000
+      },
+      "session_id": {
+        "type": "string",
+        "pattern": "^tsess_[0-9a-f]{24}$"
+      },
+      "data": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "cursor": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "max_bytes": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65536
+      },
+      "wait_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 5000
+      }
+    }
+  },
+  "output_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "mac_terminal_session result",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ok",
+      "request_id",
+      "tool",
+      "result_class",
+      "data",
+      "verification"
+    ],
+    "properties": {
+      "ok": {
+        "const": true
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "tool": {
+        "const": "mac_terminal_session"
+      },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
+      "data": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "session_id",
+          "job_id",
+          "state",
+          "execution_mode"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "start",
+              "write",
+              "read",
+              "stop"
+            ]
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "cancelled",
+              "timed_out",
+              "unknown"
+            ]
+          },
+          "reused": {
+            "type": "boolean"
+          },
+          "output": {
+            "type": "string",
+            "maxLength": 131072
+          },
+          "next_cursor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dropped_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "finished": {
+            "type": "boolean"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "execution_mode": {
+            "const": "personal_owner_terminal_session"
+          }
+        }
+      },
+      "warnings": {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 32,
+        "uniqueItems": false,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "verification": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "required",
+          "status",
+          "strategy"
+        ],
+        "properties": {
+          "required": {
+            "const": true
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "verified",
+              "failed",
+              "unknown",
+              "not_run"
+            ]
+          },
+          "strategy": {
+            "const": "exit_status_and_declared_task_verification"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 0,
+                "maxLength": 512
+              },
+              "readback_hash": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[A-Fa-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "format": "date-time"
+              }
+            },
+            "required": []
+          }
+        }
+      },
+      "duration_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 180000
+      }
+    }
+  },
+  "source": {
+    "kind": "local_owner_request",
+    "request_date": "2026-10-02",
+    "source_text": "The owner explicitly requested interactive, long-lived terminal control of their Mac for AI agents. This opt-in mode runs a PTY shell as the macOS owner without claiming task isolation."
+  }
+}

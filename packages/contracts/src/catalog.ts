@@ -11,7 +11,7 @@ export const PLANNED_TOOL_NAMES = [
   "mac_process_inspect", "mac_process_list", "mac_project_discover", "mac_project_summary",
   "mac_read_file", "mac_recent_files", "mac_search_text", "mac_service_control",
   "mac_service_status", "mac_stat_path", "mac_storage_analysis", "mac_system_summary",
-  "mac_task_run", "mac_terminal_exec", "mac_test_run", "mac_ui_action", "mac_ui_observe", "mac_ui_type",
+  "mac_task_run", "mac_terminal_exec", "mac_terminal_session", "mac_test_run", "mac_ui_action", "mac_ui_observe", "mac_ui_type",
   "mac_write_file_atomic"
 ] as const;
 

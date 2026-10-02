@@ -60,6 +60,8 @@ export interface OwnerTerminalSessionStart {
   lifetimeMs: number;
   /** Ends the session when the client neither reads nor writes for this long. */
   idleTimeoutMs: number;
+  /** Opaque caller label (the Broker stores its Job id) returned by describe(). */
+  tag?: string;
   shouldCancel: () => boolean;
   onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
   onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
@@ -80,6 +82,7 @@ export interface OwnerTerminalSessionRead {
 interface Session {
   id: string;
   ownerId: string;
+  tag: string;
   sink?: ProcessStdinSink | undefined;
   chunks: Buffer[];
   baseOffset: number;
@@ -128,7 +131,7 @@ export class OwnerTerminalSessionManager {
     if ([...this.sessions.values()].filter(session => session.result === undefined).length >= this.maxSessions) {
       throw new BrokerError("CONFLICT", "Terminal session capacity is exhausted", true);
     }
-    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, chunks: [], baseOffset: 0, endOffset: 0,
+    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, tag: request.tag ?? "", chunks: [], baseOffset: 0, endOffset: 0,
       lastActivityMs: this.now(), idleTimeoutMs: request.idleTimeoutMs, stopRequested: false };
     this.sessions.set(session.id, session);
     const home = await realpath(homedir());
@@ -190,6 +193,11 @@ export class OwnerTerminalSessionManager {
     const base = { data: redacted.text, nextCursor: from + slice.byteLength, droppedBytes: dropped,
       truncated: truncated || redacted.truncated, finished: session.result !== undefined };
     return session.result === undefined ? base : { ...base, state: session.result.state, exitCode: session.result.exitCode };
+  }
+
+  describe(ownerId: string, sessionId: string): { tag: string; finished: boolean } {
+    const session = this.owned(ownerId, sessionId);
+    return { tag: session.tag, finished: session.result !== undefined };
   }
 
   /** Requests termination; the supervisor observes it and drains the process tree. */

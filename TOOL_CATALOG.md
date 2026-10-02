@@ -99,3 +99,4 @@ These additive source contracts do not enable the live personal deployment. Prod
 ## Personal owner terminal mode
 
 - [mac_terminal_exec](tool-contracts/mac_terminal_exec.json): explicit opt-in owner-account shell and CLI execution; separate from isolated task profiles.
+- [mac_terminal_session](tool-contracts/mac_terminal_session.json): explicit opt-in interactive PTY shell session (start, write, read, stop) as the owner; same scope and delegation as `mac_terminal_exec`.

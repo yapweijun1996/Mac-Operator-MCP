@@ -23,7 +23,7 @@ export const W1_TOOLS = [
 ] as const;
 export const G1_GUI_TOOLS = ["mac_app_open", "mac_app_focus", "mac_ui_observe", "mac_ui_action", "mac_ui_type"] as const;
 export const G1_TOOLS = [...W1_TOOLS, ...G1_GUI_TOOLS] as const;
-export const O1_TOOLS = [...G1_TOOLS, "mac_terminal_exec"] as const;
+export const O1_TOOLS = [...G1_TOOLS, "mac_terminal_exec", "mac_terminal_session"] as const;
 export const V2_TOOLS = [...O1_TOOLS, "mac_task_run", "mac_git_worktree_create", "mac_git_worktree_list", "mac_git_worktree_remove",
   "mac_git_branch_create", "mac_codex_preflight", "mac_codex_run", "mac_test_run", "mac_build_run", "mac_pr_prepare", "mac_execution_audit"] as const;
 export const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
