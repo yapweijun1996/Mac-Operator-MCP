@@ -1,5 +1,9 @@
 # Mac-Operator-MCP Progress
 
+## Product direction change: owner full control (documentation only)
+
+2026-10-02: the owner directed that the product target is full control of the owner's Mac by AI agents through one grant. `GOAL.md`, `SECURITY.md`, `SCOPE_MODEL.md`, `README.md` and the new `docs/owner-full-control.md` were revised to state this. This is documentation of intent only. No code, policy, tool enablement or deployment changed, and none of the owner full-control capabilities are implemented. The deployed profiles (R1, G1, O1, V2) are unchanged. Next work, in order: interactive PTY sessions, a single connection with one consent, any-application GUI scope, replacing per-action approval, an OFC policy profile, host availability settings, and real-Mac verification. Details: `docs/owner-full-control.md`.
+
 ## Current Chrome GUI repair: PASS — production verified
 
 2026-10-02: unified native AX/CG window resolution and stable process/window

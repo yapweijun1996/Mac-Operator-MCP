@@ -4,6 +4,9 @@ Status: Initial threat-model baseline; mitigations are requirements, not impleme
 Version: 0.1
 Last reviewed: 2026-09-14
 
+> **Owner direction (2026-10-02):** the product target is now owner full control ([docs/owner-full-control.md](docs/owner-full-control.md)): one authenticated owner, one grant, the owner account's whole authority. This document's threats and mitigations describe the governed profiles that are deployed today. Where they conflict with that target, the owner direction in `GOAL.md` wins for future work, and `PROGRESS.md` still decides what is implemented.
+
+
 ## Scope
 
 This model covers the remote MCP client, Remote MCP Edge, Edge-to-Broker IPC, Local Broker, policy/configuration, adapters, Broker-owned child processes, filesystem, Docker integration, applications and Accessibility, Audit Store, Privileged Helper, secrets, and operational recovery. It covers local and remote adversaries, compromised projects, accidental misuse, and partial system failure.

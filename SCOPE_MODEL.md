@@ -3,6 +3,10 @@
 Status: Exact-scope and finite target-set authority implemented; physical resource identity remains open
 Version: 0.1
 
+## Owner full-control profile
+
+By owner decision on 2026-10-02 the target for the personal deployment is a single owner grant that covers the whole tool set on one connection ([Owner full control](docs/owner-full-control.md)). It is a target and is not implemented. The exact-scope rules below describe the governed profiles and remain the implemented behavior.
+
 ## Purpose
 
 Scopes are explicit grants consumed by Broker policy. They identify an action family; they do not bypass target, filesystem, network, approval, tool-enable, secret, or privileged policy.

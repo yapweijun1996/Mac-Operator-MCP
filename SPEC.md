@@ -4,6 +4,9 @@ Status: Draft requirements baseline
 Version: 0.1
 Last verified: 2026-09-12
 
+> **Owner direction (2026-10-02):** the product target is now owner full control ([docs/owner-full-control.md](docs/owner-full-control.md)): one authenticated owner, one grant, the owner account's whole authority. This document's requirements describe the governed profiles that are deployed today. Where they conflict with that target, the owner direction in `GOAL.md` wins for future work, and `PROGRESS.md` still decides what is implemented.
+
+
 ## Conformance language
 
 `MUST`, `MUST NOT`, `SHOULD`, and `MAY` define requirements. A requirement is implemented only when code and relevant verification evidence exist in the repository.

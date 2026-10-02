@@ -6,9 +6,13 @@ Source: KBID `mac-operator-mcp`, item `2ea82306-ed68-4ad2-b647-1a5937107320`
 
 ## Security objective
 
-Governed profiles grant bounded Mac-operating capability. The owner may explicitly select O1 for arbitrary owner-account commands; its different trust boundary is documented in [Owner terminal](docs/owner-terminal.md). O1 does not grant unrestricted root or bypass macOS permissions.
+Two trust models exist. Governed profiles (R1, G1, V2) grant bounded Mac-operating capability. The owner may explicitly select O1 for arbitrary owner-account commands; its trust boundary is documented in [Owner terminal](docs/owner-terminal.md).
+
+By owner decision on 2026-10-02 the product target for the personal deployment is the owner full-control profile ([Owner full control](docs/owner-full-control.md)): one authenticated owner, one grant, the owner account's whole authority. That profile is a target, not an implemented capability. It does not grant unrestricted root and does not bypass macOS permissions. Its security objective is to ensure only the authenticated owner can use it, and that the owner can revoke it and stop it.
 
 ## Core invariants
+
+Invariants 3 to 7 describe the governed profiles. The owner full-control profile replaces 4, 6 and 7 with owner-granted authority as described in `docs/owner-full-control.md`; invariants 1, 2 and 3 still apply to it.
 
 1. Local Broker is the final authorization authority; remote client claims are never sufficient by themselves.
 2. Default deny for unknown tools, scopes, paths, apps, networks, and privileged operations.
@@ -47,6 +51,8 @@ Record actor or principal reference, tool, normalized target reference, policy d
 Stopping or locking the Broker and revoking connector credentials remove remote execution authority according to the request and job lifecycle contract. Maintain emergency disables for mutating, GUI, and privileged capabilities. Failed mutation verification returns `VERIFICATION_FAILED`, never success.
 
 ## Excluded from governed profiles
+
+This list applies to the governed profiles only. The owner full-control profile includes these capabilities when the owner grants it.
 
 `run_shell`, `sudo_shell`, raw Keychain reads, SSH private-key reads, raw Docker socket proxying, arbitrary AppleScript/JXA execution, generic click-anywhere, credential autofill, Git push, force reset, destructive disk operations, and security-setting bypass.
 

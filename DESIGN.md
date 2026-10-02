@@ -4,6 +4,9 @@ Status: Locked architecture core with proposed detailed decisions
 Version: 0.1
 Last verified: 2026-09-12
 
+> **Owner direction (2026-10-02):** the product target is now owner full control ([docs/owner-full-control.md](docs/owner-full-control.md)): one authenticated owner, one grant, the owner account's whole authority. This document's boundaries and authority model describe the governed profiles that are deployed today. Where they conflict with that target, the owner direction in `GOAL.md` wins for future work, and `PROGRESS.md` still decides what is implemented.
+
+
 ## Source-of-truth statement
 
 This document owns durable architecture. `PROGRESS.md` owns current Git and delivery state. `SECURITY.md`, `FILESYSTEM_POLICY.md`, and the tool contracts provide the detailed authority rules. Architecture text does not prove that a component is implemented or enabled.

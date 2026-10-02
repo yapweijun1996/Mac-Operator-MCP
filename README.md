@@ -1,6 +1,6 @@
 # Mac-Operator-MCP
 
-Mac-Operator-MCP provides a governed MCP Edge and local macOS Broker for operating a physical Mac mini. The Local Broker performs final authorization. Scoped R1/G1 and V2 interfaces preserve the boundaries in `SECURITY.md`; the separately authorized [personal owner terminal profile (O1)](docs/owner-terminal.md) executes arbitrary commands with the owner's permissions.
+Mac-Operator-MCP provides an MCP Edge and a local macOS Broker for operating a physical Mac mini. The product target, set by the owner on 2026-10-02, is [owner full control](docs/owner-full-control.md): one authenticated owner, one grant, and the owner account's whole authority for AI agents. That target is not yet implemented. What is deployed today are the governed profiles (scoped R1/G1 and V2, whose boundaries are in `SECURITY.md`) and the separately authorized [personal owner terminal profile (O1)](docs/owner-terminal.md), which executes arbitrary commands with the owner's permissions.
 
 ## Current status
 
@@ -22,6 +22,7 @@ to consent to the separate coding grant before using newly enabled tools.
 ## Start here
 
 - [Goal](GOAL.md)
+- [Owner full control (target)](docs/owner-full-control.md)
 - [Current progress](PROGRESS.md)
 - [Architecture](DESIGN.md)
 - [Specification](SPEC.md)
