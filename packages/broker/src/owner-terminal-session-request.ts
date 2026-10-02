@@ -49,7 +49,7 @@ export function parseOwnerTerminalSessionRequest(value: unknown): OwnerTerminalS
     return { action, sessionId, data: value.data };
   }
   if (action === "read") {
-    return { action, sessionId, cursor: integer(value.cursor, 0, Number.MAX_SAFE_INTEGER), maxBytes: integer(value.max_bytes, 1, 65_536, 65_536),
+    return { action, sessionId, cursor: integer(value.cursor, 0, Number.MAX_SAFE_INTEGER), maxBytes: integer(value.max_bytes, 1, 32_768, 32_768),
       waitMs: integer(value.wait_ms, 0, 5_000, 0) };
   }
   return { action, sessionId };

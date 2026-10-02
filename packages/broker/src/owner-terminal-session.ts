@@ -7,7 +7,8 @@ import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot, type ProcessStdinSink } from "./process-supervisor.js";
 
 const MAX_WRITE_BYTES = 4_096;
-const MAX_READ_BYTES = 65_536;
+// Terminal escape bytes JSON-encode up to 6x, so keep a read within the 256 KiB result cap.
+const MAX_READ_BYTES = 32_768;
 const RING_BYTES = 262_144;
 const MAX_LIFETIME_MS = 600_000;
 const FINISHED_RETENTION_MS = 60_000;
@@ -28,6 +29,7 @@ if pid == 0:
     os.execv('/bin/zsh', ['zsh', '-f'])
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
 stdin_open = True
+hung_up = False
 while True:
     fds = [fd] + ([0] if stdin_open else [])
     ready, _, _ = select.select(fds, [], [])
@@ -43,13 +45,17 @@ while True:
         data = os.read(0, 4096)
         if not data:
             stdin_open = False
+            hung_up = True
             os.close(fd)
             break
         os.write(fd, data)
 try:
-    os.waitpid(pid, 0)
+    status = os.waitpid(pid, 0)[1]
 except ChildProcessError:
-    pass
+    status = 0
+if hung_up:
+    sys.exit(0)
+sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
 `;
 
 export interface OwnerTerminalSessionStart {
@@ -200,11 +206,13 @@ export class OwnerTerminalSessionManager {
     return { tag: session.tag, finished: session.result !== undefined };
   }
 
-  /** Requests termination; the supervisor observes it and drains the process tree. */
+  /**
+   * Graceful stop: closing the PTY hangs up the shell and the session ends as completed.
+   * A session that ignores the hangup must be cancelled by its owner (Job cancellation).
+   */
   stop(ownerId: string, sessionId: string): void {
     const session = this.owned(ownerId, sessionId);
     if (session.result !== undefined) return;
-    session.stopRequested = true;
     session.sink?.end();
   }
 

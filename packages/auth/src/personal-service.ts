@@ -13,7 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { Broker, BrokerStore, BrokerServiceInstanceLock, EdgeKeyring, MacOsNativeBrokerIpcServer,
   capturePeerProcessIdentity, PolicyBundleVerifier, PolicyManager, createDefaultPolicy,
-  ApprovalIssuerKeyManager, PersonalOwnerTerminalExecutor, provisionAuthenticationKey, writeApprovalIssuerKeyConfig,
+  ApprovalIssuerKeyManager, PersonalOwnerTerminalExecutor, OwnerTerminalSessionManager, provisionAuthenticationKey, writeApprovalIssuerKeyConfig,
   type SignedPolicyBundle, type PolicyDocument } from "@mac-operator/broker";
 import { runEdgeServiceMain, validateEdgeServiceStartupConfig, type JwtRevocationContext } from "@mac-operator/edge";
 import { assertPrivateDirectory } from "./store.js";
@@ -195,6 +195,7 @@ async function start(root: string) {
             worktrees: developmentRuntime!.gateway.worktrees, developmentProjects: developmentConfig!.developmentProjects,
             taskProfiles: developmentConfig!.taskProfiles })(operation) } : {}),
       ...(terminalProfile ? { ownerTerminalExecutor: new PersonalOwnerTerminalExecutor({ enabled: true }),
+        ownerTerminalSessions: new OwnerTerminalSessionManager({ enabled: true }),
         authorizeOwnerTerminal: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
           createPersonalTerminalApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock") })(operation) } : {}),
       ...(guiProfile ? { authorizeGuiSession: operation => browserApprovalController?.authorizeGuiSession(operation) ?? Promise.resolve(false) } : {}), edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "personal-edge", keyId: "personal-edge-1", key,

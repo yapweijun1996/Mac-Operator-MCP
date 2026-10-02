@@ -1,5 +1,15 @@
 # Mac-Operator-MCP Progress
 
+## Owner terminal PTY sessions: implemented on local branch, not deployed
+
+2026-10-02: branch `feat/terminal-pty-sessions` adds `mac_terminal_session` (start, write,
+read, stop) as an interactive PTY shell under the existing `mac.terminal.exec` scope and
+delegated issuer, with a per-call approval for every write. ProcessSupervisor gained opt-in
+streaming stdin/output. The tool is in the O1 tool list (O1 39, V2 50) but disabled in the
+default policy; a live deployment needs the `owner-terminal` offline upgrade and an MCP
+reconnect. Not pushed, merged or deployed. Design and limits: `docs/owner-terminal.md`,
+`docs/FULL_ACCESS_DESIGN.md`.
+
 ## Current Chrome GUI repair: PASS — production verified
 
 2026-10-02: unified native AX/CG window resolution and stable process/window

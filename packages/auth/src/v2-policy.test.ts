@@ -43,7 +43,7 @@ async function fixture() {
 }
 
 test("V2 grant profile adds exactly the development authority while O1 remains unchanged", () => {
-  assert.equal(V2_TOOLS.length, 49); assert.equal(O1_TOOLS.length, 38);
+  assert.equal(V2_TOOLS.length, 50); assert.equal(O1_TOOLS.length, 39);
   assert.deepEqual(scopesForGrantProfile("v2"), V2_CODING_SCOPES); assert.equal(V2_CODING_SCOPES.includes("mac.terminal.exec" as never), false); assert.deepEqual(scopesForGrantProfile("o1"), O1_SCOPES);
   assert.equal(new Set(OAUTH_SCOPES).size, OAUTH_SCOPES.length); assert.equal(new Set(V2_TOOLS).size, V2_TOOLS.length);
   for (const name of ["mac_git_push", "mac_service_control", "mac_package_install"]) assert.equal((V2_TOOLS as readonly string[]).includes(name), false);

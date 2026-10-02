@@ -23,6 +23,19 @@ Commands have a default 30-second timeout and a 120-second maximum. Output is li
 
 Authority revocation, job cancellation, shutdown and timeout terminate observed process groups and tracked descendants. Arbitrary owner programs can daemonize or intentionally persist outside observed process ownership; this mode makes no complete containment or rollback claim. Restart recovery uses recorded PID/start-time identities and never converts an unresolved Job into success. The MCP call is synchronous and noninteractive; password prompts and interactive terminal sessions require a separate PTY feature.
 
+## Interactive sessions (`mac_terminal_session`)
+
+`mac_terminal_session` adds a PTY-backed interactive shell to O1. It reuses the `mac.terminal.exec` scope, the `host:owner-terminal` target, the delegated terminal issuer and the same owner-account authority as `mac_terminal_exec`; it adds no scope. Reconnecting is only needed when the grant predates the policy revision that lists the tool (rerun the `owner-terminal` offline upgrade described below).
+
+Actions (one tool, exact per-action arguments):
+
+- `start` — `cwd`, `idempotency_key`, optional `rows`, `cols`, `lifetime_ms` (default 300 s, max 600 s), `idle_timeout_ms` (default 120 s). Creates a durable Job, persists the shell's process identity, returns `session_id` and `job_id`, and keeps the start request open until the session ends. At most two sessions run at once.
+- `write` — `session_id`, `data` (at most 4 KiB, no NUL, known literal credentials rejected). Control characters such as Ctrl-C (`\u0003`) are allowed. Every write is its own request with its own single-use delegated approval bound to the payload digest; a start approval never covers later input.
+- `read` — `session_id`, `cursor`, optional `max_bytes` (at most 32 KiB), `wait_ms` (at most 5 s). Returns redacted output, `next_cursor`, and `dropped_bytes` when the 256 KiB ring buffer overwrote unread output.
+- `stop` — hangs up the shell and waits for the session to end; if the shell ignores the hangup the Job is cancelled and the process tree drained. `mac_job_cancel` on the session Job does the same.
+
+Limits and behaviour: sessions are in memory and bound to the starting principal; another principal receives not-found. Revocation, Job cancellation, idle timeout, the absolute lifetime and Broker shutdown terminate the observed process tree. A Broker restart never resumes a session; the recorded process identity is recovered like any other terminal Job. Output redaction is signature-based and applied per read, so a secret split across two reads may not be recognised. Output is never persisted. The PTY is created by `/usr/bin/python3`, a root-owned system executable, so no native Node dependency is added. The same disclaimers as one-shot O1 apply: no isolation, no rollback, daemonized descendants can escape observation.
+
 ## Permissions and disablement
 
 O1 runs with the owner's existing macOS permissions. Administrator authentication, Accessibility, Automation, Screen Recording, Full Disk Access and other macOS controls remain OS-owned. Commands can launch applications, manipulate owner files, invoke CLIs and use networks or persistence allowed to that account. Structured-tool path restrictions and destructive/privileged kill switches do not constrain shell command contents. Revoke `mac.terminal.exec`, disable `mac_terminal_exec`, revoke the OAuth grant, or use the global/mutation/process/network kill switches to remove this execution authority.

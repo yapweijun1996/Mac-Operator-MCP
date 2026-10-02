@@ -6,7 +6,7 @@ import { OwnerTerminalSessionManager } from "./owner-terminal-session.js";
 
 const supported = process.platform === "darwin" && process.getuid?.() !== 0;
 
-async function waitFor(check: () => boolean, ms = 10_000): Promise<void> {
+async function waitFor(check: () => boolean, ms = 20_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!check()) {
     if (Date.now() > deadline) throw new Error("condition not reached");

@@ -73,6 +73,9 @@ import { UserServiceControlAdapter, validateUserServiceControlResult, type UserS
 import { createServiceControlJobMetadata, UserServiceControlJobExecutor } from "./user-service-control-executor.js";
 import { parseOwnerTerminalRequest, type OwnerTerminalExecutor, type OwnerTerminalRequest } from "./owner-terminal.js";
 import { dispatchOwnerTerminal } from "./owner-terminal-dispatch.js";
+import type { OwnerTerminalSessionManager } from "./owner-terminal-session.js";
+import { parseOwnerTerminalSessionRequest, type OwnerTerminalSessionRequest } from "./owner-terminal-session-request.js";
+import { dispatchOwnerTerminalSessionIo, startOwnerTerminalSession } from "./owner-terminal-session-dispatch.js";
 import { validateSemanticResourceBudget, validateStorageSemanticResourceBudget } from "./resource-budget.js";
 
 export interface GuiSessionOperation {
@@ -152,6 +155,8 @@ export interface BrokerOptions {
   authorizeDevelopment?: (operation: DevelopmentOperation) => Promise<boolean>;
   /** Explicit personal owner authority; omitted and disabled by default. */
   ownerTerminalExecutor?: OwnerTerminalExecutor;
+  /** Interactive PTY sessions; share the owner-terminal delegation and scope. */
+  ownerTerminalSessions?: OwnerTerminalSessionManager;
   authorizeOwnerTerminal?: (operation: OwnerTerminalOperation) => Promise<boolean>;
   taskProfileRegistry?: TaskProfileRegistry;
   taskRunner?: TaskRunner;
@@ -346,6 +351,7 @@ export class Broker {
 
   private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
     if (toolName === "mac_terminal_exec" && (!this.options.ownerTerminalExecutor?.available || !this.options.authorizeOwnerTerminal)) return "runtime_unavailable";
+    if (toolName === "mac_terminal_session" && (!this.options.ownerTerminalSessions?.available || !this.options.authorizeOwnerTerminal)) return "runtime_unavailable";
     if (TASK_JOB_TOOLS.has(toolName) && !this.taskRunner.available) return "runtime_unavailable";
     if (DEVELOPMENT_TOOL_NAMES.includes(toolName)) {
       const gateway = this.options.developmentGateway;
@@ -377,7 +383,7 @@ export class Broker {
   close(): Promise<void> {
     if (this.closePromise !== undefined) return this.closePromise;
     this.closing = true;
-    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.dockerProcessSupervisor, this.taskRunner, this.options.ownerTerminalExecutor];
+    const resources = [this.filesystemExecutor, this.processExecutor, this.processSupervisor, this.dockerProcessSupervisor, this.taskRunner, this.options.ownerTerminalExecutor, this.options.ownerTerminalSessions];
     this.closePromise = (async () => {
       let firstError: unknown;
       for (const resource of resources) {
@@ -1191,6 +1197,14 @@ export class Broker {
         }
         if (existing) execution.taskJob = existing;
       }
+      if (execution.ownerTerminalSession?.action === "start") {
+        const existing = this.options.store.ownedJobByIdempotencyKey(execution.ownerTerminalSession.idempotencyKey, request.principal.principalId);
+        if (existing && (existing.tool !== request.tool || existing.payloadDigest !== sha256(canonicalJson(request.arguments)) ||
+            existing.targetRef !== plannedAuditTarget || existing.policyVersion !== request.policyVersion)) {
+          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different terminal session");
+        }
+        if (existing) execution.taskJob = existing;
+      }
       this.options.store.recordRequestDecision({
         requestId: request.requestId,
         principalId: request.principal.principalId,
@@ -1233,12 +1247,12 @@ export class Broker {
           this.checkRevocation(request);
         }
       }
-      if (execution.ownerTerminal) {
+      if (execution.ownerTerminal || execution.ownerTerminalSession) {
         const delegated = await this.options.authorizeOwnerTerminal!({
           requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
           tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
           targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
-          expiresAtMs: request.principal.expiresAtMs, timeoutMs: execution.ownerTerminal.timeoutMs
+          expiresAtMs: request.principal.expiresAtMs, timeoutMs: execution.ownerTerminal?.timeoutMs ?? 30_000
         });
         if (!delegated) throw new BrokerError("POLICY_DENIED", "Owner terminal delegation is unavailable");
         this.checkRevocation(request);
@@ -1246,7 +1260,7 @@ export class Broker {
       let developmentDelegated = false;
       const delegatedProject = execution.development?.projectRoot ?? execution.auditContext?.project;
       if (toolPolicy.mutation && this.options.authorizeDevelopment && typeof delegatedProject === "string" &&
-          !execution.ownerTerminal && ["trusted_write", "trusted_profile"].includes(toolPolicy.approvalPolicy)) {
+          !execution.ownerTerminal && !execution.ownerTerminalSession && ["trusted_write", "trusted_profile"].includes(toolPolicy.approvalPolicy)) {
         developmentDelegated = await this.options.authorizeDevelopment({
           requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
           tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
@@ -1261,7 +1275,9 @@ export class Broker {
         this.checkRevocation(request);
       }
       if (toolPolicy.mutation) {
-        if (execution.ownerTerminal) {
+        if (execution.ownerTerminal || execution.ownerTerminalSession) {
+          const terminalKey = execution.ownerTerminal?.idempotencyKey ??
+            (execution.ownerTerminalSession?.action === "start" ? execution.ownerTerminalSession.idempotencyKey : undefined);
           const admissionAt = this.now();
           const approval: ApprovalConsumptionBinding = {
             contractVersion: request.contractVersion, targetKind: target.kind, targetRef: plannedAuditTarget,
@@ -1274,13 +1290,16 @@ export class Broker {
           if (execution.taskJob) {
             this.options.store.recordRequestIntent(intent, approval);
             this.options.store.linkRequestJob(request.requestId, execution.taskJob.jobId, admissionAt);
+          } else if (terminalKey === undefined) {
+            // write, read and stop act on an existing session and create no Job.
+            this.options.store.recordRequestIntent(intent, approval);
           } else {
             const admitted = this.options.store.admitApprovedJobAfterDecision({ intent, approval, job: {
-              jobId: `job:terminal-${sha256(canonicalJson({ principalId: request.principal.principalId, key: execution.ownerTerminal.idempotencyKey })).slice(0, 48)}`,
+              jobId: `job:${execution.ownerTerminal ? "terminal" : "tsession"}-${sha256(canonicalJson({ principalId: request.principal.principalId, key: terminalKey })).slice(0, 48)}`,
               edgeId: request.principal.edgeId, edgeKeyId: keyIdentity(request.principal.edgeId, request.authenticationKeyId),
               ownerPrincipalId: request.principal.principalId, ownerSessionId: request.principal.sessionId,
               tool: request.tool, targetRef: plannedAuditTarget, policyVersion: request.policyVersion,
-              payloadDigest: approval.payloadDigest, idempotencyKey: execution.ownerTerminal.idempotencyKey, createdAtMs: admissionAt
+              payloadDigest: approval.payloadDigest, idempotencyKey: terminalKey, createdAtMs: admissionAt
             } });
             execution.taskJob = admitted.job;
             execution.taskJobNew = true;
@@ -1687,6 +1706,34 @@ export class Broker {
         }).finally(() => { this.activeAsyncTasks.delete(execution.taskJob!.jobId); });
         this.activeAsyncTasks.set(execution.taskJob!.jobId, continuation);
         return receipt;
+      }
+      if (execution.ownerTerminalSession?.action === "start") {
+        const sessionJob = execution.taskJob;
+        if (!sessionJob || !this.options.ownerTerminalSessions) throw new BrokerError("POLICY_DENIED", "Owner terminal session runtime is unavailable");
+        const started = await startOwnerTerminalSession({ store: this.options.store, manager: this.options.ownerTerminalSessions,
+          request, session: execution.ownerTerminalSession, job: sessionJob, ...(execution.jobLease ? { lease: execution.jobLease } : {}),
+          control: this.executionControl(request, execution.target, toolPolicy.timeoutMs, sessionJob.jobId, [], execution.jobLease),
+          assertAuthority: () => this.ensureActiveAuthority(request!, execution.target), now: this.now });
+        // The request stays open (and its approval active) until the session ends; the
+        // caller receives its session id now and settles the audit from the continuation.
+        const continuation = started.finished.then(() => {
+          this.options.store.completeRequest({
+            requestId: request!.requestId, principalId: request!.principal.principalId, tool: request!.tool,
+            eventType: "completion", decision: "allow", resultClass: "SUCCEEDED", targetRef: started.result.auditTarget,
+            policyVersion: policy.version,
+            evidence: { outputClass: "bounded_structured", scopes: [...toolPolicy.requiredScopes], ...started.result.auditEvidence,
+              durationMs: Math.max(0, this.now() - startedAt) },
+            timestampMs: this.now()
+          });
+        }).catch((error: unknown) => {
+          const brokerError = error instanceof BrokerError ? error : new BrokerError("UNKNOWN_OUTCOME", "Terminal session completion could not be persisted", true);
+          this.auditFailure(request!, brokerError, this.now(), true, plannedAuditTarget);
+        }).finally(() => { this.activeAsyncTasks.delete(sessionJob.jobId); });
+        this.activeAsyncTasks.set(sessionJob.jobId, continuation);
+        this.ensureActiveAuthority(request, execution.target);
+        return { ok: true, request_id: request.requestId, tool: request.tool, result_class: "SUCCEEDED", data: started.result.data,
+          warnings: started.result.warnings, truncated: false, verification: started.result.verification,
+          duration_ms: Math.max(0, this.now() - startedAt) };
       }
       const dispatched = await this.dispatch(request, policy, execution, toolPolicy);
       // Re-check every normalized target immediately before publishing a
@@ -3101,6 +3148,13 @@ export class Broker {
           control: this.executionControl(request, execution.target, toolPolicy.timeoutMs, execution.taskJob.jobId, [], execution.jobLease),
           assertAuthority: () => this.ensureActiveAuthority(request, execution.target), now: this.now });
       }
+      case "mac_terminal_session": {
+        if (!execution.ownerTerminalSession || execution.ownerTerminalSession.action === "start" || !this.options.ownerTerminalSessions) {
+          throw new BrokerError("POLICY_DENIED", "Owner terminal session runtime is unavailable");
+        }
+        return dispatchOwnerTerminalSessionIo({ store: this.options.store, now: this.now, manager: this.options.ownerTerminalSessions, request,
+          session: execution.ownerTerminalSession, assertAuthority: () => this.ensureActiveAuthority(request, execution.target) });
+      }
       case "mac_task_run":
       case "mac_test_run":
       case "mac_build_run":
@@ -4332,6 +4386,11 @@ export class Broker {
       return { target: { kind: "host", reference: "owner-terminal" }, auditTarget: "host:owner-terminal",
         ownerTerminal: parseOwnerTerminalRequest(request.arguments) };
     }
+    if (request.tool === "mac_terminal_session") {
+      if (this.runtimeCapabilityDisabledReason(request.tool)) throw new BrokerError("POLICY_DENIED", "Owner terminal sessions are not enabled");
+      return { target: { kind: "host", reference: "owner-terminal" }, auditTarget: "host:owner-terminal",
+        ownerTerminalSession: parseOwnerTerminalSessionRequest(request.arguments) };
+    }
     if (request.tool === "mac_task_run") {
       assertExactArguments(request.arguments, ["profile", "cwd", "args", "async", "idempotency_key", "task_id", "max_runtime"]);
       const parsed = validateTaskRunArguments(request.arguments);
@@ -4945,7 +5004,7 @@ export class Broker {
   }
 
   private authorizeCapabilityTarget(policy: BrokerPolicy, principalId: string, tool: ToolPolicy): void {
-    if (tool.tool === "mac_terminal_exec") {
+    if (tool.tool === "mac_terminal_exec" || tool.tool === "mac_terminal_session") {
       authorizeTarget(policy, principalId, tool.requiredScopes, { kind: "host", reference: "owner-terminal" });
       return;
     }
@@ -5453,6 +5512,7 @@ interface ExecutionPlan {
   patchJob?: BrokerJob;
   patchJobNew?: boolean;
   ownerTerminal?: OwnerTerminalRequest;
+  ownerTerminalSession?: OwnerTerminalSessionRequest;
   taskJob?: BrokerJob;
   taskJobNew?: boolean;
   gitStageJob?: BrokerJob;
