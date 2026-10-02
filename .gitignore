@@ -16,12 +16,14 @@ coverage/
 *.sqlite.enc*
 *.sqlite-shm
 *.sqlite-wal
+*.sqlite-journal
 *.anchor
 *.anchor.lock
 *.pid
 *.sock
 *.socket
 *.log
+*.log.*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -53,9 +55,11 @@ pnpm-debug.log*
 .tmp/
 .cache/
 .runtime/
+.privileged-helper-build-*/
 
 # macOS metadata
 .DS_Store
+._*
 
 # Rendered packaging artifacts
 packaging/macos/rendered/
