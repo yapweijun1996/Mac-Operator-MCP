@@ -53,6 +53,8 @@ to consent to the separate coding grant before using newly enabled tools.
 - [V2 development gateway design and threat model](docs/MAC_OPERATOR_V2_DESIGN.md)
 - [V2 development gateway operator runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md)
 - [Personal owner terminal (O1)](docs/owner-terminal.md)
+- [Independent native Codex terminal connection](docs/owner-terminal-connection.md)
+- [Native terminal protocol acceptance](evidence/2026-10-02-terminal-client-protocol.md)
 - [macOS packaging boundary](packaging/macos/README.md)
 - [Operations](OPERATIONS.md)
 - [Kill switch](KILL_SWITCH.md)

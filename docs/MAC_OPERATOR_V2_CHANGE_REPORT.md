@@ -1,5 +1,10 @@
 # Mac Operator V2 change report
 
+The independently authorized native Codex terminal connection is also verified.
+Its final protocol/security acceptance is recorded in
+[the October 2 native-client evidence](../evidence/2026-10-02-terminal-client-protocol.md).
+The default V2 resource retains its project-scoped execution and push denial.
+
 Updated: 2026-10-02. Final acceptance is recorded in
 [production evidence](../evidence/2026-10-02-v2-production-gateway.md).
 Implementation branch: `codex/v2-production-executor`; destination: local `main`.
