@@ -6657,3 +6657,31 @@ rollback detection, and ADR acceptance remain open. Evidence:
 ## Personal owner terminal expansion (2026-10-01)
 
 The owner explicitly requested terminal and CLI control of their Mac. O1 adds the independently enabled `mac_terminal_exec` capability under `mac.terminal.exec`, with authenticated owner grants, exact delegated approvals, durable Jobs, bounded output, cancellation and audit. This mode executes arbitrary commands under the macOS owner account and makes no isolation claim. R1/W1/G1 and isolated task-run acceptance remain unchanged. Online O1 enablement and public OAuth verification passed at runtime source revision `fa215d61ba553c306127a0f0a676dffd39bd6cc3`. Implementation and operating limits are recorded in [Owner terminal operations](docs/owner-terminal.md); final results are in [verification evidence](evidence/2026-10-01-owner-terminal-control.md).
+
+
+## October 2, 2026: independent terminal OAuth connection
+
+Implemented an explicit offline opt-in for `/terminal/mcp` (O1 24 scopes), while
+preserving fresh `/mcp` V2 consent (27 scopes). Clients, transactions, codes,
+grants, refresh/replay checks, browser cookies and status/revocation endpoints
+are bound to their resource; legacy records remain at the origin's `/mcp`.
+Auth and Edge share existing owner keys/policy but use separate providers,
+verifiers, status monitors and MCP handlers. Terminal consent discloses owner
+shell/CLI authentication-state access accurately. Under shared policy the O1
+scope set projects 43 tools, including five existing Git worktree/review tools.
+
+Independent review found and reproduced a P1 in refresh scope-reduction
+monitoring: a newer narrow token could overwrite old active terminal authority.
+The fix retains each accepted scope only until its own latest token expiry.
+Independent revalidation passed propagation retries, token arrival orders and
+precise expiry. Latest full regression: 1603 tests, 1585 passed, 18 existing
+opt-in cases skipped, zero failures. Build, typecheck, style, doc links and
+process-boundary audit passed. Immutable source release: `8165721`.
+
+Rollout enabled paired configuration after a full stopped-state backup, updated
+only Mac-specific tunnel routes and switched PM2 to the immutable release.
+Default V2 public OAuth lists 48 tools and passes 26 reads; terminal public OAuth
+lists 43 tools and passes the same reads plus real 31-second CLI execution,
+network/file access, idempotency, Job status, timeout and active grant revocation.
+Final scope-reduction execution evidence is recorded in
+`evidence/2026-10-02-independent-terminal-oauth.md`.

@@ -1,11 +1,37 @@
 # Personal always-on deployment
 
-Status: combined O1/V2 source running under the existing O1 policy as of
-October 2, 2026. V2 tools remain disabled. This is an
-owner-managed, unsigned personal deployment, not a Developer ID/notarized
-package or acceptance of the formal production installer.
+Status: V2 coding and independent owner terminal OAuth connections are running
+as of October 2, 2026. This is an owner-managed, unsigned personal deployment,
+not a Developer ID/notarized package or the formal production installer.
 
-## Current O1 owner terminal deployment
+## Current V2 and owner terminal connections
+
+The default `https://mac.yapweijun1996.com/mcp` retains the V2 coding profile:
+27 OAuth scopes and 48 tools, including approved worktree/container development.
+A separate connection at `https://mac.yapweijun1996.com/terminal/mcp` uses issuer
+`https://mac.yapweijun1996.com/terminal/` and explicit O1 consent: 24 scopes and
+43 tools under the shared V2 policy, including owner shell and CLI execution.
+The five additional Git worktree/review tools use already granted Git/project/job
+scopes; task, coding-agent and execution-audit scopes remain excluded. Each
+connection has separate OAuth clients, cookies, audience binding and MCP handler.
+Existing root grants keep their original scopes. Add the terminal URL as a new
+connection and complete its owner login; reconnecting only the root V2 URL
+continues to authorize the coding profile.
+
+PM2 `mac-operator-personal` runs immutable release
+`MacOperator/releases/personal-20261002-terminal-a`, source
+`81657216c3699e3278b2272b58867803f91549c6`, with protected state still at
+`MacOperator-o1-20261001a`. Paired `ownerTerminalConnection: true` settings enable
+the extra endpoint. Signed policy-3, keys, runtime profiles and existing grants
+are preserved. Rollback must restore the complete stopped-state backup at
+`MacOperator/backups/v2-before-20261002-terminal-a/state` together with the old
+`personal-20261002-v2h` release and tunnel configuration. See
+[connection operations](owner-terminal-connection.md) and the
+[verified rollout](../evidence/2026-10-02-independent-terminal-oauth.md).
+
+## Historical O1 source rollout
+
+The following records the earlier O1 source rollout before V2 was enabled.
 
 The public MCP URL remains `https://mac.yapweijun1996.com/mcp`. O1 retains G1's
 37 tools and adds `mac_terminal_exec` under `mac.terminal.exec`: 38 tools and

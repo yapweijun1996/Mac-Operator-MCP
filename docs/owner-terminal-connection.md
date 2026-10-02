@@ -55,3 +55,9 @@ consent has 24 O1 scopes; under the shared V2 policy it also exposes five Git
 worktree/review tools using its existing Git/project/job scopes (43 tools total).
 It has no task, coding-agent or execution-audit scopes. Existing root O1 grants
 retain their original approved scope set until expiry or revocation.
+
+
+Removing a previously accepted scope ends that Broker session so active work
+using the removed authority can be cancelled. Start a fresh OAuth authorization
+for continued access after a scope reduction. Revoking terminal authorization
+does not revoke the separate V2 grant.
