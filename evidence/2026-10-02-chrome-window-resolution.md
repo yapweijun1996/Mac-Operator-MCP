@@ -7,6 +7,11 @@ repeated against that build. All listed acceptance calls used the real
 `gui_launcher` -> LaunchServices -> `Mac Operator GUI.app` route.
 A separate external ChatGPT client session was not exercised by this record.
 
+This is historical acceptance on the available desktop at that time. The later
+[focus/session investigation](2026-10-02-chrome-focus-protected-session.md)
+reproduces a locked-host failure and records the follow-up source repair; its
+unlocked physical acceptance remains pending.
+
 ## Verified root causes
 
 1. Focus selected `AXFocusedWindow` and returned the AX title. Screenshot-backed

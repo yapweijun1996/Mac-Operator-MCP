@@ -64,28 +64,82 @@ static NSArray *axWindows(pid_t pid, NSString **reason) {
   return windows;
 }
 
+static BOOL protectedGuiSession(NSString *bundleId) {
+  return [@[@"com.apple.loginwindow", @"com.apple.SecurityAgent", @"com.apple.securityagent"] containsObject:bundleId ?: @""];
+}
+
+// A timer keeps an otherwise empty run loop alive; uptime bounds the whole transition.
+static BOOL pollGuiState(NSTimeInterval deadline, BOOL (^readback)(void)) {
+  while (NSProcessInfo.processInfo.systemUptime < deadline) {
+    if (readback()) return YES;
+    NSTimeInterval remaining = deadline - NSProcessInfo.processInfo.systemUptime;
+    if (remaining <= 0) break;
+    NSTimeInterval interval = MIN(0.05, remaining);
+    NSTimer *timer = [NSTimer timerWithTimeInterval:interval repeats:NO block:^(NSTimer *value) { (void)value; }];
+    [NSRunLoop.currentRunLoop addTimer:timer forMode:NSDefaultRunLoopMode];
+    [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:interval]];
+    [timer invalidate];
+  }
+  return NO;
+}
+
+// Workspace activation and system-wide AX focus are independent observations.
+static BOOL readGuiFrontmost(NSRunningApplication *app, NSString **reason) {
+  NSRunningApplication *frontmost = NSWorkspace.sharedWorkspace.frontmostApplication;
+  if (protectedGuiSession(frontmost.bundleIdentifier)) { *reason = @"protected_session"; return NO; }
+  if (app.terminated || frontmost.processIdentifier != app.processIdentifier ||
+      ![frontmost.bundleIdentifier isEqualToString:app.bundleIdentifier] ||
+      app.launchDate == nil || ![frontmost.launchDate isEqualToDate:app.launchDate]) {
+    *reason = @"focused_app_mismatch"; return NO;
+  }
+  AXUIElementRef system = AXUIElementCreateSystemWide(); CFTypeRef focused = NULL; pid_t pid = -1;
+  AXUIElementSetMessagingTimeout(system, 0.5);
+  AXError error = AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute, &focused);
+  if (error == kAXErrorSuccess && focused != NULL && CFGetTypeID(focused) == AXUIElementGetTypeID())
+    error = AXUIElementGetPid((AXUIElementRef)focused, &pid);
+  if (focused != NULL) CFRelease(focused);
+  CFRelease(system);
+  if (error != kAXErrorSuccess) { *reason = error == kAXErrorAPIDisabled ? @"accessibility_permission" : @"ax_enumeration_failed"; return NO; }
+  if (pid != app.processIdentifier) {
+    NSString *focusedBundle = pid > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:pid].bundleIdentifier : nil;
+    *reason = protectedGuiSession(focusedBundle) ? @"protected_session" : @"focused_app_mismatch"; return NO;
+  }
+  return YES;
+}
+
+static BOOL readGuiFocusedWindow(NSRunningApplication *app, id selected, NSString **reason) {
+  if (!readGuiFrontmost(app, reason)) return NO;
+  AXUIElementRef axApp = AXUIElementCreateApplication(app.processIdentifier); CFTypeRef focused = NULL;
+  AXUIElementSetMessagingTimeout(axApp, 0.5);
+  AXError error = AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute, &focused);
+  pid_t pid = -1;
+  BOOL same = error == kAXErrorSuccess && focused != NULL && CFGetTypeID(focused) == AXUIElementGetTypeID() &&
+    AXUIElementGetPid((AXUIElementRef)focused, &pid) == kAXErrorSuccess && pid == app.processIdentifier &&
+    CFEqual((__bridge CFTypeRef)selected, focused);
+  if (focused != NULL) CFRelease(focused);
+  CFRelease(axApp);
+  if (!same) *reason = error == kAXErrorAPIDisabled ? @"accessibility_permission" : @"focused_window_not_found";
+  return same;
+}
+
 static GuiWindowTarget *resolveGuiWindow(NSString *bundleId, NSString *hint, BOOL focus,
                                          NSString *expectedIdentity, NSString **reason) {
   if (!AXIsProcessTrusted()) { *reason = @"accessibility_permission"; return nil; }
   NSArray<NSRunningApplication *> *apps = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleId];
   if (apps.count == 0) { *reason = @"app_not_running"; return nil; }
+  NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 3.0;
   NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
+  if (protectedGuiSession(app.bundleIdentifier)) { *reason = @"protected_session"; return nil; }
   if (![app.bundleIdentifier isEqualToString:bundleId]) {
     if (!focus) { *reason = @"app_not_frontmost"; return nil; }
     if (apps.count != 1) { *reason = @"window_ambiguous"; return nil; }
-    app = apps[0]; [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-    for (NSUInteger attempt = 0; attempt < 30; attempt++) {
-      if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == app.processIdentifier) break;
-      [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
-    }
-  }
-  if (app.terminated || NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier != app.processIdentifier) {
-    *reason = @"app_not_frontmost"; return nil;
+    app = apps[0];
   }
   enableBrowserAccessibility(bundleId, app.processIdentifier);
   NSArray *windows = axWindows(app.processIdentifier, reason);
   if (windows == nil || windows.count == 0) return nil;
   AXUIElementRef axApp = AXUIElementCreateApplication(app.processIdentifier);
+  AXUIElementSetMessagingTimeout(axApp, 0.5);
   CFTypeRef focused = NULL;
   AXError error = AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute, &focused);
   CFRelease(axApp);
@@ -105,21 +159,23 @@ static GuiWindowTarget *resolveGuiWindow(NSString *bundleId, NSString *hint, BOO
   if (sensitiveTitle(title)) { *reason = @"target_denied"; return nil; }
   if (title.length > 512) { *reason = @"ax_enumeration_failed"; return nil; }
   if (focus) {
-    if (attributeBool(ax, kAXMinimizedAttribute, NO)) AXUIElementSetAttributeValue(ax, kAXMinimizedAttribute, kCFBooleanFalse);
-    AXUIElementPerformAction(ax, kAXRaiseAction);
+    if (![app activateWithOptions:NSApplicationActivateIgnoringOtherApps]) { *reason = @"activation_failed"; return nil; }
+    __block NSString *stateReason = @"focused_app_mismatch";
+    if (!pollGuiState(deadline, ^BOOL { return readGuiFrontmost(app, &stateReason); })) {
+      *reason = [stateReason isEqualToString:@"focused_app_mismatch"] ? @"frontmost_timeout" : stateReason; return nil;
+    }
+    if (attributeBool(ax, kAXMinimizedAttribute, NO) &&
+        AXUIElementSetAttributeValue(ax, kAXMinimizedAttribute, kCFBooleanFalse) != kAXErrorSuccess) {
+      *reason = @"window_unavailable"; return nil;
+    }
+    if (AXUIElementPerformAction(ax, kAXRaiseAction) != kAXErrorSuccess) { *reason = @"activation_failed"; return nil; }
     AXUIElementSetAttributeValue(ax, kAXMainAttribute, kCFBooleanTrue);
   }
   if (app.hidden || attributeBool(ax, kAXMinimizedAttribute, NO)) { *reason = @"window_unavailable"; return nil; }
-  BOOL same = NO;
-  for (NSUInteger attempt = 0; attempt < (focus ? 30 : 1); attempt++) {
-    axApp = AXUIElementCreateApplication(app.processIdentifier); focused = NULL;
-    error = AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute, &focused); CFRelease(axApp);
-    same = error == kAXErrorSuccess && focused != NULL && CFEqual((__bridge CFTypeRef)selected, focused);
-    if (focused != NULL) CFRelease(focused);
-    if (same) break;
-    if (focus) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
-  }
-  if (!same) { *reason = @"focus_changed"; return nil; }
+  __block NSString *stateReason = @"focused_window_not_found";
+  BOOL same = focus ? pollGuiState(deadline, ^BOOL { return readGuiFocusedWindow(app, selected, &stateReason); })
+    : readGuiFocusedWindow(app, selected, &stateReason);
+  if (!same) { *reason = stateReason; return nil; }
   title = attributeText(ax, kAXTitleAttribute);
   if (sensitiveTitle(title)) { *reason = @"target_denied"; return nil; }
   if (title.length > 512) { *reason = @"ax_enumeration_failed"; return nil; }
@@ -135,6 +191,7 @@ static GuiWindowTarget *resolveGuiWindow(NSString *bundleId, NSString *hint, BOO
   NSString *identity = [NSString stringWithFormat:@"%d:%lld:%u", app.processIdentifier,
     (long long)(app.launchDate.timeIntervalSince1970 * 1000), [cgWindow[(id)kCGWindowNumber] unsignedIntValue]];
   if (expectedIdentity.length > 0 && ![identity isEqualToString:expectedIdentity]) { *reason = @"stale_target"; return nil; }
+  if (!readGuiFocusedWindow(app, selected, reason)) return nil;
   GuiWindowTarget *target = [GuiWindowTarget new];
   target.application = app; target.axWindow = selected; target.cgWindow = cgWindow;
   target.windows = cgWindows; target.position = position; target.title = title; target.identity = identity;

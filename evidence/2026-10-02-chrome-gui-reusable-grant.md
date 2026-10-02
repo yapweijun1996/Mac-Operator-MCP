@@ -2,7 +2,9 @@
 
 Historical record of the earlier repair and permission renewal. The follow-up
 [window-resolution report](2026-10-02-chrome-window-resolution.md) records the
-current deployed production MCP acceptance, which now passes. Evidence below
+earlier successful deployed production MCP acceptance. The later
+[focus/session report](2026-10-02-chrome-focus-protected-session.md) records the
+locked-desktop failure and pending follow-up physical acceptance. Evidence below
 belongs to that earlier deployment and is retained as historical provenance.
 
 ## Root cause and current deployment

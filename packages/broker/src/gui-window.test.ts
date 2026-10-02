@@ -54,9 +54,17 @@ for (const [reason, expected] of [
   ["app_not_frontmost", "PRECONDITION_FAILED"], ["window_unavailable", "PRECONDITION_FAILED"],
   ["window_correlation_failed", "VERIFICATION_FAILED"], ["window_ambiguous", "VERIFICATION_FAILED"],
   ["ax_enumeration_failed", "VERIFICATION_FAILED"], ["accessibility_permission", "POLICY_DENIED"],
-  ["screen_recording_permission", "POLICY_DENIED"], ["capture_failed", "EXECUTION_FAILED"]
+  ["screen_recording_permission", "POLICY_DENIED"], ["capture_failed", "EXECUTION_FAILED"],
+  ["protected_session", "SECRET_BOUNDARY_DENIED"], ["activation_failed", "EXECUTION_FAILED"],
+  ["frontmost_timeout", "TIMEOUT"], ["focused_app_mismatch", "VERIFICATION_FAILED"],
+  ["focused_window_not_found", "VERIFICATION_FAILED"]
 ]) test(`GUI failure ${reason} preserves its actual boundary`, () => {
   assert.throws(() => throwGuiWindowError(reason), error => error instanceof Error && "errorClass" in error && error.errorClass === expected);
+});
+test("focus timeout is retryable and diagnostics contain no window content", () => {
+  assert.throws(() => throwGuiWindowError("frontmost_timeout"), error => error instanceof Error &&
+    "retryable" in error && error.retryable === true && error.message.startsWith("FRONTMOST_TIMEOUT:"));
+  assert.throws(() => throwGuiWindowError("protected_session"), /PROTECTED_SESSION:/u);
 });
 test("reusable browser navigation requires native toolbar provenance and bounded HTTPS input", () => {
   const observed = observation();

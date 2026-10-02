@@ -78,6 +78,24 @@ failure have distinct errors. A correlation failure is not reported as absence.
 Observation does not activate an unfocused app; focus it first. Explicit focus
 may restore a minimized selected window and waits for exact AX focus readback.
 
+Without `window_hint`, focus retains the process's last `AXFocusedWindow`,
+independent of AX/CG array order. An exact title hint selects one AX window;
+duplicate matching hints fail closed. Titles are selectors only, never identity.
+The selected window is checked for sensitive content before activation. Activation
+must be accepted, then Workspace bundle/PID/process generation and system-wide
+AX application focus must agree. The same three-second monotonic deadline covers
+application and exact window focus propagation; no unconditional sleep is used.
+Capture checks the same identity again after ScreenCaptureKit returns.
+
+A locked desktop or active system authorization UI returns
+`SECRET_BOUNDARY_DENIED` with `PROTECTED_SESSION` before browser activation.
+Unlock the Mac locally or dismiss the authorization UI and retry. Running apps,
+healthy Broker status and granted TCC permissions do not prove the desktop is
+available. Activation rejection, frontmost timeout, independent app mismatch,
+missing focused window, ambiguous identity and missing AX/capture permission
+have separate safe diagnostic prefixes within the existing error contract.
+No window titles or UI contents are included in these failure diagnostics.
+
 ## Observation and action loop
 
 1. Open and focus Chrome or Safari.

@@ -6724,3 +6724,18 @@ metadata. Default V2 still passed 48 tools/26 public reads. Bundled Codex 0.159.
 also reports the connection OAuth-authenticated. Live source is `8066356`, with
 stopped-state backups and saved PM2 configuration. Details:
 `evidence/2026-10-02-codex-native-terminal-connection.md`.
+
+## October 2, 2026: Chrome focus protected-session diagnosis
+
+PARTIAL: current physical MCP health/inventory pass, but Chrome focus reproduces
+PRECONDITION_FAILED because the Mac is locked. Workspace/system AX both identify
+loginwindow; activation is accepted but cannot transition. Production GUI AX and
+Screen Recording permissions are true. This differs from the earlier repaired
+AX/CG title-correlation failure. Source now diagnoses protected sessions, checks
+activation, uses one monotonic focus deadline, independently verifies app/window
+focus, and rechecks capture identity. Full regression: 1657 total, 1639 passed,
+18 existing conditional skips, zero failures. Finder policy denial and System
+Settings secret-boundary denial pass through real MCP. Production/native identity
+is unchanged while owner unlock and physical 20/20 focus/observe, current Chrome
+JPEG/AX and multi-window acceptance remain pending. Evidence:
+`evidence/2026-10-02-chrome-focus-protected-session.md`.

@@ -660,6 +660,9 @@ static int executeGui(int argc, const char *argv[]) {
     }
     CGImageRef image = captureImage(mode, [selected[(id)kCGWindowNumber] unsignedIntValue]);
     if (image == NULL) return fail(@"capture_failed");
+    if (resolveGuiWindow(bundleId, @"", NO, target.identity, &reason) == nil) {
+      CGImageRelease(image); return fail(reason);
+    }
     size_t imageWidth = CGImageGetWidth(image);
     size_t imageHeight = CGImageGetHeight(image);
     NSData *jpeg = jpegForImage(image, 1600);
