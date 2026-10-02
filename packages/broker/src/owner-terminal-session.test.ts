@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { OwnerTerminalSessionManager } from "./owner-terminal-session.js";
@@ -116,6 +117,21 @@ test("output ring reports dropped bytes and capacity is enforced", { skip: !supp
     let cursor = first.nextCursor;
     let text = first.data;
     await waitFor(() => { const r = manager.read("owner", sessionId, cursor); cursor = r.nextCursor; text += r.data; return text.includes("DONE_MARK"); }, 20_000);
+    manager.stop("owner", sessionId);
+  } finally { await manager.close(); }
+});
+
+test("session shell PATH ends with the owner's user bin directory", { skip: !supported }, async () => {
+  const manager = new OwnerTerminalSessionManager({ enabled: true });
+  try {
+    const { sessionId } = await manager.start("owner", { ...base, cwd: "/tmp" });
+    const out = collector(manager, "owner", sessionId);
+    // The split marker keeps the echoed command line from matching the pattern.
+    manager.write("owner", sessionId, "print -r -- \"P\"\"ATH_IS:$PATH:END\"\n");
+    await waitFor(() => { out.poll(); return /PATH_IS:\S+:END\r?\n/u.test(out.text); });
+    const path = /PATH_IS:(\S+):END\r?\n/u.exec(out.text)![1]!;
+    assert.ok(path.startsWith("/opt/homebrew/bin:"), path);
+    assert.ok(path.endsWith(`${homedir()}/.local/bin`), path);
     manager.stop("owner", sessionId);
   } finally { await manager.close(); }
 });

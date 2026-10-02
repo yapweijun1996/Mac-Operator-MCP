@@ -11,7 +11,8 @@ import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { BrokerStore } from "./persistence.js";
-import { PersonalOwnerTerminalExecutor, parseOwnerTerminalRequest } from "./owner-terminal.js";
+import { homedir } from "node:os";
+import { PersonalOwnerTerminalExecutor, ownerTerminalPath, parseOwnerTerminalRequest } from "./owner-terminal.js";
 
 const supported = process.platform === "darwin" && process.getuid?.() !== 0;
 
@@ -41,6 +42,9 @@ test("owner shell runs pipelines, local CLIs and file writes after ownership is 
     assert.equal(result.state, "completed", JSON.stringify(result));
     assert.match(result.stdout, /^PAYLOADgit version .*\n\nunset$/u);
     assert.equal(await readFile(join(root, "marker"), "utf8"), "payload");
+    const pathResult = await executor.run({ ...request, command: "printf %s \"$PATH\"" }, { timeoutMs: 30000, shouldCancel: () => false });
+    assert.equal(pathResult.stdout, ownerTerminalPath(homedir()));
+    assert.ok(pathResult.stdout.endsWith("/.local/bin"));
     const failure = await executor.run({ ...request, command: "exit 7" }, { timeoutMs: 30000, shouldCancel: () => false });
     assert.equal(failure.exitCode, 7);
     assert.equal(failure.state, "failed");
