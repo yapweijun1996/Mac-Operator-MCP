@@ -102,7 +102,11 @@ export class GuiSessionApprovals {
   async authorize(operation: GuiSessionOperation): Promise<boolean> {
     this.restore();
     if (this.store.isRevoked("session", operation.sessionId)) return false;
-    if (!TOOLS.includes(operation.tool) || !APPS.includes(operation.appId)) return false;
+    if (operation.requiresExplicitApproval || !TOOLS.includes(operation.tool) || !APPS.includes(operation.appId)) return false;
+    // The Broker resolves element ownership first; reject mismatched delegation shapes too.
+    if (operation.tool === "mac_app_focus"
+      ? operation.targetKind !== "app_window" || operation.targetRef !== `app_window:window:${operation.appId}`
+      : operation.targetKind !== "ui_element" || !/^ui_element:element:[a-f0-9]{48}$/u.test(operation.targetRef)) return false;
     const grant = [...this.grants.values()].find(candidate => this.active(candidate) &&
       candidate.principalId === operation.principalId && (candidate.persistent || candidate.sessionId === operation.sessionId) &&
       candidate.policyVersion === operation.policyVersion && candidate.appId === operation.appId);

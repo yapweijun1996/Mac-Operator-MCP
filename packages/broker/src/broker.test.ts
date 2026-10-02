@@ -5506,6 +5506,45 @@ for (const explicitTarget of [true, false]) {
   });
 }
 
+test("Chrome focus requires scope and exact approval before GUI dispatch", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-chrome-grant-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite")), key = randomBytes(32);
+  const appId = "bundle:com.google.Chrome";
+  const base = createDefaultPolicy("edge-1", true, ["mac.app.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  const policy = { ...base, tools: new Map(base.tools).set("mac_app_focus", { ...base.tools.get("mac_app_focus")!, enabled: true }) };
+  let delegate = false, issued = 0, dispatched = 0;
+  const broker = new Broker({ store, policy, now: () => NOW, edgeAuthenticationKeys: testKeyring(key),
+    async authorizeGuiSession(operation) {
+      if (!delegate) return false;
+      issued++;
+      store.issueApproval({ approvalId: guiSessionApprovalId(operation.requestId), approverPrincipalId: "operator-1",
+        requestingPrincipalId: operation.principalId, tool: operation.tool, contractVersion: operation.contractVersion,
+        targetKind: operation.targetKind, targetRef: operation.targetRef, payloadDigest: operation.payloadDigest,
+        policyVersion: operation.policyVersion, approvalClass: "trusted_gui", unattended: false,
+        issuedAtMs: NOW, expiresAtMs: NOW + 30000, useLimit: 1 });
+      return true;
+    }, appControlInspector: { async open() { throw new Error("unused"); }, async focus(target) {
+      dispatched++;
+      return { appId: target, windowId: `window:${"a".repeat(48)}`, windowTitle: "Web form", focused: true,
+        verified: true, warnings: [], truncated: false };
+    } } });
+  try {
+    for (const [id, scopes, app, allowed] of [
+      ["no-scope", [], appId, false], ["no-approval", ["mac.app.control"], appId, false],
+      ["valid-grant", ["mac.app.control"], appId, true],
+      ["wrong-app", ["mac.app.control"], "bundle:com.apple.finder", false]
+    ] as const) {
+      if (id === "valid-grant") delegate = true;
+      const result = await broker.handle(signRequest(unsigned({ requestId: id, nonce: id, tool: "mac_app_focus",
+        arguments: { app_id: app } }, [...scopes]), key));
+      assert.equal(result.ok, allowed, JSON.stringify(result));
+      if (!result.ok) assert.equal(result.result_class, id === "no-scope" ? "SCOPE_DENIED" : "POLICY_DENIED");
+    }
+    assert.equal(issued, 1);
+    assert.equal(dispatched, 1);
+  } finally { await broker.close(); store.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test("owner GUI session issuer admits consecutive exact inputs without per-operation previews", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-session-input-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
@@ -5516,6 +5555,7 @@ test("owner GUI session issuer admits consecutive exact inputs without per-opera
   let calls = 0, dispatches = 0;
   const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), uiSnapshotRegistry: registry, now: () => NOW,
     async authorizeGuiSession(operation) {
+      if (operation.requiresExplicitApproval) return false;
       calls++;
       assert.equal(operation.appId, appId);
       assert.equal(operation.sessionId, "session-1");
@@ -5550,6 +5590,11 @@ test("owner GUI session issuer admits consecutive exact inputs without per-opera
       arguments: { element_ref: elementRef, text: "denied" } }, []), key));
     assert.equal(denied.ok, false);
     assert.equal(calls, 2, "Session issuance must not precede the policy checks");
+    const submit = await broker.handle(signRequest(unsigned({ requestId: "sensitive-session-submit", nonce: "sensitive-session-submit", tool: "mac_ui_type",
+      arguments: { element_ref: elementRef, text: "Send", submit: true } }, ["mac.ui.control"]), key));
+    assert.equal(submit.ok, false);
+    if (!submit.ok) assert.equal(submit.result_class, "POLICY_DENIED");
+    assert.equal(dispatches, 2, "Submission needs an independent exact operation approval");
   } finally { await broker.close(); store.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

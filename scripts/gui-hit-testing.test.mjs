@@ -36,6 +36,10 @@ int main(void) { @autoreleasepool {
   assert([screenWindowBlockReason(YES, 20, browser, covered, YES) isEqualToString:@"sensitive_window_visible"]);
   assert(sensitiveTitle(@"Password"));
   assert(!sensitiveTitle(@"Text input"));
+  for (NSString *label in @[@"Send message", @"Buy now", @"Delete account", @"Privacy settings"])
+    assert(sensitiveAction(label));
+  assert(!sensitiveAction(@"Text input"));
+  assert(!sensitiveAction(@"Search"));
 } return 0; }
 `);
     const executable = join(directory, 'fixture');

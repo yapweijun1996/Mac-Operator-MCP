@@ -4,6 +4,19 @@ Status: V2 coding and independent owner terminal OAuth connections are running
 as of October 2, 2026. This is an owner-managed, unsigned personal deployment,
 not a Developer ID/notarized package or the formal production installer.
 
+October 2 GUI repair: PM2 runs
+`MacOperator/releases/personal-20261002-terminal-protocol-c`, which carries
+forward the GUI repair from `personal-20261002-gui-a` together with the latest
+terminal compatibility changes. The four GUI runtime modules and native source
+match the workspace; `GUI-HOTFIX.json` records their committed source revision.
+The V2/O1 state, OAuth connections, signed policy and scopes are preserved.
+The original GUI rollout backup is under `MacOperator/backups/gui-20261002`.
+It predates the terminal compatibility update; use the current release for any
+new rollback baseline. The native app update needs TCC re-binding. Prior GUI
+regression passed; the owner requested no additional tests and will perform
+live GUI acceptance. See the
+[repair evidence](../evidence/2026-10-02-chrome-gui-reusable-grant.md).
+
 ## Current V2 and owner terminal connections
 
 The default `https://mac.yapweijun1996.com/mcp` retains the V2 coding profile:
@@ -434,6 +447,9 @@ and an origin-side `tools/call` success for acceptance. See OpenAI's
 [OAuth guidance](https://developers.openai.com/plugins/build/auth).
 
 ### Persistent browser control
+
+The review page also offers **Allow this browser for 30 minutes**: one OAuth
+session, one browser, at most 500 operations, revocable and cleared on restart.
 
 G1 owners can select **Allow this browser until revoked** on a focus approval
 page. This permits focus, click/scroll/key and input for the same browser, owner

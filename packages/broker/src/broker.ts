@@ -76,6 +76,7 @@ import { dispatchOwnerTerminal } from "./owner-terminal-dispatch.js";
 import { validateSemanticResourceBudget, validateStorageSemanticResourceBudget } from "./resource-budget.js";
 
 export interface GuiSessionOperation {
+  requiresExplicitApproval?: boolean;
   requestId: string;
   principalId: string;
   sessionId: string;
@@ -1213,6 +1214,9 @@ export class Broker {
           requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
           appId, tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
           targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
+          requiresExplicitApproval: Boolean(execution.uiType?.submit || execution.uiType?.keys.includes("ENTER") ||
+            (execution.uiAction && (execution.uiAction.options?.key === "ENTER" ||
+              /\b(?:buy|purchase|pay|checkout|send|publish|delete|remove|erase|security|privacy)\b/iu.test(snapshot?.label ?? "")))),
           expiresAtMs: request.principal.expiresAtMs
         })) {
           if (snapshot?.screenshotFingerprint) {

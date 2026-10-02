@@ -1612,7 +1612,7 @@ test("persistent consent and management login do not depend on a live operation 
   const cookie = f.cookieFrom(login);
   const reviewHtml = await (await f.request("/approval/review", undefined, cookie)).text();
   assert.match(reviewHtml, /Allow this browser until revoked/u);
-  assert.doesNotMatch(reviewHtml, /Allow this browser for 30 minutes/u);
+  assert.match(reviewHtml, /Allow this browser for 30 minutes/u);
   const reviewCsrf = await f.csrfFrom(new Response(reviewHtml));
   const approved = await f.request("/approval/decision", { csrf: reviewCsrf, decision: "allow-permanent" }, cookie);
   assert.equal(approved.status, 303);

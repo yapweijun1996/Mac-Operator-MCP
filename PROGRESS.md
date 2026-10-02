@@ -1,5 +1,22 @@
 # Mac-Operator-MCP Progress
 
+## Current Chrome GUI repair: deployed — owner acceptance pending
+
+2026-10-02: repaired the metadata-only osascript/native TCC split, added bounded
+native AX tree/action handling, restored the 30-minute consent option and added
+delegation target/sensitive-submit guards. Full regression: 1587 PASS, 18 SKIP,
+0 FAIL (1605 total); native build/typecheck/lint pass before the final terminal
+compatibility merge. The active `personal-20261002-terminal-protocol-c` snapshot
+includes the GUI patch, preserving V2/O1 state and scopes. Current Chrome
+policy-3 reusable consent is active; a live child approval was consumed with
+30-second TTL. New native LaunchServices identity reports Accessibility=false,
+Screen Recording=false despite the stale enabled entry in Settings. Owner must
+re-add the installed Mac Operator GUI.app in both TCC panes; then run live MCP
+focus, AX/screenshot observe, safe action, type and postcondition readback.
+The owner requested deployment, commit and main merge without additional tests
+and will perform live acceptance. GUI end-to-end success remains unverified. Details:
+`evidence/2026-10-02-chrome-gui-reusable-grant.md`.
+
 ## Current V2 task progress: 100% — DONE
 
 V2 production completion (2026-10-02): source/physical/YAP/public acceptance PASS;

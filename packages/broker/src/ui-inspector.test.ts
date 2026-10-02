@@ -142,7 +142,7 @@ test("Accessibility result validation rejects unstable authority fields", () => 
   );
 });
 
-test("Accessibility observation uses a fixed Broker-owned JXA command boundary", async () => {
+test("Accessibility observation without screenshots uses the fixed TCC application boundary", async () => {
   let observed: { executable: string; args: readonly string[]; cwd: string; environment?: Readonly<Record<string, string>>; timeoutMs: number; outputCapBytes: number } | undefined;
   const inspector = new MacUiInspectorImpl({
     run: async (request) => {
@@ -159,10 +159,9 @@ test("Accessibility observation uses a fixed Broker-owned JXA command boundary",
   });
   const result = await inspector.observe(appId, "Example", 25, { timeoutMs: 20_000, shouldCancel: () => false });
   assert.equal(result.focused, true);
-  assert.equal(observed?.executable, uiObserveExecutableForTesting);
-  assert.deepEqual(observed?.args.slice(0, 3), ["-l", "JavaScript", "-e"]);
-  assert.equal(observed?.args[3], uiObserveScriptForTesting);
-  assert.deepEqual(observed?.args.slice(-3), [appId, "Example", "25"]);
+  assert.equal(observed?.executable, guiVisionExecutableForTesting);
+  assert.deepEqual(observed?.args, ["inspect", "accessibility", appId.slice(7), "Example", "25"]);
+  assert.equal(result.nativeVisual, true);
   assert.equal(observed?.cwd, "/");
   assert.deepEqual(observed?.environment, {});
   assert.equal(observed?.timeoutMs, 10_000);
@@ -207,6 +206,16 @@ test("Accessibility action validates fixed command output and reobserved identit
   assert.equal(observed?.timeoutMs, 10_000);
   assert.equal(observed?.outputCapBytes, 262_144);
   assert.ok(Buffer.byteLength(uiActionScriptForTesting, "utf8") <= 4_096);
+  observed = undefined;
+  const native = { ...snapshot, nativeVisual: true };
+  await inspector.action!({ snapshot: native, action: "focus" }, { timeoutMs: 20_000, shouldCancel: () => false });
+  const nativeCommand = observed as { executable: string; args: readonly string[] } | undefined;
+  assert.equal(nativeCommand?.executable, guiVisionExecutableForTesting);
+  assert.deepEqual(nativeCommand?.args, ["ax_action", "accessibility", appId.slice(7), "Example", "0", "AXButton", "Save", "focus"]);
+  observed = undefined;
+  await assert.rejects(inspector.action!({ snapshot: { ...native, secure: true }, action: "focus" },
+    { timeoutMs: 20_000, shouldCancel: () => false }), /Secure or redacted/u);
+  assert.equal(observed, undefined, "Secure AX targets must be rejected before native dispatch");
 });
 
 test("Accessibility action rejects stale, secure, and malformed targets", () => {

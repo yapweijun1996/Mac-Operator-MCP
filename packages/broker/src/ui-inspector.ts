@@ -183,6 +183,7 @@ export interface SafeUiNode {
 }
 
 export interface SafeUiObservation {
+  nativeVisual?: boolean;
   appId: string;
   windowId: string;
   windowIndex?: number;
@@ -315,20 +316,18 @@ export class MacUiInspectorImpl implements UiInspector {
   async observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl, captureMode: UiCaptureMode = "none"): Promise<SafeUiObservation> {
     validateUiObserveRequest(appId, windowHint, maxNodes);
     validateSensitiveUiTarget(appId, windowHint);
-    const nativeVisual = captureMode !== "none";
+    // All production observations use the same TCC-attributed application.
     const result = await this.supervisor.run({
-      executable: nativeVisual ? GUI_VISION : OSASCRIPT,
-      allowUserOwnedExecutable: nativeVisual,
-      args: nativeVisual
-        ? ["inspect", "visual", appId.slice("bundle:".length), windowHint ?? "", String(maxNodes)]
-        : ["-l", "JavaScript", "-e", UI_OBSERVE_SCRIPT, "--", appId, windowHint ?? "", String(maxNodes)],
+      executable: GUI_VISION,
+      allowUserOwnedExecutable: true,
+      args: ["inspect", captureMode === "none" ? "accessibility" : "visual", appId.slice("bundle:".length), windowHint ?? "", String(maxNodes)],
       cwd: UI_OBSERVE_CWD,
       environment: {},
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
       outputCapBytes: MAX_OUTPUT_BYTES,
       shouldCancel: control.shouldCancel
     });
-    const observed = parseUiObserveResult(result, appId, maxNodes, nativeVisual);
+    const observed = parseUiObserveResult(result, appId, maxNodes, true);
     if (captureMode === "none") return observed;
     if (!["screen", "active_window", "selected_window"].includes(captureMode)) {
       throw new BrokerError("PRECONDITION_FAILED", "capture_mode is invalid");
@@ -416,8 +415,10 @@ export class MacUiInspectorImpl implements UiInspector {
       throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure or redacted UI elements cannot be acted on");
     }
     const result = await this.supervisor.run({
-      executable: OSASCRIPT,
-      args: [
+      executable: snapshot.nativeVisual ? GUI_VISION : OSASCRIPT,
+      allowUserOwnedExecutable: snapshot.nativeVisual === true,
+      args: snapshot.nativeVisual ? ["ax_action", "accessibility", snapshot.appId.slice("bundle:".length),
+        snapshot.windowTitle, String(snapshot.elementIndex), snapshot.role, snapshot.label ?? "", action] : [
         "-l", "JavaScript", "-e", UI_ACTION_SCRIPT, "--",
         snapshot.appId,
         snapshot.windowTitle,
@@ -503,7 +504,7 @@ export class UiSnapshotRegistry {
         ownerSessionId,
         observedAtMs,
         ...(observation.screenshot === undefined ? {} : { screenshotFingerprint: uiScreenshotFingerprint(observation.screenshot), captureMode: observation.screenshot.mode }),
-        nativeVisual: observation.screenshot !== undefined
+        nativeVisual: observation.nativeVisual === true || observation.screenshot !== undefined
       };
       this.snapshots.delete(node.elementRef);
       this.snapshots.set(node.elementRef, record);
@@ -940,6 +941,7 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   if (result.truncated || record.truncated) warnings.push("Accessibility output was limited by a fixed adapter budget");
   return {
     appId,
+    ...(nativeVisual ? { nativeVisual: true } : {}),
     windowId,
     windowIndex: record.window_index as number,
     ...(windowTitle.length > 0 ? { windowTitle } : {}),

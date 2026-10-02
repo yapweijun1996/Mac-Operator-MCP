@@ -7,6 +7,54 @@ The personal `g1` grant adds five GUI tools to the existing owner profile:
 and Safari bundle identities. GUI mutations retain attended `trusted_gui`
 approval, request timeouts, revocation checks, and audit records.
 
+## October 2 GUI repair
+
+The current V2/O1 deployment inherits this browser boundary. The canonical
+contracts use `trusted_gui` for focus/action/type; `trusted_app_control` is not
+an approval class in the current contract enum. An OAuth scope does not create
+browser consent. The earlier Chrome grant was revoked and bound to policy-1;
+the active deployment uses policy-3. Fresh Chrome owner consent must match that
+policy. Do not un-revoke or rewrite old grant rows to restore access.
+
+All production observations, including `capture_mode=none`, now run through
+LaunchServices in `~/Applications/Mac Operator GUI.app`, bundle identifier
+`dev.macoperator.personal.gui`, executable `Contents/MacOS/gui_vision`. The
+Broker's Node process and fixed `gui_launcher` transport do not perform the AX
+calls. The previous metadata-only JXA branch executed `/usr/bin/osascript` with
+a different TCC identity; granting the native app did not authorize that branch.
+The native adapter returns a bounded window tree with no field values, redacts
+secure labels, and uses the same app for element actions and focused typing.
+Opaque element references remain scoped to the caller/session and fresh window
+observation. A capped metadata-only tree is not made actionable by this repair.
+
+Grant **Mac Operator GUI.app**, at the exact installed path above, Accessibility
+access. Every screenshot mode (`active_window`, `selected_window`, `screen`)
+also requires Screen & System Audio Recording. Metadata-only observation and
+AX focus/action use AX window metadata and do not request screen capture.
+The adapter captures no audio. Apple documents the
+[screen recording permission](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac).
+Rebuilding the ad-hoc signed app can invalidate the LaunchServices TCC binding
+while System Settings still shows the old entry enabled. Remove/re-add only
+this application when that occurs; do not grant all Node executables or edit TCC.
+Use the **production `gui_launcher`** for permission readback: an interactive
+direct launch can inherit a different responsible process and report true while
+the service launch reports false. Do not rebuild again after renewing grants.
+
+The focus review page offers a 30-minute, 500-operation session first, and
+retains the separate until-revoked choice. Session authority remains bound to
+principal, OAuth session, exact app and policy; persistent authority is bound
+to principal/app/policy and requires a live unrevoked OAuth session. Exact
+single-use child approvals expire within 30 seconds. Focus target shape and
+element target shape are validated before issuance. Form submissions, Enter
+submissions and named sensitive AX actions cannot use the reusable grant and
+fall back to exact attended approval. Visual hit testing additionally denies
+named purchase/send/delete/security controls. These label guards do not claim
+to infer all transaction intent or redact sensitive screenshot pixels.
+
+See [live repair evidence](../evidence/2026-10-02-chrome-gui-reusable-grant.md).
+The owner will perform the documented live MCP interaction sequence after the
+committed deployment. Final native interaction success remains unverified.
+
 ## Observation and action loop
 
 1. Open and focus Chrome or Safari.

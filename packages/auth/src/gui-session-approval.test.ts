@@ -50,7 +50,8 @@ test("GUI session is explicit, scope-bound, finite and revocable", async t => {
     assert.equal(await f.sessions.authorize({ ...f.operation, ...changed }), false);
   }
   for (const tool of ["mac_app_focus", "mac_ui_action", "mac_ui_type"]) {
-    assert.equal(await f.sessions.authorize({ ...f.operation, tool, requestId: `operation-${tool}` }), true);
+    assert.equal(await f.sessions.authorize({ ...f.operation, tool, requestId: `operation-${tool}`,
+      ...(tool === "mac_app_focus" ? {} : { targetKind: "ui_element", targetRef: `ui_element:element:${"b".repeat(48)}` }) }), true);
   }
   assert.equal(f.sessions.status(grant.id)?.remainingOperations, 497);
   for (const id of f.issued) {
@@ -62,6 +63,19 @@ test("GUI session is explicit, scope-bound, finite and revocable", async t => {
   assert.equal(f.sessions.status(grant.id), undefined);
   assert.throws(() => f.sessions.start("focus-preview"), /already been used/u);
   for (const id of f.issued) assert.equal(f.store.approvalRecord(id)?.revokedAtMs, NOW);
+});
+
+test("Chrome delegation rejects unapproved apps, target mismatch and sensitive operations", async t => {
+  const f = await fixture(t);
+  f.pending("focus-preview");
+  f.sessions.start("focus-preview");
+  for (const changed of [
+    { appId: "bundle:com.apple.finder" }, { targetKind: "app" },
+    { targetRef: "app_window:window:bundle:com.apple.Safari" },
+    { requiresExplicitApproval: true },
+    { tool: "mac_ui_type", targetKind: "ui_element", targetRef: "ui_element:invalid" }
+  ]) assert.equal(await f.sessions.authorize({ ...f.operation, ...changed }), false);
+  assert.equal(f.issued.length, 0);
 });
 
 test("GUI session ends on expiry or OAuth revocation and cannot originate from other tools", async t => {
