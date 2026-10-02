@@ -23,5 +23,8 @@ export async function createPassword(password: string): Promise<{ salt: string; 
 
 export async function verifyPassword(password: string, salt: string, passwordHash: string): Promise<boolean> {
   const actual = await derivePassword(password, salt);
-  return timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(passwordHash, "hex"));
+  const expected = Buffer.from(passwordHash, "hex");
+  const derived = Buffer.from(actual, "hex");
+  // A malformed stored hash must verify as false instead of throwing on length mismatch.
+  return derived.byteLength === expected.byteLength && timingSafeEqual(derived, expected);
 }
