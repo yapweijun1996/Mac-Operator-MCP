@@ -1,3 +1,4 @@
+import { guiWindowFields, nativeWindowIdentity, throwGuiWindowError } from "./gui-window.js";
 import { GuiProcessSupervisor } from "./gui-process-supervisor.js";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { randomBytes } from "node:crypto";
@@ -174,6 +175,7 @@ export interface UiExecutionControl {
 }
 
 export interface SafeUiNode {
+  browserNavigation?: boolean;
   elementRef: string;
   role: string;
   label?: string;
@@ -184,6 +186,7 @@ export interface SafeUiNode {
 
 export interface SafeUiObservation {
   nativeVisual?: boolean;
+  nativeWindowIdentity?: string;
   appId: string;
   windowId: string;
   windowIndex?: number;
@@ -228,6 +231,7 @@ export interface UiVisualActionOptions {
 export type UiInputKey = "ENTER" | "TAB" | "ESCAPE" | "ARROW_UP" | "ARROW_DOWN" | "ARROW_LEFT" | "ARROW_RIGHT" | "HOME" | "END";
 
 export interface UiSnapshotRecord {
+  browserNavigation?: boolean;
   elementRef: string;
   appId: string;
   windowId: string;
@@ -243,6 +247,7 @@ export interface UiSnapshotRecord {
   ownerSessionId: string;
   observedAtMs: number;
   nativeVisual?: boolean;
+  nativeWindowIdentity?: string;
   approvalRetainUntilMs?: number;
   revalidationRequired?: boolean;
   screenshotFingerprint?: string;
@@ -313,14 +318,14 @@ export class MacUiInspectorImpl implements UiInspector {
     this.supervisor = supervisor;
   }
 
-  async observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl, captureMode: UiCaptureMode = "none"): Promise<SafeUiObservation> {
+  async observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl, captureMode: UiCaptureMode = "none", expectedWindowIdentity?: string): Promise<SafeUiObservation> {
     validateUiObserveRequest(appId, windowHint, maxNodes);
     validateSensitiveUiTarget(appId, windowHint);
     // All production observations use the same TCC-attributed application.
     const result = await this.supervisor.run({
       executable: GUI_VISION,
       allowUserOwnedExecutable: true,
-      args: ["inspect", captureMode === "none" ? "accessibility" : "visual", appId.slice("bundle:".length), windowHint ?? "", String(maxNodes)],
+      args: ["inspect", captureMode === "none" ? "accessibility" : "visual", appId.slice("bundle:".length), windowHint ?? "", String(maxNodes), ...(expectedWindowIdentity ? [expectedWindowIdentity] : [])],
       cwd: UI_OBSERVE_CWD,
       environment: {},
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
@@ -339,7 +344,7 @@ export class MacUiInspectorImpl implements UiInspector {
     const screenshotResult = await this.supervisor.run({
       executable: GUI_VISION,
       allowUserOwnedExecutable: true,
-      args: ["capture", captureMode, appId.slice("bundle:".length), windowHint ?? ""],
+      args: ["capture", captureMode, appId.slice("bundle:".length), observed.windowTitle ?? "", observed.nativeWindowIdentity!],
       cwd: UI_OBSERVE_CWD,
       environment: {},
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
@@ -366,7 +371,7 @@ export class MacUiInspectorImpl implements UiInspector {
     for (let attempt = 0; attempt < MAX_VISUAL_REVALIDATION_ATTEMPTS; attempt++) {
       if (control.shouldCancel()) throw new BrokerError("CANCELLED", "UI target revalidation was cancelled");
       if (Date.now() >= deadline) throw new BrokerError("TIMEOUT", "UI target revalidation timed out");
-      const observed = await this.observe(snapshot.appId, snapshot.windowTitle, MAX_NODES, bounded(), snapshot.captureMode);
+      const observed = await this.observe(snapshot.appId, snapshot.windowTitle, MAX_NODES, bounded(), snapshot.captureMode, snapshot.nativeWindowIdentity);
       assertRetainedUiTargetIdentityMatches(snapshot, observed);
       if (Date.now() >= deadline) throw new BrokerError("TIMEOUT", "UI target revalidation timed out");
       if (control.shouldCancel()) throw new BrokerError("CANCELLED", "UI target revalidation was cancelled");
@@ -400,7 +405,7 @@ export class MacUiInspectorImpl implements UiInspector {
         allowUserOwnedExecutable: true,
         args: ["action", "visual", snapshot.appId.slice("bundle:".length), snapshot.windowTitle,
           action, String(x), String(y), String(options.dx ?? 0), String(options.dy ?? 0),
-          options.key ?? "", String(options.waitMs ?? 0)],
+          options.key ?? "", String(options.waitMs ?? 0), snapshot.nativeWindowIdentity ?? ""],
         cwd: UI_OBSERVE_CWD,
         environment: {},
         timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
@@ -418,7 +423,7 @@ export class MacUiInspectorImpl implements UiInspector {
       executable: snapshot.nativeVisual ? GUI_VISION : OSASCRIPT,
       allowUserOwnedExecutable: snapshot.nativeVisual === true,
       args: snapshot.nativeVisual ? ["ax_action", "accessibility", snapshot.appId.slice("bundle:".length),
-        snapshot.windowTitle, String(snapshot.elementIndex), snapshot.role, snapshot.label ?? "", action] : [
+        snapshot.windowTitle, String(snapshot.elementIndex), snapshot.role, snapshot.label ?? "", action, snapshot.nativeWindowIdentity ?? ""] : [
         "-l", "JavaScript", "-e", UI_ACTION_SCRIPT, "--",
         snapshot.appId,
         snapshot.windowTitle,
@@ -459,10 +464,11 @@ export class MacUiInspectorImpl implements UiInspector {
       executable: snapshot.nativeVisual ? GUI_VISION : OSASCRIPT,
       allowUserOwnedExecutable: snapshot.nativeVisual === true,
       args: snapshot.nativeVisual
-        ? ["type", "visual", snapshot.appId.slice("bundle:".length), snapshot.windowTitle, snapshot.role, snapshot.label ?? ""]
+        ? ["type", "visual", snapshot.appId.slice("bundle:".length), snapshot.windowTitle, snapshot.role, snapshot.label ?? "", snapshot.nativeWindowIdentity ?? ""]
         : ["-l", "JavaScript", "-e", UI_TYPE_SCRIPT, "--", snapshot.appId, snapshot.windowTitle,
           String(snapshot.windowIndex), String(snapshot.elementIndex), snapshot.role, snapshot.label ?? ""],
-      stdin: canonicalJson({ text: inputText, keys: [...keys], submit }),
+      stdin: canonicalJson({ text: inputText, keys: [...keys], submit,
+        ...(snapshot.nativeVisual ? { navigation: isBoundedBrowserNavigation(execution) } : {}) }),
       cwd: UI_OBSERVE_CWD,
       environment: {},
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
@@ -500,11 +506,13 @@ export class UiSnapshotRegistry {
         enabled: node.enabled,
         focused: node.focused,
         secure: node.secure,
+        ...(node.browserNavigation === undefined ? {} : { browserNavigation: node.browserNavigation }),
         ownerPrincipalId,
         ownerSessionId,
         observedAtMs,
         ...(observation.screenshot === undefined ? {} : { screenshotFingerprint: uiScreenshotFingerprint(observation.screenshot), captureMode: observation.screenshot.mode }),
-        nativeVisual: observation.nativeVisual === true || observation.screenshot !== undefined
+        nativeVisual: observation.nativeVisual === true || observation.screenshot !== undefined,
+        ...(observation.nativeWindowIdentity === undefined ? {} : { nativeWindowIdentity: observation.nativeWindowIdentity })
       };
       this.snapshots.delete(node.elementRef);
       this.snapshots.set(node.elementRef, record);
@@ -517,6 +525,7 @@ export class UiSnapshotRegistry {
         windowIndex,
         windowTitle,
         elementIndex: -1,
+        ...(observation.nativeWindowIdentity === undefined ? {} : { nativeWindowIdentity: observation.nativeWindowIdentity }),
         screenshotFingerprint: uiScreenshotFingerprint(observation.screenshot),
         captureMode: observation.screenshot.mode,
         role: "VisualWindow",
@@ -690,13 +699,14 @@ export function parseUiVisualActionResult(result: ProcessExecutionResult, snapsh
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Visual action returned malformed metadata");
-    if (record.error === "secure_target" || record.error === "target_denied" || record.error === "other_window_visible") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Visual action cannot target secure or covered UI");
-    if (record.error === "stale_target" || record.error === "app_not_frontmost") throw new BrokerError("TARGET_NOT_FOUND", "Visual target is no longer frontmost");
+    throwGuiWindowError(record.error);
+    if (record.error === "other_window_visible") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Visual action cannot target secure or covered UI");
     if (record.error === "outside_window" || record.error === "invalid_request") throw new BrokerError("PRECONDITION_FAILED", "Visual action arguments are invalid");
-    if (record.error === "focus_changed") throw new BrokerError("VERIFICATION_FAILED", "Browser focus changed after visual action");
     throw new BrokerError("EXECUTION_FAILED", "Visual action failed");
   }
-  if (!hasExactFields(record, ["status", "app_id", "window_title", "action", "accepted", "focused"]) ||
+  const identity = nativeWindowIdentity(record, snapshot.nativeWindowIdentity !== undefined);
+  if (identity !== snapshot.nativeWindowIdentity) throw new BrokerError("TARGET_NOT_FOUND", "Visual window snapshot is stale");
+  if (!hasExactFields(record, guiWindowFields(record, ["status", "app_id", "window_title", "action", "accepted", "focused"])) ||
       record.status !== "ok" || record.app_id !== snapshot.appId || record.window_title !== snapshot.windowTitle ||
       record.action !== action || record.accepted !== true || record.focused !== true) {
     throw new BrokerError("VERIFICATION_FAILED", "Visual action did not match the approved window");
@@ -712,6 +722,16 @@ export function parseUiVisualActionResult(result: ProcessExecutionResult, snapsh
     truncated: false,
     verified: true
   };
+}
+
+export function isBoundedBrowserNavigation(execution: UiTypeExecution): boolean {
+  if (!execution.snapshot.browserNavigation || execution.snapshot.secure ||
+      !["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].includes(execution.snapshot.role) ||
+      !(execution.submit && execution.keys.length === 0 || !execution.submit && execution.keys.length === 1 && execution.keys[0] === "ENTER")) return false;
+  try {
+    const destination = new URL(execution.text);
+    return destination.protocol === "https:" && destination.hostname.length > 0 && !destination.username && !destination.password && !destination.hash;
+  } catch { return false; }
 }
 
 export function validateUiTypeRequest(
@@ -756,17 +776,17 @@ export function parseUiTypeResult(result: ProcessExecutionResult, execution: UiT
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata");
+    throwGuiWindowError(record.error);
     switch (record.error) {
-      case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
-      case "app_not_running":
-      case "window_not_found":
-      case "stale_target": throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
       case "target_unsupported": throw new BrokerError("UNSUPPORTED_CAPABILITY", "Accessibility input target is not a text control");
       case "invalid_input": throw new BrokerError("PRECONDITION_FAILED", "Accessibility input metadata is malformed");
       default: throw new BrokerError("EXECUTION_FAILED", "Accessibility input failed");
     }
   }
-  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "element_index", "role", "characters_accepted", "keys_accepted", "submitted", "focus_confirmed", "secure"])) {
+  const navigation = snapshot.nativeVisual === true && isBoundedBrowserNavigation(execution);
+  if (navigation && (record.navigation_verified !== true || typeof record.post_role !== "string" ||
+      !/^AX[A-Za-z]{1,125}$/u.test(record.post_role))) throw new BrokerError("VERIFICATION_FAILED", "Browser navigation postcondition was not verified");
+  if (!hasExactFields(record, guiWindowFields(record, ["status", "app_id", "window_index", "window_title", "element_index", "role", "characters_accepted", "keys_accepted", "submitted", "focus_confirmed", "secure", ...(navigation ? ["navigation_verified", "post_role"] : [])]))) {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility input returned malformed metadata");
   }
   if (record.status !== "ok" || record.app_id !== snapshot.appId || record.window_index !== snapshot.windowIndex ||
@@ -776,7 +796,9 @@ export function parseUiTypeResult(result: ProcessExecutionResult, execution: UiT
       record.submitted !== submit || record.focus_confirmed !== true || record.secure !== false) {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility input postcondition did not match the approved snapshot");
   }
-  const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle);
+  const identity = nativeWindowIdentity(record, snapshot.nativeWindowIdentity !== undefined || snapshot.nativeVisual === true);
+  if (identity !== snapshot.nativeWindowIdentity) throw new BrokerError("TARGET_NOT_FOUND", "UI window snapshot is stale");
+  const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle, identity);
   if (windowId !== snapshot.windowId || opaqueElementId(windowId, snapshot.elementIndex, snapshot.role, snapshot.label ?? "", false) !== snapshot.elementRef) {
     throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
   }
@@ -788,7 +810,7 @@ export function parseUiTypeResult(result: ProcessExecutionResult, execution: UiT
     focusConfirmed: true,
     appId: snapshot.appId,
     windowId,
-    reobserved: { role: snapshot.role, focused: true, secure: false },
+    reobserved: { role: navigation ? record.post_role as string : snapshot.role, focused: true, secure: false },
     warnings: [],
     truncated: false,
     verified: true
@@ -820,18 +842,14 @@ export function parseUiActionResult(
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
+    throwGuiWindowError(record.error);
     switch (record.error) {
-      case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
-      case "app_not_running":
-      case "window_not_found":
-      case "stale_target": throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
-      case "secure_target": throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure UI elements cannot be acted on");
       case "action_unsupported": throw new BrokerError("UNSUPPORTED_CAPABILITY", "Accessibility action is not supported by the target");
       case "invalid_target": throw new BrokerError("PRECONDITION_FAILED", "UI action target metadata is malformed");
       default: throw new BrokerError("EXECUTION_FAILED", "Accessibility action failed");
     }
   }
-  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "element_index", "role", "enabled", "focused", "secure", "accepted"])) {
+  if (!hasExactFields(record, guiWindowFields(record, ["status", "app_id", "window_index", "window_title", "element_index", "role", "enabled", "focused", "secure", "accepted"]))) {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility action returned malformed metadata");
   }
   if (record.status !== "ok" || record.app_id !== snapshot.appId ||
@@ -841,7 +859,9 @@ export function parseUiActionResult(
       record.secure !== false || record.accepted !== true) {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility action readback did not match the approved snapshot");
   }
-  const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle);
+  const identity = nativeWindowIdentity(record, snapshot.nativeWindowIdentity !== undefined || snapshot.nativeVisual === true);
+  if (identity !== snapshot.nativeWindowIdentity) throw new BrokerError("TARGET_NOT_FOUND", "UI window snapshot is stale");
+  const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle, identity);
   if (windowId !== snapshot.windowId || opaqueElementId(windowId, snapshot.elementIndex, snapshot.role, snapshot.label ?? "", false) !== snapshot.elementRef) {
     throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
   }
@@ -880,22 +900,16 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
   }
   const record = parsed as Record<string, unknown>;
-  // The installed Objective-C adapter boxes its relational expression as int.
-  // Normalize only this known native flag; JXA and all other fields stay strict.
-  if (nativeVisual && (record.truncated === 0 || record.truncated === 1)) record.truncated = record.truncated === 1;
   validateSensitiveUiTarget(appId);
   if (record.status === "error") {
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
+    throwGuiWindowError(record.error);
     switch (record.error) {
-      case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
-      case "app_not_running": throw new BrokerError("TARGET_NOT_FOUND", "The requested app is not running");
-      case "app_not_frontmost": throw new BrokerError("TARGET_NOT_FOUND", "The requested app is not frontmost");
-      case "window_not_found": throw new BrokerError("TARGET_NOT_FOUND", "The requested app window was not found");
       case "invalid_app_identity": throw new BrokerError("PRECONDITION_FAILED", "app_id must be a stable bundle identity");
       default: throw new BrokerError("EXECUTION_FAILED", "Accessibility observation failed");
     }
   }
-  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "focused", "nodes", "truncated"])) {
+  if (!hasExactFields(record, guiWindowFields(record, ["status", "app_id", "window_index", "window_title", "focused", "nodes", "truncated"]))) {
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata");
   }
   if (record.status !== "ok" || record.app_id !== appId ||
@@ -909,19 +923,22 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   if (SENSITIVE_UI_TEXT_PATTERN.test(windowTitle)) {
     throw new BrokerError("SECRET_BOUNDARY_DENIED", "Sensitive application or security UI targets are not observable");
   }
-  const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle);
+  const identity = nativeWindowIdentity(record, nativeVisual);
+  const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle, identity);
   const warnings: string[] = [];
   let redacted = false;
   const nodes: SafeUiNode[] = [];
   for (const [index, value] of record.nodes.entries()) {
-    if (!isPlainDataRecord(value) || !hasExactFields(value, ["index", "role", "label", "enabled", "focused", "secure"])) {
+    if (!isPlainDataRecord(value) || !hasExactFields(value, ["index", "role", "label", "enabled", "focused", "secure",
+      ...(value.browser_navigation === undefined ? [] : ["browser_navigation"])])) {
       throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed node metadata");
     }
     const node = value as Record<string, unknown>;
     if (!Number.isSafeInteger(node.index) || (node.index as number) !== index ||
         typeof node.role !== "string" || node.role.length < 1 || node.role.length > MAX_ROLE_LENGTH ||
         typeof node.label !== "string" || node.label.length > MAX_LABEL_LENGTH ||
-        typeof node.enabled !== "boolean" || typeof node.focused !== "boolean" || typeof node.secure !== "boolean") {
+        typeof node.enabled !== "boolean" || typeof node.focused !== "boolean" || typeof node.secure !== "boolean" ||
+        (node.browser_navigation !== undefined && typeof node.browser_navigation !== "boolean")) {
       throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed node metadata");
     }
     const role = sanitizeText(node.role, MAX_ROLE_LENGTH);
@@ -934,7 +951,8 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
       ...(labelResult.text.length > 0 ? { label: labelResult.text } : {}),
       enabled: node.enabled,
       focused: node.focused,
-      secure: node.secure
+      secure: node.secure,
+      ...(node.browser_navigation === undefined ? {} : { browserNavigation: node.browser_navigation as boolean })
     });
   }
   if (redacted) warnings.push("Sensitive Accessibility labels were redacted");
@@ -942,6 +960,7 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   return {
     appId,
     ...(nativeVisual ? { nativeVisual: true } : {}),
+    ...(identity === undefined ? {} : { nativeWindowIdentity: identity }),
     windowId,
     windowIndex: record.window_index as number,
     ...(windowTitle.length > 0 ? { windowTitle } : {}),
@@ -956,8 +975,8 @@ function sanitizeText(value: string, maxLength: number): string {
   return value.replace(/[\u0000-\u001f\u007f]/gu, "�").slice(0, maxLength);
 }
 
-export function opaqueWindowId(appId: string, windowIndex: number, windowTitle: string): string {
-  return `window:${sha256(canonicalJson({ appId, windowIndex, windowTitle })).slice(0, 48)}`;
+export function opaqueWindowId(appId: string, windowIndex: number, windowTitle: string, nativeIdentity?: string): string {
+  return `window:${sha256(canonicalJson(nativeIdentity === undefined ? { appId, windowIndex, windowTitle } : { appId, nativeIdentity })).slice(0, 48)}`;
 }
 
 export function opaqueElementId(windowId: string, elementIndex: number, role: string, label: string, secure: boolean): string {
@@ -988,17 +1007,19 @@ export function parseUiScreenshotResult(
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Screen capture returned malformed metadata");
-    if (record.error === "screen_recording_permission") throw new BrokerError("POLICY_DENIED", "Screen Recording permission is not granted");
+    throwGuiWindowError(record.error);
     if (record.error === "screen_window_occluded") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Full-screen capture is blocked by a window above the browser; use capture_mode=active_window or move the covering window away. No secret content was detected by this geometry check.");
     if (record.error === "screen_other_window_visible" || record.error === "other_window_visible") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Full-screen capture would include another visible window outside the authorized browser; use capture_mode=active_window. This is a window-boundary restriction, not secret-content detection.");
     if (record.error === "sensitive_window_visible") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Full-screen capture includes a known sensitive application or a window with a sensitive title; close or hide that window before capturing.");
-    if (record.error === "target_denied") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Capture target is outside the allowed browser/display boundary or its window title matches the sensitive-title rule; screenshot contents were not inspected.");
-    if (record.error === "app_not_frontmost" || record.error === "window_not_found") throw new BrokerError("TARGET_NOT_FOUND", "Screen capture target is no longer frontmost");
     throw new BrokerError("EXECUTION_FAILED", "Screen capture failed");
   }
-  const fields = ["status", "mode", "app_id", "window_title", "screen_width", "screen_height", "window_x", "window_y", "window_width", "window_height", "capture_width", "capture_height", "image_width", "image_height", "image_base64"];
+  const identity = nativeWindowIdentity(record, observed.nativeVisual === true);
+  if (identity !== observed.nativeWindowIdentity) throw new BrokerError("VERIFICATION_FAILED", "Screen capture changed the resolved window identity");
+  if (typeof record.window_title !== "string") throw new BrokerError("VERIFICATION_FAILED", "Screen capture window title is invalid");
+  validateSensitiveUiTarget(observed.appId, record.window_title);
+  const fields = guiWindowFields(record, ["status", "mode", "app_id", "window_title", "screen_width", "screen_height", "window_x", "window_y", "window_width", "window_height", "capture_width", "capture_height", "image_width", "image_height", "image_base64"]);
   if (!hasExactFields(record, fields) || record.status !== "ok" || record.mode !== mode || record.app_id !== observed.appId ||
-      record.window_title !== observed.windowTitle || !observed.focused) {
+      (identity === undefined && record.window_title !== observed.windowTitle) || !observed.focused) {
     throw new BrokerError("VERIFICATION_FAILED", "Screen capture did not match the observed frontmost window");
   }
   for (const key of ["screen_width", "screen_height", "capture_width", "capture_height", "image_width", "image_height", "window_width", "window_height"]) {

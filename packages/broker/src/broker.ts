@@ -63,7 +63,7 @@ import type { RootHelperSnapshotRequestAdmission } from "./root-helper-snapshot.
 import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-authority.js";
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, normalizeAppId, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
-import { MacUiInspectorImpl, UiSnapshotRegistry, VISUAL_ACTION_NAMES, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, validateUiVisualActionRequest, type UiActionName, type UiCaptureMode, type UiInputKey, type UiInspector, type UiSnapshotRecord, type UiVisualActionOptions } from "./ui-inspector.js";
+import { isBoundedBrowserNavigation, MacUiInspectorImpl, UiSnapshotRegistry, VISUAL_ACTION_NAMES, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, validateUiVisualActionRequest, type UiActionName, type UiCaptureMode, type UiInputKey, type UiInspector, type UiSnapshotRecord, type UiVisualActionOptions } from "./ui-inspector.js";
 import { requiresAccessibilityPermission, type GuiPublicEnablement } from "./gui-readiness.js";
 import { requiresDeveloperReadiness, type DeveloperPublicEnablement } from "./developer-readiness.js";
 import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
@@ -1207,16 +1207,19 @@ export class Broker {
         timestampMs: startedAt
       });
       authorized = true;
-      if (toolPolicy.mutation && ["mac_app_focus", "mac_ui_action", "mac_ui_type"].includes(request.tool) && this.options.authorizeGuiSession) {
+      if (toolPolicy.mutation && ["mac_app_open", "mac_app_focus", "mac_ui_action", "mac_ui_type"].includes(request.tool) && this.options.authorizeGuiSession) {
         const snapshot = execution.uiAction?.snapshot ?? execution.uiType?.snapshot;
-        const appId = snapshot?.appId ?? execution.appFocus?.appId;
+        const appId = snapshot?.appId ?? execution.appFocus?.appId ?? execution.appOpen?.appId;
+        const input = execution.uiType;
+        const submits = input && (input.submit || input.keys.includes("ENTER"));
+        const navigation = input?.snapshot && isBoundedBrowserNavigation({ ...input, snapshot: input.snapshot });
+        const sensitiveAction = execution.uiAction && (execution.uiAction.options?.key === "ENTER" ||
+          /\b(?:buy|purchase|pay|checkout|send|publish|delete|remove|erase|security|privacy)\b/iu.test(snapshot?.label ?? ""));
         if (appId && await this.options.authorizeGuiSession({
           requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
           appId, tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
           targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
-          requiresExplicitApproval: Boolean(execution.uiType?.submit || execution.uiType?.keys.includes("ENTER") ||
-            (execution.uiAction && (execution.uiAction.options?.key === "ENTER" ||
-              /\b(?:buy|purchase|pay|checkout|send|publish|delete|remove|erase|security|privacy)\b/iu.test(snapshot?.label ?? "")))),
+          requiresExplicitApproval: Boolean(submits && !navigation || sensitiveAction),
           expiresAtMs: request.principal.expiresAtMs
         })) {
           if (snapshot?.screenshotFingerprint) {

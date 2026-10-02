@@ -40,20 +40,43 @@ Use the **production `gui_launcher`** for permission readback: an interactive
 direct launch can inherit a different responsible process and report true while
 the service launch reports false. Do not rebuild again after renewing grants.
 
-The focus review page offers a 30-minute, 500-operation session first, and
+The launch/focus review page offers a 30-minute, 500-operation session first, and
 retains the separate until-revoked choice. Session authority remains bound to
 principal, OAuth session, exact app and policy; persistent authority is bound
 to principal/app/policy and requires a live unrevoked OAuth session. Exact
 single-use child approvals expire within 30 seconds. Focus target shape and
-element target shape are validated before issuance. Form submissions, Enter
-submissions and named sensitive AX actions cannot use the reusable grant and
-fall back to exact attended approval. Visual hit testing additionally denies
+element target shape are validated before issuance. Web form submissions, generic Enter
+submissions and named sensitive AX actions require exact attended approval.
+A complete credential-free HTTPS URL submitted directly to a native browser
+toolbar address field may use the reusable grant. Native ancestor verification
+excludes AXWebArea descendants, including webpage toolbar impersonation; label
+text alone never authorizes navigation. Visual hit testing additionally denies
 named purchase/send/delete/security controls. These label guards do not claim
 to infer all transaction intent or redact sensitive screenshot pixels.
 
 See [live repair evidence](../evidence/2026-10-02-chrome-gui-reusable-grant.md).
-The owner will perform the documented live MCP interaction sequence after the
-committed deployment. Final native interaction success remains unverified.
+The follow-up [window-resolution evidence](../evidence/2026-10-02-chrome-window-resolution.md)
+records the current production verification and deployment.
+
+## Canonical window resolution
+
+Focus, observe, capture and input share the native `resolveGuiWindow` resolver.
+It resolves the exact bundle/PID and focused AXWindow, then correlates the
+visible layer-zero CGWindow using owner PID and global AX position/size. AX and
+CG titles may differ; browser titles are never the correlation key. Ambiguous
+geometry fails closed rather than selecting the first CG entry.
+
+The opaque `window_id` hashes app identity plus PID, process launch generation
+and CGWindowID. It remains stable when a tab/title changes. Screenshot and input
+requests carry the private native identity and reject changed/replaced windows.
+Element references still require a fresh caller/session-owned observation;
+retained operation approvals also require their original element/image evidence.
+
+Missing app/window, hidden/minimized window, missing AX permission, missing
+screenshot permission, AX metadata failure, correlation ambiguity and capture
+failure have distinct errors. A correlation failure is not reported as absence.
+Observation does not activate an unfocused app; focus it first. Explicit focus
+may restore a minimized selected window and waits for exact AX focus readback.
 
 ## Observation and action loop
 
@@ -93,8 +116,7 @@ committed deployment. Final native interaction success remains unverified.
    after typing or submitting.
 
 An example browser flow is: open Chrome, focus it, observe, send
-`shortcut(COMMAND_L)`, type an HTTPS URL into the focused address bar, send
-`key_press(ENTER)`, inspect the new screenshot, then click, type, scroll, and
+`shortcut(COMMAND_L)`, type a complete HTTPS URL into the focused address bar with `submit=true`, inspect the new screenshot, then click, type, scroll, and
 observe until the page result is visible.
 
 ## Host requirements and limits

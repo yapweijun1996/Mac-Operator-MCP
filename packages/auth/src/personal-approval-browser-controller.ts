@@ -5,7 +5,7 @@ import {
   type IssueApprovalInput
 } from "@mac-operator/broker";
 import type { AuthStore } from "./store.js";
-import { GuiSessionApprovals } from "./gui-session-approval.js";
+import { browserConsentApp, GuiSessionApprovals } from "./gui-session-approval.js";
 import type { GuiSessionOperation } from "@mac-operator/broker";
 import { sha256 } from "@mac-operator/contracts";
 import type { ApprovalBrowserIssuanceResult, ApprovalBrowserPreview } from "./approval-browser-bridge.js";
@@ -56,8 +56,7 @@ export function createPersonalApprovalBrowserController(options: {
       approvalClass: record.approvalClass,
       unattended: record.unattended,
       expiresAtMs: record.expiresAtMs,
-      sessionEligible: record.tool === "mac_app_focus" && record.approvalClass === "trusted_gui" &&
-        ["app_window:window:bundle:com.google.Chrome", "app_window:window:bundle:com.apple.Safari"].includes(record.targetRef)
+      sessionEligible: browserConsentApp(record) !== undefined
     };
   };
   const issue = (requestId: string): Promise<ApprovalBrowserIssuanceResult> => {

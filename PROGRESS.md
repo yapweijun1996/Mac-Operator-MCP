@@ -1,22 +1,18 @@
 # Mac-Operator-MCP Progress
 
-## Current Chrome GUI repair: deployed — owner acceptance pending
+## Current Chrome GUI repair: PASS — production verified
 
-2026-10-02: repaired the metadata-only osascript/native TCC split, added bounded
-native AX tree/action handling, restored the 30-minute consent option and added
-delegation target/sensitive-submit guards. Full regression: 1587 PASS, 18 SKIP,
-0 FAIL (1605 total); native build/typecheck/lint pass before the final terminal
-compatibility merge. The active `personal-20261002-terminal-protocol-c` snapshot
-includes the GUI patch, preserving V2/O1 state and scopes. Current Chrome
-policy-3 reusable consent is active; a live child approval was consumed with
-30-second TTL. After owner system authentication, the exact installed
-Mac Operator GUI.app was removed/re-added in both TCC panes. Production
-LaunchServices readback now reports Accessibility=true, Screen Recording=true.
-Live MCP focus, AX/screenshot observe, safe action, type and postcondition
-readback remain for owner acceptance.
-The owner requested deployment, commit and main merge without additional tests
-and will perform live acceptance. GUI end-to-end success remains unverified. Details:
-`evidence/2026-10-02-chrome-gui-reusable-grant.md`.
+2026-10-02: unified native AX/CG window resolution and stable process/window
+identity, fixed strict Boolean serialization and browser navigation readback,
+and completed existing launch/focus consent delegation without widening policy.
+Final installed `personal-20261002-gui-window-c` and native bytes match source.
+Production gui_launcher TCC readback is Accessibility=true / ScreenRecording=true.
+Real MCP health, app inventory, open, focus, active/none/selected observations,
+HTTPS address navigation, safe checkbox action, non-secure text entry and final
+screenshot postcondition passed on the same logical Chrome window. Secure fields,
+web submission and an unapproved app deny. Full regression: 1626 PASS, 18 SKIP,
+0 FAIL; typecheck/native build/lint/contracts/document gates pass. Details:
+`evidence/2026-10-02-chrome-window-resolution.md`.
 
 ## Current V2 task progress: 100% — DONE
 

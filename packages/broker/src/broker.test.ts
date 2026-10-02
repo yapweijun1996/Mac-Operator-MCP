@@ -5506,12 +5506,12 @@ for (const explicitTarget of [true, false]) {
   });
 }
 
-test("Chrome focus requires scope and exact approval before GUI dispatch", async () => {
+for (const tool of ["mac_app_focus", "mac_app_open"] as const) test(`Chrome ${tool} requires scope and exact session approval before GUI dispatch`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-chrome-grant-"));
   const store = new BrokerStore(join(directory, "broker.sqlite")), key = randomBytes(32);
   const appId = "bundle:com.google.Chrome";
   const base = createDefaultPolicy("edge-1", true, ["mac.app.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
-  const policy = { ...base, tools: new Map(base.tools).set("mac_app_focus", { ...base.tools.get("mac_app_focus")!, enabled: true }) };
+  const policy = { ...base, tools: new Map(base.tools).set(tool, { ...base.tools.get(tool)!, enabled: true }) };
   let delegate = false, issued = 0, dispatched = 0;
   const broker = new Broker({ store, policy, now: () => NOW, edgeAuthenticationKeys: testKeyring(key),
     async authorizeGuiSession(operation) {
@@ -5523,7 +5523,11 @@ test("Chrome focus requires scope and exact approval before GUI dispatch", async
         policyVersion: operation.policyVersion, approvalClass: "trusted_gui", unattended: false,
         issuedAtMs: NOW, expiresAtMs: NOW + 30000, useLimit: 1 });
       return true;
-    }, appControlInspector: { async open() { throw new Error("unused"); }, async focus(target) {
+    }, appControlInspector: { async open(target) {
+      dispatched++;
+      return { appId: target, state: "already_running", processId: null, target: { kind: "app", reference: target },
+        verified: true, warnings: [], truncated: false };
+    }, async focus(target) {
       dispatched++;
       return { appId: target, windowId: `window:${"a".repeat(48)}`, windowTitle: "Web form", focused: true,
         verified: true, warnings: [], truncated: false };
@@ -5535,7 +5539,7 @@ test("Chrome focus requires scope and exact approval before GUI dispatch", async
       ["wrong-app", ["mac.app.control"], "bundle:com.apple.finder", false]
     ] as const) {
       if (id === "valid-grant") delegate = true;
-      const result = await broker.handle(signRequest(unsigned({ requestId: id, nonce: id, tool: "mac_app_focus",
+      const result = await broker.handle(signRequest(unsigned({ requestId: id, nonce: id, tool,
         arguments: { app_id: app } }, [...scopes]), key));
       assert.equal(result.ok, allowed, JSON.stringify(result));
       if (!result.ok) assert.equal(result.result_class, id === "no-scope" ? "SCOPE_DENIED" : "POLICY_DENIED");
@@ -5567,7 +5571,7 @@ test("owner GUI session issuer admits consecutive exact inputs without per-opera
     },
     uiInspector: { async observe() { throw new Error("unused"); }, async type({ snapshot, text, keys, submit }) {
       dispatches++;
-      assert.equal(snapshot.revalidationRequired, true);
+      assert.equal(snapshot.revalidationRequired, snapshot.screenshotFingerprint ? true : undefined);
       return { elementRef, appId, windowId, charactersAccepted: text.length, keysAccepted: keys, submitted: submit,
         focusConfirmed: true, reobserved: { role: "AXTextField", focused: true, secure: false }, warnings: [], truncated: false, verified: true };
     } } });
@@ -5595,6 +5599,17 @@ test("owner GUI session issuer admits consecutive exact inputs without per-opera
     assert.equal(submit.ok, false);
     if (!submit.ok) assert.equal(submit.result_class, "POLICY_DENIED");
     assert.equal(dispatches, 2, "Submission needs an independent exact operation approval");
+    for (const browserNavigation of [false, true]) {
+      registry.recordObservation({ appId, windowId, windowTitle: "Web form", focused: true,
+        nodes: [{ elementRef, role: "AXTextField", label: "Address and search bar", enabled: true,
+          focused: true, secure: false, browserNavigation }], truncated: false, warnings: [],
+        nativeWindowIdentity: "485:1790918400000:46" }, "principal-1", "session-1", NOW);
+      const requestId = `navigation-${browserNavigation}`;
+      const navigation = await broker.handle(signRequest(unsigned({ requestId, nonce: requestId, tool: "mac_ui_type",
+        arguments: { element_ref: elementRef, text: "https://example.com/", submit: true } }, ["mac.ui.control"]), key));
+      assert.equal(navigation.ok, browserNavigation, JSON.stringify(navigation));
+    }
+    assert.equal(dispatches, 3, "Only native browser toolbar navigation may use delegated submission");
   } finally { await broker.close(); store.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

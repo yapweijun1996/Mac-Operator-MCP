@@ -152,7 +152,7 @@ test("app focus validates stable app-window inputs and fixed focus command outpu
       if (request.environment !== undefined) observed.environment = request.environment;
       return successWithOutput(JSON.stringify({
         status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
-        window_title: "Main", focused: true
+        window_identity: "485:1790918400000:46", window_title: "Main", focused: true
       }));
     }
   });
@@ -170,20 +170,20 @@ test("app focus validates stable app-window inputs and fixed focus command outpu
 test("app focus rejects unverified, sensitive, and permission-denied outcomes", () => {
   assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
     status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
-    window_title: "Main", focused: true
+    window_identity: "485:1790918400000:46", window_title: "Main", focused: true
   })), "bundle:com.apple.SecurityAgent"), /Sensitive application/u);
   assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
     status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
-    window_title: "Main", focused: false
+    window_identity: "485:1790918400000:46", window_title: "Main", focused: false
   })), "bundle:com.example.Editor"), /malformed metadata/u);
   assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
     status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
-    window_title: "Password", focused: true
+    window_identity: "485:1790918400000:46", window_title: "Password", focused: true
   })), "bundle:com.example.Editor"), /Sensitive application/u);
   assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({ status: "error", error: "accessibility_permission" })), "bundle:com.example.Editor"), /permission is not granted/u);
   assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
     status: "ok", app_id: "bundle:com.example.Editor", window_index: 0,
-    window_title: "Main", focused: true, extra: "authority"
+    window_identity: "485:1790918400000:46", window_title: "Main", focused: true, extra: "authority"
   })), "bundle:com.example.Editor"), /malformed metadata/u);
   assert.throws(() => parseAppFocusResult(successWithOutput(JSON.stringify({
     status: "error", error: "window_not_found", extra: true

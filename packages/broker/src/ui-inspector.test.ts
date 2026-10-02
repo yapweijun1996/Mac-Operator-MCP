@@ -4,6 +4,7 @@ import { assertRetainedUiTargetMatches, MacUiInspectorImpl, UiSnapshotRegistry, 
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 const appId = "bundle:com.example.Accessible";
+const nativeIdentity = "485:1790918400000:46";
 
 function success(stdout: string): ProcessExecutionResult {
   return {
@@ -47,7 +48,7 @@ test("Accessibility observation fails closed for permission, app, and window err
   for (const [error, expected] of [
     ["accessibility_permission", "POLICY_DENIED"],
     ["app_not_running", "TARGET_NOT_FOUND"],
-    ["app_not_frontmost", "TARGET_NOT_FOUND"],
+    ["app_not_frontmost", "PRECONDITION_FAILED"],
     ["window_not_found", "TARGET_NOT_FOUND"]
   ] as const) {
     assert.throws(
@@ -154,7 +155,7 @@ test("Accessibility observation without screenshots uses the fixed TCC applicati
         timeoutMs: request.timeoutMs,
         outputCapBytes: request.outputCapBytes
       };
-      return success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0, window_title: "Example", focused: true, nodes: [], truncated: false }));
+      return success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0, window_identity: nativeIdentity, window_title: "Example", focused: true, nodes: [], truncated: false }));
     }
   });
   const result = await inspector.observe(appId, "Example", 25, { timeoutMs: 20_000, shouldCancel: () => false });
@@ -191,7 +192,7 @@ test("Accessibility action validates fixed command output and reobserved identit
   const inspector = new MacUiInspectorImpl({
     run: async (request) => {
       observed = { executable: request.executable, args: request.args, cwd: request.cwd, ...(request.environment ? { environment: request.environment } : {}), timeoutMs: request.timeoutMs, outputCapBytes: request.outputCapBytes };
-      return success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0, window_title: "Example", element_index: 0, role: "AXButton", enabled: true, focused: true, secure: false, accepted: true }));
+      return success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0, ...(request.executable === guiVisionExecutableForTesting ? { window_identity: nativeIdentity } : {}), window_title: "Example", element_index: 0, role: "AXButton", enabled: true, focused: true, secure: false, accepted: true }));
     }
   });
   const result = await inspector.action!({ snapshot, action: "press" }, { timeoutMs: 20_000, shouldCancel: () => false });
@@ -207,11 +208,13 @@ test("Accessibility action validates fixed command output and reobserved identit
   assert.equal(observed?.outputCapBytes, 262_144);
   assert.ok(Buffer.byteLength(uiActionScriptForTesting, "utf8") <= 4_096);
   observed = undefined;
-  const native = { ...snapshot, nativeVisual: true };
+  const nativeWindowId = opaqueWindowId(appId, 0, "Example", nativeIdentity);
+  const native = { ...snapshot, nativeVisual: true, nativeWindowIdentity: nativeIdentity, windowId: nativeWindowId,
+    elementRef: opaqueElementId(nativeWindowId, 0, snapshot.role, snapshot.label, false) };
   await inspector.action!({ snapshot: native, action: "focus" }, { timeoutMs: 20_000, shouldCancel: () => false });
   const nativeCommand = observed as { executable: string; args: readonly string[] } | undefined;
   assert.equal(nativeCommand?.executable, guiVisionExecutableForTesting);
-  assert.deepEqual(nativeCommand?.args, ["ax_action", "accessibility", appId.slice(7), "Example", "0", "AXButton", "Save", "focus"]);
+  assert.deepEqual(nativeCommand?.args, ["ax_action", "accessibility", appId.slice(7), "Example", "0", "AXButton", "Save", "focus", nativeIdentity]);
   observed = undefined;
   await assert.rejects(inspector.action!({ snapshot: { ...native, secure: true }, action: "focus" },
     { timeoutMs: 20_000, shouldCancel: () => false }), /Secure or redacted/u);
@@ -284,11 +287,11 @@ test("visual observation returns a bounded JPEG and a session-owned action refer
     run: async request => {
       calls.push({ executable: request.executable, args: request.args, allowUserOwnedExecutable: request.allowUserOwnedExecutable });
       if (calls.length === 1) return success(JSON.stringify({
-        status: "ok", app_id: browserApp, window_index: 0, window_title: "Example Domain",
+        status: "ok", app_id: browserApp, window_index: 0, window_identity: nativeIdentity, window_title: "Example Domain",
         focused: true, nodes: [{ index: 0, role: "AXWindow", label: "Example Domain", enabled: true, focused: true, secure: false }], truncated: false
       }));
       return success(JSON.stringify({
-        status: "ok", mode: "active_window", app_id: browserApp, window_title: "Example Domain",
+        status: "ok", mode: "active_window", app_id: browserApp, window_identity: nativeIdentity, window_title: "Example Domain",
         screen_width: 800, screen_height: 600, window_x: 0, window_y: 0,
         window_width: 800, window_height: 600, capture_width: 1600, capture_height: 1200,
         image_width: 1600, image_height: 1200, image_base64: jpeg
@@ -302,7 +305,7 @@ test("visual observation returns a bounded JPEG and a session-owned action refer
   assert.equal(calls[0]?.executable, guiVisionExecutableForTesting);
   assert.deepEqual(calls[0]?.args, ["inspect", "visual", "com.google.Chrome", "", "10"]);
   assert.equal(calls[1]?.executable, guiVisionExecutableForTesting);
-  assert.deepEqual(calls[1]?.args, ["capture", "active_window", "com.google.Chrome", ""]);
+  assert.deepEqual(calls[1]?.args, ["capture", "active_window", "com.google.Chrome", "Example Domain", nativeIdentity]);
   const registry = new UiSnapshotRegistry();
   registry.recordObservation(observed, "owner", "session", 1_000);
   assert.equal(registry.resolve(observed.visualRef!, "owner", "session", 1_001).role, "VisualWindow");
@@ -324,18 +327,18 @@ test("truncated Accessibility-only observations do not create actionable element
 
 test("visual typing uses the app-owned helper and keeps text on stdin", async () => {
   const appId = "bundle:com.google.Chrome";
-  const windowId = opaqueWindowId(appId, 0, "Example Domain");
+  const windowId = opaqueWindowId(appId, 0, "Example Domain", nativeIdentity);
   const snapshot = {
     elementRef: opaqueElementId(windowId, 0, "AXTextField", "Text input", false),
     appId, windowId, windowIndex: 0, windowTitle: "Example Domain", elementIndex: 0,
     role: "AXTextField", label: "Text input", enabled: true, focused: true, secure: false,
-    ownerPrincipalId: "owner", ownerSessionId: "session", observedAtMs: 1_000, nativeVisual: true
+    ownerPrincipalId: "owner", ownerSessionId: "session", observedAtMs: 1_000, nativeVisual: true, nativeWindowIdentity: nativeIdentity
   } as const;
   let command: { executable: string; args: readonly string[]; stdin: string | undefined } | undefined;
   const inspector = new MacUiInspectorImpl({ run: async request => {
     command = { executable: request.executable, args: request.args, stdin: request.stdin };
     return success(JSON.stringify({ status: "ok", app_id: appId, window_index: 0,
-      window_title: "Example Domain", element_index: 0, role: "AXTextField",
+      window_identity: nativeIdentity, window_title: "Example Domain", element_index: 0, role: "AXTextField",
       characters_accepted: 4, keys_accepted: [], submitted: false,
       focus_confirmed: true, secure: false }));
   } });
@@ -343,8 +346,8 @@ test("visual typing uses the app-owned helper and keeps text on stdin", async ()
     { timeoutMs: 10_000, shouldCancel: () => false });
   assert.equal(typed.charactersAccepted, 4);
   assert.equal(command?.executable, guiVisionExecutableForTesting);
-  assert.deepEqual(command?.args, ["type", "visual", "com.google.Chrome", "Example Domain", "AXTextField", "Text input"]);
-  assert.equal(command?.stdin, '{"keys":[],"submit":false,"text":"Test"}');
+  assert.deepEqual(command?.args, ["type", "visual", "com.google.Chrome", "Example Domain", "AXTextField", "Text input", nativeIdentity]);
+  assert.equal(command?.stdin, '{"keys":[],"navigation":false,"submit":false,"text":"Test"}');
 });
 
 test("visual actions validate bounds and reject secure or mismatched readback", () => {
@@ -381,7 +384,7 @@ test("visual click dispatch stays inside an observed browser window", async () =
     { timeoutMs: 10_000, shouldCancel: () => false });
   assert.equal(acted.reobserved.role, "VisualWindow");
   assert.equal(command?.executable, guiVisionExecutableForTesting);
-  assert.deepEqual(command?.args, ["action", "visual", "com.google.Chrome", "Example Domain", "click", "200", "150", "0", "0", "", "0"]);
+  assert.deepEqual(command?.args, ["action", "visual", "com.google.Chrome", "Example Domain", "click", "200", "150", "0", "0", "", "0", ""]);
   await assert.rejects(inspector.action({ snapshot, action: "click", options: { x: 801, y: 150 } },
     { timeoutMs: 10_000, shouldCancel: () => false }), /within the observed window/u);
 });
@@ -426,15 +429,12 @@ test("browser address input rejects executable and local URL schemes", async () 
   assert.equal(called, false);
 });
 
-test("native observation accepts only the installed adapter's numeric truncation flag", () => {
+test("native observation requires strict boolean truncation metadata", () => {
   const result = (truncated: unknown) => success(JSON.stringify({
-    status: "ok", app_id: appId, window_index: 0, window_title: "Example", focused: true, nodes: [], truncated
+    status: "ok", app_id: appId, window_index: 0, window_identity: nativeIdentity, window_title: "Example", focused: true, nodes: [], truncated
   }));
-  for (const value of [0, 1]) {
-    assert.equal(parseUiObserveResult(result(value), appId, 10, true).truncated, value === 1);
-    assert.throws(() => parseUiObserveResult(result(value), appId, 10), /malformed metadata/u);
-  }
-  for (const value of [2, -1, "1", null]) {
+  for (const value of [false, true]) assert.equal(parseUiObserveResult(result(value), appId, 10, true).truncated, value);
+  for (const value of [0, 1, 2, -1, "1", null]) {
     assert.throws(() => parseUiObserveResult(result(value), appId, 10, true), /malformed metadata/u);
   }
 });

@@ -22,8 +22,8 @@ async function fixture(t: import("node:test").TestContext) {
     store.admitRequest({ requestId: id, edgeId: "edge-1", nonce: `nonce-${id}`, nonceExpiresAtMs: now + 60000,
       principalId: "owner-1", sessionId: "session-1", tool, policyVersion: "policy-1", payloadDigest: "a".repeat(64), mutation: true, receivedAtMs: now });
     store.recordRequestDecision({ requestId: id, principalId: "owner-1", tool, eventType: "decision", decision: "allow",
-      resultClass: "AUTHORIZED", targetRef, policyVersion: "policy-1", evidence: {}, timestampMs: now });
-    store.createApprovalPreview(id, { contractVersion: "0.1", targetKind: "app_window", targetRef,
+      resultClass: "AUTHORIZED", targetRef: tool === "mac_app_open" ? "app:bundle:com.google.Chrome" : targetRef, policyVersion: "policy-1", evidence: {}, timestampMs: now });
+    store.createApprovalPreview(id, { contractVersion: "0.1", targetKind: tool === "mac_app_open" ? "app" : "app_window", targetRef: tool === "mac_app_open" ? "app:bundle:com.google.Chrome" : targetRef,
       payloadDigest: "a".repeat(64), approvalClass: "trusted_gui", unattended: false }, now, now + (tool === "mac_app_focus" ? 600000 : 120000));
   };
   const issued: string[] = [];
@@ -196,4 +196,17 @@ test("persistent revocation during issuance rejects the committed operation", as
   finish();
   await assert.rejects(operation, /ended during issuance/u);
   assert.equal(f.store.approvalRecord(approvalId)?.revokedAtMs, NOW);
+});
+
+
+test("browser launch consent shares the finite grant without authorizing arbitrary applications", async t => {
+  const f = await fixture(t); f.pending("open-consent", "mac_app_open");
+  const grant = f.sessions.start("open-consent");
+  const operation = { ...f.operation, tool: "mac_app_open", targetKind: "app", targetRef: "app:bundle:com.google.Chrome" };
+  assert.equal(await f.sessions.authorize(operation), true);
+  assert.equal(f.sessions.status(grant.id)?.remainingOperations, 499);
+  assert.equal(await f.sessions.authorize({ ...operation, targetRef: "app:bundle:com.apple.Safari" }), false);
+  assert.equal(await f.sessions.authorize({ ...operation, appId: "bundle:com.apple.finder", targetRef: "app:bundle:com.apple.finder" }), false);
+  f.setNow(NOW + GUI_SESSION_MS);
+  assert.equal(await f.sessions.authorize(operation), false);
 });

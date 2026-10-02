@@ -1,3 +1,4 @@
+import { guiWindowFields, nativeWindowIdentity, throwGuiWindowError } from "./gui-window.js";
 import { GuiProcessSupervisor } from "./gui-process-supervisor.js";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
@@ -187,15 +188,13 @@ export function parseAppFocusResult(result: ProcessExecutionResult, appId: strin
   const record = parsed as Record<string, unknown>;
   if (record.status === "error") {
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata");
+    throwGuiWindowError(record.error);
     switch (record.error) {
-      case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
-      case "app_not_running": throw new BrokerError("TARGET_NOT_FOUND", "The requested app is not running");
-      case "window_not_found": throw new BrokerError("TARGET_NOT_FOUND", "The requested app window was not found");
       case "invalid_app_identity": throw new BrokerError("PRECONDITION_FAILED", "app_id must be a stable bundle identity");
       default: throw new BrokerError("EXECUTION_FAILED", "App focus failed");
     }
   }
-  if (!hasExactFields(record, ["status", "app_id", "window_index", "window_title", "focused"])) {
+  if (!hasExactFields(record, guiWindowFields(record, ["status", "app_id", "window_index", "window_title", "focused"]))) {
     throw new BrokerError("VERIFICATION_FAILED", "App focus returned malformed metadata");
   }
   if (record.status !== "ok" || record.app_id !== appId ||
@@ -205,7 +204,7 @@ export function parseAppFocusResult(result: ProcessExecutionResult, appId: strin
   }
   const windowTitle = redactLogText(record.window_title.replace(/[\u0000-\u001f\u007f]/gu, "�").slice(0, 512));
   if (windowTitle.text.length > 0) validateSensitiveUiTarget(appId, windowTitle.text);
-  const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle.text);
+  const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle.text, nativeWindowIdentity(record, true));
   return {
     appId,
     windowId,

@@ -1,10 +1,9 @@
 # Chrome GUI reusable authorization repair — 2026-10-02
 
-Status: implementation deployed; owner acceptance pending. The owner requested
-commit and main merge without additional tests and will perform the final live
-Chrome verification. Native TCC renewal is complete; the post-deployment MCP
-interaction sequence remains pending. The GUI patch is committed separately from unrelated
-working-tree changes; the deployed GUI manifest records its source revision.
+Historical record of the earlier repair and permission renewal. The follow-up
+[window-resolution report](2026-10-02-chrome-window-resolution.md) records the
+current deployed production MCP acceptance, which now passes. Evidence below
+belongs to that earlier deployment and is retained as historical provenance.
 
 ## Root cause and current deployment
 

@@ -5,7 +5,17 @@ import { guiSessionApprovalId, type BrokerStore, type GuiSessionOperation, type 
 export const GUI_SESSION_MS = 30 * 60_000;
 const MAX_OPERATIONS = 500;
 const APPS = ["bundle:com.google.Chrome", "bundle:com.apple.Safari"];
-const TOOLS = ["mac_app_focus", "mac_ui_action", "mac_ui_type"];
+const TOOLS = ["mac_app_open", "mac_app_focus", "mac_ui_action", "mac_ui_type"];
+
+export function browserConsentApp(preview: { tool: string; approvalClass: string; unattended: boolean; targetKind: string; targetRef: string }): string | undefined {
+  if (preview.approvalClass !== "trusted_gui" || preview.unattended) return undefined;
+  const app = preview.tool === "mac_app_focus" && preview.targetKind === "app_window"
+    ? preview.targetRef.replace(/^app_window:window:/u, "")
+    : preview.tool === "mac_app_open" && preview.targetKind === "app"
+      ? preview.targetRef.replace(/^app:/u, "") : undefined;
+  const expected = preview.tool === "mac_app_focus" ? `app_window:window:${app}` : `app:${app}`;
+  return app !== undefined && APPS.includes(app) && preview.targetRef === expected ? app : undefined;
+}
 export interface GuiSessionView {
   id: string;
   appId: string;
@@ -58,11 +68,10 @@ export class GuiSessionApprovals {
     }
     const preview = this.store.approvalPreview(requestId, this.now());
     const request = this.store.requestRecord(requestId);
-    const appId = preview?.targetRef.replace(/^app_window:window:/u, "");
-    if (!preview || !request || preview.tool !== "mac_app_focus" || preview.approvalClass !== "trusted_gui" ||
-        preview.unattended || preview.targetKind !== "app_window" || !appId || !APPS.includes(appId) ||
+    const appId = preview && browserConsentApp(preview);
+    if (!preview || !request || !appId ||
         this.store.isRevoked("session", request.sessionId) || this.store.isRevoked("principal", request.principalId)) {
-      throw new Error("Session consent requires a current browser focus preview");
+      throw new Error("Session consent requires a current browser focus preview or browser launch preview");
     }
     this.prune();
     if (this.grants.size >= 16 || this.requestGrants.size >= 4096) throw new Error("Too many active GUI sessions");
@@ -104,7 +113,9 @@ export class GuiSessionApprovals {
     if (this.store.isRevoked("session", operation.sessionId)) return false;
     if (operation.requiresExplicitApproval || !TOOLS.includes(operation.tool) || !APPS.includes(operation.appId)) return false;
     // The Broker resolves element ownership first; reject mismatched delegation shapes too.
-    if (operation.tool === "mac_app_focus"
+    if (operation.tool === "mac_app_open"
+      ? operation.targetKind !== "app" || operation.targetRef !== `app:${operation.appId}`
+      : operation.tool === "mac_app_focus"
       ? operation.targetKind !== "app_window" || operation.targetRef !== `app_window:window:${operation.appId}`
       : operation.targetKind !== "ui_element" || !/^ui_element:element:[a-f0-9]{48}$/u.test(operation.targetRef)) return false;
     const grant = [...this.grants.values()].find(candidate => this.active(candidate) &&

@@ -94,6 +94,68 @@ static BOOL textRole(NSString *role) {
   return [@[@"AXTextField", @"AXTextArea", @"AXSearchField", @"AXComboBox"] containsObject:role];
 }
 
+static BOOL browserNavigationAncestors(NSArray<NSString *> *roles) {
+  BOOL toolbar = NO;
+  for (NSString *role in roles) {
+    if ([role isEqualToString:@"AXWebArea"]) return NO;
+    if ([role isEqualToString:@"AXToolbar"]) toolbar = YES;
+    if ([role isEqualToString:@"AXWindow"]) return toolbar;
+  }
+  return NO;
+}
+
+static BOOL browserNavigationElement(AXUIElementRef element) {
+  if (!textRole(attributeText(element, kAXRoleAttribute))) return NO;
+  NSString *label = elementLabel(element);
+  NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:
+    @"(?i)\\b(address|location|omnibox|smart search field)\\b" options:0 error:nil];
+  if ([pattern firstMatchInString:label options:0 range:NSMakeRange(0, label.length)] == nil) return NO;
+  AXUIElementRef cursor = (AXUIElementRef)CFRetain(element);
+  NSMutableArray<NSString *> *roles = [NSMutableArray array];
+  for (NSUInteger depth = 0; depth < 16; depth++) {
+    NSString *role = attributeText(cursor, kAXRoleAttribute);
+    [roles addObject:role];
+    if ([role isEqualToString:@"AXWebArea"] || [role isEqualToString:@"AXWindow"]) break;
+    CFTypeRef parent = NULL;
+    AXUIElementCopyAttributeValue(cursor, kAXParentAttribute, &parent);
+    if (parent == NULL || CFGetTypeID(parent) != AXUIElementGetTypeID()) {
+      if (parent != NULL) CFRelease(parent);
+      break;
+    }
+    CFRelease(cursor); cursor = (AXUIElementRef)parent;
+  }
+  CFRelease(cursor);
+  return browserNavigationAncestors(roles);
+}
+
+static BOOL boundedNavigationInput(NSString *text, NSArray *keys, BOOL submit) {
+  NSURLComponents *url = [NSURLComponents componentsWithString:text];
+  return ((submit && keys.count == 0) || (!submit && keys.count == 1 && [keys[0] isEqualToString:@"ENTER"])) &&
+    [url.scheme.lowercaseString isEqualToString:@"https"] && url.host.length > 0 &&
+    url.user.length == 0 && url.password.length == 0 && url.fragment.length == 0;
+}
+
+static BOOL navigationDispatchAllowed(BOOL delegated, BOOL nativeToolbar, NSString *text, NSArray *keys, BOOL submit) {
+  return !delegated || (nativeToolbar && boundedNavigationInput(text, keys, submit));
+}
+
+static BOOL navigationAddressMatches(NSString *requested, NSString *actual) {
+  if (actual.length == 0 || actual.length > 10000) return NO;
+  // Chrome may omit the HTTPS scheme in its toolbar presentation value.
+  NSURLComponents *expected = [NSURLComponents componentsWithString:requested];
+  NSURLComponents *observed = [NSURLComponents componentsWithString:
+    [actual containsString:@"://"] ? actual : [@"https://" stringByAppendingString:actual]];
+  NSString *expectedPath = expected.percentEncodedPath.length == 0 ? @"/" : expected.percentEncodedPath;
+  NSString *observedPath = observed.percentEncodedPath.length == 0 ? @"/" : observed.percentEncodedPath;
+  return [observed.scheme.lowercaseString isEqualToString:@"https"] && observed.user.length == 0 &&
+    observed.password.length == 0 && observed.fragment.length == 0 &&
+    [expected.host.lowercaseString isEqualToString:observed.host.lowercaseString] &&
+    ((expected.port == nil && observed.port == nil) || [expected.port isEqual:observed.port]) &&
+    [expectedPath isEqualToString:observedPath] &&
+    ((expected.percentEncodedQuery == nil && observed.percentEncodedQuery == nil) ||
+      [expected.percentEncodedQuery isEqualToString:observed.percentEncodedQuery]);
+}
+
 static void enableBrowserAccessibility(NSString *bundleId, pid_t pid) {
   if (![bundleId isEqualToString:@"com.google.Chrome"] || !AXIsProcessTrusted()) return;
   AXUIElementRef app = AXUIElementCreateApplication(pid);
@@ -133,33 +195,11 @@ static BOOL secureElement(AXUIElementRef element) {
     sensitiveTitle(elementLabel(element));
 }
 
-static NSString *accessibleWindowTitle(pid_t pid, NSString *hint) {
-  AXUIElementRef app = AXUIElementCreateApplication(pid);
-  CFTypeRef rawWindow = NULL;
-  AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, &rawWindow);
-  CFRelease(app);
-  if (rawWindow == NULL) return nil;
-  NSString *title = attributeText((AXUIElementRef)rawWindow, kAXTitleAttribute);
-  CFRelease(rawWindow);
-  return title.length > 0 && !sensitiveTitle(title) && (hint.length == 0 || [hint isEqualToString:title]) ? title : nil;
-}
+#import "gui_window.h"
 
 // Focused element stays at index zero for the existing non-secure typing contract.
 // The remaining bounded tree belongs only to the selected browser window.
-static NSArray *windowElements(pid_t pid, NSString *title, NSInteger limit, BOOL *truncated) {
-  AXUIElementRef app = AXUIElementCreateApplication(pid);
-  AXUIElementSetMessagingTimeout(app, 0.5);
-  CFTypeRef rawWindows = NULL;
-  AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, &rawWindows);
-  CFRelease(app);
-  NSArray *windows = rawWindows != NULL && CFGetTypeID(rawWindows) == CFArrayGetTypeID()
-    ? [(__bridge NSArray *)rawWindows copy] : @[];
-  if (rawWindows != NULL) CFRelease(rawWindows);
-  id selected = nil;
-  for (id window in windows) {
-    if ([attributeText((__bridge AXUIElementRef)window, kAXTitleAttribute) isEqualToString:title]) { selected = window; break; }
-  }
-  if (selected == nil) return nil;
+static NSArray *windowElements(pid_t pid, id selected, NSInteger limit, BOOL *truncated) {
   NSMutableArray *queue = [NSMutableArray arrayWithObject:selected];
   NSMutableArray *elements = [NSMutableArray array];
   AXUIElementRef focused = focusedElement(pid);
@@ -190,10 +230,19 @@ static NSArray *windowElements(pid_t pid, NSString *title, NSInteger limit, BOOL
   return elements;
 }
 
-static int inspectUi(NSString *bundleId, NSString *title, pid_t pid, NSInteger maxNodes) {
+static NSDictionary *guiNode(NSUInteger index, NSString *role, NSString *label, BOOL enabled,
+                             BOOL focused, BOOL secure, BOOL navigation) {
+  return @{ @"index": @(index), @"role": role, @"label": secure ? @"" : label,
+    @"enabled": @(enabled), @"focused": @(focused), @"secure": @(secure),
+    @"browser_navigation": @((BOOL)(navigation && !secure)) };
+}
+
+static int inspectUi(GuiWindowTarget *target, NSInteger maxNodes) {
+  NSString *bundleId = target.application.bundleIdentifier, *title = target.title;
+  pid_t pid = target.application.processIdentifier;
   if (!AXIsProcessTrusted()) return fail(@"accessibility_permission");
   BOOL truncated = NO;
-  NSArray *elements = windowElements(pid, title, maxNodes, &truncated);
+  NSArray *elements = windowElements(pid, target.axWindow, maxNodes, &truncated);
   if (elements == nil) return fail(@"window_not_found");
   NSMutableArray *nodes = [NSMutableArray array];
   AXUIElementRef focused = focusedElement(pid);
@@ -201,23 +250,24 @@ static int inspectUi(NSString *bundleId, NSString *title, pid_t pid, NSInteger m
     AXUIElementRef element = (__bridge AXUIElementRef)item;
     BOOL secure = secureElement(element);
     NSString *role = attributeText(element, kAXRoleAttribute);
-    [nodes addObject:@{ @"index": @(nodes.count), @"role": role.length > 0 && role.length <= 128 ? role : @"AXUnknown",
-      @"label": secure ? @"" : elementLabel(element),
-      @"enabled": @(attributeBool(element, kAXEnabledAttribute, NO)),
-      @"focused": @(focused != NULL && CFEqual(focused, element)), @"secure": @(secure) }];
+    if (role.length == 0 || role.length > 128) { if (focused != NULL) CFRelease(focused); return fail(@"ax_enumeration_failed"); }
+    [nodes addObject:guiNode(nodes.count, role, elementLabel(element), attributeBool(element, kAXEnabledAttribute, NO),
+      focused != NULL && CFEqual(focused, element), secure, secure ? NO : browserNavigationElement(element))];
   }
   if (focused != NULL) CFRelease(focused);
   return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
-    @"window_index": @0, @"window_title": title, @"focused": @YES,
+    @"window_index": @0, @"window_title": title, @"window_identity": target.identity, @"focused": @YES,
     @"nodes": nodes, @"truncated": @(truncated) });
 }
 
-static int performAxAction(NSString *bundleId, NSString *title, pid_t pid, int argc, const char *argv[]) {
+static int performAxAction(GuiWindowTarget *target, int argc, const char *argv[]) {
+  NSString *bundleId = target.application.bundleIdentifier, *title = target.title;
+  pid_t pid = target.application.processIdentifier;
   if (!AXIsProcessTrusted()) return fail(@"accessibility_permission");
   NSInteger index;
-  if (argc != 9 || !parseNumber(argv[5], 0, 1999, &index)) return fail(@"invalid_request");
+  if (argc != 10 || !parseNumber(argv[5], 0, 1999, &index)) return fail(@"invalid_request");
   BOOL truncated = NO;
-  NSArray *elements = windowElements(pid, title, 2000, &truncated);
+  NSArray *elements = windowElements(pid, target.axWindow, 2000, &truncated);
   if (elements == nil || index >= (NSInteger)elements.count) return fail(@"stale_target");
   AXUIElementRef element = (__bridge AXUIElementRef)elements[index];
   NSString *role = attributeText(element, kAXRoleAttribute);
@@ -236,10 +286,12 @@ static int performAxAction(NSString *bundleId, NSString *title, pid_t pid, int a
   else return fail(@"action_unsupported");
   if (error != kAXErrorSuccess) return fail(@"execution_failed");
   usleep(250000);
-  if (![NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier isEqualToString:bundleId] || secureElement(element) ||
+  NSString *reason = @"stale_target";
+  if (resolveGuiWindow(bundleId, @"", NO, target.identity, &reason) == nil) return fail(reason);
+  if (secureElement(element) ||
       ![attributeText(element, kAXRoleAttribute) isEqualToString:role] || ![elementLabel(element) isEqualToString:label]) return fail(@"stale_target");
   return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
-    @"window_index": @0, @"window_title": title, @"element_index": @(index), @"role": role,
+    @"window_index": @0, @"window_title": title, @"window_identity": target.identity, @"element_index": @(index), @"role": role,
     @"enabled": @(attributeBool(element, kAXEnabledAttribute, NO)),
     @"focused": @(attributeBool(element, kAXFocusedAttribute, NO)), @"secure": @NO, @"accepted": @YES });
 }
@@ -255,18 +307,24 @@ static BOOL postKey(CGKeyCode code, CGEventFlags flags) {
   return YES;
 }
 
-static int typeIntoFocused(NSString *bundleId, NSString *title, pid_t pid, const char *expectedRole,
-                           const char *expectedLabel) {
+static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, const char *expectedLabel) {
+  NSString *bundleId = target.application.bundleIdentifier, *title = target.title;
+  pid_t pid = target.application.processIdentifier;
   if (!AXIsProcessTrusted()) return fail(@"accessibility_permission");
   AXUIElementRef focused = focusedElement(pid);
   if (focused == NULL) return fail(@"stale_target");
   NSString *role = attributeText(focused, kAXRoleAttribute);
   NSString *subrole = attributeText(focused, kAXSubroleAttribute);
   NSString *label = elementLabel(focused);
+  CFTypeRef ownerWindow = NULL;
+  AXUIElementCopyAttributeValue(focused, kAXWindowAttribute, &ownerWindow);
+  BOOL owned = ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)target.axWindow);
+  if (ownerWindow != NULL) CFRelease(ownerWindow);
   BOOL valid = textRole(role) && [role isEqualToString:[NSString stringWithUTF8String:expectedRole]] &&
     [label isEqualToString:[NSString stringWithUTF8String:expectedLabel]] &&
     ![subrole localizedCaseInsensitiveContainsString:@"secure"] && !sensitiveTitle(label) &&
-    attributeBool(focused, kAXEnabledAttribute, NO);
+    attributeBool(focused, kAXEnabledAttribute, NO) && owned;
+  id navigationElement = valid && browserNavigationElement(focused) ? (__bridge id)focused : nil;
   CFRelease(focused);
   if (!valid) return fail(@"secure_target");
   NSMutableData *input = [NSMutableData data];
@@ -282,6 +340,10 @@ static int typeIntoFocused(NSString *bundleId, NSString *title, pid_t pid, const
       ![request[@"keys"] isKindOfClass:NSArray.class] || ![request[@"submit"] isKindOfClass:NSNumber.class]) return fail(@"invalid_request");
   NSString *text = request[@"text"];
   NSArray *keys = request[@"keys"];
+  BOOL navigation = [request[@"navigation"] boolValue];
+  // Delegation provenance must still hold at dispatch, before typing or Enter.
+  if (!navigationDispatchAllowed(navigation, navigationElement != nil, text, keys, [request[@"submit"] boolValue]))
+    return fail(@"secure_target");
   if (text.length > 10000 || keys.count > 32) return fail(@"invalid_request");
   for (NSUInteger index = 0; index < text.length; index++) {
     if ([text characterAtIndex:index] == 0) return fail(@"invalid_request");
@@ -327,11 +389,37 @@ static int typeIntoFocused(NSString *bundleId, NSString *title, pid_t pid, const
     ![attributeText(after, kAXSubroleAttribute) localizedCaseInsensitiveContainsString:@"secure"] &&
     [elementLabel(after) isEqualToString:label];
   if (after != NULL) CFRelease(after);
-  if (!focusConfirmed) return fail(@"focus_changed");
-  return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
-    @"window_index": @0, @"window_title": title, @"element_index": @0, @"role": role,
+  NSString *reason = @"stale_target";
+  NSString *postRole = nil;
+  if (navigation) {
+    focusConfirmed = NO;
+    for (NSUInteger attempt = 0; attempt < 30; attempt++) {
+      GuiWindowTarget *current = resolveGuiWindow(bundleId, @"", NO, target.identity, &reason);
+      if (current == nil) return fail(reason);
+      after = focusedElement(pid);
+      CFTypeRef ownerWindow = NULL;
+      if (after != NULL) AXUIElementCopyAttributeValue(after, kAXWindowAttribute, &ownerWindow);
+      BOOL owned = ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)current.axWindow);
+      BOOL verified = owned && !secureElement(after) &&
+        browserNavigationElement((__bridge AXUIElementRef)navigationElement) &&
+        navigationAddressMatches(text, attributeText((__bridge AXUIElementRef)navigationElement, kAXValueAttribute));
+      if (verified) postRole = attributeText(after, kAXRoleAttribute);
+      if (ownerWindow != NULL) CFRelease(ownerWindow);
+      if (after != NULL) CFRelease(after);
+      if (verified && postRole.length > 0 && postRole.length <= 128) { focusConfirmed = YES; break; }
+      [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    if (!focusConfirmed) return fail(@"navigation_unverified");
+  } else {
+    if (!focusConfirmed) return fail(@"focus_changed");
+    if (resolveGuiWindow(bundleId, @"", NO, target.identity, &reason) == nil) return fail(reason);
+  }
+  NSMutableDictionary *result = [@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
+    @"window_index": @0, @"window_title": title, @"window_identity": target.identity, @"element_index": @0, @"role": role,
     @"characters_accepted": @(text.length), @"keys_accepted": keys,
-    @"submitted": request[@"submit"], @"focus_confirmed": @YES, @"secure": @NO });
+    @"submitted": request[@"submit"], @"focus_confirmed": @YES, @"secure": @NO } mutableCopy];
+  if (navigation) { result[@"navigation_verified"] = @YES; result[@"post_role"] = postRole; }
+  return emit(result);
 }
 
 static BOOL secureUiAt(pid_t pid, CGPoint point, BOOL focused) {
@@ -347,25 +435,6 @@ static BOOL secureUiAt(pid_t pid, CGPoint point, BOOL focused) {
     attributeText(element, kAXTitleAttribute), attributeText(element, kAXDescriptionAttribute)];
   CFRelease(element);
   return sensitiveTitle(identity) || sensitiveAction(identity) || [identity localizedCaseInsensitiveContainsString:@"secure"];
-}
-
-static NSDictionary *browserWindow(NSArray<NSDictionary *> *windows, pid_t pid,
-                                   NSString *windowHint, NSUInteger *position) {
-  for (NSUInteger index = 0; index < windows.count; index++) {
-    NSDictionary *window = windows[index];
-    if ([window[(id)kCGWindowOwnerPID] intValue] != pid ||
-        [window[(id)kCGWindowLayer] intValue] != 0 ||
-        [window[(id)kCGWindowAlpha] doubleValue] < 0.01) continue;
-    CGRect bounds = CGRectZero;
-    if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)window[(id)kCGWindowBounds], &bounds) ||
-        bounds.size.width < 320 || bounds.size.height < 240) continue;
-    NSString *title = window[(id)kCGWindowName] ?: @"";
-    if (title.length == 0 || sensitiveTitle(title) ||
-        (windowHint.length > 0 && ![title isEqualToString:windowHint])) continue;
-    *position = index;
-    return window;
-  }
-  return nil;
 }
 
 static BOOL isExcludedScreenOverlay(NSString *bundleId, NSInteger layer) {
@@ -429,19 +498,19 @@ static CGImageRef captureImage(NSString *mode, CGWindowID windowId) {
   return image;
 }
 
-static int performAction(NSString *bundleId, NSString *windowHint, NSArray<NSDictionary *> *windows,
-                         NSRunningApplication *frontmost, int argc, const char *argv[]) {
-  if (argc != 12) return fail(@"invalid_request");
+static int performAction(GuiWindowTarget *target, int argc, const char *argv[]) {
+  NSString *bundleId = target.application.bundleIdentifier, *windowHint = target.title;
+  NSArray<NSDictionary *> *windows = target.windows;
+  NSRunningApplication *frontmost = target.application;
+  if (argc != 13) return fail(@"invalid_request");
   NSString *action = [NSString stringWithUTF8String:argv[5]];
   NSString *key = [NSString stringWithUTF8String:argv[10]];
   NSInteger x, y, dx, dy, waitMs;
   if (!parseNumber(argv[6], 0, 20000, &x) || !parseNumber(argv[7], 0, 20000, &y) ||
       !parseNumber(argv[8], -1000, 1000, &dx) || !parseNumber(argv[9], -1000, 1000, &dy) ||
       !parseNumber(argv[11], 0, 2000, &waitMs)) return fail(@"invalid_request");
-  NSUInteger selectedPosition = NSNotFound;
-  NSDictionary *selected = browserWindow(windows, frontmost.processIdentifier, windowHint, &selectedPosition);
-  if (selected == nil || ![(selected[(id)kCGWindowName] ?: @"") isEqualToString:windowHint] ||
-      sensitiveTitle(windowHint)) return fail(@"stale_target");
+  NSUInteger selectedPosition = target.position;
+  NSDictionary *selected = target.cgWindow;
   CGRect bounds = CGRectZero;
   CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)selected[(id)kCGWindowBounds], &bounds);
   CGPoint point = CGPointMake(x, y);
@@ -510,9 +579,10 @@ static int performAction(NSString *bundleId, NSString *windowHint, NSArray<NSDic
   } else return fail(@"invalid_request");
   // Event delivery is asynchronous and requires this authorized sender to stay alive.
   if (![action isEqualToString:@"wait"]) usleep(250000);
-  if (![NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier isEqualToString:bundleId]) return fail(@"focus_changed");
+  NSString *reason = @"stale_target";
+  if (resolveGuiWindow(bundleId, @"", NO, target.identity, &reason) == nil) return fail(reason);
   return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
-    @"window_title": windowHint, @"action": action, @"accepted": @YES, @"focused": @YES });
+    @"window_title": windowHint, @"window_identity": target.identity, @"action": action, @"accepted": @YES, @"focused": @YES });
 }
 
 static int executeGui(int argc, const char *argv[]) {
@@ -538,55 +608,33 @@ static int executeGui(int argc, const char *argv[]) {
         ![@[@"com.google.Chrome", @"com.apple.Safari"] containsObject:bundleId] ||
         (windowHint.length > 0 && sensitiveTitle(windowHint))) return fail(@"target_denied");
     if (strcmp(argv[1], "capture") == 0 && !CGPreflightScreenCaptureAccess()) return fail(@"screen_recording_permission");
-    NSRunningApplication *frontmost = NSWorkspace.sharedWorkspace.frontmostApplication;
-    if (strcmp(argv[1], "focus") == 0) {
-      if (!AXIsProcessTrusted()) return fail(@"accessibility_permission");
-      NSArray<NSRunningApplication *> *apps = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleId];
-      if (apps.count == 0) return fail(@"app_not_running");
-      [apps[0] activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-      for (NSUInteger attempt = 0; attempt < 30; attempt++) {
-        frontmost = NSWorkspace.sharedWorkspace.frontmostApplication;
-        if ([frontmost.bundleIdentifier isEqualToString:bundleId]) break;
-        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
-      }
-    }
-    if (![frontmost.bundleIdentifier isEqualToString:bundleId]) return fail(@"app_not_frontmost");
-    if (strcmp(argv[1], "focus") == 0 || strcmp(argv[1], "ax_action") == 0) {
-      if (!AXIsProcessTrusted()) return fail(@"accessibility_permission");
-      enableBrowserAccessibility(bundleId, frontmost.processIdentifier);
-      NSString *title = accessibleWindowTitle(frontmost.processIdentifier, windowHint);
-      if (title == nil) return fail(@"window_not_found");
-      if (strcmp(argv[1], "ax_action") == 0) return performAxAction(bundleId, title, frontmost.processIdentifier, argc, argv);
-      return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
-        @"window_index": @0, @"window_title": title, @"focused": @YES });
-    }
-    if (strcmp(argv[1], "inspect") == 0 && strcmp(argv[2], "accessibility") == 0) {
-      if (!AXIsProcessTrusted()) return fail(@"accessibility_permission");
+    BOOL focus = strcmp(argv[1], "focus") == 0;
+    BOOL inspect = strcmp(argv[1], "inspect") == 0;
+    BOOL capture = strcmp(argv[1], "capture") == 0;
+    BOOL action = strcmp(argv[1], "action") == 0;
+    BOOL axAction = strcmp(argv[1], "ax_action") == 0;
+    BOOL type = strcmp(argv[1], "type") == 0;
+    if ((focus && argc != 5) || (inspect && argc != 6 && argc != 7) || (capture && argc != 6) ||
+        (action && argc != 13) || (axAction && argc != 10) || (type && argc != 8)) return fail(@"invalid_request");
+    NSString *expected = focus || (inspect && argc == 6) ? @"" : [NSString stringWithUTF8String:argv[argc - 1]];
+    if (!focus && !inspect && expected.length == 0) return fail(@"invalid_request");
+    NSString *reason = @"window_correlation_failed";
+    GuiWindowTarget *target = resolveGuiWindow(bundleId, windowHint, focus, expected, &reason);
+    if (target == nil) return fail(reason);
+    if (focus) return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
+      @"window_index": @0, @"window_title": target.title, @"window_identity": target.identity, @"focused": @YES });
+    if (axAction) return performAxAction(target, argc, argv);
+    if (action) return performAction(target, argc, argv);
+    if (type) return typeIntoFocused(target, argv[5], argv[6]);
+    if (inspect) {
       NSInteger maxNodes;
-      if (argc != 6 || !parseNumber(argv[5], 1, 2000, &maxNodes)) return fail(@"invalid_request");
-      enableBrowserAccessibility(bundleId, frontmost.processIdentifier);
-      NSString *title = accessibleWindowTitle(frontmost.processIdentifier, windowHint);
-      if (title == nil) return fail(@"window_not_found");
-      return inspectUi(bundleId, title, frontmost.processIdentifier, maxNodes);
+      if (!parseNumber(argv[5], 1, 2000, &maxNodes)) return fail(@"invalid_request");
+      return inspectUi(target, maxNodes);
     }
-    NSArray<NSDictionary *> *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(
-      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
-    enableBrowserAccessibility(bundleId, frontmost.processIdentifier);
-    if (strcmp(argv[1], "action") == 0) return performAction(bundleId, windowHint, windows, frontmost, argc, argv);
-    NSUInteger selectedPosition = NSNotFound;
-    NSDictionary *selected = browserWindow(windows, frontmost.processIdentifier, windowHint, &selectedPosition);
-    if (selected == nil) return fail(@"window_not_found");
-    NSString *title = selected[(id)kCGWindowName] ?: @"";
-    if (sensitiveTitle(title)) return fail(@"target_denied");
-    if (strcmp(argv[1], "inspect") == 0) {
-      NSInteger maxNodes;
-      if (argc != 6 || !parseNumber(argv[5], 1, 2000, &maxNodes)) return fail(@"invalid_request");
-      return inspectUi(bundleId, title, frontmost.processIdentifier, maxNodes);
-    }
-    if (strcmp(argv[1], "type") == 0) {
-      if (argc != 7 || windowHint.length == 0) return fail(@"invalid_request");
-      return typeIntoFocused(bundleId, title, frontmost.processIdentifier, argv[5], argv[6]);
-    }
+    NSArray<NSDictionary *> *windows = target.windows;
+    NSDictionary *selected = target.cgWindow;
+    NSUInteger selectedPosition = target.position;
+    NSString *title = target.title;
     CGRect bounds = CGRectZero;
     CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)selected[(id)kCGWindowBounds], &bounds);
     if ([mode isEqualToString:@"screen"]) {
@@ -621,7 +669,7 @@ static int executeGui(int argc, const char *argv[]) {
     return emit(@{
       @"status": @"ok", @"mode": mode,
       @"app_id": [@"bundle:" stringByAppendingString:bundleId],
-      @"window_title": title,
+      @"window_title": title, @"window_identity": target.identity,
       @"screen_width": @((NSInteger)CGDisplayBounds(display).size.width),
       @"screen_height": @((NSInteger)CGDisplayBounds(display).size.height),
       @"window_x": @(bounds.origin.x), @"window_y": @(bounds.origin.y),
