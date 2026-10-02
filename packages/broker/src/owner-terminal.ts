@@ -6,6 +6,11 @@ import { isPlainDataRecord } from "./plain-record.js";
 import { assertContentDoesNotContainSecrets } from "./secret-policy.js";
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
 
+/** Fixed owner-shell PATH; the owner's user bin directory is last so it cannot shadow system tools. */
+export function ownerTerminalPath(home: string): string {
+  return `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${home}/.local/bin`;
+}
+
 export interface OwnerTerminalRequest {
   command: string;
   cwd: string;
@@ -61,7 +66,7 @@ export class PersonalOwnerTerminalExecutor implements OwnerTerminalExecutor {
     if (!(await lstat(cwd)).isDirectory()) throw new BrokerError("PRECONDITION_FAILED", "Terminal cwd must be a directory");
     if (control.shouldCancel()) throw new BrokerError("CANCELLED", "Terminal authority was revoked before execution");
     return this.supervisor.run({ executable: "/bin/zsh", args: ["-f", "-s"], cwd: await realpath(homedir()),
-      stdin: `export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin TMPDIR=/tmp\ncd -- ${shellQuote(cwd)} || exit 125\n${request.command}\n`, timeoutMs: Math.min(request.timeoutMs, control.timeoutMs), outputCapBytes: 131_072,
+      stdin: `export PATH=${shellQuote(ownerTerminalPath(homedir()))} TMPDIR=/tmp\ncd -- ${shellQuote(cwd)} || exit 125\n${request.command}\n`, timeoutMs: Math.min(request.timeoutMs, control.timeoutMs), outputCapBytes: 131_072,
       environment: { HOME: homedir(), LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8", TERM: "dumb" },
       shouldCancel: control.shouldCancel,
       ...(control.onProcessStarted ? { onStarted: control.onProcessStarted } : {}),

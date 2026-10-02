@@ -24,7 +24,7 @@ rows, cols, cwd = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
     os.chdir(cwd)
-    os.environ['PATH'] = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+    os.environ['PATH'] = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:' + os.environ['HOME'] + '/.local/bin'
     os.environ['TMPDIR'] = '/tmp'
     os.execv('/bin/zsh', ['zsh', '-f'])
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
