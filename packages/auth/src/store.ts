@@ -115,6 +115,18 @@ export class AuthStore {
     }
   }
 
+  /**
+   * Free registration slots by deleting the oldest clients that no grant references.
+   * Anonymous registration cannot expire, so this keeps it from exhausting capacity.
+   */
+  evictUnusedClients(count: number): number {
+    this.assertAvailable();
+    return this.write(() => Number(this.db.prepare(
+      "DELETE FROM records WHERE kind='client' AND id IN (SELECT c.id FROM records c WHERE c.kind='client' AND NOT EXISTS " +
+      "(SELECT 1 FROM records g WHERE g.kind='grant' AND json_extract(g.payload,'$.clientId') = c.id) ORDER BY c.rowid LIMIT ?)"
+    ).run(count).changes));
+  }
+
   prune(): void {
     this.assertAvailable();
     this.write(() => this.db.prepare("DELETE FROM records WHERE kind != 'account' AND json_extract(payload,'$.expiresAt') <= ?").run(Date.now()));
