@@ -55,6 +55,24 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
   let requests = 0;
   let loginAttempts = 0;
   let activePasswords = 0;
+  // Escalating lockout after repeated login bursts: 2, 5, then 10 minutes. The level resets
+  // after a successful login or an hour without a new lockout.
+  const lockoutSeconds = [120, 300, 600];
+  let lockedUntil = 0;
+  let lockoutLevel = 0;
+  let lastLockoutAt = 0;
+  const loginBlocked = (res: Response): boolean => {
+    const now = Date.now();
+    if (now < lockedUntil) { res.set("Retry-After", String(Math.ceil((lockedUntil - now) / 1000))).status(429).end(); return true; }
+    if (now - lastLockoutAt >= 3_600_000) lockoutLevel = 0;
+    if (++loginAttempts > 10) {
+      const seconds = lockoutSeconds[Math.min(lockoutLevel, lockoutSeconds.length - 1)] ?? 600;
+      lockoutLevel++; lastLockoutAt = now; lockedUntil = now + seconds * 1000;
+      res.set("Retry-After", String(seconds)).status(429).end(); return true;
+    }
+    if (activePasswords >= 2) { res.set("Retry-After", "60").status(429).end(); return true; }
+    return false;
+  };
   app.use((req, res, next) => {
     res.set({ "Cache-Control": "no-store", "Pragma": "no-cache", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
       "Content-Security-Policy": contentSecurityPolicy() });
@@ -94,7 +112,13 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     }
     const clientId = nonce();
     // Connector registration outlives individual seven-day user grants.
-    store.put("client", clientId, { id: clientId, name: data.client_name, redirectUris: data.redirect_uris, expiresAt: Number.MAX_SAFE_INTEGER, ...provider.resourceBinding() });
+    const record = { id: clientId, name: data.client_name, redirectUris: data.redirect_uris, expiresAt: Number.MAX_SAFE_INTEGER, ...provider.resourceBinding() };
+    try { store.put("client", clientId, record); }
+    catch (error) {
+      // Anonymous registrations never expire; when full, drop the oldest unused ones instead of locking out new connectors.
+      if (!(error instanceof Error) || error.message !== "Auth capacity exceeded" || store.evictUnusedClients(100) === 0) throw error;
+      store.put("client", clientId, record);
+    }
     res.status(201).json({ client_id: clientId, client_id_issued_at: Math.floor(Date.now() / 1000), client_name: data.client_name,
       redirect_uris: data.redirect_uris, token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
   });
@@ -169,7 +193,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     const body = loginBody.parse(req.body);
     const { key, session } = browser(req);
     csrfCheck(req, session.csrf, body.csrf);
-    if (++loginAttempts > 10 || activePasswords >= 2) { res.set("Retry-After", "60").status(429).end(); return; }
+    if (loginBlocked(res)) return;
     activePasswords++;
     let valid: boolean;
     try {
@@ -178,6 +202,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       valid = await verifyPassword(body.password, current.salt, current.passwordHash) && body.username === current.username;
     } finally { activePasswords--; }
     if (!valid) { res.status(401).type("html").send(loginPage(session.csrf, true, basePath)); return; }
+    lockoutLevel = 0;
     const newId = nonce();
     store.transaction(() => {
       // A concurrent login/reset may already have invalidated this session.
@@ -276,7 +301,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     const body = approvalLoginBody.parse(req.body);
     const { key, session } = approvalBrowser(req);
     csrfCheck(req, session.csrf, body.csrf);
-    if (++loginAttempts > 10 || activePasswords >= 2) { res.set("Retry-After", "60").status(429).end(); return; }
+    if (loginBlocked(res)) return;
     activePasswords++;
     let valid: boolean;
     try {
@@ -284,6 +309,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       valid = await verifyPassword(body.password, current.salt, current.passwordHash) && body.username === current.username;
     } finally { activePasswords--; }
     if (!valid) { res.status(401).type("html").send(approvalLoginPage(session.csrf, true, undefined, session.requestId === "manage-browser-access")); return; }
+    lockoutLevel = 0;
     const newId = nonce();
     store.transaction(() => {
       if (!store.delete("approval_session", key)) throw new BrowserSessionError("Invalid approval session");
