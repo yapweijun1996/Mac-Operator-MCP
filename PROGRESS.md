@@ -62,6 +62,21 @@ Design: `docs/MAC_OPERATOR_V2_DESIGN.md`; operator runbook:
 `evidence/2026-10-01-v2-gateway-validation.md` and
 `docs/MAC_OPERATOR_V2_CHANGE_REPORT.md`.
 
+Historical direct task unblock check (2026-10-01): BLOCKED at that checkpoint.
+The then-live G1 policy and
+OAuth configuration omit task authority, and the personal supervisor has no
+task registry or executor. The physical Seatbelt probe and focused runner
+checks pass, but the available experimental boundaries do not supply an
+accepted deployed task executor. The root-helper route lacks its installed
+helper/signing material, and non-interactive administrator access is unavailable.
+No live policy or service was changed. The next step is an accepted isolated
+executor deployment, followed by named-profile, signed-policy, OAuth and real
+task-call verification. Evidence:
+`evidence/2026-10-01-direct-task-run-enablement.md`.
+Later V2 production acceptance is recorded in
+`evidence/2026-10-02-v2-production-gateway.md`; this G1 check does not describe
+the current deployment.
+
 Personal owner terminal (2026-10-01): O1 is live under explicit owner opt-in
 and OAuth consent, with 38 tools and 24 scopes. The public verifier passed
 31-second terminal/CLI/network/file execution, idempotency, timeout, durable
