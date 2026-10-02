@@ -112,7 +112,13 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     }
     const clientId = nonce();
     // Connector registration outlives individual seven-day user grants.
-    store.put("client", clientId, { id: clientId, name: data.client_name, redirectUris: data.redirect_uris, expiresAt: Number.MAX_SAFE_INTEGER, ...provider.resourceBinding() });
+    const record = { id: clientId, name: data.client_name, redirectUris: data.redirect_uris, expiresAt: Number.MAX_SAFE_INTEGER, ...provider.resourceBinding() };
+    try { store.put("client", clientId, record); }
+    catch (error) {
+      // Anonymous registrations never expire; when full, drop the oldest unused ones instead of locking out new connectors.
+      if (!(error instanceof Error) || error.message !== "Auth capacity exceeded" || store.evictUnusedClients(100) === 0) throw error;
+      store.put("client", clientId, record);
+    }
     res.status(201).json({ client_id: clientId, client_id_issued_at: Math.floor(Date.now() / 1000), client_name: data.client_name,
       redirect_uris: data.redirect_uris, token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
   });
