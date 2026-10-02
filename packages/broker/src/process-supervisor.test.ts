@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
-import { assertProcessPathIdentityStable, captureProcessPathIdentity, detectProcessIdentityReplacement, ProcessSupervisor } from "./process-supervisor.js";
+import { assertProcessPathIdentityStable, captureProcessPathIdentity, detectProcessIdentityReplacement, observeProcessRootState, ProcessSupervisor, type ProcessStdinSink } from "./process-supervisor.js";
 
 const CWD = process.cwd();
 
@@ -127,6 +127,113 @@ test("process supervisor rejects descendant PID identity replacement", () => {
   assert.equal(detectProcessIdentityReplacement(tracked, [{ pid: 43, startTimeMicros: 101 }]), false);
 });
 
+test("root observation resolves an exit between liveness and identity reads", () => {
+  const identity = { pid: 42, processGroupId: 42, startTimeMicros: 100 };
+  let checks = 0;
+  const state = observeProcessRootState({
+    isProcessIdentityAlive: (pid, startTimeMicros) => {
+      assert.equal(pid, identity.pid);
+      assert.equal(startTimeMicros, identity.startTimeMicros);
+      checks += 1;
+      return checks === 1;
+    },
+    getProcessIdentity: () => { throw new Error("process exited before identity read"); }
+  }, identity, (pid) => { assert.equal(pid, identity.pid); return true; });
+  assert.equal(state, "dead");
+  assert.equal(checks, 2, "exit-race recovery performs one bounded exact-identity recheck");
+});
+
+test("root observation preserves uncertainty when the identity read fails for a live process", () => {
+  const identity = { pid: 42, processGroupId: 42, startTimeMicros: 100 };
+  for (const recheck of [true, undefined, "unavailable"] as const) {
+    let checks = 0;
+    assert.equal(observeProcessRootState({
+      isProcessIdentityAlive: () => { checks += 1; return checks === 1 ? true : recheck; },
+      getProcessIdentity: () => { throw new Error("observer unavailable"); }
+    }, identity), "unknown");
+    assert.equal(checks, 2);
+  }
+  let checks = 0;
+  assert.equal(observeProcessRootState({
+    isProcessIdentityAlive: () => { checks += 1; if (checks === 1) return true; throw new Error("observer unavailable"); },
+    getProcessIdentity: () => { throw new Error("observer unavailable"); }
+  }, identity), "unknown");
+  assert.equal(checks, 2);
+  assert.equal(observeProcessRootState({
+    isProcessIdentityAlive: () => { throw new Error("initial observer unavailable"); },
+    getProcessIdentity: () => { assert.fail("initial observation failure must not read another identity"); }
+  }, identity), "unknown");
+});
+
+test("root observation requires an independent absence proof after a native read race", () => {
+  const identity = { pid: 42, processGroupId: 42, startTimeMicros: 100 };
+  for (const absence of [false, undefined, "permission-denied"] as const) {
+    let checks = 0;
+    assert.equal(observeProcessRootState({
+      isProcessIdentityAlive: () => { checks += 1; return checks === 1; },
+      getProcessIdentity: () => { throw new Error("process identity could not be read"); }
+    }, identity, () => absence), "unknown");
+    assert.equal(checks, 2);
+  }
+  let checks = 0;
+  assert.equal(observeProcessRootState({
+    isProcessIdentityAlive: () => { checks += 1; return checks === 1; },
+    getProcessIdentity: () => { throw new Error("process identity could not be read"); }
+  }, identity, () => { throw new Error("absence observer unavailable"); }), "unknown");
+  assert.equal(checks, 2);
+});
+
+test("root absence probe accepts only ESRCH and never sends a termination signal", (t) => {
+  const identity = { pid: 42, processGroupId: 42, startTimeMicros: 100 };
+  for (const code of [undefined, "ESRCH", "EPERM", "EIO"] as const) {
+    let checks = 0;
+    t.mock.method(process, "kill", (pid: number, signal?: string | number) => {
+      assert.equal(pid, identity.pid);
+      assert.equal(signal, 0);
+      if (code !== undefined) throw Object.assign(new Error("probe result"), { code });
+      return true;
+    });
+    try {
+      assert.equal(observeProcessRootState({
+        isProcessIdentityAlive: () => { checks += 1; return checks === 1; },
+        getProcessIdentity: () => { throw new Error("process identity could not be read"); }
+      }, identity), code === "ESRCH" ? "dead" : "unknown");
+      assert.equal(checks, 2);
+    } finally {
+      t.mock.restoreAll();
+    }
+  }
+});
+
+test("root observation never resolves PID reuse or malformed identity as an absence race", () => {
+  const identity = { pid: 42, processGroupId: 42, startTimeMicros: 100 };
+  for (const current of [
+    { pid: 42, parentPid: 1, processGroupId: 42, startTimeMicros: 101 },
+    { pid: 43, parentPid: 1, processGroupId: 43, startTimeMicros: 100 },
+    { pid: 42, parentPid: 1, processGroupId: 43, startTimeMicros: 100 },
+    { pid: 42 }
+  ]) {
+    let checks = 0;
+    assert.equal(observeProcessRootState({
+      isProcessIdentityAlive: () => { checks += 1; return checks === 1; },
+      getProcessIdentity: () => current
+    }, identity), "unknown");
+    assert.equal(checks, 1, "a concrete invalid identity must not be reclassified by a later absence");
+  }
+});
+
+test("root observation keeps exact live identity and already-absent identity deterministic", () => {
+  const identity = { pid: 42, processGroupId: 42, startTimeMicros: 100 };
+  assert.equal(observeProcessRootState({
+    isProcessIdentityAlive: () => true,
+    getProcessIdentity: () => ({ ...identity, parentPid: 1 })
+  }, identity), "alive");
+  assert.equal(observeProcessRootState({
+    isProcessIdentityAlive: () => false,
+    getProcessIdentity: () => { assert.fail("already absent identity does not require another read"); }
+  }, identity), "dead");
+});
+
 test("process supervisor uses an explicit environment and bounded output", async () => {
   const supervisor = new ProcessSupervisor({ allowedEnvironmentKeys: ["SAFE_PROFILE"] });
   const result = await supervisor.run({
@@ -166,6 +273,155 @@ test("process supervisor delivers bounded stdin without exposing it in argv", as
     timeoutMs: 1_000,
     outputCapBytes: 100
   }), /stdin exceeds/u);
+});
+
+test("process supervisor accepts queued stdin writes and makes stdin end idempotent", async () => {
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  const payload = "x".repeat(512 * 1024);
+  let sink: ProcessStdinSink | undefined;
+  try {
+    const result = await supervisor.run({
+      executable: "/usr/bin/python3",
+      args: ["-c", "import sys,time; time.sleep(0.1); print(len(sys.stdin.read()))"],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 1_024,
+      keepStdinOpen: true,
+      onStdinReady: (value) => {
+        sink = value;
+        assert.equal(value.write(payload), true);
+        value.end();
+        value.end();
+        assert.equal(value.write("after-end"), false);
+      }
+    });
+    assert.equal(result.state, "completed");
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stdout.trim(), String(payload.length));
+    assert.equal(result.terminationObserved, true);
+    assert.equal(sink!.write("after-close"), false);
+    assert.doesNotThrow(() => sink!.end());
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("process supervisor isolates asynchronous interactive stdin failure", async () => {
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let sink: ProcessStdinSink | undefined;
+  let wrote = false;
+  try {
+    const result = await supervisor.run({
+      executable: "/usr/bin/python3",
+      args: ["-c", "import os,time; time.sleep(0.1); os.close(0); os.write(1,b'INPUT_CLOSED'); time.sleep(10)"],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 100,
+      keepStdinOpen: true,
+      onStdinReady: (value) => { sink = value; },
+      streamOutput: true,
+      onOutputChunk: () => {
+        wrote = true;
+        sink!.write("unread-input");
+      }
+    });
+    assert.equal(wrote, true);
+    assert.equal(result.state, "failed");
+    assert.equal(result.resultClass, "EXECUTION_FAILED");
+    assert.equal(result.terminationObserved, true);
+    await assertProcessGone(result.processId);
+    const independent = await supervisor.run({
+      executable: "/usr/bin/printf", args: ["STILL_HEALTHY"], cwd: CWD, timeoutMs: 1_000, outputCapBytes: 100
+    });
+    assert.equal(independent.stdout, "STILL_HEALTHY");
+    assert.equal(independent.state, "completed");
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("process supervisor isolates streamed output consumer failure and drains the process", async () => {
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let consumed = 0;
+  try {
+    const result = await supervisor.run({
+      executable: "/usr/bin/python3",
+      args: ["-c", "import os,time; os.write(1,b'OUTPUT'); time.sleep(10)"],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 100,
+      streamOutput: true,
+      onOutputChunk: () => { consumed += 1; throw new Error("consumer unavailable"); }
+    });
+    assert.equal(consumed, 1);
+    assert.equal(result.state, "failed");
+    assert.equal(result.resultClass, "EXECUTION_FAILED");
+    assert.equal(result.terminationObserved, true);
+    await assertProcessGone(result.processId);
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("process supervisor drains the process tree when stdin startup binding fails", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Startup tree cleanup proof uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let snapshot: import("./process-supervisor.js").ProcessOwnershipSnapshot | undefined;
+  let output = "";
+  try {
+    await assert.rejects(supervisor.run({
+      executable: "/usr/bin/python3",
+      args: ["-c", "import os,time; child=os.fork(); (os.setsid(), time.sleep(10)) if child == 0 else (os.write(1,('CHILD_PID:' + str(child)).encode()), time.sleep(10))"],
+      cwd: CWD,
+      timeoutMs: 2_000,
+      outputCapBytes: 100,
+      onStarted: async (value) => { snapshot = value; await new Promise((resolve) => setTimeout(resolve, 100)); },
+      streamOutput: true,
+      onOutputChunk: (chunk) => { output += chunk.toString("utf8"); },
+      keepStdinOpen: true,
+      onStdinReady: () => { throw new Error("session binding unavailable"); }
+    }), (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED");
+    assert.ok(snapshot);
+    const descendantPid = Number(/CHILD_PID:(\d+)/u.exec(output)?.[1]);
+    assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+    await assertProcessGone(snapshot.identity.pid);
+    await assertProcessGone(descendantPid);
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("process supervisor isolates asynchronous one-shot stdin failure", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("Startup timing fixture uses the macOS native process observer");
+    return;
+  }
+  const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  try {
+    const result = await supervisor.run({
+      executable: "/usr/bin/python3",
+      args: ["-c", "import os,time; os.close(0); time.sleep(10)"],
+      cwd: CWD,
+      stdin: "queued-input".repeat(5_000),
+      timeoutMs: 2_000,
+      outputCapBytes: 1_024,
+      onStarted: async () => { await new Promise((resolve) => setTimeout(resolve, 100)); }
+    });
+    assert.equal(result.state, "failed");
+    assert.equal(result.resultClass, "EXECUTION_FAILED");
+    assert.equal(result.terminationObserved, true);
+    await assertProcessGone(result.processId);
+    assert.equal(supervisor.activeCount(), 0);
+  } finally {
+    await supervisor.close();
+  }
 });
 
 test("process supervisor rejects known secret representations in stdin", async () => {

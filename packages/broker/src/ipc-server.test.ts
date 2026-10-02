@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, stat, symlink, unlink, rename } from "node:fs/promises";
@@ -392,4 +393,97 @@ test("framed IPC processing outlives the 15-second input deadline", { timeout: 2
   await new Promise<void>(resolve => server.listen(socketPath, resolve));
   try { assert.deepEqual(JSON.parse(await send(socketPath, "{}\n")), response); }
   finally { await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a reset IPC connection cannot crash the Broker or affect later tool requests", () => {
+  // Run in a child so the pre-fix unhandled Socket error is observable as a
+  // Broker-process crash rather than taking down the test runner itself.
+  const program = `
+    import assert from "node:assert/strict";
+    import { execFileSync } from "node:child_process";
+    import { createConnection, createServer } from "node:net";
+    import { setTimeout as delay } from "node:timers/promises";
+    const { handleBrokerSocket } = await import(process.argv[1]);
+    const broker = { handleForIpc: async request => {
+      if (request.tool === "mac_terminal_session") await delay(50);
+      const output = request.tool === "mac_terminal_exec"
+        ? execFileSync("/bin/echo", ["PARALLEL_OK"], { encoding: "utf8" }).trim() : "healthy";
+      return { ok: true, request_id: request.tool, tool: request.tool, data: { output } };
+    } };
+    const pendingClose = [];
+    const server = createServer(socket => {
+      pendingClose.push(new Promise(resolve => socket.once("close", resolve)));
+      handleBrokerSocket(socket, broker, 4096);
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const port = server.address().port;
+    const connect = async () => {
+      const accepted = new Promise(resolve => server.once("connection", resolve));
+      const socket = createConnection(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await new Promise(resolve => socket.once("connect", resolve));
+      await accepted;
+      return socket;
+    };
+    const beforeRequest = await connect();
+    beforeRequest.resetAndDestroy();
+    await pendingClose[0];
+    const duringRequest = await connect();
+    duringRequest.write(JSON.stringify({ tool: "mac_terminal_session" }) + "\\n");
+    await delay(10);
+    duringRequest.resetAndDestroy();
+    await delay(100);
+    const request = async tool => {
+      const socket = await connect();
+      let response = "";
+      socket.setEncoding("utf8");
+      const ended = new Promise((resolve, reject) => {
+        socket.on("data", chunk => { response += chunk; });
+        socket.once("end", resolve);
+        socket.once("error", reject);
+      });
+      socket.write(JSON.stringify({ tool }) + "\\n");
+      await ended;
+      return JSON.parse(response);
+    };
+    const [health, terminal] = await Promise.all([request("mac_health"), request("mac_terminal_exec")]);
+    assert.equal(health.data.output, "healthy");
+    assert.equal(terminal.data.output, "PARALLEL_OK");
+    await new Promise(resolve => server.close(resolve));
+    console.log("BROKER_SURVIVED_PARALLEL_REQUESTS");
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", program, new URL("./ipc-server.js", import.meta.url).href],
+    { encoding: "utf8", timeout: 10_000 });
+  assert.equal(child.error, undefined, String(child.error));
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /BROKER_SURVIVED_PARALLEL_REQUESTS/u);
+});
+
+test("a synchronous IPC response write failure remains local to its connection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-write-fault-"));
+  const socketPath = join(directory, "broker.sock");
+  let accepted!: ReturnType<typeof createConnection>;
+  const response = { ok: true, request_id: "write-fault", tool: "mac_health", result_class: "SUCCEEDED" };
+  const broker = { handleForIpc: async () => response } as unknown as Broker;
+  const server = createServer(socket => {
+    accepted = socket;
+    handleBrokerSocket(socket, broker, 4096);
+    socket.end = (() => { throw new Error("Response socket closed during write"); }) as typeof socket.end;
+  });
+  await listenServer(server, socketPath);
+  const client = createConnection(socketPath);
+  try {
+    await new Promise<void>((resolve, reject) => { client.once("connect", resolve); client.once("error", reject); });
+    const closed = new Promise<void>(resolve => client.once("close", resolve));
+    client.write("{}\n");
+    await closed;
+    assert.equal(accepted.destroyed, true);
+  } finally {
+    client.destroy();
+    await closeServer(server);
+    await rm(directory, { recursive: true, force: true });
+  }
 });

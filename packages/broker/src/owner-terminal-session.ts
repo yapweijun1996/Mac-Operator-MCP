@@ -19,7 +19,7 @@ const FINISHED_RETENTION_MS = 60_000;
  * native Node dependency is needed. Window size arrives as argv.
  */
 const PTY_SHIM = `
-import fcntl, os, select, signal, struct, sys, termios, time, pty
+import errno, fcntl, os, select, signal, struct, sys, termios, time, pty
 rows, cols, cwd = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
@@ -27,54 +27,120 @@ if pid == 0:
     os.environ['PATH'] = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:' + os.environ['HOME'] + '/.local/bin'
     os.environ['TMPDIR'] = '/tmp'
     os.execv('/bin/zsh', ['zsh', '-f'])
-fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
-stdin_open = True
-hung_up = False
-while True:
-    fds = [fd] + ([0] if stdin_open else [])
-    ready, _, _ = select.select(fds, [], [])
-    if fd in ready:
-        try:
-            data = os.read(fd, 4096)
-        except OSError:
-            break
-        if not data:
-            break
-        os.write(1, data)
-    if stdin_open and 0 in ready:
-        data = os.read(0, 4096)
-        if not data:
-            stdin_open = False
-            hung_up = True
-            os.close(fd)
-            break
-        os.write(fd, data)
-def reap(hung):
-    # After the hangup, a shell that was still starting may never see it; escalate so stop always ends.
-    if hung:
-        for sig, wait in ((signal.SIGHUP, 2.0), (signal.SIGKILL, 2.0)):
+stop_signal = 0
+def requested_stop(sig, frame):
+    global stop_signal
+    stop_signal = sig
+signal.signal(signal.SIGTERM, requested_stop)
+signal.signal(signal.SIGHUP, requested_stop)
+pending = bytearray()
+stopped = False
+failed = False
+status = None
+foreground = pid
+try:
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+    os.set_blocking(fd, False)
+    while not stop_signal:
+        # Bound queued input, handle short writes, and keep reading a raw-mode TUI
+        # even when its input is backpressured. Terminal bytes stay opaque.
+        readers = [fd] + ([0] if len(pending) < 65536 else [])
+        ready, writable, _ = select.select(readers, [fd] if pending else [], [], 0.1)
+        if fd in ready:
+            try:
+                data = os.read(fd, 4096)
+            except OSError as error:
+                if error.errno in (errno.EAGAIN, errno.EINTR):
+                    continue
+                if error.errno == errno.EIO:
+                    break
+                raise
+            if not data:
+                break
+            view = memoryview(data)
+            while view:
+                try:
+                    count = os.write(1, view)
+                    view = view[count:]
+                except InterruptedError:
+                    continue
+        if 0 in ready:
+            data = os.read(0, 4096)
+            if not data:
+                stopped = True
+                break
+            pending.extend(data)
+        if fd in writable:
+            try:
+                count = os.write(fd, pending)
+                del pending[:count]
+            except OSError as error:
+                if error.errno not in (errno.EAGAIN, errno.EINTR):
+                    raise
+except (OSError, ValueError) as error:
+    failed = True
+    try:
+        os.write(2, ('PTY_RELAY_FAILED errno=%s\\n' % getattr(error, 'errno', None)).encode())
+    except OSError:
+        pass
+finally:
+    # Capture the terminal-owned foreground group before closing the master.
+    # Closing it first loses the only handle to a foreground TUI's job group.
+    try:
+        foreground = os.tcgetpgrp(fd)
+    except OSError:
+        pass
+    if stopped or failed or stop_signal:
+        for group in set((pid, foreground)):
+            if group > 0:
+                try:
+                    if os.getsid(group) == pid:
+                        os.killpg(group, signal.SIGHUP)
+                except ProcessLookupError:
+                    pass
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    for sig, wait in ((None, 0.3), (signal.SIGTERM, 0.3), (signal.SIGKILL, 0.3)):
+        # An unreaped direct child cannot have its PID reused. Foreground groups
+        # receive HUP only while the terminal is attached; any survivors are
+        # drained by the supervisor using PID/start-time identities.
+        if status is None and sig is not None:
             try:
                 os.kill(pid, sig)
             except ProcessLookupError:
-                break
-            deadline = time.monotonic() + wait
-            while time.monotonic() < deadline:
-                try:
-                    done, status = os.waitpid(pid, os.WNOHANG)
-                except ChildProcessError:
-                    return 0
+                pass
+        deadline = time.monotonic() + wait
+        while status is None and time.monotonic() < deadline:
+            try:
+                done, value = os.waitpid(pid, os.WNOHANG)
                 if done:
-                    return status
-                time.sleep(0.05)
-    try:
-        return os.waitpid(pid, 0)[1]
-    except ChildProcessError:
-        return 0
-status = reap(hung_up)
-if hung_up:
+                    status = value
+            except ChildProcessError:
+                failed = True
+                break
+            if status is None:
+                time.sleep(0.01)
+        if status is not None:
+            break
+    if status is None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            status = os.waitpid(pid, 0)[1]
+        except ChildProcessError:
+            failed = True
+if failed or status is None:
+    sys.exit(1)
+if stop_signal:
+    sys.exit(128 + stop_signal)
+if stopped:
     sys.exit(0)
 sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
-`;
+`.replace(/^[ \t]*#.*\n/gmu, ""); // Keep the documented shim within the supervisor's 4096-byte argument bound.
 
 export interface OwnerTerminalSessionStart {
   cwd: string;
@@ -91,7 +157,8 @@ export interface OwnerTerminalSessionStart {
   onIdleTimeout?: () => void;
   onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
   onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
-  onFinished?: (result: ProcessExecutionResult) => void;
+  /** Must commit the final Job state before resolving. Failed commits retain the session. */
+  onFinished?: (result: ProcessExecutionResult) => void | ProcessExecutionResult | Promise<void | ProcessExecutionResult>;
 }
 
 export interface OwnerTerminalSessionRead {
@@ -116,8 +183,11 @@ interface Session {
   lastActivityMs: number;
   idleTimeoutMs: number;
   stopRequested: boolean;
+  inputEnded: boolean;
+  failureRequested?: boolean;
   idleNotified?: boolean;
   result?: ProcessExecutionResult;
+  finalizationError?: BrokerError;
   retainTimer?: NodeJS.Timeout;
 }
 
@@ -128,22 +198,31 @@ interface Session {
  */
 export class OwnerTerminalSessionManager {
   readonly available: boolean;
-  private readonly supervisor: ProcessSupervisor;
+  private readonly supervisor: Pick<ProcessSupervisor, "run" | "close">;
   private readonly sessions = new Map<string, Session>();
   private readonly maxSessions: number;
   private readonly now: () => number;
+  private readonly finishedRetentionMs: number;
+  private readonly completions = new Set<Promise<void>>();
+  private closing = false;
 
-  constructor(options: { enabled?: boolean; maxSessions?: number; now?: () => number } = {}) {
+  constructor(options: { enabled?: boolean; maxSessions?: number; now?: () => number; finishedRetentionMs?: number;
+    supervisor?: Pick<ProcessSupervisor, "run" | "close"> } = {}) {
     this.available = options.enabled === true && process.platform === "darwin" && process.getuid?.() !== 0;
     this.maxSessions = options.maxSessions ?? 2;
     this.now = options.now ?? Date.now;
-    this.supervisor = new ProcessSupervisor({ requireRootOwnedExecutable: true,
+    this.finishedRetentionMs = options.finishedRetentionMs ?? FINISHED_RETENTION_MS;
+    if (!Number.isSafeInteger(this.finishedRetentionMs) || this.finishedRetentionMs < 1 || this.finishedRetentionMs > FINISHED_RETENTION_MS) {
+      throw new Error("Terminal session retention is outside the supported range");
+    }
+    this.supervisor = options.supervisor ?? new ProcessSupervisor({ requireRootOwnedExecutable: true,
       requireSystemPublishedExecutable: true, maxConcurrent: this.maxSessions, maxConcurrentPerExecutable: this.maxSessions,
       allowedEnvironmentKeys: ["HOME", "LANG", "LC_ALL", "TERM"] });
   }
 
   async start(ownerId: string, request: OwnerTerminalSessionStart): Promise<{ sessionId: string }> {
     if (!this.available) throw new BrokerError("POLICY_DENIED", "Personal owner terminal mode is not enabled");
+    if (this.closing) throw new BrokerError("CANCELLED", "Terminal session manager is closed");
     const rows = request.rows ?? 24;
     const cols = request.cols ?? 80;
     if (typeof ownerId !== "string" || ownerId.length === 0 || !isAbsolute(request.cwd) || request.cwd.includes("\0") ||
@@ -158,36 +237,60 @@ export class OwnerTerminalSessionManager {
     if ([...this.sessions.values()].filter(session => session.result === undefined).length >= this.maxSessions) {
       throw new BrokerError("CONFLICT", "Terminal session capacity is exhausted", true);
     }
-    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, tag: request.tag ?? "", chunks: [], baseOffset: 0, endOffset: 0,
-      lastActivityMs: this.now(), idleTimeoutMs: request.idleTimeoutMs, stopRequested: false };
-    this.sessions.set(session.id, session);
     const home = await realpath(homedir());
+    // Recheck after path resolution so concurrent starts/shutdown cannot outrun admission.
+    if (this.closing) throw new BrokerError("CANCELLED", "Terminal session manager is closed");
+    if ([...this.sessions.values()].filter(session => session.result === undefined).length >= this.maxSessions) {
+      throw new BrokerError("CONFLICT", "Terminal session capacity is exhausted", true);
+    }
+    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, tag: request.tag ?? "", chunks: [], baseOffset: 0, endOffset: 0,
+      lastActivityMs: this.now(), idleTimeoutMs: request.idleTimeoutMs, stopRequested: false, inputEnded: false };
+    this.sessions.set(session.id, session);
     let markReady!: () => void;
     let markFailed!: (error: unknown) => void;
     const ready = new Promise<void>((resolve, reject) => { markReady = resolve; markFailed = reject; });
+    let inputReady = false;
+    let ownership: ProcessOwnershipSnapshot | undefined;
+    const startedAt = this.now();
     const running = this.supervisor.run({
       executable: "/usr/bin/python3", args: ["-c", PTY_SHIM, String(rows), String(cols), cwd], cwd: home,
       environment: { HOME: home, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8", TERM: "xterm-256color" },
       timeoutMs: request.lifetimeMs, outputCapBytes: 1,
       keepStdinOpen: true, streamOutput: true,
       onOutputChunk: chunk => this.append(session, chunk),
-      onStdinReady: sink => { session.sink = sink; markReady(); },
+      onStdinReady: sink => { session.sink = sink; inputReady = true; markReady(); },
       shouldCancel: () => {
         if (request.shouldCancel() || session.stopRequested) return true;
         if (this.now() - session.lastActivityMs <= session.idleTimeoutMs) return false;
         if (!session.idleNotified) {
           session.idleNotified = true;
-          try { request.onIdleTimeout?.(); } catch { /* The supervisor still cancels; the Job outcome is then unresolved. */ }
+          request.onIdleTimeout?.();
         }
         return true;
       },
-      ...(request.onProcessStarted ? { onStarted: request.onProcessStarted } : {}),
+      onStarted: async snapshot => { ownership = snapshot; await request.onProcessStarted?.(snapshot); },
       ...(request.onProcessOwnershipChanged ? { onOwnershipChanged: request.onProcessOwnershipChanged } : {})
     });
-    void running.then(result => this.finish(session, result, request), error => {
-      this.sessions.delete(session.id);
-      markFailed(error);
+    const completion = running.then(async result => {
+      // Orphan cleanup is a failed PTY when the supervisor proved the tree drained.
+      // Unobserved termination remains explicitly uncertain, never fabricated success.
+      const terminal = (result.state === "unknown" || result.state === "cancelled" && session.failureRequested) && result.terminationObserved
+        ? { ...result, state: "failed" as const, resultClass: "EXECUTION_FAILED" as const } : result;
+      await this.finish(session, terminal, request);
+      if (!inputReady) markFailed(new BrokerError("EXECUTION_FAILED", "Terminal session ended before input became ready"));
+    }, async error => {
+      const brokerError = error instanceof BrokerError ? error : new BrokerError("UNKNOWN_OUTCOME", "Terminal session supervision failed", true);
+      const uncertain = brokerError.errorClass === "UNKNOWN_OUTCOME";
+      await this.finish(session, { state: uncertain ? "unknown" : "failed", resultClass: uncertain ? "UNKNOWN_OUTCOME" : "EXECUTION_FAILED",
+        exitCode: null, signal: null, stdout: "", stderr: "", truncated: false, durationMs: Math.max(0, this.now() - startedAt),
+        processId: ownership?.identity.pid ?? 0, processGroupId: ownership?.identity.processGroupId ?? 0, terminationObserved: !uncertain }, request);
+      markFailed(brokerError);
+    }).catch(error => {
+      session.finalizationError = error instanceof BrokerError ? error : new BrokerError("AUDIT_UNAVAILABLE", "Terminal session final state could not be persisted", true);
+      markFailed(session.finalizationError);
     });
+    this.completions.add(completion);
+    void completion.then(() => { this.completions.delete(completion); });
     await ready;
     return { sessionId: session.id };
   }
@@ -195,13 +298,19 @@ export class OwnerTerminalSessionManager {
   /** Sends bytes to the PTY. Control characters are allowed; known secrets are not. */
   write(ownerId: string, sessionId: string, data: string): void {
     const session = this.owned(ownerId, sessionId);
-    if (session.result !== undefined || session.sink === undefined) throw new BrokerError("CONFLICT", "Terminal session has ended");
+    if (session.result !== undefined || session.inputEnded || session.sink === undefined) throw new BrokerError("CONFLICT", "Terminal session has ended or is stopping");
     if (typeof data !== "string" || data.length === 0 || data.includes("\0") || Buffer.byteLength(data, "utf8") > MAX_WRITE_BYTES) {
       throw new BrokerError("PRECONDITION_FAILED", "Terminal input is empty, contains NUL or exceeds 4096 bytes");
     }
     assertContentDoesNotContainSecrets(Buffer.from(data, "utf8"));
     session.lastActivityMs = this.now();
-    if (!session.sink.write(data)) throw new BrokerError("EXECUTION_FAILED", "Terminal session input is not writable");
+    try {
+      if (!session.sink.write(data)) throw new BrokerError("EXECUTION_FAILED", "Terminal session input is not writable");
+    } catch {
+      session.failureRequested = true;
+      session.stopRequested = true;
+      throw new BrokerError("EXECUTION_FAILED", "Terminal session input is not writable");
+    }
   }
 
   read(ownerId: string, sessionId: string, cursor: number, maxBytes = MAX_READ_BYTES): OwnerTerminalSessionRead {
@@ -240,13 +349,26 @@ export class OwnerTerminalSessionManager {
    */
   stop(ownerId: string, sessionId: string): void {
     const session = this.owned(ownerId, sessionId);
-    if (session.result !== undefined) return;
-    session.sink?.end();
+    if (session.result !== undefined || session.inputEnded) return;
+    session.inputEnded = true;
+    try { session.sink?.end(); }
+    catch {
+      session.failureRequested = true;
+      session.stopRequested = true;
+      throw new BrokerError("EXECUTION_FAILED", "Terminal session input could not be closed");
+    }
   }
 
   async close(): Promise<void> {
-    for (const session of this.sessions.values()) { session.stopRequested = true; session.sink?.end(); }
+    this.closing = true;
+    for (const session of this.sessions.values()) {
+      session.stopRequested = true;
+      try { this.stop(session.ownerId, session.id); } catch { /* Supervision still drains the tree. */ }
+    }
     await this.supervisor.close();
+    await Promise.all(this.completions);
+    const failure = [...this.sessions.values()].find(session => session.finalizationError)?.finalizationError;
+    if (failure) throw failure;
     for (const session of this.sessions.values()) if (session.retainTimer) clearTimeout(session.retainTimer);
     this.sessions.clear();
   }
@@ -255,6 +377,7 @@ export class OwnerTerminalSessionManager {
     const session = this.sessions.get(sessionId);
     // Same error for missing and foreign sessions so ids cannot be probed.
     if (session === undefined || session.ownerId !== ownerId) throw new BrokerError("TARGET_NOT_FOUND", "Terminal session was not found");
+    if (session.finalizationError) throw session.finalizationError;
     return session;
   }
 
@@ -269,11 +392,14 @@ export class OwnerTerminalSessionManager {
     }
   }
 
-  private finish(session: Session, result: ProcessExecutionResult, request: OwnerTerminalSessionStart): void {
-    session.result = result;
+  private async finish(session: Session, result: ProcessExecutionResult, request: OwnerTerminalSessionStart): Promise<void> {
     session.sink = undefined;
-    try { request.onFinished?.(result); } catch { /* Persistence failures are the Broker's to surface. */ }
-    session.retainTimer = setTimeout(() => this.sessions.delete(session.id), FINISHED_RETENTION_MS);
+    session.inputEnded = true;
+    // The caller owns the authoritative ledger commit. Do not publish finished
+    // or arm eviction when that commit fails.
+    const committed = await request.onFinished?.(result);
+    session.result = committed ?? result;
+    session.retainTimer = setTimeout(() => this.sessions.delete(session.id), this.finishedRetentionMs);
     session.retainTimer.unref();
   }
 }

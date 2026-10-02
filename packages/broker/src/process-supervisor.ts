@@ -55,12 +55,15 @@ interface ChildProcessCapture {
   stderrBytes: number;
   outputOverflow: boolean;
   spawnError: boolean;
+  executionError: boolean;
+  outputConsumerFailed: boolean;
   exited: boolean;
   exitCode: number | null;
   exitSignal: NodeJS.Signals | null;
   closed: boolean;
   onOutput?: () => void;
   onError?: () => void;
+  onExecutionError?: () => void;
   onExit?: () => void;
   onClose?: () => void;
 }
@@ -136,6 +139,7 @@ export interface ProcessExecutionRequest {
 }
 
 export interface ProcessStdinSink {
+  /** True means the bytes were accepted, including queued backpressure writes. */
   write(data: string): boolean;
   end(): void;
 }
@@ -216,6 +220,43 @@ export function detectProcessIdentityReplacement(
     const previousStartTime = trackedStartTimes.get(identity.pid);
     return previousStartTime !== undefined && previousStartTime !== identity.startTimeMicros;
   });
+}
+
+/**
+ * Observe an owned root without treating the gap between two native reads as
+ * an observer failure. A root can exit after the liveness read and before the
+ * identity read; one exact-identity recheck and an ESRCH-only absence probe
+ * resolve that race while preserving genuine observation uncertainty.
+ */
+export function observeProcessRootState(
+  native: Pick<NativeProcessTreeAdapter, "isProcessIdentityAlive" | "getProcessIdentity">,
+  identity: ProcessOwnershipIdentity,
+  isAbsent: (pid: number) => unknown = processIdAbsent
+): "alive" | "dead" | "unknown" {
+  let alive: unknown;
+  try { alive = native.isProcessIdentityAlive(identity.pid, identity.startTimeMicros); }
+  catch { return "unknown"; }
+  if (alive === false) return "dead";
+  if (alive !== true) return "unknown";
+  let currentValue: unknown;
+  try { currentValue = native.getProcessIdentity(identity.pid); }
+  catch {
+    // The native liveness function also returns false for a read failure.
+    // Require ESRCH from a separate no-signal probe before proving absence.
+    try {
+      return native.isProcessIdentityAlive(identity.pid, identity.startTimeMicros) === false && isAbsent(identity.pid) === true
+        ? "dead" : "unknown";
+    }
+    catch { return "unknown"; }
+  }
+  try {
+    const current = parseProcessIdentity(currentValue, true);
+    return current.pid === identity.pid && current.startTimeMicros === identity.startTimeMicros &&
+      current.processGroupId === identity.processGroupId ? "alive" : "unknown";
+  } catch {
+    // Malformed observation and identity replacement are not absence races.
+    return "unknown";
+  }
 }
 
 export interface ProcessSupervisorOptions {
@@ -482,22 +523,43 @@ export class ProcessSupervisor {
       }
       if (safeRequest.keepStdinOpen === true && child.stdin !== null) {
         const stdin = child.stdin;
-        stdin.on("error", () => undefined);
+        const markStdinFailure = (): void => {
+          capture.executionError = true;
+          capture.onExecutionError?.();
+        };
+        const canWrite = (): boolean => !stdin.destroyed && stdin.writable && !stdin.writableEnded && !stdin.writableFinished;
         try {
-          if (safeRequest.stdin !== undefined) stdin.write(safeRequest.stdin, "utf8");
+          if (safeRequest.stdin !== undefined) stdin.write(safeRequest.stdin, "utf8", (error) => { if (error) markStdinFailure(); });
           safeRequest.onStdinReady!({
-            write: (data: string) => !stdin.destroyed && stdin.writable && stdin.write(data, "utf8"),
-            end: () => { if (!stdin.destroyed) stdin.end(); }
+            write: (data: string) => {
+              if (!canWrite()) return false;
+              try {
+                // Writable.write(false) accepted the bytes but asks the producer
+                // to pause. It is not a closed-session or delivery failure.
+                stdin.write(data, "utf8", (error) => { if (error) markStdinFailure(); });
+                return true;
+              } catch {
+                markStdinFailure();
+                return false;
+              }
+            },
+            end: () => {
+              if (!canWrite()) return;
+              try { stdin.end(); }
+              catch { markStdinFailure(); }
+            }
           });
         } catch {
-          child.kill("SIGKILL");
+          const drained = await this.abortUnownedProcess(child, processId, processTree);
+          if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process stdin startup cleanup could not be verified", true);
           throw new BrokerError("EXECUTION_FAILED", "Process stdin could not be delivered");
         }
       } else if (safeRequest.stdin !== undefined && child.stdin !== null) {
         try {
           child.stdin.end(safeRequest.stdin, "utf8");
         } catch {
-          child.kill("SIGKILL");
+          const drained = await this.abortUnownedProcess(child, processId, processTree);
+          if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process stdin startup cleanup could not be verified", true);
           throw new BrokerError("EXECUTION_FAILED", "Process stdin could not be delivered");
         }
       }
@@ -794,7 +856,7 @@ export class ProcessSupervisor {
   ): Promise<ProcessExecutionResult> {
     return new Promise((resolveResult) => {
       let settled = false;
-      let terminationReason: "cancelled" | "timed_out" | "output_limit" | "orphaned" | null = null;
+      let terminationReason: "cancelled" | "timed_out" | "output_limit" | "orphaned" | "failed" | null = null;
       let terminationRequested = false;
       let terminationTimer: NodeJS.Timeout | undefined;
       let groupDrainTimer: NodeJS.Timeout | undefined;
@@ -831,7 +893,8 @@ export class ProcessSupervisor {
         if (!processGroupAlive(processId)) return "none";
         return processTree?.rootIdentityUnavailable ? "unknown" : "alive";
       };
-      const terminate = (reason: "cancelled" | "timed_out" | "output_limit" | "orphaned") => {
+      const terminate = (reason: "cancelled" | "timed_out" | "output_limit" | "orphaned" | "failed") => {
+        if (settled) return;
         if (terminationReason === null) terminationReason = reason;
         if (terminationRequested) return;
         terminationRequested = true;
@@ -881,7 +944,7 @@ export class ProcessSupervisor {
         clearTimers();
         release();
         const durationMs = Math.max(0, Date.now() - startedAtMs);
-        const abnormalExit = spawnError || code !== 0 || signal !== null;
+        const abnormalExit = spawnError || capture.executionError || terminationReason === "failed" || code !== 0 || signal !== null;
         const state = terminationReason === "cancelled" ? "cancelled" :
           terminationReason === "timed_out" ? "timed_out" :
           terminationReason === "orphaned" ? "unknown" :
@@ -988,7 +1051,10 @@ export class ProcessSupervisor {
         // The detached group can remain visible for a short interval after
         // the root emits `exit`; let the bounded proof window distinguish
         // that teardown lag from a surviving descendant.
-        strictExitProof = processTree.confirmNoDescendantsAfterExit(this.pollIntervalMs);
+        // Attach rejection handling at exit, before inherited output pipes can
+        // delay close. A failed proof stays unresolved rather than escaping as
+        // an unhandled rejection in the Broker process.
+        strictExitProof = processTree.confirmNoDescendantsAfterExit(this.pollIntervalMs).catch(() => false);
       };
       const handleClose = (): void => {
         childExitCode = capture.exitCode;
@@ -1027,7 +1093,12 @@ export class ProcessSupervisor {
           } else {
             finish(childExitCode, childExitSignal);
           }
-        })();
+        })().catch(() => {
+          // A finalization callback failure belongs to this execution. Cleanup
+          // still decides whether a failed result or unknown outcome is safe.
+          terminate("failed");
+          waitForGroupDrain();
+        });
       };
 
       capture.onOutput = () => {
@@ -1036,12 +1107,15 @@ export class ProcessSupervisor {
         if (!settled && capture.outputOverflow) terminate("output_limit");
       };
       capture.onError = () => { spawnError = true; };
+      capture.onExecutionError = () => { if (!settled) terminate("failed"); };
       capture.onExit = handleExit;
       capture.onClose = handleClose;
       capture.onOutput();
+      if (capture.executionError) capture.onExecutionError();
       if (capture.exited) handleExit();
       if (capture.closed) handleClose();
 
+      if (settled) return;
       timeoutTimer = setTimeout(() => terminate("timed_out"), request.timeoutMs);
       cancellationPoll = setInterval(() => {
         processTree?.sample();
@@ -1083,6 +1157,8 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number, 
     stderrBytes: 0,
     outputOverflow: false,
     spawnError: false,
+    executionError: false,
+    outputConsumerFailed: false,
     exited: false,
     exitCode: null,
     exitSignal: null,
@@ -1091,7 +1167,14 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number, 
   const append = (stream: "stdout" | "stderr", chunk: Buffer | string): void => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     if (streamTo !== undefined) {
-      try { streamTo(bytes); } catch { /* A consumer failure must not change process supervision. */ }
+      if (!capture.outputConsumerFailed) {
+        try { streamTo(bytes); }
+        catch {
+          capture.executionError = true;
+          capture.outputConsumerFailed = true;
+          capture.onExecutionError?.();
+        }
+      }
       capture.onOutput?.();
       return;
     }
@@ -1109,6 +1192,12 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number, 
   };
   child.stdout?.on("data", (chunk: Buffer | string) => append("stdout", chunk));
   child.stderr?.on("data", (chunk: Buffer | string) => append("stderr", chunk));
+  // Install before startup awaits and before either stdin.write or stdin.end.
+  // EPIPE is asynchronous and must never become a process-global exception.
+  child.stdin?.on("error", () => {
+    capture.executionError = true;
+    capture.onExecutionError?.();
+  });
   child.once("error", () => {
     capture.spawnError = true;
     capture.onError?.();
@@ -1466,6 +1555,15 @@ function processGroupAlive(processId: number): boolean {
   }
 }
 
+function processIdAbsent(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
 function validateProcessOwnershipIdentity(identity: ProcessOwnershipIdentity): void {
   if (!isPlainDataRecord(identity) || !hasExactFields(identity, ["pid", "processGroupId", "startTimeMicros"]) ||
       !Number.isSafeInteger(identity.pid) || identity.pid < 1 || identity.pid > 99_999_999 ||
@@ -1700,19 +1798,12 @@ class ProcessTreeTracker {
   rootState(): "alive" | "dead" | "unknown" {
     if (this.failed) return "unknown";
     if (this.rootIdentity === undefined) return "dead";
-    try {
-      const alive = this.native.isProcessIdentityAlive(this.rootIdentity.pid, this.rootIdentity.startTimeMicros);
-      if (alive === true) {
-        const current = parseProcessIdentity(this.native.getProcessIdentity(this.rootIdentity.pid), true);
-        if (current.pid !== this.rootIdentity.pid || current.startTimeMicros !== this.rootIdentity.startTimeMicros ||
-            current.processGroupId !== this.rootIdentity.processGroupId) return "unknown";
-        return "alive";
-      }
-      if (alive === false) return "dead";
-      return "unknown";
-    } catch {
-      return "unknown";
-    }
+    if (this.rootIdentity.processGroupId === undefined) return "unknown";
+    return observeProcessRootState(this.native, {
+      pid: this.rootIdentity.pid,
+      processGroupId: this.rootIdentity.processGroupId,
+      startTimeMicros: this.rootIdentity.startTimeMicros
+    });
   }
 
   sample(): void {

@@ -3,7 +3,9 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import { OwnerTerminalSessionManager } from "./owner-terminal-session.js";
+import type { ProcessExecutionRequest, ProcessExecutionResult } from "./process-supervisor.js";
 
 const supported = process.platform === "darwin" && process.getuid?.() !== 0;
 
@@ -22,6 +24,110 @@ function collector(manager: OwnerTerminalSessionManager, owner: string, id: stri
 }
 
 const base = { lifetimeMs: 60_000, idleTimeoutMs: 30_000, shouldCancel: () => false };
+
+const completed: ProcessExecutionResult = { state: "completed", resultClass: "SUCCEEDED", exitCode: 0, signal: null,
+  stdout: "", stderr: "", truncated: false, durationMs: 1, processId: 123, processGroupId: 123, terminationObserved: true };
+
+function controlledSupervisor() {
+  let request: ProcessExecutionRequest | undefined;
+  let resolve!: (result: ProcessExecutionResult) => void;
+  let reject!: (error: unknown) => void;
+  return { supervisor: {
+    run(value: ProcessExecutionRequest) { request = value; return new Promise<ProcessExecutionResult>((yes, no) => { resolve = yes; reject = no; }); },
+    async close() { resolve({ ...completed, state: "cancelled", resultClass: "CANCELLED" }); }
+  }, ready() { request!.onStdinReady!({ write: () => true, end: () => undefined }); }, finish(result = completed) { resolve(result); },
+  fail(error: unknown) { reject(error); }, get started() { return request !== undefined; } };
+}
+
+test("session finalization commits before finished becomes visible or retention starts", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor, finishedRetentionMs: 200 });
+  let commit!: () => void;
+  const pendingCommit = new Promise<void>(resolve => { commit = resolve; });
+  let committing = false;
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp", onFinished: async () => { committing = true; await pendingCommit; } });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    controlled.finish();
+    await waitFor(() => committing);
+    await delay(300);
+    assert.equal(manager.read("owner", sessionId, 0).finished, false);
+    assert.throws(() => manager.write("owner", sessionId, "x"), /ended|stopping/u);
+    manager.stop("owner", sessionId);
+    commit();
+    await waitFor(() => manager.read("owner", sessionId, 0).finished);
+    await delay(300);
+    assert.throws(() => manager.describe("owner", sessionId), (error: unknown) => error instanceof BrokerError && error.errorClass === "TARGET_NOT_FOUND");
+  } finally { commit(); await manager.close(); }
+});
+
+test("session persistence failure is local, structured and prevents eviction", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor, finishedRetentionMs: 30 });
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp", onFinished: () => { throw new BrokerError("AUDIT_UNAVAILABLE", "Final Job commit failed", true); } });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    controlled.finish();
+    await delay(100);
+    for (const operation of [() => manager.read("owner", sessionId, 0), () => manager.write("owner", sessionId, "x"), () => manager.stop("owner", sessionId)]) {
+      assert.throws(operation, (error: unknown) => error instanceof BrokerError && error.errorClass === "AUDIT_UNAVAILABLE" && error.retryable);
+    }
+    // Foreign ownership must remain indistinguishable from not-found.
+    assert.throws(() => manager.describe("other", sessionId), /not found/u);
+  } finally { await assert.rejects(manager.close(), /Final Job commit failed/u); }
+});
+
+test("supervisor startup rejection and exit-before-ready settle without deleting an uncommitted session", { skip: !supported }, async () => {
+  for (const kind of ["reject", "exit"] as const) {
+    const controlled = controlledSupervisor();
+    const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+    let recorded: ProcessExecutionResult | undefined;
+    try {
+      const start = manager.start("owner", { ...base, cwd: "/tmp", onFinished: result => { recorded = result; } });
+      const rejected = assert.rejects(start, (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED");
+      await waitFor(() => controlled.started);
+      if (kind === "reject") controlled.fail(new BrokerError("EXECUTION_FAILED", "Startup failed after verified cleanup"));
+      else controlled.finish();
+      await rejected;
+      assert.ok(recorded);
+      assert.equal(recorded.state, kind === "reject" ? "failed" : "completed");
+    } finally { await manager.close(); }
+  }
+});
+
+test("only proven-drained uncertain PTY results become explicit failures", { skip: !supported }, async () => {
+  for (const terminationObserved of [true, false]) {
+    const controlled = controlledSupervisor();
+    const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+    try {
+      const start = manager.start("owner", { ...base, cwd: "/tmp" });
+      await waitFor(() => controlled.started);
+      controlled.ready();
+      const { sessionId } = await start;
+      controlled.finish({ ...completed, state: "unknown", resultClass: "UNKNOWN_OUTCOME", exitCode: null, terminationObserved });
+      await waitFor(() => manager.read("owner", sessionId, 0).finished);
+      assert.equal(manager.read("owner", sessionId, 0).state, terminationObserved ? "failed" : "unknown");
+    } finally { await manager.close(); }
+  }
+});
+
+test("session readback uses the committed cancellation outcome", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp", onFinished: result => ({ ...result, state: "cancelled", resultClass: "CANCELLED" }) });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    controlled.finish();
+    await waitFor(() => manager.read("owner", sessionId, 0).finished);
+    assert.equal(manager.read("owner", sessionId, 0).state, "cancelled");
+  } finally { await manager.close(); }
+});
 
 test("session manager stays disabled without opt-in", async () => {
   const manager = new OwnerTerminalSessionManager();

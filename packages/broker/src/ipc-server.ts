@@ -86,6 +86,7 @@ export class BrokerIpcServer {
     try {
       this.options.peerCredentialVerifier.verify(socket);
     } catch {
+      socket.on("error", () => undefined);
       socket.destroy();
       return;
     }
@@ -95,10 +96,17 @@ export class BrokerIpcServer {
 
 /** Handles an already peer-authenticated socket for both Node and native UDS transports. */
 export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestBytes: number): void {
-  socket.setTimeout(15_000, () => socket.destroy());
   let chunks: Buffer[] = [];
   let total = 0;
   let handled = false;
+  // A caller can disconnect while a PTY read or another admitted tool is still
+  // running. Socket errors belong to that connection and must not crash the Broker.
+  socket.on("error", () => {
+    handled = true;
+    chunks = [];
+    socket.destroy();
+  });
+  socket.setTimeout(15_000, () => socket.destroy());
   socket.on("data", async (chunk: Buffer) => {
     if (handled) return;
     total += chunk.byteLength;
@@ -132,7 +140,9 @@ export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestByt
 }
 
 function writeResult(socket: Socket, result: BrokerResult | AuthenticatedBrokerResponse | AuthenticatedBrokerRevocationResponse | BrokerRevocationResult): void {
-  if (!socket.destroyed) socket.end(`${JSON.stringify(result)}\n`);
+  if (socket.destroyed) return;
+  try { socket.end(`${JSON.stringify(result)}\n`); }
+  catch { socket.destroy(); }
 }
 
 function isAsciiWhitespace(byte: number): boolean {

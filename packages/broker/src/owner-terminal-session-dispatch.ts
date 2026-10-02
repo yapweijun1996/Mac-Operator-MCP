@@ -62,28 +62,37 @@ export async function startOwnerTerminalSession(options: {
   let settle!: (error?: BrokerError) => void;
   const finished = new Promise<void>((resolve, reject) => { settle = error => error ? reject(error) : resolve(); });
   finished.catch(() => undefined);
-  const onFinished = (result: ProcessExecutionResult): void => {
+  const onFinished = (result: ProcessExecutionResult): ProcessExecutionResult => {
     try {
       let current = store.ownedJob(job.jobId, principalId);
       if (!current) throw new BrokerError("AUDIT_UNAVAILABLE", "Terminal session Job disappeared before exit readback");
-      if (result.state === "cancelled") {
+      if (result.state === "cancelled" || current.cancelRequested && result.terminationObserved) {
         if (!result.terminationObserved) throw new BrokerError("UNKNOWN_OUTCOME", "Terminal session cancellation could not be observed");
         if (!current.cancelRequested) {
           if (!options.control.shouldCancel()) throw new BrokerError("UNKNOWN_OUTCOME", "Terminal session cancellation authority could not be confirmed");
           current = store.requestJobCancellation(job.jobId, principalId, "OWNER_TERMINAL_AUTHORITY_CANCELLED", now()).job;
         }
       }
+      const cancelled = current.cancelRequested && result.terminationObserved;
       job = store.finishJob(job.jobId, principalId, current.revision, {
-        state: result.state === "unknown" ? "unknown" : result.state === "cancelled" ? "cancelled" : result.state === "completed" ? "completed" : "failed",
-        resultClass: result.state === "unknown" ? "unknown" : result.state === "cancelled" ? "denied" : result.state === "completed" ? "success" : "failed",
-        finishedAtMs: now(), exitCode: result.exitCode, truncated: false
+        state: result.state === "unknown" ? "unknown" : cancelled ? "cancelled" : result.state === "completed" ? "completed" : "failed",
+        resultClass: result.state === "unknown" ? "unknown" : cancelled ? "denied" : result.state === "completed" ? "success" : "failed",
+        finishedAtMs: now(), exitCode: result.exitCode, truncated: false,
+        // UNKNOWN is reserved for missing process-tree proof, with an explicit
+        // diagnostic and preserved ownership for recovery; never infer success.
+        stderr: result.state === "unknown" ? "PTY_TERMINATION_UNOBSERVED: process-tree cleanup could not be verified" : ""
       }, lease, now());
       if (result.state === "unknown") settle(new BrokerError("UNKNOWN_OUTCOME", `Terminal session termination is uncertain; inspect ${job.jobId}`));
-      else if (result.state === "cancelled") settle(new BrokerError("CANCELLED", `Terminal session was cancelled; inspect ${job.jobId}`));
+      else if (cancelled) settle(new BrokerError("CANCELLED", `Terminal session was cancelled; inspect ${job.jobId}`));
       else if (result.state === "timed_out") settle(new BrokerError("TIMEOUT", `Terminal session reached its lifetime limit; inspect ${job.jobId}`));
       else settle();
+      return cancelled ? { ...result, state: "cancelled", resultClass: "CANCELLED" } : result;
     } catch (error) {
-      settle(error instanceof BrokerError ? error : new BrokerError("UNKNOWN_OUTCOME", `Terminal session outcome could not be recorded; inspect ${job.jobId}`));
+      const failure = error instanceof BrokerError ? error : new BrokerError("AUDIT_UNAVAILABLE", `Terminal session outcome could not be recorded; inspect ${job.jobId}`, true);
+      settle(failure);
+      // The manager must retain the session and refuse to publish finished
+      // until the authoritative ledger commit succeeds.
+      throw failure;
     }
   };
   try {
@@ -98,10 +107,15 @@ export async function startOwnerTerminalSession(options: {
       { jobId: job.jobId, action: "start" }) };
   } catch (error) {
     const current = store.ownedJob(job.jobId, principalId);
-    if (current?.state === "running") store.finishJob(job.jobId, principalId, current.revision,
-      { state: "unknown", resultClass: "unknown", finishedAtMs: now() }, lease, now());
+    if (current?.state === "running") {
+      const uncertain = error instanceof BrokerError && (error.errorClass === "UNKNOWN_OUTCOME" || error.errorClass === "AUDIT_UNAVAILABLE" && current.processMetadata !== undefined);
+      store.finishJob(job.jobId, principalId, current.revision, { state: uncertain ? "unknown" : current.cancelRequested ? "cancelled" : "failed",
+        resultClass: uncertain ? "unknown" : current.cancelRequested ? "denied" : "failed", finishedAtMs: now(),
+        stderr: uncertain ? "PTY_START_UNRESOLVED: startup or final-state persistence could not be verified" : "PTY_START_FAILED: terminal session was not admitted" }, lease, now());
+    }
+    settle(error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", `Terminal session could not be started; inspect ${job.jobId}`));
     if (error instanceof BrokerError) throw error;
-    throw new BrokerError("UNKNOWN_OUTCOME", `Terminal session could not be started; inspect ${job.jobId}`);
+    throw new BrokerError("EXECUTION_FAILED", `Terminal session could not be started; inspect ${job.jobId}`);
   }
 }
 
