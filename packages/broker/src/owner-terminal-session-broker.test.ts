@@ -132,6 +132,18 @@ test("Broker owner terminal sessions: delegated per-call authority, owner bindin
     await until(() => store.ownedJob(cancelJob.jobId, "principal-1")?.state === "cancelled", 20_000);
     assert.equal(typeof cancelled.session_id, "string");
 
+    // A shell that exits nonzero ends the session as failed; the ledger must still reopen after a restart.
+    const failingStart = `session-req-${sequence + 1}`;
+    const failing = data(await call({ action: "start", cwd: root, idempotency_key: "nonzero-exit" }));
+    const failingJob = store.ownedJobByIdempotencyKey("nonzero-exit", "principal-1")!;
+    data(await call({ action: "write", session_id: failing.session_id, data: "exit 3\n" }));
+    await until(() => store.ownedJob(failingJob.jobId, "principal-1")?.state === "failed", 20_000);
+    assert.equal(store.ownedJob(failingJob.jobId, "principal-1")?.exitCode, 3);
+    await until(() => store.auditEventExists(failingStart, "completion"));
+    assert.equal(store.requestRecord(failingStart)?.state, "SUCCEEDED");
+    // Opening a second handle runs the same startup ledger integrity check a service restart does.
+    new BrokerStore(join(root, "broker.sqlite")).close();
+
     const idle = data(await call({ action: "start", cwd: root, idempotency_key: "idle", idle_timeout_ms: 1000, lifetime_ms: 60_000 }));
     const idleStart = `session-req-${sequence}`;
     const idleJob = store.ownedJobByIdempotencyKey("idle", "principal-1")!;
