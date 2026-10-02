@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { AuthInfo } from "@modelcontextprotocol/server";
-import type { BrokerResult } from "@mac-operator/contracts";
+import { O1_SCOPES, ownerTerminalOAuthContext, type BrokerResult } from "@mac-operator/contracts";
 import { Client, StreamableHTTPClientTransport, type FetchLike } from "@modelcontextprotocol/client";
 import { ToolContractRegistry } from "./contract-registry.js";
 import { createHttpsMcpEdge, type HttpsMcpEdgeOptions } from "./https-edge.js";
@@ -60,7 +60,7 @@ test("HTTPS Edge rejects malformed transport and policy configuration before sta
     ...baseOptions(),
     requiredScopes: ["mac.unknown.read"]
   }), /required scopes are invalid/u);
-  assert.throws(() => createHttpsMcpEdge({ ...baseOptions(), legacyProtocol: "allow" as "reject" }), /legacy protocol policy is invalid/u);
+  assert.throws(() => createHttpsMcpEdge({ ...baseOptions(), legacyProtocol: "unknown" } as never), /Primary MCP endpoint/u);
 });
 
 test("HTTPS Edge normalizes case and rejects host-list syntax smuggling", () => {
@@ -445,7 +445,7 @@ function baseOptions(): HttpsMcpEdgeOptions {
 test("two OAuth MCP resources isolate tokens and serve native legacy requests only at the terminal resource", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-edge-two-oauth-"));
   const options = baseOptions();
-  const rootIssuer = new URL("https://issuer.example.test/");
+  const rootIssuer = new URL(options.resourceServerUrl.origin);
   const terminalIssuer = new URL("terminal/", rootIssuer);
   const terminalResource = new URL("terminal/mcp", options.resourceServerUrl.origin);
   const { privateKey, publicKey } = await generateKeyPair("RS256");
@@ -454,11 +454,11 @@ test("two OAuth MCP resources isolate tokens and serve native legacy requests on
   options.oauthIssuer = rootIssuer;
   options.oauthMetadata = { ...options.oauthMetadata, issuer: rootIssuer.href, scopes_supported: ["mac.control.read"] };
   options.tokenVerifier = createJwtAccessTokenVerifier({ issuer: rootIssuer, issuerId: "issuer-1", resourceServerUrl: options.resourceServerUrl, jwks });
-  options.additionalEndpoints = [{ oauthIssuer: terminalIssuer, resourceServerUrl: terminalResource, legacyProtocol: "stateless",
+  options.additionalEndpoints = [{ oauthIssuer: terminalIssuer, resourceServerUrl: terminalResource, legacyProtocol: "2025-06-18",
     tokenVerifier: createJwtAccessTokenVerifier({ issuer: terminalIssuer, issuerId: "issuer-1", resourceServerUrl: terminalResource, jwks }),
     oauthMetadata: { ...options.oauthMetadata, issuer: terminalIssuer.href,
       authorization_endpoint: new URL("authorize", terminalIssuer).href, token_endpoint: new URL("token", terminalIssuer).href,
-      scopes_supported: ["mac.control.read", "mac.terminal.exec"] } }];
+      scopes_supported: [...O1_SCOPES] } }];
   const observedScopes = new Set<string>();
   options.gateway = {
     async execute(tool, _arguments, principal, signal): Promise<BrokerResult> {
@@ -532,5 +532,169 @@ test("two OAuth MCP resources isolate tokens and serve native legacy requests on
       assert.equal((result.structuredContent as { ok: boolean }).ok, true);
       assert.deepEqual(observedScopes, new Set(["mac.control.read", "mac.control.read,mac.terminal.exec"]));
     } finally { await nativeClient.close(); }
+  } finally { await edge.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("independent owner terminal legacy compatibility is narrowly bound at startup", () => {
+  const primary = baseOptions();
+  primary.oauthIssuer = new URL(primary.resourceServerUrl.origin);
+  primary.oauthMetadata = { ...primary.oauthMetadata, issuer: primary.oauthIssuer.href };
+  const terminal = ownerTerminalOAuthContext(primary.oauthIssuer);
+  const endpoint = { resourceServerUrl: terminal.resource, oauthIssuer: terminal.issuer,
+    tokenVerifier: primary.tokenVerifier, legacyProtocol: "2025-06-18" as const,
+    oauthMetadata: { ...primary.oauthMetadata, issuer: terminal.issuer.href, scopes_supported: [...O1_SCOPES] } };
+  assert.throws(() => createHttpsMcpEdge({ ...primary, legacyProtocol: "2025-06-18" } as never), /Primary MCP/u);
+  for (const mutation of [
+    { resourceServerUrl: new URL("https://edge.example.test/other/mcp") },
+    { oauthIssuer: new URL("https://edge.example.test/other/") },
+    { legacyProtocol: "2025-11-25" },
+    { oauthMetadata: { ...endpoint.oauthMetadata, scopes_supported: ["mac.control.read"] } },
+    { oauthMetadata: { ...endpoint.oauthMetadata, scopes_supported: [...O1_SCOPES, "mac.agent.run"] } }
+  ]) {
+    assert.throws(() => createHttpsMcpEdge({ ...primary,
+      additionalEndpoints: [{ ...endpoint, ...mutation } as never] }), /independent owner terminal|metadata issuer/u);
+  }
+});
+
+test("saved-client protocol retains owner authorization and modern V2 isolation", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-edge-terminal-legacy-"));
+  const options = baseOptions();
+  options.oauthIssuer = new URL(options.resourceServerUrl.origin);
+  options.oauthMetadata = { ...options.oauthMetadata, issuer: options.oauthIssuer.href, scopes_supported: ["mac.control.read"] };
+  const terminal = ownerTerminalOAuthContext(options.oauthIssuer);
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const publicJwk = await exportJWK(publicKey);
+  const jwks = { keys: [{ ...publicJwk, kid: "integration-key", alg: "RS256", use: "sig" }] };
+  let revoked = false;
+  let brokerRevoked = false;
+  const verifier = (issuer: URL, resourceServerUrl: URL) => createJwtAccessTokenVerifier({ issuer,
+    issuerId: "issuer-1", resourceServerUrl, jwks, revocationCheck: async () => revoked });
+  options.tokenVerifier = verifier(options.oauthIssuer, options.resourceServerUrl);
+  options.additionalEndpoints = [{ oauthIssuer: terminal.issuer, resourceServerUrl: terminal.resource,
+    legacyProtocol: "2025-06-18", tokenVerifier: verifier(terminal.issuer, terminal.resource),
+    oauthMetadata: { ...options.oauthMetadata, issuer: terminal.issuer.href, scopes_supported: [...O1_SCOPES] } }];
+  const executed: string[] = [];
+  options.gateway = { async execute(tool, _arguments, principal): Promise<BrokerResult> {
+    executed.push(tool);
+    if (brokerRevoked) return { ok: false, request_id: "revoked-test", tool, result_class: "REVOKED",
+      error: { message: "Revoked", retryable: false }, duration_ms: 0 };
+    const enabled = ["mac_health", ...(principal.scopes.includes("mac.terminal.exec") ? ["mac_terminal_exec"] : [])];
+    return { ok: true, request_id: `legacy-${tool}`, tool, result_class: "SUCCEEDED",
+      data: tool === "mac_capabilities" ? { protocol_version: "0.1", contract_version: "0.1",
+        capabilities: enabled.map(name => ({ name, scopes: name === "mac_health" ? ["mac.control.read"] : ["mac.terminal.exec"],
+          planned: true, implemented: true, enabled: true, contract_version: "0.1" })) }
+        : tool === "mac_terminal_exec" ? { cwd: "/tmp", job_id: "mock-job", state: "completed", exit_code: 0,
+          stdout: "O1_CONNECTION_OK", stderr: "", truncated: false, reused: false, execution_mode: "personal_owner_terminal" }
+          : { overall: "healthy", components: [] },
+      warnings: [], truncated: false, duration_ms: 1,
+      verification: tool === "mac_terminal_exec" ? { required: true, status: "verified", strategy: "exit_status_and_declared_task_verification" } : {} };
+  } };
+  const { certificatePath, keyPath } = await createTestCertificate(directory);
+  options.tlsCertificate = await readFile(certificatePath);
+  options.tlsPrivateKey = await readFile(keyPath);
+  const edge = createHttpsMcpEdge(options);
+  try {
+    edge.server.listen(0, "127.0.0.1");
+    await once(edge.server, "listening");
+    const address = edge.server.address();
+    assert.ok(address && typeof address === "object");
+    const fetch = createPinnedFetch(address.port);
+    const request = (path: string, init?: RequestInit) => fetch(new URL(`https://edge.example.test:${address.port}${path}`), init);
+    const owner = await createAccessToken(privateKey, terminal.issuer, terminal.resource, O1_SCOPES.join(" "), "owner-token");
+    const reader = await createAccessToken(privateKey, terminal.issuer, terminal.resource, "mac.control.read", "reader-token");
+    const root = await createAccessToken(privateKey, options.oauthIssuer, options.resourceServerUrl, "mac.control.read", "v2-token");
+    const expired = await createAccessToken(privateKey, terminal.issuer, terminal.resource, O1_SCOPES.join(" "), "expired-token", Math.floor(Date.now() / 1000) - 120);
+    const initialize = { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18",
+      capabilities: {}, clientInfo: { name: "native-client-wire-probe", version: "1.0.0" } } };
+    const list = { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} };
+    const call = (name: string, argumentsValue: Record<string, unknown> = {}) => ({ jsonrpc: "2.0", id: 3,
+      method: "tools/call", params: { name, arguments: argumentsValue } });
+    const legacy = (body: unknown, token = owner, protocol: string | null = "2025-06-18"): RequestInit => ({
+      method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${token}`, ...(protocol === null ? {} : { "MCP-Protocol-Version": protocol }) }, body: JSON.stringify(body) });
+    const rpc = async (response: Response): Promise<Record<string, unknown>> => {
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("mcp-session-id"), null);
+      const text = await response.text();
+      const event = text.split(/\r?\n/u).find(line => line.startsWith("data: "));
+      return JSON.parse(event ? event.slice(6) : text) as Record<string, unknown>;
+    };
+    await t.test("legacy initialize, tools/list and terminal use the governed factory without sessions", async () => {
+      const initialized = await rpc(await request("/terminal/mcp", legacy(initialize, owner, null)));
+      assert.equal((initialized.result as { protocolVersion: string }).protocolVersion, "2025-06-18");
+      const notification = await request("/terminal/mcp", legacy({ jsonrpc: "2.0", method: "notifications/initialized" }));
+      assert.equal(notification.status, 202);
+      assert.equal(notification.headers.get("mcp-session-id"), null);
+      const listed = await rpc(await request("/terminal/mcp", legacy(list)));
+      assert.deepEqual((listed.result as { tools: { name: string }[] }).tools.map(tool => tool.name).sort(), ["mac_health", "mac_terminal_exec"]);
+      const result = await rpc(await request("/terminal/mcp", legacy(call("mac_terminal_exec", {
+        command: "printf O1_CONNECTION_OK", cwd: "/tmp", timeout_ms: 5000, idempotency_key: "legacy-probe" }))));
+      assert.equal((result.result as { structuredContent: { data: { stdout: string } } }).structuredContent.data.stdout, "O1_CONNECTION_OK");
+      assert.ok(executed.includes("mac_terminal_exec"));
+    });
+    await t.test("modern root and terminal still negotiate while root rejects legacy", async () => {
+      assert.equal((await request("/mcp", legacy(initialize, root))).status, 400);
+      assert.equal((await request("/mcp", createMcpAuthRequest(root))).status, 200);
+      assert.equal((await request("/terminal/mcp", createMcpAuthRequest(owner))).status, 200);
+    });
+    await t.test("legacy requests reject foreign, absent, expired and revoked authority before Broker", async () => {
+      const before = executed.length;
+      assert.equal((await request("/terminal/mcp", legacy(initialize, root))).status, 401);
+      assert.equal((await request("/mcp", legacy(initialize, owner))).status, 401);
+      assert.equal((await request("/terminal/mcp", legacy(initialize, ""))).status, 401);
+      assert.equal((await request("/terminal/mcp", legacy(initialize, expired))).status, 401);
+      revoked = true;
+      assert.equal((await request("/terminal/mcp", legacy(call("mac_health")))).status, 401);
+      revoked = false;
+      assert.equal(executed.length, before);
+    });
+    await t.test("reduced scopes and invalid arguments cannot dispatch the terminal", async () => {
+      executed.length = 0;
+      const denied = await rpc(await request("/terminal/mcp", legacy(call("mac_terminal_exec"), reader)));
+      assert.ok(denied.error || (denied.result as { isError?: boolean } | undefined)?.isError);
+      const malformed = await rpc(await request("/terminal/mcp", legacy(call("mac_terminal_exec", { command: "echo unsafe", cwd: "/tmp" }))));
+      assert.equal((malformed.result as { isError: boolean }).isError, true);
+      assert.equal(executed.includes("mac_terminal_exec"), false);
+    });
+    await t.test("Broker revocation remains a stable handshake denial and per-call failure", async () => {
+      brokerRevoked = true;
+      assert.equal((await request("/terminal/mcp", legacy(initialize))).status, 403);
+      const result = await rpc(await request("/terminal/mcp", legacy(call("mac_health"))));
+      assert.equal((result.result as { isError: boolean }).isError, true);
+      brokerRevoked = false;
+    });
+    await t.test("unknown versions, absent subsequent headers, conflicts and batches fail before Broker", async () => {
+      const before = executed.length;
+      for (const init of [
+        legacy({ ...initialize, params: { ...initialize.params, protocolVersion: "2025-11-25" } }),
+        legacy(initialize, owner, "2025-03-26"), legacy(initialize, owner, "2026-07-28"),
+        legacy(list, owner, null), legacy(list, owner, "2025-03-26"),
+        legacy({ jsonrpc: "2.0", method: "notifications/initialized" }, owner, null),
+        legacy([list, list]), legacy([]), legacy([initialize, list]),
+        legacy({ ...initialize, params: { ...initialize.params, _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": "invalid" } } }),
+        { ...createMcpAuthRequest(owner), headers: { ...(createMcpAuthRequest(owner).headers as Record<string, string>), "Mcp-Method": "tools/call" } }
+      ]) assert.equal((await request("/terminal/mcp", init)).status, 400);
+      const correlated = await request("/terminal/mcp", legacy(initialize, owner, "2025-11-25"));
+      assert.equal((await correlated.json() as { id: number }).id, initialize.id);
+      const batch = await request("/terminal/mcp", legacy([list, list]));
+      assert.equal((await batch.json() as { id: unknown }).id, null);
+      assert.equal(executed.length, before);
+    });
+    await t.test("stateless terminal refuses persistent GET and DELETE sessions", async () => {
+      for (const method of ["GET", "DELETE"]) {
+        const response = await request("/terminal/mcp", { method, headers: { Authorization: `Bearer ${owner}`, Accept: "text/event-stream" } });
+        assert.equal(response.status, 405);
+        assert.equal(response.headers.get("mcp-session-id"), null);
+      }
+    });
+    await t.test("legacy still enforces body size and malformed JSON limits", async () => {
+      const before = executed.length;
+      assert.equal((await request("/terminal/mcp", { ...legacy(list), body: "{" })).status, 400);
+      assert.equal((await request("/terminal/mcp", legacy({ padding: "x".repeat(1024 * 1024) }))).status, 413);
+      assert.equal(executed.length, before);
+    });
   } finally { await edge.close(); await rm(directory, { recursive: true, force: true }); }
 });

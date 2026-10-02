@@ -264,6 +264,31 @@ transaction; individually verified partial writes remain visible and audited.
 The current YAP image/registry validates its Node isolation test and site build;
 other languages/projects require separately reviewed profiles and runtime images.
 
+## Independent owner terminal client compatibility audit
+
+On October 2, the native Codex OAuth manager had an authenticated independent
+`/terminal/mcp` registration, but startup failed: its initialize request used
+`2025-06-18`, while Edge explicitly rejected all legacy protocols. Previous live
+probes used the SDK's pinned `2026-07-28` client and did not cover this consumer.
+OAuth credentials and owner consent were valid; transport negotiation was the
+blocking contract. No change to the V2 execution boundary is needed.
+
+The existing SDK provides a stateless legacy handler using the same governed
+server factory. Reuse it only for the independent owner terminal resource with
+its exact issuer and O1 scopes. Accept exactly `2025-06-18` in addition to the
+existing modern protocol. Require the negotiated protocol header on subsequent
+legacy requests; reject batches, unknown versions and header/body conflicts
+before invoking Broker. The primary V2 endpoint continues to reject legacy.
+
+Both protocol paths retain bearer verification, issuer/audience binding, scope
+projection, Broker authorization, grant revocation, rate/body/Host/Origin
+limits, bounded output and managed jobs. No credentials are forwarded or
+rewritten. Stateless operation adds no session authority or persisted state.
+The residual risk is the SDK's legacy parsing/SSE implementation, covered by
+transport and cross-resource authorization regressions plus a real saved-OAuth
+Codex execution. Roll out as an immutable release with stopped-state backup;
+rollback restores the previous release and complete protected state.
+
 Git hooks remain configured in user repositories but every adapter forces
 `core.hooksPath=/dev/null` and pins repository configuration identity. Filters,
 external integration and unsafe Git metadata remain denied. The offline

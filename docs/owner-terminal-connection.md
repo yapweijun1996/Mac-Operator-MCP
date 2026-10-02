@@ -92,13 +92,28 @@ The listener binds only to loopback. Registering or exchanging a code with a
 different port or path is rejected. A successful login is reported by
 `codex mcp list`; a fresh Codex session loads the newly connected tools.
 
-The independent terminal endpoint accepts MCP 2025 clients through the official
+The independent terminal endpoint accepts exactly MCP `2025-06-18` through the official
 SDK's stateless compatibility handler, using the same bearer validation, resource
 binding and Broker-governed tools as MCP 2026 requests. Default V2 remains
 modern-only. Requests claiming MCP 2026 must satisfy its envelope/header checks
 and cannot fall back to the legacy handler. No session ID substitutes for OAuth
 authorization, and every terminal command retains its Job, deadline and grant
 revocation checks.
+
+Initialize must name `2025-06-18`; all subsequent legacy requests and notifications
+must carry `MCP-Protocol-Version: 2025-06-18`. Unknown versions, conflicting
+claims, malformed modern initialization envelopes and batches are rejected
+before Broker dispatch. GET/DELETE do not create persistent sessions. Modern
+`2026-07-28` clients remain supported on both resources. Compatibility cannot be
+enabled on the primary endpoint or on another issuer/resource/scope profile.
+
+Verify with the actual native client's saved OAuth manager, rather than only a
+modern SDK client. The documented Codex app-server `mcpServerStatus/list` and
+`mcpServer/tool/call` APIs can check `mac-terminal` without starting an AI turn:
+require `authStatus: oAuth`, `runtimeStatus: connected`, 43 tools, healthy
+`mac_health`, and `mac_terminal_exec` running `printf O1_CONNECTION_OK` in `/tmp`
+with a 5-second timeout and a fresh idempotency key. Check the returned job,
+exit code 0 and exact bounded output. Do not extract or copy saved credentials.
 
 HTTP disconnects and protocol cancellation reach the Broker through combined
 request/tool abort signals, including requests already cancelled before factory
