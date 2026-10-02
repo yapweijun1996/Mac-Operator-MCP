@@ -1,0 +1,83 @@
+import { lstatSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { BrokerPolicy, PolicyDocument } from "@mac-operator/broker";
+import { canonicalJson } from "@mac-operator/contracts";
+import { W1_SCOPES, W1_TOOLS } from "./contracts.js";
+import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
+
+export function w1ProjectRoot(path: string): string {
+  if (!isAbsolute(path) || resolve(path) !== path) throw new Error("Personal write project path must be absolute and canonical");
+  const projectRoot = realpathSync(path);
+  if (projectRoot !== path) throw new Error("Personal write project path must not be a symlink");
+  const home = realpathSync(homedir());
+  const withinHome = relative(home, projectRoot);
+  if (!withinHome || withinHome === ".." || withinHome.startsWith(`..${sep}`) || isAbsolute(withinHome)) {
+    throw new Error("Personal write project must be inside the owner home");
+  }
+  if (!lstatSync(projectRoot).isDirectory()) throw new Error("Personal write project must be a directory");
+  let gitEntry;
+  try { gitEntry = lstatSync(join(projectRoot, ".git")); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Personal write project must be a Git repository");
+    throw error;
+  }
+  if (!gitEntry.isDirectory()) throw new Error("Personal write project must have its own Git directory");
+  return projectRoot;
+}
+
+export function w1FilesystemRoots(projectRoot: string): PolicyDocument["filesystem_roots"] {
+  return [
+    ...r1FilesystemRoots(),
+    { root_id: "owner-project", path: projectRoot, metadata: true, content_read: true, write: true, deny_relative_paths: [] }
+  ];
+}
+
+export function buildW1TargetRules(
+  principalId: string,
+  filesystemRoots: PolicyDocument["filesystem_roots"],
+  projectRoot: string
+): PolicyDocument["target_rules"] {
+  return [
+    ...buildR1TargetRules(principalId, filesystemRoots, projectRoot).filter(rule => rule.scope !== "mac.docker.read"),
+    { rule_id: "owner-w1-file-path", effect: "allow", principal_id: principalId, scope: "mac.files.write", target: { kind: "path", reference: "owner-project" } },
+    { rule_id: "owner-w1-file-project", effect: "allow", principal_id: principalId, scope: "mac.files.write", target: { kind: "project", reference: projectRoot } },
+    { rule_id: "owner-w1-project", effect: "allow", principal_id: principalId, scope: "mac.project.write", target: { kind: "project", reference: projectRoot } },
+    { rule_id: "owner-w1-git", effect: "allow", principal_id: principalId, scope: "mac.git.write", target: { kind: "project", reference: projectRoot } },
+    { rule_id: "owner-w1-job-cancel", effect: "allow", principal_id: principalId, scope: "mac.job.cancel", target: { kind: "job", reference: "owned" } }
+  ];
+}
+
+export function assertW1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
+  const grants = [...policy.principalGrants.values()];
+  if (grants.length !== 1 || grants[0]?.principalId !== principalId || grants[0]?.issuer !== issuerId || !grants[0]?.enabled ||
+      canonicalJson([...grants[0].scopes].sort()) !== canonicalJson([...W1_SCOPES].sort())) {
+    throw new Error("Personal write principal grant mismatch");
+  }
+  const enabled = [...policy.tools.values()].filter(tool => tool.enabled).map(tool => tool.tool).sort();
+  if (canonicalJson(enabled) !== canonicalJson([...W1_TOOLS].sort())) {
+    throw new Error("Personal write tool set mismatch");
+  }
+  const projectRoot = policy.filesystemRoots.find(root => root.rootId === "owner-project")?.path;
+  if (projectRoot === undefined || w1ProjectRoot(projectRoot) !== projectRoot) {
+    throw new Error("Personal write project root mismatch");
+  }
+  const expectedRoots = w1FilesystemRoots(projectRoot);
+  const actualRoots = policy.filesystemRoots.map(root => ({ root_id: root.rootId, path: root.path,
+    metadata: root.metadata, content_read: root.contentRead, write: root.write, deny_relative_paths: root.denyRelativePaths }));
+  if (canonicalJson(actualRoots) !== canonicalJson(expectedRoots)) {
+    throw new Error("Personal write filesystem roots mismatch");
+  }
+  const expectedRules = buildW1TargetRules(principalId, expectedRoots, projectRoot);
+  const actualRules = policy.targetRules.map(rule => ({ rule_id: rule.ruleId, effect: rule.effect,
+    principal_id: rule.principalId, scope: rule.scope, target: rule.target,
+    ...(rule.targetConstraint === undefined ? {} : { target_constraint: rule.targetConstraint }) }));
+  if (canonicalJson(actualRules) !== canonicalJson(expectedRules)) {
+    throw new Error("Personal write target rules mismatch");
+  }
+  const switches = policy.killSwitches;
+  if (switches.global || switches.mutations || switches.process || switches.network ||
+      !switches.gui || !switches.destructive || !switches.privileged) {
+    throw new Error("Personal write kill-switch boundary mismatch");
+  }
+}

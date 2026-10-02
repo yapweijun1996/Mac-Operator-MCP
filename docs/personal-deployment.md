@@ -1,31 +1,60 @@
 # Personal always-on deployment
 
-Status: Running on the owner's Mac mini as of September 21, 2026. This is an
+Status: W1 running on the owner's Mac mini as of September 24, 2026. This is an
 owner-managed, unsigned personal deployment, not a Developer ID/notarized
 package or acceptance of the formal production installer.
 
-## Current authoritative R1 state
+## Current W1 personal project deployment
 
-The live service is the bounded R1 read-only profile. The original R0
-paragraphs retained later in this document are historical evidence and do not
-describe the current policy. A separate owner-approved ChatGPT R1 app is
-connected with the full 17-scope grant and exactly 30 discovered read-only
-actions; an older installed app still retains its earlier R0 grant.
+The live service uses a separate `w1` owner profile for one canonical Git
+repository under the owner's home. It keeps 27 R1 read tools and adds `mac_write_file_atomic`,
+`mac_apply_patch`, `mac_git_stage`, `mac_git_commit`, and `mac_job_cancel` to
+form 32 tools total. Docker's three read tools remain on R1 because the newer
+Broker requires a kernel descriptor launcher that this host does not provide.
+The signed policy gives write access only to that project;
+other home paths remain read-only. Each write requires an attended owner browser
+approval bound to the exact tool, target, and payload. W1 does not grant task
+execution, service control, GUI control, privileged operations, or arbitrary
+shell access.
 
-## Connect
+The selected project is `/Users/yapweijun/Documents/GitHub/Mac-Operator-MCP`.
+The MCP URL remains `https://mac.yapweijun1996.com/mcp`; the owner signs in
+through its OAuth page with the configured local username and password.
+PM2 runs the snapshot at
+`~/Library/Application Support/MacOperator/releases/personal-20260924-w1d`
+with protected state at
+`~/Library/Application Support/MacOperator-w1-20260924d`.
+The preserved R1 snapshot and state are the immediate rollback path.
+
+The public OAuth discovery advertises 20 W1 scopes and the MCP endpoint lists
+32 tools. A real owner OAuth grant completed 26 read calls; a project-external
+write returned `POLICY_DENIED` without creating a file, and revocation blocked
+the next request. The live PM2 process had zero restarts at this check. An
+in-project write with attended browser approval and ChatGPT app reconnect are
+still pending. Existing R1 ChatGPT grants do not expand into W1; the owner
+must reconnect and consent to the new scope set.
+
+## Historical R1 rollback state
+
+The preserved R1 snapshot exposes 30 read-only tools under 17 scopes, including
+Docker reads. Its earlier ChatGPT acceptance is historical evidence and does
+not prove that the new W1 connection has been completed. The R0 paragraphs
+retained later in this document are also historical.
+
+## Historical R1 connection
 
 - MCP URL: `https://mac.yapweijun1996.com/mcp`
 - Authentication: OAuth, public-client dynamic registration (DCR).
 - Username: the locally provisioned owner username.
 - Password: the owner's configured password, entered only on the Mac Operator
   login page. No manually issued client ID or client secret is needed for DCR.
-- Current R1 scopes: `mac.control.read`, `mac.policy.explain`,
+- R1 scopes: `mac.control.read`, `mac.policy.explain`,
   `mac.system.read`, `mac.storage.read`, `mac.process.read`, `mac.log.read`,
   `mac.network.read`, `mac.service.read`, `mac.package.read`,
   `mac.files.read`, `mac.files.search`, `mac.files.hash`, `mac.project.read`,
   `mac.git.read`, `mac.docker.read`, `mac.app.read`, `mac.job.read`.
 
-The service/API enables exactly 30 read-only tools. The policy grants two
+The R1 service/API enables exactly 30 read-only tools. Its policy grants two
 filesystem roots: the canonical owner home with metadata/content read and no
 write, and `/` with metadata-only read. No root has write access and no system
 content is readable. Mutation, GUI, destructive and privileged adapters remain
@@ -33,7 +62,7 @@ disabled; process and network read tools are enabled in R1. Docker objects are
 matched dynamically only by the fixed local inspector, never through a raw
 Docker socket.
 
-## Running components
+## Historical R1 components
 
 PM2 manages `mac-operator-personal`. Its supervisor owns the real Broker and
 spawns separate Auth and Edge processes, bound to loopback ports 3444 and 3443.
@@ -83,7 +112,7 @@ Other hosts use normal DNS. This does not change system DNS or disable HTTPS
 certificate checks. Authenticated grant checks still fail closed if unavailable.
 An older snapshot demonstrated an intermittent public status-channel timeout
 during repeated verification; it returned `401 invalid_token` after the bounded
-3-second check. The current r1f snapshot uses the fixed loopback status channel
+3-second check. The preserved r1f snapshot uses the fixed loopback status channel
 and passed the repeated public verifier. See the historical incident record:
 [`evidence/2026-09-21-r1-revocation-channel-timeout.md`](../evidence/2026-09-21-r1-revocation-channel-timeout.md).
 
@@ -129,7 +158,7 @@ Renew before expiry, copy the renewed Edge certificate into `personal/edge.crt`,
 and restart this service. Update the tunnel CA only when changing the CA; do not
 disable certificate validation to recover an expired deployment.
 
-## Verification
+## Historical R1 verification
 
 Live verification used the real owner account from the protected `.env` without
 printing credentials. It performed public HTTPS discovery, browser-session
@@ -230,16 +259,16 @@ For a repeat live probe (it creates then revokes its own test grant):
 ```sh
 MOPS_VERIFY_PROJECT_ROOT="$PWD" \
 node scripts/verify-personal-connection.mjs \
-  "$HOME/Library/Application Support/MacOperator-r1f" .env
+  "$HOME/Library/Application Support/MacOperator-w1-20260924d" .env
 ```
 
-Before switching a personal snapshot, build the repository and run the
-owner-only read-only preflight:
+Before switching a future personal snapshot, build the repository and run the
+owner-only read-only preflight against that snapshot state root:
 
 ```sh
 npm run build
 npm run verify:personal:snapshot -- \
-  "$HOME/Library/Application Support/MacOperator-r1f"
+  "$HOME/Library/Application Support/MacOperator-w1-20260924d"
 ```
 
 The preflight must report `loopbackStatus=bound`. It rejects older snapshots

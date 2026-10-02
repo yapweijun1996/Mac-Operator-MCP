@@ -81,9 +81,9 @@ Initialization is exclusive and does not overwrite an account. If interrupted,
 inspect the partial protected directory locally; do not rerun with overwrite
 or delete an existing database as a recovery shortcut.
 
-## Assemble the current R1 connection
+## Historical R1 connection
 
-The live personal supervisor provisions the signed R1 policy. It grants the 17
+The preserved R1 personal supervisor provisions the signed R1 policy. It grants the 17
 scopes listed in [personal deployment](personal-deployment.md), enables the
 exact 30 read-only tools, and binds filesystem, project, service, log, process,
 Docker, app and job targets before the Broker accepts requests. The provisioning
@@ -96,21 +96,29 @@ introduced. OAuth metadata advertises available scopes but cannot expand a
 stored grant. The expected UI result after reconnect is the R1 tool list; until
 then the existing app correctly remains at its original three-tool R0 list.
 
-## Stage the D1 grant profile without enabling mutations
+## Owner project write profile and D1 staging
 
-The Auth initializer accepts `--grant-profile r1|d1`; `r1` is the default and
-the personal supervisor accepts only R1. The staging-only D1 profile advertises
+The Auth initializer accepts `--grant-profile r1|w1|d1`; `r1` is the default.
+The personal supervisor accepts R1 and the owner project write profile W1.
+W1 advertises the R1 scopes except `mac.docker.read`, plus `mac.files.write`, `mac.project.write`,
+`mac.git.write`, and `mac.job.cancel`. Its signed policy enables only the four
+file/Git write tools and job cancellation in addition to 27 read tools, and requires an
+attended owner approval for each write. The live personal snapshot is W1; its
+public 20-scope discovery, 32-tool list, 26 real reads, out-of-project denial,
+and grant revocation passed. ChatGPT reconnect and an attended in-project write
+remain open; see [personal deployment](personal-deployment.md).
+
+The staging-only D1 profile advertises
 the 17 R1 scopes plus `mac.files.write`, `mac.project.write`, `mac.git.write`,
-`mac.task.run`, and `mac.job.cancel`. The generated
+`mac.service.control`, `mac.task.run`, and `mac.job.cancel`. The generated
 `edge-auth-settings.json` records this full list as `oauthScopes`, while an
 Edge startup document may keep a smaller `requiredScopes` list for the MCP
 initialization gate. These fields must not be conflated.
 
 D1 initialization remains a scope and contract-parity check only: generated
-Broker policy input still enables the 30 read-only tools, and the live personal
-deployment refuses the D1 profile. Public mutation enablement additionally
-requires signed policy changes, installed approval/audit wiring, real-Mac
-readback and recovery evidence, and an end-to-end ChatGPT mutation probe.
+Broker policy input still enables the 30 read-only tools, and the personal
+supervisor refuses the D1 profile. W1 still requires an attended in-project
+write and an end-to-end ChatGPT mutation probe before claiming full acceptance.
 
 ## Historical R0 policy assembly
 
