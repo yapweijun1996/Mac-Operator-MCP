@@ -23,6 +23,7 @@ const DEFAULT_POLL_INTERVAL_MS = 25;
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_MAX_CONCURRENT_PER_EXECUTABLE = 4;
 const MAX_TRACKED_PROCESS_GROUPS = 256;
+const PROCESS_REQUEST_KEYS = ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "runAsUid", "runAsGid", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged", "keepStdinOpen", "onStdinReady", "streamOutput", "onOutputChunk"];
 interface NativeProcessTreeAdapter {
   listDescendantProcesses(pid: number): unknown;
   listProcessGroupMembers(processGroupId: number): unknown;
@@ -119,6 +120,24 @@ export interface ProcessExecutionRequest {
   onStarted?: (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
   /** Synchronous hook used to persist newly observed descendants. */
   onOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
+  /**
+   * Interactive sessions only: keep stdin open after any initial payload and hand
+   * the caller a sink once identity is persisted. The caller must apply its own
+   * per-write authorization and secret screening; the supervisor only transports bytes.
+   */
+  keepStdinOpen?: boolean;
+  onStdinReady?: (sink: ProcessStdinSink) => void;
+  /**
+   * Deliver output only through onOutputChunk instead of accumulating it. The
+   * caller owns bounding and redaction; outputCapBytes then no longer ends the process.
+   */
+  streamOutput?: boolean;
+  onOutputChunk?: (chunk: Buffer) => void;
+}
+
+export interface ProcessStdinSink {
+  write(data: string): boolean;
+  end(): void;
 }
 
 /**
@@ -359,7 +378,7 @@ export class ProcessSupervisor {
               shell: false,
               detached: true,
               ...(safeRequest.runAsUid === undefined ? {} : { uid: safeRequest.runAsUid, gid: safeRequest.runAsGid }),
-              stdio: [safeRequest.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
+              stdio: [safeRequest.stdin === undefined && safeRequest.keepStdinOpen !== true ? "ignore" : "pipe", "pipe", "pipe"]
             });
         } else {
           executableDescriptor = await open(
@@ -398,7 +417,8 @@ export class ProcessSupervisor {
         if (executableDescriptor !== undefined) await executableDescriptor.close().catch(() => undefined);
         if (cwdDescriptor !== undefined) await cwdDescriptor.close().catch(() => undefined);
       }
-      const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes);
+      const capture = attachChildProcessCapture(child, safeRequest.outputCapBytes,
+        safeRequest.streamOutput === true ? safeRequest.onOutputChunk : undefined);
       const childPid = child.pid;
       if (typeof childPid !== "number" || !Number.isSafeInteger(childPid) || childPid <= 0) {
         child.kill("SIGKILL");
@@ -460,7 +480,20 @@ export class ProcessSupervisor {
         if (!drained) throw new BrokerError("UNKNOWN_OUTCOME", "Process startup cleanup could not be verified", true);
         throw new BrokerError("CANCELLED", "Process authority was revoked before execution");
       }
-      if (safeRequest.stdin !== undefined && child.stdin !== null) {
+      if (safeRequest.keepStdinOpen === true && child.stdin !== null) {
+        const stdin = child.stdin;
+        stdin.on("error", () => undefined);
+        try {
+          if (safeRequest.stdin !== undefined) stdin.write(safeRequest.stdin, "utf8");
+          safeRequest.onStdinReady!({
+            write: (data: string) => !stdin.destroyed && stdin.writable && stdin.write(data, "utf8"),
+            end: () => { if (!stdin.destroyed) stdin.end(); }
+          });
+        } catch {
+          child.kill("SIGKILL");
+          throw new BrokerError("EXECUTION_FAILED", "Process stdin could not be delivered");
+        }
+      } else if (safeRequest.stdin !== undefined && child.stdin !== null) {
         try {
           child.stdin.end(safeRequest.stdin, "utf8");
         } catch {
@@ -1042,7 +1075,7 @@ function redactProcessOutput(value: Buffer, maxBytes: number): string {
   return redactBoundedText(value.toString("utf8"), maxBytes).text;
 }
 
-function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number): ChildProcessCapture {
+function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number, streamTo?: (chunk: Buffer) => void): ChildProcessCapture {
   const capture: ChildProcessCapture = {
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
@@ -1057,6 +1090,11 @@ function attachChildProcessCapture(child: ChildProcess, outputCapBytes: number):
   };
   const append = (stream: "stdout" | "stderr", chunk: Buffer | string): void => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (streamTo !== undefined) {
+      try { streamTo(bytes); } catch { /* A consumer failure must not change process supervision. */ }
+      capture.onOutput?.();
+      return;
+    }
     const remaining = outputCapBytes - capture.stdoutBytes - capture.stderrBytes;
     const accepted = bytes.subarray(0, Math.max(0, Math.min(remaining, bytes.byteLength)));
     if (stream === "stdout") {
@@ -1101,7 +1139,7 @@ async function validateRequest(
   trustedUserOwnedExecutablePaths: ReadonlySet<string>
 ): Promise<ValidatedProcessPaths> {
   if (!isPlainDataRecord(request) ||
-      !hasAllowedKeys(request, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "runAsUid", "runAsGid", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"]) ||
+      !hasAllowedKeys(request, PROCESS_REQUEST_KEYS) ||
       !isCanonicalAbsolutePath(request.executable) || !isCanonicalAbsolutePath(request.cwd) ||
       !isDenseStringArray(request.args, MAX_ARGUMENTS) ||
       !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1 || request.timeoutMs > MAX_TIMEOUT_MS ||
@@ -1205,7 +1243,7 @@ function isCanonicalAbsolutePath(value: string): boolean {
 
 function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (!isPlainDataRecord(value) ||
-      !hasAllowedKeys(value, ["executable", "expectedExecutableContentSha256", "args", "cwd", "environment", "stdin", "timeoutMs", "outputCapBytes", "runAsUid", "runAsGid", "allowUserOwnedExecutable", "requireCleanExitProof", "shouldCancel", "onStarted", "onOwnershipChanged"])) {
+      !hasAllowedKeys(value, PROCESS_REQUEST_KEYS)) {
     throw new BrokerError("PRECONDITION_FAILED", "Process request limits or paths are invalid");
   }
   if (!isDenseStringArray(value.args, MAX_ARGUMENTS)) {
@@ -1223,6 +1261,14 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   }
   if (value.requireCleanExitProof !== undefined && typeof value.requireCleanExitProof !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process exit-proof policy is malformed");
+  }
+  if ((value.keepStdinOpen !== undefined && typeof value.keepStdinOpen !== "boolean") ||
+      (value.streamOutput !== undefined && typeof value.streamOutput !== "boolean") ||
+      (value.onStdinReady !== undefined && typeof value.onStdinReady !== "function") ||
+      (value.onOutputChunk !== undefined && typeof value.onOutputChunk !== "function") ||
+      (value.keepStdinOpen === true && value.onStdinReady === undefined) ||
+      (value.streamOutput === true && value.onOutputChunk === undefined)) {
+    throw new BrokerError("PRECONDITION_FAILED", "Process streaming options are malformed");
   }
   if (value.allowUserOwnedExecutable !== undefined && typeof value.allowUserOwnedExecutable !== "boolean") {
     throw new BrokerError("PRECONDITION_FAILED", "Process executable ownership policy is malformed");
@@ -1259,6 +1305,10 @@ function snapshotProcessRequest(value: unknown): ProcessExecutionRequest {
   if (value.onOwnershipChanged !== undefined) {
     snapshot.onOwnershipChanged = value.onOwnershipChanged as (snapshot: ProcessOwnershipSnapshot) => void;
   }
+  if (value.keepStdinOpen !== undefined) snapshot.keepStdinOpen = value.keepStdinOpen as boolean;
+  if (value.onStdinReady !== undefined) snapshot.onStdinReady = value.onStdinReady as (sink: ProcessStdinSink) => void;
+  if (value.streamOutput !== undefined) snapshot.streamOutput = value.streamOutput as boolean;
+  if (value.onOutputChunk !== undefined) snapshot.onOutputChunk = value.onOutputChunk as (chunk: Buffer) => void;
   return snapshot;
 }
 
