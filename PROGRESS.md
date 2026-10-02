@@ -6685,3 +6685,28 @@ lists 43 tools and passes the same reads plus real 31-second CLI execution,
 network/file access, idempotency, Job status, timeout and active grant revocation.
 Final scope-reduction execution evidence is recorded in
 `evidence/2026-10-02-independent-terminal-oauth.md`.
+
+## October 2, 2026: Codex native terminal connection completed
+
+Added and authenticated the independent `mac-terminal` connection in the owner
+Codex configuration. Auth now permits exact allowlisted canonical IPv4 loopback
+callbacks with an explicit unprivileged port; issuer/resource URLs still require
+HTTPS. Codex uses `http://127.0.0.1:61989/callback`, S256, and the separate terminal
+resource. Only its `mac_terminal_exec` client approval is automatic; global
+approvals and the default V2 connection remain unchanged.
+
+Actual Codex 0.153.4 required MCP 2025 compatibility. The independent terminal
+endpoint now uses the official SDK's stateless legacy handler behind the same
+authentication and Broker authorization, while default V2 stays modern-only.
+Independent review reproduced an SDK pre-abort race; captured HTTP/tool signals
+now prevent terminal delivery before, during and after factory construction and
+cancel activity on disconnect. All 109 Auth and 81 Edge tests passed, plus
+independent normal/cancelled delivery checks.
+
+Native AI execution succeeded without a confirmation: owner identity, cwd,
+Git and Node version commands returned exit 0 with a durable completed Job.
+A 150 ms timeout stopped `/bin/sleep 3`, with durable failure and cleared process
+metadata. Default V2 still passed 48 tools/26 public reads. Bundled Codex 0.159.2
+also reports the connection OAuth-authenticated. Live source is `8066356`, with
+stopped-state backups and saved PM2 configuration. Details:
+`evidence/2026-10-02-codex-native-terminal-connection.md`.
