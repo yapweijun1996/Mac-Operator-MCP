@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { parseJsonUtf8Strict, SCOPES } from "@mac-operator/contracts";
+import { parseJsonUtf8Strict, SCOPES, O1_SCOPES, V2_CODING_SCOPES, ownerTerminalOAuthContext } from "@mac-operator/contracts";
 import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import type { OAuthMetadata, OAuthTokenVerifier } from "@modelcontextprotocol/server";
 import { BrokerIpcClient } from "./ipc-client.js";
@@ -29,7 +29,7 @@ const CONFIG_KEYS = new Set([
   "policyVersion", "sourceRevision", "contractVersion", "ipcTimeoutMs", "maxIpcResponseBytes",
   "rateLimitWindowMs", "rateLimitMaxRequests", "rateLimitMaxKeys",
   "oauthStatusUrl", "oauthStatusKeyPath", "oauthStatusKeyDigest", "oauthStatusLocalUrl",
-  "oauthStatusLocalServerName", "oauthStatusLocalCaPath"
+  "oauthStatusLocalServerName", "oauthStatusLocalCaPath", "ownerTerminalConnection"
 ]);
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{7,64}$/u;
@@ -72,6 +72,7 @@ export interface EdgeServiceStartupConfig {
   allowedHosts: string[];
   allowedOrigins: string[];
   oauthScopes?: string[];
+  ownerTerminalConnection?: boolean;
   requiredScopes?: string[];
   policyVersion: string;
   sourceRevision: string;
@@ -337,6 +338,17 @@ export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceSta
   if (oauthScopes !== undefined && requiredScopes !== undefined && requiredScopes.some(scope => !oauthScopes.includes(scope))) {
     throw new Error("Edge required scope is not advertised by the OAuth profile");
   }
+  if (record.ownerTerminalConnection !== undefined && typeof record.ownerTerminalConnection !== "boolean") {
+    throw new Error("Owner terminal connection opt-in must be boolean");
+  }
+  if (record.ownerTerminalConnection === true) {
+    const context = ownerTerminalOAuthContext(new URL(oauthIssuer));
+    if (issuerId !== "mac-operator-auth" || resourceServerUrl !== new URL("/mcp", oauthIssuer).href ||
+        !oauthScopes || JSON.stringify([...oauthScopes].sort()) !== JSON.stringify([...V2_CODING_SCOPES].sort()) ||
+        context.resource.origin !== new URL(resourceServerUrl).origin) {
+      throw new Error("Independent terminal connection requires the unchanged personal V2 profile");
+    }
+  }
   if (!allowedHosts.includes(new URL(resourceServerUrl).hostname.toLowerCase())) {
     throw new Error("Edge Host allowlist must include the resource server hostname");
   }
@@ -350,6 +362,7 @@ export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceSta
     authenticationKeyPath, authenticationKeyId, authenticationKeyDigest, contractsDirectory,
     tlsCertificatePath, tlsPrivateKeyPath, bindHost, bindPort, resourceServerUrl, oauthIssuer, issuerId,
     authorizationEndpoint, tokenEndpoint, jwksUri, allowedHosts, allowedOrigins,
+    ...(record.ownerTerminalConnection === undefined ? {} : { ownerTerminalConnection: record.ownerTerminalConnection as boolean }),
     ...(oauthScopes === undefined ? {} : { oauthScopes }), ...(requiredScopes === undefined ? {} : { requiredScopes }), policyVersion,
     sourceRevision, contractVersion,
     ipcTimeoutMs: boundedInteger(record.ipcTimeoutMs, 100, 180_000, "Edge IPC timeout"),
@@ -377,6 +390,7 @@ export async function createEdgeServiceFromStartupConfig(options: {
   let serviceStatusKey: Buffer | undefined;
   let serviceStatusChannel: EdgeStatusIpcServer | undefined;
   let revocationMonitor: OAuthGrantRevocationMonitor | undefined;
+  let terminalMonitor: OAuthGrantRevocationMonitor | undefined;
   try {
     if (config.oauthStatusKeyPath) statusKey = await loadProtectedEdgeAuthenticationKey(config.oauthStatusKeyPath, config.oauthStatusKeyDigest!);
     if (config.oauthStatusLocalCaPath) {
@@ -449,6 +463,31 @@ export async function createEdgeServiceFromStartupConfig(options: {
         scopes_supported: oauthScopes
       } : {})
     };
+    const additionalEndpoints = [] as NonNullable<Parameters<typeof createHttpsMcpEdge>[0]["additionalEndpoints"]>;
+    if (config.ownerTerminalConnection === true) {
+      if (!statusKey || !statusCa || !config.oauthStatusLocalUrl || !config.oauthStatusLocalServerName) {
+        throw new Error("Independent terminal status boundary is unavailable");
+      }
+      const terminal = ownerTerminalOAuthContext(issuer);
+      const statusUrl = new URL("oauth/status", terminal.issuer);
+      const localStatusUrl = new URL(config.oauthStatusLocalUrl);
+      localStatusUrl.pathname = statusUrl.pathname;
+      const terminalFetch = createLoopbackOAuthStatusFetch({ publicUrl: statusUrl, loopbackUrl: localStatusUrl,
+        serverName: config.oauthStatusLocalServerName, ca: statusCa });
+      terminalMonitor = new OAuthGrantRevocationMonitor({
+        readStatus: createOAuthGrantStatusReader({ url: statusUrl, key: statusKey, fetch: terminalFetch }), onRevoked, now: Date.now });
+      additionalEndpoints.push({ resourceServerUrl: terminal.resource, oauthIssuer: terminal.issuer,
+        tokenVerifier: createJwtAccessTokenVerifier({ issuer: terminal.issuer, issuerId: config.issuerId,
+          resourceServerUrl: terminal.resource, jwksUri: new URL("jwks", terminal.issuer),
+          revocationCheck: createOAuthGrantRevocationCheck({ url: statusUrl, key: statusKey, fetch: terminalFetch }),
+          onAccepted: context => terminalMonitor?.track(context), onRevoked }),
+        oauthMetadata: { ...oauthMetadata, issuer: terminal.issuer.href,
+          authorization_endpoint: new URL("authorize", terminal.issuer).href,
+          token_endpoint: new URL("token", terminal.issuer).href,
+          registration_endpoint: new URL("register", terminal.issuer).href,
+          revocation_endpoint: new URL("revoke", terminal.issuer).href,
+          jwks_uri: new URL("jwks", terminal.issuer).href, scopes_supported: [...O1_SCOPES] } });
+    }
     const edge = createHttpsMcpEdge({
       edgeId: config.edgeId,
       brokerAudience: config.brokerAudience,
@@ -463,6 +502,7 @@ export async function createEdgeServiceFromStartupConfig(options: {
       oauthIssuer: issuer,
       tokenVerifier,
       oauthMetadata,
+      additionalEndpoints,
       ...(config.requiredScopes === undefined ? {} : { requiredScopes: config.requiredScopes }),
       rateLimit: {
         windowMs: config.rateLimitWindowMs,
@@ -486,14 +526,17 @@ export async function createEdgeServiceFromStartupConfig(options: {
     const notifyOAuthGrantRevoked = async (context: JwtRevocationContext): Promise<void> => {
       if (revocationMonitor !== undefined) await revocationMonitor.notifyRevoked(context);
       else await onRevoked(context);
+      terminalMonitor?.forget(context);
     };
     revocationMonitor?.start();
+    terminalMonitor?.start();
     return {
       service,
       edge,
       notifyOAuthGrantRevoked,
       async close() {
         revocationMonitor?.stop();
+        terminalMonitor?.stop();
         try {
           await serviceStatusChannel?.close();
           await service.stop();
@@ -510,6 +553,7 @@ export async function createEdgeServiceFromStartupConfig(options: {
   } catch (error) {
     await serviceStatusChannel?.close().catch(() => undefined);
     revocationMonitor?.stop();
+    terminalMonitor?.stop();
     requestFactory?.dispose();
     statusKey?.fill(0);
     statusCa?.fill(0);

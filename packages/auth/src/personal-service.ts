@@ -24,6 +24,7 @@ import { enableConnectionDiagnostics } from "./connection-diagnostics.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
 import { assertO1Policy, assertG1Policy, assertW1Policy, buildO1TargetRules, buildG1TargetRules, buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
 import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
+import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
@@ -149,6 +150,10 @@ async function start(root: string) {
   try {
     const config = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
     if (config.grantProfile === "d1") throw new Error("Personal service accepts only r1, w1, g1, or o1 OAuth grants");
+    const edgeConfig = validateEdgeServiceStartupConfig(JSON.parse(readAuthFile(join(data, "edge-service.json")).toString()));
+    if ((config.ownerTerminalConnection === true) !== (edgeConfig.ownerTerminalConnection === true) ||
+        config.issuer !== edgeConfig.oauthIssuer || config.resource !== edgeConfig.resourceServerUrl ||
+        new URL(config.issuer).pathname !== "/") throw new Error("Personal Auth/Edge connection configuration mismatch");
     const developmentProfile = config.grantProfile === "v2";
     const terminalProfile = config.grantProfile === "o1" || developmentProfile;
     const developmentConfig = developmentProfile ? loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json")) : undefined;
@@ -330,6 +335,11 @@ async function main() {
     if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || process.argv[5] !== "--enable") throw new Error("Snapshot identity and explicit --enable required");
     await upgradePersonalOwnerTerminal(root, packageRoot, detail);
     console.log("Personal owner terminal enabled in offline state; reconnect OAuth to grant mac.terminal.exec.");
+  }
+  else if (mode === "terminal-connection") {
+    if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");
+    await enablePersonalTerminalConnection(root, packageRoot, detail);
+    console.log("Independent owner terminal connection enabled at /terminal/mcp; default V2 consent unchanged.");
   }
   else if (mode === "development") {
     if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || !process.argv[5] || process.argv[6] !== "--enable") throw new Error("Source revision, private runtime config and explicit --enable required");

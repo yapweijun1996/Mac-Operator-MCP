@@ -1,22 +1,8 @@
 import { z } from "zod";
-
-/** R1 is the owner-only bounded read profile; mutation and GUI-control scopes stay excluded. */
-export const READ_SCOPES = [
-  "mac.control.read", "mac.policy.explain", "mac.system.read", "mac.storage.read",
-  "mac.process.read", "mac.log.read", "mac.network.read", "mac.service.read",
-  "mac.package.read", "mac.files.read", "mac.files.search", "mac.files.hash",
-  "mac.project.read", "mac.git.read", "mac.docker.read", "mac.app.read", "mac.job.read"
-] as const;
-export const D1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "mac.git.write", "mac.service.control", "mac.task.run", "mac.job.cancel"] as const;
-export const W1_ADDITIONAL_SCOPES = ["mac.files.write", "mac.project.write", "mac.git.write", "mac.job.cancel"] as const;
-export const W1_READ_SCOPES = READ_SCOPES.filter(scope => scope !== "mac.docker.read");
-export const W1_SCOPES = [...W1_READ_SCOPES, ...W1_ADDITIONAL_SCOPES] as const;
-export const G1_GUI_SCOPES = ["mac.app.control", "mac.ui.observe", "mac.ui.control"] as const;
-export const G1_SCOPES = [...W1_SCOPES, ...G1_GUI_SCOPES] as const;
-export const O1_SCOPES = [...G1_SCOPES, "mac.terminal.exec"] as const;
-export const V2_SCOPES = [...O1_SCOPES, "mac.task.run", "mac.agent.read", "mac.agent.run", "mac.audit.read"] as const;
-export const V2_CODING_SCOPES = V2_SCOPES.filter(scope => scope !== "mac.terminal.exec");
-export const D1_SCOPES = [...READ_SCOPES, ...D1_ADDITIONAL_SCOPES] as const;
+import { READ_SCOPES, D1_SCOPES, G1_SCOPES, W1_SCOPES, D1_ADDITIONAL_SCOPES, G1_GUI_SCOPES,
+  O1_SCOPES, V2_CODING_SCOPES, ownerTerminalOAuthContext } from "@mac-operator/contracts";
+export { READ_SCOPES, D1_ADDITIONAL_SCOPES, W1_ADDITIONAL_SCOPES, W1_READ_SCOPES, W1_SCOPES,
+  G1_GUI_SCOPES, G1_SCOPES, O1_SCOPES, V2_SCOPES, V2_CODING_SCOPES, D1_SCOPES } from "@mac-operator/contracts";
 export const OAUTH_SCOPES = [...D1_SCOPES, ...G1_GUI_SCOPES, "mac.terminal.exec", "mac.agent.read", "mac.agent.run", "mac.audit.read"] as const;
 export type GrantProfile = "r1" | "w1" | "g1" | "o1" | "d1" | "v2";
 export function scopesForGrantProfile(profile: GrantProfile): readonly string[] {
@@ -53,28 +39,37 @@ const httpsUrl = z.string().max(2048).refine(value => {
 
 export const configSchema = z.object({
   version: z.literal(1),
-  issuer: httpsUrl.refine(value => new URL(value).href === value && new URL(value).pathname === "/" && !new URL(value).search),
+  issuer: httpsUrl.refine(value => new URL(value).href === value && ["/", "/terminal/"].includes(new URL(value).pathname) && !new URL(value).search),
   resource: httpsUrl,
   issuerId: z.literal("mac-operator-auth"),
   principalId: id,
   keyId: id,
   port: z.number().int().min(1024).max(65535),
   allowedRedirectUris: z.array(httpsUrl).min(1).max(16),
-  grantProfile: z.enum(["r1", "w1", "g1", "o1", "d1", "v2"]).default("r1")
-}).strict().refine(value => value.resource === new URL("/mcp", value.issuer).href);
+  grantProfile: z.enum(["r1", "w1", "g1", "o1", "d1", "v2"]).default("r1"),
+  ownerTerminalConnection: z.boolean().optional()
+}).strict().refine(value => value.resource === new URL("mcp", value.issuer).href &&
+  (new URL(value.issuer).pathname === "/" || (value.grantProfile === "o1" && value.ownerTerminalConnection !== true)) &&
+  (value.ownerTerminalConnection !== true || value.grantProfile === "v2"));
 export type AuthConfig = z.infer<typeof configSchema>;
+export function ownerTerminalAuthConfig(config: AuthConfig): AuthConfig {
+  if (config.grantProfile !== "v2" || config.ownerTerminalConnection !== true) throw new Error("Separate owner terminal consent is not enabled");
+  const { ownerTerminalConnection: _enabled, ...base } = config;
+  const context = ownerTerminalOAuthContext(new URL(config.issuer));
+  return configSchema.parse({ ...base, issuer: context.issuer.href, resource: context.resource.href, grantProfile: "o1" });
+}
 
 export const recordSchemas = {
   account: z.object({ username: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/u), salt: hash, passwordHash: hash, principalId: id }).strict(),
-  client: z.object({ id, name: z.string().min(1).max(100), redirectUris: z.array(httpsUrl).min(1).max(8), expiresAt: time }).strict(),
-  transaction: z.object({ clientId: id, redirectUri: httpsUrl, state: z.string().min(1).max(512), challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u), scopes, expiresAt: time }).strict(),
+  client: z.object({ id, name: z.string().min(1).max(100), redirectUris: z.array(httpsUrl).min(1).max(8), expiresAt: time, resource: httpsUrl.optional() }).strict(),
+  transaction: z.object({ clientId: id, redirectUri: httpsUrl, state: z.string().min(1).max(512), challenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u), scopes, expiresAt: time, resource: httpsUrl.optional() }).strict(),
   session: z.object({ transactionId: hash, csrf: hash, authenticated: z.boolean(), expiresAt: time }).strict(),
   approval_session: z.object({ guiGrantId: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u).optional(), requestId: z.string().regex(/^[A-Za-z0-9._:@/+-]{1,128}$/u), csrf: hash, authenticated: z.boolean(), expiresAt: time }).strict(),
   browser_grant: z.object({ id: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u), principalId: id, sessionId: id,
     appId: z.enum(["bundle:com.google.Chrome", "bundle:com.apple.Safari"]), policyVersion: id,
     consentRequestId: id, createdAt: time, revoked: z.boolean() }).strict(),
-  code: z.object({ clientId: id, redirectUri: httpsUrl, challenge: z.string(), scopes, grantId: id, principalId: id, expiresAt: time }).strict(),
-  grant: z.object({ clientId: id, principalId: id, scopes, expiresAt: time, revoked: z.boolean() }).strict(),
+  code: z.object({ clientId: id, redirectUri: httpsUrl, challenge: z.string(), scopes, grantId: id, principalId: id, expiresAt: time, resource: httpsUrl.optional() }).strict(),
+  grant: z.object({ clientId: id, principalId: id, scopes, expiresAt: time, revoked: z.boolean(), resource: httpsUrl.optional() }).strict(),
   refresh: z.object({ clientId: id, grantId: id, expiresAt: time, consumed: z.boolean() }).strict()
 };
 export type Kind = keyof typeof recordSchemas;

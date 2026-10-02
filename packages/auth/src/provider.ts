@@ -1,4 +1,4 @@
-import { createHash, randomBytes, type KeyObject } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, type KeyObject } from "node:crypto";
 import OAuth2Server from "@node-oauth/oauth2-server";
 import { jwtVerify, SignJWT } from "jose";
 import { OAUTH_SCOPES, scopesForGrantProfile, type AuthConfig } from "./contracts.js";
@@ -24,10 +24,19 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
     });
   }
 
+  /** Legacy records always belong to the original resource, regardless of this provider. */
+  matchesResource(record: { resource?: string | undefined }): boolean {
+    return (record.resource ?? new URL("/mcp", this.config.issuer).href) === this.config.resource;
+  }
+
+  resourceBinding(): { resource?: string } {
+    return this.config.resource === new URL("/mcp", this.config.issuer).href ? {} : { resource: this.config.resource };
+  }
+
   async getClient(clientId: string, clientSecret?: string | null): Promise<OAuth2Server.Client | false> {
     if (clientSecret) return false;
     const client = this.store.get("client", clientId);
-    return client && client.expiresAt > Date.now()
+    return client && this.matchesResource(client) && client.expiresAt > Date.now()
       ? { id: client.id, redirectUris: client.redirectUris, grants: ["authorization_code", "refresh_token"] }
       : false;
   }
@@ -46,10 +55,10 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
     const grantId = nonce();
     const scopes = code.scope as Array<(typeof OAUTH_SCOPES)[number]>;
     this.store.transaction(() => {
-      this.store.put("grant", grantId, { clientId: client.id, principalId: this.config.principalId, scopes, expiresAt: Date.now() + GRANT_MS, revoked: false });
+      this.store.put("grant", grantId, { clientId: client.id, principalId: this.config.principalId, scopes, expiresAt: Date.now() + GRANT_MS, revoked: false, ...this.resourceBinding() });
       this.store.put("code", fingerprint(code.authorizationCode), {
         clientId: client.id, redirectUri: code.redirectUri, challenge: code.codeChallenge!, scopes,
-        grantId, principalId: this.config.principalId, expiresAt: code.expiresAt.getTime()
+        grantId, principalId: this.config.principalId, expiresAt: code.expiresAt.getTime(), ...this.resourceBinding()
       });
     });
     return { ...code, client, user: { ...user, grantId } };
@@ -57,7 +66,7 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
 
   async getAuthorizationCode(value: string): Promise<OAuth2Server.AuthorizationCode | false> {
     const record = this.store.get("code", fingerprint(value));
-    if (!record || record.expiresAt <= Date.now()) return false;
+    if (!record || !this.matchesResource(record) || record.expiresAt <= Date.now()) return false;
     const client = await this.getClient(record.clientId);
     if (!client) return false;
     return {
@@ -68,13 +77,14 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
   }
 
   async revokeAuthorizationCode(code: OAuth2Server.AuthorizationCode): Promise<boolean> {
-    return this.store.delete("code", fingerprint(code.authorizationCode));
+    const record = this.store.get("code", fingerprint(code.authorizationCode));
+    return Boolean(record && this.matchesResource(record) && this.store.delete("code", fingerprint(code.authorizationCode)));
   }
 
   async generateAccessToken(client: OAuth2Server.Client, user: OAuth2Server.User, scope: string[]): Promise<string> {
     const grantId = String(user.grantId);
     const grant = this.store.get("grant", grantId);
-    if (!grant || grant.revoked || grant.clientId !== client.id || grant.principalId !== user.id || grant.expiresAt <= Date.now() ||
+    if (!grant || !this.matchesResource(grant) || grant.revoked || grant.clientId !== client.id || grant.principalId !== user.id || grant.expiresAt <= Date.now() ||
         scope.some(value => !(grant.scopes as string[]).includes(value))) throw new OAuth2Server.InvalidGrantError("Invalid grant");
     const now = Math.floor(Date.now() / 1000);
     return new SignJWT({ sid: grantId, azp: client.id, scope: scope.join(" ") })
@@ -90,7 +100,7 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
     const grantId = String(user.grantId);
     const outcome = this.store.transaction(() => {
       const grant = this.store.get("grant", grantId);
-      if (!grant || grant.revoked || grant.expiresAt <= Date.now() || grant.clientId !== client.id || grant.principalId !== user.id) return undefined;
+      if (!grant || !this.matchesResource(grant) || grant.revoked || grant.expiresAt <= Date.now() || grant.clientId !== client.id || grant.principalId !== user.id) return undefined;
       // Consume the old refresh token in the same transaction as its successor.
       // Keep consumed hashes until absolute expiry to detect replay after restart.
       if (typeof user.refreshHash === "string") {
@@ -117,9 +127,9 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
     const key = fingerprint(value);
     const record = this.store.get("refresh", key);
     if (!record || record.expiresAt <= Date.now()) return false;
-    if (record.consumed) { this.store.revoke(record.grantId); return false; }
     const grant = this.store.get("grant", record.grantId);
-    if (!grant || grant.revoked || grant.expiresAt <= Date.now()) return false;
+    if (!grant || !this.matchesResource(grant) || grant.revoked || grant.expiresAt <= Date.now()) return false;
+    if (record.consumed) { this.store.revoke(record.grantId); return false; }
     const client = await this.getClient(record.clientId);
     if (!client) return false;
     return { refreshToken: value, refreshTokenExpiresAt: new Date(record.expiresAt), scope: grant.scopes, client,
@@ -132,10 +142,10 @@ export class AuthProvider implements OAuth2Server.AuthorizationCodeModel, OAuth2
 
   async getAccessToken(value: string): Promise<OAuth2Server.Token | false> {
     try {
-      const { payload } = await jwtVerify(value, this.key, { issuer: this.config.issuer, audience: this.config.resource, algorithms: ["ES256"] });
+      const { payload } = await jwtVerify(value, createPublicKey(this.key), { issuer: this.config.issuer, audience: this.config.resource, algorithms: ["ES256"] });
       if (typeof payload.sid !== "string" || typeof payload.azp !== "string" || typeof payload.scope !== "string" || payload.sub !== this.config.principalId) return false;
       const grant = this.store.get("grant", payload.sid);
-      if (!grant || grant.revoked || grant.expiresAt <= Date.now() || grant.clientId !== payload.azp ||
+      if (!grant || !this.matchesResource(grant) || grant.revoked || grant.expiresAt <= Date.now() || grant.clientId !== payload.azp ||
           payload.scope.split(" ").some(scope => !(grant.scopes as string[]).includes(scope))) return false;
       const client = await this.getClient(payload.azp);
       return client ? { accessToken: value, accessTokenExpiresAt: new Date(payload.exp! * 1000), scope: payload.scope.split(" "), client,

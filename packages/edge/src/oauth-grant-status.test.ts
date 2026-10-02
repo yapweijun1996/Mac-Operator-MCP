@@ -73,3 +73,40 @@ test("OAuth revocation monitor accepts a direct issuer push and removes the retr
     monitor.stop();
   }
 });
+
+
+for (const reverse of [false, true]) {
+  test(`narrower accepted tokens preserve monitoring for active terminal authority (reverse=${reverse})`, async () => {
+    const broad = { ...context, scopes: ["mac.control.read", "mac.terminal.exec"], expiresAt: Math.floor(Date.now() / 1000) + 60 };
+    const narrow = { ...broad, tokenId: "narrow-token", scopes: ["mac.control.read"], expiresAt: broad.expiresAt + 60 };
+    let propagated: JwtRevocationContext | undefined;
+    const monitor = new OAuthGrantRevocationMonitor({ intervalMs: 250,
+      readStatus: async () => ({ active: true, scopes: ["mac.control.read"] }),
+      onRevoked: async value => { propagated = value; } });
+    try {
+      for (const value of reverse ? [narrow, broad] : [broad, narrow]) monitor.track(value);
+      monitor.start();
+      await delay(550);
+      assert.ok(propagated);
+      assert.deepEqual([...propagated.scopes].sort(), ["mac.control.read", "mac.terminal.exec"]);
+      assert.equal(propagated.expiresAt, narrow.expiresAt);
+    } finally { monitor.stop(); }
+  });
+}
+
+test("expired terminal tokens do not extend terminal authority with a later read token", async () => {
+  let now = Date.now();
+  let reads = 0;
+  let revocations = 0;
+  const broad = { ...context, scopes: ["mac.control.read", "mac.terminal.exec"], expiresAt: Math.floor(now / 1000) + 1 };
+  const narrow = { ...broad, scopes: ["mac.control.read"], expiresAt: broad.expiresAt + 60 };
+  const monitor = new OAuthGrantRevocationMonitor({ intervalMs: 250, now: () => now,
+    readStatus: async value => { reads++; assert.deepEqual(value.scopes, ["mac.control.read"]); return { active: true, scopes: value.scopes }; },
+    onRevoked: async () => { revocations++; } });
+  try {
+    monitor.track(broad); monitor.track(narrow);
+    now = (broad.expiresAt + 1) * 1000;
+    monitor.start(); await delay(550);
+    assert.ok(reads > 0); assert.equal(revocations, 0);
+  } finally { monitor.stop(); }
+});

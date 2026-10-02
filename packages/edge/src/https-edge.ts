@@ -5,7 +5,6 @@ import { BrokerError, SCOPES } from "@mac-operator/contracts";
 import {
   createMcpExpressApp,
   getOAuthProtectedResourceMetadataUrl,
-  mcpAuthMetadataRouter,
   requireBearerAuth,
   type OAuthTokenVerifier
 } from "@modelcontextprotocol/express";
@@ -40,6 +39,8 @@ export interface HttpsMcpEdgeOptions extends GovernedMcpServerOptions {
   /** Scopes required to initialize this MCP endpoint. Individual tools still enforce their own scopes. */
   requiredScopes?: string[];
   rateLimit?: RateLimitOptions;
+  /** Separate OAuth resources use separate SDK handlers and bearer verifiers. */
+  additionalEndpoints?: Array<Pick<HttpsMcpEdgeOptions, "resourceServerUrl" | "oauthIssuer" | "tokenVerifier" | "oauthMetadata">>;
 }
 
 export interface HttpsMcpEdge {
@@ -57,73 +58,91 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
     jsonLimit: "1mb"
   });
   app.disable("x-powered-by");
-  const metadataOptions = {
-    oauthMetadata: options.oauthMetadata,
-    resourceServerUrl: options.resourceServerUrl,
-    scopesSupported: options.oauthMetadata.scopes_supported ?? [...SCOPES],
-    resourceName: "Mac-Operator-MCP"
-  };
-  // Some clients start discovery at the origin instead of following the challenge.
-  app.get("/.well-known/oauth-protected-resource", (_request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    response.json(buildOAuthProtectedResourceMetadata(metadataOptions));
-  });
-  app.use(mcpAuthMetadataRouter(metadataOptions));
-
-  const handler = createMcpHandler(createGovernedMcpServerFactory(options), {
-    legacy: "reject",
-    responseMode: "json"
-  });
-  const nodeHandler = toNodeHandler(handler);
-  const bearerAuth = requireBearerAuth({
-    verifier: options.tokenVerifier,
-    requiredScopes: validated.requiredScopes,
-    resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(options.resourceServerUrl)
-  });
-  const rateLimiter = new FixedWindowRateLimiter(options.rateLimit);
-  app.all(options.resourceServerUrl.pathname, (_request: Request, response: Response, next: NextFunction) => {
-    response.setHeader("Cache-Control", "no-store");
-    next();
-  }, (_request: Request, response: Response, next: NextFunction) => {
-    advertiseFullScopesOnChallenge(response, metadataOptions.scopesSupported);
-    next();
-  }, bearerAuth, (request: Request, response: Response, next: NextFunction) => {
-    const auth = (request as Request & { auth?: AuthInfo }).auth;
-    const identity = auth?.clientId ?? readPrincipalId(auth) ?? "authenticated";
-    const decision = rateLimiter.consume(identity);
-    if (!decision.allowed) {
-      response.setHeader("Retry-After", String(Math.max(1, Math.ceil(decision.retryAfterMs / 1_000))));
-      response.status(429).json({ error: "rate_limit_exceeded" });
-      return;
+  const primary = options;
+  const handlers: McpHttpHandler[] = [];
+  const endpoints = [primary, ...(primary.additionalEndpoints ?? []).map(endpoint => ({ ...primary, ...endpoint }))];
+  if (new Set(endpoints.map(endpoint => endpoint.resourceServerUrl.pathname)).size !== endpoints.length ||
+      new Set(endpoints.map(endpoint => endpoint.oauthIssuer.href)).size !== endpoints.length) {
+    throw new Error("OAuth endpoint resources and issuers must be distinct");
+  }
+  for (const options of endpoints) {
+    const validated = validateOptions(options);
+    const metadataOptions = {
+      oauthMetadata: options.oauthMetadata,
+      resourceServerUrl: options.resourceServerUrl,
+      scopesSupported: options.oauthMetadata.scopes_supported ?? [...SCOPES],
+      resourceName: "Mac-Operator-MCP"
+    };
+    const serveResourceMetadata = (_request: Request, response: Response) => {
+      response.setHeader("Cache-Control", "no-store");
+      response.json(buildOAuthProtectedResourceMetadata(metadataOptions));
+    };
+    if (options.resourceServerUrl.href === primary.resourceServerUrl.href) {
+      app.get("/.well-known/oauth-protected-resource", serveResourceMetadata);
     }
-    void (async () => {
-      // The MCP SDK deliberately converts factory failures to an internal
-      // JSON-RPC error. Probe only a session-less session-start request so a
-      // Broker revocation remains a stable authorization response at the
-      // HTTPS boundary; all other requests still use the SDK handler.
-      if (isSessionStartRequest(request)) {
-        const auth = (request as Request & { auth?: AuthInfo }).auth;
-        if (auth) {
-          try {
-            const principal = projectPrincipal(auth, options);
-            const capabilities = await options.gateway.execute("mac_capabilities", {}, principal);
-            if (!capabilities.ok && capabilities.result_class === "REVOKED") {
-              response.status(403).json({ error: "revoked", result_class: "REVOKED" });
+    app.get(new URL(getOAuthProtectedResourceMetadataUrl(options.resourceServerUrl)).pathname, serveResourceMetadata);
+    const issuerPath = options.oauthIssuer.pathname.replace(/\/$/u, "");
+    app.get(`/.well-known/oauth-authorization-server${issuerPath}`, (_request, response) => {
+      response.setHeader("Cache-Control", "no-store");
+      response.json(options.oauthMetadata);
+    });
+
+    const handler = createMcpHandler(createGovernedMcpServerFactory(options), {
+      legacy: "reject",
+      responseMode: "json"
+    });
+    handlers.push(handler);
+    const nodeHandler = toNodeHandler(handler);
+    const bearerAuth = requireBearerAuth({
+      verifier: options.tokenVerifier,
+      requiredScopes: validated.requiredScopes,
+      resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(options.resourceServerUrl)
+    });
+    const rateLimiter = new FixedWindowRateLimiter(options.rateLimit);
+    app.all(options.resourceServerUrl.pathname, (_request: Request, response: Response, next: NextFunction) => {
+      response.setHeader("Cache-Control", "no-store");
+      next();
+    }, (_request: Request, response: Response, next: NextFunction) => {
+      advertiseFullScopesOnChallenge(response, metadataOptions.scopesSupported);
+      next();
+    }, bearerAuth, (request: Request, response: Response, next: NextFunction) => {
+      const auth = (request as Request & { auth?: AuthInfo }).auth;
+      const identity = auth?.clientId ?? readPrincipalId(auth) ?? "authenticated";
+      const decision = rateLimiter.consume(identity);
+      if (!decision.allowed) {
+        response.setHeader("Retry-After", String(Math.max(1, Math.ceil(decision.retryAfterMs / 1_000))));
+        response.status(429).json({ error: "rate_limit_exceeded" });
+        return;
+      }
+      void (async () => {
+        // The MCP SDK deliberately converts factory failures to an internal
+        // JSON-RPC error. Probe only a session-less session-start request so a
+        // Broker revocation remains a stable authorization response at the
+        // HTTPS boundary; all other requests still use the SDK handler.
+        if (isSessionStartRequest(request)) {
+          const auth = (request as Request & { auth?: AuthInfo }).auth;
+          if (auth) {
+            try {
+              const principal = projectPrincipal(auth, options);
+              const capabilities = await options.gateway.execute("mac_capabilities", {}, principal);
+              if (!capabilities.ok && capabilities.result_class === "REVOKED") {
+                response.status(403).json({ error: "revoked", result_class: "REVOKED" });
+                return;
+              }
+            } catch (error) {
+              if (error instanceof BrokerError && error.errorClass === "REVOKED") {
+                response.status(403).json({ error: "revoked", result_class: "REVOKED" });
+                return;
+              }
+              next(error);
               return;
             }
-          } catch (error) {
-            if (error instanceof BrokerError && error.errorClass === "REVOKED") {
-              response.status(403).json({ error: "revoked", result_class: "REVOKED" });
-              return;
-            }
-            next(error);
-            return;
           }
         }
-      }
-      await nodeHandler(request, response, request.body);
-    })().catch(next);
-  });
+        await nodeHandler(request, response, request.body);
+      })().catch(next);
+    });
+  }
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
     if (response.headersSent) {
       response.end();
@@ -148,9 +167,9 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
   server.maxRequestsPerSocket = EDGE_MAX_REQUESTS_PER_SOCKET;
   return {
     server,
-    handler,
+    handler: handlers[0]!,
     async close() {
-      await handler.close();
+      await Promise.all(handlers.map(handler => handler.close()));
       if (!server.listening) return;
       await new Promise<void>((resolve, reject) => {
         server.close((error) => error ? reject(error) : resolve());

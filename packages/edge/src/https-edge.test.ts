@@ -439,3 +439,53 @@ function baseOptions(): HttpsMcpEdgeOptions {
     }
   };
 }
+
+
+test("two OAuth MCP resources publish exact discovery and reject each other's token", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-edge-two-oauth-"));
+  const options = baseOptions();
+  const rootIssuer = new URL("https://issuer.example.test/");
+  const terminalIssuer = new URL("terminal/", rootIssuer);
+  const terminalResource = new URL("terminal/mcp", options.resourceServerUrl.origin);
+  const { privateKey, publicKey } = await generateKeyPair("RS256");
+  const publicJwk = await exportJWK(publicKey);
+  const jwks = { keys: [{ ...publicJwk, kid: "integration-key", alg: "RS256", use: "sig" }] };
+  options.oauthIssuer = rootIssuer;
+  options.oauthMetadata = { ...options.oauthMetadata, issuer: rootIssuer.href, scopes_supported: ["mac.control.read"] };
+  options.tokenVerifier = createJwtAccessTokenVerifier({ issuer: rootIssuer, issuerId: "issuer-1", resourceServerUrl: options.resourceServerUrl, jwks });
+  options.additionalEndpoints = [{ oauthIssuer: terminalIssuer, resourceServerUrl: terminalResource,
+    tokenVerifier: createJwtAccessTokenVerifier({ issuer: terminalIssuer, issuerId: "issuer-1", resourceServerUrl: terminalResource, jwks }),
+    oauthMetadata: { ...options.oauthMetadata, issuer: terminalIssuer.href,
+      authorization_endpoint: new URL("authorize", terminalIssuer).href, token_endpoint: new URL("token", terminalIssuer).href,
+      scopes_supported: ["mac.control.read", "mac.terminal.exec"] } }];
+  const { certificatePath, keyPath } = await createTestCertificate(directory);
+  options.tlsCertificate = await readFile(certificatePath);
+  options.tlsPrivateKey = await readFile(keyPath);
+  const edge = createHttpsMcpEdge(options);
+  try {
+    edge.server.listen(0, "127.0.0.1");
+    await once(edge.server, "listening");
+    const address = edge.server.address();
+    assert.ok(address && typeof address === "object");
+    const fetch = createPinnedFetch(address.port);
+    const request = (path: string, init?: RequestInit) => fetch(new URL(`https://edge.example.test:${address.port}${path}`), init);
+    const rootMetadata = await (await request("/.well-known/oauth-authorization-server")).json() as { issuer: string };
+    const terminalMetadata = await (await request("/.well-known/oauth-authorization-server/terminal")).json() as { issuer: string; token_endpoint: string };
+    assert.equal(rootMetadata.issuer, rootIssuer.href);
+    assert.equal(terminalMetadata.issuer, terminalIssuer.href);
+    assert.equal(terminalMetadata.token_endpoint, new URL("token", terminalIssuer).href);
+    const resourceMetadata = await (await request("/.well-known/oauth-protected-resource/terminal/mcp")).json() as { resource: string; authorization_servers: string[] };
+    assert.equal(resourceMetadata.resource, terminalResource.href);
+    assert.deepEqual(resourceMetadata.authorization_servers, [terminalIssuer.href]);
+    const challenge = await request("/terminal/mcp");
+    assert.equal(challenge.status, 401);
+    assert.match(challenge.headers.get("www-authenticate")!, /oauth-protected-resource\/terminal\/mcp/u);
+    const rootToken = await createAccessToken(privateKey, rootIssuer, options.resourceServerUrl, "mac.control.read", "root-token");
+    const terminalToken = await createAccessToken(privateKey, terminalIssuer, terminalResource, "mac.control.read mac.terminal.exec", "terminal-token");
+    assert.equal((await request("/terminal/mcp", createMcpAuthRequest(rootToken))).status, 401);
+    assert.equal((await request("/mcp", createMcpAuthRequest(terminalToken))).status, 401);
+    // Accepted bearer requests reach the same Broker gateway with their own projected resource.
+    assert.notEqual((await request("/terminal/mcp", createMcpAuthRequest(terminalToken))).status, 401);
+    assert.notEqual((await request("/mcp", createMcpAuthRequest(rootToken))).status, 401);
+  } finally { await edge.close(); await rm(directory, { recursive: true, force: true }); }
+});

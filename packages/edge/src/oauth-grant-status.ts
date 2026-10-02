@@ -77,7 +77,10 @@ export interface OAuthGrantRevocationMonitorOptions {
  * Transport failures retain the session for retry and never become revocation.
  */
 export class OAuthGrantRevocationMonitor {
-  private readonly sessions = new Map<string, JwtRevocationContext>();
+  private readonly sessions = new Map<string, {
+    context: JwtRevocationContext;
+    scopeExpirations: ReadonlyMap<string, number>;
+  }>();
   private readonly inFlight = new Set<string>();
   private readonly intervalMs: number;
   private readonly maxSessions: number;
@@ -98,7 +101,18 @@ export class OAuthGrantRevocationMonitor {
       this.pruneExpired();
       if (this.sessions.size >= this.maxSessions) throw new Error("OAuth revocation monitor capacity exceeded");
     }
-    this.sessions.set(key, Object.freeze({ ...context, scopes: Object.freeze([...context.scopes]) }));
+    const previous = this.sessions.get(key);
+    const scopeExpirations = new Map(previous?.scopeExpirations);
+    const nowSeconds = Math.floor(this.now() / 1_000);
+    for (const [scope, expiration] of scopeExpirations) if (expiration <= nowSeconds) scopeExpirations.delete(scope);
+    // A narrower refresh must not erase authority used by an active older token.
+    // Retain each scope only until the last accepted token carrying it expires.
+    for (const scope of context.scopes) {
+      if (context.expiresAt > nowSeconds) scopeExpirations.set(scope, Math.max(scopeExpirations.get(scope) ?? 0, context.expiresAt));
+    }
+    this.sessions.set(key, { scopeExpirations, context: Object.freeze({ ...context,
+      expiresAt: Math.max(context.expiresAt, ...scopeExpirations.values()),
+      scopes: Object.freeze([...scopeExpirations.keys()]) }) });
   }
 
   /**
@@ -114,6 +128,10 @@ export class OAuthGrantRevocationMonitor {
       this.track(context);
       throw error;
     }
+  }
+
+  forget(context: JwtRevocationContext): void {
+    this.sessions.delete(`${context.subject}:${context.sessionId}`);
   }
 
   start(): void {
@@ -144,7 +162,8 @@ export class OAuthGrantRevocationMonitor {
     this.polling = true;
     try {
       this.pruneExpired();
-      for (const [key, context] of this.sessions) {
+      for (const [key, tracked] of this.sessions) {
+        const context = tracked.context;
         if (!this.running || this.inFlight.has(key)) continue;
         this.inFlight.add(key);
         try {
@@ -166,7 +185,12 @@ export class OAuthGrantRevocationMonitor {
 
   private pruneExpired(): void {
     const nowSeconds = Math.floor(this.now() / 1_000);
-    for (const [key, context] of this.sessions) if (context.expiresAt <= nowSeconds) this.sessions.delete(key);
+    for (const [key, tracked] of this.sessions) {
+      const activeScopes = [...tracked.scopeExpirations].filter(([, expiration]) => expiration > nowSeconds);
+      if (activeScopes.length === 0) { this.sessions.delete(key); continue; }
+      this.sessions.set(key, { scopeExpirations: new Map(activeScopes), context: Object.freeze({ ...tracked.context,
+        scopes: Object.freeze(activeScopes.map(([scope]) => scope)), expiresAt: Math.max(...activeScopes.map(([, expiration]) => expiration)) }) });
+    }
   }
 }
 

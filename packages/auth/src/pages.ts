@@ -2,16 +2,16 @@ import type { GuiSessionView } from "./gui-session-approval.js";
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/gu, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 import type { ApprovalBrowserPreview } from "./approval-browser-bridge.js";
 
-function page(title: string, content: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Mac Operator</title><link rel="stylesheet" href="/oauth/style.css"></head><body><main><div class="brand">MAC OPERATOR <span>PRIVATE ACCESS</span></div><h1>${title}</h1>${content}<footer>Your password stays with Mac Operator. ChatGPT receives a limited access token.</footer></main></body></html>`;
+function page(title: string, content: string, basePath = ""): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} · Mac Operator</title><link rel="stylesheet" href="${escapeHtml(basePath)}/oauth/style.css"></head><body><main><div class="brand">MAC OPERATOR <span>PRIVATE ACCESS</span></div><h1>${title}</h1>${content}<footer>Your password stays with Mac Operator. ChatGPT receives a limited access token.</footer></main></body></html>`;
 }
 
-export function loginPage(csrf: string, failed = false): string {
-  return page("Sign in to your Mac", `<p>Sign in to review this connection request.</p>${failed ? '<p role="alert" class="error">Unable to sign in. Check your credentials and try again.</p>' : ""}<form method="post" action="/oauth/login"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><label for="username">Username</label><input id="username" name="username" autocomplete="username" maxlength="64" required autofocus><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required><button type="submit">Sign in</button></form>`);
+export function loginPage(csrf: string, failed = false, basePath = ""): string {
+  return page("Sign in to your Mac", `<p>Sign in to review this connection request.</p>${failed ? '<p role="alert" class="error">Unable to sign in. Check your credentials and try again.</p>' : ""}<form method="post" action="${escapeHtml(basePath)}/oauth/login"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><label for="username">Username</label><input id="username" name="username" autocomplete="username" maxlength="64" required autofocus><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required><button type="submit">Sign in</button></form>`, basePath);
 }
 
-export function expiredRequestPage(): string {
-  return page("Start a new connection", "<p>This request has expired or has already been submitted.</p><p>Return to ChatGPT, open Mac Operator MCP, and start the sign-in flow again. Do not resubmit this page.</p>");
+export function expiredRequestPage(basePath = ""): string {
+  return page("Start a new connection", "<p>This request has expired or has already been submitted.</p><p>Return to ChatGPT, open Mac Operator MCP, and start the sign-in flow again. Do not resubmit this page.</p>", basePath);
 }
 
 export function expiredApprovalPage(sessionExpired = false): string {
@@ -22,13 +22,15 @@ export function expiredApprovalPage(sessionExpired = false): string {
 }
 
 export function consentPage(csrf: string, clientName: string, redirect: string, system: boolean,
-                            developer = false, gui = false): string {
-  const boundary = gui
+                            developer = false, gui = false, terminal = false, basePath = ""): string {
+  const boundary = terminal
+    ? "<li>Run shell commands, scripts and installed CLI tools as the signed-in macOS owner account.</li><li>Commands can access owner-readable files and existing CLI authentication state, and change files or applications within that account's permissions. They are not isolated in the V2 coding container.</li><li>Browser control and file operations are also available under current owner policy. macOS permissions and operation authorization still apply; this does not grant root privileges.</li>"
+    : gui
     ? "<li>Observe Chrome or Safari windows and screenshots, and request bounded mouse and keyboard control. Browser control requires owner approval; optional persistent browser access covers focus, clicks and input for the owner account until revoked.</li><li>Controlled developer operations may be requested; each mutation requires separate Broker owner approval.</li><li>No unrestricted shell, root access, credential access, or arbitrary scripts are granted.</li>"
     : developer
       ? "<li>Controlled developer operations may be requested; each mutation requires separate Broker owner approval.</li><li>No unrestricted shell, root access, credential access, arbitrary scripts, or GUI control is granted.</li>"
       : "<li>No file access, command execution or Mac control is granted.</li>";
-  return page("Review this connection", `<p><strong>${escapeHtml(clientName)}</strong> is requesting access. This name is supplied by the client.</p><p class="destination">Return address: ${escapeHtml(redirect)}</p><ul><li>Check connection health</li><li>List available capabilities</li>${system ? "<li>Read system version, CPU, memory, uptime and load</li>" : ""}${boundary}</ul><form method="post" action="/oauth/consent"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><div class="actions"><button name="decision" value="allow">Allow connection</button><button name="decision" value="deny" class="secondary">Cancel</button></div></form>`);
+  return page("Review this connection", `<p><strong>${escapeHtml(clientName)}</strong> is requesting access. This name is supplied by the client.</p><p class="destination">Return address: ${escapeHtml(redirect)}</p><ul><li>Check connection health</li><li>List available capabilities</li>${system ? "<li>Read system version, CPU, memory, uptime and load</li>" : ""}${boundary}</ul><form method="post" action="${escapeHtml(basePath)}/oauth/consent"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><div class="actions"><button name="decision" value="allow">Allow connection</button><button name="decision" value="deny" class="secondary">Cancel</button></div></form>`, basePath);
 }
 
 export function approvalLoginPage(csrf: string, failed = false, expiresAtMs?: number, management = false): string {

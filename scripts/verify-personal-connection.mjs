@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { readAuthFile } from "../packages/auth/dist/cli.js";
 import { AuthStore } from "../packages/auth/dist/store.js";
-import { configSchema, V2_TOOLS, O1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, scopesForGrantProfile } from "../packages/auth/dist/contracts.js";
+import { configSchema, ownerTerminalAuthConfig, V2_TOOLS, O1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, scopesForGrantProfile } from "../packages/auth/dist/contracts.js";
 import { configureIssuerNetwork } from "../packages/auth/dist/issuer-network.js";
 import { decodeJwt } from "jose";
 import { DatabaseSync } from "node:sqlite";
@@ -23,17 +23,20 @@ let credentials; let clientId; let refreshToken; let oauthStore;
 let client; let transport; let network; let terminalDirectory;
 async function run() {
   if (process.argv.length !== 4 && !(process.argv.length === 5 && process.argv[4] === "--owner-terminal")) throw new Error("Expected protected root, env path and optional --owner-terminal");
-  const config = configSchema.parse(JSON.parse(readAuthFile(`${root}/auth/auth-config.json`).toString()));
+  const primaryConfig = configSchema.parse(JSON.parse(readAuthFile(`${root}/auth/auth-config.json`).toString()));
+  const config = process.argv[4] === "--owner-terminal" && primaryConfig.ownerTerminalConnection === true
+    ? ownerTerminalAuthConfig(primaryConfig) : primaryConfig;
   if (!["r1", "w1", "g1", "o1", "v2"].includes(config.grantProfile)) throw new Error("Unsupported personal verification profile");
   const writeProfile = config.grantProfile !== "r1";
   const terminalProbe = process.argv[4] === "--owner-terminal";
   if (terminalProbe && config.grantProfile !== "o1") throw new Error("Owner terminal verification requires O1");
   const developmentProbe = config.grantProfile === "v2" && process.env.MOPS_VERIFY_DEVELOPMENT === "1";
+  const fullCodingProfile = config.grantProfile === "v2" && process.env.MOPS_VERIFY_FULL_SCOPES === "1";
   const guiProfile = config.grantProfile === "g1" || config.grantProfile === "o1" || config.grantProfile === "v2";
   const metadataScopes = scopesForGrantProfile(config.grantProfile);
-  const expectedScopes = developmentProbe ? metadataScopes : terminalProbe ? metadataScopes : guiProfile ? W1_READ_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
-  let expectedTools = developmentProbe ? V2_TOOLS.filter(tool => tool !== "mac_terminal_exec") : terminalProbe ? O1_TOOLS : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
-  if (config.grantProfile === "v2" && !developmentProbe) {
+  const expectedScopes = developmentProbe || fullCodingProfile ? metadataScopes : terminalProbe ? metadataScopes : guiProfile ? W1_READ_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
+  let expectedTools = developmentProbe || fullCodingProfile ? V2_TOOLS.filter(tool => tool !== "mac_terminal_exec") : terminalProbe ? O1_TOOLS : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
+  if ((config.grantProfile === "v2" && !developmentProbe && !fullCodingProfile) || (terminalProbe && primaryConfig.ownerTerminalConnection === true)) {
     const additiveReads = [];
     for (const name of DEVELOPMENT_TOOL_NAMES) {
       if (!V2_TOOLS.includes(name)) continue;
@@ -46,17 +49,24 @@ async function run() {
   network = configureIssuerNetwork(new URL(config.issuer).hostname);
   const bytes = readAuthFile(envPath, 8192, false);
   try { credentials = parseEnv(bytes.toString()); } finally { bytes.fill(0); }
-  const endpoint = path => new URL(path, config.issuer);
+  const basePath = new URL(config.issuer).pathname.replace(/\/$/u, "");
+  const endpoint = path => new URL(`${basePath}${path}`, config.issuer);
   const request = (path, init = {}) => fetch(endpoint(path), { ...init, redirect: "manual", signal: AbortSignal.timeout(30000) });
   const form = (path, body, cookie) => request(path, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: new URL(config.issuer).origin, ...(cookie ? { cookie } : {}) }, body: new URLSearchParams(body) });
   const cookieOf = response => response.headers.get("set-cookie")?.split(";")[0];
   const csrfOf = async response => { assert.equal(response.status, 200); const value = /name="csrf" value="([a-f0-9]{64})"/u.exec(await response.text())?.[1]; assert.ok(value); return value; };
   const challengeResponse = await request("/mcp");
   assert.equal(challengeResponse.status, 401); assert.ok(challengeResponse.headers.get("www-authenticate")?.includes("resource_metadata="));
-  const metadata = await (await request("/.well-known/oauth-protected-resource/mcp")).json();
-  const rootMetadata = await request("/.well-known/oauth-protected-resource");
-  assert.equal(rootMetadata.status, 200);
-  assert.deepEqual(await rootMetadata.json(), metadata);
+  const metadata = await (await fetch(new URL(`/.well-known/oauth-protected-resource${new URL(config.resource).pathname}`, config.issuer))).json();
+  if (!basePath) {
+    const rootMetadata = await request("/.well-known/oauth-protected-resource");
+    assert.equal(rootMetadata.status, 200);
+    assert.deepEqual(await rootMetadata.json(), metadata);
+  } else {
+    const discovery = await fetch(new URL(`/.well-known/oauth-authorization-server${basePath}`, config.issuer));
+    assert.equal(discovery.status, 200);
+    assert.equal((await discovery.json()).issuer, config.issuer);
+  }
   assert.deepEqual(metadata.scopes_supported, [...metadataScopes]);
   console.log("Public OAuth discovery and unauthenticated MCP challenge verified.");
   const registered = await request("/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Mac Operator deployment verification", redirect_uris: [config.allowedRedirectUris[0]], token_endpoint_auth_method: "none" }) });
@@ -80,6 +90,12 @@ async function run() {
   assert.deepEqual([...claimScope].sort(), [...expectedScopes].sort());
   console.log(`Access-token claim boundary: issuer_match=${claims.iss === config.issuer} audience_match=${claims.aud === config.resource} subject_match=${claims.sub === config.principalId} required_scope_count=${expectedScopes.filter(scope => claimScope.includes(scope)).length}/${expectedScopes.length} has_sid=${typeof claims.sid === "string"} has_azp=${typeof claims.azp === "string"} has_jti=${typeof claims.jti === "string"} age_seconds=${typeof claims.iat === "number" ? nowSeconds - claims.iat : "invalid"} remaining_seconds=${typeof claims.exp === "number" ? claims.exp - nowSeconds : "invalid"}`);
   console.log("Real owner login, explicit consent and S256 token exchange verified over public HTTPS.");
+  if (primaryConfig.ownerTerminalConnection === true) {
+    const otherResource = basePath ? primaryConfig.resource : ownerTerminalAuthConfig(primaryConfig).resource;
+    assert.equal((await fetch(otherResource, { headers: { authorization: `Bearer ${tokens.access_token}` } })).status, 401);
+    console.log("Token rejected at the other independent MCP resource.");
+  }
+  let acceptedAccessToken = tokens.access_token;
   client = new Client({ name: "mac-operator-live-verifier", version: "1.0.0" }, { versionNegotiation: { mode: { pin: "2026-07-28" } } });
   const diagnosticFetch = async (input, init = {}) => {
     const headers = new Headers(init.headers);
@@ -98,7 +114,7 @@ async function run() {
     console.log(`MCP HTTP diagnostic: method=${String(init.method ?? "GET").toUpperCase()} rpc=${rpcMethod} status=${response.status} authorization=${headers.has("authorization")} session=${headers.has("mcp-session-id")} challenge=${challengeError}`);
     return response;
   };
-  transport = new StreamableHTTPClientTransport(new URL(config.resource), { authProvider: { token: async () => tokens.access_token }, fetch: diagnosticFetch, onInsufficientScope: "throw" });
+  transport = new StreamableHTTPClientTransport(new URL(config.resource), { authProvider: { token: async () => acceptedAccessToken }, fetch: diagnosticFetch, onInsufficientScope: "throw" });
   try {
     await client.connect(transport);
   } catch (error) {
@@ -177,11 +193,11 @@ async function run() {
     const data = await call(name, argumentsValue);
     if (name === "mac_capabilities") {
       assert.deepEqual(data.capabilities.map(capability => capability.name).sort(), [...PLANNED_TOOL_NAMES].sort());
-      for (const disabledTool of config.grantProfile === "v2" ? ["mac_git_push"] : [...DEVELOPMENT_TOOL_NAMES, "mac_task_run"]) {
+      for (const disabledTool of primaryConfig.grantProfile === "v2" ? ["mac_git_push", ...DEVELOPMENT_TOOL_NAMES.filter(name => !expectedTools.includes(name)), ...(terminalProbe ? ["mac_task_run"] : [])] : [...DEVELOPMENT_TOOL_NAMES, "mac_task_run"]) {
         assert.equal(data.capabilities.find(capability => capability.name === disabledTool)?.enabled, false,
           `Personal deployment unexpectedly enabled ${disabledTool}`);
       }
-      console.log(`Personal capability boundary: ${data.capabilities.length} contracts; ${config.grantProfile === "v2" ? "approved development enabled; push denied" : "V2/task execution disabled"}.`);
+      console.log(`Personal capability boundary: ${data.capabilities.length} contracts; ${primaryConfig.grantProfile === "v2" ? "scope-bound development; push denied" : "V2/task execution disabled"}.`);
     }
     console.log(`${profileLabel} call passed: ${name}`);
   }
@@ -292,8 +308,21 @@ async function run() {
     } }).then(value => value, () => undefined);
     for (let attempt = 0; attempt < 100 && !existsSync(join(terminalDirectory, "revocation-started")); attempt += 1) await delay(100);
     assert.equal(existsSync(join(terminalDirectory, "revocation-started")), true);
-    const revoked = await form("/revoke", { client_id: clientId, token: refreshToken }); assert.equal(revoked.status, 200);
-    refreshToken = undefined;
+    const reduceTerminalScope = process.env.MOPS_VERIFY_TERMINAL_REDUCE === "1";
+    if (reduceTerminalScope) {
+      const reduced = await form("/token", { grant_type: "refresh_token", client_id: clientId,
+        refresh_token: refreshToken, resource: config.resource,
+        scope: expectedScopes.filter(scope => scope !== "mac.terminal.exec").join(" ") });
+      assert.equal(reduced.status, 200);
+      const narrow = await reduced.json();
+      acceptedAccessToken = narrow.access_token;
+      refreshToken = narrow.refresh_token;
+      // Admit the reduced token before the monitor's next poll, exercising the old overwrite bug.
+      await call("mac_health", { include_components: false });
+    } else {
+      const revoked = await form("/revoke", { client_id: clientId, token: refreshToken }); assert.equal(revoked.status, 200);
+      refreshToken = undefined;
+    }
     const ended = await active;
     assert.ok(ended);
     const cancelled = JSON.parse(ended.content.find(item => item.type === "text").text);
@@ -304,7 +333,7 @@ async function run() {
       assert.equal(job?.state, "cancelled"); assert.equal(job?.cancel_requested, 1); assert.equal(job?.process_metadata_json, "");
     } finally { brokerDatabase.close(); }
     assert.equal(existsSync(join(terminalDirectory, "revoked-marker")), false);
-    console.log("Active terminal command stopped after its owner OAuth grant was revoked; durable cancellation and cleared process ownership verified.");
+    console.log(`Active terminal command stopped after ${reduceTerminalScope ? "terminal permission reduction plus a narrower-token request" : "owner OAuth grant revocation"}; durable cancellation and cleared process ownership verified.`);
   }
   if (refreshToken) { const revoked = await form("/revoke", { client_id: clientId, token: refreshToken }); assert.equal(revoked.status, 200); }
   assert.equal((await request("/mcp", { headers: { authorization: `Bearer ${tokens.access_token}` } })).status, 401);

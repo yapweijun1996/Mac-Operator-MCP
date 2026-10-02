@@ -49,12 +49,12 @@ interface ValidatedOptions {
 
 function validateOptions(options: LoopbackOAuthStatusFetchOptions): ValidatedOptions {
   if (!(options.publicUrl instanceof URL) || options.publicUrl.protocol !== "https:" ||
-      options.publicUrl.pathname !== "/oauth/status" || options.publicUrl.search || options.publicUrl.hash ||
+      !["/oauth/status", "/terminal/oauth/status"].includes(options.publicUrl.pathname) || options.publicUrl.search || options.publicUrl.hash ||
       options.publicUrl.username || options.publicUrl.password) {
     throw new Error("OAuth public status URL is invalid");
   }
   if (!(options.loopbackUrl instanceof URL) || options.loopbackUrl.protocol !== "https:" ||
-      options.loopbackUrl.hostname !== "127.0.0.1" || options.loopbackUrl.pathname !== "/oauth/status" ||
+      options.loopbackUrl.hostname !== "127.0.0.1" || options.loopbackUrl.pathname !== options.publicUrl.pathname ||
       options.loopbackUrl.search || options.loopbackUrl.hash || options.loopbackUrl.username || options.loopbackUrl.password ||
       options.loopbackUrl.port.length === 0) {
     throw new Error("OAuth status loopback URL must be a fixed HTTPS IPv4 loopback endpoint");

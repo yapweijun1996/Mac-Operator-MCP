@@ -32,7 +32,7 @@ import {
 import { createAuthApp } from "./app.js";
 import { AuthStore, type GrantRevocationListener } from "./store.js";
 import { createPassword } from "./password.js";
-import { configSchema, D1_SCOPES, READ_SCOPES, READ_TOOLS, W1_SCOPES, W1_TOOLS, type GrantProfile } from "./contracts.js";
+import { configSchema, ownerTerminalAuthConfig, O1_SCOPES, V2_CODING_SCOPES, D1_SCOPES, READ_SCOPES, READ_TOOLS, W1_SCOPES, W1_TOOLS, type GrantProfile } from "./contracts.js";
 import { fingerprint } from "./provider.js";
 import { readAuthFile, runAuthCli } from "./cli.js";
 import type { ApprovalBrowserBridge, ApprovalBrowserPreview } from "./approval-browser-bridge.js";
@@ -102,9 +102,9 @@ async function terminateExactCanaryProcess(native: CanaryNativeProcessAdapter, i
   throw new Error("Exact canary process identity remained alive after targeted cleanup");
 }
 
-async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, grantProfile: GrantProfile = "r1", onGrantRevoked?: GrantRevocationListener) {
+async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, grantProfile: GrantProfile = "r1", onGrantRevoked?: GrantRevocationListener, ownerTerminalConnection = false) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-auth-")));
-  const config = configSchema.parse({ version: 1, issuer, resource: resource.href, issuerId: "mac-operator-auth", principalId: "owner-1", keyId: "key-1", port: 3444, allowedRedirectUris: [redirectUri], grantProfile });
+  const config = configSchema.parse({ version: 1, issuer, resource: resource.href, issuerId: "mac-operator-auth", principalId: "owner-1", keyId: "key-1", port: 3444, allowedRedirectUris: [redirectUri], grantProfile, ...(ownerTerminalConnection ? { ownerTerminalConnection } : {}) });
   let store = new AuthStore(directory, true);
   store.put("account", "owner", { username: "owner", ...passwordRecord, principalId: config.principalId });
   const signingKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
@@ -128,8 +128,8 @@ async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, g
     headers: { host: "mac.example.test", ...(body ? { "content-type": "application/x-www-form-urlencoded" } : {}), ...(cookie ? { cookie } : {}), ...extra },
     ...(body ? { body: new URLSearchParams(body) } : {})
   });
-  const register = async () => {
-    const response = await localFetch(`http://127.0.0.1:${port}/register`, { method: "POST", headers: { host: "mac.example.test", "content-type": "application/json" },
+  const register = async (prefix = "") => {
+    const response = await localFetch(`http://127.0.0.1:${port}${prefix}/register`, { method: "POST", headers: { host: "mac.example.test", "content-type": "application/json" },
       body: JSON.stringify({ client_name: "ChatGPT test <script>", redirect_uris: [redirectUri], token_endpoint_auth_method: "none" }) });
     assert.equal(response.status, 201); return (await response.json() as { client_id: string }).client_id;
   };
@@ -172,7 +172,7 @@ async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, g
     revocationCheck: createOAuthGrantRevocationCheck({ url: new URL("/oauth/status", issuer), key: statusKey,
       fetch: async (_url, init) => request("/oauth/status", JSON.parse(String(init?.body)), undefined, { authorization: String((init?.headers as Record<string, string>).authorization) }) })
   });
-  return { directory, request, register, begin, login, authorize, exchange, issue, cookieFrom, csrfFrom, edgeVerifier, config,
+  return { directory, statusKey, signingKey, request, register, begin, login, authorize, exchange, issue, cookieFrom, csrfFrom, edgeVerifier, config,
     store: () => store, provider: () => provider,
     restart: async () => { await stop(); store.close(); store = new AuthStore(directory); provider = await start(); } };
 }
@@ -1587,4 +1587,108 @@ test("persistent consent and management login do not depend on a live operation 
   const stop = await f.request("/approval/gui-session/revoke", { csrf: stopCsrf, grant_id: grant.id }, manageCookie);
   assert.equal(stop.status, 303);
   assert.equal(revoked, true);
+});
+
+
+test("independent terminal consent binds clients, browser flows, codes, refresh, status and revoke", async t => {
+  let revocations = 0;
+  const f = await fixture(t, undefined, "v2", () => { revocations++; }, true);
+  const terminal = ownerTerminalAuthConfig(f.config);
+  const metadata = await (await f.request("/.well-known/oauth-authorization-server/terminal")).json() as { issuer: string; scopes_supported: string[]; token_endpoint: string };
+  assert.equal(metadata.issuer, terminal.issuer);
+  assert.equal(metadata.token_endpoint, `${issuer}terminal/token`);
+  assert.deepEqual(metadata.scopes_supported, [...O1_SCOPES]);
+  assert.deepEqual(await (await f.request("/terminal/.well-known/oauth-authorization-server")).json(), metadata);
+  const primaryMetadata = await (await f.request("/.well-known/oauth-authorization-server")).json() as { scopes_supported: string[] };
+  assert.deepEqual(primaryMetadata.scopes_supported, [...V2_CODING_SCOPES]);
+  const rootClient = await f.register();
+  const terminalClient = await f.register("/terminal");
+  const begin = (clientId: string) => f.request(`/terminal/authorize?${new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri,
+    response_type: "code", scope: O1_SCOPES.join(" "), state: "terminal-state", code_challenge: challenge,
+    code_challenge_method: "S256", resource: terminal.resource })}`);
+  assert.equal((await begin(rootClient)).status, 400);
+  assert.equal((await f.begin(terminalClient)).status, 400);
+  const initial = await begin(terminalClient);
+  assert.equal(initial.status, 303);
+  assert.equal(initial.headers.get("location"), "/terminal/oauth/login");
+  const cookie = f.cookieFrom(initial);
+  assert.match(cookie, /^__Host-mac-terminal-session=/u);
+  const page = await f.request("/terminal/oauth/login", undefined, cookie);
+  const html = await page.text();
+  assert.match(html, /action="\/terminal\/oauth\/login"/u);
+  assert.match(html, /href="\/terminal\/oauth\/style.css"/u);
+  const csrf = /name="csrf" value="([a-f0-9]{64})"/u.exec(html)![1]!;
+  assert.equal((await f.request("/oauth/login", undefined, cookie.replace("mac-terminal-session", "mac-session"))).status, 400);
+  const rootSession = await f.login(rootClient, V2_CODING_SCOPES.join(" "));
+  const login = await f.request("/terminal/oauth/login", { username: "owner", password, csrf }, cookie);
+  assert.equal(login.status, 303);
+  const logged = f.cookieFrom(login);
+  assert.equal((await f.request("/oauth/consent", undefined, rootSession.cookie)).status, 200);
+  const consentHtml = await (await f.request("/terminal/oauth/consent", undefined, logged)).text();
+  assert.match(consentHtml, /Run shell commands/u);
+  assert.match(consentHtml, /existing CLI authentication state/u);
+  assert.doesNotMatch(consentHtml, /No unrestricted shell/u);
+  const consentCsrf = /name="csrf" value="([a-f0-9]{64})"/u.exec(consentHtml)![1]!;
+  const consent = await f.request("/terminal/oauth/consent", { csrf: consentCsrf, decision: "allow" }, logged);
+  assert.equal(consent.status, 303);
+  const callback = new URL(consent.headers.get("location")!);
+  assert.equal(callback.searchParams.get("iss"), terminal.issuer);
+  const code = callback.searchParams.get("code")!;
+  const exchangeBody = { grant_type: "authorization_code", client_id: terminalClient, code,
+    code_verifier: verifier, redirect_uri: redirectUri };
+  assert.equal((await f.request("/token", exchangeBody)).status, 400);
+  assert.ok(f.store().get("code", fingerprint(code)));
+  const exchanged = await f.request("/terminal/token", exchangeBody);
+  assert.equal(exchanged.status, 200);
+  const tokens = await exchanged.json() as { access_token: string; refresh_token: string };
+  const claims = decodeJwt(tokens.access_token);
+  assert.equal(claims.iss, terminal.issuer);
+  assert.equal(claims.aud, terminal.resource);
+  assert.equal((claims.scope as string).includes("mac.terminal.exec"), true);
+  assert.equal(await f.provider().getAccessToken(tokens.access_token), false);
+  const status = async (prefix: string) => (await f.request(`${prefix}/oauth/status`, { sessionId: String(claims.sid), subject: f.config.principalId },
+    undefined, { authorization: `Bearer ${f.statusKey.toString("hex")}` })).json() as Promise<{ active: boolean; scopes: string[] }>;
+  assert.deepEqual(await status(""), { active: false, scopes: [] });
+  assert.equal((await status("/terminal")).active, true);
+  const refreshBody = { grant_type: "refresh_token", client_id: terminalClient, refresh_token: tokens.refresh_token };
+  assert.equal((await f.request("/token", refreshBody)).status, 400);
+  await f.request("/revoke", { client_id: terminalClient, token: tokens.refresh_token });
+  assert.equal((await status("/terminal")).active, true);
+  const refreshed = await f.request("/terminal/token", refreshBody);
+  assert.equal(refreshed.status, 200);
+  const next = await refreshed.json() as { access_token: string; refresh_token: string };
+  // A consumed token at the other endpoint cannot trigger replay revocation.
+  assert.equal((await f.request("/token", refreshBody)).status, 400);
+  assert.equal((await status("/terminal")).active, true);
+  const primaryTokens = await f.issue(V2_CODING_SCOPES.join(" "));
+  const crossRootRefresh = { grant_type: "refresh_token", client_id: primaryTokens.clientId, refresh_token: primaryTokens.refresh_token };
+  assert.equal((await f.request("/terminal/token", crossRootRefresh)).status, 400);
+  await f.request("/terminal/revoke", { client_id: primaryTokens.clientId, token: primaryTokens.refresh_token });
+  assert.ok(await f.provider().getAccessToken(primaryTokens.access_token));
+  await f.restart();
+  assert.equal((await status("/terminal")).active, true);
+  assert.equal((await f.request("/terminal/token", { ...refreshBody, refresh_token: next.refresh_token })).status, 200);
+  await f.request("/terminal/revoke", { client_id: terminalClient, token: next.access_token });
+  assert.equal((await status("/terminal")).active, false);
+  assert.equal(revocations, 1);
+  assert.ok(await f.provider().getAccessToken(primaryTokens.access_token));
+});
+
+test("legacy root O1 refresh grants retain their approved scopes with independent terminal enabled", async t => {
+  const f = await fixture(t, undefined, "v2", undefined, true);
+  const clientId = await f.register();
+  const grantId = randomBytes(32).toString("hex");
+  const refresh = randomBytes(32).toString("hex");
+  const expiresAt = Date.now() + 60_000;
+  f.store().put("grant", grantId, { clientId, principalId: f.config.principalId, scopes: [...O1_SCOPES], expiresAt, revoked: false });
+  f.store().put("refresh", fingerprint(refresh), { clientId, grantId, expiresAt, consumed: false });
+  const body = { grant_type: "refresh_token", client_id: clientId, refresh_token: refresh };
+  assert.equal((await f.request("/terminal/token", body)).status, 400);
+  assert.equal(f.store().get("grant", grantId)?.revoked, false);
+  const response = await f.request("/token", body);
+  assert.equal(response.status, 200);
+  const tokens = await response.json() as { access_token: string };
+  assert.deepEqual((decodeJwt(tokens.access_token).scope as string).split(" "), [...O1_SCOPES]);
+  assert.ok(await f.provider().getAccessToken(tokens.access_token));
+  assert.equal((await f.begin(clientId, { scope: O1_SCOPES.join(" ") })).status, 400);
 });

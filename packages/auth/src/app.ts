@@ -3,7 +3,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import OAuth2Server from "@node-oauth/oauth2-server";
 import { exportJWK } from "jose";
 import { z } from "zod";
-import { configSchema, OAUTH_SCOPES, scopesForGrantProfile, type AuthConfig } from "./contracts.js";
+import { configSchema, ownerTerminalAuthConfig, OAUTH_SCOPES, scopesForGrantProfile, type AuthConfig } from "./contracts.js";
 import { AuthStore, type GrantRevocationListener } from "./store.js";
 import { AuthProvider, fingerprint, nonce } from "./provider.js";
 import { verifyPassword } from "./password.js";
@@ -14,7 +14,6 @@ const contentSecurityPolicy = (callbackOrigin?: string): string =>
   `default-src 'none'; style-src 'self'; form-action 'self'${callbackOrigin ? ` ${callbackOrigin}` : ""}; frame-ancestors 'none'; base-uri 'none'`;
 class BrowserSessionError extends Error {}
 
-const COOKIE = "__Host-mac-session";
 const APPROVAL_COOKIE = "__Host-mac-approval";
 const sessionMs = 10 * 60 * 1000;
 const loginBody = z.object({ csrf: z.string().length(64), username: z.string().max(64), password: z.string().max(1024) }).strict();
@@ -24,18 +23,33 @@ const approvalDecisionBody = z.object({ csrf: z.string().length(64), decision: z
 const approvalSessionMs = 30 * 60 * 1000;
 const approvalRequestId = z.string().regex(/^[A-Za-z0-9._:@/+-]{1,128}$/u);
 
-export async function createAuthApp(input: { config: AuthConfig; store: AuthStore; signingKey: KeyObject; statusKey: Buffer; approvalBridge?: ApprovalBrowserBridge; onGrantRevoked?: GrantRevocationListener }) {
+export async function createAuthApp(input: { config: AuthConfig; store: AuthStore; signingKey: KeyObject; statusKey: Buffer; approvalBridge?: ApprovalBrowserBridge; onGrantRevoked?: GrantRevocationListener }): Promise<{ app: express.Express; provider: AuthProvider; metadata: Record<string, unknown> }> {
   const config = configSchema.parse(input.config);
   const { store, signingKey } = input;
+  const basePath = new URL(config.issuer).pathname.replace(/\/$/u, "");
+  const COOKIE = basePath === "/terminal" ? "__Host-mac-terminal-session" : "__Host-mac-session";
+  const endpoint = (path: string) => `${basePath}${path}`;
   if (input.statusKey.length !== 32) throw new Error("Status key must be 32 bytes");
   const provider = new AuthProvider(store, config, signingKey);
-  store.setGrantRevocationListener(input.onGrantRevoked);
+  if (input.onGrantRevoked) store.setGrantRevocationListener(input.onGrantRevoked);
   const supportedScopes = scopesForGrantProfile(config.grantProfile);
   const account = store.get("account", "owner");
   if (!account || account.principalId !== config.principalId) throw new Error("Owner account is not provisioned");
   const publicJwk = await exportJWK(createPublicKey(signingKey));
   const app = express();
   app.disable("x-powered-by");
+  app.use((req, res, next) => {
+    if (req.headers.host !== new URL(config.issuer).host) { res.status(403).end(); return; }
+    next();
+  });
+  if (config.ownerTerminalConnection === true) {
+    const terminal = await createAuthApp({ config: ownerTerminalAuthConfig(config), store, signingKey,
+      statusKey: input.statusKey, ...(input.onGrantRevoked ? { onGrantRevoked: input.onGrantRevoked } : {}) });
+    app.get("/.well-known/oauth-authorization-server/terminal", (_req, res) => {
+      res.set("Cache-Control", "no-store").json(terminal.metadata);
+    });
+    app.use("/terminal", terminal.app);
+  }
   app.set("trust proxy", false);
   let windowStart = 0;
   let requests = 0;
@@ -49,7 +63,6 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     if (["/oauth/login", "/oauth/consent", "/approval/login", "/approval/access", "/approval/review", "/approval/decision", "/approval/gui-session", "/approval/gui-session/revoke"].includes(req.path)) {
       res.set("Referrer-Policy", "same-origin");
     }
-    if (req.headers.host !== new URL(config.issuer).host) { res.status(403).end(); return; }
     if (Date.now() - windowStart >= 60_000) { windowStart = Date.now(); requests = 0; loginAttempts = 0; }
     if (++requests > 300) { res.set("Retry-After", "60").status(429).json({ error: "rate_limit_exceeded" }); return; }
     try { store.prune(); next(); } catch { res.status(503).json({ error: "temporarily_unavailable" }); }
@@ -57,15 +70,14 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
   app.use(express.urlencoded({ extended: false, limit: "8kb", parameterLimit: 20 }));
   app.use(express.json({ limit: "8kb", strict: true }));
   app.get("/oauth/style.css", (_req, res) => { res.type("text/css").send(stylesheet); });
-  app.get("/.well-known/oauth-authorization-server", (_req, res) => {
-    res.json({ issuer: config.issuer, authorization_response_iss_parameter_supported: true,
-      authorization_endpoint: new URL("/authorize", config.issuer).href,
-      token_endpoint: new URL("/token", config.issuer).href, registration_endpoint: new URL("/register", config.issuer).href,
-      revocation_endpoint: new URL("/revoke", config.issuer).href, jwks_uri: new URL("/jwks", config.issuer).href,
-      response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"],
-      token_endpoint_auth_methods_supported: ["none"], revocation_endpoint_auth_methods_supported: ["none"],
-      code_challenge_methods_supported: ["S256"], scopes_supported: supportedScopes });
-  });
+  const metadata = { issuer: config.issuer, authorization_response_iss_parameter_supported: true,
+    authorization_endpoint: new URL("authorize", config.issuer).href,
+    token_endpoint: new URL("token", config.issuer).href, registration_endpoint: new URL("register", config.issuer).href,
+    revocation_endpoint: new URL("revoke", config.issuer).href, jwks_uri: new URL("jwks", config.issuer).href,
+    response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"],
+    token_endpoint_auth_methods_supported: ["none"], revocation_endpoint_auth_methods_supported: ["none"],
+    code_challenge_methods_supported: ["S256"], scopes_supported: supportedScopes };
+  app.get("/.well-known/oauth-authorization-server", (_req, res) => { res.json(metadata); });
   app.get("/jwks", (_req, res) => { res.json({ keys: [{ ...publicJwk, kid: config.keyId, alg: "ES256", use: "sig" }] }); });
 
   app.post("/register", (req, res) => {
@@ -82,7 +94,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     }
     const clientId = nonce();
     // Connector registration outlives individual seven-day user grants.
-    store.put("client", clientId, { id: clientId, name: data.client_name, redirectUris: data.redirect_uris, expiresAt: Number.MAX_SAFE_INTEGER });
+    store.put("client", clientId, { id: clientId, name: data.client_name, redirectUris: data.redirect_uris, expiresAt: Number.MAX_SAFE_INTEGER, ...provider.resourceBinding() });
     res.status(201).json({ client_id: clientId, client_id_issued_at: Math.floor(Date.now() / 1000), client_name: data.client_name,
       redirect_uris: data.redirect_uris, token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] });
   });
@@ -99,7 +111,9 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     const session = store.get("session", key);
     if (!session || session.expiresAt <= Date.now()) throw new BrowserSessionError("Expired browser session");
     const transaction = store.get("transaction", session.transactionId);
-    if (!transaction || transaction.expiresAt <= Date.now()) throw new BrowserSessionError("Expired authorization request");
+    if (!transaction || !provider.matchesResource(transaction) || transaction.expiresAt <= Date.now()) throw new BrowserSessionError("Expired authorization request");
+    const client = store.get("client", transaction.clientId);
+    if (!client || !provider.matchesResource(client)) throw new BrowserSessionError("Invalid authorization client");
     return { key, session, transaction };
   };
   const csrfCheck = (req: Request, expected: string, actual: string): void => {
@@ -140,16 +154,16 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     const sessionId = nonce();
     store.transaction(() => {
       store.put("transaction", transactionId, { clientId: client.id, redirectUri: query.redirect_uri, state: query.state, challenge: query.code_challenge,
-        scopes: scopes as Array<(typeof OAUTH_SCOPES)[number]>, expiresAt: Date.now() + sessionMs });
+        scopes: scopes as Array<(typeof OAUTH_SCOPES)[number]>, expiresAt: Date.now() + sessionMs, ...provider.resourceBinding() });
       store.put("session", fingerprint(sessionId), { transactionId, csrf: nonce(), authenticated: false, expiresAt: Date.now() + sessionMs });
     });
     setSession(res, sessionId);
-    res.redirect(303, "/oauth/login");
+    res.redirect(303, endpoint("/oauth/login"));
   });
   app.get("/oauth/login", (req, res) => {
     const { session } = browser(req);
-    if (session.authenticated) { res.redirect(303, "/oauth/consent"); return; }
-    res.type("html").send(loginPage(session.csrf));
+    if (session.authenticated) { res.redirect(303, endpoint("/oauth/consent")); return; }
+    res.type("html").send(loginPage(session.csrf, false, basePath));
   });
   app.post("/oauth/login", async (req, res) => {
     const body = loginBody.parse(req.body);
@@ -163,7 +177,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       const current = store.get("account", "owner")!;
       valid = await verifyPassword(body.password, current.salt, current.passwordHash) && body.username === current.username;
     } finally { activePasswords--; }
-    if (!valid) { res.status(401).type("html").send(loginPage(session.csrf, true)); return; }
+    if (!valid) { res.status(401).type("html").send(loginPage(session.csrf, true, basePath)); return; }
     const newId = nonce();
     store.transaction(() => {
       // A concurrent login/reset may already have invalidated this session.
@@ -171,11 +185,11 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       store.put("session", fingerprint(newId), { ...session, csrf: nonce(), authenticated: true });
     });
     setSession(res, newId);
-    res.redirect(303, "/oauth/consent");
+    res.redirect(303, endpoint("/oauth/consent"));
   });
   app.get("/oauth/consent", (req, res) => {
     const { session, transaction } = browser(req);
-    if (!session.authenticated) { res.redirect(303, "/oauth/login"); return; }
+    if (!session.authenticated) { res.redirect(303, endpoint("/oauth/login")); return; }
     const client = store.get("client", transaction.clientId);
     if (!client) throw new Error("Client unavailable");
     // Chromium applies form-action to the final redirect after a form POST.
@@ -183,7 +197,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     res.set("Content-Security-Policy", contentSecurityPolicy(new URL(transaction.redirectUri).origin));
     res.type("html").send(consentPage(session.csrf, client.name, transaction.redirectUri,
       transaction.scopes.includes("mac.system.read"), config.grantProfile !== "r1",
-      transaction.scopes.includes("mac.ui.control")));
+      transaction.scopes.includes("mac.ui.control"), transaction.scopes.includes("mac.terminal.exec"), basePath));
   });
   app.post("/oauth/consent", async (req, res) => {
     const body = consentBody.parse(req.body);
@@ -361,7 +375,10 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
   app.post("/revoke", async (req, res) => {
     const body = z.object({ client_id: z.string().max(128), token: z.string().max(8192), token_type_hint: z.string().optional() }).strict().parse(req.body);
     const refresh = store.get("refresh", fingerprint(body.token));
-    if (refresh) store.revoke(refresh.grantId, body.client_id);
+    if (refresh) {
+      const grant = store.get("grant", refresh.grantId);
+      if (grant && provider.matchesResource(grant)) store.revoke(refresh.grantId, body.client_id);
+    }
     else {
       const access = await provider.getAccessToken(body.token);
       if (access && access.client.id === body.client_id) store.revoke(String(access.user.grantId), body.client_id);
@@ -377,17 +394,17 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     if (header.length !== expected.length || !timingSafeEqual(Buffer.from(header), Buffer.from(expected))) { res.status(401).end(); return; }
     const body = z.object({ sessionId: z.string().regex(/^[a-f0-9]{64}$/u), subject: z.string().max(128) }).strict().parse(req.body);
     const grant = store.get("grant", body.sessionId);
-    res.json({ active: Boolean(grant && !grant.revoked && grant.expiresAt > Date.now() && grant.principalId === body.subject),
-      scopes: grant && !grant.revoked && grant.expiresAt > Date.now() && grant.principalId === body.subject ? grant.scopes : [] });
+    res.json({ active: Boolean(grant && provider.matchesResource(grant) && !grant.revoked && grant.expiresAt > Date.now() && grant.principalId === body.subject),
+      scopes: grant && provider.matchesResource(grant) && !grant.revoked && grant.expiresAt > Date.now() && grant.principalId === body.subject ? grant.scopes : [] });
   });
   app.use((_req, res) => { res.status(404).end(); });
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof BrowserSessionError) {
-      res.status(400).type("html").send(_req.path.startsWith("/approval") ? expiredApprovalPage(true) : expiredRequestPage());
+      res.status(400).type("html").send(_req.path.startsWith("/approval") ? expiredApprovalPage(true) : expiredRequestPage(basePath));
     } else if (error instanceof OAuth2Server.OAuthError) {
       res.status(error.code >= 400 && error.code < 500 ? error.code : 503).json({ error: error.code < 500 ? error.name : "temporarily_unavailable" });
     } else if (error instanceof z.ZodError) res.status(400).json({ error: "invalid_request" });
     else res.status(400).json({ error: "request_failed" });
   });
-  return { app, provider };
+  return { app, provider, metadata };
 }

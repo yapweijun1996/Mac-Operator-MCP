@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { sha256 } from "@mac-operator/contracts";
+import { sha256, V2_CODING_SCOPES } from "@mac-operator/contracts";
 import {
   EdgeServiceEntrypoint,
   createEdgeServiceFromStartupConfig,
@@ -252,3 +252,19 @@ async function createTestCertificate(directory: string, certificatePath: string,
     { cwd: directory, env: { PATH: "/usr/bin:/bin" }, timeout: 10_000, maxBuffer: 64 * 1024 }
   );
 }
+
+
+test("terminal connection opt-in requires the exact root V2 scope profile and owner issuer", () => {
+  const config = baseConfig("/Users/operator/package", "/Users/operator/data", "/Users/operator/runtime", {
+    issuerId: "mac-operator-auth", resourceServerUrl: "https://issuer.example.test/mcp",
+    allowedHosts: ["issuer.example.test"], oauthScopes: [...V2_CODING_SCOPES],
+    oauthStatusUrl: "https://issuer.example.test/oauth/status", oauthStatusKeyPath: "/Users/operator/data/status.key",
+    oauthStatusKeyDigest: "a".repeat(64), oauthStatusLocalUrl: "https://127.0.0.1:3444/oauth/status",
+    oauthStatusLocalServerName: "issuer.example.test", oauthStatusLocalCaPath: "/Users/operator/data/ca.crt",
+    ownerTerminalConnection: true });
+  assert.deepEqual(validateEdgeServiceStartupConfig(config), config);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, ownerTerminalConnection: "true" } as never), /boolean/u);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, issuerId: "external-issuer" }), /unchanged personal V2/u);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, oauthScopes: [...V2_CODING_SCOPES, "mac.terminal.exec"] }), /unchanged personal V2/u);
+  assert.throws(() => validateEdgeServiceStartupConfig({ ...config, resourceServerUrl: "https://issuer.example.test/other" }), /unchanged personal V2/u);
+});
