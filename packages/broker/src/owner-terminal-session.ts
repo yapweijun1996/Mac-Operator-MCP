@@ -7,7 +7,8 @@ import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-
 import { ProcessSupervisor, type ProcessExecutionResult, type ProcessOwnershipSnapshot, type ProcessStdinSink } from "./process-supervisor.js";
 
 const MAX_WRITE_BYTES = 4_096;
-const MAX_READ_BYTES = 65_536;
+// Terminal escape bytes JSON-encode up to 6x, so keep a read within the 256 KiB result cap.
+const MAX_READ_BYTES = 32_768;
 const RING_BYTES = 262_144;
 const MAX_LIFETIME_MS = 600_000;
 const FINISHED_RETENTION_MS = 60_000;
@@ -18,7 +19,7 @@ const FINISHED_RETENTION_MS = 60_000;
  * native Node dependency is needed. Window size arrives as argv.
  */
 const PTY_SHIM = `
-import fcntl, os, select, struct, sys, termios, pty
+import fcntl, os, select, signal, struct, sys, termios, time, pty
 rows, cols, cwd = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
@@ -28,6 +29,7 @@ if pid == 0:
     os.execv('/bin/zsh', ['zsh', '-f'])
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
 stdin_open = True
+hung_up = False
 while True:
     fds = [fd] + ([0] if stdin_open else [])
     ready, _, _ = select.select(fds, [], [])
@@ -43,13 +45,35 @@ while True:
         data = os.read(0, 4096)
         if not data:
             stdin_open = False
+            hung_up = True
             os.close(fd)
             break
         os.write(fd, data)
-try:
-    os.waitpid(pid, 0)
-except ChildProcessError:
-    pass
+def reap(hung):
+    # After the hangup, a shell that was still starting may never see it; escalate so stop always ends.
+    if hung:
+        for sig, wait in ((signal.SIGHUP, 2.0), (signal.SIGKILL, 2.0)):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                break
+            deadline = time.monotonic() + wait
+            while time.monotonic() < deadline:
+                try:
+                    done, status = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    return 0
+                if done:
+                    return status
+                time.sleep(0.05)
+    try:
+        return os.waitpid(pid, 0)[1]
+    except ChildProcessError:
+        return 0
+status = reap(hung_up)
+if hung_up:
+    sys.exit(0)
+sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
 `;
 
 export interface OwnerTerminalSessionStart {
@@ -60,7 +84,11 @@ export interface OwnerTerminalSessionStart {
   lifetimeMs: number;
   /** Ends the session when the client neither reads nor writes for this long. */
   idleTimeoutMs: number;
+  /** Opaque caller label (the Broker stores its Job id) returned by describe(). */
+  tag?: string;
   shouldCancel: () => boolean;
+  /** Called once, before the cancellation it causes, when the idle limit is reached. */
+  onIdleTimeout?: () => void;
   onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void | Promise<void>;
   onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void;
   onFinished?: (result: ProcessExecutionResult) => void;
@@ -80,6 +108,7 @@ export interface OwnerTerminalSessionRead {
 interface Session {
   id: string;
   ownerId: string;
+  tag: string;
   sink?: ProcessStdinSink | undefined;
   chunks: Buffer[];
   baseOffset: number;
@@ -87,6 +116,7 @@ interface Session {
   lastActivityMs: number;
   idleTimeoutMs: number;
   stopRequested: boolean;
+  idleNotified?: boolean;
   result?: ProcessExecutionResult;
   retainTimer?: NodeJS.Timeout;
 }
@@ -128,7 +158,7 @@ export class OwnerTerminalSessionManager {
     if ([...this.sessions.values()].filter(session => session.result === undefined).length >= this.maxSessions) {
       throw new BrokerError("CONFLICT", "Terminal session capacity is exhausted", true);
     }
-    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, chunks: [], baseOffset: 0, endOffset: 0,
+    const session: Session = { id: `tsess_${randomBytes(12).toString("hex")}`, ownerId, tag: request.tag ?? "", chunks: [], baseOffset: 0, endOffset: 0,
       lastActivityMs: this.now(), idleTimeoutMs: request.idleTimeoutMs, stopRequested: false };
     this.sessions.set(session.id, session);
     const home = await realpath(homedir());
@@ -142,8 +172,15 @@ export class OwnerTerminalSessionManager {
       keepStdinOpen: true, streamOutput: true,
       onOutputChunk: chunk => this.append(session, chunk),
       onStdinReady: sink => { session.sink = sink; markReady(); },
-      shouldCancel: () => request.shouldCancel() || session.stopRequested ||
-        this.now() - session.lastActivityMs > session.idleTimeoutMs,
+      shouldCancel: () => {
+        if (request.shouldCancel() || session.stopRequested) return true;
+        if (this.now() - session.lastActivityMs <= session.idleTimeoutMs) return false;
+        if (!session.idleNotified) {
+          session.idleNotified = true;
+          try { request.onIdleTimeout?.(); } catch { /* The supervisor still cancels; the Job outcome is then unresolved. */ }
+        }
+        return true;
+      },
       ...(request.onProcessStarted ? { onStarted: request.onProcessStarted } : {}),
       ...(request.onProcessOwnershipChanged ? { onOwnershipChanged: request.onProcessOwnershipChanged } : {})
     });
@@ -192,11 +229,18 @@ export class OwnerTerminalSessionManager {
     return session.result === undefined ? base : { ...base, state: session.result.state, exitCode: session.result.exitCode };
   }
 
-  /** Requests termination; the supervisor observes it and drains the process tree. */
+  describe(ownerId: string, sessionId: string): { tag: string; finished: boolean } {
+    const session = this.owned(ownerId, sessionId);
+    return { tag: session.tag, finished: session.result !== undefined };
+  }
+
+  /**
+   * Graceful stop: closing the PTY hangs up the shell and the session ends as completed.
+   * A session that ignores the hangup must be cancelled by its owner (Job cancellation).
+   */
   stop(ownerId: string, sessionId: string): void {
     const session = this.owned(ownerId, sessionId);
     if (session.result !== undefined) return;
-    session.stopRequested = true;
     session.sink?.end();
   }
 

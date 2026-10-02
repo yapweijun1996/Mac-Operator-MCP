@@ -8,6 +8,9 @@ const tools: ToolPolicy[] = [
   { tool: "mac_terminal_exec", contractVersion: "0.1", requiredScopes: ["mac.terminal.exec"],
     capabilityFamilies: ["write", "process", "network"], targetType: "broker", mutation: true,
     approvalPolicy: "trusted_profile", outputCapBytes: 262_144, timeoutMs: 120_000, implemented: true, enabled: false },
+  { tool: "mac_terminal_session", contractVersion: "0.1", requiredScopes: ["mac.terminal.exec"],
+    capabilityFamilies: ["write", "process", "network"], targetType: "broker", mutation: true,
+    approvalPolicy: "trusted_profile", outputCapBytes: 262_144, timeoutMs: 30_000, implemented: true, enabled: false },
   {
     tool: "mac_health",
     contractVersion: "0.1",

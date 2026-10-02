@@ -13,7 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { Broker, BrokerStore, BrokerServiceInstanceLock, EdgeKeyring, MacOsNativeBrokerIpcServer,
   capturePeerProcessIdentity, PolicyBundleVerifier, PolicyManager, createDefaultPolicy,
-  ApprovalIssuerKeyManager, PersonalOwnerTerminalExecutor, provisionAuthenticationKey, writeApprovalIssuerKeyConfig,
+  ApprovalIssuerKeyManager, PersonalOwnerTerminalExecutor, OwnerTerminalSessionManager, provisionAuthenticationKey, writeApprovalIssuerKeyConfig,
   type SignedPolicyBundle, type PolicyDocument } from "@mac-operator/broker";
 import { runEdgeServiceMain, validateEdgeServiceStartupConfig, type JwtRevocationContext } from "@mac-operator/edge";
 import { assertPrivateDirectory } from "./store.js";
@@ -26,6 +26,7 @@ import { assertO1Policy, assertG1Policy, assertW1Policy, buildO1TargetRules, bui
 import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
 import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
+import { upgradePersonalTerminalSessions } from "./personal-terminal-session-upgrade.js";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
 import { createProcessApprovalBrowserBridge, parseApprovalBrowserRequest } from "./approval-browser-bridge.js";
@@ -195,6 +196,7 @@ async function start(root: string) {
             worktrees: developmentRuntime!.gateway.worktrees, developmentProjects: developmentConfig!.developmentProjects,
             taskProfiles: developmentConfig!.taskProfiles })(operation) } : {}),
       ...(terminalProfile ? { ownerTerminalExecutor: new PersonalOwnerTerminalExecutor({ enabled: true }),
+        ownerTerminalSessions: new OwnerTerminalSessionManager({ enabled: true }),
         authorizeOwnerTerminal: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
           createPersonalTerminalApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock") })(operation) } : {}),
       ...(guiProfile ? { authorizeGuiSession: operation => browserApprovalController?.authorizeGuiSession(operation) ?? Promise.resolve(false) } : {}), edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "personal-edge", keyId: "personal-edge-1", key,
@@ -335,6 +337,11 @@ async function main() {
     if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || process.argv[5] !== "--enable") throw new Error("Snapshot identity and explicit --enable required");
     await upgradePersonalOwnerTerminal(root, packageRoot, detail);
     console.log("Personal owner terminal enabled in offline state; reconnect OAuth to grant mac.terminal.exec.");
+  }
+  else if (mode === "terminal-sessions") {
+    if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");
+    await upgradePersonalTerminalSessions(root, packageRoot, detail);
+    console.log("Owner terminal sessions enabled in offline state; existing OAuth grants keep their scopes and need no reconnect.");
   }
   else if (mode === "terminal-connection") {
     if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");

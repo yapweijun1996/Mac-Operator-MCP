@@ -52,7 +52,7 @@ for (const file of files) {
   }
   const name = String(contract.tool_name);
   const source = contract.source as Record<string, unknown>;
-  if (source.kind === "local_owner_request" && name !== "mac_terminal_exec") throw new Error(`${file}: local owner provenance is not allowed for this tool`);
+  if (source.kind === "local_owner_request" && name !== "mac_terminal_exec" && name !== "mac_terminal_session") throw new Error(`${file}: local owner provenance is not allowed for this tool`);
   const sourceId = source.kind === "local_owner_request" ? `local:${name}:${source.request_date}` : String(source.kb_item_id);
   if (names.has(name)) throw new Error(`Duplicate tool_name: ${name}`);
   if (file !== `${name}.json`) throw new Error(`${file}: filename does not match tool_name ${name}`);

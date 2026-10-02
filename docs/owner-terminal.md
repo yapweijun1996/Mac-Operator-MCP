@@ -23,6 +23,33 @@ Commands have a default 30-second timeout and a 120-second maximum. Output is li
 
 Authority revocation, job cancellation, shutdown and timeout terminate observed process groups and tracked descendants. Arbitrary owner programs can daemonize or intentionally persist outside observed process ownership; this mode makes no complete containment or rollback claim. Restart recovery uses recorded PID/start-time identities and never converts an unresolved Job into success. The MCP call is synchronous and noninteractive; password prompts and interactive terminal sessions require a separate PTY feature.
 
+## Interactive sessions (`mac_terminal_session`)
+
+`mac_terminal_session` adds a PTY-backed interactive shell to O1. It reuses the `mac.terminal.exec` scope, the `host:owner-terminal` target, the delegated terminal issuer and the same owner-account authority as `mac_terminal_exec`; it adds no scope. The tool is disabled in the default policy, and an O1 or V2 policy signed by an earlier release does not list it. A service running this build against such state fails its startup capability check, so run the re-signing upgrade below first.
+
+Actions (one tool, exact per-action arguments):
+
+- `start` — `cwd`, `idempotency_key`, optional `rows`, `cols`, `lifetime_ms` (default 300 s, max 600 s), `idle_timeout_ms` (default 120 s). Creates a durable Job, persists the shell's process identity, returns `session_id` and `job_id`, and keeps the start request open until the session ends. At most two sessions run at once.
+- `write` — `session_id`, `data` (at most 4 KiB, no NUL, known literal credentials rejected). Control characters such as Ctrl-C (`\u0003`) are allowed. Every write is its own request with its own single-use delegated approval bound to the payload digest; a start approval never covers later input.
+- `read` — `session_id`, `cursor`, optional `max_bytes` (at most 32 KiB), `wait_ms` (at most 5 s). Returns redacted output, `next_cursor`, and `dropped_bytes` when the 256 KiB ring buffer overwrote unread output.
+- `stop` — hangs up the shell and waits for the session to end; if the shell ignores the hangup the Job is cancelled and the process tree drained. `mac_job_cancel` on the session Job does the same.
+
+Limits and behaviour: sessions are in memory and bound to the starting principal; another principal receives not-found. Revocation, Job cancellation, idle timeout, the absolute lifetime and Broker shutdown terminate the observed process tree. A Broker restart never resumes a session. The Job uses the generic terminal-Job process-identity recovery (the tool is covered by those queries), but no session-specific restart test exists yet. The session lifetime is also capped by the OAuth token: the start approval and the request authority end at the principal's expiry, which cancels the session. Output redaction is signature-based and applied per read, so a secret split across two reads may not be recognised. Output is never persisted. The PTY is created by `/usr/bin/python3`, a root-owned system executable, so no native Node dependency is added. The same disclaimers as one-shot O1 apply: no isolation, no rollback, daemonized descendants can escape observation.
+
+### Enabling sessions on an existing O1 or V2 installation
+
+1. Stop the personal supervisor and keep a complete protected copy of its state and the previous release (do not copy a live SQLite file).
+2. Using the new release, run against the stopped state:
+
+   ```sh
+   node packages/auth/dist/personal-service.js terminal-sessions /absolute/protected/state SOURCE_REVISION --enable
+   ```
+
+3. The command accepts only an O1 or V2 state whose enabled tool set is exactly the previous signed set, and refuses anything else without changing state. It signs one new policy revision that appends `mac_terminal_session` and nothing else, so scopes, targets, grants, approval keys and OAuth consent are unchanged: existing OAuth grants keep working and **no reconnect is needed**. It then verifies the full O1 or V2 policy, rebinds `edge-service.json` to the new release and policy version, updates `broker-policy-input.json`, moves retained browser grants to the new policy version, and writes intent and completion audit records. Re-running it is a no-op.
+4. Start the new release against the upgraded state. Roll back by stopping it and restoring the complete previous release/state pair; an interrupted upgrade fails startup validation, so keep the backup until readback succeeds.
+
+`owner-terminal` still only upgrades G1 to O1; for an O1 state that predates this tool it refuses and the error points to `terminal-sessions`.
+
 ## Permissions and disablement
 
 O1 runs with the owner's existing macOS permissions. Administrator authentication, Accessibility, Automation, Screen Recording, Full Disk Access and other macOS controls remain OS-owned. Commands can launch applications, manipulate owner files, invoke CLIs and use networks or persistence allowed to that account. Structured-tool path restrictions and destructive/privileged kill switches do not constrain shell command contents. Revoke `mac.terminal.exec`, disable `mac_terminal_exec`, revoke the OAuth grant, or use the global/mutation/process/network kill switches to remove this execution authority.

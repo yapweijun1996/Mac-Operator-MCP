@@ -292,7 +292,7 @@ function validateInputSchemaAuthorityFields(value: unknown, file: string, ownerT
 }
 
 function validateSource(value: unknown, file: string, toolName: string): void {
-  if (toolName === "mac_terminal_exec" && isPlainDataRecord(value) && hasExactKeys(value, ["kind", "request_date", "source_text"]) &&
+  if ((toolName === "mac_terminal_exec" || toolName === "mac_terminal_session") && isPlainDataRecord(value) && hasExactKeys(value, ["kind", "request_date", "source_text"]) &&
       value.kind === "local_owner_request" && typeof value.request_date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(value.request_date) &&
       typeof value.source_text === "string" && value.source_text.length > 0 && value.source_text.length <= MAX_SOURCE_TEXT_LENGTH) return;
   if (!isPlainDataRecord(value) || !hasExactKeys(value, ["kbid", "kb_id", "kb_item_id", "source_text"]) ||

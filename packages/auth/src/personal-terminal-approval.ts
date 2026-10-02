@@ -7,9 +7,10 @@ export function createPersonalTerminalApprover(options: {
 }) {
   const now = options.now ?? Date.now;
   return async (operation: OwnerTerminalOperation): Promise<boolean> => {
-    if (operation.principalId !== options.principalId || operation.tool !== "mac_terminal_exec" ||
+    if (operation.principalId !== options.principalId || !["mac_terminal_exec", "mac_terminal_session"].includes(operation.tool) ||
         operation.targetKind !== "host" || operation.targetRef !== "host:owner-terminal" ||
-        !Number.isSafeInteger(operation.timeoutMs) || operation.timeoutMs < 100 || operation.timeoutMs > 120000) return false;
+        !Number.isSafeInteger(operation.timeoutMs) || operation.timeoutMs < 100 ||
+        operation.timeoutMs > (operation.tool === "mac_terminal_session" ? 600000 : 120000)) return false;
     const issuerId = `terminal-approver-${sha256(options.principalId).slice(0, 32)}`;
     const keys = options.runtime.keyManager.current().keys.filter(key => key.keyId === "personal-terminal-1" &&
       key.issuerId === issuerId && key.allowUnattended === true);

@@ -1,6 +1,6 @@
 # Owner-level full access for AI agents (design proposal)
 
-Status: PROPOSAL. Nothing in this document is implemented or enabled.
+Status: item 1 (background PTY sessions) is implemented on a local branch as the single tool `mac_terminal_session`; see `docs/owner-terminal.md`. Items 2-5 remain proposals. Nothing is deployed or enabled in a live policy.
 Scope: personal Mac (MacBook Air) running this repository. Owner-level only; no root, no sudo.
 
 ## Goal
