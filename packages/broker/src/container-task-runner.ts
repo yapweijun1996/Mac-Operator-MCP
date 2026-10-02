@@ -384,10 +384,10 @@ function safeFailureDetail(error: unknown): string {
     "Fixed workspace staging did not verify": "STAGING_ACK_DENIED",
     "Task exec identity, user or exit state did not verify": "EXEC_READBACK_DENIED"
   };
-  const fixed = messages[error.message];
+  const fixed = Object.hasOwn(messages, error.message) ? messages[error.message] : undefined;
   if (fixed) return `/${fixed}`;
-  const transport = /^Container Engine request transport failed \((ECONNRESET|EPIPE|EMFILE|ENFILE|ENOBUFS|EACCES|ENOENT|ECONNREFUSED)\)$/u.exec(error.message)?.[1];
-  if (transport !== undefined) return `/ENGINE_REQUEST_${transport}`;
+  const transport = /^Container Engine request transport failed \((ECONNRESET|EPIPE|EMFILE|ENFILE|ENOBUFS|EACCES|ENOENT|ECONNREFUSED)(?:\/(info|inspect|exec-create|exec-start|control))?\)$/u.exec(error.message);
+  if (transport !== null) return `/ENGINE_REQUEST_${transport[1]}${transport[2] === undefined ? "" : `/${transport[2]}`}`;
   const status = /^Container Engine operation failed with status ([1-5][0-9]{2})$/u.exec(error.message)?.[1];
   return status === undefined ? "" : `/ENGINE_HTTP_${status}`;
 }

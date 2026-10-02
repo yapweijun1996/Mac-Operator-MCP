@@ -179,7 +179,7 @@ test("Container Engine discloses only a fixed transport errno after an authentic
   const f = await fixture();
   try {
     f.responseOverride = (req) => { req.socket.destroy(); return true; };
-    await assert.rejects(f.engine.version(), error => error instanceof Error && error.message === "Container Engine request transport failed (ECONNRESET)");
+    await assert.rejects(f.engine.version(), error => error instanceof Error && error.message === "Container Engine request transport failed (ECONNRESET/control)");
     assert.equal(f.verifiedConnections, 1);
   } finally { await f.close(); }
 });

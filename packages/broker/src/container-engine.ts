@@ -464,7 +464,9 @@ export class DockerContainerEngine {
       });
       req.once("error", (error) => {
         const code = (error as NodeJS.ErrnoException).code;
-        const knownCode = ["ECONNRESET", "EPIPE", "EMFILE", "ENFILE", "ENOBUFS", "EACCES", "ENOENT", "ECONNREFUSED"].includes(code ?? "") ? ` (${code})` : "";
+        const operation = path === "/info" ? "info" : path.endsWith("/json") ? "inspect" : path.endsWith("/exec") ? "exec-create" :
+          path.startsWith("/exec/") && path.endsWith("/start") ? "exec-start" : "control";
+        const knownCode = ["ECONNRESET", "EPIPE", "EMFILE", "ENFILE", "ENOBUFS", "EACCES", "ENOENT", "ECONNREFUSED"].includes(code ?? "") ? ` (${code}/${operation})` : "";
         finish(error instanceof BrokerError ? error : new BrokerError("EXECUTION_FAILED", `Container Engine request transport failed${knownCode}`));
       });
       if (body !== undefined) req.write(body);

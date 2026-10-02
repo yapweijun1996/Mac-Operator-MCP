@@ -219,7 +219,10 @@ test("Staging diagnostics classify only fixed Engine failures and exact HTTP sta
     ["Container Engine request transport failed", "ENGINE_REQUEST_TRANSPORT"],
     ["Container Engine request transport failed (ECONNRESET)", "ENGINE_REQUEST_ECONNRESET"],
     ["Container Engine request transport failed (EMFILE)", "ENGINE_REQUEST_EMFILE"],
+    ["Container Engine request transport failed (EPIPE/exec-start)", "ENGINE_REQUEST_EPIPE/exec-start"],
     ["Container Engine operation failed with status 500", "ENGINE_HTTP_500"],
+    ["constructor", ""],
+    ["toString", ""],
     ["Container Engine operation failed with status 500 token=synthetic-private-value", ""]
   ]) {
     const engine = new FakeEngine();
