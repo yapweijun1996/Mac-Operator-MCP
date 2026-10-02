@@ -86,11 +86,19 @@ tool_timeout_sec = 150
 [mcp_servers.mac-terminal.oauth]
 callback_url = "http://127.0.0.1:61989/callback"
 callback_port = 61989
+
+[mcp_servers.mac-terminal.tools.mac_terminal_exec]
+approval_mode = "approve"
 ```
 
 The listener binds only to loopback. Registering or exchanging a code with a
 different port or path is rejected. A successful login is reported by
 `codex mcp list`; a fresh Codex session loads the newly connected tools.
+Native discovery supplies the resource parameter; leave `oauth_resource` unset
+for this connection. Codex 0.153.4 otherwise sends the same resource twice,
+which Auth correctly rejects. The per-tool approval override applies only after
+the owner explicitly authorizes terminal access. It prevents a second client
+confirmation without changing global approvals or the Broker's grant checks.
 
 The independent terminal endpoint accepts MCP 2025 clients through the official
 SDK's stateless compatibility handler, using the same bearer validation, resource
