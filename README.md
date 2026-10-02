@@ -14,6 +14,11 @@ explicit O1 grants retain their original scopes. Push remains denied. See the
 [change report](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md) for exact acceptance and
 live release evidence.
 
+The requested personal V2 gateway is live and accepted: actual Codex read/write,
+registered test/build, local commit/review and primary-repository isolation passed
+through public OAuth. Existing connections retain their old scopes; reconnect
+to consent to the separate coding grant before using newly enabled tools.
+
 ## Start here
 
 - [Goal](GOAL.md)

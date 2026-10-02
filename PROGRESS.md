@@ -1,14 +1,15 @@
 # Mac-Operator-MCP Progress
 
-## Current overall progress: 92%
+## Current V2 task progress: 100% — DONE
 
-V2 production completion (2026-10-02): source/physical/YAP acceptance PASS;
-local main merge and live cutover are the remaining rollout steps.
+V2 production completion (2026-10-02): source/physical/YAP/public acceptance PASS;
+all 11 requested Definition-of-Done gates verified. Implementation commit
+`6e332f1d3adeaaccdb100a03cf0a990b3fef96ad` is merged to local main and live.
 Branch: `codex/v2-production-executor`. Disposable pinned containers and the
 constrained Codex 0.153.4 inference controller replace the missing production
 executor without promoting the rejected staging boundaries. Final image:
 `sha256:540f2d2753dc5674d05ec0cb7963a1fbb75b77f1fdeaa63c48a3825660aa01c4`.
-Actual physical enforcement passed three runs of 17/17 checks, including
+Actual physical enforcement passed six runs of 17/17 checks, including
 cancellation, Broker SIGKILL, independent deadlines, exact recovery and
 concurrent isolation. Actual YAP Codex readonly/write, registered test/task/build,
 explicit stage, local commit and review passed; primary HEAD/index/source/status
@@ -17,7 +18,11 @@ Existing unrelated user changes are preserved. Ordinary fresh coding grants
 exclude host terminal; push and other high-risk actions remain denied. Exact
 current results: `evidence/2026-10-02-v2-production-gateway.md` and
 `docs/MAC_OPERATOR_V2_CHANGE_REPORT.md`. The older entries below are historical
-and retain the broader 92% formal installer/signing status separately.
+and retain the broader 92% formal installer/signing status separately. Standard
+regression: 1577 PASS, 18 opt-in SKIP, 0 FAIL. Public coding read/write/test/build/
+local commit/review passed twice with primary unchanged; 27 scopes/48 tools.
+Old read grants passed 29 tools/26 real reads without scope expansion. Exact
+owned synthetic worktrees were cleaned; branches remain local. Push stays denied.
 
 V2/O1 source integration (2026-10-02): deployed and merged to local main at
 `2c37194d9bd822e78ad088f61d79a5f91061e152`. Standard npm test: 1313 PASS,

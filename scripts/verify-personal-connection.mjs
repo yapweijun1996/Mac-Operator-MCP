@@ -211,14 +211,14 @@ async function run() {
     assert.equal(preflight.permission, "allow");
     const settle = async receipt => {
       assert.ok(receipt.job_id);
-      for (let attempt = 0; attempt < 1200; attempt += 1) {
+      for (let attempt = 0; attempt < 300; attempt += 1) {
         const job = await call("mac_job_status", { job_id: receipt.job_id, tail_bytes: 1024 });
         if (!["queued", "running"].includes(job.state)) {
           assert.equal(job.state, "completed", `${receipt.job_id} ended ${job.state}: ${job.result_class}`);
           assert.equal(job.exit_code, 0);
           return { jobId: receipt.job_id, state: job.state, exitCode: job.exit_code };
         }
-        await delay(500);
+        await delay(2000);
       }
       throw new Error("Public development job did not settle within its runtime budget");
     };

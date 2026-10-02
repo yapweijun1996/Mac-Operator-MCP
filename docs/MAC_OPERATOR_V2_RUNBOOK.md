@@ -64,6 +64,21 @@ executable, grant credentials, or upgrade a staging runner to production.
    Save supervisor configuration only after readback. Reconnect ChatGPT to obtain
    the new coding scopes; a preexisting connection intentionally keeps its old grant.
 
+Use `MOPS_VERIFY_DEVELOPMENT=1` with `scripts/verify-personal-connection.mjs`
+for the explicitly synthetic YAP public acceptance workflow. It edits one test
+only in a new owned worktree, runs named task/test/build jobs, commits locally,
+prepares review evidence, verifies primary fingerprints and removes the clean
+worktree. It never publishes or merges YAP changes. The verifier uses two-second
+job polling to respect the unchanged Edge rate limit; avoid simultaneous bulk
+verification clients. Protected evidence is stored outside Git without tokens.
+
+Engine connection recovery is limited to read queries and registration of
+unstarted exec descriptors after a fixed `EPIPE`/`ECONNRESET`. There are at most
+two retries inside the original deadline, with peer/socket verification on every
+attempt. No task code, exec-start, lifecycle mutation or source import retries.
+If execution or cleanup is ambiguous, preserve the failed/UNKNOWN evidence and
+use exact-owned recovery; never replay the task to manufacture a success.
+
 The controller binary is pinned to Codex `0.153.4`; its installed permission
 profile and feature gates were physically checked. Upgrading the CLI requires
 fresh review and acceptance. Trusted inference uses the existing authentication

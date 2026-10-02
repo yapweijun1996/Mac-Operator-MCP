@@ -1,7 +1,10 @@
 # V2 production development gateway — 2026-10-02
 
-Source, physical enforcement and real YAP E2E: PASS. Local main merge and
-public live deployment readback are the remaining rollout steps.
+Requested V2 acceptance: **DONE, 100%, 11/11 completion gates PASS**.
+Source, physical enforcement, actual YAP and public end-to-end workflows passed.
+Runtime implementation `6e332f1d3adeaaccdb100a03cf0a990b3fef96ad` is merged to local
+main. Protected final deployment evidence records the exact immutable release,
+source revision, native artifact, service restart and saved supervisor state.
 
 The owner authorized the complete implementation, testing, local commit/main
 merge and live deployment without additional implementation questions. No push
@@ -109,6 +112,43 @@ with mode 0400/0700. Production config requires its exact digest and runtime IDs
 - Named tasks now reject unresolved same-worktree jobs as well as coding/validation
   jobs; original-project audit attribution is preserved. UNKNOWN encrypted archive
   round-trip retains identity and cannot report recovery as success.
+- Public staging exposed a Docker connection `EPIPE` while registering an
+  unstarted exec. Exact fixed errno/operation diagnostics do not expose backend
+  messages. Bounded recovery repeats only reads/unstarted registration within
+  the same deadline; unique-ID tests prove no task replay. Exec-start, lifecycle
+  mutations, status errors, malformed responses and identity failures never retry.
+- Parallel operator probes exceeded the existing 100-request/60-second Edge
+  limit. The verifier now polls managed jobs every two seconds. Production rate
+  limits and task execution permissions were not relaxed.
+
+## Public deployment acceptance
+
+Fresh public OAuth coding consent exposes exactly 27 scopes/48 tools and excludes
+`mac.terminal.exec`. Existing read grants expose 29 tools (27 legacy plus two
+safe read additions); 26 real legacy read calls and revocation passed.
+
+Two full public coding workflows passed on the accepted runtime. They created
+fresh worktrees, reused duplicate creation/task identities, ran actual Codex
+readonly and workspace-write jobs, executed registered test/build commands,
+reviewed the one-file diff, staged explicitly, committed locally and prepared
+review evidence. Primary HEAD/index/source/status were identical before/after;
+push was denied. Clean worktrees were removed, retaining their local branches:
+
+- `codex/public-v2-99348726de927826`: `9d61b177e02f02d1fac21285fa8281e3162bbc06`.
+- `codex/public-v2-fcefea6fd37d3f98`: `5d991c2257d1cd419c7ebe0dc9a7c6f1743a15a3`.
+
+Six failed operator canaries were removed only after exact provenance and clean
+Git readback. Private synthetic worktrees were removed through Broker approval
+and audit; the one known failed synthetic edit was archived and restored first.
+Other user worktrees and the primary's preexisting `.claude` file were preserved.
+
+Additional physical evidence SHA-256:
+
+- Diagnostic runtime: `421d6a47c897d513ce7c7c8c90d537e01b5753448c0559c868b2f97fb1adfdff`.
+- Bounded recovery: `01c48a3d3472112f454c937b198d28da3f35d6d73a15354bce2714f1b3b55b94`.
+- Deployed runtime: `fa19c416df7c1a3b9a5af4c9fe3e36954fcd572ebcef746b36ff381829c1f2f1`.
+- First public workflow: `518d866de9aa25acf1621432eabf4e7181dc09b3c5d86cd42186a0845ecef7cb`.
+- Exact public cleanup: `657db067f0b80ca86ae2f208799c936c26edbc40584b163f2b857a3459118131`.
 
 Failed historical jobs remain failed/unknown as observed; they were not rewritten
 as successes. New evidence uses new task/request identities. Independent source
@@ -117,10 +157,11 @@ not atomic across database/files; a full stopped backup is mandatory.
 
 ## Final source verification
 
-Standard `npm test`: **1579 total, 1561 PASS, 18 SKIP, 0 FAIL**.
+Standard `npm test`: **1595 total, 1577 PASS, 18 SKIP, 0 FAIL**.
 Native builds and TypeScript passed. The 18 skips are explicit opt-in host
 checks; the container check was separately exercised against the final image
-three times with zero skips. No skip is counted as a pass.
+six times, including the deployed runtime, with zero skips. No skip is counted
+as a pass. A final-release physical readback is retained separately.
 Strict contracts: 57 unique schemas and the schema-20 ledger record verified.
 Style: 1197 tracked inputs. Docs: 40 README links/8 runbooks. Verification
 matrix: 29 targets/25 threats/31 tasks/19 evidence references. Process-boundary

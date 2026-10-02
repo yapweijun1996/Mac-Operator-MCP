@@ -5,6 +5,26 @@ Updated: 2026-10-02. Final acceptance is recorded in
 Implementation branch: `codex/v2-production-executor`; destination: local `main`.
 No remote push, PR publication or YAP production merge is part of this change.
 
+Requested V2 delivery: **DONE, 100% (11/11 Definition-of-Done gates)**.
+Runtime implementation commit: `6e332f1d3adeaaccdb100a03cf0a990b3fef96ad`.
+The final protected release readback records its complete source revision and
+native artifact digest; documentation and operator verification do not change
+the runtime implementation. The live endpoint is `https://mac.yapweijun1996.com/mcp`.
+
+| Completion gate | Result |
+| --- | --- |
+| Codex operates an authorized project | PASS, actual YAP and public OAuth workflows |
+| Codex writes only in an isolated worktree | PASS, exact source path and primary fingerprint equality |
+| Tests/build use managed jobs | PASS, named task, test and site build |
+| Secrets and unauthorized paths inaccessible | PASS, native, policy, controller and physical checks |
+| Coding grant has no unrestricted sudo/shell | PASS, no host tools, unprivileged guest, no terminal scope |
+| Git push remains gated | PASS, default denial and no publishing route |
+| Audit evidence exists | PASS, durable ownership, source import, Git and execution audit |
+| Policy tests pass | PASS |
+| Security tests pass | PASS, actual isolation plus failure/recovery regressions |
+| E2E development workflow passes | PASS, public read/write/test/build/commit/review |
+| Existing R1 behavior compatible | PASS, 26 real reads and unchanged old grant scopes |
+
 ## Architecture before and after
 
 | Before | After |
@@ -49,6 +69,13 @@ It never returns authentication values. Async receipts return a `job_id`;
 status/cancel and bounded log retrieval retain the existing job contracts.
 Test/build receipts include redacted fixed argv; terminal status includes
 execution duration, exit status and bounded stdout/stderr evidence.
+
+The Engine transport repeats only read queries and registration of an unstarted
+exec descriptor after `EPIPE`/`ECONNRESET`, at most twice within the original
+deadline. Every attempt verifies the native peer and socket again. It never
+replays exec-start, task code, lifecycle mutations or host imports. Unique-ID
+lost-response tests prove the abandoned descriptor starts zero times and the
+returned descriptor starts once.
 
 ## Security controls
 
@@ -133,6 +160,10 @@ a separately authorized old O1 terminal boundary for existing owner grants.
   migration requires the full stopped-state backup; the old release cannot read
   schema 20. Formal Developer ID/notarization and the old staging helper/VM
   release gates remain separate from this personal V2 deployment.
+- Docker may close a transport connection. Only non-executing preparation has
+  bounded recovery; ambiguous execution still stops the exact owned container
+  and fails closed. The Docker-internal cause of the observed registration
+  `EPIPE` is not established. Historical failed jobs remain recorded as failures.
 
 The [design/threat model](MAC_OPERATOR_V2_DESIGN.md) and
 [operator runbook](MAC_OPERATOR_V2_RUNBOOK.md) document current boundaries,
@@ -140,8 +171,13 @@ provisioning, configuration migration, recovery and rollback.
 
 ## Final source checks and changed files
 
-Standard regression: 1579 total, **1561 PASS / 18 SKIP / 0 FAIL**.
-Final image physical enforcement: **51/51 PASS**, three actual runs, zero skips.
+Standard regression: 1595 total, **1577 PASS / 18 SKIP / 0 FAIL**.
+Final-image physical enforcement passed every check in six actual 17-check runs,
+including the deployed runtime, with zero skips. Final release readback is
+recorded separately in protected deployment evidence.
+Public acceptance passed two full coding workflows: 27 scopes, 48 tools, 26
+legacy reads each, five managed jobs, local commit/review and primary unchanged.
+The read grant separately passed 29 tools/26 reads with no coding scope expansion.
 57 strict contracts, native/TypeScript build, style, docs, verification matrix,
 process-boundary audit, canonical JSON 5/5 and dependency audit all pass.
 Independent source review has no unresolved substantiated P0/P1.
