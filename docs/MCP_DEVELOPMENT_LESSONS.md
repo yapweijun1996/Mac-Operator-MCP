@@ -40,8 +40,8 @@ PKCE S256 only, exact redirect URI allowlist, refresh-token rotation with replay
 
 ### 3.1 Fail-closed storage can become fail-dead
 - Risk: strict schemas plus "seal the whole store on any parse error" is safe, but one unreadable record, or a new field added in a later version, makes the whole auth service unavailable until fixed by hand.
-- Check: records carry a schema version; there is a migration step; logs name the failing record kind and id.
-- Status: **Open**.
+- Check: records carry a schema version; there is a migration step; logs name the failing record kind.
+- Status: **Partly fixed**. Fail-closed behavior is unchanged, but the error now names the record kind and the schema issue codes (never payload values or record ids), so a bad record can be found. A schema version and migration step for records are still **Open**.
 
 ### 3.2 Do not do write work on every request
 - Risk: `store.prune()` runs a DELETE on every HTTP request, including anonymous ones. Fine at small scale, wasteful under flood.

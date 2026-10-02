@@ -24,6 +24,17 @@ export function assertPrivateFile(path: string): void {
       (stat.mode & 0o077) !== 0 || realpathSync(path) !== path) throw new Error("Protected auth file required");
 }
 
+/** Value-free reason for a rejected stored record; never includes payload content or record ids. */
+class AuthRecordError extends Error {
+  constructor(kind: string, cause: unknown) {
+    const issues = (cause as { issues?: Array<{ path?: unknown[]; code?: unknown }> } | null)?.issues;
+    const reason = Array.isArray(issues)
+      ? issues.slice(0, 5).map(issue => `${(issue.path ?? []).join(".").replace(/[^A-Za-z0-9_.]/gu, "?") || "record"}:${String(issue.code).replace(/[^A-Za-z0-9_]/gu, "?")}`).join(",")
+      : cause instanceof SyntaxError ? "unparseable_json" : "unreadable";
+    super(`Auth state unavailable: record kind=${kind} invalid (${reason})`);
+  }
+}
+
 /** Single-owner durable auth state; never silently replace an invalid database. */
 export class AuthStore {
   private readonly db: DatabaseSync;
@@ -52,20 +63,23 @@ export class AuthStore {
       for (const row of rows) {
         if (typeof row.kind !== "string" || !Object.hasOwn(recordSchemas, row.kind) || typeof row.id !== "string" ||
             !/^[A-Za-z0-9._:-]{1,128}$/u.test(row.id) || typeof row.payload !== "string" || row.payload.length > 8192) throw new Error("Invalid auth state");
-        recordSchemas[row.kind as Kind].parse(JSON.parse(row.payload));
+        try { recordSchemas[row.kind as Kind].parse(JSON.parse(row.payload)); }
+        catch (error) { throw new AuthRecordError(row.kind, error); }
       }
-    } catch {
+    } catch (error) {
       this.db.close();
-      throw new Error("Auth state unavailable");
+      throw error instanceof AuthRecordError ? error : new Error("Auth state unavailable");
     }
   }
 
   get<K extends Kind>(kind: K, key: string): RecordValue<K> | undefined {
     this.assertAvailable();
-    try {
-      const row = this.db.prepare("SELECT payload FROM records WHERE kind=? AND id=?").get(kind, key);
-      return row === undefined ? undefined : recordSchemas[kind].parse(JSON.parse(String(row.payload))) as RecordValue<K>;
-    } catch { this.sealed = true; throw new Error("Auth state unavailable"); }
+    let row: { payload?: unknown } | undefined;
+    try { row = this.db.prepare("SELECT payload FROM records WHERE kind=? AND id=?").get(kind, key); }
+    catch { this.sealed = true; throw new Error("Auth state unavailable"); }
+    if (row === undefined) return undefined;
+    try { return recordSchemas[kind].parse(JSON.parse(String(row.payload))) as RecordValue<K>; }
+    catch (error) { this.sealed = true; throw new AuthRecordError(kind, error); }
   }
 
   browserGrants(): RecordValue<"browser_grant">[] {
