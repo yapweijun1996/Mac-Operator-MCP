@@ -169,6 +169,63 @@ test("Ordinary validation source writes are ephemeral and a failed exit retains 
   assert.equal(failure.containerCleanupVerified, true); assert.equal(imports, 0);
 });
 
+test("Readonly snapshot and staging failures identify their trusted phase without forwarding backend messages", async () => {
+  const backendMessage = "Private backend trace must not be forwarded: token=synthetic-backend-credential /Users/fixture/.ssh/private.key";
+  for (const phase of ["snapshot", "stage"] as const) {
+    const engine = new FakeEngine();
+    let controllerCalls = 0;
+    let imports = 0;
+    const fail = () => { throw new BrokerError("VERIFICATION_FAILED", backendMessage); };
+    if (phase === "stage") engine.uploadArchive = async () => fail();
+    const task = runner(engine, {
+      ...(phase === "snapshot" ? { snapshotProvider: fail } : {}),
+      controller: { run: async () => { controllerCalls++; return complete(); } },
+      importChanges: () => { imports++; return []; }
+    });
+    const result = await task.run(profile(undefined, "readonly"), control());
+    assert.equal(result.state, "failed");
+    assert.equal(result.resultClass, "EXECUTION_FAILED");
+    assert.equal(result.stderr, `Container task failed a validation or execution check [VERIFICATION_FAILED/${phase}]`);
+    assert.equal(result.stdout, "");
+    assert.ok(!JSON.stringify(result).includes(backendMessage));
+    assert.ok(!JSON.stringify(result).includes("Private backend trace"));
+    assert.ok(!JSON.stringify(result).includes("synthetic-backend-credential"));
+    assert.ok(!JSON.stringify(result).includes(".ssh"));
+    assert.equal(controllerCalls, 0);
+    assert.equal(imports, 0);
+    assert.equal(result.containerCleanupVerified, true);
+    assert.ok(engine.events.includes("remove"));
+    assert.ok(!engine.events.includes("exec"));
+  }
+});
+
+test("Registered command failure diagnostics disclose the fixed error class and phase only", async () => {
+  const engine = new FakeEngine();
+  engine.onExec = async () => { throw new BrokerError("POLICY_DENIED", "backend-private-details password=synthetic-command-credential"); };
+  const result = await runner(engine).run(profile(), control());
+  assert.equal(result.state, "failed");
+  assert.equal(result.stderr, "Container task failed a validation or execution check [POLICY_DENIED/command]");
+  assert.equal(result.stdout, "");
+  assert.ok(!JSON.stringify(result).includes("backend-private-details"));
+  assert.ok(!JSON.stringify(result).includes("synthetic-command-credential"));
+  assert.equal(result.containerCleanupVerified, true);
+  assert.ok(engine.events.includes("remove"));
+});
+
+test("Unclassified backend exceptions retain UNKNOWN and never expose an exception message", async () => {
+  const engine = new FakeEngine();
+  engine.uploadArchive = async () => { throw new Error("private-engine-exception api_key=synthetic-opaque-credential"); };
+  const result = await runner(engine).run(profile(), control());
+  assert.equal(result.state, "unknown");
+  assert.equal(result.resultClass, "UNKNOWN_OUTCOME");
+  assert.equal(result.stderr, "Container task outcome could not be verified");
+  assert.equal(result.stdout, "");
+  assert.ok(!JSON.stringify(result).includes("private-engine-exception"));
+  assert.ok(!JSON.stringify(result).includes("synthetic-opaque-credential"));
+  assert.equal(result.containerCleanupVerified, true);
+  assert.ok(engine.events.includes("remove"));
+});
+
 test("Workspace-write coding imports only a validated archive and rechecks cancellation immediately before each host write", async () => {
   const engine = new FakeEngine(); let cancelled = false; let writes = 0;
   const task = runner(engine, { controller: { run: async () => complete() }, importChanges: (input, output, paths, hooks) => {

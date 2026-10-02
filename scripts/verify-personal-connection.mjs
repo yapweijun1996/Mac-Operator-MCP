@@ -32,7 +32,16 @@ async function run() {
   const guiProfile = config.grantProfile === "g1" || config.grantProfile === "o1" || config.grantProfile === "v2";
   const metadataScopes = scopesForGrantProfile(config.grantProfile);
   const expectedScopes = developmentProbe ? metadataScopes : terminalProbe ? metadataScopes : guiProfile ? W1_READ_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
-  const expectedTools = developmentProbe ? V2_TOOLS.filter(tool => tool !== "mac_terminal_exec") : terminalProbe ? O1_TOOLS : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
+  let expectedTools = developmentProbe ? V2_TOOLS.filter(tool => tool !== "mac_terminal_exec") : terminalProbe ? O1_TOOLS : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
+  if (config.grantProfile === "v2" && !developmentProbe) {
+    const additiveReads = [];
+    for (const name of DEVELOPMENT_TOOL_NAMES) {
+      if (!V2_TOOLS.includes(name)) continue;
+      const contract = JSON.parse(await readFile(new URL(`../tool-contracts/${name}.json`, import.meta.url), "utf8"));
+      if (contract.required_scopes.every(scope => expectedScopes.includes(scope))) additiveReads.push(name);
+    }
+    expectedTools = [...new Set([...expectedTools, ...additiveReads])];
+  }
   const profileLabel = config.grantProfile.toUpperCase();
   network = configureIssuerNetwork(new URL(config.issuer).hostname);
   const bytes = readAuthFile(envPath, 8192, false);
@@ -185,7 +194,7 @@ async function run() {
     const branch = `codex/${taskId}`;
     const createArgs = { project_root: developmentProject, task_id: taskId, branch_name: branch, base_ref: "main", idempotency_key: `${taskId}-create` };
     const treesBefore = await call("mac_git_worktree_list", { project_root: developmentProject });
-    const explained = await call("mac_policy_explain", { proposed_tool: "mac_git_worktree_create", proposed_arguments: createArgs });
+    const explained = await call("mac_policy_explain", { proposed_tool: "mac_git_worktree_create", target: { kind: "project", reference: developmentProject }, proposed_arguments: createArgs });
     assert.equal(explained.decision, "allow");
     assert.deepEqual(await call("mac_git_worktree_list", { project_root: developmentProject }), treesBefore);
     const created = await call("mac_git_worktree_create", createArgs);
@@ -218,7 +227,7 @@ async function run() {
       task: "Use only the supplied read_file tool to read scripts/test-isolation.test.js. Briefly describe its environment filtering test. Do not modify files or execute commands." }));
     const status = await call("mac_git_status", { project_root: worktree });
     assert.equal(status.dirty, false);
-    const push = await call("mac_policy_explain", { proposed_tool: "mac_git_push", proposed_arguments: { project_root: developmentProject,
+    const push = await call("mac_policy_explain", { proposed_tool: "mac_git_push", target: { kind: "project", reference: developmentProject }, proposed_arguments: { project_root: developmentProject,
       worktree, remote: "origin", branch_name: branch, approval_id: "public-probe-denied", idempotency_key: `${taskId}-push-denied` } });
     assert.equal(push.decision, "deny");
     const audit = await call("mac_execution_audit", { project_root: developmentProject, limit: 100 });

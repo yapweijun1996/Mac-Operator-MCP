@@ -173,6 +173,7 @@ export class ContainerTaskRunner implements TaskRunner {
     let createAttempted = false;
     let snapshot: ContainerSnapshot | undefined;
     let result = outcome("unknown", "UNKNOWN_OUTCOME", null, "", "Task result has not been established", 0);
+    let phase: "create" | "ownership" | "start" | "snapshot" | "stage" | "controller" | "command" | "export" | "import" = "create";
     let reason: "timeout" | "cancel" | undefined;
     const check = (): void => {
       if (Date.now() >= deadline) { reason = "timeout"; abort.abort(); }
@@ -200,22 +201,28 @@ export class ContainerTaskRunner implements TaskRunner {
         recordedAtMs, deadlineAtMs: Math.max(recordedAtMs + 1, Math.min(deadline, recordedAtMs + handle.maxRuntimeMs))
       };
       // Async acknowledgements cannot prove durable ownership before guest code starts.
+      phase = "ownership";
       const acknowledged = control.onContainerCreated!(Object.freeze(metadata));
       if (acknowledged !== undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Container ownership persistence must complete synchronously");
       check();
+      phase = "start";
       await this.engine!.start(handle, { signal: abort.signal, timeoutMs: remaining(deadline) });
       check();
+      phase = "snapshot";
       snapshot = this.snapshotProvider(profile.cwd, handle.readonlyWorkspace, this.snapshotExcludedPaths);
       check();
+      phase = "stage";
       await this.engine!.uploadArchive(handle, snapshot.archive, { signal: abort.signal, timeoutMs: remaining(deadline) });
       check();
       if (profile.containerExecution!.agent) {
         const agent = profile.containerExecution!.agent;
+        phase = "controller";
         const coding = await raceAbort(this.controller!.run({ cwd: profile.cwd, task: agent.task,
           ...(agent.model === undefined ? {} : { model: agent.model }), maxRuntimeMs: remaining(deadline), executionProfile: agent.executionProfile,
           dynamicTools: this.dynamicTools(handle, profile.containerExecution!, deadline, abort.signal, check), signal: abort.signal }), abort.signal);
         result = mapCoding(coding, profile.process.outputCapBytes);
       } else {
+        phase = "command";
         const executed = await this.engine!.exec(handle, { command: [profile.process.executable, ...profile.process.args],
           timeoutMs: remaining(deadline), outputCapBytes: profile.process.outputCapBytes }, { signal: abort.signal });
         result = outcome(executed.exitCode === 0 ? "completed" : "failed", executed.exitCode === 0 ? "SUCCEEDED" : "EXECUTION_FAILED",
@@ -223,11 +230,13 @@ export class ContainerTaskRunner implements TaskRunner {
       }
       check();
       if (result.state === "completed" && profile.containerExecution!.agent?.executionProfile === "workspace-write") {
+        phase = "export";
         const archive = await this.engine!.downloadArchive(handle, { signal: abort.signal, timeoutMs: remaining(deadline) });
         check();
         const files = this.parseArchive(archive, false);
         if (files.some(file => this.isExcluded(file.path))) deny("Task output cannot recreate an excluded snapshot path");
         check();
+        phase = "import";
         this.importChanges(snapshot, files, profile.containerExecution!.agent?.allowedPaths ?? [], {
           beforeWrite: check,
           onWriteIntent: path => notifyImport(control, path, "intent"),
@@ -235,7 +244,7 @@ export class ContainerTaskRunner implements TaskRunner {
         });
       }
     } catch (error) {
-      result = mapError(error, abort.signal.aborted ? reason ?? "cancel" : undefined);
+      result = mapError(error, abort.signal.aborted ? reason ?? "cancel" : undefined, phase);
     } finally {
       clearTimeout(timer); clearInterval(monitor);
       abort.abort();
@@ -358,13 +367,13 @@ function mapCoding(result: CodexControllerResult, cap: number): TaskExecutionRes
   const output = redactBoundedText(result.output, cap);
   return { ...outcome(result.status, classes[result.status], result.status === "completed" ? 0 : null, output.text, result.reasonCodes.join(","), 0), truncated: output.truncated };
 }
-function mapError(error: unknown, aborted?: "timeout" | "cancel"): TaskExecutionResult {
+function mapError(error: unknown, aborted?: "timeout" | "cancel", phase?: string): TaskExecutionResult {
   const name = aborted === "timeout" ? "TIMEOUT" : aborted === "cancel" ? "CANCELLED" : error instanceof BrokerError ? error.errorClass : "UNKNOWN_OUTCOME";
   if (name === "TIMEOUT") return outcome("timed_out", "TIMEOUT", null, "", "Container task exceeded its deadline", 0);
   if (name === "CANCELLED") return outcome("cancelled", "CANCELLED", null, "", "Container task was cancelled", 0);
   if (name === "OUTPUT_LIMIT") return outcome("failed", "OUTPUT_LIMIT", null, "", "Container task exceeded its output limit", 0);
   if (name === "UNKNOWN_OUTCOME" || name === "AUDIT_UNAVAILABLE") return outcome("unknown", "UNKNOWN_OUTCOME", null, "", "Container task outcome could not be verified", 0);
-  return outcome("failed", "EXECUTION_FAILED", null, "", "Container task failed a validation or execution check", 0);
+  return outcome("failed", "EXECUTION_FAILED", null, "", `Container task failed a validation or execution check [${name}${phase === undefined ? "" : `/${phase}`}]`, 0);
 }
 async function raceAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw new BrokerError("CANCELLED", "Container coding request was cancelled");
