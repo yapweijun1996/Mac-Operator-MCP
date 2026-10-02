@@ -190,6 +190,13 @@ async function run() {
   if (developmentProbe) {
     const runtime = JSON.parse(readAuthFile(join(root, "personal/development-runtime.json")).toString());
     const developmentProject = runtime.developmentProjects[0];
+    const syntheticPath = "scripts/test-isolation.test.js";
+    const primaryFingerprint = async () => ({
+      git: await call("mac_git_status", { project_root: developmentProject }),
+      indexSha256: createHash("sha256").update(await readFile(join(developmentProject, ".git/index"))).digest("hex"),
+      sourceSha256: createHash("sha256").update(await readFile(join(developmentProject, syntheticPath))).digest("hex")
+    });
+    const primaryBefore = await primaryFingerprint();
     const taskId = `public-v2-${randomBytes(8).toString("hex")}`;
     const branch = `codex/${taskId}`;
     const createArgs = { project_root: developmentProject, task_id: taskId, branch_name: branch, base_ref: "main", idempotency_key: `${taskId}-create` };
@@ -225,8 +232,24 @@ async function run() {
       execution_profile: "readonly", network_policy: "none", max_runtime: 600000, idempotency_key: `${taskId}-readonly`,
       allowed_paths: ["scripts/test-isolation.test.js"],
       task: "Use only the supplied read_file tool to read scripts/test-isolation.test.js. Briefly describe its environment filtering test. Do not modify files or execute commands." }));
+    const written = await settle(await call("mac_codex_run", { project_root: developmentProject, worktree, task_id: taskId,
+      execution_profile: "workspace-write", network_policy: "none", max_runtime: 600000, idempotency_key: `${taskId}-write`,
+      allowed_paths: [syntheticPath],
+      task: "Synthetic acceptance task: modify only scripts/test-isolation.test.js. Add one concise Node test asserting cleanEnvironment excludes an extra synthetic credential-like field named SYNTHETIC_SERVICE_CREDENTIAL with an innocuous fixture marker and retains PATH. Preserve all existing tests. Use the supplied read_file then edit_file or write_file tool; this workspace-write profile authorizes changes through those gateway tools. Do not change production helpers, manifests or other files. Do not execute commands or access host data." }));
+    const diff = await call("mac_git_diff", { project_root: worktree });
+    assert.deepEqual(diff.changed_paths, [syntheticPath]);
+    const common = { project_root: developmentProject, worktree, task_id: taskId, max_runtime: 600000 };
+    const tested = await settle(await call("mac_test_run", { ...common, idempotency_key: `${taskId}-test` }));
+    const built = await settle(await call("mac_build_run", { ...common, idempotency_key: `${taskId}-build` }));
+    const staged = await call("mac_git_stage", { project_root: worktree, paths: [syntheticPath] });
+    const committed = await call("mac_git_commit", { project_root: worktree, message: "test: verify public synthetic credential environment isolation",
+      expected_staged_diff_sha256: staged.staged_diff_sha256 });
+    const review = await call("mac_pr_prepare", { project_root: developmentProject, worktree });
+    assert.deepEqual(review.changed_files, [syntheticPath]);
     const status = await call("mac_git_status", { project_root: worktree });
     assert.equal(status.dirty, false);
+    const primaryAfter = await primaryFingerprint();
+    assert.deepEqual(primaryAfter, primaryBefore);
     const push = await call("mac_policy_explain", { proposed_tool: "mac_git_push", target: { kind: "project", reference: developmentProject }, proposed_arguments: { project_root: developmentProject,
       worktree, remote: "origin", branch_name: branch, approval_id: "public-probe-denied", idempotency_key: `${taskId}-push-denied` } });
     assert.equal(push.decision, "deny");
@@ -237,9 +260,10 @@ async function run() {
     await writeFile(join(root, "personal/public-development-evidence.json"), `${JSON.stringify({ schemaVersion: "0.1", status: "pass",
       verifiedAt: new Date().toISOString(), taskId, project: developmentProject, worktree, branch,
       scopes: expectedScopes.length, tools: listed.tools.length, readCalls: verificationCalls.size,
-      task, readonly, policyExplainDidNotCreateWorktree: true, duplicateRequestReused: true, worktreeClean: true,
+      task, readonly, written, tested, built, commit: committed.commit_id, review, primaryBefore, primaryAfter,
+      primaryUnchanged: true, policyExplainDidNotCreateWorktree: true, duplicateRequestReused: true, worktreeClean: true,
       removed: true, pushDenied: true, auditRead: true, terminalScopeAbsent: !claimScope.includes("mac.terminal.exec") }, null, 2)}\n`, { mode: 0o600 });
-    console.log("Public V2 accepted: exact scoped approvals, worktree lifecycle, named task and Codex readonly jobs, idempotency, audit and push denial.");
+    console.log("Public V2 accepted: exact scoped approvals, worktree lifecycle, Codex read/write, named task, tests, build, local commit, review, primary unchanged, idempotency, audit and push denial.");
   }
   if (terminalProbe) {
     terminalDirectory = await mkdtemp("/tmp/mop-owner-live-");

@@ -18,6 +18,11 @@ const ENGINE = "engine-local-identity";
 const TASK = { image: IMAGE, taskId: "task-1", owner: "operator-1", nonce: "nonce-1", maxRuntimeMs: 30_000 };
 
 type JsonRecord = Record<string, any>;
+interface FakeExecDescriptor {
+  config: JsonRecord;
+  starts: number;
+}
+
 interface FakeEngine {
   engine: DockerContainerEngine;
   socket: string;
@@ -26,6 +31,11 @@ interface FakeEngine {
   requests: Array<{ method: string; path: string; body: JsonRecord | Buffer }>;
   createConfig: JsonRecord | undefined;
   execConfig: JsonRecord | undefined;
+  execDescriptors: Map<string, FakeExecDescriptor>;
+  uniqueExecIds: boolean;
+  workspaceFiles: Map<string, Buffer>;
+  execCreateResponseOverride: ((req: IncomingMessage, res: ServerResponse, id: string) => boolean) | undefined;
+  execStartResponseOverride: ((req: IncomingMessage, res: ServerResponse, id: string) => boolean) | undefined;
   inspectMutation: ((value: JsonRecord) => void) | undefined;
   output: Buffer;
   outputStatus: number;
@@ -51,9 +61,12 @@ async function fixture(overrides: Partial<ContainerEngineOptions> = {}): Promise
   const socket = join(directory, "engine.sock");
   let running = false;
   let deleted = false;
+  let nextExecId = 0;
   const workspaceFiles = new Map<string, Buffer>();
   const result = {
     directory, socket, requests: [], createConfig: undefined, execConfig: undefined, inspectMutation: undefined,
+    execDescriptors: new Map<string, FakeExecDescriptor>(), uniqueExecIds: false, workspaceFiles,
+    execCreateResponseOverride: undefined, execStartResponseOverride: undefined,
     output: Buffer.concat([multiplex(1, "test passed\n"), multiplex(2, "warning\n")]), outputStatus: 200,
     delayRoute: undefined, responseOverride: undefined, verifiedConnections: 0, execExitCode: 0, execInspectionMutation: undefined
   } as unknown as FakeEngine;
@@ -82,25 +95,35 @@ async function fixture(overrides: Partial<ContainerEngineOptions> = {}): Promise
     }
     if (path.endsWith("/start") && path.includes("/containers/")) { running = true; res.writeHead(204); return res.end(); }
     if (path.endsWith("/kill?signal=SIGKILL")) { running = false; res.writeHead(204); return res.end(); }
-    if (req.method === "DELETE" && path.endsWith("?force=false&v=false")) { deleted = true; res.writeHead(204); return res.end(); }
+    if (req.method === "DELETE" && path.endsWith("?force=false&v=false")) {
+      deleted = true; result.execDescriptors.clear(); res.writeHead(204); return res.end();
+    }
     if (path.endsWith("/exec") && path.includes("/containers/")) {
       result.execConfig = body as JsonRecord;
-      if (result.execConfig.Cmd[2]?.includes("STAGING_DENIED")) {
-        const stage = JSON.parse(result.execConfig.Cmd[3]);
+      const id = result.uniqueExecIds ? (++nextExecId).toString(16).padStart(64, "0") : EXEC_ID;
+      result.execDescriptors.set(id, { config: result.execConfig, starts: 0 });
+      if (result.execCreateResponseOverride?.(req, res, id)) return;
+      return json(res, 201, { Id: id });
+    }
+    const execRoute = /^\/v1\.47\/exec\/([a-f0-9]{64})\/(start|json)$/u.exec(path);
+    const descriptor = execRoute ? result.execDescriptors.get(execRoute[1]!) : undefined;
+    if (execRoute?.[2] === "start" && descriptor) {
+      descriptor.starts++;
+      const config = descriptor.config;
+      const staging = config.Cmd[2]?.includes("STAGING_DENIED");
+      const exporting = config.Cmd[2]?.includes("EXPORT_DENIED");
+      if (staging) {
+        const stage = JSON.parse(config.Cmd[3]);
         if (stage.op === "begin") workspaceFiles.clear();
         if (stage.op === "chunks") for (const chunk of stage.chunks) {
           const before = workspaceFiles.get(chunk.path) ?? Buffer.alloc(0);
           workspaceFiles.set(chunk.path, Buffer.concat([before, Buffer.from(chunk.data, "base64")]));
         }
       }
-      return json(res, 201, { Id: EXEC_ID });
-    }
-    if (path === `/v1.47/exec/${EXEC_ID}/start`) {
-      const staging = result.execConfig?.Cmd[2]?.includes("STAGING_DENIED");
-      const exporting = result.execConfig?.Cmd[2]?.includes("EXPORT_DENIED");
+      if (result.execStartResponseOverride?.(req, res, execRoute[1]!)) return;
       let exported: unknown;
       if (exporting) {
-        const query = JSON.parse(result.execConfig!.Cmd[3]);
+        const query = JSON.parse(config.Cmd[3]);
         if (query.op === "index") {
           const directories = [...new Set([...workspaceFiles.keys()].flatMap(path => path.split("/").slice(0, -1).map((_p, i) => path.split("/").slice(0, i + 1).join("/"))))];
           exported = { directories, files: [...workspaceFiles.entries()].map(([path, content]) => ({ path, size: content.length, dev: "1", ino: "1", mtime: "1", ctime: "1" })) };
@@ -110,10 +133,10 @@ async function fixture(overrides: Partial<ContainerEngineOptions> = {}): Promise
       res.writeHead(staging || exporting ? 200 : result.outputStatus, { "Content-Type": "application/vnd.docker.raw-stream" });
       return res.end(staging ? multiplex(1, "STAGED") : exporting ? multiplex(1, JSON.stringify(exported)) : result.output);
     }
-    if (path === `/v1.47/exec/${EXEC_ID}/json`) {
-      const staging = result.execConfig?.Cmd[2]?.includes("STAGING_DENIED");
-      const exporting = result.execConfig?.Cmd[2]?.includes("EXPORT_DENIED");
-      const raw = { ID: EXEC_ID, ContainerID: CONTAINER_ID, Running: false, ExitCode: staging || exporting ? 0 : result.execExitCode, ProcessConfig: { user: result.execConfig?.User, privileged: false, tty: false } };
+    if (execRoute?.[2] === "json" && descriptor) {
+      const staging = descriptor.config.Cmd[2]?.includes("STAGING_DENIED");
+      const exporting = descriptor.config.Cmd[2]?.includes("EXPORT_DENIED");
+      const raw = { ID: execRoute[1], ContainerID: CONTAINER_ID, Running: false, ExitCode: staging || exporting ? 0 : result.execExitCode, ProcessConfig: { user: descriptor.config.User, privileged: false, tty: false } };
       result.execInspectionMutation?.(raw);
       return json(res, 200, raw);
     }
@@ -180,7 +203,169 @@ test("Container Engine discloses only a fixed transport errno after an authentic
   try {
     f.responseOverride = (req) => { req.socket.destroy(); return true; };
     await assert.rejects(f.engine.version(), error => error instanceof Error && error.message === "Container Engine request transport failed (ECONNRESET/control)");
-    assert.equal(f.verifiedConnections, 1);
+    assert.equal(f.verifiedConnections, 3);
+  } finally { await f.close(); }
+});
+
+test("Container Engine retries an unstarted exec descriptor without replaying task execution", async () => {
+  const f = await fixture();
+  try {
+    const handle = await running(f);
+    f.uniqueExecIds = true;
+    const baseline = f.requests.length;
+    const descriptors: string[] = [];
+    f.execCreateResponseOverride = (req, _res, id) => {
+      descriptors.push(id);
+      assert.equal(f.execDescriptors.get(id)!.starts, 0);
+      if (descriptors.length === 1) { req.socket.destroy(); return true; }
+      return false;
+    };
+    const result = await f.engine.exec(handle, { command: ["/usr/local/bin/node", "--version"], timeoutMs: 2000, outputCapBytes: 1024 });
+    assert.equal(result.exitCode, 0);
+    const requests = f.requests.slice(baseline);
+    const prepared = requests.filter(value => value.path.endsWith("/exec"));
+    assert.equal(prepared.length, 2);
+    assert.deepEqual(prepared[0]!.body, prepared[1]!.body);
+    assert.equal(new Set(descriptors).size, 2);
+    assert.ok(descriptors.every(id => /^[a-f0-9]{64}$/u.test(id)));
+    assert.equal(f.execDescriptors.get(descriptors[0]!)!.starts, 0);
+    assert.equal(f.execDescriptors.get(descriptors[1]!)!.starts, 1);
+    assert.deepEqual(requests.filter(value => /\/exec\/[a-f0-9]{64}\/start$/u.test(value.path)).map(value => value.path),
+      [`/v1.47/exec/${descriptors[1]}/start`]);
+    assert.equal(f.verifiedConnections, f.requests.length);
+    await f.engine.kill(handle); await f.engine.remove(handle);
+    assert.equal(f.execDescriptors.size, 0);
+  } finally { await f.close(); }
+});
+
+test("Container Engine exhausts preparation retries and stops the container without starting code", async () => {
+  const f = await fixture();
+  try {
+    const handle = await running(f);
+    f.uniqueExecIds = true;
+    const baseline = f.requests.length;
+    const descriptors: string[] = [];
+    f.execCreateResponseOverride = (req, _res, id) => { descriptors.push(id); req.socket.destroy(); return true; };
+    await assert.rejects(f.engine.exec(handle, { command: ["/usr/local/bin/node", "--version"], timeoutMs: 2000, outputCapBytes: 1024 }), /ECONNRESET\/exec-create/u);
+    const requests = f.requests.slice(baseline);
+    assert.equal(requests.filter(value => value.path.endsWith("/exec")).length, 3);
+    assert.equal(new Set(descriptors).size, 3);
+    assert.ok(descriptors.every(id => f.execDescriptors.get(id)!.starts === 0));
+    assert.equal(requests.filter(value => /\/exec\/[a-f0-9]{64}\/start$/u.test(value.path)).length, 0);
+    assert.equal((await f.engine.inspect(handle)).running, false);
+    await f.engine.remove(handle);
+    assert.equal(f.execDescriptors.size, 0);
+  } finally { await f.close(); }
+});
+
+test("Container Engine never retries an attached exec start after connection loss", async () => {
+  const f = await fixture();
+  try {
+    const handle = await running(f);
+    f.uniqueExecIds = true;
+    const baseline = f.requests.length;
+    f.execStartResponseOverride = req => { req.socket.destroy(); return true; };
+    await assert.rejects(f.engine.exec(handle, { command: ["/usr/local/bin/node", "--version"], timeoutMs: 2000, outputCapBytes: 1024 }), /ECONNRESET\/exec-start/u);
+    const requests = f.requests.slice(baseline);
+    assert.equal(requests.filter(value => value.path.endsWith("/exec")).length, 1);
+    assert.equal(requests.filter(value => /\/exec\/[a-f0-9]{64}\/start$/u.test(value.path)).length, 1);
+    const descriptors = [...f.execDescriptors.entries()].filter(([id]) => id !== EXEC_ID);
+    assert.equal(descriptors.length, 1);
+    assert.equal(descriptors[0]![1].starts, 1);
+    assert.equal((await f.engine.inspect(handle)).running, false);
+  } finally { await f.close(); }
+});
+
+test("Container Engine preparation retries preserve the original deadline and cancellation", async () => {
+  for (const cancelled of [false, true]) {
+    const f = await fixture();
+    try {
+      const controller = new AbortController();
+      f.responseOverride = req => {
+        req.socket.destroy();
+        if (cancelled) controller.abort();
+        return true;
+      };
+      await assert.rejects(f.engine.version({ timeoutMs: cancelled ? 1000 : 10, signal: controller.signal }), error =>
+        error instanceof Error && /deadline|cancelled/u.test(error.message));
+      assert.equal(f.requests.length, 1);
+    } finally { await f.close(); }
+  }
+});
+
+test("Lost staging descriptor responses cannot append snapshot data twice", async () => {
+  const f = await fixture();
+  try {
+    f.uniqueExecIds = true;
+    const handle = await f.engine.create({ ...TASK, readonlyWorkspace: true });
+    await f.engine.start(handle);
+    const descriptors: string[] = [];
+    f.execCreateResponseOverride = (req, _res, id) => {
+      const config = f.execDescriptors.get(id)!.config;
+      if (!config.Cmd[2]?.includes("STAGING_DENIED") || JSON.parse(config.Cmd[3]).op !== "chunks") return false;
+      descriptors.push(id);
+      assert.equal(f.workspaceFiles.has("source.js"), false);
+      assert.equal(f.execDescriptors.get(id)!.starts, 0);
+      if (descriptors.length === 1) { req.socket.destroy(); return true; }
+      return false;
+    };
+    const content = Buffer.from("export const value = 1;\n");
+    await f.engine.uploadArchive(handle, createWorkspaceArchive([{ path: "source.js", content }], [], true));
+    assert.equal(descriptors.length, 2);
+    assert.notEqual(descriptors[0], descriptors[1]);
+    assert.equal(f.execDescriptors.get(descriptors[0]!)!.starts, 0);
+    assert.equal(f.execDescriptors.get(descriptors[1]!)!.starts, 1);
+    assert.deepEqual(f.execDescriptors.get(descriptors[0]!)!.config, f.execDescriptors.get(descriptors[1]!)!.config);
+    assert.equal(f.execDescriptors.get(descriptors[1]!)!.config.User, "0:0");
+    assert.deepEqual(f.workspaceFiles.get("source.js"), content);
+    const output = parseWorkspaceArchive(await f.engine.downloadArchive(handle), false);
+    assert.deepEqual(output.map(file => [file.path, file.content]), [["source.js", content]]);
+    await f.engine.kill(handle); await f.engine.remove(handle);
+    assert.equal(f.execDescriptors.size, 0);
+  } finally { await f.close(); }
+});
+
+for (const failure of ["status-403", "status-409", "status-500", "malformed-json", "malformed-id"] as const) {
+  test(`Container Engine does not retry definitive exec creation ${failure}`, async () => {
+    const f = await fixture();
+    try {
+      const handle = await running(f);
+      f.uniqueExecIds = true;
+      const baseline = f.requests.length;
+      f.execCreateResponseOverride = (_req, res) => {
+        if (failure.startsWith("status-")) {
+          res.writeHead(Number(failure.slice(7))); res.end(JSON.stringify({ message: "backend detail" }));
+        } else {
+          res.writeHead(201);
+          res.end(failure === "malformed-json" ? '{"Id":' : JSON.stringify({ Id: "short" }));
+        }
+        return true;
+      };
+      await assert.rejects(f.engine.exec(handle, { command: ["/usr/local/bin/node", "--version"], timeoutMs: 2000, outputCapBytes: 1024 }),
+        /status|malformed/u);
+      const requests = f.requests.slice(baseline);
+      assert.equal(requests.filter(value => value.path.endsWith("/exec")).length, 1);
+      assert.equal(requests.filter(value => /\/exec\/[a-f0-9]{64}\/start$/u.test(value.path)).length, 0);
+      assert.equal((await f.engine.inspect(handle)).running, false);
+      const descriptor = [...f.execDescriptors.entries()].find(([id]) => id !== EXEC_ID)![1];
+      assert.equal(descriptor.starts, 0);
+    } finally { await f.close(); }
+  });
+}
+
+test("Container Engine rechecks peer identity after a retryable reset and does not retry rejection", async () => {
+  let rejected = false;
+  let verifications = 0;
+  const f = await fixture({ peerVerifier: { verify: () => {
+    verifications++;
+    if (rejected) throw new Error("untrusted peer");
+    return { uid: process.getuid!(), gid: process.getgid!(), pid: process.pid };
+  } } });
+  try {
+    f.responseOverride = req => { rejected = true; req.socket.destroy(); return true; };
+    await assert.rejects(f.engine.version(), /peer identity/u);
+    assert.equal(verifications, 2);
+    assert.equal(f.requests.length, 1);
   } finally { await f.close(); }
 });
 

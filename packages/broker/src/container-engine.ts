@@ -395,7 +395,24 @@ export class DockerContainerEngine {
 
   private async json(method: string, path: string, body: unknown, control?: ContainerEngineControl, statuses = [200]): Promise<unknown> {
     const encoded = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
-    const response = await this.exchange(method, path, encoded, control, this.maxResponseBytes, statuses);
+    const repeatable = method === "GET" || method === "POST" && /^\/containers\/[a-f0-9]{64}\/exec$/u.test(path);
+    const deadline = Date.now() + integer(control?.timeoutMs ?? this.requestTimeoutMs, 1, MAX_RUNTIME_MS, "request timeout");
+    let response: EngineResponse;
+    for (let attempt = 0;; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining < 1) throw new BrokerError("TIMEOUT", "Container Engine request exceeded its deadline");
+      try {
+        response = await this.exchange(method, path, encoded, { ...control, timeoutMs: remaining }, this.maxResponseBytes, statuses);
+        break;
+      } catch (error) {
+        // Exec creation only allocates an unstarted descriptor. An orphaned
+        // descriptor cannot execute and is removed with its owned container.
+        // Never repeat exec-start, container lifecycle changes or task code.
+        if (!repeatable || attempt >= 2 || !(error instanceof BrokerError) || error.errorClass !== "EXECUTION_FAILED" ||
+            !/^Container Engine request transport failed \((?:EPIPE|ECONNRESET)\/(?:info|inspect|exec-create|control)\)$/u.test(error.message)) throw error;
+        await new Promise<void>(resolveDelay => setTimeout(resolveDelay, 25 * (attempt + 1)));
+      }
+    }
     if (response.bytes.length === 0) return null;
     try { return parseJsonUtf8Strict(response.bytes); }
     catch { throw new BrokerError("VERIFICATION_FAILED", "Container Engine returned malformed JSON"); }
