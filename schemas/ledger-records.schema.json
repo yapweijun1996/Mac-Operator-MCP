@@ -152,6 +152,28 @@
         "ownershipProof": { "const": "sandbox-exec-no-fork-v1" }
       }
     },
+    "container_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "containerId", "engineId", "imageId", "taskId", "owner", "nonce", "taskDescriptorDigest", "recordedAtMs", "deadlineAtMs", "readonlyWorkspace", "memoryBytes", "nanoCpus", "pidsLimit", "maxRuntimeMs"],
+      "properties": {
+        "schemaVersion": { "const": "0.1" },
+        "containerId": { "$ref": "#/$defs/digest" },
+        "engineId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "imageId": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+        "owner": { "$ref": "#/$defs/principal_id" },
+        "nonce": { "$ref": "#/$defs/digest" },
+        "taskDescriptorDigest": { "$ref": "#/$defs/digest" },
+        "recordedAtMs": { "$ref": "#/$defs/timestamp" },
+        "deadlineAtMs": { "$ref": "#/$defs/timestamp" },
+        "readonlyWorkspace": { "type": "boolean" },
+        "memoryBytes": { "type": "integer", "minimum": 67108864, "maximum": 4294967296 },
+        "nanoCpus": { "type": "integer", "minimum": 100000000, "maximum": 4000000000 },
+        "pidsLimit": { "type": "integer", "minimum": 16, "maximum": 512 },
+        "maxRuntimeMs": { "type": "integer", "minimum": 1, "maximum": 600000 }
+      }
+    },
     "request_record": {
       "type": "object",
       "additionalProperties": false,
@@ -234,6 +256,7 @@
         "revision": { "type": "integer", "minimum": 0 },
         "writeMetadata": { "$ref": "#/$defs/write_metadata" },
         "processMetadata": { "$ref": "#/$defs/process_metadata" },
+        "containerMetadata": { "$ref": "#/$defs/container_metadata" },
         "privilegedPayload": { "$ref": "#/$defs/privileged_payload" }
       }
     },

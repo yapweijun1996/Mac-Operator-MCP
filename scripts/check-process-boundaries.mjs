@@ -6,9 +6,12 @@ const SCRIPT_ROOT = "scripts";
 const ALLOWED_FILES = new Set([
   "packages/auth/src/personal-service.ts",
   "packages/broker/src/process-supervisor.ts",
-  "packages/broker/src/app-sandbox-task-executor.ts"
+  "packages/broker/src/app-sandbox-task-executor.ts",
+  "packages/broker/src/codex-controller.ts",
+  "packages/broker/src/container-physical-validation.ts"
 ]);
 const ALLOWED_SCRIPT_FILES = new Set([
+  "scripts/probe-v2-yap-container.mjs",
   "scripts/check-completion-audit.mjs",
   "scripts/check-style.mjs",
   "scripts/probe-app-sandbox-boundary.mjs",

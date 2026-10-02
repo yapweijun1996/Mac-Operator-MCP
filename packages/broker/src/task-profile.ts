@@ -124,7 +124,24 @@ export function validateTaskRunArguments(argumentsValue: unknown): TaskRunReques
   };
 }
 
+export interface ContainerExecutionDescriptor {
+  projectRoot?: string;
+  imageId: string;
+  engineId: string;
+  taskId: string;
+  owner: string;
+  readonlyWorkspace: boolean;
+  agent?: {
+    task: string;
+    model?: string;
+    executionProfile: "readonly" | "workspace-write" | "test-only";
+    allowedPaths: readonly string[];
+  };
+}
+
 export interface ResolvedTaskProfile {
+  /** Guest command identity is pinned by the immutable image, never a host executable hash. */
+  containerExecution?: ContainerExecutionDescriptor;
   profile: string;
   cwd: string;
   executionKind?: TaskExecutionKind;

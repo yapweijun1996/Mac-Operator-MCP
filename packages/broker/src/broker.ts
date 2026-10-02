@@ -1,3 +1,4 @@
+import type { ContainerTaskJobMetadata } from "./container-job-metadata.js";
 import { DevelopmentGateway, worktreeResult, type DevelopmentPlan } from "./development-gateway.js";
 import { DEVELOPMENT_TOOL_NAMES, DEVELOPMENT_EXECUTION_TOOLS } from "./development-policy.js";
 import { GuiProcessSupervisor, guiLauncherExecutable } from "./gui-process-supervisor.js";
@@ -52,7 +53,7 @@ import { WorkerProcessExecutor, type ProcessExecutor } from "./process-executor.
 import { ProcessSupervisor, type ProcessOwnershipSnapshot } from "./process-supervisor.js";
 import { LaunchdServiceInspector, validateServiceId, type ServiceInspector } from "./service-inspector.js";
 import { MacLogInspector, validateLogRequest, type LogInspector } from "./log-inspector.js";
-import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
+import { GitBranchListInspector, GitDiffInspectorImpl, GitLogInspectorImpl, SAFE_GIT_ENVIRONMENT, GitStatusInspector, GitWriteInspectorImpl, validateGitBranchRequest, validateGitCommitRequest, validateGitDiffRequest, validateGitLogRequest, validateGitStageRequest, validateGitStatusRequest, type GitBranchInspector, type GitDiffInspector, type GitInspector, type GitLogInspector, type GitWriteInspector } from "./git-inspector.js";
 import { PackageInspectorImpl, validatePackageInspectRequest, type PackageInspector, type PackageManagerRequest } from "./package-inspector.js";
 import { createDockerProcessSupervisor, DOCKER_CODE_SIGNATURE_EXPECTATION, DOCKER_EXECUTABLE_CANDIDATES, DockerInspectorImpl, dockerObjectIdentityMatches, validateDockerLogsRequest, validateDockerObjectRequest, validateDockerStatusRequest, type DockerInspector, type DockerObjectType } from "./docker-inspector.js";
 import { assertContentDoesNotContainSecrets, redactBoundedText } from "./secret-policy.js";
@@ -92,6 +93,23 @@ export interface OwnerTerminalOperation extends Omit<GuiSessionOperation, "appId
   timeoutMs: number;
 }
 
+export interface DevelopmentOperation {
+  requestId: string;
+  principalId: string;
+  sessionId: string;
+  tool: string;
+  contractVersion: string;
+  policyVersion: string;
+  targetKind: string;
+  targetRef: string;
+  payloadDigest: string;
+  approvalClass: "trusted_write" | "trusted_profile";
+  expiresAtMs: number;
+  projectRoot: string;
+  worktree?: string;
+  taskId?: string;
+}
+
 export interface BrokerOptions {
   store: BrokerStore;
   policy: BrokerPolicy | PolicyManager;
@@ -129,6 +147,8 @@ export interface BrokerOptions {
   /** Owner-consented GUI session issuer; ordinary policy checks still apply. */
   authorizeGuiSession?: (operation: GuiSessionOperation) => Promise<boolean>;
   developmentGateway?: DevelopmentGateway;
+  /** Explicit owner delegation restricted to owned development tasks, independent of HIGH_RISK authority. */
+  authorizeDevelopment?: (operation: DevelopmentOperation) => Promise<boolean>;
   /** Explicit personal owner authority; omitted and disabled by default. */
   ownerTerminalExecutor?: OwnerTerminalExecutor;
   authorizeOwnerTerminal?: (operation: OwnerTerminalOperation) => Promise<boolean>;
@@ -248,8 +268,7 @@ export class Broker {
       maxConcurrent: 16,
       requireRootOwnedExecutable: true,
       allowedEnvironmentKeys: [
-        "DOCKER_CONFIG", "DOCKER_HOST", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
-        "GIT_CONFIG_SYSTEM", "GIT_NO_REPLACE_OBJECTS", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "HOME"
+        "DOCKER_CONFIG", "DOCKER_HOST", "HOME", ...Object.keys(SAFE_GIT_ENVIRONMENT)
       ],
       trustedUserOwnedExecutablePaths: [...DOCKER_EXECUTABLE_CANDIDATES, guiLauncherExecutable]
     });
@@ -279,7 +298,7 @@ export class Broker {
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     validateTaskProfileRegistry(this.taskProfileRegistry);
     const configuredTaskRunner = options.taskRunner ?? new FailClosedTaskRunner();
-    this.taskRunner = configuredTaskRunner.mechanism === null || configuredTaskRunner.mechanism === "virtualization"
+    this.taskRunner = configuredTaskRunner.mechanism === null || (configuredTaskRunner.mechanism === "virtualization" || configuredTaskRunner.mechanism === "docker-container")
       ? configuredTaskRunner
       : new PersistentlyQuarantinedTaskRunner(
         configuredTaskRunner,
@@ -766,6 +785,23 @@ export class Broker {
    * execution: it asks the authenticated guest for the original task status,
    * and only a signed, verified terminal readback may close the Job.
    */
+  async reconcileRestartedContainerTasks(limit = 1000): Promise<{ inspected: number; cleaned: number; unresolved: number }> {
+    const jobs = this.options.store.listUnresolvedTaskContainers(limit);
+    let cleaned = 0;
+    for (const job of jobs) {
+      if (job.state !== "unknown" || job.containerMetadata === undefined ||
+          this.taskRunner.mechanism !== "docker-container" || !this.taskRunner.recoverContainerTask) continue;
+      try {
+        if (!await this.taskRunner.recoverContainerTask(job.containerMetadata)) continue;
+        this.options.store.reconcileUnknownContainerTask(job.jobId, job.ownerPrincipalId, job.revision,
+          job.containerMetadata, { state: job.cancelRequested ? "cancelled" : "failed",
+            finishedAtMs: this.now(), containerCleanupVerified: true });
+        cleaned += 1;
+      } catch { /* Keep exact durable identity unresolved when cleanup cannot be proven. */ }
+    }
+    return { inspected: jobs.length, cleaned, unresolved: jobs.length - cleaned };
+  }
+
   async reconcileRestartedGuestTasks(limit = 100): Promise<{
     inspected: number;
     recovered: number;
@@ -1113,6 +1149,21 @@ export class Broker {
           idempotencyKey: request.arguments.idempotency_key as string, taskId: execution.development.taskId!,
           maxRuntimeMs: request.arguments.max_runtime as number, resolvedProfile: resolved };
       }
+      if (request.tool === "mac_task_run" && this.taskRunner.mechanism === "docker-container") {
+        const run = execution.taskRun!;
+        const project = this.options.developmentGateway?.worktrees.originalProject(run.cwd, request.principal.principalId);
+        if (!project || !run.taskId) throw new BrokerError("POLICY_DENIED", "Container task requires an owned development worktree");
+        this.options.developmentGateway!.worktrees.require(run.cwd, project, request.principal.principalId, run.taskId);
+        authorizeTarget(policy, request.principal.principalId, ["mac.project.read", "mac.project.write"], { kind: "project", reference: project });
+        const taskScopes = request.principal.scopes;
+        if (!taskScopes.includes("mac.project.read") || !taskScopes.includes("mac.project.write")) {
+          throw new BrokerError("POLICY_DENIED", "Container task requires explicit project scopes");
+        }
+        run.resolvedProfile = await this.taskProfileRegistry.resolve({ profile: run.profile, cwd: run.cwd, args: run.args,
+          taskId: run.taskId, ...(run.maxRuntimeMs === undefined ? {} : { maxRuntimeMs: run.maxRuntimeMs }) });
+        run.asynchronous = true;
+        execution.auditContext = { project, worktree: run.cwd, taskId: run.taskId };
+      }
       // Preserve the Broker-normalized target for any later failure. Raw tool
       // arguments are never copied into audit records.
       plannedAuditTarget = execution.auditTarget ?? `${target.kind}:${target.reference}`;
@@ -1185,6 +1236,23 @@ export class Broker {
         if (!delegated) throw new BrokerError("POLICY_DENIED", "Owner terminal delegation is unavailable");
         this.checkRevocation(request);
       }
+      let developmentDelegated = false;
+      const delegatedProject = execution.development?.projectRoot ?? execution.auditContext?.project;
+      if (toolPolicy.mutation && this.options.authorizeDevelopment && typeof delegatedProject === "string" &&
+          !execution.ownerTerminal && ["trusted_write", "trusted_profile"].includes(toolPolicy.approvalPolicy)) {
+        developmentDelegated = await this.options.authorizeDevelopment({
+          requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
+          tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
+          targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
+          approvalClass: toolPolicy.approvalPolicy as "trusted_write" | "trusted_profile", expiresAtMs: request.principal.expiresAtMs,
+          projectRoot: delegatedProject,
+          ...(execution.development?.worktree === undefined && execution.auditContext?.worktree === undefined ? {} :
+            { worktree: (execution.development?.worktree ?? execution.auditContext?.worktree) as string }),
+          ...(execution.development?.taskId === undefined && execution.auditContext?.taskId === undefined ? {} :
+            { taskId: (execution.development?.taskId ?? execution.auditContext?.taskId) as string })
+        });
+        this.checkRevocation(request);
+      }
       if (toolPolicy.mutation) {
         if (execution.ownerTerminal) {
           const admissionAt = this.now();
@@ -1233,12 +1301,12 @@ export class Broker {
             targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
             payloadDigest: sha256(canonicalJson(request.arguments)),
             approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
-            unattended: false
+            unattended: developmentDelegated
           };
           let admitted: ReturnType<BrokerStore["admitApprovedJobAfterDecision"]>;
           if (execution.development) this.options.developmentGateway!.worktrees.require(execution.taskRun.cwd,
             execution.development.projectRoot, request.principal.principalId, execution.taskRun.taskId);
-          if (execution.development && this.options.store.hasActiveWorktreeJobs(execution.taskRun.cwd, jobInput.jobId)) {
+          if ((execution.development || execution.taskRun.resolvedProfile?.containerExecution) && this.options.store.hasActiveWorktreeJobs(execution.taskRun.cwd, jobInput.jobId)) {
             throw new BrokerError("CONFLICT", "An active or unresolved job already owns this worktree");
           }
           try {
@@ -1256,7 +1324,7 @@ export class Broker {
                   argumentDigest: sha256(canonicalJson(request.arguments)),
                   ...(execution.taskRun.taskId === undefined ? {} : { taskId: execution.taskRun.taskId }),
                   scopes: [...toolPolicy.requiredScopes],
-                  project: execution.development?.projectRoot ?? execution.taskRun.cwd,
+                  project: execution.development?.projectRoot ?? execution.auditContext?.project ?? execution.taskRun.cwd,
                   worktree: execution.taskRun.cwd,
                   jobId: jobInput.jobId
                 },
@@ -1283,7 +1351,7 @@ export class Broker {
             targetRef: execution.auditTarget ?? `${target.kind}:${target.reference}`,
             payloadDigest: mutationPayloadDigest,
             approvalClass: requireMutationApprovalClass(toolPolicy.approvalPolicy),
-            unattended: false
+            unattended: developmentDelegated
           };
           try {
             this.options.store.recordRequestIntent({
@@ -3965,7 +4033,9 @@ export class Broker {
       result_class: "SUCCEEDED",
       data: execution.development ? { job_id: execution.taskJob.jobId, state: execution.taskJob.state,
         task_id: execution.taskRun.taskId!, worktree: execution.taskRun.cwd,
-        ...(request.tool === "mac_codex_run" ? {} : { profile: execution.taskRun.profile }) } : {
+        ...(request.tool === "mac_codex_run" ? {} : { profile: execution.taskRun.profile,
+          ...(execution.taskRun.resolvedProfile ? { command: [execution.taskRun.resolvedProfile.process.executable,
+            ...execution.taskRun.resolvedProfile.process.args].map(argument => redactBoundedText(argument, 4096).text) } : {}) }) } : {
         profile: execution.taskRun.profile,
         cwd: execution.taskRun.cwd,
         state: execution.taskJob.state,
@@ -4003,7 +4073,8 @@ export class Broker {
         profile: execution.taskRun.profile,
         cwd: execution.taskRun.cwd,
         args: execution.taskRun.args,
-        ...(execution.taskRun.maxRuntimeMs === undefined ? {} : { maxRuntimeMs: execution.taskRun.maxRuntimeMs })
+        ...(execution.taskRun.maxRuntimeMs === undefined ? {} : { maxRuntimeMs: execution.taskRun.maxRuntimeMs }),
+        ...(execution.taskRun.taskId === undefined ? {} : { taskId: execution.taskRun.taskId })
       });
     } catch (error) {
       const brokerError = error instanceof BrokerError ? error : new BrokerError("PRECONDITION_FAILED", "Task profile resolution failed");
@@ -4082,6 +4153,22 @@ export class Broker {
           recordedAtMs
         );
       };
+      const persistContainer = (metadata: Omit<ContainerTaskJobMetadata, "taskDescriptorDigest">): void => {
+        if (!execution.taskJob || !execution.jobLease) throw new BrokerError("AUDIT_UNAVAILABLE", "Container ownership requires an active Job lease");
+        this.ensureActiveAuthority(request, execution.target);
+        execution.taskJob = this.options.store.recordJobContainerOwnership(execution.taskJob.jobId,
+          request.principal.principalId, execution.taskJob.revision, { ...metadata, taskDescriptorDigest: descriptorDigest },
+          execution.jobLease, this.now());
+      };
+      const persistWorkspaceImport = (path: string, phase: "intent" | "verified"): void => {
+        this.options.store.appendAudit({ requestId: `${request.requestId}:import:${sha256(path).slice(0, 16)}`,
+          principalId: request.principal.principalId, tool: request.tool, eventType: phase === "intent" ? "intent" : "completion",
+          decision: "allow", resultClass: phase === "intent" ? "SOURCE_WRITE_INTENT" : "SOURCE_WRITE_VERIFIED",
+          targetRef: `project:${execution.development?.projectRoot ?? execution.auditContext?.project ?? resolved.cwd}`,
+          policyVersion: request.policyVersion, timestampMs: this.now(),
+          evidence: { requestId: request.requestId, jobId: job.jobId, taskId: execution.taskRun!.taskId,
+            worktree: resolved.cwd, changedPaths: [path], phase } });
+      };
       const persistGuestResult = (result: TaskExecutionResult): void => {
         if (!execution.taskJob || !execution.jobLease) {
           throw new BrokerError("EXECUTION_FAILED", "Guest result cannot be linked to its Job");
@@ -4108,16 +4195,22 @@ export class Broker {
         (snapshot) => persistTaskProcessSnapshot(snapshot, true),
         (snapshot) => persistTaskProcessSnapshot(snapshot, false),
         persistGuestRequest,
-        this.taskRunner.mechanism === "virtualization" ? persistGuestResult : undefined
+        this.taskRunner.mechanism === "virtualization" ? persistGuestResult : undefined,
+        this.taskRunner.mechanism === "docker-container" ? persistContainer : undefined,
+        this.taskRunner.mechanism === "docker-container" ? persistWorkspaceImport : undefined
       );
       const taskResult = validateTaskExecutionResult(await this.taskRunner.run(
         resolved,
         taskControl
       ));
-      // A runner may return after cancellation or revocation without observing
-      // the control callback. Never publish a success after the Broker lost
-      // authority; the outcome is unresolved and must remain inspectable.
-      this.ensureActiveAuthority(request, execution.target);
+      // Revocation can arrive after the executor has already verified removal.
+      // Preserve that cleanup evidence, but never publish execution success.
+      let authorityLost = false;
+      try { this.ensureActiveAuthority(request, execution.target); }
+      catch (error) {
+        if (this.taskRunner.mechanism !== "docker-container" || taskResult.containerCleanupVerified !== true) throw error;
+        authorityLost = true;
+      }
       const rawOutputBytes = Buffer.byteLength(taskResult.stdout, "utf8") + Buffer.byteLength(taskResult.stderr, "utf8");
       const outputBudgetExceeded = taskResult.truncated || rawOutputBytes > resolved.process.outputCapBytes;
       const timeoutBudgetExceeded = taskResult.durationMs > Math.min(timeoutMs, resolved.process.timeoutMs);
@@ -4127,9 +4220,12 @@ export class Broker {
       const verificationSummary = taskResult.verification.summary === undefined
         ? undefined
         : redactBoundedText(taskResult.verification.summary, 512).text;
-      const finished = !outputBudgetExceeded && !timeoutBudgetExceeded && taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
-      const terminalState = finished ? "completed" : timeoutBudgetExceeded || taskResult.state === "timed_out" ? "failed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
+      const durableCancellation = this.options.store.ownedJob(job.jobId, request.principal.principalId)?.cancelRequested === true;
+      if (durableCancellation && this.taskRunner.mechanism === "docker-container" && taskResult.containerCleanupVerified !== true) throw new BrokerError("UNKNOWN_OUTCOME", "Cancellation cleanup is unverified", true);
+      const finished = !authorityLost && !durableCancellation && !outputBudgetExceeded && !timeoutBudgetExceeded && taskResult.state === "completed" && taskResult.resultClass === "SUCCEEDED" && taskResult.verification.status === "verified";
+      const terminalState = authorityLost || durableCancellation ? "cancelled" : finished ? "completed" : timeoutBudgetExceeded || taskResult.state === "timed_out" ? "failed" : taskResult.state === "cancelled" ? "cancelled" : taskResult.state === "unknown" ? "unknown" : "failed";
       const terminalClass = finished ? "success" : terminalState === "cancelled" ? "denied" : terminalState === "unknown" ? "unknown" : timeoutBudgetExceeded || taskResult.state === "timed_out" || outputBudgetExceeded || taskResult.resultClass === "OUTPUT_LIMIT" ? "failed" : taskResult.verification.status === "failed" ? "verification_failed" : "failed";
+      if (authorityLost) this.options.store.requestJobCancellation(job.jobId, request.principal.principalId, "Active task authority ended", this.now());
       const currentTaskJob = this.options.store.ownedJob(job.jobId, request.principal.principalId);
       if (currentTaskJob === undefined) throw new BrokerError("AUDIT_UNAVAILABLE", "Task Job disappeared before terminal persistence");
       execution.taskJob = currentTaskJob;
@@ -4139,7 +4235,8 @@ export class Broker {
         finishedAtMs: this.now(),
         exitCode: taskResult.exitCode,
         stdout: stdout.text,
-        stderr: stderr.text
+        stderr: stderr.text,
+        ...(taskResult.containerCleanupVerified === undefined ? {} : { containerCleanupVerified: taskResult.containerCleanupVerified })
       }, execution.jobLease, this.now());
       terminalPersisted = true;
       if (!finished) {
@@ -4169,7 +4266,8 @@ export class Broker {
         },
         truncated: taskResult.truncated || stdout.truncated || stderr.truncated,
         auditTarget: `task_profile:${resolved.profile}`,
-        auditEvidence: { jobId: execution.taskJob.jobId, state: execution.taskJob.state, verification: taskResult.verification.status }
+        auditEvidence: { jobId: execution.taskJob.jobId, state: execution.taskJob.state, verification: taskResult.verification.status,
+          ...(taskResult.changedPaths === undefined ? {} : { changedPaths: taskResult.changedPaths }) }
       };
     } catch (error) {
       if (!terminalPersisted) {
@@ -5013,7 +5111,9 @@ export class Broker {
     onProcessStarted?: (snapshot: ProcessOwnershipSnapshot) => void,
     onProcessOwnershipChanged?: (snapshot: ProcessOwnershipSnapshot) => void,
     onGuestRequestAdmitted?: (admission: VirtualizationGuestTaskAdmission) => void,
-    onGuestResultVerified?: (result: TaskExecutionResult) => void
+    onGuestResultVerified?: (result: TaskExecutionResult) => void,
+    onContainerCreated?: (metadata: Omit<ContainerTaskJobMetadata, "taskDescriptorDigest">) => void,
+    onWorkspaceImport?: (path: string, phase: "intent" | "verified") => void
   ) {
     let lastLeaseHeartbeatMs = Number.NEGATIVE_INFINITY;
     const rootHelperRequestAuthority = this.rootHelperSnapshotRequestAuthority === undefined
@@ -5055,6 +5155,8 @@ export class Broker {
       ...(onProcessOwnershipChanged === undefined ? {} : { onProcessOwnershipChanged }),
       ...(onGuestRequestAdmitted === undefined ? {} : { onGuestRequestAdmitted }),
       ...(onGuestResultVerified === undefined ? {} : { onGuestResultVerified }),
+      ...(onContainerCreated === undefined ? {} : { onContainerCreated }),
+      ...(onWorkspaceImport === undefined ? {} : { onWorkspaceImport }),
       ...(rootHelperRequestAuthority === undefined ? {} : { rootHelperSnapshotRequestAuthority: rootHelperRequestAuthority })
     };
   }
@@ -6369,6 +6471,7 @@ function jobStatusData(
     started_at: job.startedAtMs === null ? null : new Date(job.startedAtMs).toISOString(),
     finished_at: job.finishedAtMs === null ? null : new Date(job.finishedAtMs).toISOString(),
     exit_code: job.exitCode,
+    ...(job.startedAtMs !== null && job.finishedAtMs !== null ? { execution_duration_ms: Math.max(0, job.finishedAtMs - job.startedAtMs) } : {}),
     result_class: job.resultClass,
     stdout: output.stdout,
     stderr: output.stderr,
@@ -6385,6 +6488,7 @@ function archivedJobStatusData(job: ArchivedJobRecord) {
     started_at: job.startedAtMs === null ? null : new Date(job.startedAtMs).toISOString(),
     finished_at: new Date(job.finishedAtMs).toISOString(),
     exit_code: job.exitCode,
+    ...(job.startedAtMs !== null && job.finishedAtMs !== null ? { execution_duration_ms: Math.max(0, job.finishedAtMs - job.startedAtMs) } : {}),
     result_class: job.resultClass,
     stdout: "",
     stderr: "",

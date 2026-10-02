@@ -7,17 +7,16 @@ V2 is additive to the existing R1/G1 deployment. The
 [the V2 validation record](../evidence/2026-10-01-v2-gateway-validation.md) owns this change's source verification; [PROGRESS.md](../PROGRESS.md) retains deployment evidence.
 The wire and contract versions remain `0.1`.
 
-All 11 V2 tools default to disabled. `mac_git_push` always denies execution,
-even when its scope and policy entry are present. There is no shipped production
-coding-agent adapter, no automatic service migration, and no claimed production
-Codex or YAP-MCP coding E2E. Source tests and mock providers do not establish an
-accepted macOS execution boundary.
+All 11 V2 contracts remain disabled by default; the accepted personal V2
+profile enables ten of them and the existing named `mac_task_run` interface.
+`mac_git_push` always denies execution, including with a supplied scope.
+The production adapter is `ContainerTaskRunner`; its pinned Linux runtime and
+constrained `CodexController` are distinct from the earlier staging runners.
+Real acceptance is recorded in the [current change report](MAC_OPERATOR_V2_CHANGE_REPORT.md).
 
-A combined O1/V2 source snapshot is now live under the existing O1 policy; see
-the [October 2 rollout and rollback record](../evidence/2026-10-02-v2-o1-personal-rollout.md).
-V2 tools remain disabled. Its CLI/shell checks do
-not qualify as V2 isolation evidence. Do not use that terminal authority to
-bypass V2 job/worktree/profile admission or bundle it into coding approval.
+Ordinary V2 OAuth consent excludes `mac.terminal.exec`. The installation retains
+previously authorized O1 grants and their separate terminal approval issuer.
+Neither a new coding grant nor its development issuer grants host-shell authority.
 
 The host operator owns provisioning, signed policy changes, OAuth grants and
 operation approvals. Tool arguments cannot create profiles, select an arbitrary
@@ -25,56 +24,79 @@ executable, grant credentials, or upgrade a staging runner to production.
 
 ## Host-owned provisioning
 
-1. Preserve the current signed policy, deployment revision, job/audit store and
-   R1/G1 grants. Record the original project's canonical path, HEAD, index digest
-   and status. Use a staging deployment first; do not replace the running service
-   simply to enable a tool name.
-2. Provision two separate, non-nested absolute canonical directories for
-   `ManagedWorktrees(stateRoot, worktreeRoot)`. Both must already exist, belong to
-   the Broker's effective user and have owner-only permissions such as `0700`.
-   They must be outside every primary project used by the gateway and must not
-   be symlinks. Keep provenance state unavailable to project scripts, agents and
-   ordinary file tools. The gateway rejects ordinary filesystem roots that cover
-   provenance or the all-task tree root. Worktrees are created beneath the controlled tree root;
-   callers cannot choose arbitrary destination paths.
-3. Construct `DevelopmentGateway` in reviewed host startup code. Supply its
-   `worktrees` object and, when needed, fixed `commands` entries with canonical
-   `projectRoot`, task `type`, and named `profile`. Do not load these entries from
-   an untrusted project manifest or MCP request. The optional `codexExecutable`
-   is a metadata-only hint; preflight does not execute it or open auth/config.
-4. Register reviewed commands in `TaskProfileRegistry`: fixed executable and
-   arguments, pinned executable/content identity, allowed cwd roots, filesystem
-   roots, minimal credential-free environment, declared network/process policy,
-   runtime/output bounds and postcondition strategy. Only then map a `test` or
-   `build` entry to the matching profile in the gateway. Project manifests can
-   inform operator review; they never authorize execution. If more than one
-   approved profile matches, the caller must name the registered profile.
-5. Pass `developmentGateway` and any `taskProfileRegistry` through the host-owned
-   `createBrokerServiceFromStartupConfig` / `runBrokerServiceMain` options. These
-   are source integration seams, not new MCP fields or public command-line
-   flags. Startup rejects task-profile configuration without a configured
-   isolated task runner. Existing runner startup options and release gates still
-   apply; the default is `FailClosedTaskRunner`.
-6. Keep AGENT_RUN tools disabled until the chosen runner has accepted physical
-   host evidence, `available: true`, `publicEnablement: "production"`, a matching
-   isolation mechanism and owned process-tree proof. Evidence must cover hostile
-   descendants, secrets, filesystem escape, cancellation and restart. Do not set
-   production metadata merely to bypass a gate.
+1. Pin Docker Desktop Engine identity, canonical owner socket and native peer
+   identity. Pin an immutable image ID built from the reviewed Dockerfile in
+   `runtime/container`; tasks cannot select a daemon/image, install packages or
+   mount host directories. Provision dependencies once as an operator outside MCP.
+2. Provision separate canonical owner-only `stateRoot` and `worktreeRoot`.
+   Keep control state beneath protected MCP storage. Worktree source storage
+   must be outside credential zones and every original repository, for example
+   a separate `DevelopmentWorktrees` directory. Never put source worktrees under
+   `.codex` or `MacOperator` credential storage. All ordinary filesystem roots,
+   including broad metadata roots, must explicitly deny both private roots.
+3. Create a private runtime JSON matching `personal-development-runtime.ts`:
+   exact authorized projects, Engine/image/controller hashes and version,
+   approved manifest hashes and script values, fixed guest argv, timeout/output
+   caps, and `snapshotExcludedPaths`. The current YAP registry approves
+   `test:isolation` and `site/package.json` build. The build image contains Linux
+   dependencies installed with lifecycle scripts disabled; task network is none.
+4. Review source exclusions before admission. The YAP configuration omits
+   the entire `portal`, `mcp-connector`, `sample`, `docs`, `output` and
+   `tmp` trees. The approved source subset contains root scripts, shared
+   source and the site build; it excludes production portal data and uploads. Those paths
+   cannot be read/written by dynamic tools or recreated during source import.
+   Add a new source scope only after operator review and fresh relevant evidence;
+   do not raise snapshot budgets or copy production data to make a task pass.
+5. Run actual isolation and YAP probes in private, non-listening acceptance
+   state. Preserve bounded evidence in an owner-only file. The loader requires
+   all sixteen named acceptance checks, exact image/Engine/provider identity and
+   an unchanged evidence digest. Unit doubles are not physical acceptance.
+6. Stop the existing service and take a full consistent private state backup,
+   including SQLite, audit anchor, signed policy, approval/OAuth state and launch
+   configuration. Preserve dirty task files and original repository evidence.
+7. Run the explicit offline upgrade from the verified immutable release:
+   `node packages/auth/dist/personal-service.js development <state-root> <source-revision> <private-runtime-config> --enable`.
+   It validates the runtime before signed authority changes, adds the narrowly
+   constrained `personal-development-1` issuer and signs exact project/profile
+   rules. It does not initialize the installation or expand existing OAuth grants.
+8. Start the new release, verify public OAuth, fresh coding discovery, old
+   read/O1 scope projections, accepted task jobs, policy explain and push denial.
+   Save supervisor configuration only after readback. Reconnect ChatGPT to obtain
+   the new coding scopes; a preexisting connection intentionally keeps its old grant.
 
-A future `CodingAgentProvider` must be provisioned by trusted host code and
-resolve to a governed `ResolvedTaskProfile`. It must report enforced `readonly`,
-`workspace-write` or `test-only` profiles, deny host Git control, and declare its
-supported network policy. The gateway requires exact worktree cwd and
-`credentialPolicy: "none"`; it rejects direct sudo/su executables and mismatched
-network profiles. These admission checks complement the accepted outer runner;
-readiness assertions and prompt text alone do not prove containment.
+The controller binary is pinned to Codex `0.153.4`; its installed permission
+profile and feature gates were physically checked. Upgrading the CLI requires
+fresh review and acceptance. Trusted inference uses the existing authentication
+manager; no credential bytes enter task tools, snapshots, environment or logs.
+Built-in shell, patch, MCP, subagent, skill, browser, plugin and hook capabilities
+are disabled. The logical coding cwd is `/workspace`; the inference controller
+has a private cwd and no model-visible host filesystem authority.
 
-Do not mount `~/.codex`, `~/.claude`, `.ssh`, Keychain, browser profiles, MCP state
-or user credential stores into a task. Do not put API keys into prompts,
-profile arguments, environment or audit records. Credential-free inference
-provisioning remains a separate dependency. Current registered network
-allowlists accept precise loopback destinations; installing a CLI or observing
-its local login is insufficient to enable coding.
+## Container recovery and rollback
+
+A container handle is durable before start. UID65533 PID1 enforces an independent
+deadline; task UID65532 cannot stop it. A task is successful only after exact
+container deletion and absence readback. Export first fences all new execution,
+terminates same-UID descendants, verifies quiescence, then hashes bounded regular
+files. Native import rechecks authority and persists per-path intent/readback.
+
+Restart converts interrupted jobs to UNKNOWN and retains exact Engine, image,
+container, owner, nonce and descriptor identity. Recovery may delete only that
+verified container and settle failed/cancelled; it never replays or reports
+success. If identity or Engine availability is uncertain, keep UNKNOWN and the
+worktree locked. Status/cancel/log retrieval use the existing job tools.
+
+The migration spans database activation and several private config renames; it
+is not an atomic cross-file transaction. An interrupted migration requires the
+full stopped backup. Schema 20 is not readable by the earlier release: stop and
+drain the new service, preserve new worktrees/audit as a separate snapshot,
+restore the complete old private state and old launch configuration, then verify
+health and unchanged grants. Restoring only an old policy or Edge config is
+insufficient. Never erase task checkouts or falsely clear UNKNOWN ownership.
+
+Docker Desktop and the pinned controller are availability dependencies. Changed
+binary, image, Engine, peer or evidence identities fail startup closed. Investigate
+and revalidate before enabling them again; never choose another runtime implicitly.
 
 ## Policy migration and grants
 
@@ -224,9 +246,8 @@ health, grants, read behavior and GUI behavior according to the existing
 Before production execution enablement, require contract/policy/security tests,
 physical isolation/credential/network evidence, managed-job timeout/cancel and
 restart evidence, and an actual isolated development E2E. Record PASS/FAIL and
-source revision in [PROGRESS.md](../PROGRESS.md). Current missing production
-coding provisioning and any unavailable project grant remain explicit
-acceptance dependencies, never implicit waivers.
+source revision in [PROGRESS.md](../PROGRESS.md). An unavailable dependency or unverified project grant remains an explicit
+acceptance dependency, never an implicit waiver.
 
 ## Personal O1 source-only upgrade
 

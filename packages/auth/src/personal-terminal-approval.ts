@@ -10,7 +10,9 @@ export function createPersonalTerminalApprover(options: {
     if (operation.principalId !== options.principalId || operation.tool !== "mac_terminal_exec" ||
         operation.targetKind !== "host" || operation.targetRef !== "host:owner-terminal" ||
         !Number.isSafeInteger(operation.timeoutMs) || operation.timeoutMs < 100 || operation.timeoutMs > 120000) return false;
-    const keys = options.runtime.keyManager.current().keys.filter(key => key.allowUnattended);
+    const issuerId = `terminal-approver-${sha256(options.principalId).slice(0, 32)}`;
+    const keys = options.runtime.keyManager.current().keys.filter(key => key.keyId === "personal-terminal-1" &&
+      key.issuerId === issuerId && key.allowUnattended === true);
     if (keys.length !== 1) throw new Error("Owner terminal requires its separate delegated issuer");
     const issuer = keys[0]!;
     const client = new ApprovalIpcClient({ socketPath: options.socketPath, issuerId: issuer.issuerId,

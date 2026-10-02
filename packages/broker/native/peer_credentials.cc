@@ -2398,6 +2398,81 @@ bool AuthorizeWriteTarget(napi_env env, napi_value authorizer, int root_descript
   return true;
 }
 
+napi_value CreateDirectoryWithinRoot(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  char configured_root[PATH_MAX], target[PATH_MAX], parent[PATH_MAX];
+  napi_valuetype authorizer_type;
+  if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3 ||
+      !ReadString(env, args[0], configured_root, sizeof(configured_root)) ||
+      !ReadString(env, args[1], target, sizeof(target)) ||
+      napi_typeof(env, args[2], &authorizer_type) != napi_ok || authorizer_type != napi_function) {
+    napi_throw_type_error(env, nullptr, "createDirectoryWithinRoot requires root, target, synchronous authorizer");
+    return nullptr;
+  }
+  const char* slash = strrchr(target, '/');
+  if (slash == nullptr || slash == target || slash[1] == '\0' ||
+      static_cast<size_t>(slash - target) >= sizeof(parent)) {
+    napi_throw_type_error(env, nullptr, "Directory target must name a child of an authorized root");
+    return nullptr;
+  }
+  memcpy(parent, target, slash - target);
+  parent[slash - target] = '\0';
+  const char* basename = slash + 1;
+  int root_fd = open(configured_root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  char root_path[PATH_MAX], parent_path[PATH_MAX], relative_parent[PATH_MAX];
+  struct stat root_stat;
+  struct statfs volume;
+  if (root_fd < 0 || fstat(root_fd, &root_stat) != 0 || fstatfs(root_fd, &volume) != 0 ||
+      (volume.f_flags & MNT_LOCAL) == 0 || !DescriptorPath(root_fd, root_path) ||
+      realpath(parent, parent_path) == nullptr ||
+      !RelativePathWithinRoot(root_path, parent_path, relative_parent)) {
+    if (root_fd >= 0) close(root_fd);
+    ThrowSystemError(env, "Directory parent escaped the authorized root");
+    return nullptr;
+  }
+  int parent_fd = openat(root_fd, relative_parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  struct stat parent_stat;
+  char pinned_parent[PATH_MAX];
+  if (parent_fd < 0 || fstat(parent_fd, &parent_stat) != 0 || parent_stat.st_dev != root_stat.st_dev ||
+      !SameFilesystem(parent_fd, volume) || !DescriptorPath(parent_fd, pinned_parent) ||
+      strcmp(pinned_parent, parent_path) != 0 ||
+      !AuthorizeWriteTarget(env, args[2], root_fd, parent_fd, root_path, pinned_parent, basename)) {
+    if (parent_fd >= 0) close(parent_fd);
+    close(root_fd);
+    bool pending = false;
+    napi_is_exception_pending(env, &pending);
+    if (!pending) ThrowSystemError(env, "Directory parent identity is not authorized");
+    return nullptr;
+  }
+  if (mkdirat(parent_fd, basename, 0700) != 0) {
+    close(parent_fd); close(root_fd);
+    ThrowSystemError(env, "Directory create-only precondition failed");
+    return nullptr;
+  }
+  int child_fd = openat(parent_fd, basename, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  char child_path[PATH_MAX], expected_path[PATH_MAX];
+  struct stat child_stat;
+  snprintf(expected_path, sizeof(expected_path), "%s/%s", pinned_parent, basename);
+  bool verified = child_fd >= 0 && fstat(child_fd, &child_stat) == 0 &&
+    child_stat.st_dev == root_stat.st_dev && DescriptorPath(child_fd, child_path) &&
+    strcmp(child_path, expected_path) == 0 && fsync(parent_fd) == 0 &&
+    AuthorizeWriteTarget(env, args[2], root_fd, parent_fd, root_path, pinned_parent, basename);
+  if (child_fd >= 0) close(child_fd);
+  close(parent_fd); close(root_fd);
+  if (!verified) {
+    bool pending = false;
+    napi_is_exception_pending(env, &pending);
+    if (!pending) ThrowSystemError(env, "Directory creation could not be verified");
+    return nullptr;
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  SetString(env, result, "path", child_path);
+  SetString(env, result, "rootPath", root_path);
+  return result;
+}
+
 napi_value WriteFileAtomicWithinRoot(napi_env env, napi_callback_info info) {
   size_t argc = 9;
   napi_value args[9];
@@ -3932,6 +4007,8 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "hashFileWithinRoot", function);
   napi_create_function(env, "writeFileAtomicWithinRoot", NAPI_AUTO_LENGTH, WriteFileAtomicWithinRoot, nullptr, &function);
   napi_set_named_property(env, exports, "writeFileAtomicWithinRoot", function);
+  napi_create_function(env, "createDirectoryWithinRoot", NAPI_AUTO_LENGTH, CreateDirectoryWithinRoot, nullptr, &function);
+  napi_set_named_property(env, exports, "createDirectoryWithinRoot", function);
 #ifdef MAC_OPERATOR_NATIVE_FAULT_INJECTION
   napi_create_function(env, "setWriteFaultPoint", NAPI_AUTO_LENGTH, SetWriteFaultPoint, nullptr, &function);
   napi_set_named_property(env, exports, "setWriteFaultPoint", function);

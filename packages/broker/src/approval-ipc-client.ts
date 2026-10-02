@@ -11,6 +11,7 @@ import {
 import type { ApprovalIpcResponse } from "./approval-ipc-server.js";
 import type { ApprovalClass, IssueApprovalInput } from "./persistence.js";
 import { validateOwnerSocketParentChain } from "./owner-socket-path.js";
+import { DEVELOPMENT_ISSUER_KEY_ID, isDevelopmentDelegatedApproval } from "./development-approval-boundary.js";
 
 const APPROVAL_CLASSES: readonly ApprovalClass[] = [
   "trusted_write",
@@ -81,7 +82,9 @@ export class ApprovalIpcClient {
     if (approval.approverPrincipalId !== this.options.issuerId) {
       throw new BrokerError("POLICY_DENIED", "Approval approver does not match the configured issuer");
     }
-    validateOwnerApproval(approval, this.now(), this.maxRequestAgeMs, this.options.allowUnattended === true);
+    const developmentApproval = isDevelopmentDelegatedApproval(approval, this.options.issuerId, this.options.keyId);
+    if (this.options.keyId === DEVELOPMENT_ISSUER_KEY_ID && !developmentApproval) throw new BrokerError("POLICY_DENIED", "Development issuer cannot authorize this operation");
+    validateOwnerApproval(approval, this.now(), this.maxRequestAgeMs, this.options.allowUnattended === true, developmentApproval);
     const timestampMs = approval.issuedAtMs;
     const unsigned: UnsignedApprovalIssuance = {
       protocolVersion: "0.1",
@@ -159,7 +162,7 @@ export class ApprovalIpcClient {
   }
 }
 
-function validateOwnerApproval(approval: IssueApprovalInput, nowMs: number, maxRequestAgeMs: number, allowUnattended: boolean): void {
+function validateOwnerApproval(approval: IssueApprovalInput, nowMs: number, maxRequestAgeMs: number, allowUnattended: boolean, developmentApproval = false): void {
   if (!/^approval:[A-Za-z0-9._:-]{1,240}$/u.test(approval.approvalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(approval.approverPrincipalId) ||
       !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(approval.requestingPrincipalId) ||
@@ -168,7 +171,7 @@ function validateOwnerApproval(approval: IssueApprovalInput, nowMs: number, maxR
       !validApprovalTarget(approval.targetKind, approval.targetRef) ||
       !/^[a-f0-9]{64}$/u.test(approval.payloadDigest) ||
       !/^policy-[A-Za-z0-9._:-]{1,120}$/u.test(approval.policyVersion) ||
-      !APPROVAL_CLASSES.includes(approval.approvalClass) || (typeof approval.unattended !== "boolean" || (approval.unattended && (!allowUnattended || approval.approvalClass !== "trusted_profile"))) ||
+      !APPROVAL_CLASSES.includes(approval.approvalClass) || (typeof approval.unattended !== "boolean" || (approval.unattended && (!allowUnattended || approval.approvalClass !== "trusted_profile" && !developmentApproval))) ||
       !Number.isSafeInteger(approval.issuedAtMs) || approval.issuedAtMs < 0 ||
       !Number.isSafeInteger(approval.expiresAtMs) || approval.expiresAtMs <= approval.issuedAtMs ||
       approval.useLimit !== undefined && approval.useLimit !== 1 ||

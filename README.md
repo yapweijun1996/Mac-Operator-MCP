@@ -6,13 +6,13 @@ Mac-Operator-MCP provides a governed MCP Edge and local macOS Broker for operati
 
 See `PROGRESS.md` for current Git evidence, implementation and enablement state, verification, blockers, and next work.
 
-O1 owner-terminal execution retains its separate explicit owner authority.
-The combined O1/V2 source is deployed on the personal Mac mini as of October 2,
-2026, with the existing signed policy preserved and V2 tools disabled.
-Public OAuth and existing-tool verification passed. V2 acceptance remains PARTIAL (55%);
-O1 shell/CLI checks do not establish V2 isolation or coding E2E. See the
-[live rollout evidence](evidence/2026-10-02-v2-o1-personal-rollout.md) and
-[remaining acceptance gates](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md).
+V2 now includes a pinned Docker Desktop execution boundary and a constrained
+Codex inference controller. Tasks use owned Git worktrees, filtered snapshots,
+no host mounts or task network, durable jobs, verified cleanup and audited source
+imports. Ordinary V2 OAuth consent excludes owner-terminal authority; existing
+explicit O1 grants retain their original scopes. Push remains denied. See the
+[change report](docs/MAC_OPERATOR_V2_CHANGE_REPORT.md) for exact acceptance and
+live release evidence.
 
 ## Start here
 
@@ -78,21 +78,19 @@ existing Edge authorization, Local Broker policies, operation approvals, Git
 safety controls, and durable job ledger. Protocol version remains `0.1`; existing
 R1 and G1 contracts and grants remain compatible.
 
-All 11 new tools are disabled by default. Enabling a policy entry alone cannot
-provision the gateway or an execution boundary. Host-owned startup assembly must
-provide `DevelopmentGateway`, protected `ManagedWorktrees` storage, and any
-approved command registrations. Test/build commands resolve through an existing
-`TaskProfileRegistry`; execution requires a production-enabled isolated
-`TaskRunner` with accepted process ownership evidence. No production coding
-adapter ships in this change, and `mac_git_push` always denies execution.
+All new tools default to disabled. Production enablement requires a protected,
+evidence-verified runtime configuration, signed project policy and a separate
+development approval issuer. The shipped container runner accepts only pinned
+registered argv from approved manifests. `mac_task_run`, tests and builds return
+managed job IDs; status and bounded logs use `mac_job_status`.
 
-This is an additive implementation, not a claim that production Codex execution
-or the YAP-MCP development E2E has passed. Coding enablement still requires a
-verified credential-free agent runtime, enforced execution profiles, and an
-explicit inference network route. No live policy, OAuth grant, or service must be
-changed merely to try this source-level integration. Follow the
-[V2 operator runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md) for staged provisioning,
-approval, job recovery, and worktree reconciliation.
+Codex exposes only scoped Broker file tools and registered validations. Its
+trusted authentication manager remains outside the task container; task code
+receives no credentials. `readonly` and `test-only` cannot import source changes.
+Only `workspace-write` can import verified changes to its owned worktree.
+`mac_git_push` always denies execution. Follow the
+[V2 operator runbook](docs/MAC_OPERATOR_V2_RUNBOOK.md) for provisioning, migration,
+rollback, approved source exclusions, job recovery and adding projects.
 
 ## Source-of-truth rules
 

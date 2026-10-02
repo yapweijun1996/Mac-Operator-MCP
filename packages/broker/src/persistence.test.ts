@@ -43,7 +43,8 @@ test("BrokerStore records a monotonic schema version after initialization", asyn
         { version: 16, name: "edge-revocation-replay-ledger" },
         { version: 17, name: "terminal-ledger-tombstones" },
         { version: 18, name: "request-edge-key-provenance" },
-        { version: 19, name: "guest-task-authenticated-result-journal" }
+        { version: 19, name: "guest-task-authenticated-result-journal" },
+        { version: 20, name: "container-task-ownership-metadata" }
       ]);
     } finally {
       database.close();
@@ -435,7 +436,7 @@ test("BrokerStore adds the authenticated guest-result journal to a version 18 da
     const legacy = new DatabaseSync(databasePath);
     try {
       legacy.exec("ALTER TABLE jobs DROP COLUMN guest_result_json");
-      legacy.prepare("DELETE FROM schema_migrations WHERE version = 19").run();
+      legacy.prepare("DELETE FROM schema_migrations WHERE version >= 19").run();
       legacy.exec("PRAGMA user_version = 18");
     } finally {
       legacy.close();
@@ -451,7 +452,7 @@ test("BrokerStore adds the authenticated guest-result journal to a version 18 da
           type: columns.find((column) => column.name === "guest_result_json")?.type,
           notnull: columns.find((column) => column.name === "guest_result_json")?.notnull
         }, { type: "TEXT", notnull: 1 });
-        assert.equal((database.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 19);
+        assert.equal((database.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 20);
       } finally {
         database.close();
       }

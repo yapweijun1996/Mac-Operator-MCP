@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { sha256 } from "@mac-operator/contracts";
 import {
   guiSessionApprovalId,
   ApprovalIssuerKeyManager,
@@ -42,7 +43,7 @@ test("personal browser approval controller binds a real preview through owner IP
         notBeforeMs: NOW - 1_000,
         expiresAtMs: NOW + 60_000,
         allowUnattended: false
-      }, { issuerId: "owner-terminal-issuer", keyId: "owner-terminal-key", path: terminalKeyPath,
+      }, { issuerId: `terminal-approver-${sha256("owner-1").slice(0, 32)}`, keyId: "personal-terminal-1", path: terminalKeyPath,
         notBeforeMs: NOW - 1000, expiresAtMs: NOW + 60000, allowUnattended: true }]
     });
     keyManager = new ApprovalIssuerKeyManager(keyConfigPath, store, () => NOW);

@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import type { ApprovalRecord, AuthenticatedApprovalIssuance, BrokerStore, IssueApprovalInput } from "./persistence.js";
 import { isPlainDataRecord } from "./plain-record.js";
+import { DEVELOPMENT_ISSUER_KEY_ID, isDevelopmentDelegatedApproval } from "./development-approval-boundary.js";
 
 const APPROVAL_ISSUE_DOMAIN = "mac-operator-approval-issue-v0.1\0";
 const MAX_PREVIEW_BYTES = 8 * 1024;
@@ -116,8 +117,9 @@ export class ApprovalAuthority {
         issuance.issuerId === issuance.approval.requestingPrincipalId) {
       throw new BrokerError("POLICY_DENIED", "Approval issuer is not distinct and bound to the approver");
     }
-    if (issuance.approval.unattended &&
-        (!key.allowUnattended || issuance.approval.approvalClass !== "trusted_profile")) {
+    const developmentApproval = isDevelopmentDelegatedApproval(issuance.approval, issuance.issuerId, issuance.keyId);
+    if (issuance.keyId === DEVELOPMENT_ISSUER_KEY_ID && !developmentApproval || issuance.approval.unattended &&
+        (!key.allowUnattended || issuance.approval.approvalClass !== "trusted_profile" && !developmentApproval)) {
       throw new BrokerError("POLICY_DENIED", "Unattended approval requires an authorized profile issuer");
     }
     if (issuance.approval.issuedAtMs !== issuance.timestampMs) {

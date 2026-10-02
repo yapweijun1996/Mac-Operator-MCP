@@ -121,3 +121,11 @@ export * from "./resource-budget.js";
 export * from "./managed-worktrees.js";
 export * from "./development-policy.js";
 export * from "./development-gateway.js";
+
+export * from "./container-engine.js";
+export * from "./container-job-metadata.js";
+export * from "./container-task-profile.js";
+export * from "./container-task-runner.js";
+export * from "./codex-controller.js";
+
+export { safeSnapshotPath } from "./container-snapshot.js";

@@ -143,6 +143,15 @@
             "minLength": 1,
             "maxLength": 128,
             "pattern": "^[A-Za-z0-9._:@/+-]+$"
+          },
+          "command": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            }
           }
         },
         "required": [

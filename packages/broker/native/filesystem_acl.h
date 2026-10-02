@@ -12,11 +12,13 @@ namespace mop {
 inline bool HasExtendedAclEntries(const char* path, bool* has_entries) {
   struct stat path_status{};
   if (path == nullptr || has_entries == nullptr || lstat(path, &path_status) != 0 ||
-      (!S_ISDIR(path_status.st_mode) && !S_ISREG(path_status.st_mode))) return false;
+      (!S_ISDIR(path_status.st_mode) && !S_ISREG(path_status.st_mode) && !S_ISSOCK(path_status.st_mode))) return false;
 
   acl_t acl = acl_get_file(path, ACL_TYPE_EXTENDED);
   if (acl == nullptr) {
-    if (errno == ENOENT) {
+    // Darwin may report unsupported ACLs for a Unix socket. Other errors and
+    // filesystem object types retain their existing fail-closed behavior.
+    if (errno == ENOENT || (S_ISSOCK(path_status.st_mode) && errno == ENOTSUP)) {
       *has_entries = false;
       return true;
     }

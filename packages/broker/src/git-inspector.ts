@@ -27,6 +27,8 @@ const MAX_WRITE_TIMEOUT_MS = 30_000;
 const PROJECT_ROOT_PATTERN = /^\/[^\u0000\n]*$/u;
 export const SAFE_GIT_ENVIRONMENT = {
   GIT_CONFIG_NOSYSTEM: "1",
+  GIT_NO_LAZY_FETCH: "1",
+  GIT_ALLOW_PROTOCOL: "",
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_NO_REPLACE_OBJECTS: "1",
@@ -508,7 +510,7 @@ export class GitWriteInspectorImpl implements GitWriteInspector {
   private runGit(projectRoot: string, args: readonly string[], control: GitExecutionControl, outputCapBytes: number): Promise<ProcessExecutionResult> {
     return this.supervisor.run({
       executable: GIT_EXECUTABLE,
-      args,
+      args: ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args],
       cwd: projectRoot,
       environment: SAFE_GIT_ENVIRONMENT,
       timeoutMs: Math.min(control.timeoutMs, MAX_WRITE_TIMEOUT_MS),
@@ -1123,9 +1125,14 @@ function validateRepositoryConfig(gitDirectory: string): string {
   } finally {
     if (typeof descriptor === "number") closeSync(descriptor);
   }
+  let currentSection = "";
   for (const line of config.split(/\r?\n/u)) {
     const section = /^\s*\[\s*([^\]]+)\]/u.exec(line)?.[1]?.trim().toLocaleLowerCase("en-US");
     const key = /^\s*([A-Za-z][A-Za-z0-9.-]*)\s*=/u.exec(line)?.[1]?.toLocaleLowerCase("en-US");
+    if (section) currentSection = section;
+    // Every governed Git adapter overrides hooksPath before repository loading.
+    // Keep this common project setting inert without changing the user's config.
+    if (key === "hookspath" && currentSection === "core") continue;
     if (section && /^(?:include|filter(?:\s|$)|fsmonitor|diff(?:\s|$)|merge(?:\s|$)|credential(?:\s|$)|url(?:\s|$)|mergetool(?:\s|$))/u.test(section)) {
       throw new BrokerError("POLICY_DENIED", "Git repository configuration contains an executable integration");
     }

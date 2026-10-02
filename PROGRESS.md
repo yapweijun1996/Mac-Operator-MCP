@@ -2,6 +2,23 @@
 
 ## Current overall progress: 92%
 
+V2 production completion (2026-10-02): source/physical/YAP acceptance PASS;
+local main merge and live cutover are the remaining rollout steps.
+Branch: `codex/v2-production-executor`. Disposable pinned containers and the
+constrained Codex 0.153.4 inference controller replace the missing production
+executor without promoting the rejected staging boundaries. Final image:
+`sha256:540f2d2753dc5674d05ec0cb7963a1fbb75b77f1fdeaa63c48a3825660aa01c4`.
+Actual physical enforcement passed three runs of 17/17 checks, including
+cancellation, Broker SIGKILL, independent deadlines, exact recovery and
+concurrent isolation. Actual YAP Codex readonly/write, registered test/task/build,
+explicit stage, local commit and review passed; primary HEAD/index/source/status
+were identical before/after. Synthetic commit: `e24ffbb64b9efd5895a03fef37dcdb46d140483b`.
+Existing unrelated user changes are preserved. Ordinary fresh coding grants
+exclude host terminal; push and other high-risk actions remain denied. Exact
+current results: `evidence/2026-10-02-v2-production-gateway.md` and
+`docs/MAC_OPERATOR_V2_CHANGE_REPORT.md`. The older entries below are historical
+and retain the broader 92% formal installer/signing status separately.
+
 V2/O1 source integration (2026-10-02): deployed and merged to local main at
 `2c37194d9bd822e78ad088f61d79a5f91061e152`. Standard npm test: 1313 PASS,
 17 SKIP, 0 FAIL; 57 contracts

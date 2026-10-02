@@ -1,3 +1,4 @@
+import { validateContainerTaskJobMetadata } from "./container-job-metadata.js";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { chmod, link, lstat, open, unlink } from "node:fs/promises";
@@ -256,6 +257,7 @@ function normalizeJobs(rows: readonly BrokerJob[]): BrokerJob[] {
       ...(row.writeMetadata === undefined ? {} : { writeMetadata: row.writeMetadata }),
       ...(row.processMetadata === undefined ? {} : { processMetadata: row.processMetadata }),
       ...(row.guestMetadata === undefined ? {} : { guestMetadata: row.guestMetadata }),
+      ...(row.containerMetadata === undefined ? {} : { containerMetadata: row.containerMetadata }),
       ...(row.guestResultJournal === undefined ? {} : { guestResultJournal: row.guestResultJournal }),
       ...(row.serviceMetadata === undefined ? {} : { serviceMetadata: row.serviceMetadata }),
       ...(row.privilegedPayload === undefined ? {} : { privilegedPayload: row.privilegedPayload })
@@ -335,7 +337,7 @@ function validateJobRecord(value: unknown): asserts value is BrokerJob {
     "policyVersion", "payloadDigest", "idempotencyKey", "state", "resultClass", "createdAtMs", "startedAtMs",
     "finishedAtMs", "exitCode", "stdout", "stderr", "truncated", "cancelRequested", "revision"
   ];
-  const optional = ["writeMetadata", "processMetadata", "guestMetadata", "guestResultJournal", "serviceMetadata", "privilegedPayload"];
+  const optional = ["writeMetadata", "processMetadata", "guestMetadata", "guestResultJournal", "serviceMetadata", "privilegedPayload", "containerMetadata"];
   if (!hasExactKeys(value, [...expected, ...optional.filter((key) => Object.prototype.hasOwnProperty.call(value, key))])) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Ledger export Job record has an unexpected shape");
   }
@@ -356,6 +358,7 @@ function validateJobRecord(value: unknown): asserts value is BrokerJob {
       typeof row.cancelRequested !== "boolean" || !Number.isSafeInteger(row.revision) || row.revision < 0) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Ledger export Job record is malformed");
   }
+  if (row.containerMetadata !== undefined) validateContainerTaskJobMetadata(row.containerMetadata);
   if (row.guestResultJournal !== undefined) validateGuestTaskResultJournalRecord(row.guestResultJournal, row.guestMetadata, row.state);
 }
 

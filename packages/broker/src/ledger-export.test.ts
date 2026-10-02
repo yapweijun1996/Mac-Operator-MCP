@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
-import { BrokerStore } from "./persistence.js";
+import { BrokerStore, BROKER_SCHEMA_VERSION } from "./persistence.js";
 
 const archiveKey = {
   keyId: "ledger-export-test-1",
@@ -147,6 +147,91 @@ test("ledger archive preserves the authenticated guest result needed by an unkno
     assert.equal((await readFile(manifest.path)).includes(Buffer.from("journal must remain recoverable", "utf8")), false);
     assert.deepEqual(await BrokerStore.inspectLedgerArchive(manifest.path, archiveKey), manifest);
     assert.equal(store.ownedJob("job:guest-result-archive", "principal-1")?.state, "unknown");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("encrypted ledger round-trip retains schema-20 UNKNOWN container authority without inferring success", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-broker-container-archive-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath);
+  const metadata = {
+    schemaVersion: "0.1",
+    containerId: "b".repeat(64),
+    engineId: "engine-container-archive-1",
+    imageId: `sha256:${"c".repeat(64)}`,
+    taskId: "task-container-archive-1",
+    owner: "principal-1",
+    nonce: "d".repeat(64),
+    taskDescriptorDigest: "e".repeat(64),
+    recordedAtMs: 3,
+    deadlineAtMs: 10_003,
+    readonlyWorkspace: false,
+    memoryBytes: 512 * 1024 * 1024,
+    nanoCpus: 1_000_000_000,
+    pidsLimit: 128,
+    maxRuntimeMs: 10_000
+  } as const;
+  const lease = { ownerId: "broker:container-archive", token: "lease:container-archive-123456", expiresAtMs: 30 };
+  try {
+    const database = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      assert.equal(BROKER_SCHEMA_VERSION, 20);
+      assert.equal(database.prepare("PRAGMA user_version").get()?.user_version, BROKER_SCHEMA_VERSION);
+    } finally { database.close(); }
+    store.createJob({
+      jobId: "job:container-archive",
+      ownerPrincipalId: "principal-1",
+      ownerSessionId: "session-1",
+      tool: "mac_codex_run",
+      targetRef: "task:container-archive",
+      policyVersion: "policy-0.1",
+      payloadDigest: "a".repeat(64),
+      idempotencyKey: "container-archive",
+      createdAtMs: 1
+    });
+    const started = store.startJob("job:container-archive", "principal-1", 0, 2, lease);
+    const admitted = store.recordJobContainerOwnership(started.jobId, "principal-1", started.revision, metadata, lease, 3);
+    const unknown = store.finishJob(admitted.jobId, "principal-1", admitted.revision,
+      { state: "unknown", resultClass: "unknown", finishedAtMs: 4 }, lease, 4);
+    assert.deepEqual(unknown.containerMetadata, metadata);
+    assert.deepEqual(store.listUnresolvedTaskContainers(), [unknown]);
+
+    const manifest = await store.exportLedgerArchive(directory, { keySource: archiveKey, nowMs: 1_700_000_000_105 });
+    assert.equal(manifest.encrypted, true);
+    assert.equal(manifest.jobCount, 1);
+    assert.equal(manifest.requestCount, 0);
+    // Inspection authenticates and normalizes every record before checking this full-record digest.
+    const expectedDigest = sha256(canonicalJson({ requests: [], jobs: [unknown] }));
+    assert.equal(manifest.snapshotDigest, expectedDigest);
+    assert.deepEqual(await BrokerStore.inspectLedgerArchive(manifest.path, archiveKey), manifest);
+    assert.equal((await readFile(manifest.path)).includes(Buffer.from(metadata.engineId, "utf8")), false);
+    assert.deepEqual(store.ownedJob(unknown.jobId, "principal-1"), unknown);
+
+    const rejectsRecovery = (error: unknown) => error instanceof BrokerError;
+    assert.throws(() => store.reconcileUnknownContainerTask(unknown.jobId, "principal-1", unknown.revision,
+      { ...metadata, containerId: "f".repeat(64) },
+      { state: "failed", finishedAtMs: 5, containerCleanupVerified: true }), rejectsRecovery);
+    assert.throws(() => store.reconcileUnknownContainerTask(unknown.jobId, "principal-1", unknown.revision, metadata,
+      { state: "completed" as never, finishedAtMs: 5, containerCleanupVerified: true }), rejectsRecovery);
+    assert.throws(() => store.reconcileUnknownContainerTask(unknown.jobId, "principal-1", unknown.revision, metadata,
+      { state: "failed", finishedAtMs: 5, containerCleanupVerified: false as never }), rejectsRecovery);
+    assert.deepEqual(store.ownedJob(unknown.jobId, "principal-1"), unknown);
+
+    const recovered = store.reconcileUnknownContainerTask(unknown.jobId, "principal-1", unknown.revision, metadata,
+      { state: "failed", finishedAtMs: 5, containerCleanupVerified: true });
+    assert.equal(recovered.state, "failed");
+    assert.equal(recovered.resultClass, "failed");
+    assert.equal(recovered.exitCode, null);
+    assert.equal(recovered.containerMetadata, undefined);
+    assert.deepEqual(store.listUnresolvedTaskContainers(), []);
+    // Cleaning the live task cannot rewrite its archived UNKNOWN authority or manufacture a successful result.
+    assert.deepEqual(await BrokerStore.inspectLedgerArchive(manifest.path, archiveKey), manifest);
+    assert.equal(manifest.snapshotDigest, expectedDigest);
+    assert.deepEqual(store.auditRows().filter(row => row.tool === "internal_container_recovery")
+      .map(row => row.result_class), ["INTENT_RECORDED", "CONTAINER_CLEANUP_VERIFIED"]);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

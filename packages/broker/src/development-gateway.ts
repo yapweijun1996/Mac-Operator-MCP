@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { join, isAbsolute, resolve } from "node:path";
+import { join, isAbsolute, relative, resolve } from "node:path";
 import { BrokerError, type BrokerRequest } from "@mac-operator/contracts";
 import { isPlainDataRecord } from "./plain-record.js";
 import { ManagedWorktrees, validateCreate, type ManagedWorktreeRecord } from "./managed-worktrees.js";
@@ -26,7 +26,7 @@ export interface AgentReadiness {
   networkPolicies: readonly ("none" | "allowlist")[];
 }
 
-/** Host-owned provisioning seam. No production coding adapter ships in V2 yet. */
+/** Host-owned provider; credentials remain outside every task workspace. */
 export interface CodingAgentProvider {
   readonly readiness: AgentReadiness;
   resolve(input: Readonly<Record<string, unknown>>, worktree: ManagedWorktreeRecord): Promise<ResolvedTaskProfile>;
@@ -94,13 +94,15 @@ export class DevelopmentGateway {
 
   close(): Promise<void> { return this.worktrees.close(); }
 
-  assertProtectedStorage(roots: readonly { path: string }[]): void {
-    for (const { path } of roots) {
-      const state = this.worktrees.stateRoot;
-      const trees = this.worktrees.worktreeRoot;
-      if (path === "/" || path === state || state.startsWith(`${path}/`) || path.startsWith(`${state}/`) ||
-          path === trees || trees.startsWith(`${path}/`)) {
-        throw new BrokerError("POLICY_DENIED", "Gateway provenance and all-task storage cannot be ordinary filesystem roots");
+  assertProtectedStorage(roots: readonly { path: string; denyRelativePaths?: readonly string[] }[]): void {
+    const contains = (root: string, child: string) => root === child || child.startsWith(root === "/" ? "/" : `${root}/`);
+    for (const root of roots) {
+      for (const protectedPath of [this.worktrees.stateRoot, this.worktrees.worktreeRoot]) {
+        if (contains(protectedPath, root.path) || contains(root.path, protectedPath) &&
+            !(root.denyRelativePaths ?? []).some(denied => denied === relative(root.path, protectedPath) ||
+              contains(join(root.path, denied), protectedPath))) {
+          throw new BrokerError("POLICY_DENIED", "Gateway provenance and all-task storage must be excluded from ordinary filesystem roots");
+        }
       }
     }
   }
@@ -176,7 +178,7 @@ export class DevelopmentGateway {
     const record = this.worktrees.require(plan.worktree!, plan.projectRoot, request.principal.principalId, plan.taskId);
     const resolved = request.tool === "mac_codex_run"
       ? await this.agent!.resolve(request.arguments, record)
-      : await registry.resolve({ profile: plan.profile!, cwd: record.worktree, args: [] });
+      : await registry.resolve({ profile: plan.profile!, cwd: record.worktree, args: [], taskId: record.taskId, maxRuntimeMs: request.arguments.max_runtime as number });
     this.worktrees.require(plan.worktree!, plan.projectRoot, request.principal.principalId, plan.taskId);
     if (["/usr/bin/sudo", "/bin/su", "/usr/bin/su"].includes(resolved.process.executable)) throw new BrokerError("POLICY_DENIED", "PRIVILEGE_ESCALATION_DENIED");
     if (resolved.cwd !== record.worktree || resolved.process.cwd !== record.worktree || resolved.credentialPolicy !== "none" ||

@@ -1,5 +1,6 @@
 import { BrokerError, canonicalJson, sha256 } from "@mac-operator/contracts";
 import { isAbsolute, resolve } from "node:path";
+import type { ContainerTaskJobMetadata } from "./container-job-metadata.js";
 import type { GuestTaskJobMetadata } from "./persistence.js";
 import {
   type DescriptorSnapshotPreparationInput,
@@ -85,13 +86,14 @@ export type {
 export { validateVirtualizationGuestAttestation } from "./virtualization-guest-attestation.js";
 
 /** Mechanisms with a governed runner contract; availability remains evidence-gated. */
-export type TaskIsolationMechanism = "sandbox-exec" | "app-sandbox" | "virtualization";
+export type TaskIsolationMechanism = "sandbox-exec" | "app-sandbox" | "virtualization" | "docker-container";
 /** Public exposure state; staging evidence must never become a production capability. */
 export type TaskRunnerPublicEnablement = "unavailable" | "staging-only" | "production";
 export type TaskCredentialIsolationProof =
   | "sandbox-exec-empty-env-deny-secret-zones-v1"
   | "app-sandbox-container-no-host-credentials-v1"
-  | "virtualization-no-host-credentials-v1";
+  | "virtualization-no-host-credentials-v1"
+  | "docker-container-no-host-credentials-v1";
 
 export interface TaskExecutionControl {
   timeoutMs: number;
@@ -103,6 +105,8 @@ export interface TaskExecutionControl {
   onGuestRequestAdmitted?: (admission: VirtualizationGuestTaskAdmission) => void;
   /** Called after the guest response is authenticated and mapped, before the runner returns. */
   onGuestResultVerified?: (result: TaskExecutionResult) => void;
+  onContainerCreated?: (metadata: Omit<ContainerTaskJobMetadata, "taskDescriptorDigest">) => void;
+  onWorkspaceImport?: (path: string, phase: "intent" | "verified") => void;
 }
 
 /** Non-secret identity captured immediately before a guest request is sent. */
@@ -126,6 +130,8 @@ export interface TaskRecoveryRequest {
 export type TaskVerificationStatus = "verified" | "failed" | "unknown" | "not_run";
 
 export interface TaskExecutionResult {
+  containerCleanupVerified?: boolean;
+  changedPaths?: readonly string[];
   state: "completed" | "failed" | "cancelled" | "timed_out" | "unknown";
   resultClass: "SUCCEEDED" | "EXECUTION_FAILED" | "CANCELLED" | "TIMEOUT" | "OUTPUT_LIMIT" | "UNKNOWN_OUTCOME";
   exitCode: number | null;
@@ -164,6 +170,7 @@ export interface TaskIsolationProof {
   executableSelection?: "system-published-root-owned-v1" | "descriptor-snapshot-root-helper-v1" | "app-sandbox-helper-v1";
   /** Required for Virtualization.framework guests; absent for host sandboxes. */
   virtualizationGuest?: VirtualizationGuestIdentity;
+  containerImage?: { imageId: string; engineId: string };
 }
 
 /**
@@ -182,6 +189,7 @@ export interface TaskRunner {
   close?(): Promise<void>;
   run(profile: ResolvedTaskProfile, control: TaskExecutionControl): Promise<TaskExecutionResult>;
   recoverUnknownTask?(request: TaskRecoveryRequest): Promise<TaskExecutionResult>;
+  recoverContainerTask?(metadata: ContainerTaskJobMetadata): Promise<boolean>;
 }
 
 /**
@@ -744,7 +752,8 @@ export function virtualizationTaskDigest(
 
 /** Digest of the exact local task descriptor persisted with a running Job. */
 export function taskDescriptorDigest(profile: ResolvedTaskProfile): string {
-  const baseDigest = virtualizationTaskDigest(profile);
+  const baseDigest = profile.containerExecution === undefined ? virtualizationTaskDigest(profile) :
+    sha256(canonicalJson({ base: virtualizationTaskDigest(profile), container: profile.containerExecution }));
   if (profile.executionKind !== "posix-sh-script" || profile.scriptPath === undefined || profile.scriptContentSha256 === undefined) {
     return baseDigest;
   }
@@ -1139,17 +1148,19 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     throw new BrokerError("POLICY_DENIED", "Task isolation proof is unavailable");
   }
   const proof = value as Partial<TaskIsolationProof>;
-  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "persistence", "credentialIsolation", "processTree", "processTreePolicy", "evidenceRef", "executableSelection", "virtualizationGuest"]);
+  const allowedKeys = new Set(["schemaVersion", "sandboxMechanism", "sandboxProfile", "filesystem", "network", "credentials", "persistence", "credentialIsolation", "processTree", "processTreePolicy", "evidenceRef", "executableSelection", "virtualizationGuest", "containerImage"]);
   const expectedCredentialIsolation = proof.sandboxMechanism === "sandbox-exec"
     ? "sandbox-exec-empty-env-deny-secret-zones-v1"
     : proof.sandboxMechanism === "app-sandbox"
       ? "app-sandbox-container-no-host-credentials-v1"
-      : "virtualization-no-host-credentials-v1";
+      : proof.sandboxMechanism === "docker-container"
+        ? "docker-container-no-host-credentials-v1"
+        : "virtualization-no-host-credentials-v1";
   const expectedProcessTree = proof.sandboxMechanism === "app-sandbox" ? "observer-only" : "owned";
   if (
     Object.keys(value).some((key) => !allowedKeys.has(key)) ||
     proof.schemaVersion !== "0.1" ||
-    (proof.sandboxMechanism !== "sandbox-exec" && proof.sandboxMechanism !== "app-sandbox" && proof.sandboxMechanism !== "virtualization") ||
+    (proof.sandboxMechanism !== "sandbox-exec" && proof.sandboxMechanism !== "app-sandbox" && proof.sandboxMechanism !== "virtualization" && proof.sandboxMechanism !== "docker-container") ||
     typeof proof.sandboxProfile !== "string" ||
     !SANDBOX_PROFILE_PATTERN.test(proof.sandboxProfile) ||
     proof.filesystem !== "enforced" ||
@@ -1166,6 +1177,12 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     (proof.sandboxMechanism !== "virtualization" && proof.virtualizationGuest !== undefined) ||
     (proof.sandboxMechanism === "app-sandbox" && proof.executableSelection !== "app-sandbox-helper-v1") ||
     (proof.sandboxMechanism !== "app-sandbox" && proof.executableSelection === "app-sandbox-helper-v1") ||
+    (proof.sandboxMechanism !== "docker-container" && proof.containerImage !== undefined) ||
+    (proof.sandboxMechanism === "docker-container" &&
+      (proof.executableSelection !== undefined || !isPlainDataRecord(proof.containerImage) ||
+       !hasExactKeys(proof.containerImage, ["imageId", "engineId"]) ||
+       typeof proof.containerImage.imageId !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(proof.containerImage.imageId) ||
+       typeof proof.containerImage.engineId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/u.test(proof.containerImage.engineId))) ||
     (proof.sandboxMechanism === "virtualization" &&
       (proof.executableSelection !== undefined || !isVirtualizationGuestIdentity(proof.virtualizationGuest)))
   ) {
@@ -1184,6 +1201,7 @@ export function validateTaskIsolationProof(value: unknown): TaskIsolationProof {
     processTreePolicy: proof.processTreePolicy,
     evidenceRef: proof.evidenceRef,
     ...(proof.executableSelection === undefined ? {} : { executableSelection: proof.executableSelection }),
+    ...(proof.sandboxMechanism === "docker-container" ? { containerImage: { ...proof.containerImage! } } : {}),
     ...(proof.sandboxMechanism === "virtualization"
       ? { virtualizationGuest: parseVirtualizationGuestIdentity(proof.virtualizationGuest) }
       : {})
@@ -1303,12 +1321,21 @@ export function requireTaskIsolationProof(
   if ((profile.credentialPolicy ?? "none") !== "none") {
     throw new BrokerError("POLICY_DENIED", "Task credential policy is not supported by the Broker boundary");
   }
+  if (expectedMechanism === "docker-container" && (profile.containerExecution === undefined ||
+      profile.containerExecution.imageId !== validated.containerImage?.imageId ||
+      profile.containerExecution.engineId !== validated.containerImage?.engineId)) {
+    throw new BrokerError("POLICY_DENIED", "Container profile image/Engine identity does not match accepted evidence");
+  }
+  if (expectedMechanism !== "docker-container" && profile.containerExecution !== undefined) {
+    throw new BrokerError("POLICY_DENIED", "A container descriptor cannot be executed on the host");
+  }
   return validated;
 }
 
 export function validateTaskExecutionResult(value: unknown): TaskExecutionResult {
   if (!isPlainDataRecord(value) ||
-      !hasExactKeys(value, ["state", "resultClass", "exitCode", "stdout", "stderr", "truncated", "durationMs", "verification"])) {
+      !hasRequiredKeys(value, ["state", "resultClass", "exitCode", "stdout", "stderr", "truncated", "durationMs", "verification"],
+      ["state", "resultClass", "exitCode", "stdout", "stderr", "truncated", "durationMs", "verification", "containerCleanupVerified", "changedPaths"])) {
     throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed result");
   }
   const state = value.state;
@@ -1329,12 +1356,19 @@ export function validateTaskExecutionResult(value: unknown): TaskExecutionResult
       typeof verification.status !== "string" || !(["verified", "failed", "unknown", "not_run"] as readonly string[]).includes(verification.status)) {
     throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed result");
   }
+  if (value.containerCleanupVerified !== undefined && typeof value.containerCleanupVerified !== "boolean" ||
+      value.changedPaths !== undefined && (!Array.isArray(value.changedPaths) || value.changedPaths.length > 10000 ||
+        value.changedPaths.some(path => typeof path !== "string" || !path || path.startsWith("/") || path.split("/").some((part: string) => part === ".." || part === ".git") || /[\x00-\x1f]/u.test(path)))) {
+    throw new BrokerError("EXECUTION_FAILED", "Container task result metadata is malformed");
+  }
   const summary = verification.summary;
   if (summary !== undefined &&
       (typeof summary !== "string" || Buffer.byteLength(summary, "utf8") > MAX_TASK_RESULT_SUMMARY_BYTES || summary.includes("\0"))) {
     throw new BrokerError("EXECUTION_FAILED", "Task runner returned a malformed verification summary");
   }
   return {
+    ...(value.containerCleanupVerified === undefined ? {} : { containerCleanupVerified: value.containerCleanupVerified as boolean }),
+    ...(value.changedPaths === undefined ? {} : { changedPaths: [...value.changedPaths as string[]] }),
     state: state as TaskExecutionResult["state"],
     resultClass: resultClass as TaskExecutionResult["resultClass"],
     exitCode: exitCode as number | null,

@@ -25,7 +25,7 @@
   "implementation_status": "planned",
   "purpose": "read status and bounded sanitized output for a Broker-owned asynchronous job.",
   "input_summary": "job_id:string, tail_bytes?:0..524288.",
-    "output_summary": "queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative postcondition status for unresolved writes and independently authenticated Job-bound privileged-helper readback.",
+  "output_summary": "queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative postcondition status for unresolved writes and independently authenticated Job-bound privileged-helper readback.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_job_status input",
@@ -73,7 +73,9 @@
       "tool": {
         "const": "mac_job_status"
       },
-      "result_class": { "const": "SUCCEEDED" },
+      "result_class": {
+        "const": "SUCCEEDED"
+      },
       "data": {
         "type": "object",
         "additionalProperties": false,
@@ -188,6 +190,11 @@
               "resolution",
               "observed_at"
             ]
+          },
+          "execution_duration_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
           }
         },
         "required": [

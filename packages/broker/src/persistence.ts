@@ -18,6 +18,12 @@ import { EDGE_KEY_IDENTITY_PATTERN, isValidEdgeId } from "./edge-keyring.js";
 import type { AuditIntegrityReadback } from "./audit-integrity.js";
 import { createAuditArchive, inspectAuditArchive, type AuditArchiveManifest, type AuditArchiveOptions } from "./audit-export.js";
 import { createLedgerArchive, inspectLedgerArchive, type LedgerArchiveManifest, type LedgerArchiveOptions } from "./ledger-export.js";
+import {
+  parseContainerTaskJobMetadata,
+  serializeContainerTaskJobMetadata,
+  type ContainerTaskJobMetadata
+} from "./container-job-metadata.js";
+export type { ContainerTaskJobMetadata } from "./container-job-metadata.js";
 
 export type SwitchName = "global" | "mutations" | "process" | "network" | "gui" | "destructive" | "privileged";
 const SWITCH_NAMES: readonly SwitchName[] = ["global", "mutations", "process", "network", "gui", "destructive", "privileged"];
@@ -103,7 +109,7 @@ const MAX_ACTIVE_REQUESTS_PER_SESSION = 64;
  * written by a newer runtime because unknown columns or invariants could make
  * authority and recovery decisions unsafe.
  */
-export const BROKER_SCHEMA_VERSION = 19;
+export const BROKER_SCHEMA_VERSION = 20;
 export const APPROVAL_PREVIEW_TTL_MS = 120_000;
 export const GUI_SESSION_PREVIEW_TTL_MS = 600_000;
 /** Reserved IDs bind delegated GUI approvals to one authenticated Broker request. */
@@ -275,6 +281,7 @@ export interface BrokerJob {
   revision: number;
   writeMetadata?: WriteJobMetadata;
   processMetadata?: ProcessJobMetadata;
+  containerMetadata?: ContainerTaskJobMetadata;
   guestMetadata?: GuestTaskJobMetadata;
   guestResultJournal?: GuestTaskResultJournal;
   serviceMetadata?: ServiceControlJobMetadata;
@@ -797,6 +804,7 @@ export class BrokerStore {
         lease_expires_at_ms INTEGER,
         write_metadata_json TEXT NOT NULL DEFAULT '',
         process_metadata_json TEXT NOT NULL DEFAULT '',
+        container_metadata_json TEXT NOT NULL DEFAULT '',
         guest_metadata_json TEXT NOT NULL DEFAULT '',
         guest_result_json TEXT NOT NULL DEFAULT '',
         service_metadata_json TEXT NOT NULL DEFAULT '',
@@ -1004,7 +1012,7 @@ export class BrokerStore {
         "policy_version", "payload_digest", "idempotency_key", "state", "result_class", "created_at_ms", "started_at_ms",
         "finished_at_ms", "exit_code", "stdout_text", "stderr_text", "output_truncated", "cancel_requested",
         "cancel_reason", "lease_owner_id", "lease_token", "lease_acquired_at_ms", "lease_heartbeat_at_ms",
-        "lease_expires_at_ms", "write_metadata_json", "process_metadata_json", "guest_metadata_json", "guest_result_json",
+        "lease_expires_at_ms", "write_metadata_json", "process_metadata_json", "container_metadata_json", "guest_metadata_json", "guest_result_json",
         "service_metadata_json", "privileged_payload_json", "revision"
       ],
       job_tombstones: [
@@ -1330,6 +1338,7 @@ export class BrokerStore {
       ).all() as unknown as JobRow[];
       for (const row of rows) {
         const job = mapJob(row);
+        if (job.containerMetadata !== undefined) this.verifyContainerTaskOwnershipAudit(job);
         if (job.guestResultJournal !== undefined) {
           this.verifyGuestTaskResultJournalAudit(job, job.guestResultJournal);
         }
@@ -1337,6 +1346,27 @@ export class BrokerStore {
     } catch (error) {
       if (error instanceof BrokerError) throw error;
       throw new BrokerError("AUDIT_UNAVAILABLE", "Job ledger integrity could not be verified");
+    }
+  }
+
+  private verifyContainerTaskOwnershipAudit(job: BrokerJob): void {
+    const metadata = job.containerMetadata;
+    if (metadata === undefined) return;
+    const expectedEvidence = canonicalJson({ metadataDigest: sha256(canonicalJson(metadata)) });
+    const rows = this.database.prepare(`
+      SELECT principal_id, tool, event_type, decision, result_class, target_ref, policy_version, evidence_json, timestamp_ms
+      FROM audit_events WHERE request_id = ? ORDER BY sequence
+    `).all(`job-container-admit-${job.jobId}`) as Array<Record<string, unknown>>;
+    if (rows.length !== 2 || rows.some((row, index) =>
+      row.principal_id !== job.ownerPrincipalId || row.tool !== "internal_container_admission" ||
+      row.decision !== "allow" || !Number.isSafeInteger(row.timestamp_ms) ||
+      (row.timestamp_ms as number) < metadata.recordedAtMs ||
+      (row.timestamp_ms as number) >= metadata.deadlineAtMs ||
+      row.timestamp_ms !== rows[0]?.timestamp_ms ||
+      row.event_type !== (index === 0 ? "intent" : "completion") ||
+      row.result_class !== (index === 0 ? "INTENT_RECORDED" : "CONTAINER_OWNERSHIP_RECORDED") ||
+      row.target_ref !== `job:${job.jobId}` || row.policy_version !== job.policyVersion || row.evidence_json !== expectedEvidence)) {
+      throw new BrokerError("AUDIT_UNAVAILABLE", "Container task ownership does not match its durable admission audit");
     }
   }
 
@@ -2854,11 +2884,27 @@ export class BrokerStore {
       WHERE tool IN ('mac_task_run', 'mac_test_run', 'mac_build_run', 'mac_codex_run', 'mac_terminal_exec')
         AND state = 'unknown'
         AND guest_metadata_json = ''
+        AND container_metadata_json = ''
         AND process_metadata_json <> ''
       ORDER BY created_at_ms, job_id
       LIMIT ?
     `).all(limit) as unknown as JobRow[];
     return rows.map(mapJob);
+  }
+
+  /** Exact container identities survive interruption; callers must never replay these tasks. */
+  listUnresolvedTaskContainers(limit = 100): BrokerJob[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw malformedJob();
+    const rows = this.database.prepare(`
+      SELECT * FROM jobs
+      WHERE state IN ('running', 'unknown') AND container_metadata_json <> ''
+      ORDER BY created_at_ms, job_id LIMIT ?
+    `).all(limit) as unknown as JobRow[];
+    return rows.map(row => {
+      const job = mapJob(row);
+      this.verifyContainerTaskOwnershipAudit(job);
+      return job;
+    });
   }
 
   /**
@@ -2875,6 +2921,7 @@ export class BrokerStore {
         WHERE job.tool IN ('mac_task_run', 'mac_test_run', 'mac_build_run', 'mac_codex_run')
           AND job.state = 'unknown'
           AND job.guest_metadata_json = ''
+          AND job.container_metadata_json = ''
           AND (
             CASE
               WHEN job.process_metadata_json = '' THEN 1
@@ -3014,6 +3061,7 @@ export class BrokerStore {
           metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Task process ownership metadata is outside the active Job window");
       }
+      if (current.containerMetadata !== undefined) throw new BrokerError("CONFLICT", "Container task cannot acquire host process ownership");
       if (current.processMetadata !== undefined) throw new BrokerError("CONFLICT", "Process ownership was already recorded");
       this.database.prepare(`
         UPDATE jobs SET process_metadata_json = ?, revision = revision + 1
@@ -3091,6 +3139,7 @@ export class BrokerStore {
           metadata.recordedAtMs < current.startedAtMs || metadata.recordedAtMs > nowMs) {
         throw new BrokerError("PRECONDITION_FAILED", "Guest request metadata is outside the active Job window");
       }
+      if (current.containerMetadata !== undefined) throw new BrokerError("CONFLICT", "Container task cannot acquire guest request ownership");
       if (current.guestMetadata !== undefined) {
         throw new BrokerError("CONFLICT", "Guest request metadata was already recorded");
       }
@@ -3098,6 +3147,48 @@ export class BrokerStore {
         UPDATE jobs SET guest_metadata_json = ?, revision = revision + 1
         WHERE job_id = ? AND owner_principal_id = ?
       `).run(serializeGuestTaskJobMetadata(metadata), jobId, principalId);
+    }, lease, nowMs);
+  }
+
+  /** Record recovery authority before an Engine start request can release task code. */
+  recordJobContainerOwnership(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    metadata: ContainerTaskJobMetadata,
+    lease: JobLease,
+    nowMs: number
+  ): BrokerJob {
+    const serialized = serializeContainerTaskJobMetadata(metadata);
+    const safe = parseContainerTaskJobMetadata(serialized);
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw malformedJob();
+    validateJobLease(lease, nowMs, false);
+    return this.transitionJob(jobId, principalId, expectedRevision, ["running"], (current) => {
+      if (current.cancelRequested) throw new BrokerError("CANCELLED", "Cancelled Job cannot acquire container ownership");
+      if (!TASK_JOB_TOOLS.has(current.tool) || current.startedAtMs === null || safe.owner !== principalId ||
+          safe.recordedAtMs < current.startedAtMs || safe.recordedAtMs > nowMs || safe.deadlineAtMs <= nowMs) {
+        throw new BrokerError("PRECONDITION_FAILED", "Container ownership metadata is outside the active Job authority");
+      }
+      if (current.containerMetadata !== undefined || current.processMetadata !== undefined || current.guestMetadata !== undefined) {
+        throw new BrokerError("CONFLICT", "Task execution ownership was already recorded");
+      }
+      const reusedIdentity = this.database.prepare(`
+        SELECT job_id FROM jobs WHERE container_metadata_json <> ''
+          AND json_extract(container_metadata_json, '$.engineId') = ?
+          AND json_extract(container_metadata_json, '$.containerId') = ? LIMIT 1
+      `).get(safe.engineId, safe.containerId);
+      if (reusedIdentity !== undefined) throw new BrokerError("CONFLICT", "Container identity belongs to an unresolved Job");
+      const auditBase = {
+        requestId: `job-container-admit-${jobId}`, principalId, tool: "internal_container_admission",
+        decision: "allow" as const, targetRef: `job:${jobId}`, policyVersion: current.policyVersion,
+        evidence: { metadataDigest: sha256(serialized) }, timestampMs: nowMs
+      };
+      this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
+      this.database.prepare(`
+        UPDATE jobs SET container_metadata_json = ?, revision = revision + 1
+        WHERE job_id = ? AND owner_principal_id = ?
+      `).run(serialized, jobId, principalId);
+      this.insertAudit({ ...auditBase, eventType: "completion", resultClass: "CONTAINER_OWNERSHIP_RECORDED" });
     }, lease, nowMs);
   }
 
@@ -3172,6 +3263,8 @@ export class BrokerStore {
       stdout?: string;
       stderr?: string;
       truncated?: boolean;
+      /** Only the exact Engine stop/remove readback may clear container ownership. */
+      containerCleanupVerified?: boolean;
     },
     lease?: JobLease,
     leaseNowMs = Date.now()
@@ -3188,6 +3281,11 @@ export class BrokerStore {
     }
     const persist = (current: BrokerJob): void => {
       if (current.startedAtMs === null || outcome.finishedAtMs < current.startedAtMs) throw malformedJob();
+      if (outcome.containerCleanupVerified !== undefined && typeof outcome.containerCleanupVerified !== "boolean") throw malformedJob();
+      if (current.containerMetadata !== undefined && outcome.state !== "unknown" && outcome.containerCleanupVerified !== true) {
+        throw new BrokerError("PRECONDITION_FAILED", "Container cleanup must be verified before terminal Job completion");
+      }
+      if (current.containerMetadata !== undefined && outcome.state !== "unknown") this.verifyContainerTaskOwnershipAudit(current);
       // A cancelled terminal state is only authoritative when the durable
       // cancellation marker won the Job revision race first. Without this
       // fence, a worker could manufacture a cancelled row that does not prove
@@ -3206,6 +3304,7 @@ export class BrokerStore {
           stdout_text = ?, stderr_text = ?, output_truncated = ?, process_metadata_json = CASE WHEN ? = 'unknown' THEN process_metadata_json ELSE '' END,
           guest_metadata_json = CASE WHEN ? = 'unknown' THEN guest_metadata_json ELSE '' END,
           guest_result_json = CASE WHEN ? = 'unknown' THEN guest_result_json ELSE '' END,
+          container_metadata_json = CASE WHEN ? = 'unknown' THEN container_metadata_json ELSE '' END,
           service_metadata_json = CASE WHEN ? = 'unknown' THEN service_metadata_json ELSE '' END,
           lease_owner_id = NULL, lease_token = NULL, lease_acquired_at_ms = NULL,
           lease_heartbeat_at_ms = NULL, lease_expires_at_ms = NULL, revision = revision + 1
@@ -3213,7 +3312,7 @@ export class BrokerStore {
       `).run(
         outcome.state, outcome.resultClass, outcome.finishedAtMs, exitCode,
         stdout.value, stderr.value, outcome.truncated === true || stdout.truncated || stderr.truncated ? 1 : 0,
-        outcome.state, outcome.state, outcome.state, outcome.state, jobId, principalId
+        outcome.state, outcome.state, outcome.state, outcome.state, outcome.state, jobId, principalId
       );
     };
     try {
@@ -3287,6 +3386,50 @@ export class BrokerStore {
         jobId, principalId, expectedRevision
       );
       if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Guest Job recovery changed concurrently");
+      return this.requireOwnedJob(jobId, principalId);
+    });
+  }
+
+  /** A recovered container can only be terminated, never resumed or declared successful. */
+  reconcileUnknownContainerTask(
+    jobId: string,
+    principalId: string,
+    expectedRevision: number,
+    expectedMetadata: ContainerTaskJobMetadata,
+    outcome: { state: "failed" | "cancelled"; finishedAtMs: number; containerCleanupVerified: true }
+  ): BrokerJob {
+    const expected = serializeContainerTaskJobMetadata(expectedMetadata);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
+        !Number.isSafeInteger(outcome.finishedAtMs) || outcome.finishedAtMs < 0 ||
+        !["failed", "cancelled"].includes(outcome.state) || outcome.containerCleanupVerified !== true) throw malformedJob();
+    return this.runTransaction(() => {
+      const row = this.requireOwnedJobRow(jobId, principalId);
+      const current = mapJob(row);
+      if (current.revision !== expectedRevision || current.state !== "unknown" ||
+          !TASK_JOB_TOOLS.has(current.tool) || current.containerMetadata === undefined || row.lease_token !== null ||
+          canonicalJson(current.containerMetadata) !== expected || current.startedAtMs === null ||
+          outcome.finishedAtMs < current.startedAtMs || outcome.finishedAtMs < (current.finishedAtMs ?? 0) ||
+          outcome.state === "cancelled" && !current.cancelRequested) {
+        throw new BrokerError("CONFLICT", "Container Job recovery authority changed concurrently");
+      }
+      this.verifyContainerTaskOwnershipAudit(current);
+      const resultClass = outcome.state === "cancelled" ? "denied" : "failed";
+      const requestId = `job-container-recovery-${jobId}-${expectedRevision + 1}`;
+      const auditBase = {
+        requestId, principalId, tool: "internal_container_recovery", decision: "allow" as const,
+        targetRef: `job:${jobId}`, policyVersion: current.policyVersion, timestampMs: outcome.finishedAtMs,
+        evidence: { containerId: current.containerMetadata.containerId, engineId: current.containerMetadata.engineId,
+          taskDescriptorDigest: current.containerMetadata.taskDescriptorDigest, priorState: "unknown", nextState: outcome.state }
+      };
+      this.insertAudit({ ...auditBase, eventType: "intent", resultClass: "INTENT_RECORDED" });
+      const updated = this.database.prepare(`
+        UPDATE jobs SET state = ?, result_class = ?, finished_at_ms = ?, exit_code = NULL,
+          container_metadata_json = '', revision = revision + 1
+        WHERE job_id = ? AND owner_principal_id = ? AND state = 'unknown'
+          AND revision = ? AND lease_token IS NULL AND container_metadata_json = ?
+      `).run(outcome.state, resultClass, outcome.finishedAtMs, jobId, principalId, expectedRevision, expected);
+      if (updated.changes !== 1) throw new BrokerError("CONFLICT", "Container Job recovery changed concurrently");
+      this.insertAudit({ ...auditBase, eventType: "completion", resultClass: "CONTAINER_CLEANUP_VERIFIED" });
       return this.requireOwnedJob(jobId, principalId);
     });
   }
@@ -4567,7 +4710,8 @@ export class BrokerStore {
         { version: 16, name: "edge-revocation-replay-ledger", apply: () => this.migrateEdgeRevocationReplaySchema() },
         { version: 17, name: "terminal-ledger-tombstones", apply: () => this.migrateLedgerTombstoneSchema() },
         { version: 18, name: "request-edge-key-provenance", apply: () => this.migrateRequestEdgeKeyProvenanceSchema() },
-        { version: 19, name: "guest-task-authenticated-result-journal", apply: () => this.migrateGuestTaskResultJournalSchema() }
+        { version: 19, name: "guest-task-authenticated-result-journal", apply: () => this.migrateGuestTaskResultJournalSchema() },
+        { version: 20, name: "container-task-ownership-metadata", apply: () => this.migrateContainerTaskOwnershipSchema() }
       ] as const;
       const recorded = new Map<number, string>();
       const rows = this.database.prepare("SELECT version, name, applied_at_ms FROM schema_migrations ORDER BY version").all() as Array<{ version?: unknown; name?: unknown; applied_at_ms?: unknown }>;
@@ -4693,6 +4837,13 @@ export class BrokerStore {
     const names = new Set(columns.map((column) => column.name));
     if (!names.has("guest_result_json")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN guest_result_json TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  private migrateContainerTaskOwnershipSchema(): void {
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === "container_metadata_json")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN container_metadata_json TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -5138,6 +5289,7 @@ interface JobRow {
   lease_expires_at_ms: number | null;
   write_metadata_json: string;
   process_metadata_json: string;
+  container_metadata_json: string;
   guest_metadata_json: string;
   guest_result_json: string;
   service_metadata_json: string;
@@ -5828,6 +5980,7 @@ function mapJob(row: JobRow): BrokerJob {
     revision: row.revision,
     ...(row.write_metadata_json ? { writeMetadata: parseWriteJobMetadata(row.write_metadata_json) } : {}),
     ...(row.process_metadata_json ? { processMetadata: parseProcessJobMetadata(row.process_metadata_json) } : {}),
+    ...(row.container_metadata_json ? { containerMetadata: parseContainerTaskJobMetadata(row.container_metadata_json) } : {}),
     ...(row.guest_metadata_json ? { guestMetadata: parseGuestTaskJobMetadata(row.guest_metadata_json) } : {}),
     ...(row.guest_result_json ? { guestResultJournal: parseGuestTaskResultJournal(row.guest_result_json) } : {}),
     ...(row.service_metadata_json ? { serviceMetadata: parseServiceControlJobMetadata(row.service_metadata_json) } : {}),
@@ -5836,6 +5989,12 @@ function mapJob(row: JobRow): BrokerJob {
   if (job.guestResultJournal !== undefined &&
       (job.guestMetadata === undefined || canonicalJson(job.guestResultJournal.admission) !== canonicalJson(job.guestMetadata))) {
     throw new BrokerError("AUDIT_UNAVAILABLE", "Guest result journal is not bound to the admitted request");
+  }
+  if (job.containerMetadata !== undefined &&
+      (job.containerMetadata.owner !== job.ownerPrincipalId || job.startedAtMs === null ||
+       job.containerMetadata.recordedAtMs < job.startedAtMs ||
+       job.finishedAtMs !== null && job.containerMetadata.recordedAtMs > job.finishedAtMs)) {
+    throw new BrokerError("AUDIT_UNAVAILABLE", "Container task ownership is not bound to the admitted Job");
   }
   return job;
 }
@@ -5874,7 +6033,7 @@ function validateStoredJobState(row: JobRow): void {
       !boundedOutput(row.stdout_text) || !boundedOutput(row.stderr_text) ||
       (row.exit_code !== null && (!Number.isSafeInteger(row.exit_code) || row.exit_code < -2_147_483_648 || row.exit_code > 2_147_483_647)) ||
       (row.cancel_reason !== null && typeof row.cancel_reason !== "string") ||
-      typeof row.write_metadata_json !== "string" || typeof row.process_metadata_json !== "string" ||
+      typeof row.write_metadata_json !== "string" || typeof row.process_metadata_json !== "string" || typeof row.container_metadata_json !== "string" ||
       typeof row.guest_metadata_json !== "string" || typeof row.guest_result_json !== "string" ||
       typeof row.service_metadata_json !== "string" ||
       typeof row.privileged_payload_json !== "string") fail();
@@ -5907,21 +6066,24 @@ function validateStoredJobState(row: JobRow): void {
   if (row.lease_expires_at_ms !== null && row.lease_expires_at_ms <= row.lease_acquired_at_ms!) fail();
   if (row.lease_expires_at_ms !== null && row.lease_heartbeat_at_ms !== null &&
       row.lease_heartbeat_at_ms > row.lease_expires_at_ms) fail();
-  if (row.lease_acquired_at_ms !== null && row.lease_expires_at_ms !== null &&
-      row.lease_expires_at_ms - row.lease_acquired_at_ms > MAX_JOB_LEASE_MS) fail();
+  // A renewal advances a bounded lease from the latest heartbeat, not from
+  // the original acquisition. Total task duration is enforced by its executor.
+  if (row.lease_heartbeat_at_ms !== null && row.lease_expires_at_ms !== null &&
+      row.lease_expires_at_ms - row.lease_heartbeat_at_ms > MAX_JOB_LEASE_MS) fail();
   if (row.cancel_requested === 0 && row.cancel_reason !== null) fail();
   if (row.cancel_requested === 1 && (row.cancel_reason === null || row.cancel_reason.length < 1 || row.cancel_reason.length > 200 || row.cancel_reason.includes("\0"))) fail();
 
   const hasWriteMetadata = row.write_metadata_json.length > 0;
   const hasProcessMetadata = row.process_metadata_json.length > 0;
+  const hasContainerMetadata = row.container_metadata_json.length > 0;
   const hasGuestMetadata = row.guest_metadata_json.length > 0;
   const hasGuestResult = row.guest_result_json.length > 0;
   const hasServiceMetadata = row.service_metadata_json.length > 0;
   if (hasWriteMetadata && row.tool !== "mac_write_file_atomic") fail();
   if (hasProcessMetadata && !TASK_JOB_TOOLS.has(row.tool) && row.tool !== "mac_terminal_exec" ||
-      hasGuestMetadata && !TASK_JOB_TOOLS.has(row.tool)) fail();
-  if (hasProcessMetadata && hasGuestMetadata) fail();
-  if ((hasProcessMetadata || hasGuestMetadata) && row.state !== "running" && row.state !== "unknown") fail();
+      (hasGuestMetadata || hasContainerMetadata) && !TASK_JOB_TOOLS.has(row.tool)) fail();
+  if (Number(hasProcessMetadata) + Number(hasGuestMetadata) + Number(hasContainerMetadata) > 1) fail();
+  if ((hasProcessMetadata || hasGuestMetadata || hasContainerMetadata) && row.state !== "running" && row.state !== "unknown") fail();
   if (hasGuestResult && (!hasGuestMetadata || !TASK_JOB_TOOLS.has(row.tool) || row.state !== "running" && row.state !== "unknown")) fail();
   if (hasServiceMetadata && row.tool !== "mac_service_control") fail();
   if (hasServiceMetadata && row.state !== "queued" && row.state !== "running" && row.state !== "unknown") fail();
@@ -5985,6 +6147,7 @@ function assertActiveJobLease(row: JobRow, lease: JobLease, nowMs: number, allow
   if (row.lease_owner_id !== lease.ownerId || row.lease_token !== lease.token ||
       row.lease_acquired_at_ms === null || row.lease_heartbeat_at_ms === null ||
       row.lease_expires_at_ms === null ||
+      nowMs < row.lease_acquired_at_ms || nowMs < row.lease_heartbeat_at_ms ||
       (!allowExpired && row.lease_expires_at_ms <= nowMs)) {
     throw new BrokerError("CONFLICT", "Job lease is no longer active");
   }

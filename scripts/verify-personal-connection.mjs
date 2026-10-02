@@ -3,13 +3,13 @@ import { createHash, randomBytes } from "node:crypto";
 import { parseEnv } from "node:util";
 import { resolve, join } from "node:path";
 import { homedir } from "node:os";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { existsSync } from "node:fs";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { readAuthFile } from "../packages/auth/dist/cli.js";
 import { AuthStore } from "../packages/auth/dist/store.js";
-import { configSchema, O1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, scopesForGrantProfile } from "../packages/auth/dist/contracts.js";
+import { configSchema, V2_TOOLS, O1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, scopesForGrantProfile } from "../packages/auth/dist/contracts.js";
 import { configureIssuerNetwork } from "../packages/auth/dist/issuer-network.js";
 import { decodeJwt } from "jose";
 import { DatabaseSync } from "node:sqlite";
@@ -24,14 +24,15 @@ let client; let transport; let network; let terminalDirectory;
 async function run() {
   if (process.argv.length !== 4 && !(process.argv.length === 5 && process.argv[4] === "--owner-terminal")) throw new Error("Expected protected root, env path and optional --owner-terminal");
   const config = configSchema.parse(JSON.parse(readAuthFile(`${root}/auth/auth-config.json`).toString()));
-  if (!["r1", "w1", "g1", "o1"].includes(config.grantProfile)) throw new Error("Unsupported personal verification profile");
+  if (!["r1", "w1", "g1", "o1", "v2"].includes(config.grantProfile)) throw new Error("Unsupported personal verification profile");
   const writeProfile = config.grantProfile !== "r1";
   const terminalProbe = process.argv[4] === "--owner-terminal";
   if (terminalProbe && config.grantProfile !== "o1") throw new Error("Owner terminal verification requires O1");
-  const guiProfile = config.grantProfile === "g1" || config.grantProfile === "o1";
+  const developmentProbe = config.grantProfile === "v2" && process.env.MOPS_VERIFY_DEVELOPMENT === "1";
+  const guiProfile = config.grantProfile === "g1" || config.grantProfile === "o1" || config.grantProfile === "v2";
   const metadataScopes = scopesForGrantProfile(config.grantProfile);
-  const expectedScopes = terminalProbe ? metadataScopes : guiProfile ? W1_READ_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
-  const expectedTools = terminalProbe ? O1_TOOLS : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
+  const expectedScopes = developmentProbe ? metadataScopes : terminalProbe ? metadataScopes : guiProfile ? W1_READ_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
+  const expectedTools = developmentProbe ? V2_TOOLS.filter(tool => tool !== "mac_terminal_exec") : terminalProbe ? O1_TOOLS : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
   const profileLabel = config.grantProfile.toUpperCase();
   network = configureIssuerNetwork(new URL(config.issuer).hostname);
   const bytes = readAuthFile(envPath, 8192, false);
@@ -167,16 +168,70 @@ async function run() {
     const data = await call(name, argumentsValue);
     if (name === "mac_capabilities") {
       assert.deepEqual(data.capabilities.map(capability => capability.name).sort(), [...PLANNED_TOOL_NAMES].sort());
-      for (const disabledTool of [...DEVELOPMENT_TOOL_NAMES, "mac_task_run"]) {
+      for (const disabledTool of config.grantProfile === "v2" ? ["mac_git_push"] : [...DEVELOPMENT_TOOL_NAMES, "mac_task_run"]) {
         assert.equal(data.capabilities.find(capability => capability.name === disabledTool)?.enabled, false,
           `Personal deployment unexpectedly enabled ${disabledTool}`);
       }
-      console.log(`Personal capability boundary: ${data.capabilities.length} contracts; V2/task execution disabled.`);
+      console.log(`Personal capability boundary: ${data.capabilities.length} contracts; ${config.grantProfile === "v2" ? "approved development enabled; push denied" : "V2/task execution disabled"}.`);
     }
     console.log(`${profileLabel} call passed: ${name}`);
   }
   assert.equal(READ_TOOLS.includes("mac_job_status"), true);
   console.log(`${profileLabel} tool discovery verified: ${listed.tools.length} tools listed; ${verificationCalls.size + (writeProfile ? 0 : 1)} real read calls succeeded. mac_job_status remains available for owner-owned Job readback only.`);
+  if (developmentProbe) {
+    const runtime = JSON.parse(readAuthFile(join(root, "personal/development-runtime.json")).toString());
+    const developmentProject = runtime.developmentProjects[0];
+    const taskId = `public-v2-${randomBytes(8).toString("hex")}`;
+    const branch = `codex/${taskId}`;
+    const createArgs = { project_root: developmentProject, task_id: taskId, branch_name: branch, base_ref: "main", idempotency_key: `${taskId}-create` };
+    const treesBefore = await call("mac_git_worktree_list", { project_root: developmentProject });
+    const explained = await call("mac_policy_explain", { proposed_tool: "mac_git_worktree_create", proposed_arguments: createArgs });
+    assert.equal(explained.decision, "allow");
+    assert.deepEqual(await call("mac_git_worktree_list", { project_root: developmentProject }), treesBefore);
+    const created = await call("mac_git_worktree_create", createArgs);
+    assert.equal((await call("mac_git_worktree_create", createArgs)).worktree, created.worktree);
+    const worktree = created.worktree;
+    const preflight = await call("mac_codex_preflight", { project_root: developmentProject, worktree });
+    assert.equal(preflight.permission, "allow");
+    const settle = async receipt => {
+      assert.ok(receipt.job_id);
+      for (let attempt = 0; attempt < 1200; attempt += 1) {
+        const job = await call("mac_job_status", { job_id: receipt.job_id, tail_bytes: 1024 });
+        if (!["queued", "running"].includes(job.state)) {
+          assert.equal(job.state, "completed", `${receipt.job_id} ended ${job.state}: ${job.result_class}`);
+          assert.equal(job.exit_code, 0);
+          return { jobId: receipt.job_id, state: job.state, exitCode: job.exit_code };
+        }
+        await delay(500);
+      }
+      throw new Error("Public development job did not settle within its runtime budget");
+    };
+    const entry = runtime.entries.find(value => value.type === "test" && value.projectRoot === developmentProject);
+    assert.ok(entry);
+    const args = { profile: entry.profile, cwd: worktree, task_id: taskId, max_runtime: 600000, idempotency_key: `${taskId}-task` };
+    const receipt = await call("mac_task_run", args);
+    assert.equal((await call("mac_task_run", args)).job_id, receipt.job_id);
+    const task = await settle(receipt);
+    const readonly = await settle(await call("mac_codex_run", { project_root: developmentProject, worktree, task_id: taskId,
+      execution_profile: "readonly", network_policy: "none", max_runtime: 600000, idempotency_key: `${taskId}-readonly`,
+      allowed_paths: ["scripts/test-isolation.test.js"],
+      task: "Use only the supplied read_file tool to read scripts/test-isolation.test.js. Briefly describe its environment filtering test. Do not modify files or execute commands." }));
+    const status = await call("mac_git_status", { project_root: worktree });
+    assert.equal(status.dirty, false);
+    const push = await call("mac_policy_explain", { proposed_tool: "mac_git_push", proposed_arguments: { project_root: developmentProject,
+      worktree, remote: "origin", branch_name: branch, approval_id: "public-probe-denied", idempotency_key: `${taskId}-push-denied` } });
+    assert.equal(push.decision, "deny");
+    const audit = await call("mac_execution_audit", { project_root: developmentProject, limit: 100 });
+    assert.ok(audit);
+    const removed = await call("mac_git_worktree_remove", { project_root: developmentProject, worktree, task_id: taskId, idempotency_key: `${taskId}-remove` });
+    assert.equal(removed.removed, true);
+    await writeFile(join(root, "personal/public-development-evidence.json"), `${JSON.stringify({ schemaVersion: "0.1", status: "pass",
+      verifiedAt: new Date().toISOString(), taskId, project: developmentProject, worktree, branch,
+      scopes: expectedScopes.length, tools: listed.tools.length, readCalls: verificationCalls.size,
+      task, readonly, policyExplainDidNotCreateWorktree: true, duplicateRequestReused: true, worktreeClean: true,
+      removed: true, pushDenied: true, auditRead: true, terminalScopeAbsent: !claimScope.includes("mac.terminal.exec") }, null, 2)}\n`, { mode: 0o600 });
+    console.log("Public V2 accepted: exact scoped approvals, worktree lifecycle, named task and Codex readonly jobs, idempotency, audit and push denial.");
+  }
   if (terminalProbe) {
     terminalDirectory = await mkdtemp("/tmp/mop-owner-live-");
     const command = "printf once >> counter && sleep 31 && pwd && git --version && node --version && if command -v codex >/dev/null; then codex --version; fi && curl -fsS --max-time 10 -o /dev/null https://mac.yapweijun1996.com/.well-known/oauth-protected-resource/mcp && printf '\nnetwork-ok'";

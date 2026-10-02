@@ -1,3 +1,6 @@
+import { loadPersonalDevelopmentRuntimeConfig, createPersonalDevelopmentRuntime, developmentPolicyConfiguration } from "./personal-development-runtime.js";
+import { assertV2Policy } from "./v2-policy.js";
+import { createPersonalDevelopmentApprover } from "./personal-development-approval.js";
 import { GuiSessionApprovals } from "./gui-session-approval.js";
 import { AuthStore } from "./store.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -15,11 +18,12 @@ import { Broker, BrokerStore, BrokerServiceInstanceLock, EdgeKeyring, MacOsNativ
 import { runEdgeServiceMain, validateEdgeServiceStartupConfig, type JwtRevocationContext } from "@mac-operator/edge";
 import { assertPrivateDirectory } from "./store.js";
 import { readAuthFile, runAuthCli } from "./cli.js";
-import { configSchema, O1_SCOPES, O1_TOOLS, G1_SCOPES, G1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS } from "./contracts.js";
+import { configSchema, V2_SCOPES, V2_TOOLS, O1_SCOPES, O1_TOOLS, G1_SCOPES, G1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS } from "./contracts.js";
 import { configureIssuerNetwork } from "./issuer-network.js";
 import { enableConnectionDiagnostics } from "./connection-diagnostics.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
 import { assertO1Policy, assertG1Policy, assertW1Policy, buildO1TargetRules, buildG1TargetRules, buildW1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
+import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
@@ -39,6 +43,7 @@ async function provision(root: string, revision: string) {
   assertPrivateDirectory(root);
   const auth = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
   if (auth.grantProfile === "d1") throw new Error("Personal service accepts only r1, w1, g1, or o1 OAuth grants");
+  if (auth.grantProfile === "v2") throw new Error("V2 requires an evidence-verified upgrade of an existing personal installation");
   const terminalProfile = auth.grantProfile === "o1";
   const guiProfile = auth.grantProfile === "g1" || terminalProfile;
   const writeProfile = auth.grantProfile === "w1" || guiProfile;
@@ -131,6 +136,7 @@ async function start(root: string) {
   const children: ChildProcess[] = [];
   let store: BrokerStore | undefined; let broker: Broker | undefined; let server: MacOsNativeBrokerIpcServer | undefined;
   let approvalIssuerRuntime: ApprovalIssuerRuntimeAssembly | undefined;
+  let developmentRuntime: Awaited<ReturnType<typeof createPersonalDevelopmentRuntime>> | undefined;
   let browserAuthStore: AuthStore | undefined;
   let browserApprovalController: ReturnType<typeof createPersonalApprovalBrowserController> | undefined;
   let stopping = false; let failed = false;
@@ -143,7 +149,9 @@ async function start(root: string) {
   try {
     const config = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
     if (config.grantProfile === "d1") throw new Error("Personal service accepts only r1, w1, g1, or o1 OAuth grants");
-    const terminalProfile = config.grantProfile === "o1";
+    const developmentProfile = config.grantProfile === "v2";
+    const terminalProfile = config.grantProfile === "o1" || developmentProfile;
+    const developmentConfig = developmentProfile ? loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json")) : undefined;
     const guiProfile = config.grantProfile === "g1" || terminalProfile;
     const writeProfile = config.grantProfile === "w1" || guiProfile;
     store = openStore(data);
@@ -151,11 +159,14 @@ async function start(root: string) {
     new PolicyManager(verified.policy, store).restore(verified);
     const granted = [...verified.policy.principalGrants.values()];
     if (granted.length !== 1 || granted[0]?.principalId !== config.principalId || granted[0]?.issuer !== config.issuerId ||
-        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...(terminalProfile ? O1_SCOPES : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES)].sort())) throw new Error("Owner policy mismatch");
+        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...(developmentProfile ? V2_SCOPES : terminalProfile ? O1_SCOPES : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES)].sort())) throw new Error("Owner policy mismatch");
     const enabled = [...verified.policy.tools.values()].filter(t => t.enabled).map(t => t.tool).sort();
     const roots = verified.policy.filesystemRoots;
     if (writeProfile) {
-      if (terminalProfile) assertO1Policy(verified.policy, config.principalId, config.issuerId);
+      if (developmentConfig) {
+        if (verified.policy.filesystemRoots.find(root => root.rootId === "owner-project")?.path !== developmentConfig.ownerProjectRoot) throw new Error("Development owner project binding changed");
+        assertV2Policy(verified.policy, config.principalId, config.issuerId, developmentPolicyConfiguration(developmentConfig));
+      } else if (terminalProfile) assertO1Policy(verified.policy, config.principalId, config.issuerId);
       else if (guiProfile) assertG1Policy(verified.policy, config.principalId, config.issuerId);
       else assertW1Policy(verified.policy, config.principalId, config.issuerId);
     } else {
@@ -171,13 +182,19 @@ async function start(root: string) {
     }
     const bundle = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const validity = bundle.payload.trusted_edge_keys[0]!;
+    if (developmentConfig) developmentRuntime = await createPersonalDevelopmentRuntime(developmentConfig, config.principalId);
     broker = new Broker({ store, policy: verified.policy,
+      ...(developmentRuntime ? { developmentGateway: developmentRuntime.gateway, taskProfileRegistry: developmentRuntime.profiles,
+        taskRunner: developmentRuntime.runner, authorizeDevelopment: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
+          createPersonalDevelopmentApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock"),
+            worktrees: developmentRuntime!.gateway.worktrees, developmentProjects: developmentConfig!.developmentProjects,
+            taskProfiles: developmentConfig!.taskProfiles })(operation) } : {}),
       ...(terminalProfile ? { ownerTerminalExecutor: new PersonalOwnerTerminalExecutor({ enabled: true }),
         authorizeOwnerTerminal: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
           createPersonalTerminalApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock") })(operation) } : {}),
       ...(guiProfile ? { authorizeGuiSession: operation => browserApprovalController?.authorizeGuiSession(operation) ?? Promise.resolve(false) } : {}), edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "personal-edge", keyId: "personal-edge-1", key,
       notBeforeMs: validity.not_before_ms, expiresAtMs: validity.expires_at_ms }]) });
-    const expectedTools = terminalProfile ? O1_TOOLS : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
+    const expectedTools = developmentProfile ? V2_TOOLS : terminalProfile ? O1_TOOLS : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
     if (JSON.stringify([...broker.enabledRuntimeCapabilityNames()].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error("Unexpected runtime capability");
     approvalIssuerRuntime = await createPersonalApprovalIssuerRuntime({
       configPath: join(data, "approval-issuer.json"), dataRoot: data, runtimeRoot: runtime, store,
@@ -185,7 +202,12 @@ async function start(root: string) {
     });
     if (writeProfile !== (approvalIssuerRuntime !== undefined)) throw new Error("Personal approval boundary mismatch");
     if (approvalIssuerRuntime && !terminalProfile && approvalIssuerRuntime.keyManager.current().keys.some(key => key.allowUnattended)) throw new Error("Unexpected terminal delegation");
-    if (terminalProfile && approvalIssuerRuntime?.keyManager.current().keys.filter(key => key.allowUnattended).length !== 1) throw new Error("Terminal delegation is missing");
+    if (terminalProfile) {
+      const delegated = approvalIssuerRuntime?.keyManager.current().keys.filter(key => key.allowUnattended) ?? [];
+      const expected = developmentProfile ? ["personal-development-1", "personal-terminal-1"] : ["personal-terminal-1"];
+      if (JSON.stringify(delegated.map(key => key.keyId).sort()) !== JSON.stringify(expected)) throw new Error("Explicit owner delegation keys do not match the selected profile");
+    }
+    if (developmentRuntime) await broker.reconcileRestartedContainerTasks();
     if (terminalProfile) await broker.reconcileRestartedTaskProcesses();
     if (guiProfile) browserAuthStore = new AuthStore(join(root, "auth"));
     browserApprovalController = approvalIssuerRuntime === undefined ? undefined : createPersonalApprovalBrowserController({
@@ -268,7 +290,7 @@ async function start(root: string) {
     for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     for (let i = 0; i < 50 && children.some(c => c.exitCode === null && c.signalCode === null); i++) await delay(100);
     for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    await approvalIssuerRuntime?.close(); await server?.close(); await broker?.close(); store?.close(); browserAuthStore?.close(); key.fill(0); await lock.close();
+    await approvalIssuerRuntime?.close(); await server?.close(); await broker?.close(); if (!broker && developmentRuntime) { await developmentRuntime.runner.close(); await developmentRuntime.gateway.close(); } store?.close(); browserAuthStore?.close(); key.fill(0); await lock.close();
     process.off("SIGTERM", stop); process.off("SIGINT", stop);
   }
   if (failed) throw new Error("Child stopped unexpectedly");
@@ -283,11 +305,13 @@ async function grantPersistentBrowserAccess(root: string, requestId: string): Pr
   let authStore: AuthStore | undefined;
   try {
     const config = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
-    if (config.grantProfile !== "g1" && config.grantProfile !== "o1") throw new Error("Persistent browser access requires G1 or O1");
+    if (config.grantProfile !== "g1" && config.grantProfile !== "o1" && config.grantProfile !== "v2") throw new Error("Persistent browser access requires G1, O1 or V2");
     store = openStore(data);
     const verified = await (await policyVerifier(data)).verifyFile(join(data, "policy.json"));
     new PolicyManager(verified.policy, store).restore(verified);
-    (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(verified.policy, config.principalId, config.issuerId);
+    if (config.grantProfile === "v2") assertV2Policy(verified.policy, config.principalId, config.issuerId,
+      developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))));
+    else (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(verified.policy, config.principalId, config.issuerId);
     if (store.requestRecord(requestId)?.principalId !== config.principalId) throw new Error("Owner preview required");
     authStore = new AuthStore(join(root, "auth"));
     const sessions = new GuiSessionApprovals(store, async () => { throw new Error("Setup cannot issue operations"); }, Date.now, authStore);
@@ -306,6 +330,11 @@ async function main() {
     if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || process.argv[5] !== "--enable") throw new Error("Snapshot identity and explicit --enable required");
     await upgradePersonalOwnerTerminal(root, packageRoot, detail);
     console.log("Personal owner terminal enabled in offline state; reconnect OAuth to grant mac.terminal.exec.");
+  }
+  else if (mode === "development") {
+    if (!detail || !/^[a-f0-9]{7,64}$/u.test(detail) || !process.argv[5] || process.argv[6] !== "--enable") throw new Error("Source revision, private runtime config and explicit --enable required");
+    await upgradePersonalDevelopment(root, packageRoot, detail, process.argv[5]);
+    console.log("Evidence-verified development gateway enabled; existing OAuth grants retain their original scopes.");
   }
   else if (mode === "browser-access") {
     if (!detail || !/^[A-Za-z0-9._:-]{1,128}$/u.test(detail) || process.argv[5] !== "--until-revoked") {

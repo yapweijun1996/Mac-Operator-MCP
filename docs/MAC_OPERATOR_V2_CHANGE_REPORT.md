@@ -1,286 +1,211 @@
 # Mac Operator V2 change report
 
-Updated: 2026-10-02. V2 acceptance: PARTIAL. Source regression and personal
-deployment: PASS.
-Overall completion: **55%**, based on 6 of 11 Definition of Done gates verified;
-5 require a real production coding/runtime workflow. This is an acceptance
-estimate, not a claim that 55% of engineering effort remains.
-
-Current branch: `main` (local merge; no push). Integration source commit:
-`2c37194d9bd822e78ad088f61d79a5f91061e152`.
-Original implementation branch: `codex/safe-development-gateway-v2`.
-Baseline commit: `0be86f5`. Implementation commit:
-`d43d4f5fc423d3ecd73d9357515def61b3d496b1`. A later documentation-only commit
-records the independent O1 rollout below. No push or PR.
+Updated: 2026-10-02. Final acceptance is recorded in
+[production evidence](../evidence/2026-10-02-v2-production-gateway.md).
+Implementation branch: `codex/v2-production-executor`; destination: local `main`.
+No remote push, PR publication or YAP production merge is part of this change.
 
 ## Architecture before and after
 
 | Before | After |
 | --- | --- |
-| Authenticated Edge → Local Broker scopes/policy/approval | Same authority boundary; additive project-scoped gateway admission |
-| Filesystem workers and fixed safe Git on primary repositories | Same adapters, plus inventory-verified linked worktree Git support |
-| Named task profiles; default fail-closed runner; async flag rejected | Same registry/isolation/job system; opt-in async and bounded retries; test/build aliases |
-| Durable SQLite jobs/audit with conservative restart | Same ledger, with agent/test/build ownership/recovery and bounded execution-audit view |
-| No accepted local Codex runtime | Trusted provisioning interface/preflight; execution still denied without accepted adapter/runtime |
+| Edge OAuth → authenticated Local Broker policy/approval | Same boundary; separate V2 coding grant and delegated development issuer |
+| Safe files/Git, managed jobs; task runner disabled in personal policy | Same components; registered task/test/build commands in one disposable container per owned worktree |
+| Worktree/gateway contracts existed but no accepted executor/provider | Pinned Docker Engine/image plus constrained native Codex app-server controller |
+| Schema 19 persistent requests, approvals, jobs and audit | Schema 20 adds immutable container ownership before start, verified cleanup and conservative restart recovery |
+| Independently authorized O1 host terminal | Existing O1 grants retain their scopes; fresh coding consent excludes terminal authority |
 
-The V2 interfaces add no unrestricted shell, sudo, credential mount, automatic
-push or PR publishing. The original October 1 implementation did not migrate
-the service. The separately authorized October 2 source rollout is recorded below.
+Codex inference runs in a private controller directory. Its model-visible host
+filesystem permissions deny `/`; built-in shell, patch, MCP, skills, subagents,
+browser, plugins and hooks are disabled. Its exact supplied tools operate on
+logical `/workspace` inside the task container. This intentionally differs
+from launching an ordinary Codex CLI in a host worktree: inference credentials
+stay with the trusted authentication manager, outside task code and snapshots.
 
-## Independent live O1 deployment (later on 2026-10-01)
+The agent container has no host mounts, socket, credentials or task network.
+A bounded, filtered source snapshot is copied in. Only validated source changes
+from `workspace-write` are imported through canonical native atomic writes into
+the owned worktree. Validation jobs retain artifacts inside their container.
 
-The owner-terminal work was implemented and deployed independently from this
-V2 checkout. Its rollout evidence is
-`evidence/2026-10-01-owner-terminal-control.md` on
-`codex/owner-terminal-control` (runtime source
-`fa215d61ba553c306127a0f0a676dffd39bd6cc3`, evidence commit
-`463388cfd4b2fb210fb1d9321dc26ee5a1e79780`). It records release
-`personal-20261001-o1a`, state `MacOperator-o1-20261001a`, 38 runtime tools and
-24 scopes. This is source-backed handoff evidence; this V2 task did not perform
-that rollout or merge its code.
+## Tools and contracts
 
-A subsequent live `mac_capabilities` read confirmed a 46-contract catalog,
-`mac_terminal_exec` implemented but `scope_not_granted` for this caller,
-`mac_task_run` still `disabled_by_policy`, and no V2 Codex/worktree entries.
-At that time the live mode was independent O1, while the V2 implementation
-remained undeployed. Earlier G1 observations in the audit are
-historical baseline evidence, not a statement that live deployment stayed G1.
+The existing 57 versioned contracts remain compatible. The accepted personal
+runtime enables ten V2 tools plus the existing `mac_task_run`:
 
-O1 intentionally executes arbitrary owner-account commands, with owner-file
-and network authority. Its own evidence explicitly excludes isolated-task
-acceptance and warns that output redaction cannot guarantee secret protection.
-Successful shell/CLI, timeout or cancellation checks are not evidence of V2
-worktree, secret, readonly or descendant containment. O1 must not serve as a
-fallback for V2 agent/test/build admission, and ordinary V2 coding approval
-must not confer owner-terminal authority. V2 completion remains PARTIAL/55%.
+- Worktree create/list/remove and branch create through a new worktree.
+- Codex read-only preflight and asynchronous run with explicit execution profile.
+- Purpose-specific test/build, review preparation and bounded execution audit.
+- Named task profiles with manifest identity, fixed guest argv, required runtime
+  and durable idempotency; no caller-supplied shell command.
 
-## Verified source integration (2026-10-02)
+`mac_policy_explain` plans future operations without executing them.
+Existing explicit-path Git stage/local commit work on managed worktrees.
+`mac_git_push` is reserved and always denied; force push, remote mutation,
+package install and PR publishing have no development approval route.
 
-The owner subsequently authorized testing, committing, merging to local main
-and live deployment. The integration combines this V2 source with the existing
-O1 branch to preserve the already deployed owner-terminal capability. The
-October 1 separate-branch observations above remain historical evidence.
-The personal rollout retains the exact O1 signed policy, 24 scopes and 38
-runtime tools; no DevelopmentGateway is provisioned and all 11 V2 tools plus
-`mac_task_run` stay disabled. Deployment does not advance V2 isolation/E2E
-acceptance or confer new authority on existing OAuth grants.
+Preflight reports installed version, safe authentication readiness, supported
+models, owned-worktree validity, Git state and available registered commands.
+It never returns authentication values. Async receipts return a `job_id`;
+status/cancel and bounded log retrieval retain the existing job contracts.
+Test/build receipts include redacted fixed argv; terminal status includes
+execution duration, exit status and bounded stdout/stderr evidence.
 
-Integration validation: **1330 tests, 1313 PASS, 17 SKIP, 0 FAIL** using the
-standard `npm test`; native/TypeScript build and 57 strict tool contracts pass.
-Style, documentation, verification matrix, process boundaries and native
-canonical JSON checks pass. `npm audit` reports zero vulnerabilities after the
-compatible `fast-uri` patch from 3.1.7 to 3.1.8.
+## Security controls
 
-Independent review found a P1 canonical-write alias bypass. It was reproduced
-before fixing: a source directory alias to `.git` could rewrite metadata.
-Native writes now require synchronous canonical-path authorization from a
-pinned parent descriptor before temporary creation and again before commit;
-callbacks deny Git metadata, secret zones and configured denied paths. Paths
-are rechecked after callbacks; rejected writes leave no temporary remnants.
-A native capability-version gate rejects writes through an older binary that
-would ignore the new callback. Independent review accepted the fix, with
-55 related regression tests passing and no unresolved P0/P1 findings.
-
-O1 clone fixtures were changed from shared object stores to independent clones
-so they respect the V2 metadata boundary. Duplicate test imports were removed.
-The [personal rollout record](../evidence/2026-10-02-v2-o1-personal-rollout.md)
-confirms live cutover to `personal-20261002-v2a` at integration commit `2c37194`.
-The signed policy is byte-identical to the offline backup. Only unsigned source
-binding fields changed. Public OAuth checks passed exact 38-tool owner and
-27-tool read-only discovery, 26 reads for each grant, denied out-of-project
-writes, terminal idempotency, timeout, durable cancellation and revocation.
-`mac_health` is healthy; `mac_capabilities` reports all 57 contracts and disabled
-V2/task tools. The tested native binary hash matches the release record. PM2
-configuration is saved. No push or PR publication occurred.
-
-This completes the authorized source deployment and local main merge. V2
-production coding acceptance remains PARTIAL/55%; the O1 checks above cannot
-substitute for it.
-
-## Tools
-
-Added 11 contracts and Broker policies:
-
-- `mac_git_worktree_create`, `mac_git_worktree_list`, `mac_git_worktree_remove`
-- `mac_git_branch_create` (creates a worktree; never switches the primary)
-- `mac_codex_preflight`, `mac_codex_run`
-- `mac_test_run`, `mac_build_run`
-- `mac_git_push` (always denied), `mac_pr_prepare`, `mac_execution_audit`
-
-Modified `mac_task_run` for strict async/task/retry/runtime fields while keeping
-synchronous named-profile behavior. It accepts no arbitrary command or shell
-string. Modified `mac_policy_explain` for bounded proposed arguments and a
-non-executing future-action plan. Existing Git operations map an owned managed
-checkout back to the exact original-project grant and retain explicit approvals.
-
-Test/build selection uses an approved host command registry. It does not
-execute arbitrary manifest scripts or guess a missing test command. A manifest
-may inform operator registration; it is not authorization. Claude execution,
-package installation and publishing are not added.
-
-## Security and operational controls
-
-- Protected separate state/worktree roots, exclusive inventory lock, native
-  inode-conditional lock deletion, atomic fsynced provenance and conservative
-  pending/removing records. Ordinary file roots cannot expose provenance or
-  every task checkout at once.
-- Owner/project/task-bound worktrees, stable retry fingerprints, canonical
-  identities, no overwrite, no primary checkout switch and no force removal.
-  Dirty and ignored files prevent removal; uncertain jobs pin storage.
-- Fixed safe Git environment/arguments, blocked metadata indirection, symlink
-  and alternate object stores, configuration content identity, reciprocal
-  pointers, approved task HEAD and exclusive checkout branch ownership.
-- Ordinary file writes/patches cannot modify `.git`. Same-worktree jobs block
-  competing execution and premature Git mutation; distinct worktrees remain
-  independent. Primary HEAD/index/content/status invariance has real fixtures.
-- Four permission tiers with explicit scopes/targets/operation approvals. New
-  tools default disabled; push fails closed even with a grant. Coding approval
-  cannot authorize higher-risk actions.
-- Production runner and owned-process proof remain mandatory. Profiles are
-  snapshotted/frozen and narrowed to the exact worktree; runtime is bounded,
-  credentials remain `none`, network must be explicit, direct privilege
-  escalation executables are rejected.
-- Expanded Codex/Claude/Firefox/MCP secret zones and `.env` variants. Raw `.env`
-  content/hash is denied; existing metadata can expose existence safely.
-  There is no new environment-value export or credential reader.
-- Existing tamper-evident request/intent/completion ledger records actual
-  scopes, project/task/worktree, duration, bounded changed paths and commit IDs
-  where observed. Prompts and file/credential contents are not audit evidence.
-  Async receipt proves admission; terminal status is separately inspectable.
-- Existing restart UNKNOWN/quarantine, leases, cancellation and shutdown drain
-  are reused; interrupted coding/validation tasks are never blindly replayed.
-
-## Validation
-
-Final suite: **1322 tests, 1305 PASS, 17 SKIP, 0 FAIL**. Native build and
-TypeScript passed. Style, documentation, verification-matrix and process-boundary
-checks passed. Two existing GUI test launchers were bounded and registered after
-the boundary check found missing controls; GUI product code was preserved. All **56** tool contracts passed verification. V2 signed
-Broker results were also validated against strict output schemas. Real Git
-worktrees, stage/commit, audit/review and primary invariance passed. The physical
-single-process Seatbelt probe passed allowed/denied file access, fork denial and
-bounded output/time.
-
-An initial default-concurrency run exposed an existing timing-sensitive UI
-assertion. The unchanged file passed alone and complete concurrency-4 reruns
-passed. See the [validation record](../evidence/2026-10-01-v2-gateway-validation.md)
-for exact limits, commands, 25 required cases and mock-versus-physical evidence.
-
-## Definition of Done accounting
-
-| Gate | Status |
+| Tier | Ordinary V2 authority |
 | --- | --- |
-| Codex safely operates an authorized project | PENDING: accepted adapter/runtime/inference route |
-| Codex writes only inside isolated worktree | PENDING: admission verified; real agent enforcement not exercised |
-| Tests/builds run through production managed jobs | PENDING: lifecycle fixture verified; production executor absent |
-| V2/R1 scoped APIs preserve secret and unauthorized path denials | PASS: native/file authorization regressions; O1 owner authority is a separate boundary |
-| Unrestricted sudo/shell unavailable through V2 tool contracts | PASS: separate existing O1 authority is preserved; V2 never uses it as a fallback |
-| Git push gated | PASS: implementation always denies |
-| Audit evidence exists | PASS |
-| Policy tests pass | PASS |
-| Complete agent security acceptance tests pass | PENDING: real descendant/network/readonly agent evidence |
-| YAP-MCP development E2E passes | PENDING: project identity and execution dependencies |
-| Existing R1 behavior remains compatible | PASS: full regression and original contracts preserved |
+| READ | Exact scope/target checks; bounded safe reads, preflight, review and audit |
+| SAFE_WRITE | Authorized source/worktree, canonical native path gate, stable retry identity, intent/readback audit |
+| AGENT_RUN | Owned isolated worktree, explicit profile/network none, bounded runtime/output, durable container identity and managed jobs |
+| HIGH_RISK | Denied; ordinary coding consent/issuer cannot authorize push, install, service mutation or privilege escalation |
 
-## Limitations and remaining risks
+Controlled storage is private and excluded from ordinary filesystem roots.
+Secret zones, `.env` values, Git metadata, symlink escapes and traversal are
+blocked before snapshot/tool access/import. Known secret signatures are checked
+on source input, dynamic tool content and bounded output. All output deltas and
+allowed paths are validated before the first source write.
 
-1. No production `CodingAgentProvider` ships. Existing local runners have
-   staging limitations; App Sandbox descendant escape is a known acceptance
-   failure. VM/root-helper alternatives require installed/accepted host resources.
-   CLI installation/login, mock proofs or prompts cannot replace these controls.
-2. Credential-free model inference and the provisioned model catalog are absent.
-   No user credential storage was read or mounted. Preflight reports unknown or
-   not-ready rather than manufacturing authentication/model evidence.
-3. Authorized discovery did not identify the exact YAP-MCP Git repository, and
-   the results were bounded/truncated. Memory confirms Mac mini as host but no
-   path. No YAP production source was modified. The requested live E2E is not
-   passed by the synthetic Git fixture.
-4. Operator startup integration, signed policy and OAuth provisioning are
-   documented source seams, not an automatic migration or installed V2 profile.
-   Direct file access to one new checkout needs exact filesystem roots/rules.
-5. Pending/removing inventory needs reviewed host reconciliation. There is no
-   MCP force-delete, dirty-removal override, push implementation or PR publisher.
-   Inventory is capped at 256 records; Git metadata inspection at 50000 entries.
-   Coding/validation retry identity also binds the original session and Edge;
-   after authority rotation, inspect the owned job before a newly approved run.
-   Worktree retries reuse provenance but still require an operation approval at
-   the Broker; they are not an approval bypass. Complex object alternates,
-   metadata symlinks and worktree configuration are
-   conservatively rejected. Shared Git metadata means trusted host operators
-   must avoid concurrent manual checkout/ref changes during managed operations.
-6. Readonly/test-only and secret protections in an eventual coding runtime must
-   be enforced by accepted outer isolation. Fixture readiness declarations prove
-   admission behavior only. Secret scanners cover known signatures and zones;
-   an eventual adapter must validate its project snapshot and output boundary.
-   `allowed_paths` and `validation_plan` are validated and passed to the trusted
-   adapter; per-file write restriction/plan enforcement still needs runtime evidence.
-7. PR preparation and audit views are intentionally bounded. They are review
-   evidence, not exhaustive ancestry or per-system-call filesystem tracing.
-   Failed/unknown tasks require additional Git/status inspection before review.
-8. Independent source-integration review accepted the confirmed fixes and
-   independently reran 55 related tests. This is not a production coding
-   isolation certification.
+Containers have a read-only root filesystem, nonroot UID65532, no capabilities,
+no-new-privileges, default seccomp, private PID/IPC/cgroup namespaces and bounded
+memory/CPU/PIDs. UID65533 PID1 owns an independent deadline; the task UID cannot
+stop it. Readonly/test-only source is root-owned and non-writable. Export fences
+new execution, terminates task descendants and pins each file before reading.
 
-The recommended next step is to supply an accepted production execution and
-credential-free inference boundary, then configure one staging project and run
-its actual synthetic E2E. Keep current V2 execution disabled until that passes.
+Container ownership is durable before start. Success requires exact teardown
+and absence readback. Cancellation/revocation cannot become success. A crash
+retains UNKNOWN ownership; restart performs exact cleanup without replaying
+execution or inventing success. Renewable job leases remain valid across long
+bounded jobs and reject wrong tokens, clock rollback and forged intervals.
 
-## Changed files
+Git adapters override hooks/fsmonitor, pin configuration and disable all
+transports and lazy fetch. A real partial-clone fixture reproduced implicit
+remote-helper execution; governed Git now rejects it before host credentials
+or networking can be invoked.
 
-The original V2 implementation changed 51 files. The combined integration
-changed 84 files relative to baseline `0be86f5`; the later rollout record is a
-documentation-only commit. Unrelated existing progress/evidence edits remain
-outside the task commits. The integration delta is available with
-`git diff --stat 0be86f5 2c37194`.
+Audit records request/task/project/worktree/actor/scopes/decision/result,
+duration, verified paths and local commit IDs. Partial imports retain their
+verified-path evidence even if a later write or cleanup fails. Prompt/source
+contents and credential values are not audit fields.
+
+## Verification and rollout
+
+The current production evidence owns exact test counts, physical security
+checks, the real YAP synthetic workflow, source/runtime commit hashes, public
+OAuth checks and deployment readback. Earlier October 1 records and the 55%
+source-only rollout remain historical; they did not prove production execution.
+
+The synthetic YAP task changes only one test file in a Broker-created worktree,
+runs the existing isolation tests and site build through managed jobs, stages
+that explicit path, commits locally and prepares review evidence. Primary HEAD,
+index, test-source hash and status are compared before/after. Existing unrelated
+YAP `.claude/settings.local.json` is preserved. No production YAP code is merged.
+
+Deployment uses an immutable tested release, a full stopped-state backup,
+explicit signed-policy/runtime migration and readback. Existing OAuth grants
+are not expanded. Fresh coding consent provides 27 scopes and 48 tools without
+terminal authority; reconnecting obtains those scopes. The installation retains
+a separately authorized old O1 terminal boundary for existing owner grants.
+
+## Known limitations and remaining risks
+
+- Docker Desktop/guest kernel, pinned image, native adapter and Codex binary are
+  trusted dependencies. Same-UID host compromise is outside the remote-agent
+  boundary. Version/image changes require fresh acceptance.
+- The approved YAP subset contains root scripts, shared source and the site;
+  `portal`, `mcp-connector`, `sample`, `docs`, `output` and `tmp` are excluded.
+  Other projects, languages, source scopes and build dependencies require
+  separately reviewed registry/image configuration. Snapshot limits remain fixed.
+- Only task network policy `none` is enabled. Trusted inference may contact its
+  configured provider through the authentication manager; task tools cannot
+  reach that manager or its credential storage.
+- Claude is not provisioned. Source deletion, dirty force-removal, package
+  installation, push and PR publishing are unsupported and fail closed.
+- Validation artifacts are ephemeral; safe host artifact import is not added.
+  Source import is atomic per file, not a multi-file transaction. A later failure
+  can leave earlier audited source changes for review.
+- Known-signature scanning cannot recognize every unknown credential format.
+  Secrets must not be committed to approved source. Control/path separation
+  prevents task access to host secret stores without relying on scanning alone.
+- A create acknowledgement lost before durable ownership can leave an empty,
+  unstarted container; no task code starts before acknowledgement. Exact-owned
+  recovery never blindly deletes unproven containers.
+- The migration updates database and protected files in steps. Interrupted
+  migration requires the full stopped-state backup; the old release cannot read
+  schema 20. Formal Developer ID/notarization and the old staging helper/VM
+  release gates remain separate from this personal V2 deployment.
+
+The [design/threat model](MAC_OPERATOR_V2_DESIGN.md) and
+[operator runbook](MAC_OPERATOR_V2_RUNBOOK.md) document current boundaries,
+provisioning, configuration migration, recovery and rollback.
+
+## Final source checks and changed files
+
+Standard regression: 1579 total, **1561 PASS / 18 SKIP / 0 FAIL**.
+Final image physical enforcement: **51/51 PASS**, three actual runs, zero skips.
+57 strict contracts, native/TypeScript build, style, docs, verification matrix,
+process-boundary audit, canonical JSON 5/5 and dependency audit all pass.
+Independent source review has no unresolved substantiated P0/P1.
+
+This production-runtime change modifies the following 61 focused files:
 
 - `PROGRESS.md`
 - `README.md`
-- `TOOL_CATALOG.md`
 - `docs/MAC_OPERATOR_V2_CHANGE_REPORT.md`
 - `docs/MAC_OPERATOR_V2_DESIGN.md`
 - `docs/MAC_OPERATOR_V2_RUNBOOK.md`
-- `evidence/2026-10-01-v2-gateway-validation.md`
-- `packages/broker/src/broker-async-task.test.ts`
-- `packages/broker/src/broker.test.ts`
+- `evidence/2026-10-02-v2-production-gateway.md`
+- `packages/auth/src/contracts.ts`
+- `packages/auth/src/index.ts`
+- `packages/auth/src/personal-approval-browser-controller.test.ts`
+- `packages/auth/src/personal-development-approval.test.ts`
+- `packages/auth/src/personal-development-approval.ts`
+- `packages/auth/src/personal-development-runtime.test.ts`
+- `packages/auth/src/personal-development-runtime.ts`
+- `packages/auth/src/personal-development-upgrade.ts`
+- `packages/auth/src/personal-service.ts`
+- `packages/auth/src/personal-terminal-approval.ts`
+- `packages/auth/src/v2-policy.test.ts`
+- `packages/auth/src/v2-policy.ts`
+- `packages/broker/native/filesystem_acl.h`
+- `packages/broker/native/peer_credentials.cc`
+- `packages/broker/src/approval-authority.ts`
+- `packages/broker/src/approval-ipc-client.ts`
 - `packages/broker/src/broker.ts`
-- `packages/broker/src/default-policy.ts`
-- `packages/broker/src/development-gateway.test.ts`
+- `packages/broker/src/codex-controller.test.ts`
+- `packages/broker/src/codex-controller.ts`
+- `packages/broker/src/container-broker.test.ts`
+- `packages/broker/src/container-engine.test.ts`
+- `packages/broker/src/container-engine.ts`
+- `packages/broker/src/container-job-metadata.ts`
+- `packages/broker/src/container-physical-validation.ts`
+- `packages/broker/src/container-physical.test.ts`
+- `packages/broker/src/container-snapshot.test.ts`
+- `packages/broker/src/container-snapshot.ts`
+- `packages/broker/src/container-task-profile.test.ts`
+- `packages/broker/src/container-task-profile.ts`
+- `packages/broker/src/container-task-runner.test.ts`
+- `packages/broker/src/container-task-runner.ts`
+- `packages/broker/src/development-approval-boundary.ts`
 - `packages/broker/src/development-gateway.ts`
-- `packages/broker/src/development-policy.ts`
-- `packages/broker/src/filesystem-inspector.test.ts`
-- `packages/broker/src/filesystem-inspector.ts`
-- `packages/broker/src/filesystem-patch.ts`
+- `packages/broker/src/git-hooks-isolation.test.ts`
+- `packages/broker/src/git-inspector.test.ts`
 - `packages/broker/src/git-inspector.ts`
 - `packages/broker/src/index.ts`
-- `packages/broker/src/managed-worktrees.test.ts`
-- `packages/broker/src/managed-worktrees.ts`
+- `packages/broker/src/ledger-export.test.ts`
+- `packages/broker/src/ledger-export.ts`
+- `packages/broker/src/persistence-container.test.ts`
+- `packages/broker/src/persistence-lease-renewal.test.ts`
+- `packages/broker/src/persistence.test.ts`
 - `packages/broker/src/persistence.ts`
-- `packages/broker/src/policy.test.ts`
-- `packages/broker/src/sandbox-profile.ts`
-- `packages/broker/src/secret-policy.test.ts`
-- `packages/broker/src/secret-policy.ts`
-- `packages/broker/src/service-startup.ts`
-- `packages/broker/src/task-profile.test.ts`
+- `packages/broker/src/process-environment.ts`
 - `packages/broker/src/task-profile.ts`
-- `packages/contracts/src/catalog.ts`
-- `packages/contracts/src/types.ts`
-- `packages/contracts/src/verify-contracts.ts`
-- `packages/edge/src/oauth-grant-status.ts`
-- `schemas/policy-document.schema.json`
+- `packages/broker/src/task-runner.ts`
+- `runtime/container/Dockerfile`
+- `runtime/container/run-site-build.cjs`
+- `schemas/ledger-records.schema.json`
 - `scripts/check-process-boundaries.mjs`
-- `scripts/gui-hit-testing.test.mjs`
-- `scripts/gui-transport.test.mjs`
-- `tool-contracts/README.md`
+- `scripts/probe-v2-yap-container.mjs`
+- `scripts/verify-personal-connection.mjs`
 - `tool-contracts/mac_build_run.json`
-- `tool-contracts/mac_codex_preflight.json`
-- `tool-contracts/mac_codex_run.json`
-- `tool-contracts/mac_execution_audit.json`
-- `tool-contracts/mac_git_branch_create.json`
-- `tool-contracts/mac_git_push.json`
-- `tool-contracts/mac_git_worktree_create.json`
-- `tool-contracts/mac_git_worktree_list.json`
-- `tool-contracts/mac_git_worktree_remove.json`
-- `tool-contracts/mac_policy_explain.json`
-- `tool-contracts/mac_pr_prepare.json`
-- `tool-contracts/mac_task_run.json`
+- `tool-contracts/mac_job_status.json`
 - `tool-contracts/mac_test_run.json`
