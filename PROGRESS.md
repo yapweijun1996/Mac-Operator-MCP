@@ -9,10 +9,11 @@ delegation target/sensitive-submit guards. Full regression: 1587 PASS, 18 SKIP,
 compatibility merge. The active `personal-20261002-terminal-protocol-c` snapshot
 includes the GUI patch, preserving V2/O1 state and scopes. Current Chrome
 policy-3 reusable consent is active; a live child approval was consumed with
-30-second TTL. New native LaunchServices identity reports Accessibility=false,
-Screen Recording=false despite the stale enabled entry in Settings. Owner must
-re-add the installed Mac Operator GUI.app in both TCC panes; then run live MCP
-focus, AX/screenshot observe, safe action, type and postcondition readback.
+30-second TTL. After owner system authentication, the exact installed
+Mac Operator GUI.app was removed/re-added in both TCC panes. Production
+LaunchServices readback now reports Accessibility=true, Screen Recording=true.
+Live MCP focus, AX/screenshot observe, safe action, type and postcondition
+readback remain for owner acceptance.
 The owner requested deployment, commit and main merge without additional tests
 and will perform live acceptance. GUI end-to-end success remains unverified. Details:
 `evidence/2026-10-02-chrome-gui-reusable-grant.md`.

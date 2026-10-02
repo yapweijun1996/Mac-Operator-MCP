@@ -2,8 +2,8 @@
 
 Status: implementation deployed; owner acceptance pending. The owner requested
 commit and main merge without additional tests and will perform the final live
-Chrome verification. Native TCC renewal and the post-deployment MCP interaction
-sequence remain pending. The GUI patch is committed separately from unrelated
+Chrome verification. Native TCC renewal is complete; the post-deployment MCP
+interaction sequence remains pending. The GUI patch is committed separately from unrelated
 working-tree changes; the deployed GUI manifest records its source revision.
 
 ## Root cause and current deployment
@@ -89,14 +89,17 @@ windows/overlays. Apple reference:
 
 Installed/build executable SHA-256:
 `112dabaa5891a03b8db25ea7b14eec85dbcc5e6f7ba4d4fda10229777580538c`.
-The bundle is ad-hoc signed; native replacement changed its TCC identity. Direct
+The bundle is ad-hoc signed; native replacement changed its TCC identity. Before renewal, direct
 interactive execution reported true/true, but **the production LaunchServices
 launcher reported false/false**. System Settings still showed its old entry on.
 Direct launch is not authoritative service permission evidence.
 
-Required owner step: remove/re-add only the exact installed application in
+Completed renewal: the owner performed the macOS system authentication, then
+only the exact installed application was removed/re-added and enabled in
 System Settings -> Privacy & Security -> Accessibility and Screen & System Audio
-Recording, then enable it. Do not rebuild/reinstall again after renewal. No Node
+Recording. The production gui_launcher permission probe now reports
+Accessibility=true and Screen Recording=true, matching direct launch. No native
+rebuild or service restart was needed. Do not rebuild/reinstall again after renewal. No Node
 grant, TCC database edit, SIP change or password access was performed.
 
 ## Tests and observed live evidence
@@ -142,7 +145,9 @@ After final deployment:
 - Focus `887f1ca7-c460-4da7-a7cc-45c7d912a545`: POLICY_DENIED, Accessibility
   missing. Read-only approval metadata proves its exact Chrome child approval
   was issued and consumed, trusted_gui, TTL 30000 ms, use limit/used count 1/1.
-  The missing-grant blocker is resolved; the new TCC binding remains pending.
+  The missing-grant blocker was resolved; the new TCC binding was renewed later
+  through System Settings as recorded above. This failed historical focus call
+  has not been rerun after renewal.
 - Auth metadata shows policy-3 Chrome consent unrevoked; old policy-1 revoked.
 - The initial GUI rollout selected `personal-20261002-gui-a`. The current
   PM2 release is `personal-20261002-terminal-protocol-c`, carrying forward the
@@ -181,7 +186,7 @@ this evidence file and an additive progress entry. Unrelated pre-existing progre
 and evidence changes are preserved. No new dependency, shell interface or OAuth
 scope was added; no secrets were printed.
 
-Remaining: renew final native TCC identity, then use this same MCP connector for
+Remaining owner acceptance: use this same MCP connector for
 health -> inventory -> focus -> active_window AX tree/JPEG -> safe click/focus
 -> reobserve -> harmless text in a non-secure fixture -> reobserve and visibly
 verify the exact text. Also check selected_window readback, metadata-only

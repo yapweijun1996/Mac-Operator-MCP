@@ -12,8 +12,9 @@ match the workspace; `GUI-HOTFIX.json` records their committed source revision.
 The V2/O1 state, OAuth connections, signed policy and scopes are preserved.
 The original GUI rollout backup is under `MacOperator/backups/gui-20261002`.
 It predates the terminal compatibility update; use the current release for any
-new rollback baseline. The native app update needs TCC re-binding. Prior GUI
-regression passed; the owner requested no additional tests and will perform
+new rollback baseline. The native app TCC binding has been renewed; production
+LaunchServices permission readback reports Accessibility and Screen Recording
+granted. Prior GUI regression passed; the owner requested no additional tests and will perform
 live GUI acceptance. See the
 [repair evidence](../evidence/2026-10-02-chrome-gui-reusable-grant.md).
 
