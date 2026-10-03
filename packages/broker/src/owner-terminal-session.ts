@@ -11,6 +11,9 @@ const MAX_WRITE_BYTES = 4_096;
 const MAX_READ_BYTES = 32_768;
 const RING_BYTES = 262_144;
 const MAX_LIFETIME_MS = 600_000;
+// A trailing token this long may be a secret split across reads; it is withheld once.
+const SECRET_HOLD_MIN_BYTES = 8;
+const SECRET_HOLD_MAX_BYTES = 256;
 const FINISHED_RETENTION_MS = 60_000;
 
 /**
@@ -186,6 +189,8 @@ interface Session {
   inputEnded: boolean;
   failureRequested?: boolean;
   idleNotified?: boolean;
+  /** End offset at which a possible secret prefix was last withheld; the next read with no new output releases it. */
+  heldAtOffset?: number;
   result?: ProcessExecutionResult;
   finalizationError?: BrokerError;
   retainTimer?: NodeJS.Timeout;
@@ -332,10 +337,34 @@ export class OwnerTerminalSessionManager {
       slice = slice.subarray(0, end);
       truncated = true;
     }
+    if (session.result === undefined) slice = slice.subarray(0, this.safeReadEnd(session, slice));
     const redacted = redactBoundedText(slice.toString("utf8"), MAX_READ_BYTES * 2);
     const base = { data: redacted.text, nextCursor: from + slice.byteLength, droppedBytes: dropped,
       truncated: truncated || redacted.truncated, finished: session.result !== undefined };
     return session.result === undefined ? base : { ...base, state: session.result.state, exitCode: session.result.exitCode };
+  }
+
+  /**
+   * While output may still grow, a read must not end inside a UTF-8 sequence or inside a
+   * long token that could be the first half of a secret: the cursor would advance past
+   * bytes that can no longer be decoded or redacted in context.
+   */
+  private safeReadEnd(session: Session, slice: Buffer): number {
+    let end = slice.byteLength;
+    for (let back = 1; back <= Math.min(3, end); back += 1) {
+      const byte = slice[end - back]!;
+      if ((byte & 0xc0) === 0x80) continue;
+      const needed = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+      if (needed > back) end -= back;
+      break;
+    }
+    let run = 0;
+    while (run < end && run <= SECRET_HOLD_MAX_BYTES && slice[end - 1 - run]! > 0x20) run += 1;
+    if (run >= SECRET_HOLD_MIN_BYTES && run <= SECRET_HOLD_MAX_BYTES && session.heldAtOffset !== session.endOffset) {
+      session.heldAtOffset = session.endOffset;
+      end -= run;
+    }
+    return end;
   }
 
   describe(ownerId: string, sessionId: string): { tag: string; finished: boolean } {

@@ -35,7 +35,7 @@ function controlledSupervisor() {
   return { supervisor: {
     run(value: ProcessExecutionRequest) { request = value; return new Promise<ProcessExecutionResult>((yes, no) => { resolve = yes; reject = no; }); },
     async close() { resolve({ ...completed, state: "cancelled", resultClass: "CANCELLED" }); }
-  }, ready() { request!.onStdinReady!({ write: () => true, end: () => undefined }); }, finish(result = completed) { resolve(result); },
+  }, emit(chunk: Buffer) { request!.onOutputChunk!(chunk); }, ready() { request!.onStdinReady!({ write: () => true, end: () => undefined }); }, finish(result = completed) { resolve(result); },
   fail(error: unknown) { reject(error); }, get started() { return request !== undefined; } };
 }
 
@@ -239,5 +239,49 @@ test("session shell PATH ends with the owner's user bin directory", { skip: !sup
     assert.ok(path.startsWith("/opt/homebrew/bin:"), path);
     assert.ok(path.endsWith(`${homedir()}/.local/bin`), path);
     manager.stop("owner", sessionId);
+  } finally { await manager.close(); }
+});
+
+test("reads never split a UTF-8 sequence while output is still arriving", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp" });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    const bytes = Buffer.from("你好世界");
+    const reader = collector(manager, "owner", sessionId);
+    controlled.emit(bytes.subarray(0, 4));
+    reader.poll();
+    controlled.emit(bytes.subarray(4, 7));
+    reader.poll();
+    controlled.emit(bytes.subarray(7));
+    reader.poll();
+    assert.equal(reader.text, "你好世界");
+  } finally { await manager.close(); }
+});
+
+test("a secret split across reads is withheld until it can be redacted whole", { skip: !supported }, async () => {
+  const controlled = controlledSupervisor();
+  const manager = new OwnerTerminalSessionManager({ enabled: true, supervisor: controlled.supervisor });
+  try {
+    const start = manager.start("owner", { ...base, cwd: "/tmp" });
+    await waitFor(() => controlled.started);
+    controlled.ready();
+    const { sessionId } = await start;
+    const secret = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    const reader = collector(manager, "owner", sessionId);
+    controlled.emit(Buffer.from(`token ${secret.slice(0, 20)}`));
+    reader.poll();
+    controlled.emit(Buffer.from(`${secret.slice(20)}\n`));
+    reader.poll();
+    assert.doesNotMatch(reader.text, /ghp_|I9j0K1l2/u);
+    assert.match(reader.text, /\[REDACTED\]/u);
+    // With no further output a held tail is released rather than stalling the reader.
+    controlled.emit(Buffer.from("longprompt_without_space"));
+    reader.poll();
+    reader.poll();
+    assert.match(reader.text, /longprompt_without_space$/u);
   } finally { await manager.close(); }
 });
