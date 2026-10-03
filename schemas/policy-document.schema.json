@@ -54,7 +54,23 @@
           "scope": { "$ref": "#/$defs/scope" },
           "target": { "$ref": "#/$defs/target" },
           "target_constraint": { "$ref": "#/$defs/target_constraint" }
-        }
+        },
+        "allOf": [{
+          "if": {
+            "properties": { "target": {
+              "type": "object",
+              "properties": { "kind": { "enum": ["app", "app_window"] }, "reference": { "const": "desktop" } },
+              "required": ["kind", "reference"]
+            } },
+            "required": ["target"]
+          },
+          "then": {
+            "properties": {
+              "scope": { "enum": ["mac.app.control", "mac.ui.observe", "mac.ui.control"] },
+              "target_constraint": false
+            }
+          }
+        }]
       }
     },
     "filesystem_roots": {
@@ -124,7 +140,7 @@
       "allOf": [
         {
           "if": { "properties": { "kind": { "const": "app" } }, "required": ["kind"] },
-          "then": { "properties": { "reference": { "type": "string", "pattern": "^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$" } } }
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^(desktop|bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255})$" } } }
         },
         {
           "if": { "properties": { "kind": { "const": "app_set" } }, "required": ["kind"] },
@@ -132,7 +148,7 @@
         },
         {
           "if": { "properties": { "kind": { "const": "app_window" } }, "required": ["kind"] },
-          "then": { "properties": { "reference": { "type": "string", "pattern": "^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$" } } }
+          "then": { "properties": { "reference": { "type": "string", "pattern": "^(desktop|window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255})$" } } }
         },
         {
           "if": { "properties": { "kind": { "const": "host" } }, "required": ["kind"] },

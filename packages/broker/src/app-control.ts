@@ -1,4 +1,5 @@
 import { guiWindowFields, nativeWindowIdentity, throwGuiWindowError } from "./gui-window.js";
+import { assertGuiIdentityContext } from "./desktop-ui.js";
 import { GuiProcessSupervisor } from "./gui-process-supervisor.js";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
@@ -204,7 +205,9 @@ export function parseAppFocusResult(result: ProcessExecutionResult, appId: strin
   }
   const windowTitle = redactLogText(record.window_title.replace(/[\u0000-\u001f\u007f]/gu, "�").slice(0, 512));
   if (windowTitle.text.length > 0) validateSensitiveUiTarget(appId, windowTitle.text);
-  const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle.text, nativeWindowIdentity(record, true));
+  const identity = nativeWindowIdentity(record, true);
+  assertGuiIdentityContext(appId, identity);
+  const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle.text, identity);
   return {
     appId,
     windowId,

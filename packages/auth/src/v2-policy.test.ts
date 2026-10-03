@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
-import { FilesystemInspector, PolicyBundleVerifier, type PolicyDocument, type SignedPolicyBundle } from "@mac-operator/broker";
+import { authorizeTarget, FilesystemInspector, PolicyBundleVerifier, type PolicyDocument, type SignedPolicyBundle } from "@mac-operator/broker";
 import { configSchema, O1_SCOPES, O1_TOOLS, OAUTH_SCOPES, recordSchemas, scopesForGrantProfile, V2_SCOPES, V2_CODING_SCOPES, V2_TOOLS } from "./contracts.js";
 import { assertO1Policy, buildO1TargetRules, w1FilesystemRoots } from "./w1-policy.js";
 import { assertV2Policy, buildV2PolicyDocument, buildV2TargetRules, v2FilesystemRoots, type V2PolicyConfiguration } from "./v2-policy.js";
@@ -72,6 +72,28 @@ test("signed V2 policy matches fixed projects, finite task profiles and enabled 
     assert.equal(document.revision, f.base.revision); assert.equal(document.issued_at_ms, f.base.issued_at_ms);
     assert.deepEqual(document.trusted_edge_keys, f.base.trusted_edge_keys);
     assert.equal(f.base.principal_grants[0]?.scopes.includes("mac.agent.run"), false);
+  } finally { await f.close(); }
+});
+
+test("V2 desktop GUI opt-in preserves coding isolation and never changes the legacy default", async () => {
+  const f = await fixture();
+  try {
+    const legacy = f.document();
+    const document = buildV2PolicyDocument(f.base, "owner-1", "mac-operator-auth", f.config, "desktop");
+    const policy = f.verify(document);
+    assert.doesNotThrow(() => assertV2Policy(policy, "owner-1", "mac-operator-auth", f.config, "desktop"));
+    assert.throws(() => assertV2Policy(policy, "owner-1", "mac-operator-auth", f.config), /target rules mismatch/u);
+    assert.throws(() => assertV2Policy(f.verify(legacy), "owner-1", "mac-operator-auth", f.config, "desktop"), /target rules mismatch/u);
+    assert.equal(legacy.target_rules.some(rule => rule.target.reference === "desktop"), false);
+    assert.deepEqual(document.filesystem_roots, legacy.filesystem_roots);
+    assert.deepEqual(document.principal_grants, legacy.principal_grants);
+    assert.deepEqual(document.tool_enablement, legacy.tool_enablement);
+    assert.deepEqual(document.kill_switches, legacy.kill_switches);
+    assert.deepEqual(document.target_rules.filter(rule => !rule.rule_id.startsWith("owner-g1-")),
+      legacy.target_rules.filter(rule => !rule.rule_id.startsWith("owner-g1-")));
+    assert.doesNotThrow(() => authorizeTarget(policy, "owner-1", ["mac.ui.observe"], {
+      kind: "app_window", reference: "window:bundle:com.apple.TextEdit"
+    }));
   } finally { await f.close(); }
 });
 

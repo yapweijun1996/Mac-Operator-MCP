@@ -55,10 +55,12 @@ export const configSchema = z.object({
   port: z.number().int().min(1024).max(65535),
   allowedRedirectUris: z.array(redirectUrl).min(1).max(16),
   grantProfile: z.enum(["r1", "w1", "g1", "o1", "d1", "v2"]).default("r1"),
+  guiAccess: z.enum(["browsers", "desktop"]).optional(),
   ownerTerminalConnection: z.boolean().optional()
 }).strict().refine(value => value.resource === new URL("mcp", value.issuer).href &&
   (new URL(value.issuer).pathname === "/" || (value.grantProfile === "o1" && value.ownerTerminalConnection !== true)) &&
-  (value.ownerTerminalConnection !== true || value.grantProfile === "v2"));
+  (value.ownerTerminalConnection !== true || value.grantProfile === "v2") &&
+  (value.guiAccess !== "desktop" || ["g1", "o1", "v2"].includes(value.grantProfile)));
 export type AuthConfig = z.infer<typeof configSchema>;
 export function ownerTerminalAuthConfig(config: AuthConfig): AuthConfig {
   if (config.grantProfile !== "v2" || config.ownerTerminalConnection !== true) throw new Error("Separate owner terminal consent is not enabled");
@@ -76,6 +78,8 @@ export const recordSchemas = {
   browser_grant: z.object({ id: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u), principalId: id, sessionId: id,
     appId: z.enum(["bundle:com.google.Chrome", "bundle:com.apple.Safari"]), policyVersion: id,
     consentRequestId: id, createdAt: time, revoked: z.boolean() }).strict(),
+  desktop_grant: z.object({ id: z.string().regex(/^gui-session:[a-f0-9-]{36}$/u), principalId: id,
+    policyVersion: id, consentRequestId: id, createdAt: time, revoked: z.boolean() }).strict(),
   code: z.object({ clientId: id, redirectUri: redirectUrl, challenge: z.string(), scopes, grantId: id, principalId: id, expiresAt: time, resource: httpsUrl.optional() }).strict(),
   grant: z.object({ clientId: id, principalId: id, scopes, expiresAt: time, revoked: z.boolean(), resource: httpsUrl.optional() }).strict(),
   refresh: z.object({ clientId: id, grantId: id, expiresAt: time, consumed: z.boolean() }).strict()

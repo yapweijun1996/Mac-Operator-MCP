@@ -143,7 +143,7 @@ export async function runAuthCli(args: string[], runtime: { approvalBridge?: App
       saveExclusive(join(directory, "broker-policy-input.json"), JSON.stringify({
         principal: { principal_id: config.principalId, issuer: config.issuerId, scopes: scopesForGrantProfile(config.grantProfile), enabled: true },
         target_rules: grantProfile === "w1" || grantProfile === "g1" || grantProfile === "o1"
-          ? grantProfile === "o1" ? buildO1TargetRules(config.principalId, filesystemRoots, projectRoot) : grantProfile === "g1" ? buildG1TargetRules(config.principalId, filesystemRoots, projectRoot) : buildW1TargetRules(config.principalId, filesystemRoots, projectRoot)
+          ? grantProfile === "o1" ? buildO1TargetRules(config.principalId, filesystemRoots, projectRoot, config.guiAccess) : grantProfile === "g1" ? buildG1TargetRules(config.principalId, filesystemRoots, projectRoot, config.guiAccess) : buildW1TargetRules(config.principalId, filesystemRoots, projectRoot)
           : buildR1TargetRules(config.principalId, filesystemRoots, projectRoot),
         enabled_tools: grantProfile === "o1" ? O1_TOOLS : grantProfile === "g1" ? G1_TOOLS : grantProfile === "w1" ? W1_TOOLS : READ_TOOLS,
         filesystem_roots: filesystemRoots

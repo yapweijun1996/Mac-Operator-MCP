@@ -23,9 +23,9 @@
   "audit_class": "gui_control",
   "tool_delivery_wave": "wave_4",
   "implementation_status": "planned",
-  "purpose": "Perform one bounded Accessibility or visual mouse, scroll, or keyboard action on an authorized observed browser window.",
-  "input_summary": "element_ref:string, action:bounded enum, x/y?:global macOS screen points, dx/dy?:scroll pixels, key?:allowlisted key, wait_ms?:0..2000.",
-  "output_summary": "Accepted bounded action, browser focus readback, and for visual actions a fresh screenshot returned as MCP image content.",
+  "purpose": "Perform one bounded Accessibility or visual action using a fresh authorized application or explicitly delegated desktop observation. Secure targets, protected sessions and sensitive submissions retain their existing approval boundaries.",
+  "input_summary": "element_ref:observed element or visual_ref, action:bounded enum, x/y?:global macOS screen points -20000..20000, dx/dy?:scroll pixels, key?:allowlisted key, wait_ms?:0..2000.",
+  "output_summary": "Accepted bounded action, application focus readback, and for visual actions a fresh screenshot returned as MCP image content.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_ui_action input",
@@ -34,6 +34,7 @@
     "properties": {
       "element_ref": {
         "type": "string",
+        "description": "A fresh observed Accessibility element_ref or screenshot visual_ref owned by this authenticated session. Desktop actions use the observed display visual_ref; arbitrary unobserved coordinates are unavailable.",
         "minLength": 1,
         "maxLength": 256,
         "pattern": "^[A-Za-z0-9._:/-]+$"
@@ -57,15 +58,15 @@
         ]
       },
       "x": {
-        "description": "Global macOS screen point. Use an active_window or selected_window capture, then convert image pixel ix with floor(window_x + ix * window_width / image_width).",
+        "description": "Global macOS screen point -20000..20000, including secondary-display negative origins. Use an application window capture or desktop screen capture, then convert image pixel ix with floor(window_x + ix * window_width / image_width). Must stay within the observed target bounds.",
         "type": "integer",
-        "minimum": 0,
+        "minimum": -20000,
         "maximum": 20000
       },
       "y": {
-        "description": "Global macOS screen point. Use an active_window or selected_window capture, then convert image pixel iy with floor(window_y + iy * window_height / image_height).",
+        "description": "Global macOS screen point -20000..20000, including secondary-display negative origins. Use an application window capture or desktop screen capture, then convert image pixel iy with floor(window_y + iy * window_height / image_height). Must stay within the observed target bounds.",
         "type": "integer",
-        "minimum": 0,
+        "minimum": -20000,
         "maximum": 20000
       },
       "dx": {

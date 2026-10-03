@@ -28,6 +28,7 @@ import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
 import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
 import { upgradePersonalTerminalSessions } from "./personal-terminal-session-upgrade.js";
+import { upgradePersonalComputerUse } from "./personal-computer-use-upgrade.js";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
 import { createProcessApprovalBrowserBridge, parseApprovalBrowserRequest } from "./approval-browser-bridge.js";
@@ -65,7 +66,7 @@ async function provision(root: string, revision: string) {
     trusted_edge_keys: [{ edge_id: "personal-edge", key_id: "personal-edge-1", not_before_ms: now - 5000, expires_at_ms: now + 365 * 86400000 }],
     principal_grants: [{ principal_id: auth.principalId, issuer: auth.issuerId, scopes: [...scopes], enabled: true }],
     target_rules: writeProfile
-      ? terminalProfile ? buildO1TargetRules(auth.principalId, filesystemRoots, projectRoot) : guiProfile ? buildG1TargetRules(auth.principalId, filesystemRoots, projectRoot) : buildW1TargetRules(auth.principalId, filesystemRoots, projectRoot)
+      ? terminalProfile ? buildO1TargetRules(auth.principalId, filesystemRoots, projectRoot, auth.guiAccess) : guiProfile ? buildG1TargetRules(auth.principalId, filesystemRoots, projectRoot, auth.guiAccess) : buildW1TargetRules(auth.principalId, filesystemRoots, projectRoot)
       : buildR1TargetRules(auth.principalId, filesystemRoots, projectRoot),
     filesystem_roots: filesystemRoots, tool_enablement: enabledTools.map(tool => ({ tool, enabled: true })),
     kill_switches: { global: false, mutations: !writeProfile, process: false, network: false, gui: !guiProfile, destructive: true, privileged: true } };
@@ -172,9 +173,9 @@ async function start(root: string) {
     if (writeProfile) {
       if (developmentConfig) {
         if (verified.policy.filesystemRoots.find(root => root.rootId === "owner-project")?.path !== developmentConfig.ownerProjectRoot) throw new Error("Development owner project binding changed");
-        assertV2Policy(verified.policy, config.principalId, config.issuerId, developmentPolicyConfiguration(developmentConfig));
-      } else if (terminalProfile) assertO1Policy(verified.policy, config.principalId, config.issuerId);
-      else if (guiProfile) assertG1Policy(verified.policy, config.principalId, config.issuerId);
+        assertV2Policy(verified.policy, config.principalId, config.issuerId, developmentPolicyConfiguration(developmentConfig), config.guiAccess);
+      } else if (terminalProfile) assertO1Policy(verified.policy, config.principalId, config.issuerId, config.guiAccess);
+      else if (guiProfile) assertG1Policy(verified.policy, config.principalId, config.issuerId, config.guiAccess);
       else assertW1Policy(verified.policy, config.principalId, config.issuerId);
     } else {
       if (JSON.stringify(enabled) !== JSON.stringify([...READ_TOOLS].sort()) ||
@@ -201,7 +202,7 @@ async function start(root: string) {
     const bundle = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const validity = bundle.payload.trusted_edge_keys[0]!;
     if (developmentConfig) developmentRuntime = await createPersonalDevelopmentRuntime(developmentConfig, config.principalId);
-    broker = new Broker({ store, policy: verified.policy,
+    broker = new Broker({ store, policy: verified.policy, ordinaryGuiApplications: config.guiAccess === "desktop",
       ...(developmentRuntime ? { developmentGateway: developmentRuntime.gateway, taskProfileRegistry: developmentRuntime.profiles,
         taskRunner: developmentRuntime.runner, authorizeDevelopment: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
           createPersonalDevelopmentApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock"),
@@ -231,7 +232,8 @@ async function start(root: string) {
     if (terminalProfile) await broker.reconcileRestartedTaskProcesses();
     if (guiProfile) browserAuthStore = new AuthStore(join(root, "auth"));
     browserApprovalController = approvalIssuerRuntime === undefined ? undefined : createPersonalApprovalBrowserController({
-      store, ...(browserAuthStore ? { authStore: browserAuthStore } : {}), approvalIssuerRuntime, socketPath: join(runtime, "approval.sock")
+      store, ...(browserAuthStore ? { authStore: browserAuthStore } : {}), approvalIssuerRuntime, socketPath: join(runtime, "approval.sock"),
+      allowDesktop: config.guiAccess === "desktop"
     });
     const authRevocationQueue = createAuthRevocationQueue({
       isConnected: () => edge?.connected === true,
@@ -330,8 +332,8 @@ async function grantPersistentBrowserAccess(root: string, requestId: string): Pr
     const verified = await (await policyVerifier(data)).verifyFile(join(data, "policy.json"));
     new PolicyManager(verified.policy, store).restore(verified);
     if (config.grantProfile === "v2") assertV2Policy(verified.policy, config.principalId, config.issuerId,
-      developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))));
-    else (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(verified.policy, config.principalId, config.issuerId);
+      developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))), config.guiAccess);
+    else (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(verified.policy, config.principalId, config.issuerId, config.guiAccess);
     if (store.requestRecord(requestId)?.principalId !== config.principalId) throw new Error("Owner preview required");
     authStore = new AuthStore(join(root, "auth"));
     const sessions = new GuiSessionApprovals(store, async () => { throw new Error("Setup cannot issue operations"); }, Date.now, authStore);
@@ -355,6 +357,12 @@ async function main() {
     if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");
     await upgradePersonalTerminalSessions(root, packageRoot, detail);
     console.log("Owner terminal sessions enabled in offline state; existing OAuth grants keep their scopes and need no reconnect.");
+  }
+  else if (mode === "computer-use") {
+    if (!detail || process.argv[5] !== "--enable" || process.argv[6] !== "--until-revoked" || process.argv.length !== 7) {
+      throw new Error("Source revision, explicit --enable and --until-revoked required");
+    }
+    console.log(JSON.stringify({ status: "enabled", ...(await upgradePersonalComputerUse(root, packageRoot, detail)) }));
   }
   else if (mode === "terminal-connection") {
     if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");

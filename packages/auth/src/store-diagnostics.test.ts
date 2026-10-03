@@ -40,3 +40,16 @@ test("a corrupt record at startup refuses to open and reports its kind", async t
   insertRaw(directory, "grant", "bad", "not json");
   assert.throws(() => new AuthStore(directory), /record kind=grant invalid \(unparseable_json\)/u);
 });
+
+test("desktop grant enumeration validates its stored identity and seals mismatched records", async t => {
+  const directory = await privateDirectory(t);
+  const store = new AuthStore(directory, true);
+  t.after(() => store.close());
+  const id = "gui-session:12345678-1234-1234-1234-123456789abc";
+  insertRaw(directory, "desktop_grant", id, JSON.stringify({
+    id: "gui-session:22345678-1234-1234-1234-123456789abc", principalId: "owner-1",
+    policyVersion: "policy-1", consentRequestId: "owner-desktop-opt-in", createdAt: 1, revoked: false
+  }));
+  assert.throws(() => store.desktopGrants(), /^Error: Auth state unavailable$/u);
+  assert.throws(() => store.browserGrants(), /^Error: Auth state unavailable$/u);
+});

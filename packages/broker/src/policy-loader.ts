@@ -16,6 +16,7 @@ import type { BrokerStore } from "./persistence.js";
 import { cloneBrokerPolicy, validateBrokerPolicy, type BrokerPolicy, type NormalizedTarget, type PrincipalGrant, type TargetConstraint, type TargetRule } from "./policy.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 import { readProtectedFileAfterIdentity } from "./protected-file.js";
+import { isDesktopGuiPolicyScope, isDesktopGuiTargetReference } from "./target-authority.js";
 
 const require = createRequire(import.meta.url);
 const Ajv2020 = require("ajv/dist/2020").default as new (options: Record<string, unknown>) => {
@@ -313,6 +314,9 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
     if (rule.target.reference.includes("\0") || rule.target.reference.includes("*")) {
       throw new Error(`Target rule uses an unsupported reference: ${rule.rule_id}`);
     }
+    if (isDesktopGuiTargetReference(rule.target) && (!isDesktopGuiPolicyScope(rule.scope) || rule.target_constraint !== undefined)) {
+      throw new Error(`Desktop GUI target rule has incompatible authority: ${rule.rule_id}`);
+    }
     return {
       ruleId: rule.rule_id,
       effect: rule.effect,
@@ -369,10 +373,10 @@ function buildBrokerPolicy(document: PolicyDocument): BrokerPolicy {
     if (rule.target.kind === "app_set" && rule.target.reference !== "all") {
       throw new Error(`App-set target rule must use the all reference: ${rule.ruleId}`);
     }
-    if (rule.target.kind === "app" && !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(rule.target.reference)) {
+    if (rule.target.kind === "app" && rule.target.reference !== "desktop" && !/^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(rule.target.reference)) {
       throw new Error(`App target rule must use a stable bundle identity: ${rule.ruleId}`);
     }
-    if (rule.target.kind === "app_window" && !/^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(rule.target.reference)) {
+    if (rule.target.kind === "app_window" && rule.target.reference !== "desktop" && !/^window:bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u.test(rule.target.reference)) {
       throw new Error(`App-window target rule must use a stable app-window identity: ${rule.ruleId}`);
     }
   }

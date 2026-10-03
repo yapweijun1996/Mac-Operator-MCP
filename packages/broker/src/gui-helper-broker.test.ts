@@ -31,26 +31,33 @@ interface CapabilitiesData {
   permissions: { name: string; granted: boolean; reason?: string }[];
 }
 
-async function fixture(probe: GuiHelperReadinessProbe, guiEnabled = true) {
+async function fixture(probe: GuiHelperReadinessProbe, guiEnabled = true, desktop = false) {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-gui-helper-broker-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
   const base = createDefaultPolicy("edge-1", true, scopes, ["edge-key-1"], [], [], [], [], [], [], ["bundle:com.google.Chrome"]);
   const tools = new Map(base.tools);
-  for (const tool of [...ACCESSIBILITY_BOUND_GUI_TOOLS, "mac_terminal_exec"]) {
+  for (const tool of [...ACCESSIBILITY_BOUND_GUI_TOOLS, "mac_app_open", "mac_terminal_exec"]) {
     tools.set(tool, { ...tools.get(tool)!, enabled: tool === "mac_terminal_exec" || guiEnabled });
   }
   const policy = {
     ...base,
     tools,
-    targetRules: [...base.targetRules, {
+    targetRules: [...base.targetRules, ...(desktop ? [
+      { ruleId: "desktop-open", effect: "allow" as const, principalId: "principal-1", scope: "mac.app.control" as const,
+        target: { kind: "app" as const, reference: "desktop" } },
+      ...(["mac.app.control", "mac.ui.observe", "mac.ui.control"] as const).map((scope, index) => ({
+        ruleId: `desktop-window-${index}`, effect: "allow" as const, principalId: "principal-1", scope,
+        target: { kind: "app_window" as const, reference: "desktop" }
+      }))
+    ] : []), {
       ruleId: "owner-terminal", effect: "allow" as const, principalId: "principal-1",
       scope: "mac.terminal.exec" as const, target: { kind: "host" as const, reference: "owner-terminal" }
     }]
   };
   let observations = 0;
   const broker = new Broker({
-    store, policy, guiHelperReadiness: probe, guiPublicEnablement: "production", now: () => NOW,
+    store, policy, guiHelperReadiness: probe, guiPublicEnablement: "production", now: () => NOW, ordinaryGuiApplications: desktop,
     edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "edge-1", keyId: "edge-key-1", key,
       notBeforeMs: NOW - 60_000, expiresAtMs: NOW + 60_000 }]),
     ownerTerminalExecutor: {
@@ -61,6 +68,7 @@ async function fixture(probe: GuiHelperReadinessProbe, guiEnabled = true) {
     authorizeOwnerTerminal: async () => true,
     uiInspector: { async observe(appId, _windowHint, _maxNodes, _control, captureMode) {
       observations += 1;
+      if (appId === "bundle:dev.macoperator.desktop") assert.deepEqual(_control.desktopDeniedApps, []);
       assert.equal(captureMode, "none", "A denied screenshot request must not reach the GUI adapter");
       return {
         appId, windowId: "window:0123456789abcdef0123456789abcdef0123456789abcdef", windowTitle: "Example",
@@ -105,6 +113,60 @@ function ready(overrides: Partial<GuiHelperReadiness> = {}): GuiHelperReadiness 
   return { installed: true, identity_valid: true, accessibility: true, screen_recording: true,
     transport: "launchservices", ...overrides };
 }
+
+test("desktop authority fails closed for a legacy native helper while health and terminal remain enabled", async () => {
+  const context = await fixture({ async probe() { return ready({ ordinary_apps: false, reason: "GUI_HELPER_UPGRADE_REQUIRED" }); } }, true, true);
+  try {
+    const data = capabilities(await context.call("mac_capabilities"));
+    assert.equal(data.capabilities.find(value => value.name === "mac_ui_observe")?.reason, "GUI_HELPER_UPGRADE_REQUIRED");
+    assert.equal(data.capabilities.find(value => value.name === "mac_terminal_exec")?.enabled, true);
+    assert.equal((await context.call("mac_health")).ok, true);
+    const observed = await context.call("mac_ui_observe", scopes, { app_id: "com.apple.TextEdit", capture_mode: "none" });
+    assert.equal(observed.result_class, "PRECONDITION_FAILED");
+    assert.ok(!observed.ok && observed.error.message.startsWith("GUI_HELPER_UPGRADE_REQUIRED:"));
+    assert.equal(context.observations(), 0);
+  } finally { await context.close(); }
+});
+
+test("desktop public alias uses the signed application domain and cannot launch a synthetic application", async () => {
+  for (const desktop of [false, true]) {
+    const context = await fixture({ async probe() { return ready({ ordinary_apps: true, desktop_surfaces: true }); } }, true, desktop);
+    try {
+      const result = await context.call("mac_ui_observe", scopes, { app_id: "desktop", capture_mode: "none" });
+      assert.equal(result.ok, desktop, JSON.stringify(result));
+      if (result.ok) assert.equal((result.data as { app_id: string }).app_id, "bundle:dev.macoperator.desktop");
+      else assert.equal(result.result_class, "POLICY_DENIED");
+      for (const tool of ["mac_app_open", "mac_app_focus"]) {
+        const launch = await context.call(tool, scopes, { app_id: "desktop" });
+        assert.equal(launch.ok, false);
+        if (!launch.ok) assert.equal(launch.result_class, "UNSUPPORTED_CAPABILITY");
+      }
+    } finally { await context.close(); }
+  }
+});
+
+test("signed desktop authority supports ordinary application observation and capability discovery", async () => {
+  const context = await fixture({ async probe() { return ready({ ordinary_apps: true, desktop_surfaces: true }); } }, true, true);
+  try {
+    const data = capabilities(await context.call("mac_capabilities"));
+    for (const tool of ACCESSIBILITY_BOUND_GUI_TOOLS) assert.equal(data.capabilities.find(value => value.name === tool)?.enabled, true);
+    const observed = await context.call("mac_ui_observe", scopes, { app_id: "com.apple.TextEdit", capture_mode: "none" });
+    assert.equal(observed.result_class, "SUCCEEDED");
+    assert.equal(context.observations(), 1);
+    assert.equal(observed.ok && (observed.data as { app_id: string }).app_id, "bundle:com.apple.TextEdit");
+  } finally { await context.close(); }
+});
+
+test("desktop request reports actual AX denial before a missing native capability", async () => {
+  const context = await fixture({ async probe() { return ready({ accessibility: false, ordinary_apps: null,
+    reason: "ACCESSIBILITY_PERMISSION_REQUIRED" }); } }, true, true);
+  try {
+    const observed = await context.call("mac_ui_observe", scopes, { app_id: "com.apple.TextEdit", capture_mode: "none" });
+    assert.equal(observed.result_class, "POLICY_DENIED");
+    assert.ok(!observed.ok && observed.error.message.startsWith("ACCESSIBILITY_PERMISSION_REQUIRED:"));
+    assert.equal(context.observations(), 0);
+  } finally { await context.close(); }
+});
 
 const unavailableCases: { name: string; state: GuiHelperReadiness }[] = [
   { name: "missing helper", state: ready({ installed: false, identity_valid: false, accessibility: null,

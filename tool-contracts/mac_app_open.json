@@ -23,8 +23,8 @@
   "audit_class": "app_control",
   "tool_delivery_wave": "wave_4",
   "implementation_status": "planned",
-  "purpose": "Launch an allowlisted app by bundle ID, such as com.google.Chrome. Navigate URLs afterward with mac_ui_action and mac_ui_type; direct URL and document opening are unavailable.",
-  "input_summary": "app_id:bundle ID (for Chrome, com.google.Chrome).",
+  "purpose": "Launch an authorized concrete ordinary app by bundle ID, such as com.google.Chrome or com.apple.TextEdit. The desktop observation alias cannot be opened. Navigate URLs afterward with mac_ui_action and mac_ui_type; direct URL and document opening are unavailable.",
+  "input_summary": "app_id:concrete authorized bundle ID; desktop unsupported.",
   "output_summary": "launched/already-running state and verified target.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -34,7 +34,7 @@
     "properties": {
       "app_id": {
         "type": "string",
-        "description": "Use com.google.Chrome for Chrome or com.apple.Safari for Safari. A bundle: prefix is also accepted.",
+        "description": "An authorized concrete app bundle ID, such as com.google.Chrome, com.apple.Safari or com.apple.TextEdit under explicit desktop policy. A bundle: prefix is accepted; desktop is unsupported.",
         "minLength": 1,
         "maxLength": 256,
         "pattern": "^(bundle:)?[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$"

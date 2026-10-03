@@ -6,6 +6,8 @@ import { canonicalJson } from "@mac-operator/contracts";
 import { G1_SCOPES, G1_TOOLS, O1_SCOPES, O1_TOOLS, W1_SCOPES, W1_TOOLS } from "./contracts.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
 
+export type GuiAccess = "browsers" | "desktop";
+
 export function w1ProjectRoot(path: string): string {
   if (!isAbsolute(path) || resolve(path) !== path) throw new Error("Personal write project path must be absolute and canonical");
   const projectRoot = realpathSync(path);
@@ -51,9 +53,20 @@ export function buildW1TargetRules(
 export function buildG1TargetRules(
   principalId: string,
   filesystemRoots: PolicyDocument["filesystem_roots"],
-  projectRoot: string
+  projectRoot: string,
+  guiAccess: GuiAccess = "browsers"
 ): PolicyDocument["target_rules"] {
+  assertGuiAccess(guiAccess);
   const rules = buildW1TargetRules(principalId, filesystemRoots, projectRoot);
+  if (guiAccess === "desktop") {
+    rules.push(
+      { rule_id: "owner-g1-desktop-open", effect: "allow", principal_id: principalId, scope: "mac.app.control", target: { kind: "app", reference: "desktop" } },
+      { rule_id: "owner-g1-desktop-focus", effect: "allow", principal_id: principalId, scope: "mac.app.control", target: { kind: "app_window", reference: "desktop" } },
+      { rule_id: "owner-g1-desktop-observe", effect: "allow", principal_id: principalId, scope: "mac.ui.observe", target: { kind: "app_window", reference: "desktop" } },
+      { rule_id: "owner-g1-desktop-control", effect: "allow", principal_id: principalId, scope: "mac.ui.control", target: { kind: "app_window", reference: "desktop" } }
+    );
+    return rules;
+  }
   for (const appId of ["bundle:com.google.Chrome", "bundle:com.apple.Safari"]) {
     rules.push(
       { rule_id: `owner-g1-open-${appId}`, effect: "allow", principal_id: principalId, scope: "mac.app.control", target: { kind: "app", reference: appId } },
@@ -65,25 +78,32 @@ export function buildG1TargetRules(
   return rules;
 }
 
-export function buildO1TargetRules(principalId: string, filesystemRoots: PolicyDocument["filesystem_roots"], projectRoot: string): PolicyDocument["target_rules"] {
-  return [...buildG1TargetRules(principalId, filesystemRoots, projectRoot),
+export function buildO1TargetRules(principalId: string, filesystemRoots: PolicyDocument["filesystem_roots"], projectRoot: string,
+  guiAccess: GuiAccess = "browsers"): PolicyDocument["target_rules"] {
+  return [...buildG1TargetRules(principalId, filesystemRoots, projectRoot, guiAccess),
     { rule_id: "owner-terminal", effect: "allow", principal_id: principalId, scope: "mac.terminal.exec",
       target: { kind: "host", reference: "owner-terminal" } }];
 }
 
-export function assertO1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
-  assertPersonalWritePolicy(policy, principalId, issuerId, true, true);
+export function assertO1Policy(policy: BrokerPolicy, principalId: string, issuerId: string, guiAccess: GuiAccess = "browsers"): void {
+  assertPersonalWritePolicy(policy, principalId, issuerId, true, true, guiAccess);
 }
 
 export function assertW1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
   assertPersonalWritePolicy(policy, principalId, issuerId, false);
 }
 
-export function assertG1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
-  assertPersonalWritePolicy(policy, principalId, issuerId, true);
+export function assertG1Policy(policy: BrokerPolicy, principalId: string, issuerId: string, guiAccess: GuiAccess = "browsers"): void {
+  assertPersonalWritePolicy(policy, principalId, issuerId, true, false, guiAccess);
 }
 
-function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, issuerId: string, guiProfile: boolean, ownerTerminal = false): void {
+function assertGuiAccess(guiAccess: GuiAccess): void {
+  if (guiAccess !== "browsers" && guiAccess !== "desktop") throw new Error("Personal GUI access mode is invalid");
+}
+
+function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, issuerId: string, guiProfile: boolean,
+  ownerTerminal = false, guiAccess: GuiAccess = "browsers"): void {
+  assertGuiAccess(guiAccess);
   const expectedScopes = ownerTerminal ? O1_SCOPES : guiProfile ? G1_SCOPES : W1_SCOPES;
   const expectedTools = ownerTerminal ? O1_TOOLS : guiProfile ? G1_TOOLS : W1_TOOLS;
   const grants = [...policy.principalGrants.values()];
@@ -105,7 +125,7 @@ function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, is
   if (canonicalJson(actualRoots) !== canonicalJson(expectedRoots)) {
     throw new Error("Personal write filesystem roots mismatch");
   }
-  const expectedRules = ownerTerminal ? buildO1TargetRules(principalId, expectedRoots, projectRoot) : guiProfile ? buildG1TargetRules(principalId, expectedRoots, projectRoot) : buildW1TargetRules(principalId, expectedRoots, projectRoot);
+  const expectedRules = ownerTerminal ? buildO1TargetRules(principalId, expectedRoots, projectRoot, guiAccess) : guiProfile ? buildG1TargetRules(principalId, expectedRoots, projectRoot, guiAccess) : buildW1TargetRules(principalId, expectedRoots, projectRoot);
   const actualRules = policy.targetRules.map(rule => ({ rule_id: rule.ruleId, effect: rule.effect,
     principal_id: rule.principalId, scope: rule.scope, target: rule.target,
     ...(rule.targetConstraint === undefined ? {} : { target_constraint: rule.targetConstraint }) }));

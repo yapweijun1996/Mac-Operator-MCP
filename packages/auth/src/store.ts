@@ -93,6 +93,17 @@ export class AuthStore {
     } catch { this.sealed = true; throw new Error("Auth state unavailable"); }
   }
 
+  desktopGrants(): RecordValue<"desktop_grant">[] {
+    this.assertAvailable();
+    try {
+      return this.db.prepare("SELECT id, payload FROM records WHERE kind='desktop_grant'").all().map(row => {
+        const grant = recordSchemas.desktop_grant.parse(JSON.parse(String(row.payload)));
+        if (grant.id !== row.id) throw new Error("Desktop grant identity mismatch");
+        return grant;
+      });
+    } catch { this.sealed = true; throw new Error("Auth state unavailable"); }
+  }
+
   put<K extends Kind>(kind: K, key: string, value: RecordValue<K>): void {
     this.assertAvailable();
     const payload = JSON.stringify(recordSchemas[kind].parse(value));
@@ -174,7 +185,7 @@ export class AuthStore {
       const grant = recordSchemas.grant.parse(JSON.parse(row.payload));
       return grant.revoked ? [] : [{ grantId: row.id, principalId: grant.principalId, scopes: [...grant.scopes], expiresAtMs: grant.expiresAt }];
     });
-    this.write(() => this.db.exec("UPDATE records SET payload=json_set(payload,'$.revoked',json('true')) WHERE kind='grant'; UPDATE records SET payload=json_set(payload,'$.revoked',json('true')) WHERE kind='browser_grant'; DELETE FROM records WHERE kind IN ('session','approval_session','transaction','code');"));
+    this.write(() => this.db.exec("UPDATE records SET payload=json_set(payload,'$.revoked',json('true')) WHERE kind IN ('grant','browser_grant','desktop_grant'); DELETE FROM records WHERE kind IN ('session','approval_session','transaction','code');"));
     for (const notice of notices) this.queueRevocation(notice);
   }
 

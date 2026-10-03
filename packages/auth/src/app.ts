@@ -223,7 +223,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     res.set("Content-Security-Policy", contentSecurityPolicy(new URL(transaction.redirectUri).origin));
     res.type("html").send(consentPage(session.csrf, client.name, transaction.redirectUri,
       transaction.scopes.includes("mac.system.read"), config.grantProfile !== "r1",
-      transaction.scopes.includes("mac.ui.control"), transaction.scopes.includes("mac.terminal.exec"), basePath));
+      transaction.scopes.includes("mac.ui.control"), transaction.scopes.includes("mac.terminal.exec"), basePath, config.guiAccess === "desktop"));
   });
   app.post("/oauth/consent", async (req, res) => {
     const body = consentBody.parse(req.body);

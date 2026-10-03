@@ -417,7 +417,7 @@ test("visual actions validate bounds and reject secure or mismatched readback", 
   const ref = "element:0123456789abcdef0123456789abcdef0123456789abcdef";
   assert.doesNotThrow(() => validateUiVisualActionRequest(ref, "click", { x: 100, y: 200 }));
   assert.doesNotThrow(() => validateUiVisualActionRequest(ref, "shortcut", { key: "COMMAND_L" }));
-  assert.throws(() => validateUiVisualActionRequest(ref, "click", { x: -1, y: 200 }), /bounded screen coordinates/u);
+  assert.throws(() => validateUiVisualActionRequest(ref, "click", { x: -20001, y: 200 }), /bounded screen coordinates/u);
   assert.throws(() => validateUiVisualActionRequest(ref, "shortcut", { key: "COMMAND_Q" }), /not allowed/u);
   assert.throws(() => validateUiVisualActionRequest(ref, "wait", { waitMs: 2001 }), /at most two seconds/u);
   const observed = {
@@ -490,6 +490,62 @@ test("browser address input rejects executable and local URL schemes", async () 
       { timeoutMs: 10_000, shouldCancel: () => false }), /HTTPS URL/u);
   }
   assert.equal(called, false);
+});
+
+test("ordinary application text fields do not inherit browser toolbar navigation authority", async () => {
+  const ordinaryApp = "bundle:com.apple.TextEdit";
+  const windowId = opaqueWindowId(ordinaryApp, 0, "Document", nativeIdentity);
+  const snapshot = {
+    elementRef: opaqueElementId(windowId, 0, "AXTextField", "Address", false), appId: ordinaryApp, windowId,
+    windowIndex: 0, windowTitle: "Document", elementIndex: 0, role: "AXTextField", label: "Address",
+    enabled: true, focused: true, secure: false, nativeVisual: true, nativeWindowIdentity: nativeIdentity,
+    browserNavigation: true, ownerPrincipalId: "owner", ownerSessionId: "session", observedAtMs: 1000
+  };
+  const text = "file:///tmp/document";
+  let input: string | undefined;
+  const inspector = new MacUiInspectorImpl({ run: async request => {
+    input = request.stdin;
+    return success(JSON.stringify({ status: "ok", app_id: ordinaryApp, window_index: 0,
+      window_title: "Document", window_identity: nativeIdentity, element_index: 0, role: "AXTextField",
+      characters_accepted: text.length, keys_accepted: [], submitted: false, focus_confirmed: true, secure: false }));
+  } });
+  const typed = await inspector.type({ snapshot, text, keys: [], submit: false }, { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(typed.charactersAccepted, text.length);
+  assert.deepEqual(JSON.parse(input!), { text, keys: [], submit: false, navigation: false });
+});
+
+test("ordinary application window actions accept bounded global coordinates on secondary displays", async () => {
+  const ordinaryApp = "bundle:com.apple.TextEdit";
+  for (const windowX of [-1200, 1920]) {
+    const snapshot = { elementRef: "element:0123456789abcdef0123456789abcdef0123456789abcdef",
+      appId: ordinaryApp, windowId: opaqueWindowId(ordinaryApp, 0, "Document", nativeIdentity),
+      windowIndex: 0, windowTitle: "Document", elementIndex: -1, role: "VisualWindow",
+      enabled: true, focused: true, secure: false, nativeVisual: true, nativeWindowIdentity: nativeIdentity,
+      ownerPrincipalId: "owner", ownerSessionId: "session", observedAtMs: 1000,
+      screenWidth: 1440, screenHeight: 900, windowX, windowY: 30, windowWidth: 800, windowHeight: 600 };
+    let args: readonly string[] | undefined;
+    const inspector = new MacUiInspectorImpl({ run: async request => {
+      args = request.args;
+      return success(JSON.stringify({ status: "ok", app_id: ordinaryApp, window_title: "Document",
+        window_identity: nativeIdentity, action: "click", accepted: true, focused: true }));
+    } });
+    await inspector.action({ snapshot, action: "click", options: { x: windowX + 100, y: 200 } },
+      { timeoutMs: 10_000, shouldCancel: () => false });
+    assert.equal(args?.[5], String(windowX + 100));
+    args = undefined;
+    await assert.rejects(inspector.action({ snapshot, action: "click", options: { x: windowX - 1, y: 200 } },
+      { timeoutMs: 10_000, shouldCancel: () => false }), /within the observed window/u);
+    assert.equal(args, undefined);
+  }
+  assert.doesNotThrow(() => validateUiVisualActionRequest("element:0123456789abcdef0123456789abcdef0123456789abcdef", "click", { x: -20_000, y: -20_000 }));
+  assert.throws(() => validateUiVisualActionRequest("element:0123456789abcdef0123456789abcdef0123456789abcdef", "click", { x: -20_001, y: 0 }), /bounded screen coordinates/u);
+});
+
+test("ordinary application admission retains case-insensitive protected application exclusions", () => {
+  assert.doesNotThrow(() => validateSensitiveUiTarget("bundle:com.apple.TextEdit", "Ordinary document"));
+  for (const app of ["com.apple.SEcurityAGent", "COM.APPLE.KEYCHAINACCESS", "com.apple.SystemPreferences", "com.apple.loginwindow"]) {
+    assert.throws(() => validateSensitiveUiTarget(`bundle:${app}`), /Sensitive application/u);
+  }
 });
 
 test("native observation requires strict boolean truncation metadata", () => {

@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
+#import <CommonCrypto/CommonDigest.h>
 #import "gui_transport.h"
 
 static int emit(NSDictionary *value) {
@@ -15,9 +16,31 @@ static int fail(NSString *reason) {
   return emit(@{ @"status": @"error", @"error": reason });
 }
 
+static BOOL isBrowserApplication(NSString *bundleId) {
+  return [@[@"com.google.Chrome", @"com.apple.Safari"] containsObject:bundleId];
+}
+
+static BOOL isSensitiveApplicationBundle(NSString *bundleId) {
+  return [@[@"com.apple.securityagent", @"com.apple.keychainaccess", @"com.apple.passwords",
+             @"com.apple.systempreferences", @"com.apple.loginwindow"] containsObject:bundleId.lowercaseString ?: @""];
+}
+
+static BOOL isGuiBundleIdentifier(NSString *bundleId) {
+  if (bundleId == nil || bundleId.length == 0 || bundleId.length > 256) return NO;
+  NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:
+    @"^[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$" options:0 error:nil];
+  NSTextCheckingResult *match = [pattern firstMatchInString:bundleId options:0 range:NSMakeRange(0, bundleId.length)];
+  if (match == nil || match.range.location != 0 || match.range.length != bundleId.length) return NO;
+  return YES;
+}
+
+static BOOL isGuiApplicationBundle(NSString *bundleId) {
+  return isGuiBundleIdentifier(bundleId) && !isSensitiveApplicationBundle(bundleId);
+}
+
 static BOOL sensitiveTitle(NSString *title) {
   NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:
-    @"(?i)\\b(password|passcode|credential|security|privacy|private key|sign in|log in|two.factor|verification code)\\b"
+    @"(?i)\\b(passwords?|passcodes?|credentials?|security|privacy|private key|sign in|log in|two.factor|verification code)\\b"
     options:0 error:nil];
   return [pattern firstMatchInString:title options:0 range:NSMakeRange(0, title.length)] != nil;
 }
@@ -104,7 +127,8 @@ static BOOL browserNavigationAncestors(NSArray<NSString *> *roles) {
   return NO;
 }
 
-static BOOL browserNavigationElement(AXUIElementRef element) {
+static BOOL browserNavigationElement(AXUIElementRef element, NSString *bundleId) {
+  if (!isBrowserApplication(bundleId)) return NO;
   if (!textRole(attributeText(element, kAXRoleAttribute))) return NO;
   NSString *label = elementLabel(element);
   NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:
@@ -168,6 +192,15 @@ static BOOL isPassThroughDockOverlay(NSString *bundleId, NSInteger layer,
                                      pid_t hitPid, pid_t browserPid) {
   return [bundleId isEqualToString:@"com.apple.dock"] && layer == 20 &&
     browserPid > 0 && hitPid == browserPid;
+}
+
+static BOOL isDesktopPoint(CGPoint point) {
+  CGDirectDisplayID displays[64]; uint32_t count = 0;
+  if (CGGetActiveDisplayList(64, displays, &count) != kCGErrorSuccess || count == 0) return NO;
+  for (uint32_t index = 0; index < count; index++) {
+    if (CGRectContainsPoint(CGDisplayBounds(displays[index]), point)) return YES;
+  }
+  return NO;
 }
 
 static pid_t systemHitPid(CGPoint point) {
@@ -252,7 +285,7 @@ static int inspectUi(GuiWindowTarget *target, NSInteger maxNodes) {
     NSString *role = attributeText(element, kAXRoleAttribute);
     if (role.length == 0 || role.length > 128) { if (focused != NULL) CFRelease(focused); return fail(@"ax_enumeration_failed"); }
     [nodes addObject:guiNode(nodes.count, role, elementLabel(element), attributeBool(element, kAXEnabledAttribute, NO),
-      focused != NULL && CFEqual(focused, element), secure, secure ? NO : browserNavigationElement(element))];
+      focused != NULL && CFEqual(focused, element), secure, secure ? NO : browserNavigationElement(element, bundleId))];
   }
   if (focused != NULL) CFRelease(focused);
   return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
@@ -324,7 +357,7 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
     [label isEqualToString:[NSString stringWithUTF8String:expectedLabel]] &&
     ![subrole localizedCaseInsensitiveContainsString:@"secure"] && !sensitiveTitle(label) &&
     attributeBool(focused, kAXEnabledAttribute, NO) && owned;
-  id navigationElement = valid && browserNavigationElement(focused) ? (__bridge id)focused : nil;
+  id navigationElement = valid && browserNavigationElement(focused, bundleId) ? (__bridge id)focused : nil;
   CFRelease(focused);
   if (!valid) return fail(@"secure_target");
   NSMutableData *input = [NSMutableData data];
@@ -401,7 +434,7 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
       if (after != NULL) AXUIElementCopyAttributeValue(after, kAXWindowAttribute, &ownerWindow);
       BOOL owned = ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)current.axWindow);
       BOOL verified = owned && !secureElement(after) &&
-        browserNavigationElement((__bridge AXUIElementRef)navigationElement) &&
+        browserNavigationElement((__bridge AXUIElementRef)navigationElement, bundleId) &&
         navigationAddressMatches(text, attributeText((__bridge AXUIElementRef)navigationElement, kAXValueAttribute));
       if (verified) postRole = attributeText(after, kAXRoleAttribute);
       if (ownerWindow != NULL) CFRelease(ownerWindow);
@@ -506,7 +539,7 @@ static int performAction(GuiWindowTarget *target, int argc, const char *argv[]) 
   NSString *action = [NSString stringWithUTF8String:argv[5]];
   NSString *key = [NSString stringWithUTF8String:argv[10]];
   NSInteger x, y, dx, dy, waitMs;
-  if (!parseNumber(argv[6], 0, 20000, &x) || !parseNumber(argv[7], 0, 20000, &y) ||
+  if (!parseNumber(argv[6], -20000, 20000, &x) || !parseNumber(argv[7], -20000, 20000, &y) ||
       !parseNumber(argv[8], -1000, 1000, &dx) || !parseNumber(argv[9], -1000, 1000, &dy) ||
       !parseNumber(argv[11], 0, 2000, &waitMs)) return fail(@"invalid_request");
   NSUInteger selectedPosition = target.position;
@@ -515,14 +548,14 @@ static int performAction(GuiWindowTarget *target, int argc, const char *argv[]) 
   CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)selected[(id)kCGWindowBounds], &bounds);
   CGPoint point = CGPointMake(x, y);
   BOOL pointerAction = [@[@"click", @"double_click", @"right_click", @"move_pointer", @"scroll"] containsObject:action];
-  if (pointerAction && !CGRectContainsPoint(bounds, point)) return fail(@"outside_window");
+  if (pointerAction && (!CGRectContainsPoint(bounds, point) || !isDesktopPoint(point))) return fail(@"outside_window");
   for (NSUInteger index = 0; index < selectedPosition; index++) {
     NSDictionary *overlay = windows[index];
     if ([overlay[(id)kCGWindowOwnerPID] intValue] == frontmost.processIdentifier) continue;
     CGRect overlayBounds = CGRectZero;
     CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)overlay[(id)kCGWindowBounds], &overlayBounds);
     // Dock can publish a full-display layer-20 window that does not receive clicks.
-    // Exempt it only when the system-wide hit test resolves to this browser.
+    // Exempt it only when the system-wide hit test resolves to this application.
     if (pointerAction && CGRectContainsPoint(overlayBounds, point) &&
         isPassThroughDockOverlay([NSRunningApplication runningApplicationWithProcessIdentifier:
           [overlay[(id)kCGWindowOwnerPID] intValue]].bundleIdentifier,
@@ -585,8 +618,14 @@ static int performAction(GuiWindowTarget *target, int argc, const char *argv[]) 
     @"window_title": windowHint, @"window_identity": target.identity, @"action": action, @"accepted": @YES, @"focused": @YES });
 }
 
+#import "gui_desktop.h"
+
 static int executeGui(int argc, const char *argv[]) {
   @autoreleasepool {
+    if (argc == 2 && strcmp(argv[1], "capabilities") == 0) {
+      return emit(@{ @"status": @"ok", @"version": @"0.3",
+        @"features": @{ @"ordinary_apps": @YES, @"bounded_global_coordinates": @YES, @"desktop_surfaces": @YES } });
+    }
     if (argc == 2 && strcmp(argv[1], "permission") == 0) {
       return emit(@{ @"status": @"ok", @"accessibility": @(AXIsProcessTrusted()),
         @"screen_recording": @(CGPreflightScreenCaptureAccess()) });
@@ -604,8 +643,9 @@ static int executeGui(int argc, const char *argv[]) {
     NSString *mode = strcmp(argv[1], "capture") == 0 ? [NSString stringWithUTF8String:argv[2]] : @"";
     NSString *bundleId = [NSString stringWithUTF8String:argv[3]];
     NSString *windowHint = argc > 4 ? [NSString stringWithUTF8String:argv[4]] : @"";
+    if ([bundleId isEqualToString:@"dev.macoperator.desktop"]) return executeGuiDesktop(argc, argv);
     if ((strcmp(argv[1], "capture") == 0 && ![@[@"screen", @"active_window", @"selected_window"] containsObject:mode]) ||
-        ![@[@"com.google.Chrome", @"com.apple.Safari"] containsObject:bundleId] ||
+        !isGuiApplicationBundle(bundleId) ||
         (windowHint.length > 0 && sensitiveTitle(windowHint))) return fail(@"target_denied");
     if (strcmp(argv[1], "capture") == 0 && !CGPreflightScreenCaptureAccess()) return fail(@"screen_recording_permission");
     BOOL focus = strcmp(argv[1], "focus") == 0;
@@ -651,9 +691,7 @@ static int executeGui(int argc, const char *argv[]) {
         NSString *ownerId = [NSRunningApplication runningApplicationWithProcessIdentifier:
           [window[(id)kCGWindowOwnerPID] intValue]].bundleIdentifier;
         if (isExcludedScreenOverlay(ownerId, layer)) continue;
-        BOOL sensitive = sensitiveTitle(window[(id)kCGWindowName] ?: @"") ||
-          [@[@"com.apple.SecurityAgent", @"com.apple.securityagent", @"com.apple.KeychainAccess",
-             @"com.apple.systempreferences", @"com.apple.loginwindow"] containsObject:ownerId ?: @""];
+        BOOL sensitive = sensitiveTitle(window[(id)kCGWindowName] ?: @"") || isSensitiveApplicationBundle(ownerId);
         NSString *reason = screenWindowBlockReason(index < selectedPosition, layer, bounds, overlayBounds, sensitive);
         if (reason != nil) return fail(reason);
       }

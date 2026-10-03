@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { NormalizedTarget, TargetKind } from "./policy.js";
+import type { Scope } from "@mac-operator/contracts";
 
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const APP_PATTERN = /^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
@@ -11,6 +12,20 @@ const DOCKER_OBJECT_PATTERN = /^[A-Za-z0-9._:\/-]{1,256}$/u;
 const PACKAGE_PATTERN = /^[A-Za-z0-9._:@/+-]{1,255}$/u;
 const JOB_PATTERN = /^job:[A-Za-z0-9._-]{1,240}$/u;
 const PROCESS_PATTERN = /^all$|^pid:[1-9][0-9]{0,7}$/u;
+
+/** Signed owner GUI delegation; callers still resolve a concrete application. */
+export function isDesktopGuiTargetReference(target: NormalizedTarget): boolean {
+  return (target.kind === "app" || target.kind === "app_window") && target.reference === "desktop";
+}
+
+export function isDesktopGuiPolicyScope(scope: Scope): boolean {
+  return scope === "mac.app.control" || scope === "mac.ui.observe" || scope === "mac.ui.control";
+}
+
+export function isConcreteGuiTargetReference(target: NormalizedTarget): boolean {
+  return target.kind === "app" ? APP_PATTERN.test(target.reference)
+    : target.kind === "app_window" && APP_WINDOW_PATTERN.test(target.reference);
+}
 
 /** Validate the reference grammar accepted from a policy-query caller. */
 export function isPolicyQueryTargetReference(kind: TargetKind, reference: string): boolean {
@@ -47,8 +62,8 @@ export function isSignedPolicyTargetReference(target: NormalizedTarget): boolean
     case "job": return reference === "owned";
     case "task_profile": return SAFE_ID_PATTERN.test(reference);
     case "app_set": return reference === "all";
-    case "app": return APP_PATTERN.test(reference);
-    case "app_window": return APP_WINDOW_PATTERN.test(reference);
+    case "app": return reference === "desktop" || APP_PATTERN.test(reference);
+    case "app_window": return reference === "desktop" || APP_WINDOW_PATTERN.test(reference);
     case "ui_element": return UI_ELEMENT_PATTERN.test(reference);
     case "service": return SERVICE_PATTERN.test(reference) && !reference.includes("..") && !reference.includes("//");
     case "log_source": return LOG_SOURCE_PATTERN.test(reference) && !reference.includes("..");
