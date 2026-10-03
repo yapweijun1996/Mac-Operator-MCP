@@ -5,7 +5,7 @@ import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { ApprovalIssuerKeyManager, BrokerServiceInstanceLock, BrokerStore, PolicyBundleVerifier, PolicyManager,
   provisionAuthenticationKey, type SignedPolicyBundle } from "@mac-operator/broker";
 import { validateEdgeServiceStartupConfig } from "@mac-operator/edge";
-import { configSchema, V2_CODING_SCOPES, V2_TOOLS } from "./contracts.js";
+import { configSchema, developmentTools, scopesForGrantProfile } from "./contracts.js";
 import { AuthStore, assertPrivateDirectory } from "./store.js";
 import { readAuthFile } from "./cli.js";
 import { assertO1Policy } from "./w1-policy.js";
@@ -31,17 +31,17 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
     const prior = await verifier.verifyFile(join(data, "policy.json"));
     if (prior.policy.filesystemRoots.find(value => value.rootId === "owner-project")?.path !== development.ownerProjectRoot) throw new Error("Development upgrade owner project mismatch");
     if (config.grantProfile === "v2") {
-      assertV2Policy(prior.policy, config.principalId, config.issuerId, configuration, config.guiAccess);
+      assertV2Policy(prior.policy, config.principalId, config.issuerId, configuration, config.guiAccess, config.dockerReadAccess);
       if (canonicalJson(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))) !== canonicalJson(development)) throw new Error("Installed development runtime differs from retry");
       return;
     }
-    assertO1Policy(prior.policy, config.principalId, config.issuerId, config.guiAccess);
+    assertO1Policy(prior.policy, config.principalId, config.issuerId, config.guiAccess, config.dockerReadAccess);
     // Validate real Engine, image, provider and protected roots before touching signed authority.
     const runtime = await createPersonalDevelopmentRuntime(development, config.principalId);
     await runtime.runner.close(); await runtime.gateway.close();
     const original = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const now = Date.now();
-    const payload = { ...buildV2PolicyDocument(original.payload, config.principalId, config.issuerId, configuration, config.guiAccess),
+    const payload = { ...buildV2PolicyDocument(original.payload, config.principalId, config.issuerId, configuration, config.guiAccess, config.dockerReadAccess),
       revision: original.payload.revision + 1, issued_at_ms: now };
     const bytes = Buffer.from(canonicalJson(payload));
     const privateBytes = readAuthFile(join(root, "personal-policy-private.key"));
@@ -49,11 +49,11 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
     try { bundle = { ...original, payload, payload_digest: sha256(bytes), signature: sign(null, bytes, createPrivateKey(privateBytes)).toString("base64") }; }
     finally { privateBytes.fill(0); }
     const verified = verifier.verify(bundle);
-    assertV2Policy(verified.policy, config.principalId, config.issuerId, configuration, config.guiAccess);
+    assertV2Policy(verified.policy, config.principalId, config.issuerId, configuration, config.guiAccess, config.dockerReadAccess);
     const previousEdge = validateEdgeServiceStartupConfig(JSON.parse(readAuthFile(join(data, "edge-service.json")).toString()));
     if (previousEdge.dataRoot !== data || previousEdge.runtimeRoot !== join(data, "run")) throw new Error("Development migration does not relocate existing state");
     const edge = validateEdgeServiceStartupConfig({ ...previousEdge, packageRoot, contractsDirectory: join(packageRoot, "tool-contracts"),
-      sourceRevision, oauthScopes: [...V2_CODING_SCOPES], policyVersion: verified.policy.version });
+      sourceRevision, oauthScopes: [...scopesForGrantProfile("v2", config.dockerReadAccess)], policyVersion: verified.policy.version });
     const keyConfig = JSON.parse(readAuthFile(join(data, "approval-keys.json")).toString()) as { schemaVersion: "0.1"; revision: number; keys: Record<string, unknown>[] };
     if (keyConfig.keys.length !== 2 || keyConfig.keys.filter(key => key.allowUnattended === false).length !== 1 ||
         keyConfig.keys.filter(key => key.keyId === "personal-terminal-1" && key.issuerId === `terminal-approver-${sha256(config.principalId).slice(0, 32)}` && key.allowUnattended === true).length !== 1 ||
@@ -75,9 +75,9 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
     await replaceJson(join(data, "development-runtime.json"), development);
     await replaceJson(join(data, "policy.json"), bundle);
     await replaceJson(join(data, "edge-service.json"), edge);
-    await replaceJson(join(root, "auth/edge-auth-settings.json"), { ...JSON.parse(readAuthFile(join(root, "auth/edge-auth-settings.json")).toString()), grantProfile: "v2", oauthScopes: [...V2_CODING_SCOPES] });
+    await replaceJson(join(root, "auth/edge-auth-settings.json"), { ...JSON.parse(readAuthFile(join(root, "auth/edge-auth-settings.json")).toString()), grantProfile: "v2", oauthScopes: [...scopesForGrantProfile("v2", config.dockerReadAccess)] });
     await replaceJson(join(root, "auth/broker-policy-input.json"), { principal: payload.principal_grants[0], target_rules: payload.target_rules,
-      enabled_tools: [...V2_TOOLS], filesystem_roots: payload.filesystem_roots });
+      enabled_tools: [...developmentTools(config.dockerReadAccess)], filesystem_roots: payload.filesystem_roots });
     const authStore = new AuthStore(join(root, "auth"));
     let browserGrantCount = 0;
     let desktopGrantCount = 0;

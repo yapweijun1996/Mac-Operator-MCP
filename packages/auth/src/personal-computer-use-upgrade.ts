@@ -27,8 +27,8 @@ export async function upgradePersonalComputerUse(root: string, packageRoot: stri
     const runtime = config.grantProfile === "v2"
       ? developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))) : undefined;
     const assertCurrent = (policy: Parameters<typeof assertO1Policy>[0], access: "browsers" | "desktop"): void => {
-      if (runtime) assertV2Policy(policy, config.principalId, config.issuerId, runtime, access);
-      else (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(policy, config.principalId, config.issuerId, access);
+      if (runtime) assertV2Policy(policy, config.principalId, config.issuerId, runtime, access, config.dockerReadAccess);
+      else (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(policy, config.principalId, config.issuerId, access, config.dockerReadAccess);
     };
     const verifier = await PolicyBundleVerifier.createFromKeyFile({ schemaDirectory: join(packageRoot, "schemas"),
       expectedKeyId: "personal-policy-1", publicKeyPath: join(data, "policy-public.pem") });
@@ -51,9 +51,9 @@ export async function upgradePersonalComputerUse(root: string, packageRoot: stri
       const original = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
       const project = prior.policy.filesystemRoots.find(value => value.rootId === "owner-project")!.path;
       const targetRules = runtime
-        ? buildV2TargetRules(config.principalId, original.payload.filesystem_roots, project, runtime, "desktop")
+        ? buildV2TargetRules(config.principalId, original.payload.filesystem_roots, project, runtime, "desktop", config.dockerReadAccess)
         : (config.grantProfile === "o1" ? buildO1TargetRules : buildG1TargetRules)(config.principalId,
-          original.payload.filesystem_roots, project, "desktop");
+          original.payload.filesystem_roots, project, "desktop", config.dockerReadAccess);
       const guiScopes = new Set(["mac.app.control", "mac.ui.observe", "mac.ui.control"]);
       if (canonicalJson(targetRules.filter(rule => !guiScopes.has(rule.scope))) !==
           canonicalJson(original.payload.target_rules.filter(rule => !guiScopes.has(rule.scope)))) {

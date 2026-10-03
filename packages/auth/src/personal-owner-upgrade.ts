@@ -25,7 +25,7 @@ export async function upgradePersonalOwnerTerminal(root: string, packageRoot: st
       expectedKeyId: "personal-policy-1", publicKeyPath: join(data, "policy-public.pem") });
     const prior = await verifier.verifyFile(join(data, "policy.json"));
     if (config.grantProfile === "o1") {
-      try { assertO1Policy(prior.policy, config.principalId, config.issuerId, config.guiAccess); }
+      try { assertO1Policy(prior.policy, config.principalId, config.issuerId, config.guiAccess, config.dockerReadAccess); }
       catch { throw new Error("Existing O1 policy does not match; if it predates mac_terminal_session run the terminal-sessions upgrade"); }
       return;
     }

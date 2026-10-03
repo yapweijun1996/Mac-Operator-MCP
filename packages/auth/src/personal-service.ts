@@ -19,7 +19,7 @@ import { Broker, BrokerStore, BrokerServiceInstanceLock, EdgeKeyring, MacOsNativ
 import { runEdgeServiceMain, validateEdgeServiceStartupConfig, type JwtRevocationContext } from "@mac-operator/edge";
 import { assertPrivateDirectory } from "./store.js";
 import { readAuthFile, runAuthCli } from "./cli.js";
-import { configSchema, V2_SCOPES, V2_TOOLS, O1_SCOPES, O1_TOOLS, G1_SCOPES, G1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS } from "./contracts.js";
+import { configSchema, G1_SCOPES, G1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, ownerTools, scopesForGrantProfile, developmentTools, developmentPolicyScopes } from "./contracts.js";
 import { configureIssuerNetwork } from "./issuer-network.js";
 import { enableConnectionDiagnostics } from "./connection-diagnostics.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
@@ -28,6 +28,7 @@ import { upgradePersonalDevelopment } from "./personal-development-upgrade.js";
 import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
 import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
 import { upgradePersonalTerminalSessions } from "./personal-terminal-session-upgrade.js";
+import { upgradePersonalDockerRead } from "./personal-docker-upgrade.js";
 import { upgradePersonalComputerUse } from "./personal-computer-use-upgrade.js";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalIssuerRuntime } from "./personal-approval-issuer.js";
@@ -60,13 +61,13 @@ async function provision(root: string, revision: string) {
   const now = Date.now();
   const projectRoot = realpathSync(process.env.MAC_OPERATOR_PROJECT_ROOT ?? packageRoot);
   const filesystemRoots = writeProfile ? w1FilesystemRoots(w1ProjectRoot(projectRoot)) : r1FilesystemRoots();
-  const scopes = terminalProfile ? O1_SCOPES : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
-  const enabledTools = terminalProfile ? O1_TOOLS : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
+  const scopes = terminalProfile ? scopesForGrantProfile("o1", auth.dockerReadAccess) : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
+  const enabledTools = terminalProfile ? ownerTools(auth.dockerReadAccess) : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
   const policy: PolicyDocument = { schema_version: "0.1", revision: 1, audience: "mac-operator-broker", issued_at_ms: now,
     trusted_edge_keys: [{ edge_id: "personal-edge", key_id: "personal-edge-1", not_before_ms: now - 5000, expires_at_ms: now + 365 * 86400000 }],
     principal_grants: [{ principal_id: auth.principalId, issuer: auth.issuerId, scopes: [...scopes], enabled: true }],
     target_rules: writeProfile
-      ? terminalProfile ? buildO1TargetRules(auth.principalId, filesystemRoots, projectRoot, auth.guiAccess) : guiProfile ? buildG1TargetRules(auth.principalId, filesystemRoots, projectRoot, auth.guiAccess) : buildW1TargetRules(auth.principalId, filesystemRoots, projectRoot)
+      ? terminalProfile ? buildO1TargetRules(auth.principalId, filesystemRoots, projectRoot, auth.guiAccess, auth.dockerReadAccess) : guiProfile ? buildG1TargetRules(auth.principalId, filesystemRoots, projectRoot, auth.guiAccess) : buildW1TargetRules(auth.principalId, filesystemRoots, projectRoot)
       : buildR1TargetRules(auth.principalId, filesystemRoots, projectRoot),
     filesystem_roots: filesystemRoots, tool_enablement: enabledTools.map(tool => ({ tool, enabled: true })),
     kill_switches: { global: false, mutations: !writeProfile, process: false, network: false, gui: !guiProfile, destructive: true, privileged: true } };
@@ -167,14 +168,14 @@ async function start(root: string) {
     new PolicyManager(verified.policy, store).restore(verified);
     const granted = [...verified.policy.principalGrants.values()];
     if (granted.length !== 1 || granted[0]?.principalId !== config.principalId || granted[0]?.issuer !== config.issuerId ||
-        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...(developmentProfile ? V2_SCOPES : terminalProfile ? O1_SCOPES : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES)].sort())) throw new Error("Owner policy mismatch");
+        JSON.stringify([...granted[0].scopes].sort()) !== JSON.stringify([...(developmentProfile ? developmentPolicyScopes(config.dockerReadAccess) : terminalProfile ? scopesForGrantProfile("o1", config.dockerReadAccess) : guiProfile ? G1_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES)].sort())) throw new Error("Owner policy mismatch");
     const enabled = [...verified.policy.tools.values()].filter(t => t.enabled).map(t => t.tool).sort();
     const roots = verified.policy.filesystemRoots;
     if (writeProfile) {
       if (developmentConfig) {
         if (verified.policy.filesystemRoots.find(root => root.rootId === "owner-project")?.path !== developmentConfig.ownerProjectRoot) throw new Error("Development owner project binding changed");
-        assertV2Policy(verified.policy, config.principalId, config.issuerId, developmentPolicyConfiguration(developmentConfig), config.guiAccess);
-      } else if (terminalProfile) assertO1Policy(verified.policy, config.principalId, config.issuerId, config.guiAccess);
+        assertV2Policy(verified.policy, config.principalId, config.issuerId, developmentPolicyConfiguration(developmentConfig), config.guiAccess, config.dockerReadAccess);
+      } else if (terminalProfile) assertO1Policy(verified.policy, config.principalId, config.issuerId, config.guiAccess, config.dockerReadAccess);
       else if (guiProfile) assertG1Policy(verified.policy, config.principalId, config.issuerId, config.guiAccess);
       else assertW1Policy(verified.policy, config.principalId, config.issuerId);
     } else {
@@ -214,7 +215,7 @@ async function start(root: string) {
           createPersonalTerminalApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock") })(operation) } : {}),
       ...(guiProfile ? { authorizeGuiSession: operation => browserApprovalController?.authorizeGuiSession(operation) ?? Promise.resolve(false) } : {}), edgeAuthenticationKeys: new EdgeKeyring([{ edgeId: "personal-edge", keyId: "personal-edge-1", key,
       notBeforeMs: validity.not_before_ms, expiresAtMs: validity.expires_at_ms }]) });
-    const expectedTools = developmentProfile ? V2_TOOLS : terminalProfile ? O1_TOOLS : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
+    const expectedTools = developmentProfile ? developmentTools(config.dockerReadAccess) : terminalProfile ? ownerTools(config.dockerReadAccess) : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
     if (JSON.stringify([...broker.enabledRuntimeCapabilityNames()].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error("Unexpected runtime capability");
     if (guiProfile) console.log(JSON.stringify({ component: "gui_helper", ...(await broker.guiHelperStatus()) }));
     approvalIssuerRuntime = await createPersonalApprovalIssuerRuntime({
@@ -332,8 +333,8 @@ async function grantPersistentBrowserAccess(root: string, requestId: string): Pr
     const verified = await (await policyVerifier(data)).verifyFile(join(data, "policy.json"));
     new PolicyManager(verified.policy, store).restore(verified);
     if (config.grantProfile === "v2") assertV2Policy(verified.policy, config.principalId, config.issuerId,
-      developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))), config.guiAccess);
-    else (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(verified.policy, config.principalId, config.issuerId, config.guiAccess);
+      developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))), config.guiAccess, config.dockerReadAccess);
+    else (config.grantProfile === "o1" ? assertO1Policy : assertG1Policy)(verified.policy, config.principalId, config.issuerId, config.guiAccess, config.dockerReadAccess);
     if (store.requestRecord(requestId)?.principalId !== config.principalId) throw new Error("Owner preview required");
     authStore = new AuthStore(join(root, "auth"));
     const sessions = new GuiSessionApprovals(store, async () => { throw new Error("Setup cannot issue operations"); }, Date.now, authStore);
@@ -357,6 +358,10 @@ async function main() {
     if (!detail || process.argv[5] !== "--enable") throw new Error("Source revision and explicit --enable required");
     await upgradePersonalTerminalSessions(root, packageRoot, detail);
     console.log("Owner terminal sessions enabled in offline state; existing OAuth grants keep their scopes and need no reconnect.");
+  }
+  else if (mode === "docker-read") {
+    if (!detail || process.argv[5] !== "--enable" || process.argv.length !== 6) throw new Error("Source revision and explicit --enable required");
+    console.log(JSON.stringify(await upgradePersonalDockerRead(root, packageRoot, detail)));
   }
   else if (mode === "computer-use") {
     if (!detail || process.argv[5] !== "--enable" || process.argv[6] !== "--until-revoked" || process.argv.length !== 7) {

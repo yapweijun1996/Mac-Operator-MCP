@@ -20,12 +20,12 @@ import { freezeResolvedTaskProfile, type ResolvedTaskProfile } from "./task-prof
 import { type TaskIsolationProof } from "./task-runner.js";
 
 const OWNER = "physical-validation-owner";
-const ENGINE = "f8fbb9ed-402f-4ff7-b672-fc10a3401347";
+const DEFAULT_ENGINE = "f8fbb9ed-402f-4ff7-b672-fc10a3401347";
 const execFileAsync = promisify(execFile);
 const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 const failure = (code: string) => (error: unknown): boolean => error instanceof BrokerError && error.errorClass === code;
 
-export interface PhysicalContainerValidationOptions { imageId: string; socketPath: string; evidencePath?: string; }
+export interface PhysicalContainerValidationOptions { imageId: string; socketPath: string; engineId?: string; evidencePath?: string; }
 export interface PhysicalContainerEvidence {
   schemaVersion: "0.1";
   mechanism: "docker-container";
@@ -38,13 +38,15 @@ export interface PhysicalContainerEvidence {
 
 interface FixtureConfiguration {
   root: string; projectRoot: string; stateRoot: string; worktreeRoot: string;
-  imageId: string; socketPath: string; manifestSha256: string; crashWorktree: string;
+  imageId: string; engineId: string; socketPath: string; manifestSha256: string; crashWorktree: string;
 }
 
 /** Independently exercise the real host boundary; this does not enable any live MCP tool. */
 export async function runPhysicalContainerValidation(options: PhysicalContainerValidationOptions): Promise<PhysicalContainerEvidence> {
   assert.equal(process.platform, "darwin", "Physical verification requires the actual macOS host");
   assert.match(options.imageId, /^sha256:[a-f0-9]{64}$/u);
+  const engineId = options.engineId ?? DEFAULT_ENGINE;
+  assert.match(engineId, /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
   const started = Date.now();
   const root = await realpath(await mkdtemp(join(tmpdir(), "mac-operator-physical-")));
   const projectRoot = join(root, "project");
@@ -59,7 +61,7 @@ export async function runPhysicalContainerValidation(options: PhysicalContainerV
   let worker: ChildProcess | undefined;
   const engine = await physicalEngine(options.socketPath);
   try {
-    assert.equal((await engine.info()).id, ENGINE);
+    assert.equal((await engine.info()).id, engineId);
     assert.equal((await engine.inspectImage(options.imageId)).id, options.imageId);
     await Promise.all([projectRoot, stateRoot, worktreeRoot].map(path => mkdir(path, { mode: 0o700 })));
     await writeFile(join(root, "host-marker.txt"), "PUBLIC HOST FIXTURE\n", { mode: 0o600 });
@@ -83,7 +85,7 @@ export async function runPhysicalContainerValidation(options: PhysicalContainerV
     await writeFile(join(first, ".ssh", "id_rsa"), "PUBLIC INNOCUOUS FIXTURE\n", { mode: 0o600 });
     await writeFile(join(first, ".env"), "PUBLIC_FIXTURE=present\n", { mode: 0o600 });
     await symlink(join(root, "host-marker.txt"), join(first, "host-link"));
-    const config: FixtureConfiguration = { root, projectRoot, stateRoot, worktreeRoot, imageId: options.imageId,
+    const config: FixtureConfiguration = { root, projectRoot, stateRoot, worktreeRoot, imageId: options.imageId, engineId,
       socketPath: options.socketPath, manifestSha256: sha256(manifest), crashWorktree };
     const registry = physicalRegistry(config, engine, worktrees, scripts);
     runner = physicalRunner(config, engine, registry, owned => { detachedStarted.add(owned.id); });
@@ -157,7 +159,7 @@ export async function runPhysicalContainerValidation(options: PhysicalContainerV
     store.close(); store = undefined;
     await worktrees.close(); worktrees = undefined;
     await writeFile(join(root, "fixture.json"), JSON.stringify(config), { mode: 0o600 });
-    const workerOptions: ForkOptions & { shell: false } = { shell: false, cwd: root, stdio: ["ignore", "pipe", "pipe", "ipc"],
+    const workerOptions: ForkOptions & { shell: false } = { shell: false, cwd: root, execArgv: [], stdio: ["ignore", "pipe", "pipe", "ipc"],
       env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" } };
     worker = fork(fileURLToPath(import.meta.url), ["--physical-crash-worker", root], workerOptions);
     const exit = new Promise<void>(resolve => worker!.once("exit", () => resolve()));
@@ -187,7 +189,7 @@ export async function runPhysicalContainerValidation(options: PhysicalContainerV
     assert.equal((await readFile(join(second, "public.txt"), "utf8")), "PUBLIC WORKSPACE FIXTURE\n");
     checks.push({ name: "primary_repository_and_host_worktree_content_unchanged", status: "pass" });
     const evidence: PhysicalContainerEvidence = { schemaVersion: "0.1", mechanism: "docker-container", imageId: options.imageId,
-      engineId: ENGINE, nodeVersion: observed.nodeVersion, durationMs: Date.now() - started, checks };
+      engineId, nodeVersion: observed.nodeVersion, durationMs: Date.now() - started, checks };
     if (options.evidencePath !== undefined) await writeFile(options.evidencePath, JSON.stringify(evidence, null, 2) + "\n", { mode: 0o600, flag: "wx" });
     return evidence;
   } finally {
@@ -224,7 +226,7 @@ function physicalRegistry(config: FixtureConfiguration, engine: DockerContainerE
   const entries: ApprovedContainerTask[] = Object.keys(scripts).map(name => ({ profile: `physical.${name}`, projectRoot: config.projectRoot,
     manifestPath: "package.json", manifestSha256: config.manifestSha256, scriptName: name, scriptValue: `node ${name}.mjs`,
     command: ["/usr/local/bin/node", `${name}.mjs`], timeoutMs: name === "crash" ? 8000 : 30_000, outputCapBytes: name === "output" ? 1024 : 8192 }));
-  return new ContainerTaskProfileRegistry({ imageId: config.imageId, engineId: ENGINE, entries,
+  return new ContainerTaskProfileRegistry({ imageId: config.imageId, engineId: config.engineId, entries,
     validateWorkspace: async (cwd, project, task) => { assert.equal(project, config.projectRoot); worktrees.require(cwd, project, OWNER, task); return { owner: OWNER, isWorktree: true }; },
     validateRuntime: async (image, id, command) => (await engine.info()).id === id && (await engine.inspectImage(image)).id === image && command[0] === "/usr/local/bin/node" });
 }
@@ -234,7 +236,7 @@ function physicalRunner(config: FixtureConfiguration, engine: DockerContainerEng
   const proof: TaskIsolationProof = { schemaVersion: "0.1", sandboxMechanism: "docker-container", sandboxProfile: "docker-container",
     filesystem: "enforced", network: "enforced", credentials: "isolated", persistence: "isolated",
     credentialIsolation: "docker-container-no-host-credentials-v1", processTree: "owned", processTreePolicy: "owned_group",
-    evidenceRef: "physical-validation-harness-not-live-activation", containerImage: { imageId: config.imageId, engineId: ENGINE } };
+    evidenceRef: "physical-validation-harness-not-live-activation", containerImage: { imageId: config.imageId, engineId: config.engineId } };
   // Delay delivery of a real, verified exec response to exercise the crash window
   // while a detached child remains alive. No Engine response is fabricated.
   const observedEngine = {
@@ -257,7 +259,7 @@ function physicalRunner(config: FixtureConfiguration, engine: DockerContainerEng
       return result;
     }
   };
-  return new ContainerTaskRunner({ engine: observedEngine, imageId: config.imageId, engineId: ENGINE, enabled: true, hostEvidenceAccepted: true, isolationProof: proof,
+  return new ContainerTaskRunner({ engine: observedEngine, imageId: config.imageId, engineId: config.engineId, enabled: true, hostEvidenceAccepted: true, isolationProof: proof,
     registeredCommands: registry.names().map(name => ({ name, executable: "/usr/local/bin/node", args: [`${name.slice("physical.".length)}.mjs`], kind: "test" })) });
 }
 

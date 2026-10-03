@@ -102,10 +102,10 @@ async function terminateExactCanaryProcess(native: CanaryNativeProcessAdapter, i
   throw new Error("Exact canary process identity remained alive after targeted cleanup");
 }
 
-async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, grantProfile: GrantProfile = "r1", onGrantRevoked?: GrantRevocationListener, ownerTerminalConnection = false, callbackUri = redirectUri) {
+async function fixture(t: TestContext, approvalBridge?: ApprovalBrowserBridge, grantProfile: GrantProfile = "r1", onGrantRevoked?: GrantRevocationListener, ownerTerminalConnection = false, callbackUri = redirectUri, dockerReadAccess = false) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-auth-")));
   const redirectUri = callbackUri;
-  const config = configSchema.parse({ version: 1, issuer, resource: resource.href, issuerId: "mac-operator-auth", principalId: "owner-1", keyId: "key-1", port: 3444, allowedRedirectUris: [redirectUri], grantProfile, ...(ownerTerminalConnection ? { ownerTerminalConnection } : {}) });
+  const config = configSchema.parse({ version: 1, issuer, resource: resource.href, issuerId: "mac-operator-auth", principalId: "owner-1", keyId: "key-1", port: 3444, allowedRedirectUris: [redirectUri], grantProfile, dockerReadAccess, ...(ownerTerminalConnection ? { ownerTerminalConnection } : {}) });
   let store = new AuthStore(directory, true);
   store.put("account", "owner", { username: "owner", ...passwordRecord, principalId: config.principalId });
   const signingKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
@@ -1748,4 +1748,18 @@ test("legacy root O1 refresh grants retain their approved scopes with independen
   assert.deepEqual((decodeJwt(tokens.access_token).scope as string).split(" "), [...O1_SCOPES]);
   assert.ok(await f.provider().getAccessToken(tokens.access_token));
   assert.equal((await f.begin(clientId, { scope: O1_SCOPES.join(" ") })).status, 400);
+});
+
+
+test("Docker consent is opt-in and refresh keeps the previously approved O1 scopes", async t => {
+  const f = await fixture(t, undefined, "o1", undefined, false, redirectUri, true);
+  const metadata = await (await f.request("/.well-known/oauth-authorization-server")).json() as { scopes_supported: string[] };
+  assert.equal(metadata.scopes_supported.includes("mac.docker.read"), true);
+  const old = await f.issue(O1_SCOPES.join(" "));
+  const refreshed = await f.request("/token", { grant_type: "refresh_token", client_id: old.clientId, refresh_token: old.refresh_token, resource: resource.href });
+  assert.equal(refreshed.status, 200);
+  const token = await refreshed.json() as { access_token: string };
+  assert.equal(String(decodeJwt(token.access_token).scope).split(" ").includes("mac.docker.read"), false);
+  const fresh = await f.issue([...O1_SCOPES, "mac.docker.read"].join(" "));
+  assert.equal(String(decodeJwt(fresh.access_token).scope).split(" ").includes("mac.docker.read"), true);
 });

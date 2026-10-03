@@ -32,7 +32,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
   if (input.statusKey.length !== 32) throw new Error("Status key must be 32 bytes");
   const provider = new AuthProvider(store, config, signingKey);
   if (input.onGrantRevoked) store.setGrantRevocationListener(input.onGrantRevoked);
-  const supportedScopes = scopesForGrantProfile(config.grantProfile);
+  const supportedScopes: readonly string[] = scopesForGrantProfile(config.grantProfile, config.dockerReadAccess);
   const account = store.get("account", "owner");
   if (!account || account.principalId !== config.principalId) throw new Error("Owner account is not provisioned");
   const publicJwk = await exportJWK(createPublicKey(signingKey));

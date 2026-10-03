@@ -315,7 +315,7 @@ export class ContainerTaskRunner implements TaskRunner {
       }
       return data;
     };
-    const path = { type: "string", maxLength: 240 };
+    const path = { type: "string", maxLength: 240, description: "Workspace-relative path. Never prefix /workspace or /. Root directory listing uses an empty string." };
     const tools: CodexDynamicTool[] = [
       tool("list_files", "List authorized source files in the isolated workspace.", { path, offset: { type: "integer", minimum: 0, maximum: 10_000 }, limit: { type: "integer", minimum: 1, maximum: 100 } }, ["path"], (value, context) => fileOperation("list", value, context.signal)),
       tool("read_file", "Read a bounded UTF-8 source segment from the isolated workspace.", { path, offset: { type: "integer", minimum: 0, maximum: 8 * 1024 * 1024 }, maxBytes: { type: "integer", minimum: 1, maximum: FILE_BYTES } }, ["path"], (value, context) => fileOperation("read", value, context.signal))

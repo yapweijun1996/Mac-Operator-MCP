@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import test from "node:test";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { authorizeTarget, FilesystemInspector, PolicyBundleVerifier, type PolicyDocument, type SignedPolicyBundle } from "@mac-operator/broker";
-import { configSchema, O1_SCOPES, O1_TOOLS, OAUTH_SCOPES, recordSchemas, scopesForGrantProfile, V2_SCOPES, V2_CODING_SCOPES, V2_TOOLS } from "./contracts.js";
+import { configSchema, O1_SCOPES, O1_TOOLS, OAUTH_SCOPES, recordSchemas, scopesForGrantProfile, V2_SCOPES, V2_CODING_SCOPES, V2_TOOLS, developmentTools, developmentPolicyScopes } from "./contracts.js";
 import { assertO1Policy, buildO1TargetRules, w1FilesystemRoots } from "./w1-policy.js";
 import { assertV2Policy, buildV2PolicyDocument, buildV2TargetRules, v2FilesystemRoots, type V2PolicyConfiguration } from "./v2-policy.js";
 
@@ -217,5 +217,25 @@ test("existing signed O1 policy remains accepted only by its unchanged strict ch
     assert.doesNotThrow(() => assertO1Policy(legacy, "owner-1", "mac-operator-auth"));
     assert.throws(() => assertV2Policy(legacy, "owner-1", "mac-operator-auth", f.config), /grant mismatch/u);
     assert.throws(() => assertO1Policy(f.verify(f.document()), "owner-1", "mac-operator-auth"), /grant mismatch/u);
+  } finally { await f.close(); }
+});
+
+
+test("V2 Docker opt-in adds only read targets and preserves coding and GUI isolation", async () => {
+  const f = await fixture();
+  try {
+    const before = buildV2PolicyDocument(f.base, "owner-1", "mac-operator-auth", f.config, "desktop");
+    const after = buildV2PolicyDocument(f.base, "owner-1", "mac-operator-auth", f.config, "desktop", true);
+    const policy = f.verify(after);
+    assertV2Policy(policy, "owner-1", "mac-operator-auth", f.config, "desktop", true);
+    assert.throws(() => assertV2Policy(policy, "owner-1", "mac-operator-auth", f.config, "desktop"));
+    assert.deepEqual(after.target_rules.filter(rule => rule.scope !== "mac.docker.read"), before.target_rules);
+    assert.deepEqual(after.filesystem_roots, before.filesystem_roots);
+    assert.deepEqual(after.kill_switches, before.kill_switches);
+    assert.deepEqual(after.principal_grants[0]?.scopes, developmentPolicyScopes(true));
+    assert.deepEqual(after.tool_enablement.map(tool => tool.tool), developmentTools(true));
+    assert.equal(developmentTools(true).length, 53);
+    assert.equal(scopesForGrantProfile("v2", true).includes("mac.terminal.exec"), false);
+    assert.equal(scopesForGrantProfile("v2", true).includes("mac.docker.read"), true);
   } finally { await f.close(); }
 });

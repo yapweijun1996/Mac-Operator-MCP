@@ -149,3 +149,5 @@ owner-approved ChatGPT R1 app is connected with 17 scopes and 30 discovered
 read-only tools; an older app still retains its historical three-tool R0 grant.
 See `PROGRESS.md` and the verification matrix before treating any capability as
 released beyond that personal snapshot.
+
+See [MBA operational tool enablement](docs/mba-operational-tools.md) for explicit Docker read consent, host-bound development acceptance, and remaining planned capabilities.

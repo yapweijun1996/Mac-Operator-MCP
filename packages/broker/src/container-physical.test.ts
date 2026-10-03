@@ -9,6 +9,7 @@ test("actual Docker Engine isolates registered tasks, descendants and restart re
 }, async () => {
   const evidence = await runPhysicalContainerValidation({
     imageId: process.env.MOPS_CONTAINER_IMAGE_ID ?? "sha256:540f2d2753dc5674d05ec0cb7963a1fbb75b77f1fdeaa63c48a3825660aa01c4",
+    ...(process.env.MOPS_CONTAINER_ENGINE_ID === undefined ? {} : { engineId: process.env.MOPS_CONTAINER_ENGINE_ID }),
     socketPath: join(homedir(), ".docker", "run", "docker.sock"),
     ...(process.env.MOPS_CONTAINER_EVIDENCE_PATH === undefined ? {} : { evidencePath: process.env.MOPS_CONTAINER_EVIDENCE_PATH })
   });

@@ -29,7 +29,7 @@ function codingInstructions(profile: CodexControllerRun["executionProfile"], too
     : profile === "test-only"
       ? "Source writes are unavailable. Only supplied read tools and registered test commands are authorized."
       : "Source writes and command execution are unavailable. Use only the supplied read tools.";
-  return `${INSTRUCTIONS} The logical isolated project workspace is /workspace; tool paths are relative to it. ` +
+  return `${INSTRUCTIONS} The logical isolated project workspace is /workspace; all file-tool path arguments must be workspace-relative, never absolute. For list_files at the workspace root use path=\"\"; for a file use path=\"public.txt\", never /workspace/public.txt. ` +
     `Execution profile: ${profile}. ${authority} ` +
     "The controller's host permission profile denies direct host access. It does not restrict separately authorized gateway tool operations inside /workspace. " +
     `Exact supplied gateway tool names: ${[...toolNames].join(", ") || "none"}. Do not invent gateway aliases or infer gateway write denial from the host permission profile.`;

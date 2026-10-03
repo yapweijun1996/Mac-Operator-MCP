@@ -9,7 +9,7 @@ import { existsSync } from "node:fs";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { readAuthFile } from "../packages/auth/dist/cli.js";
 import { AuthStore } from "../packages/auth/dist/store.js";
-import { configSchema, ownerTerminalAuthConfig, V2_TOOLS, O1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, scopesForGrantProfile } from "../packages/auth/dist/contracts.js";
+import { configSchema, ownerTerminalAuthConfig, V2_TOOLS, O1_TOOLS, READ_SCOPES, READ_TOOLS, W1_READ_SCOPES, W1_SCOPES, W1_TOOLS, scopesForGrantProfile, ownerTools, developmentTools } from "../packages/auth/dist/contracts.js";
 import { configureIssuerNetwork } from "../packages/auth/dist/issuer-network.js";
 import { decodeJwt } from "jose";
 import { DatabaseSync } from "node:sqlite";
@@ -33,9 +33,9 @@ async function run() {
   const developmentProbe = config.grantProfile === "v2" && process.env.MOPS_VERIFY_DEVELOPMENT === "1";
   const fullCodingProfile = config.grantProfile === "v2" && process.env.MOPS_VERIFY_FULL_SCOPES === "1";
   const guiProfile = config.grantProfile === "g1" || config.grantProfile === "o1" || config.grantProfile === "v2";
-  const metadataScopes = scopesForGrantProfile(config.grantProfile);
+  const metadataScopes = scopesForGrantProfile(config.grantProfile, config.dockerReadAccess);
   const expectedScopes = developmentProbe || fullCodingProfile ? metadataScopes : terminalProbe ? metadataScopes : guiProfile ? W1_READ_SCOPES : writeProfile ? W1_SCOPES : READ_SCOPES;
-  let expectedTools = developmentProbe || fullCodingProfile ? V2_TOOLS.filter(tool => tool !== "mac_terminal_exec" && tool !== "mac_terminal_session") : terminalProbe ? O1_TOOLS : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
+  let expectedTools = developmentProbe || fullCodingProfile ? developmentTools(config.dockerReadAccess).filter(tool => tool !== "mac_terminal_exec" && tool !== "mac_terminal_session") : terminalProbe ? ownerTools(config.dockerReadAccess) : guiProfile ? READ_TOOLS.filter(tool => !tool.startsWith("mac_docker_")) : writeProfile ? W1_TOOLS : READ_TOOLS;
   if ((config.grantProfile === "v2" && !developmentProbe && !fullCodingProfile) || (terminalProbe && primaryConfig.ownerTerminalConnection === true)) {
     const additiveReads = [];
     for (const name of DEVELOPMENT_TOOL_NAMES) {

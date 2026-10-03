@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BrokerPolicy, PolicyDocument } from "@mac-operator/broker";
 import { canonicalJson } from "@mac-operator/contracts";
-import { G1_SCOPES, G1_TOOLS, O1_SCOPES, O1_TOOLS, W1_SCOPES, W1_TOOLS } from "./contracts.js";
+import { G1_SCOPES, G1_TOOLS, W1_SCOPES, W1_TOOLS, ownerTools, scopesForGrantProfile } from "./contracts.js";
 import { buildR1TargetRules, r1FilesystemRoots } from "./r1-policy.js";
 
 export type GuiAccess = "browsers" | "desktop";
@@ -79,14 +79,18 @@ export function buildG1TargetRules(
 }
 
 export function buildO1TargetRules(principalId: string, filesystemRoots: PolicyDocument["filesystem_roots"], projectRoot: string,
-  guiAccess: GuiAccess = "browsers"): PolicyDocument["target_rules"] {
+  guiAccess: GuiAccess = "browsers", dockerReadAccess = false): PolicyDocument["target_rules"] {
   return [...buildG1TargetRules(principalId, filesystemRoots, projectRoot, guiAccess),
     { rule_id: "owner-terminal", effect: "allow", principal_id: principalId, scope: "mac.terminal.exec",
-      target: { kind: "host", reference: "owner-terminal" } }];
+      target: { kind: "host", reference: "owner-terminal" } },
+    ...(dockerReadAccess ? [
+      { rule_id: "owner-docker-runtime", effect: "allow" as const, principal_id: principalId, scope: "mac.docker.read" as const, target: { kind: "docker_runtime" as const, reference: "local" } },
+      { rule_id: "owner-docker-objects", effect: "allow" as const, principal_id: principalId, scope: "mac.docker.read" as const, target: { kind: "docker_object" as const, reference: "all" } }
+    ] : [])];
 }
 
-export function assertO1Policy(policy: BrokerPolicy, principalId: string, issuerId: string, guiAccess: GuiAccess = "browsers"): void {
-  assertPersonalWritePolicy(policy, principalId, issuerId, true, true, guiAccess);
+export function assertO1Policy(policy: BrokerPolicy, principalId: string, issuerId: string, guiAccess: GuiAccess = "browsers", dockerReadAccess = false): void {
+  assertPersonalWritePolicy(policy, principalId, issuerId, true, true, guiAccess, dockerReadAccess);
 }
 
 export function assertW1Policy(policy: BrokerPolicy, principalId: string, issuerId: string): void {
@@ -102,10 +106,10 @@ function assertGuiAccess(guiAccess: GuiAccess): void {
 }
 
 function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, issuerId: string, guiProfile: boolean,
-  ownerTerminal = false, guiAccess: GuiAccess = "browsers"): void {
+  ownerTerminal = false, guiAccess: GuiAccess = "browsers", dockerReadAccess = false): void {
   assertGuiAccess(guiAccess);
-  const expectedScopes = ownerTerminal ? O1_SCOPES : guiProfile ? G1_SCOPES : W1_SCOPES;
-  const expectedTools = ownerTerminal ? O1_TOOLS : guiProfile ? G1_TOOLS : W1_TOOLS;
+  const expectedScopes = ownerTerminal ? scopesForGrantProfile("o1", dockerReadAccess) : guiProfile ? G1_SCOPES : W1_SCOPES;
+  const expectedTools = ownerTerminal ? ownerTools(dockerReadAccess) : guiProfile ? G1_TOOLS : W1_TOOLS;
   const grants = [...policy.principalGrants.values()];
   if (grants.length !== 1 || grants[0]?.principalId !== principalId || grants[0]?.issuer !== issuerId || !grants[0]?.enabled ||
       canonicalJson([...grants[0].scopes].sort()) !== canonicalJson([...expectedScopes].sort())) {
@@ -125,7 +129,7 @@ function assertPersonalWritePolicy(policy: BrokerPolicy, principalId: string, is
   if (canonicalJson(actualRoots) !== canonicalJson(expectedRoots)) {
     throw new Error("Personal write filesystem roots mismatch");
   }
-  const expectedRules = ownerTerminal ? buildO1TargetRules(principalId, expectedRoots, projectRoot, guiAccess) : guiProfile ? buildG1TargetRules(principalId, expectedRoots, projectRoot, guiAccess) : buildW1TargetRules(principalId, expectedRoots, projectRoot);
+  const expectedRules = ownerTerminal ? buildO1TargetRules(principalId, expectedRoots, projectRoot, guiAccess, dockerReadAccess) : guiProfile ? buildG1TargetRules(principalId, expectedRoots, projectRoot, guiAccess) : buildW1TargetRules(principalId, expectedRoots, projectRoot);
   const actualRules = policy.targetRules.map(rule => ({ rule_id: rule.ruleId, effect: rule.effect,
     principal_id: rule.principalId, scope: rule.scope, target: rule.target,
     ...(rule.targetConstraint === undefined ? {} : { target_constraint: rule.targetConstraint }) }));

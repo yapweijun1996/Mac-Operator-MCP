@@ -155,6 +155,8 @@ for (const profile of ["readonly", "test-only"] as const) {
     assert.match(start.params.developerInstructions, new RegExp(`Execution profile: ${profile}\\.`));
     assert.doesNotMatch(start.params.baseInstructions, /TASK_INJECTION_MARKER|grant host shell/u);
     assert.match(start.params.developerInstructions, /Exact supplied gateway tool names: read_file\./u);
+    assert.match(start.params.developerInstructions, /all file-tool path arguments must be workspace-relative, never absolute/u);
+    assert.match(start.params.developerInstructions, /root use path=""/u);
     assert.deepEqual(start.params.dynamicTools.map((tool: { name: string }) => tool.name), ["read_file"]);
     assert.equal(start.params.permissions, "mac-operator-controller");
     assert.match(messages.find(message => message.method === "turn/start").params.input[0].text, /TASK_INJECTION_MARKER/u);

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
 import { BrokerServiceInstanceLock, BrokerStore, PolicyBundleVerifier, PolicyManager, type SignedPolicyBundle } from "@mac-operator/broker";
 import { validateEdgeServiceStartupConfig } from "@mac-operator/edge";
-import { configSchema, O1_TOOLS, V2_TOOLS } from "./contracts.js";
+import { configSchema, ownerTools, developmentTools } from "./contracts.js";
 import { AuthStore, assertPrivateDirectory } from "./store.js";
 import { readAuthFile } from "./cli.js";
 import { assertO1Policy } from "./w1-policy.js";
@@ -29,11 +29,11 @@ export async function upgradePersonalTerminalSessions(root: string, packageRoot:
   try {
     const config = configSchema.parse(JSON.parse(readAuthFile(join(root, "auth/auth-config.json")).toString()));
     if (config.grantProfile !== "o1" && config.grantProfile !== "v2") throw new Error("Terminal session upgrade requires an existing O1 or V2 installation");
-    const fullTools = config.grantProfile === "v2" ? V2_TOOLS : O1_TOOLS;
+    const fullTools = config.grantProfile === "v2" ? developmentTools(config.dockerReadAccess) : ownerTools(config.dockerReadAccess);
     const assertCurrent = (policy: Parameters<typeof assertO1Policy>[0]): void => config.grantProfile === "v2"
       ? assertV2Policy(policy, config.principalId, config.issuerId,
-        developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))), config.guiAccess)
-      : assertO1Policy(policy, config.principalId, config.issuerId, config.guiAccess);
+        developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))), config.guiAccess, config.dockerReadAccess)
+      : assertO1Policy(policy, config.principalId, config.issuerId, config.guiAccess, config.dockerReadAccess);
     const verifier = await PolicyBundleVerifier.createFromKeyFile({ schemaDirectory: join(packageRoot, "schemas"),
       expectedKeyId: "personal-policy-1", publicKeyPath: join(data, "policy-public.pem") });
     const prior = await verifier.verifyFile(join(data, "policy.json"));
