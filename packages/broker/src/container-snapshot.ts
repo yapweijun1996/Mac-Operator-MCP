@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { lstatSync, realpathSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { BrokerError, sha256 } from "@mac-operator/contracts";
@@ -23,6 +24,28 @@ export interface ContainerSnapshot {
 
 /** A snapshot carries only regular project files, never host links or Git authority. */
 export function snapshotWorktree(root: string, readonlyWorkspace = false, excludedPaths: readonly string[] = []): ContainerSnapshot {
+  const steps = snapshotSteps(root, readonlyWorkspace, excludedPaths);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/** Yield between descriptor-backed reads so job authority, cancellation and health remain live. */
+export async function snapshotWorktreeAsync(root: string, readonlyWorkspace = false, excludedPaths: readonly string[] = [], check: () => void = () => {}): Promise<ContainerSnapshot> {
+  const steps = snapshotSteps(root, readonlyWorkspace, excludedPaths);
+  try {
+    let step = steps.next();
+    while (!step.done) {
+      await yieldToEventLoop();
+      check();
+      step = steps.next();
+    }
+    check();
+    return step.value;
+  } finally { steps.return(undefined as never); }
+}
+
+function* snapshotSteps(root: string, readonlyWorkspace: boolean, excludedPaths: readonly string[]): Generator<void, ContainerSnapshot> {
   if (!Array.isArray(excludedPaths) || excludedPaths.length > 64 || new Set(excludedPaths).size !== excludedPaths.length ||
       excludedPaths.some(path => typeof path !== "string" || !safeSnapshotPath(path))) deny("Snapshot exclusions must be approved relative source paths");
   const exclusions = [...excludedPaths];
@@ -40,6 +63,7 @@ export function snapshotWorktree(root: string, readonlyWorkspace = false, exclud
     do {
       const listing = inspector.listPlanned(inspector.planPath(join(root, directory)), cursor, 500, true);
       for (const entry of listing.entries) {
+        yield;
         if (files.length + directories.length + excluded.length >= MAX_FILES) limit("Snapshot exceeds its entry budget");
         const path = directory ? `${directory}/${entry.name}` : entry.name;
         if (exclusions.some(excluded => path === excluded || path.startsWith(`${excluded}/`)) || !safeSnapshotPath(path) || EXCLUDED_DIRECTORIES.has(entry.name)) { excluded.push(path); continue; }

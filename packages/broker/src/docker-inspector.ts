@@ -115,6 +115,88 @@ export interface DockerInspector {
   logs(containerId: string, tail: number, sinceSeconds: number, control: DockerExecutionControl): Promise<SafeDockerLogs>;
 }
 
+/** Fixed read-only requests over a Broker-owned, peer-verified Engine connection. */
+export interface DockerEngineReadTransport {
+  inventory(includeImages: boolean, control: { signal: AbortSignal; timeoutMs: number }): Promise<{ version: string; containers: unknown[]; images: unknown[] }>;
+  inspect(objectType: DockerObjectType, id: string, control: { signal: AbortSignal; timeoutMs: number }): Promise<unknown>;
+  logs(id: string, tail: number, sinceSeconds: number, control: { signal: AbortSignal; timeoutMs: number }): Promise<string>;
+}
+
+export class DockerEngineInspector implements DockerInspector {
+  constructor(private readonly transport: DockerEngineReadTransport) {}
+
+  async status(includeImages: boolean, includeStorage: boolean, control: DockerExecutionControl): Promise<SafeDockerStatus> {
+    validateDockerStatusRequest(includeImages, includeStorage);
+    return this.bounded(control, async request => {
+      const inventory = await this.transport.inventory(includeImages, request);
+      const warnings: string[] = [];
+      const containers = parseContainerLines(inventory.containers.slice(0, MAX_ITEMS).map(value => {
+        if (!isPlainDataRecord(value)) throw new BrokerError("VERIFICATION_FAILED", "Docker inventory shape is invalid");
+        return JSON.stringify({ Id: value.Id, Names: Array.isArray(value.Names) ? value.Names.join(",") : "", State: value.State });
+      }).join("\n"), warnings);
+      const images = parseImageLines(inventory.images.slice(0, MAX_ITEMS).flatMap(value => {
+        if (!isPlainDataRecord(value)) throw new BrokerError("VERIFICATION_FAILED", "Docker image inventory shape is invalid");
+        const tags = Array.isArray(value.RepoTags) ? value.RepoTags.slice(0, 1) : [];
+        return (tags.length ? tags : [""]).map(tag => JSON.stringify({ Id: value.Id, Repository: typeof tag === "string" ? tag : "" }));
+      }).join("\n"), warnings);
+      const truncated = inventory.containers.length > MAX_ITEMS || inventory.images.length > MAX_ITEMS;
+      if (truncated) warnings.push("Docker inventory was capped by the fixed adapter budget");
+      if (includeStorage) warnings.push("Docker storage facts are unavailable until a fixed local volume readback is configured");
+      return { daemon: { available: true, version: boundedValue(inventory.version, 128), context: "local" }, containers, images, warnings, truncated };
+    });
+  }
+
+  async inspect(objectType: DockerObjectType, id: string, control: DockerExecutionControl): Promise<SafeDockerInspection> {
+    validateDockerObjectRequest(objectType, id);
+    return this.bounded(control, async request => {
+      const read = async (reference: string) => {
+        const raw = await this.transport.inspect(objectType, reference, request);
+        return { raw, inspection: parseInspection(objectType, reference, JSON.stringify([raw]), false) };
+      };
+      const first = await read(id);
+      if (DOCKER_HEX_ID_PATTERN.test(id) && objectType !== "volume") return first.inspection;
+      const second = await read(first.inspection.id);
+      if (normalizeDockerName(first.inspection.name) !== normalizeDockerName(second.inspection.name)) throw new BrokerError("CONFLICT", "Docker object identity changed during inspection");
+      // Volumes have a name rather than an immutable ID; fence recreation with creation metadata.
+      if (objectType === "volume" && (!isPlainDataRecord(first.raw) || !isPlainDataRecord(second.raw) ||
+          typeof first.raw.CreatedAt !== "string" || !Number.isFinite(Date.parse(first.raw.CreatedAt)) ||
+          first.raw.CreatedAt !== second.raw.CreatedAt)) throw new BrokerError("CONFLICT", "Docker volume creation identity is unavailable or changed");
+      return second.inspection;
+    });
+  }
+
+  async logs(containerId: string, tail: number, sinceSeconds: number, control: DockerExecutionControl): Promise<SafeDockerLogs> {
+    validateDockerLogsRequest(containerId, tail, sinceSeconds);
+    return this.bounded(control, async request => {
+      const identity = parseInspection("container", containerId,
+        JSON.stringify([await this.transport.inspect("container", containerId, request)]), false);
+      const stdout = await this.transport.logs(identity.id, tail, sinceSeconds, request);
+      return parseLogs(identity.id, tail, { stdout, truncated: false });
+    });
+  }
+
+  private async bounded<T>(control: DockerExecutionControl, run: (request: { signal: AbortSignal; timeoutMs: number }) => Promise<T>): Promise<T> {
+    if (!Number.isSafeInteger(control.timeoutMs) || control.timeoutMs < 1) throw new BrokerError("PRECONDITION_FAILED", "Docker execution budget is invalid");
+    const abort = new AbortController();
+    const check = () => { try { if (control.shouldCancel()) abort.abort(); } catch { abort.abort(); } };
+    check();
+    const timeoutMs = Math.min(control.timeoutMs, MAX_TIMEOUT_MS);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; abort.abort(); }, timeoutMs);
+    const monitor = setInterval(check, 25);
+    try {
+      if (abort.signal.aborted) throw new BrokerError("CANCELLED", "Docker observation was cancelled");
+      const value = await run({ signal: abort.signal, timeoutMs });
+      check();
+      if (abort.signal.aborted) throw new BrokerError("CANCELLED", "Docker observation authority ended");
+      return value;
+    } catch (error) {
+      if (timedOut) throw new BrokerError("TIMEOUT", "Docker observation exceeded its deadline");
+      throw error;
+    } finally { clearTimeout(timer); clearInterval(monitor); abort.abort(); }
+  }
+}
+
 export interface DockerInspectorOptions {
   supervisor?: Pick<ProcessSupervisor, "run">;
   executable?: string;
@@ -546,7 +628,7 @@ function normalizeDockerName(value: string): string {
   return value.startsWith("/") ? value.slice(1) : value;
 }
 
-function parseLogs(containerId: string, tail: number, result: ProcessExecutionResult): SafeDockerLogs {
+function parseLogs(containerId: string, tail: number, result: Pick<ProcessExecutionResult, "stdout" | "truncated">): SafeDockerLogs {
   const entries: SafeDockerLogEntry[] = [];
   const warnings: string[] = [];
   const allLines = result.stdout.split("\n");

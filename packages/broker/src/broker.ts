@@ -2536,7 +2536,7 @@ export class Broker {
             status: "verified",
             strategy: "sanitized_docker_result_validation",
             evidence: {
-              summary: "Docker state was collected through fixed local-only CLI arguments, bounded parsing, and secret-safe field selection",
+              summary: "Docker state was collected through a fixed local-only adapter, bounded parsing, and secret-safe field selection",
               readback_hash: sha256(canonicalJson(data)),
               observed_at: new Date(this.now()).toISOString()
             }

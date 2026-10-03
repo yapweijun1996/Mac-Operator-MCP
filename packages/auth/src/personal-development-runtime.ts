@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { sha256 } from "@mac-operator/contracts";
 import { CodexController, CODEX_CONTROLLER_EXECUTABLE_SHA256, CODEX_CONTROLLER_VERSION, ContainerTaskProfileRegistry,
-  ContainerTaskRunner, DevelopmentGateway, DockerContainerEngine, ManagedWorktrees, MacOsPeerCredentialVerifier,
+  ContainerTaskRunner, DevelopmentGateway, DockerContainerEngine, DockerEngineInspector, ManagedWorktrees, MacOsPeerCredentialVerifier,
   loadNativePeerAdapter, safeSnapshotPath, assertContentPathAllowed, type CodingAgentProvider, type RegisteredDevelopmentCommand, type TaskIsolationProof } from "@mac-operator/broker";
 import { readAuthFile } from "./cli.js";
 import type { V2PolicyConfiguration } from "./v2-policy.js";
@@ -106,7 +106,7 @@ export async function createPersonalDevelopmentRuntime(config: PersonalDevelopme
       ...(input.allowed_paths === undefined ? {} : { allowedPaths: input.allowed_paths as string[] }) }) };
     const commands: RegisteredDevelopmentCommand[] = config.entries.map(entry => ({ projectRoot: entry.projectRoot, type: entry.type, profile: entry.profile }));
     const gateway = new DevelopmentGateway({ worktrees, commands, codingAgent: provider, codexExecutable: config.codexExecutable });
-    return { gateway, runner, profiles, config };
+    return { gateway, runner, profiles, config, dockerInspector: new DockerEngineInspector(engine.dockerReadTransport()) };
   } catch (error) { await worktrees.close(); throw error; }
 }
 

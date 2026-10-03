@@ -7,6 +7,7 @@ import {
   DOCKER_CODE_SIGNATURE_EXPECTATION,
   DOCKER_EXECUTABLE_CANDIDATES,
   DockerInspectorImpl,
+  DockerEngineInspector,
   createDockerProcessSupervisor,
   dockerObjectIdentityMatches,
   parseDockerContainerRecord,
@@ -321,4 +322,54 @@ test("Docker logs cap line count and individual line size", async () => {
   assert.ok(logs.entries.every((entry) => entry.line.length <= 8_192));
   assert.ok(logs.warnings.some((warning) => warning.includes("lines were capped")));
   assert.ok(logs.warnings.some((warning) => warning.includes("line length was capped")));
+});
+
+
+test("Engine read inspector selects safe metadata and binds log reads to immutable identity", async () => {
+  const id = "a".repeat(64);
+  const calls: string[] = [];
+  const inspector = new DockerEngineInspector({
+    async inventory() { return { version: "29.0.0", containers: [{ Id: id, Names: ["/fixture"], State: "running", Env: ["sensitive"] }], images: [] }; },
+    async inspect(type, reference) { calls.push(`${type}:${reference}`); return { Id: id, Name: "/fixture", State: { Status: "running" }, Config: { Image: "node", Env: ["sensitive"] }, NetworkSettings: { Ports: {} }, Mounts: [] }; },
+    async logs(reference) { calls.push(`logs:${reference}`); return "2026-10-03T00:00:00Z public log\n"; }
+  });
+  const control = { timeoutMs: 1000, shouldCancel: () => false };
+  const status = await inspector.status(false, false, control);
+  assert.equal(status.daemon.available, true);
+  assert.equal(status.containers[0]?.id, id);
+  assert.ok(!JSON.stringify(status).includes("sensitive"));
+  const inspection = await inspector.inspect("container", "fixture", control);
+  assert.equal(inspection.id, id);
+  assert.deepEqual(calls, ["container:fixture", `container:${id}`]);
+  assert.ok(!JSON.stringify(inspection).includes("sensitive"));
+  const logs = await inspector.logs("fixture", 10, 0, control);
+  assert.equal(logs.entries[0]?.line, "public log");
+  assert.equal(calls.at(-1), `logs:${id}`);
+});
+
+test("Engine read inspector denies changed aliases, invalid requests and cancellation", async () => {
+  let calls = 0;
+  const inspector = new DockerEngineInspector({
+    async inventory() { calls++; return { version: "29", containers: [], images: [] }; },
+    async inspect() { calls++; return { Id: "a".repeat(64), Name: calls === 1 ? "/fixture" : "/replacement" }; },
+    async logs() { throw new Error("must not run"); }
+  });
+  const control = { timeoutMs: 1000, shouldCancel: () => false };
+  await assert.rejects(inspector.inspect("container", "fixture", control), /identity changed/u);
+  await assert.rejects(inspector.logs("fixture", 0, 0, control));
+  const before = calls;
+  await assert.rejects(inspector.status(false, false, { ...control, shouldCancel: () => true }), /cancelled/u);
+  assert.equal(calls, before);
+});
+
+
+test("Engine volume inspection fences same-name recreation using creation metadata", async () => {
+  let calls = 0;
+  const inspector = new DockerEngineInspector({
+    async inventory() { return { version: "29", containers: [], images: [] }; },
+    async inspect() { calls++; return { Id: "fixture", Name: "fixture", CreatedAt: calls === 1 ? "2026-10-03T00:00:00Z" : "2026-10-03T00:00:01Z" }; },
+    async logs() { throw new Error("must not run"); }
+  });
+  await assert.rejects(inspector.inspect("volume", "fixture", { timeoutMs: 1000, shouldCancel: () => false }), /creation identity/u);
+  assert.equal(calls, 2);
 });

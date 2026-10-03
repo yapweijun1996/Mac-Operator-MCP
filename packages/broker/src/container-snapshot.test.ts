@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { sha256 } from "@mac-operator/contracts";
-import { createWorkspaceArchive, importWorkspaceChanges, parseWorkspaceArchive, safeSnapshotPath, snapshotWorktree } from "./container-snapshot.js";
+import { createWorkspaceArchive, importWorkspaceChanges, parseWorkspaceArchive, safeSnapshotPath, snapshotWorktree, snapshotWorktreeAsync } from "./container-snapshot.js";
 
 test("container archive round trip preserves only regular source files", () => {
   const files = [{ path: "src/example.ts", content: Buffer.from("export const answer = 42;\n") }];
@@ -86,5 +86,28 @@ test("trusted snapshot exclusions omit persistent project data before reading fi
     assert.ok(snapshot.excluded.includes("portal/data"));
     assert.throws(() => snapshotWorktree(root, false, ["../outside"]));
     assert.throws(() => snapshotWorktree(root, false, ["portal/data", "portal/data"]));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test("asynchronous snapshot permits authority heartbeats and preserves the synchronous boundary", { skip: process.platform !== "darwin" }, async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "container-yield-")));
+  try {
+    for (let i = 0; i < 32; i++) writeFileSync(join(root, `source-${i}.txt`), "public source\n");
+    writeFileSync(join(root, ".env"), "PRIVATE_SETTING=fixture\n");
+    symlinkSync("/etc/passwd", join(root, "outside"));
+    const expected = snapshotWorktree(root);
+    let heartbeats = 0;
+    const timer = setInterval(() => { heartbeats++; }, 1);
+    let checks = 0;
+    try {
+      const result = await snapshotWorktreeAsync(root, false, [], () => { checks++; });
+      assert.ok(heartbeats > 0);
+      assert.ok(checks >= 32);
+      assert.deepEqual(result.archive, expected.archive);
+      assert.deepEqual(result.excluded, expected.excluded);
+    } finally { clearInterval(timer); }
+    await assert.rejects(snapshotWorktreeAsync(root, false, [], () => { throw new Error("authority revoked"); }), /authority revoked/u);
+    assert.equal(readFileSync(join(root, "source-0.txt"), "utf8"), "public source\n");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

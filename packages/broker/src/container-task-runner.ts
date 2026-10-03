@@ -5,7 +5,7 @@ import {
   type ContainerTaskHandle, type DockerContainerEngine, type ContainerExecResult
 } from "./container-engine.js";
 import {
-  snapshotWorktree, parseWorkspaceArchive, importWorkspaceChanges, safeSnapshotPath,
+  snapshotWorktreeAsync, parseWorkspaceArchive, importWorkspaceChanges, safeSnapshotPath,
   type ContainerSnapshot, type SnapshotFile
 } from "./container-snapshot.js";
 import { validateContainerTaskJobMetadata, type ContainerTaskJobMetadata } from "./container-job-metadata.js";
@@ -45,7 +45,7 @@ export interface ContainerTaskRunnerOptions {
   snapshotExcludedPaths?: readonly string[];
   maxConcurrent?: number;
   /** Trusted test seams; none is selected by an MCP argument. */
-  snapshotProvider?: typeof snapshotWorktree;
+  snapshotProvider?: (root: string, readonlyWorkspace: boolean, excludedPaths: readonly string[], check: () => void) => ContainerSnapshot | Promise<ContainerSnapshot>;
   parseArchive?: typeof parseWorkspaceArchive;
   importChanges?: typeof importWorkspaceChanges;
 }
@@ -62,7 +62,7 @@ export class ContainerTaskRunner implements TaskRunner {
   private readonly controller: Pick<CodexController, "run"> | undefined;
   private readonly commands: ReadonlyMap<string, RegisteredContainerCommand>;
   private readonly snapshotExcludedPaths: readonly string[];
-  private readonly snapshotProvider: typeof snapshotWorktree;
+  private readonly snapshotProvider: NonNullable<ContainerTaskRunnerOptions["snapshotProvider"]>;
   private readonly parseArchive: typeof parseWorkspaceArchive;
   private readonly importChanges: typeof importWorkspaceChanges;
   private readonly maxConcurrent: number;
@@ -96,7 +96,7 @@ export class ContainerTaskRunner implements TaskRunner {
       commands.set(command.name, Object.freeze({ ...command, args: Object.freeze([...command.args]), kind: command.kind ?? "test" }));
     }
     this.commands = commands;
-    this.snapshotProvider = options.snapshotProvider ?? snapshotWorktree;
+    this.snapshotProvider = options.snapshotProvider ?? snapshotWorktreeAsync;
     this.parseArchive = options.parseArchive ?? parseWorkspaceArchive;
     this.importChanges = options.importChanges ?? importWorkspaceChanges;
   }
@@ -209,7 +209,7 @@ export class ContainerTaskRunner implements TaskRunner {
       await this.engine!.start(handle, { signal: abort.signal, timeoutMs: remaining(deadline) });
       check();
       phase = "snapshot";
-      snapshot = this.snapshotProvider(profile.cwd, handle.readonlyWorkspace, this.snapshotExcludedPaths);
+      snapshot = await this.snapshotProvider(profile.cwd, handle.readonlyWorkspace, this.snapshotExcludedPaths, check);
       check();
       phase = "stage";
       await this.engine!.uploadArchive(handle, snapshot.archive, { signal: abort.signal, timeoutMs: remaining(deadline) });

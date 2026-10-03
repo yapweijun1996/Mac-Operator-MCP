@@ -3,6 +3,7 @@ import { createConnection, type Socket } from "node:net";
 import { lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { BrokerError, parseJsonUtf8Strict, sha256 } from "@mac-operator/contracts";
+import { validateDockerObjectRequest, validateDockerLogsRequest, type DockerObjectType, type DockerEngineReadTransport } from "./docker-inspector.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { parseWorkspaceArchive, createWorkspaceArchive, safeSnapshotPath, type SnapshotFile } from "./container-snapshot.js";
 import {
@@ -123,6 +124,48 @@ export class DockerContainerEngine {
     this.assertSocket();
     const stat = lstatSync(this.socketPath);
     this.socketIdentity = { device: stat.dev, inode: stat.ino };
+  }
+
+  /** No caller-controlled HTTP method, route, socket or body crosses this read facade. */
+  dockerReadTransport(): DockerEngineReadTransport {
+    return Object.freeze({
+      inventory: async (includeImages: boolean, control: ContainerEngineControl) => {
+        if (typeof includeImages !== "boolean") throw denied("Docker inventory flags are invalid");
+        const info = await this.info(control);
+        const containers = await this.json("GET", "/containers/json?all=true", undefined, control);
+        const images = includeImages ? await this.json("GET", "/images/json", undefined, control) : [];
+        if (!Array.isArray(containers) || !Array.isArray(images)) throw new BrokerError("VERIFICATION_FAILED", "Docker inventory shape is invalid");
+        return { version: info.serverVersion, containers, images };
+      },
+      inspect: async (objectType: DockerObjectType, id: string, control: ContainerEngineControl) => {
+        validateDockerObjectRequest(objectType, id);
+        await this.info(control);
+        const collection = { container: "containers", image: "images", network: "networks", volume: "volumes" }[objectType];
+        const value = object(await this.json("GET", `/${collection}/${encodeURIComponent(id)}${objectType === "container" || objectType === "image" ? "/json" : ""}`, undefined, control));
+        return objectType === "volume" ? { ...value, Id: value.Name } : value;
+      },
+      logs: async (id: string, tail: number, sinceSeconds: number, control: ContainerEngineControl) => {
+        validateDockerLogsRequest(id, tail, sinceSeconds);
+        await this.info(control);
+        // Only immutable full container identity is admitted after inspector resolution.
+        if (!ID_PATTERN.test(id)) throw denied("Docker logs require a resolved container identity");
+        const metadata = object(await this.json("GET", `/containers/${id}/json`, undefined, control));
+        if (metadata.Id !== id || typeof object(metadata.Config).Tty !== "boolean") throw denied("Docker log container identity is invalid");
+        const since = sinceSeconds === 0 ? 0 : Math.max(0, Math.floor(Date.now() / 1000) - sinceSeconds);
+        const response = await this.exchange("GET", `/containers/${id}/logs?stdout=true&stderr=true&timestamps=true&follow=false&tail=${tail}&since=${since}`,
+          undefined, control, 1_048_576, [200]);
+        if (object(metadata.Config).Tty === true) return response.bytes.toString("utf8");
+        const chunks: Buffer[] = [];
+        for (let offset = 0; offset < response.bytes.length;) {
+          if (offset + 8 > response.bytes.length || ![1, 2].includes(response.bytes[offset]!) ||
+              response.bytes.subarray(offset + 1, offset + 4).some(byte => byte !== 0)) throw new BrokerError("VERIFICATION_FAILED", "Docker log frame is malformed");
+          const size = response.bytes.readUInt32BE(offset + 4);
+          if (offset + 8 + size > response.bytes.length) throw new BrokerError("VERIFICATION_FAILED", "Docker log frame is incomplete");
+          chunks.push(response.bytes.subarray(offset + 8, offset + 8 + size)); offset += 8 + size;
+        }
+        return Buffer.concat(chunks).toString("utf8");
+      }
+    });
   }
 
   async info(control?: ContainerEngineControl): Promise<ContainerEngineInfo> {

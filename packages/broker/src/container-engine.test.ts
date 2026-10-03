@@ -734,3 +734,47 @@ test("Guest export cannot race an in-flight task execution", async () => {
     assert.equal((await f.engine.inspect(handle)).running, false);
   } finally { await f.close(); }
 });
+
+test("Engine read facade admits only fixed GET observations and decodes bounded Docker log frames", async () => {
+  const f = await fixture();
+  try {
+    f.responseOverride = (req, res) => {
+      const path = req.url ?? "";
+      const send = (value: unknown) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(value)); return true; };
+      if (path === "/v1.47/containers/json?all=true") return send([{ Id: CONTAINER_ID, Names: ["/fixture"], State: "running" }]);
+      if (path === "/v1.47/images/json") return send([{ Id: IMAGE, RepoTags: ["node:pinned"] }]);
+      if (path === `/v1.47/containers/${CONTAINER_ID}/json`) return send({ Id: CONTAINER_ID, Config: { Tty: false } });
+      if (path.startsWith(`/v1.47/containers/${CONTAINER_ID}/logs?`)) {
+        res.writeHead(200, { "Content-Type": "application/vnd.docker.raw-stream" }); res.end(multiplex(1, "public log\n")); return true;
+      }
+      if (path === "/v1.47/volumes/fixture") return send({ Name: "fixture" });
+      return false;
+    };
+    const reader = f.engine.dockerReadTransport();
+    const inventory = await reader.inventory(true, { signal: new AbortController().signal, timeoutMs: 1000 });
+    assert.equal(inventory.containers.length, 1);
+    assert.equal(inventory.images.length, 1);
+    assert.deepEqual(await reader.inspect("volume", "fixture", { signal: new AbortController().signal, timeoutMs: 1000 }), { Name: "fixture", Id: "fixture" });
+    assert.equal(await reader.logs(CONTAINER_ID, 10, 0, { signal: new AbortController().signal, timeoutMs: 1000 }), "public log\n");
+    const before = f.requests.length;
+    await assert.rejects(reader.inspect("container", "../escape", { signal: new AbortController().signal, timeoutMs: 1000 }));
+    await assert.rejects(reader.logs(CONTAINER_ID, 0, 0, { signal: new AbortController().signal, timeoutMs: 1000 }));
+    assert.equal(f.requests.length, before);
+    assert.ok(f.requests.every(request => request.method === "GET"));
+    assert.ok(f.verifiedConnections > 0);
+  } finally { await f.close(); }
+});
+
+test("Engine log read rejects incomplete frames without exposing partial output", async () => {
+  const f = await fixture();
+  try {
+    f.responseOverride = (req, res) => {
+      if (req.url === `/v1.47/containers/${CONTAINER_ID}/json`) {
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ Id: CONTAINER_ID, Config: { Tty: false } })); return true;
+      }
+      if (req.url?.startsWith(`/v1.47/containers/${CONTAINER_ID}/logs?`)) { res.writeHead(200); res.end(multiplex(1, "public log").subarray(0, 9)); return true; }
+      return false;
+    };
+    await assert.rejects(f.engine.dockerReadTransport().logs(CONTAINER_ID, 10, 0, { signal: new AbortController().signal, timeoutMs: 1000 }), /incomplete/u);
+  } finally { await f.close(); }
+});

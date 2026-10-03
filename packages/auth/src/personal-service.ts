@@ -205,7 +205,8 @@ async function start(root: string) {
     if (developmentConfig) developmentRuntime = await createPersonalDevelopmentRuntime(developmentConfig, config.principalId);
     broker = new Broker({ store, policy: verified.policy, ordinaryGuiApplications: config.guiAccess === "desktop",
       ...(developmentRuntime ? { developmentGateway: developmentRuntime.gateway, taskProfileRegistry: developmentRuntime.profiles,
-        taskRunner: developmentRuntime.runner, authorizeDevelopment: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
+        taskRunner: developmentRuntime.runner,
+        ...(config.dockerReadAccess ? { dockerInspector: developmentRuntime.dockerInspector } : {}), authorizeDevelopment: operation => approvalIssuerRuntime === undefined ? Promise.resolve(false) :
           createPersonalDevelopmentApprover({ principalId: config.principalId, runtime: approvalIssuerRuntime, socketPath: join(runtime, "approval.sock"),
             worktrees: developmentRuntime!.gateway.worktrees, developmentProjects: developmentConfig!.developmentProjects,
             taskProfiles: developmentConfig!.taskProfiles })(operation) } : {}),
