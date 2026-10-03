@@ -245,9 +245,13 @@ Screen capture uses ScreenCaptureKit and rejects known security and credential
 windows. Application-scoped `screen` captures remain limited to the main display
 and reject other application windows visible beside or above the target window.
 Explicit desktop observation selects a full display and can include ordinary
-applications together; sensitive and protected surfaces still fail closed.
-Dock-owned layer-20 surfaces
-are excluded from both obstruction checks and the actual ScreenCaptureKit image.
+applications together, including Dock and the menu bar. The native filter excludes
+known protected and policy-denied application identities and known sensitive
+windows, and validates the visible window set before and after capture. These
+checks do not prove pixel redaction: a new protected process that appears only
+between the window catalog and capture checks remains a residual race.
+For application-scoped captures, Dock-owned layer-20 surfaces are excluded from
+both obstruction checks and the actual ScreenCaptureKit image.
 Other overlays, including computer-control tool overlays, remain subject to the
 existing boundary. Ordinary obstruction and outside-window failures have
 specific messages; `SECRET_BOUNDARY_DENIED` alone does not mean secret text was
