@@ -1,4 +1,5 @@
 import { guiWindowFields, nativeWindowIdentity, throwGuiWindowError } from "./gui-window.js";
+import { throwGuiLauncherFailure } from "./gui-launcher-errors.js";
 import { GuiProcessSupervisor } from "./gui-process-supervisor.js";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { randomBytes } from "node:crypto";
@@ -889,10 +890,11 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Accessibility observation timed out");
   if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Accessibility observation exceeded its output limit");
   if (result.resultClass !== "SUCCEEDED") {
-    if (/not authorized|not permitted|assistive|accessibility|-1743/iu.test(result.stderr)) {
+    if (nativeVisual) throwGuiLauncherFailure(result);
+    if (!nativeVisual && /not authorized|not permitted|assistive|accessibility|-1743/iu.test(result.stderr)) {
       throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
     }
-    throw new BrokerError("EXECUTION_FAILED", "Accessibility observation failed");
+    throw new BrokerError("EXECUTION_FAILED", nativeVisual ? "GUI helper observation failed" : "Accessibility observation failed");
   }
   let parsed: unknown;
   try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata"); }
@@ -999,7 +1001,10 @@ export function parseUiScreenshotResult(
   if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Screen capture was cancelled");
   if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Screen capture timed out");
   if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Screen capture exceeded its output limit");
-  if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "Screen capture failed");
+  if (result.resultClass !== "SUCCEEDED") {
+    if (observed.nativeVisual) throwGuiLauncherFailure(result);
+    throw new BrokerError("EXECUTION_FAILED", "Screen capture failed");
+  }
   let parsed: unknown;
   try { parsed = parseJsonStrict(result.stdout); }
   catch { throw new BrokerError("VERIFICATION_FAILED", "Screen capture returned malformed metadata"); }

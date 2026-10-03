@@ -143,15 +143,33 @@ The visual adapter is a dedicated `Mac Operator GUI.app` in `~/Applications`.
 The Broker permits that one fixed user-owned executable through its process
 supervisor. It checks owner, permissions, path, and content identity around
 each launch; other user-owned executables do not gain GUI execution access.
-Build it with `npm run build` and install it once with
-`npm run install:native:gui-vision --workspace @mac-operator/broker`. macOS must
-grant that app Accessibility and Screen & System Audio Recording. The app's
+Build it with `npm run build`. Every GUI-enabled deployment must run
+`npm run install:native:gui-vision --workspace @mac-operator/broker` from the
+selected release before startup. The installer validates the exact bundle ID,
+application type, executable and strict code signature. If a valid app is
+already installed it returns `action=preserved` without changing its bytes or
+signature, even when the new release artifact differs. An absent app is copied
+into a temporary directory, verified again, and published with an atomic
+exclusive rename. Concurrent installers cannot overwrite or nest an app inside
+the installed bundle. Existing invalid apps fail closed and require a deliberate
+repair; the installer never replaces them automatically. The `--source` option
+selects a preserved signed artifact without rebuilding it; see the exact
+[deployment command](personal-deployment.md#gui-deployment-prerequisite).
+
+macOS must grant the installed app Accessibility and Screen & System Audio
+Recording. Bundle installation and code identity do not prove these TCC grants.
+Run `node scripts/probe-gui-launch-context.mjs` from the service launch context
+after installation; only the production `gui_launcher` LaunchServices readback
+represents the permission boundary. The app's
 `permission` command reports both grants without requesting them;
 `request_accessibility` and `request_screen_recording` open the system consent
 flow. A denied permission makes the GUI tool fail closed. The personal build
-uses ad-hoc signing, so rebuilding and replacing the installed app changes its
-privacy identity and requires permission again. Keep the installed app fixed
-during normal source rebuilds.
+uses ad-hoc signing, so rebuilding and replacing the installed app can change
+its privacy identity and require permission again. Keep the installed app fixed
+during normal source rebuilds. An intentional GUI binary upgrade requires a
+separate reviewed replacement and rollback plan, followed by production
+LaunchServices permission readback and, if necessary, renewing only this app's
+grants. Do not repeatedly replace it after the owner renews those grants.
 
 The current W1 deployment does not gain GUI access merely by updating source
 code: G1 requires a new signed policy, owner OAuth consent for the new scopes,

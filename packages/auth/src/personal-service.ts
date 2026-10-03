@@ -3,11 +3,12 @@ import { assertV2Policy } from "./v2-policy.js";
 import { createPersonalDevelopmentApprover } from "./personal-development-approval.js";
 import { GuiSessionApprovals } from "./gui-session-approval.js";
 import { AuthStore } from "./store.js";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { realpath, chmod } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { canonicalJson, sha256 } from "@mac-operator/contracts";
@@ -186,6 +187,17 @@ async function start(root: string) {
         throw new Error("Read-only boundary mismatch");
       }
     }
+    if (guiProfile) {
+      try {
+        // Deployment retains an existing validated app to preserve its TCC identity.
+        await promisify(execFile)(process.execPath, [join(packageRoot, "packages/broker/scripts/install-gui-app.mjs")], {
+          cwd: packageRoot, timeout: 30000, maxBuffer: 16384, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, shell: false
+        });
+      } catch {
+        // GUI readiness fails closed independently; keep health and terminal available.
+        console.warn("GUI_HELPER_UNAVAILABLE: GUI installation/readiness requires owner attention");
+      }
+    }
     const bundle = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const validity = bundle.payload.trusted_edge_keys[0]!;
     if (developmentConfig) developmentRuntime = await createPersonalDevelopmentRuntime(developmentConfig, config.principalId);
@@ -203,6 +215,7 @@ async function start(root: string) {
       notBeforeMs: validity.not_before_ms, expiresAtMs: validity.expires_at_ms }]) });
     const expectedTools = developmentProfile ? V2_TOOLS : terminalProfile ? O1_TOOLS : guiProfile ? G1_TOOLS : writeProfile ? W1_TOOLS : READ_TOOLS;
     if (JSON.stringify([...broker.enabledRuntimeCapabilityNames()].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error("Unexpected runtime capability");
+    if (guiProfile) console.log(JSON.stringify({ component: "gui_helper", ...(await broker.guiHelperStatus()) }));
     approvalIssuerRuntime = await createPersonalApprovalIssuerRuntime({
       configPath: join(data, "approval-issuer.json"), dataRoot: data, runtimeRoot: runtime, store,
       uid: process.getuid!(), ...(process.getgid === undefined ? {} : { gid: process.getgid() })

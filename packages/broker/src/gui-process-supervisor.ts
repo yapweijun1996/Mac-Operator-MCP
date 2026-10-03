@@ -1,3 +1,4 @@
+import { throwGuiLauncherFailure } from "./gui-launcher-errors.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,14 +11,16 @@ export const guiLauncherExecutable = fileURLToPath(new URL("./gui_launcher", imp
 export class GuiProcessSupervisor {
   constructor(private readonly supervisor: Pick<ProcessSupervisor, "run"> = new ProcessSupervisor({ maxConcurrent: 1, allowedEnvironmentKeys: [] })) {}
 
-  run(request: ProcessExecutionRequest): Promise<ProcessExecutionResult> {
+  async run(request: ProcessExecutionRequest): Promise<ProcessExecutionResult> {
     if (request.executable !== guiApplicationExecutable) return this.supervisor.run(request);
-    return this.supervisor.run({
+    const result = await this.supervisor.run({
       ...request,
       executable: guiLauncherExecutable,
       allowUserOwnedExecutable: true,
       args: [],
       stdin: JSON.stringify({ args: request.args, stdin: request.stdin ?? "" })
     });
+    throwGuiLauncherFailure(result);
+    return result;
   }
 }

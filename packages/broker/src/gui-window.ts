@@ -16,8 +16,8 @@ export function guiWindowFields(record: Record<string, unknown>, fields: readonl
 /** Preserve the failed boundary instead of translating every discovery error to absence. */
 export function throwGuiWindowError(reason: unknown): void {
   switch (reason) {
-    case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "AX_PERMISSION_DENIED: Accessibility permission is not granted to the production GUI application");
-    case "screen_recording_permission": throw new BrokerError("POLICY_DENIED", "SCREEN_CAPTURE_DENIED: Screen Recording permission is not granted to the production GUI application");
+    case "accessibility_permission": throw new BrokerError("POLICY_DENIED", "ACCESSIBILITY_PERMISSION_REQUIRED: Accessibility permission is not granted to the production GUI application");
+    case "screen_recording_permission": throw new BrokerError("POLICY_DENIED", "SCREEN_RECORDING_PERMISSION_REQUIRED: Screen Recording permission is not granted to the production GUI application");
     case "app_not_running": throw new BrokerError("TARGET_NOT_FOUND", "APP_NOT_RUNNING: The requested app is not running");
     case "protected_session": throw new BrokerError("SECRET_BOUNDARY_DENIED", "PROTECTED_SESSION: Unlock the Mac or dismiss the system authorization UI before browser automation");
     case "activation_failed": throw new BrokerError("EXECUTION_FAILED", "ACTIVATION_FAILED: macOS rejected app activation or window raise");

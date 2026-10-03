@@ -2,6 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 mkdir -p dist
+clang -Wall -Wextra -Werror native/gui_install.c -o dist/gui_install
 clang -fobjc-arc -Wall -Wextra -Werror -fblocks -framework AppKit -framework Security \
   native/gui_launcher.m -o dist/gui_launcher
 clang -fobjc-arc -Wall -Wextra -Werror -Wno-deprecated-declarations \

@@ -1,7 +1,7 @@
 import type { ContainerTaskJobMetadata } from "./container-job-metadata.js";
 import { DevelopmentGateway, worktreeResult, type DevelopmentPlan } from "./development-gateway.js";
 import { DEVELOPMENT_TOOL_NAMES, DEVELOPMENT_EXECUTION_TOOLS } from "./development-policy.js";
-import { GuiProcessSupervisor, guiLauncherExecutable } from "./gui-process-supervisor.js";
+import { GuiProcessSupervisor, guiApplicationExecutable, guiLauncherExecutable } from "./gui-process-supervisor.js";
 import {
   BrokerError,
   CAPABILITY_FAMILIES,
@@ -64,6 +64,7 @@ import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, normalizeAppId, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
 import { isBoundedBrowserNavigation, MacUiInspectorImpl, UiSnapshotRegistry, VISUAL_ACTION_NAMES, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, validateUiVisualActionRequest, type UiActionName, type UiCaptureMode, type UiInputKey, type UiInspector, type UiSnapshotRecord, type UiVisualActionOptions } from "./ui-inspector.js";
+import { MacGuiHelperReadinessProbe, guiReadinessPermissions, type GuiHelperReadinessProbe } from "./gui-helper-readiness.js";
 import { requiresAccessibilityPermission, type GuiPublicEnablement } from "./gui-readiness.js";
 import { requiresDeveloperReadiness, type DeveloperPublicEnablement } from "./developer-readiness.js";
 import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
@@ -145,6 +146,7 @@ export interface BrokerOptions {
   uiInspector?: UiInspector;
   /** Production startup evidence gate for Accessibility-dependent GUI tools. */
   guiPublicEnablement?: GuiPublicEnablement;
+  guiHelperReadiness?: GuiHelperReadinessProbe;
   /** Production startup evidence gate for D1 mutation tools. */
   developerPublicEnablement?: DeveloperPublicEnablement;
   uiSnapshotRegistry?: UiSnapshotRegistry;
@@ -218,6 +220,7 @@ export class Broker {
   private readonly appInspector: AppInventoryInspector;
   private readonly appControlInspector: AppControlInspector;
   private readonly uiInspector: UiInspector;
+  private readonly guiHelperReadiness: GuiHelperReadinessProbe | undefined;
   private readonly uiSnapshotRegistry: UiSnapshotRegistry;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
@@ -297,9 +300,13 @@ export class Broker {
         codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
       });
     }
+    const guiSupervisor = new GuiProcessSupervisor(this.processSupervisor);
+    this.guiHelperReadiness = options.guiHelperReadiness ?? (options.uiInspector === undefined && options.appControlInspector === undefined ? new MacGuiHelperReadinessProbe(undefined, timeoutMs => guiSupervisor.run({
+      executable: guiApplicationExecutable, args: ["permission"], cwd: "/", timeoutMs, outputCapBytes: 4096
+    })) : undefined);
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl(this.processSupervisor);
-    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, new GuiProcessSupervisor(this.processSupervisor));
-    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(new GuiProcessSupervisor(this.processSupervisor));
+    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, guiSupervisor);
+    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(guiSupervisor);
     this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     validateTaskProfileRegistry(this.taskProfileRegistry);
@@ -347,6 +354,10 @@ export class Broker {
     return runtimeToolStates(policy)
       .filter((state) => state.enabled && this.runtimeCapabilityDisabledReason(state.tool) === undefined)
       .map((state) => state.tool);
+  }
+
+  async guiHelperStatus() {
+    return this.guiHelperReadiness?.probe();
   }
 
   private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
@@ -1148,6 +1159,20 @@ export class Broker {
       }
       for (const additionalTarget of execution.additionalTargets ?? []) {
         authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, additionalTarget);
+      }
+      if (requiresAccessibilityPermission(request.tool) && this.guiHelperReadiness) {
+        const gui = await this.guiHelperStatus();
+        if (!gui?.installed || !gui.identity_valid) {
+          throw new BrokerError("PRECONDITION_FAILED", "GUI_HELPER_UNAVAILABLE: Mac Operator GUI helper is missing or failed identity validation");
+        }
+        if (gui.accessibility === null) {
+          throw new BrokerError("PRECONDITION_FAILED", `${gui.reason ?? "GUI_HELPER_PERMISSION_PROBE_FAILED"}: Production GUI permission readback is unavailable`);
+        }
+        if (!gui.accessibility) throw new BrokerError("POLICY_DENIED", "ACCESSIBILITY_PERMISSION_REQUIRED: Accessibility permission is not granted to the production GUI application");
+        if (execution.uiObserve && execution.uiObserve.captureMode !== "none" && gui.screen_recording !== true) {
+          throw new BrokerError("POLICY_DENIED", "SCREEN_RECORDING_PERMISSION_REQUIRED: Screen Recording permission is not granted to the production GUI application");
+        }
+        this.checkRevocation(request);
       }
       if (execution.development?.execution) {
         const resolved = await this.options.developmentGateway!.prepareExecution(request, execution.development, this.taskProfileRegistry, this.taskRunner);
@@ -1982,7 +2007,12 @@ export class Broker {
       }
       case "mac_capabilities": {
         assertExactArguments(request.arguments, []);
+        const gui = runtimeToolStates(policy).some(state => state.enabled && requiresAccessibilityPermission(state.tool))
+          ? await this.guiHelperStatus() : undefined;
         const states = runtimeToolStates(policy).map((state) => {
+          if (state.enabled && requiresAccessibilityPermission(state.tool) && gui && (!gui.installed || !gui.identity_valid || gui.accessibility !== true)) {
+            return { ...state, enabled: false, disabledReason: gui.reason ?? "GUI_HELPER_PERMISSION_PROBE_FAILED" };
+          }
           if (!state.enabled) return state;
           const candidate = policy.tools.get(state.tool);
           if (!candidate) return { ...state, enabled: false, disabledReason: "not_implemented" };
@@ -2017,7 +2047,7 @@ export class Broker {
                 reason: state.enabled ? "enabled" : (state.disabledReason ?? "disabled")
               };
             }),
-            permissions: [],
+            permissions: gui ? guiReadinessPermissions(gui) : [],
             protocol_version: PROTOCOL_VERSION,
             contract_version: CONTRACT_VERSION,
             version: "0.1.0"

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { BrokerError } from "@mac-operator/contracts";
 import { assertRetainedUiTargetMatches, MacUiInspectorImpl, UiSnapshotRegistry, guiVisionExecutableForTesting, opaqueElementId, opaqueWindowId, parseUiActionResult, parseUiObserveResult, parseUiScreenshotResult, parseUiTypeResult, uiActionExecutableForTesting, uiActionScriptForTesting, uiObserveExecutableForTesting, uiObserveScriptForTesting, uiTypeExecutableForTesting, uiTypeScriptForTesting, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, validateUiVisualActionRequest } from "./ui-inspector.js";
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
@@ -56,6 +57,68 @@ test("Accessibility observation fails closed for permission, app, and window err
       (caught: unknown) => caught instanceof Error && "errorClass" in caught && (caught as { errorClass: string }).errorClass === expected
     );
   }
+});
+
+test("native observation reports unavailable helper instead of an Accessibility denial", () => {
+  const failed = { ...success(""), state: "failed" as const, resultClass: "EXECUTION_FAILED" as const,
+    exitCode: 71, stderr: "Accessibility debug text with private window data" };
+  assert.throws(() => parseUiObserveResult(failed, appId, 10, true),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED" &&
+      error.message.startsWith("GUI_HELPER_UNAVAILABLE:") && !/Accessibility|private window/iu.test(error.message));
+  assert.throws(() => parseUiObserveResult({ ...failed, exitCode: 74 }, appId, 10, true),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "EXECUTION_FAILED" &&
+      error.message.startsWith("GUI_LAUNCHER_TRANSPORT_FAILED:"));
+  // Legacy osascript adapters retain their permission diagnostic compatibility.
+  assert.throws(() => parseUiObserveResult({ ...failed, exitCode: 1 }, appId, 10),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED");
+});
+
+test("native observation preserves explicit Accessibility permission denial", () => {
+  assert.throws(() => parseUiObserveResult(success(JSON.stringify({ status: "error", error: "accessibility_permission" })), appId, 10, true),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED" &&
+      error.message.startsWith("ACCESSIBILITY_PERMISSION_REQUIRED:"));
+});
+
+test("capture_mode none observes bounded browser AX nodes without requiring Screen Recording", async () => {
+  const requests: string[][] = [];
+  const inspector = new MacUiInspectorImpl({ run: async request => {
+    requests.push([...request.args]);
+    assert.equal(request.args[0], "inspect");
+    return success(JSON.stringify({ status: "ok", app_id: "bundle:com.google.Chrome", window_index: 0,
+      window_identity: nativeIdentity, window_title: "Example Domain", focused: true,
+      nodes: [{ index: 0, role: "AXButton", label: "Reload", enabled: true, focused: false, secure: false }], truncated: false }));
+  } });
+  const observed = await inspector.observe("bundle:com.google.Chrome", undefined, 10,
+    { timeoutMs: 10_000, shouldCancel: () => false }, "none");
+  assert.equal(observed.nativeWindowIdentity, nativeIdentity);
+  assert.equal(observed.nodes.length, 1);
+  assert.equal(observed.screenshot, undefined);
+  assert.deepEqual(requests, [["inspect", "accessibility", "com.google.Chrome", "", "10"]]);
+});
+
+test("active_window observation independently diagnoses Screen Recording permission denial", async () => {
+  const requests: string[][] = [];
+  const inspector = new MacUiInspectorImpl({ run: async request => {
+    requests.push([...request.args]);
+    return success(JSON.stringify(request.args[0] === "inspect" ? {
+      status: "ok", app_id: "bundle:com.google.Chrome", window_index: 0, window_identity: nativeIdentity,
+      window_title: "Example Domain", focused: true, nodes: [], truncated: false
+    } : { status: "error", error: "screen_recording_permission" }));
+  } });
+  await assert.rejects(inspector.observe("bundle:com.google.Chrome", undefined, 10,
+    { timeoutMs: 10_000, shouldCancel: () => false }, "active_window"),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "POLICY_DENIED" &&
+      error.message.startsWith("SCREEN_RECORDING_PERMISSION_REQUIRED:") && !/Accessibility/iu.test(error.message));
+  assert.deepEqual(requests, [["inspect", "visual", "com.google.Chrome", "", "10"],
+    ["capture", "active_window", "com.google.Chrome", "Example Domain", nativeIdentity]]);
+});
+
+test("active_window screenshot classifies a production launcher identity failure", () => {
+  const observed = parseUiObserveResult(success(JSON.stringify({ status: "ok", app_id: appId,
+    window_index: 0, window_identity: nativeIdentity, window_title: "Example", focused: true, nodes: [], truncated: false })), appId, 10, true);
+  assert.throws(() => parseUiScreenshotResult({ ...success(""), state: "failed", resultClass: "EXECUTION_FAILED", exitCode: 71 }, observed, "active_window"),
+    (error: unknown) => error instanceof BrokerError && error.errorClass === "PRECONDITION_FAILED" &&
+      error.message.startsWith("GUI_HELPER_UNAVAILABLE:"));
 });
 
 test("Accessibility observation denies sensitive applications, hints, and returned window titles", () => {

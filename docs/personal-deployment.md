@@ -4,6 +4,41 @@ Status: V2 coding and independent owner terminal OAuth connections are running
 as of October 2, 2026. This is an owner-managed, unsigned personal deployment,
 not a Developer ID/notarized package or the formal production installer.
 
+## GUI deployment prerequisite
+
+A healthy Broker or a built release does not prove that the installed GUI
+helper is ready. For every GUI-enabled release, run the following from the
+immutable release directory before switching the personal service:
+
+```sh
+npm run install:native:gui-vision --workspace @mac-operator/broker
+node scripts/probe-gui-launch-context.mjs
+```
+
+This step installs the release's validated signed `Mac Operator GUI.app` only
+when `~/Applications/Mac Operator GUI.app` is absent. A valid existing app is
+retained byte-for-byte so normal Broker upgrades preserve its TCC identity;
+invalid installed bundles fail closed instead of being replaced. The installer
+uses a same-parent staging directory and atomic exclusive rename, and is safe
+to run again or concurrently. It does not rebuild the GUI app, request TCC
+permissions, grant Node privileges, or modify OAuth/policy state. To install a
+specific preserved app artifact, pass the absolute path explicitly:
+
+```sh
+npm run install:native:gui-vision --workspace @mac-operator/broker -- \
+  --source "/absolute/release/packages/broker/dist/Mac Operator GUI.app"
+```
+
+Treat installation/identity, Accessibility, and Screen Recording as independent
+readiness checks. The production permission probe must traverse `gui_launcher`
+and LaunchServices; directly launching `gui_vision` is not authoritative. Renew
+permissions only for the exact installed app when necessary. An intentional
+GUI binary replacement needs its own backup and rollback plan; a routine
+deployment must not silently replace the owner's existing app. See
+[GUI host requirements](gui-computer-use.md#host-requirements-and-limits).
+
+## Historical October 2 GUI repair
+
 October 2 GUI repair: PM2 runs
 `MacOperator/releases/personal-20261002-terminal-protocol-c`, which carries
 forward the GUI repair from `personal-20261002-gui-a` together with the latest
@@ -471,3 +506,20 @@ The tunnel Auth ingress allowlist must include `/approval/access`,
 existing login/review/decision routes. Validate ingress before restarting the
 connector. Otherwise local route tests pass but the public management UI returns
 404. These paths still require owner authentication and CSRF checks in Auth.
+
+## Runtime GUI readiness
+
+GUI-enabled personal service startup also runs the same idempotent installer.
+Installation failure is reported as `GUI_HELPER_UNAVAILABLE` while the Broker's
+health and terminal interfaces remain available. Startup emits bounded GUI
+readiness JSON with `installed`, `identity_valid`, `accessibility`,
+`screen_recording`, and `transport=launchservices`.
+
+`mac_capabilities.permissions` publishes separate `gui_helper_installed`,
+`gui_helper_identity_valid`, `gui_helper_launchservices`, `accessibility`, and
+`screen_recording` entries. The readiness check is refreshed, so granting the
+exact app's permissions does not require rebuilding/reinstalling it. GUI
+requests check readiness before consuming mutation approval. Missing or invalid
+helper identity is a precondition failure; AX and screenshot permission denials
+have independent policy errors. `capture_mode=none` requires Accessibility only.
+Broker health reports Broker liveness; GUI readiness is reported separately.
