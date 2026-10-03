@@ -237,3 +237,28 @@ test("bounded redaction never exceeds the requested UTF-8 byte budget", () => {
     assert.equal(bounded.truncated, true);
   }
 });
+
+test("hyphenated provider keys are redacted and blocked", () => {
+  for (const key of ["sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789", "sk-or-v1-abcdefghijklmnopqrstuvwxyz0123456789",
+    "gsk_abcdefghijklmnopqrstuvwxyz0123", "xai-abcdefghijklmnopqrstuvwxyz0123"]) {
+    assert.equal(redactBoundedText(`key ${key} end`, 1_000).text, "key [REDACTED] end");
+    assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(`value=${key}\n`)), /secret signature/u);
+  }
+});
+
+test("token redaction does not depend on a word boundary after the token", () => {
+  const github = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  assert.equal(redactBoundedText(`${github}_suffix`, 1_000).text, "[REDACTED]_suffix");
+  assert.throws(() => assertContentDoesNotContainSecrets(Buffer.from(`${github}_\n`)), /secret signature/u);
+  assert.equal(redactBoundedText("Authorization: Bearer abcdefghijklmnop1234- ok", 1_000).text, "Authorization: [REDACTED] ok");
+  assert.equal(redactBoundedText("Bearer abcdefghijklmnopqrst/ ok", 1_000).text, "[REDACTED] ok");
+  assert.equal(redactBoundedText("AKIAIOSFODNN7EXAMPLE_x", 1_000).text, "[REDACTED]_x");
+  assert.equal(redactBoundedText("AKIAIOSFODNN7EXAMPLEX", 1_000).text, "AKIAIOSFODNN7EXAMPLEX", "longer alphanumeric identifiers are not AWS key ids");
+});
+
+test("PostgreSQL password files and 1Password CLI config are protected paths", () => {
+  for (const path of ["/Users/test/.pgpass", "/Users/test/.config/op/config", "/Users/test/.config/op/plugins/gh.json"]) {
+    assert.throws(() => assertContentPathAllowed(path), /protected secret zone/u, path);
+  }
+  assertContentPathAllowed("/Users/test/project/operator.md");
+});
