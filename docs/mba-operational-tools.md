@@ -56,3 +56,23 @@ separate approval workflow. Privileged operations and service control likewise
 require their own configured, authenticated executors and operation targets.
 Changing enablement flags cannot implement those tools or validate their
 postconditions. Their absence must remain visible in capability diagnostics.
+
+
+## MBA V2 named validation profiles
+
+`build:catalog` builds deterministic public metadata for the repository's actual
+tool contracts and verifies the output hash. `test:catalog` checks artifact
+integrity, invalid contract rejection, deterministic identity and safe output
+publication. These are platform-independent commands for the registered clean
+development repository; they run in an owned container with network denied.
+The build profile writes its artifact in the disposable container's `/tmp`, so
+validation cannot import generated files into a coding worktree.
+
+These named profiles do not claim a full TypeScript or macOS native build.
+The initial full TypeScript container probe remains failed; secret-content
+filtering and the existing resource limits remain enforced. Full host-native
+verification uses the independently authorized owner terminal connection.
+The coding connection at `/mcp` exposes the 51 coding/GUI/read tools, and the
+independent `/terminal/mcp` connection provides owner terminal authority. The
+shared signed policy enables 53 implementations; neither connection silently
+inherits the other connection's additional scopes.

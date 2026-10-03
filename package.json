@@ -58,7 +58,9 @@
     "verify:process-boundaries": "node scripts/check-process-boundaries.mjs",
     "verify:completion": "node scripts/check-completion-audit.mjs",
     "verify:contracts": "npm run build && node packages/contracts/dist/verify-contracts.js",
-    "verify:canonical:native": "sh scripts/verify-canonical-json-native.sh"
+    "verify:canonical:native": "sh scripts/verify-canonical-json-native.sh",
+    "build:catalog": "node scripts/build-tool-catalog.mjs",
+    "test:catalog": "node --test scripts/build-tool-catalog.test.mjs"
   },
   "workspaces": [
     "packages/*"

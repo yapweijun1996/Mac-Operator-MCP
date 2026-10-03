@@ -1,3 +1,6 @@
+import { enablePersonalTerminalConnection } from "./personal-terminal-connection.js";
+import { upgradePersonalDockerRead } from "./personal-docker-upgrade.js";
+import { configSchema, ownerTerminalAuthConfig, scopesForGrantProfile } from "./contracts.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createPrivateKey, randomBytes, sign } from "node:crypto";
@@ -265,5 +268,28 @@ test("terminal-sessions upgrade re-signs a pre-session V2 state and keeps its de
   } finally {
     await rm(root, { recursive: true, force: true }); await rm(project, { recursive: true, force: true });
     if (base !== undefined) await rm(base, { recursive: true, force: true });
+  }
+});
+
+
+test("V2 Docker opt-in permits independent terminal setup without inheriting Docker consent", { skip: !supported }, async () => {
+  const { root, project, personal, auth } = await provisionO1();
+  let base: string | undefined;
+  try {
+    ({ base } = await convertToSyntheticV2(root, personal, auth));
+    await upgradePersonalDockerRead(root, process.cwd(), "b".repeat(40));
+    const policyBefore = await readFile(join(personal, "policy.json"), "utf8");
+    await enablePersonalTerminalConnection(root, process.cwd(), "c".repeat(40));
+    const config = configSchema.parse(JSON.parse(await readFile(join(root, "auth/auth-config.json"), "utf8")));
+    assert.equal(config.dockerReadAccess, true);
+    assert.equal(config.ownerTerminalConnection, true);
+    assert.equal(scopesForGrantProfile("v2", config.dockerReadAccess).includes("mac.docker.read"), true);
+    const terminal = ownerTerminalAuthConfig(config);
+    assert.equal(terminal.dockerReadAccess, undefined);
+    assert.equal(scopesForGrantProfile(terminal.grantProfile, terminal.dockerReadAccess).includes("mac.docker.read"), false);
+    assert.equal(await readFile(join(personal, "policy.json"), "utf8"), policyBefore);
+  } finally {
+    if (base) await rm(base, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true }); await rm(project, { recursive: true, force: true });
   }
 });

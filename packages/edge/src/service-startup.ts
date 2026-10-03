@@ -343,8 +343,10 @@ export function validateEdgeServiceStartupConfig(value: unknown): EdgeServiceSta
   }
   if (record.ownerTerminalConnection === true) {
     const context = ownerTerminalOAuthContext(new URL(oauthIssuer));
+    const codingScopes = oauthScopes?.includes("mac.docker.read")
+      ? [...V2_CODING_SCOPES, "mac.docker.read"] : V2_CODING_SCOPES;
     if (issuerId !== "mac-operator-auth" || resourceServerUrl !== new URL("/mcp", oauthIssuer).href ||
-        !oauthScopes || JSON.stringify([...oauthScopes].sort()) !== JSON.stringify([...V2_CODING_SCOPES].sort()) ||
+        !oauthScopes || JSON.stringify([...oauthScopes].sort()) !== JSON.stringify([...codingScopes].sort()) ||
         context.resource.origin !== new URL(resourceServerUrl).origin) {
       throw new Error("Independent terminal connection requires the unchanged personal V2 profile");
     }
