@@ -5599,6 +5599,14 @@ test("owner GUI session issuer admits consecutive exact inputs without per-opera
     assert.equal(submit.ok, false);
     if (!submit.ok) assert.equal(submit.result_class, "POLICY_DENIED");
     assert.equal(dispatches, 2, "Submission needs an independent exact operation approval");
+    for (const [index, text] of ["command\n", "command\r", "message\r\n"].entries()) {
+      const id = `newline-submit-${index}`;
+      const newline = await broker.handle(signRequest(unsigned({ requestId: id, nonce: id, tool: "mac_ui_type",
+        arguments: { element_ref: elementRef, text, submit: false } }, ["mac.ui.control"]), key));
+      assert.equal(newline.ok, false);
+      if (!newline.ok) assert.equal(newline.result_class, "POLICY_DENIED");
+    }
+    assert.equal(dispatches, 2, "Embedded line breaks need explicit operation approval");
     for (const browserNavigation of [false, true]) {
       registry.recordObservation({ appId, windowId, windowTitle: "Web form", focused: true,
         nodes: [{ elementRef, role: "AXTextField", label: "Address and search bar", enabled: true,

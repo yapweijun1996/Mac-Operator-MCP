@@ -1,7 +1,7 @@
 import type { ContainerTaskJobMetadata } from "./container-job-metadata.js";
 import { DevelopmentGateway, worktreeResult, type DevelopmentPlan } from "./development-gateway.js";
 import { DEVELOPMENT_TOOL_NAMES, DEVELOPMENT_EXECUTION_TOOLS } from "./development-policy.js";
-import { GuiProcessSupervisor, guiLauncherExecutable } from "./gui-process-supervisor.js";
+import { GuiProcessSupervisor, guiApplicationExecutable, guiLauncherExecutable } from "./gui-process-supervisor.js";
 import {
   BrokerError,
   CAPABILITY_FAMILIES,
@@ -33,6 +33,7 @@ import {
   authorizeTarget,
   authorizeTool,
   cloneBrokerPolicy,
+  guiCapabilityProbeTarget,
   isCapabilityFamilyDisabled,
   runtimeToolStates,
   validateBrokerPolicy,
@@ -42,6 +43,7 @@ import {
   type ToolPolicy
 } from "./policy.js";
 import { isPolicyQueryTargetReference } from "./target-authority.js";
+import { DESKTOP_APP_ID, desktopDeniedApplications, desktopDisplayHint } from "./desktop-ui.js";
 import { PolicyManager } from "./policy-loader.js";
 import { parseBrokerRequest, parseBrokerRevocationEvent } from "./request-validator.js";
 import { FilesystemInspector, normalizeProjectTypes, type FilesystemPathPlan, type SafeWritePostcondition, type TemporaryWriteCleanupResult, type UnlinkRecoveryResult } from "./filesystem-inspector.js";
@@ -64,6 +66,7 @@ import type { RootHelperSnapshotRequestAuthority } from "./root-helper-snapshot-
 import { AppInventoryInspectorImpl, validateAppListRequest, type AppInventoryInspector } from "./app-inspector.js";
 import { AppControlInspectorImpl, normalizeAppId, validateAppFocusRequest, validateAppOpenRequest, type AppControlInspector } from "./app-control.js";
 import { isBoundedBrowserNavigation, MacUiInspectorImpl, UiSnapshotRegistry, VISUAL_ACTION_NAMES, validateSensitiveUiTarget, validateUiActionRequest, validateUiObserveRequest, validateUiTypeRequest, validateUiVisualActionRequest, type UiActionName, type UiCaptureMode, type UiInputKey, type UiInspector, type UiSnapshotRecord, type UiVisualActionOptions } from "./ui-inspector.js";
+import { MacGuiHelperReadinessProbe, guiReadinessPermissions, type GuiHelperReadinessProbe } from "./gui-helper-readiness.js";
 import { requiresAccessibilityPermission, type GuiPublicEnablement } from "./gui-readiness.js";
 import { requiresDeveloperReadiness, type DeveloperPublicEnablement } from "./developer-readiness.js";
 import { PrivilegedHelperJobExecutor, type PrivilegedHelperJobExecutionInput, type PrivilegedHelperJobExecutionOutcome } from "./privileged-helper-executor.js";
@@ -145,6 +148,9 @@ export interface BrokerOptions {
   uiInspector?: UiInspector;
   /** Production startup evidence gate for Accessibility-dependent GUI tools. */
   guiPublicEnablement?: GuiPublicEnablement;
+  guiHelperReadiness?: GuiHelperReadinessProbe;
+  /** Explicit desktop policy requires the matching native ordinary-app capability. */
+  ordinaryGuiApplications?: boolean;
   /** Production startup evidence gate for D1 mutation tools. */
   developerPublicEnablement?: DeveloperPublicEnablement;
   uiSnapshotRegistry?: UiSnapshotRegistry;
@@ -218,6 +224,7 @@ export class Broker {
   private readonly appInspector: AppInventoryInspector;
   private readonly appControlInspector: AppControlInspector;
   private readonly uiInspector: UiInspector;
+  private readonly guiHelperReadiness: GuiHelperReadinessProbe | undefined;
   private readonly uiSnapshotRegistry: UiSnapshotRegistry;
   private readonly taskProfileRegistry: TaskProfileRegistry;
   private readonly taskRunner: TaskRunner;
@@ -297,9 +304,16 @@ export class Broker {
         codeSignatureExpectation: DOCKER_CODE_SIGNATURE_EXPECTATION
       });
     }
+    const guiSupervisor = new GuiProcessSupervisor(this.processSupervisor);
+    this.guiHelperReadiness = options.guiHelperReadiness ?? (options.uiInspector === undefined && options.appControlInspector === undefined ? new MacGuiHelperReadinessProbe(undefined, timeoutMs => guiSupervisor.run({
+      executable: guiApplicationExecutable, args: ["permission"], cwd: "/", timeoutMs, outputCapBytes: 4096
+    }), { requireOrdinaryApplications: options.ordinaryGuiApplications === true,
+      productionCapabilities: timeoutMs => guiSupervisor.run({
+        executable: guiApplicationExecutable, args: ["capabilities"], cwd: "/", timeoutMs, outputCapBytes: 4096
+      }) }) : undefined);
     this.appInspector = options.appInspector ?? new AppInventoryInspectorImpl(this.processSupervisor);
-    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, new GuiProcessSupervisor(this.processSupervisor));
-    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(new GuiProcessSupervisor(this.processSupervisor));
+    this.appControlInspector = options.appControlInspector ?? new AppControlInspectorImpl(this.appInspector, guiSupervisor);
+    this.uiInspector = options.uiInspector ?? new MacUiInspectorImpl(guiSupervisor);
     this.uiSnapshotRegistry = options.uiSnapshotRegistry ?? new UiSnapshotRegistry();
     this.taskProfileRegistry = options.taskProfileRegistry ?? new TaskProfileRegistry([]);
     validateTaskProfileRegistry(this.taskProfileRegistry);
@@ -347,6 +361,10 @@ export class Broker {
     return runtimeToolStates(policy)
       .filter((state) => state.enabled && this.runtimeCapabilityDisabledReason(state.tool) === undefined)
       .map((state) => state.tool);
+  }
+
+  async guiHelperStatus() {
+    return this.guiHelperReadiness?.probe();
   }
 
   private runtimeCapabilityDisabledReason(toolName: string): string | undefined {
@@ -1149,6 +1167,23 @@ export class Broker {
       for (const additionalTarget of execution.additionalTargets ?? []) {
         authorizeTarget(policy, request.principal.principalId, toolPolicy.requiredScopes, additionalTarget);
       }
+      if (requiresAccessibilityPermission(request.tool) && this.guiHelperReadiness) {
+        const gui = await this.guiHelperStatus();
+        if (!gui?.installed || !gui.identity_valid) {
+          throw new BrokerError("PRECONDITION_FAILED", "GUI_HELPER_UNAVAILABLE: Mac Operator GUI helper is missing or failed identity validation");
+        }
+        if (gui.accessibility === null) {
+          throw new BrokerError("PRECONDITION_FAILED", `${gui.reason ?? "GUI_HELPER_PERMISSION_PROBE_FAILED"}: Production GUI permission readback is unavailable`);
+        }
+        if (!gui.accessibility) throw new BrokerError("POLICY_DENIED", "ACCESSIBILITY_PERMISSION_REQUIRED: Accessibility permission is not granted to the production GUI application");
+        if (this.options.ordinaryGuiApplications && (gui.ordinary_apps !== true || gui.desktop_surfaces !== true)) {
+          throw new BrokerError("PRECONDITION_FAILED", `${gui.reason ?? "GUI_HELPER_UPGRADE_REQUIRED"}: Production GUI computer-use capability is unavailable`);
+        }
+        if (execution.uiObserve && execution.uiObserve.captureMode !== "none" && gui.screen_recording !== true) {
+          throw new BrokerError("POLICY_DENIED", "SCREEN_RECORDING_PERMISSION_REQUIRED: Screen Recording permission is not granted to the production GUI application");
+        }
+        this.checkRevocation(request);
+      }
       if (execution.development?.execution) {
         const resolved = await this.options.developmentGateway!.prepareExecution(request, execution.development, this.taskProfileRegistry, this.taskRunner);
         this.checkRevocation(request);
@@ -1225,7 +1260,7 @@ export class Broker {
         const snapshot = execution.uiAction?.snapshot ?? execution.uiType?.snapshot;
         const appId = snapshot?.appId ?? execution.appFocus?.appId ?? execution.appOpen?.appId;
         const input = execution.uiType;
-        const submits = input && (input.submit || input.keys.includes("ENTER"));
+        const submits = input && (input.submit || input.keys.includes("ENTER") || /[\r\n]/u.test(input.text));
         const navigation = input?.snapshot && isBoundedBrowserNavigation({ ...input, snapshot: input.snapshot });
         const sensitiveAction = execution.uiAction && (execution.uiAction.options?.key === "ENTER" ||
           /\b(?:buy|purchase|pay|checkout|send|publish|delete|remove|erase|security|privacy)\b/iu.test(snapshot?.label ?? ""));
@@ -1982,7 +2017,13 @@ export class Broker {
       }
       case "mac_capabilities": {
         assertExactArguments(request.arguments, []);
+        const gui = runtimeToolStates(policy).some(state => state.enabled && requiresAccessibilityPermission(state.tool))
+          ? await this.guiHelperStatus() : undefined;
         const states = runtimeToolStates(policy).map((state) => {
+          if (state.enabled && requiresAccessibilityPermission(state.tool) && gui && (!gui.installed || !gui.identity_valid || gui.accessibility !== true ||
+              this.options.ordinaryGuiApplications === true && (gui.ordinary_apps !== true || gui.desktop_surfaces !== true))) {
+            return { ...state, enabled: false, disabledReason: gui.reason ?? "GUI_HELPER_PERMISSION_PROBE_FAILED" };
+          }
           if (!state.enabled) return state;
           const candidate = policy.tools.get(state.tool);
           if (!candidate) return { ...state, enabled: false, disabledReason: "not_implemented" };
@@ -2017,7 +2058,7 @@ export class Broker {
                 reason: state.enabled ? "enabled" : (state.disabledReason ?? "disabled")
               };
             }),
-            permissions: [],
+            permissions: gui ? guiReadinessPermissions(gui) : [],
             protocol_version: PROTOCOL_VERSION,
             contract_version: CONTRACT_VERSION,
             version: "0.1.0"
@@ -3626,7 +3667,7 @@ export class Broker {
     }
     const observed = await this.uiInspector.observe(
       execution.uiAction.snapshot.appId,
-      undefined,
+      execution.uiAction.snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(execution.uiAction.snapshot.nativeWindowIdentity!) : undefined,
       100,
       this.executionControl(request, execution.target, timeoutMs, execution.uiActionJob.jobId, [], execution.jobLease),
       "active_window"
@@ -4538,9 +4579,11 @@ export class Broker {
     if (request.tool === "mac_app_open") {
       assertExactArguments(request.arguments, ["app_id", "document_path", "url"]);
       const appId = normalizeAppId(request.arguments.app_id);
+      if (appId === DESKTOP_APP_ID || request.arguments.app_id === "desktop") throw new BrokerError("UNSUPPORTED_CAPABILITY", "Use mac_ui_observe with app_id=desktop for the desktop surface");
       const documentPath = request.arguments.document_path;
       const url = request.arguments.url;
       validateAppOpenRequest(appId, documentPath, url);
+      validateSensitiveUiTarget(appId);
       return {
         target: { kind: "app", reference: appId },
         auditTarget: `app:${appId}`,
@@ -4554,6 +4597,7 @@ export class Broker {
     if (request.tool === "mac_app_focus") {
       assertExactArguments(request.arguments, ["app_id", "window_hint"]);
       const appId = normalizeAppId(request.arguments.app_id);
+      if (appId === DESKTOP_APP_ID || request.arguments.app_id === "desktop") throw new BrokerError("UNSUPPORTED_CAPABILITY", "Focus a concrete application, or observe app_id=desktop");
       const windowHint = request.arguments.window_hint;
       validateAppFocusRequest(appId, windowHint);
       validateSensitiveUiTarget(appId, windowHint as string | undefined);
@@ -4619,7 +4663,7 @@ export class Broker {
     }
     if (request.tool === "mac_ui_observe") {
       assertExactArguments(request.arguments, ["app_id", "window_hint", "max_nodes", "capture_mode"]);
-      const appId = normalizeAppId(request.arguments.app_id);
+      const appId = request.arguments.app_id === "desktop" ? DESKTOP_APP_ID : normalizeAppId(request.arguments.app_id);
       const windowHint = request.arguments.window_hint;
       const maxNodes = request.arguments.max_nodes ?? 200;
       const captureMode = request.arguments.capture_mode ?? "active_window";
@@ -5078,7 +5122,7 @@ export class Broker {
         candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
         candidate.target.kind === "app" && candidate.effect === "allow")) {
         try {
-          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          authorizeTarget(policy, principalId, tool.requiredScopes, guiCapabilityProbeTarget(policy, rule.target));
           return;
         } catch {
           // Continue until one independently authorized app identity is found.
@@ -5091,7 +5135,7 @@ export class Broker {
         candidate.principalId === principalId && candidate.scope === tool.requiredScopes[0] &&
         candidate.target.kind === "app_window" && candidate.effect === "allow")) {
         try {
-          authorizeTarget(policy, principalId, tool.requiredScopes, rule.target);
+          authorizeTarget(policy, principalId, tool.requiredScopes, guiCapabilityProbeTarget(policy, rule.target));
           return;
         } catch {
           // Continue until one independently authorized app-window identity is found.
@@ -5184,6 +5228,9 @@ export class Broker {
     onWorkspaceImport?: (path: string, phase: "intent" | "verified") => void
   ) {
     let lastLeaseHeartbeatMs = Number.NEGATIVE_INFINITY;
+    const desktopSurface = target.reference === `window:${DESKTOP_APP_ID}` ||
+      target.kind === "ui_element" && this.uiSnapshotRegistry.resolve(target.reference, request.principal.principalId,
+        request.principal.sessionId, this.now(), uiApprovalBinding(request)).appId === DESKTOP_APP_ID;
     const rootHelperRequestAuthority = this.rootHelperSnapshotRequestAuthority === undefined
       ? undefined
       : {
@@ -5200,6 +5247,10 @@ export class Broker {
       } satisfies RootHelperSnapshotRequestAdmission;
     return {
       timeoutMs,
+      ...(desktopSurface ? {
+        desktopDeniedApps: desktopDeniedApplications(this.currentPolicy(), request.principal.principalId,
+          this.currentPolicy().tools.get(request.tool)!.requiredScopes)
+      } : {}),
       beforeMutation: () => {
         this.ensureActiveAuthority(request, target, additionalTargets);
       },

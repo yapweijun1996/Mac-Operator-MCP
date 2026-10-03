@@ -1,3 +1,10 @@
+import { createHash } from "node:crypto";
+
+/** Token identities may contain characters the limiter key grammar rejects; hash them to a fixed safe key. */
+export function rateLimitKey(identity: string): string {
+  return createHash("sha256").update(identity).digest("hex");
+}
+
 export interface RateLimitOptions {
   windowMs?: number;
   maxRequests?: number;

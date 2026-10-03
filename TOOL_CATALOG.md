@@ -59,8 +59,8 @@ Source: KBID `mac-operator-mcp`, item `65554efe-6a0a-404c-af6a-7670777944b4`
 36. [`mac_app_list`](tool-contracts/mac_app_list.json) — installed/running app inventory.
 37. [`mac_app_open`](tool-contracts/mac_app_open.json) — launch an allowlisted app or approved target.
 38. [`mac_app_focus`](tool-contracts/mac_app_focus.json) — focus an approved app/window.
-39. [`mac_ui_observe`](tool-contracts/mac_ui_observe.json) — bounded Accessibility-tree snapshot.
-40. [`mac_ui_action`](tool-contracts/mac_ui_action.json) — one supported action on a fresh approved element.
+39. [`mac_ui_observe`](tool-contracts/mac_ui_observe.json) — bounded application snapshot or explicitly delegated desktop display screenshot.
+40. [`mac_ui_action`](tool-contracts/mac_ui_action.json) — one supported action on a fresh approved element or display/window visual reference.
 41. [`mac_ui_type`](tool-contracts/mac_ui_type.json) — bounded input to an approved non-secure target.
 42. [`mac_service_control`](tool-contracts/mac_service_control.json) — owner-domain LaunchAgent lifecycle with fixed actions and readback.
 

@@ -45,3 +45,12 @@ test("GUI launcher respects the production root-ownership gate", { skip: process
   assert.equal(result.terminationObserved, true);
   assert.equal(JSON.parse(result.stdout).status, "ok");
 });
+
+test("production GUI launcher identity failure surfaces a helper precondition", async () => {
+  const supervisor = new GuiProcessSupervisor({ run: async () => ({
+    resultClass: "EXECUTION_FAILED", exitCode: 71
+  } as ProcessExecutionResult) });
+  await assert.rejects(supervisor.run({ executable: guiApplicationExecutable, args: ["permission"], cwd: "/",
+    timeoutMs: 1000, outputCapBytes: 4096 }), error => error instanceof Error &&
+      error.message.includes("GUI_HELPER_UNAVAILABLE") && !error.message.includes("Accessibility"));
+});

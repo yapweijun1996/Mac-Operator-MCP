@@ -1,6 +1,6 @@
 import type { AuthStore } from "./store.js";
 import { randomUUID } from "node:crypto";
-import { guiSessionApprovalId, type BrokerStore, type GuiSessionOperation, type IssueApprovalInput } from "@mac-operator/broker";
+import { guiSessionApprovalId, validateSensitiveUiTarget, validateUiObserveRequest, type BrokerStore, type GuiSessionOperation, type IssueApprovalInput } from "@mac-operator/broker";
 
 export const GUI_SESSION_MS = 30 * 60_000;
 const MAX_OPERATIONS = 500;
@@ -19,25 +19,29 @@ export function browserConsentApp(preview: { tool: string; approvalClass: string
 export interface GuiSessionView {
   id: string;
   appId: string;
+  desktop?: true;
   persistent?: boolean;
   expiresAtMs: number;
   remainingOperations: number;
 }
 interface Grant extends GuiSessionView {
   principalId: string;
-  sessionId: string;
+  sessionId?: string;
   policyVersion: string;
   approvals: Map<string, number>;
 }
 
-/** Owner browser delegation; policy and authenticated OAuth authority remain independent. */
+/** Explicit owner GUI delegation; policy and authenticated OAuth authority remain independent. */
 export class GuiSessionApprovals {
   private readonly grants = new Map<string, Grant>();
   private readonly requestGrants = new Map<string, string>();
+  private readonly allowDesktop: boolean;
   constructor(private readonly store: BrokerStore,
     private readonly issueExact: (approval: Omit<IssueApprovalInput, "approverPrincipalId">) => Promise<void>,
     private readonly now: () => number = Date.now,
-    private readonly authStore?: AuthStore) {
+    private readonly authStore?: AuthStore,
+    options: { allowDesktop?: boolean } = {}) {
+    this.allowDesktop = options.allowDesktop === true;
     this.restore();
   }
 
@@ -47,6 +51,14 @@ export class GuiSessionApprovals {
       if (!record.revoked && !this.grants.has(record.id)) this.grants.set(record.id, {
         id: record.id, principalId: record.principalId, sessionId: record.sessionId,
         appId: record.appId, policyVersion: record.policyVersion, persistent: true,
+        expiresAtMs: Number.MAX_SAFE_INTEGER, remainingOperations: Number.MAX_SAFE_INTEGER, approvals: new Map()
+      });
+    }
+    if (this.allowDesktop) for (const record of this.authStore?.desktopGrants() ?? []) {
+      this.requestGrants.set(record.consentRequestId, record.id);
+      if (!record.revoked && !this.grants.has(record.id)) this.grants.set(record.id, {
+        id: record.id, principalId: record.principalId, policyVersion: record.policyVersion,
+        appId: "desktop", desktop: true, persistent: true,
         expiresAtMs: Number.MAX_SAFE_INTEGER, remainingOperations: Number.MAX_SAFE_INTEGER, approvals: new Map()
       });
     }
@@ -63,7 +75,7 @@ export class GuiSessionApprovals {
     const previous = this.requestGrants.get(requestId);
     if (previous) {
       const active = this.status(previous);
-      if (active && Boolean(active.persistent) === persistent) return active;
+      if (active && !active.desktop && Boolean(active.persistent) === persistent) return active;
       throw new Error("Session consent has already been used");
     }
     const preview = this.store.approvalPreview(requestId, this.now());
@@ -82,7 +94,42 @@ export class GuiSessionApprovals {
       remainingOperations: persistent ? Number.MAX_SAFE_INTEGER : MAX_OPERATIONS, approvals: new Map() };
     this.audit(grant, "GUI_SESSION_GRANTED");
     if (persistent) this.authStore!.put("browser_grant", grant.id, { id: grant.id, principalId: grant.principalId,
-      sessionId: grant.sessionId, appId: appId as "bundle:com.google.Chrome" | "bundle:com.apple.Safari",
+      sessionId: request.sessionId, appId: appId as "bundle:com.google.Chrome" | "bundle:com.apple.Safari",
+      policyVersion: grant.policyVersion, consentRequestId: requestId, createdAt: this.now(), revoked: false });
+    this.grants.set(grant.id, grant);
+    this.requestGrants.set(requestId, grant.id);
+    return this.view(grant);
+  }
+
+  /** Explicit owner opt-in; browser session consent is never promoted to desktop authority. */
+  startDesktop(requestId: string): GuiSessionView {
+    if (!this.allowDesktop || !this.authStore) throw new Error("Desktop delegation is not enabled");
+    this.restore();
+    const previous = this.requestGrants.get(requestId);
+    if (previous) {
+      const active = this.status(previous);
+      if (active?.desktop) return active;
+      throw new Error("Session consent has already been used");
+    }
+    const preview = this.store.approvalPreview(requestId, this.now());
+    const request = this.store.requestRecord(requestId);
+    const appId = preview?.tool === "mac_app_focus" && preview.targetKind === "app_window"
+      ? preview.targetRef.replace(/^app_window:window:/u, "")
+      : preview?.tool === "mac_app_open" && preview.targetKind === "app"
+      ? preview.targetRef.replace(/^app:/u, "") : undefined;
+    const expected = preview?.tool === "mac_app_focus" ? `app_window:window:${appId}` : `app:${appId}`;
+    if (!preview || !request || preview.approvalClass !== "trusted_gui" || preview.unattended ||
+        !appId || preview.targetRef !== expected || !ordinaryGuiApp(appId) ||
+        this.store.isRevoked("session", request.sessionId) || this.store.isRevoked("principal", request.principalId)) {
+      throw new Error("Desktop consent requires a current concrete app focus or launch preview");
+    }
+    this.prune();
+    if (this.grants.size >= 16 || this.requestGrants.size >= 4096) throw new Error("Too many active GUI sessions");
+    const grant: Grant = { id: `gui-session:${randomUUID()}`, principalId: request.principalId,
+      policyVersion: request.policyVersion, appId: "desktop", desktop: true, persistent: true,
+      expiresAtMs: Number.MAX_SAFE_INTEGER, remainingOperations: Number.MAX_SAFE_INTEGER, approvals: new Map() };
+    this.audit(grant, "DESKTOP_SESSION_GRANTED");
+    this.authStore.put("desktop_grant", grant.id, { id: grant.id, principalId: grant.principalId,
       policyVersion: grant.policyVersion, consentRequestId: requestId, createdAt: this.now(), revoked: false });
     this.grants.set(grant.id, grant);
     this.requestGrants.set(requestId, grant.id);
@@ -100,8 +147,13 @@ export class GuiSessionApprovals {
     if (!grant) return;
     // Remove authority before audit or cleanup can fail.
     if (grant.persistent) {
-      const record = this.authStore?.get("browser_grant", id);
-      if (record) this.authStore!.put("browser_grant", id, { ...record, revoked: true });
+      if (grant.desktop) {
+        const record = this.authStore?.get("desktop_grant", id);
+        if (record) this.authStore!.put("desktop_grant", id, { ...record, revoked: true });
+      } else {
+        const record = this.authStore?.get("browser_grant", id);
+        if (record) this.authStore!.put("browser_grant", id, { ...record, revoked: true });
+      }
     }
     this.grants.delete(id);
     for (const approvalId of grant.approvals.keys()) this.store.revokeApproval(approvalId, "GUI_SESSION_ENDED", this.now());
@@ -111,7 +163,7 @@ export class GuiSessionApprovals {
   async authorize(operation: GuiSessionOperation): Promise<boolean> {
     this.restore();
     if (this.store.isRevoked("session", operation.sessionId)) return false;
-    if (operation.requiresExplicitApproval || !TOOLS.includes(operation.tool) || !APPS.includes(operation.appId)) return false;
+    if (operation.requiresExplicitApproval || !TOOLS.includes(operation.tool) || !ordinaryGuiApp(operation.appId)) return false;
     // The Broker resolves element ownership first; reject mismatched delegation shapes too.
     if (operation.tool === "mac_app_open"
       ? operation.targetKind !== "app" || operation.targetRef !== `app:${operation.appId}`
@@ -120,7 +172,8 @@ export class GuiSessionApprovals {
       : operation.targetKind !== "ui_element" || !/^ui_element:element:[a-f0-9]{48}$/u.test(operation.targetRef)) return false;
     const grant = [...this.grants.values()].find(candidate => this.active(candidate) &&
       candidate.principalId === operation.principalId && (candidate.persistent || candidate.sessionId === operation.sessionId) &&
-      candidate.policyVersion === operation.policyVersion && candidate.appId === operation.appId);
+      candidate.policyVersion === operation.policyVersion && (candidate.desktop
+        ? this.allowDesktop : candidate.appId === operation.appId));
     if (!grant || operation.expiresAtMs <= this.now()) return false;
     const approvalId = guiSessionApprovalId(operation.requestId);
     // Reserve synchronously so concurrent requests cannot exceed the use bound.
@@ -133,7 +186,7 @@ export class GuiSessionApprovals {
         unattended: false, issuedAtMs: this.now(), expiresAtMs: Math.min(this.now() + 30_000, grant.expiresAtMs, operation.expiresAtMs), useLimit: 1 });
       grant.approvals.set(approvalId, Math.min(this.now() + 30_000, grant.expiresAtMs, operation.expiresAtMs));
       if (!this.grants.has(grant.id) || this.now() >= grant.expiresAtMs ||
-          !this.authorityActive(grant) || this.store.isRevoked("session", operation.sessionId)) {
+          !this.authorityActive(grant) || this.now() >= operation.expiresAtMs || this.store.isRevoked("session", operation.sessionId)) {
         this.store.revokeApproval(approvalId, "GUI_SESSION_ENDED", this.now());
         throw new Error("GUI session ended during issuance");
       }
@@ -154,10 +207,15 @@ export class GuiSessionApprovals {
     this.grants.clear();
   }
   private authorityActive(grant: Grant): boolean {
+    if (grant.desktop) {
+      const record = this.allowDesktop ? this.authStore?.get("desktop_grant", grant.id) : undefined;
+      return !this.store.isRevoked("principal", grant.principalId) && !!record && !record.revoked &&
+        record.principalId === grant.principalId && record.policyVersion === grant.policyVersion;
+    }
     const record = grant.persistent ? this.authStore?.get("browser_grant", grant.id) : undefined;
     return !this.store.isRevoked("principal", grant.principalId) && (grant.persistent
       ? !!record && !record.revoked && record.principalId === grant.principalId && record.appId === grant.appId && record.policyVersion === grant.policyVersion
-      : !this.store.isRevoked("session", grant.sessionId));
+      : grant.sessionId !== undefined && !this.store.isRevoked("session", grant.sessionId));
   }
   private active(grant: Grant): boolean {
     return this.now() < grant.expiresAtMs && grant.remainingOperations > 0 &&
@@ -169,13 +227,23 @@ export class GuiSessionApprovals {
     for (const [requestId, id] of this.requestGrants) if (!this.grants.has(id) && !this.store.approvalPreview(requestId, this.now())) this.requestGrants.delete(requestId);
   }
   private view(grant: Grant): GuiSessionView {
-    return { ...(grant.persistent ? { persistent: true } : {}), id: grant.id, appId: grant.appId, expiresAtMs: grant.expiresAtMs, remainingOperations: grant.remainingOperations };
+    return { ...(grant.persistent ? { persistent: true } : {}), ...(grant.desktop ? { desktop: true } : {}),
+      id: grant.id, appId: grant.appId, expiresAtMs: grant.expiresAtMs, remainingOperations: grant.remainingOperations };
   }
   private audit(grant: Grant, resultClass: string, requestId?: string, approvalId?: string): void {
     this.store.appendAudit({ requestId: `gui-session-audit:${randomUUID()}`, principalId: grant.principalId,
       tool: "internal_gui_session", eventType: "decision", decision: "allow", resultClass,
-      targetRef: `app_window:window:${grant.appId}`, policyVersion: grant.policyVersion,
-      evidence: { guiSessionId: grant.id, sessionId: grant.sessionId, persistent: grant.persistent === true, expiresAtMs: grant.expiresAtMs,
+      targetRef: grant.desktop ? "owner-desktop" : `app_window:window:${grant.appId}`, policyVersion: grant.policyVersion,
+      evidence: { guiSessionId: grant.id, ...(grant.sessionId ? { sessionId: grant.sessionId } : {}),
+        desktop: grant.desktop === true, persistent: grant.persistent === true, expiresAtMs: grant.expiresAtMs,
         ...(requestId ? { operationRequestId: requestId } : {}), ...(approvalId ? { approvalId } : {}) }, timestampMs: this.now() });
   }
+}
+
+function ordinaryGuiApp(appId: string): boolean {
+  try {
+    validateUiObserveRequest(appId);
+    validateSensitiveUiTarget(appId);
+    return true;
+  } catch { return false; }
 }

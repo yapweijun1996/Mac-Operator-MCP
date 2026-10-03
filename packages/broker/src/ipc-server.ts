@@ -122,19 +122,26 @@ export function handleBrokerSocket(socket: Socket, broker: Broker, maxRequestByt
     handled = true;
     socket.pause();
     chunks = [];
+    let request: unknown;
     try {
       const trailing = combined.subarray(newline + 1);
       if (trailing.some((byte) => !isAsciiWhitespace(byte))) {
         writeResult(socket, failure("PRECONDITION_FAILED", "IPC request contains trailing data"));
         return;
       }
-      const request = parseJsonUtf8Strict(combined.subarray(0, newline));
-      // Input framing stays short; admitted tools have their own execution budgets.
-      // Allow the longest 600-second tool plus bounded completion/readback time.
-      socket.setTimeout(660_000);
-      writeResult(socket, await broker.handleForIpc(request));
+      request = parseJsonUtf8Strict(combined.subarray(0, newline));
     } catch {
       writeResult(socket, failure("AUTH_INVALID", "IPC request is not valid JSON"));
+      return;
+    }
+    // Input framing stays short; admitted tools have their own execution budgets.
+    // Allow the longest 600-second tool plus bounded completion/readback time.
+    socket.setTimeout(660_000);
+    try {
+      writeResult(socket, await broker.handleForIpc(request));
+    } catch {
+      // The tool may already have taken effect, so the outcome is unknown, not a bad request.
+      writeResult(socket, failure("UNKNOWN_OUTCOME", "IPC request failed inside the Broker"));
     }
   });
 }
@@ -149,7 +156,7 @@ function isAsciiWhitespace(byte: number): boolean {
   return byte === 0x09 || byte === 0x0a || byte === 0x0c || byte === 0x0d || byte === 0x20;
 }
 
-function failure(errorClass: "AUTH_INVALID" | "OUTPUT_LIMIT" | "PRECONDITION_FAILED", message: string): BrokerResult {
+function failure(errorClass: "AUTH_INVALID" | "OUTPUT_LIMIT" | "PRECONDITION_FAILED" | "UNKNOWN_OUTCOME", message: string): BrokerResult {
   const error = new BrokerError(errorClass, message);
   return { ok: false, request_id: "invalid-request", tool: "unknown", result_class: error.errorClass, error: { message, retryable: false }, duration_ms: 0 };
 }

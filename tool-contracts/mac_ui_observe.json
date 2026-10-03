@@ -23,9 +23,9 @@
   "audit_class": "gui_control",
   "tool_delivery_wave": "wave_4",
   "implementation_status": "planned",
-  "purpose": "Observe a bounded Accessibility snapshot and an inspectable screenshot of an authorized browser window or screen.",
-  "input_summary": "app_id:bundle ID (for Chrome, com.google.Chrome), window_hint?:string, max_nodes?:1..2000, capture_mode?:none|screen|active_window|selected_window.",
-  "output_summary": "Safe Accessibility metadata, screen/window dimensions, and a JPEG screenshot returned as MCP image content.",
+  "purpose": "Observe an authorized ordinary application window or, with explicit desktop delegation, one full display using app_id=desktop. Focus background applications with mac_app_focus; desktop observation does not change focus.",
+  "input_summary": "app_id:bundle ID|desktop, window_hint?:exact window title|display:<id>, max_nodes?:1..2000, capture_mode?:none|screen|active_window|selected_window. For desktop screenshots prefer screen.",
+  "output_summary": "Safe Accessibility metadata and optional JPEG MCP image with global capture geometry and a fresh visual_ref. Desktop uses canonical app_id bundle:dev.macoperator.desktop; none returns empty AX nodes without an image/ref.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_ui_observe input",
@@ -34,13 +34,14 @@
     "properties": {
       "app_id": {
         "type": "string",
-        "description": "Use com.google.Chrome for Chrome or com.apple.Safari for Safari. A bundle: prefix is also accepted.",
+        "description": "An authorized application's bundle ID, such as com.apple.TextEdit or com.google.Chrome (optional bundle: prefix), or desktop for a full-display observation under explicit owner desktop delegation. Desktop cannot be opened or focused.",
         "minLength": 1,
         "maxLength": 256,
         "pattern": "^(bundle:)?[A-Za-z0-9][A-Za-z0-9._:@+\\-]{0,255}$"
       },
       "window_hint": {
         "type": "string",
+        "description": "An exact application window title, or display:<numeric macOS display ID> for desktop; desktop defaults to the main display when absent.",
         "minLength": 0,
         "maxLength": 256
       },
@@ -50,6 +51,7 @@
         "maximum": 2000
       },
       "capture_mode": {
+        "description": "Application capture mode; active_window is the default. Desktop screenshot modes normalize to screen, with selected_window still requiring window_hint. Desktop none returns no screenshot or actionable visual_ref.",
         "enum": [
           "none",
           "screen",
@@ -249,6 +251,7 @@
           },
           "visual_ref": {
             "type": "string",
+            "description": "Fresh screenshot-backed target reference; pass as mac_ui_action.element_ref. Desktop screen refs constrain global actions to the observed display.",
             "pattern": "^element:[a-f0-9]{48}$"
           }
         },

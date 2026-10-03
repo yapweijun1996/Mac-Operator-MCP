@@ -1,4 +1,5 @@
 import { guiWindowFields, nativeWindowIdentity, throwGuiWindowError } from "./gui-window.js";
+import { throwGuiLauncherFailure } from "./gui-launcher-errors.js";
 import { GuiProcessSupervisor } from "./gui-process-supervisor.js";
 import { BrokerError, canonicalJson, parseJsonStrict, sha256 } from "@mac-operator/contracts";
 import { randomBytes } from "node:crypto";
@@ -8,6 +9,7 @@ import { join } from "node:path";
 import { ProcessSupervisor, type ProcessExecutionResult } from "./process-supervisor.js";
 import { isPlainDataRecord } from "./plain-record.js";
 import { assertContentDoesNotContainSecrets, redactLogText } from "./secret-policy.js";
+import { assertGuiIdentityContext, DESKTOP_APP_ID, desktopDisplayHint, desktopManifest } from "./desktop-ui.js";
 
 const OSASCRIPT = "/usr/bin/osascript";
 const GUI_VISION = join(homedir(), "Applications", "Mac Operator GUI.app", "Contents", "MacOS", "gui_vision");
@@ -24,13 +26,11 @@ const UI_SNAPSHOT_TTL_MS = 30_000;
 const MAX_UI_SNAPSHOTS = 2_048;
 const APP_ID_PATTERN = /^bundle:[A-Za-z0-9][A-Za-z0-9._:@+\-]{0,255}$/u;
 const SENSITIVE_APP_BUNDLE_IDS = new Set([
-  "com.apple.SecurityAgent",
   "com.apple.securityagent",
-  "com.apple.KeychainAccess",
   "com.apple.keychainaccess",
   "com.apple.systempreferences",
-  "com.apple.SystemPreferences",
-  "com.apple.loginwindow"
+  "com.apple.loginwindow",
+  "com.apple.passwords"
 ]);
 const SENSITIVE_UI_TEXT_PATTERN = /\b(?:password|passcode|credential|security|privacy|private\s+key|sign\s*in|log\s*in|two[- ]factor|verification\s+code)\b/iu;
 
@@ -172,6 +172,7 @@ JSON.stringify(emitted);
 export interface UiExecutionControl {
   timeoutMs: number;
   shouldCancel: () => boolean;
+  desktopDeniedApps?: readonly string[];
 }
 
 export interface SafeUiNode {
@@ -321,11 +322,17 @@ export class MacUiInspectorImpl implements UiInspector {
   async observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl, captureMode: UiCaptureMode = "none", expectedWindowIdentity?: string): Promise<SafeUiObservation> {
     validateUiObserveRequest(appId, windowHint, maxNodes);
     validateSensitiveUiTarget(appId, windowHint);
+    const desktop = appId === DESKTOP_APP_ID;
+    const manifest = desktop ? [desktopManifest(control.desktopDeniedApps)] : [];
+    if (desktop && windowHint !== undefined && !/^display:[1-9][0-9]{0,9}$/u.test(windowHint)) {
+      throw new BrokerError("PRECONDITION_FAILED", "Desktop window_hint must identify a display");
+    }
+    if (desktop && captureMode !== "none") captureMode = "screen";
     // All production observations use the same TCC-attributed application.
     const result = await this.supervisor.run({
       executable: GUI_VISION,
       allowUserOwnedExecutable: true,
-      args: ["inspect", captureMode === "none" ? "accessibility" : "visual", appId.slice("bundle:".length), windowHint ?? "", String(maxNodes), ...(expectedWindowIdentity ? [expectedWindowIdentity] : [])],
+      args: ["inspect", captureMode === "none" ? "accessibility" : "visual", appId.slice("bundle:".length), windowHint ?? "", String(maxNodes), ...(expectedWindowIdentity ? [expectedWindowIdentity] : []), ...manifest],
       cwd: UI_OBSERVE_CWD,
       environment: {},
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
@@ -344,7 +351,7 @@ export class MacUiInspectorImpl implements UiInspector {
     const screenshotResult = await this.supervisor.run({
       executable: GUI_VISION,
       allowUserOwnedExecutable: true,
-      args: ["capture", captureMode, appId.slice("bundle:".length), observed.windowTitle ?? "", observed.nativeWindowIdentity!],
+      args: ["capture", captureMode, appId.slice("bundle:".length), desktop ? desktopDisplayHint(observed.nativeWindowIdentity!) : observed.windowTitle ?? "", observed.nativeWindowIdentity!, ...manifest],
       cwd: UI_OBSERVE_CWD,
       environment: {},
       timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
@@ -365,13 +372,14 @@ export class MacUiInspectorImpl implements UiInspector {
     }
     const deadline = Date.now() + Math.min(control.timeoutMs, MAX_TIMEOUT_MS);
     const bounded = (): UiExecutionControl => ({
+      ...(control.desktopDeniedApps === undefined ? {} : { desktopDeniedApps: control.desktopDeniedApps }),
       timeoutMs: Math.max(1, deadline - Date.now()),
       shouldCancel: () => control.shouldCancel() || Date.now() >= deadline
     });
     for (let attempt = 0; attempt < MAX_VISUAL_REVALIDATION_ATTEMPTS; attempt++) {
       if (control.shouldCancel()) throw new BrokerError("CANCELLED", "UI target revalidation was cancelled");
       if (Date.now() >= deadline) throw new BrokerError("TIMEOUT", "UI target revalidation timed out");
-      const observed = await this.observe(snapshot.appId, snapshot.windowTitle, MAX_NODES, bounded(), snapshot.captureMode, snapshot.nativeWindowIdentity);
+      const observed = await this.observe(snapshot.appId, snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(snapshot.nativeWindowIdentity!) : snapshot.windowTitle, MAX_NODES, bounded(), snapshot.captureMode, snapshot.nativeWindowIdentity);
       assertRetainedUiTargetIdentityMatches(snapshot, observed);
       if (Date.now() >= deadline) throw new BrokerError("TIMEOUT", "UI target revalidation timed out");
       if (control.shouldCancel()) throw new BrokerError("CANCELLED", "UI target revalidation was cancelled");
@@ -396,16 +404,18 @@ export class MacUiInspectorImpl implements UiInspector {
       const y = options.y ?? Math.floor((snapshot.windowY ?? 0) + (snapshot.windowHeight ?? 0) / 2);
       if (x < (snapshot.windowX ?? 0) || y < (snapshot.windowY ?? 0) ||
           x >= (snapshot.windowX ?? 0) + (snapshot.windowWidth ?? 0) ||
-          y >= (snapshot.windowY ?? 0) + (snapshot.windowHeight ?? 0) ||
-          x >= (snapshot.screenWidth ?? 0) || y >= (snapshot.screenHeight ?? 0)) {
-        throw new BrokerError("PRECONDITION_FAILED", "Visual action coordinates must stay within the observed window and screen");
+          y >= (snapshot.windowY ?? 0) + (snapshot.windowHeight ?? 0)) {
+        // Global desktop coordinates can be negative or beyond the main display.
+        // The native adapter repeats window bounds and actual hit ownership checks.
+        throw new BrokerError("PRECONDITION_FAILED", "Visual action coordinates must stay within the observed window");
       }
       const result = await this.supervisor.run({
         executable: GUI_VISION,
         allowUserOwnedExecutable: true,
-        args: ["action", "visual", snapshot.appId.slice("bundle:".length), snapshot.windowTitle,
+        args: ["action", "visual", snapshot.appId.slice("bundle:".length), snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(snapshot.nativeWindowIdentity!) : snapshot.windowTitle,
           action, String(x), String(y), String(options.dx ?? 0), String(options.dy ?? 0),
-          options.key ?? "", String(options.waitMs ?? 0), snapshot.nativeWindowIdentity ?? ""],
+          options.key ?? "", String(options.waitMs ?? 0), snapshot.nativeWindowIdentity ?? "",
+          ...(snapshot.appId === DESKTOP_APP_ID ? [desktopManifest(control.desktopDeniedApps)] : [])],
         cwd: UI_OBSERVE_CWD,
         environment: {},
         timeoutMs: Math.min(control.timeoutMs, MAX_TIMEOUT_MS),
@@ -450,7 +460,7 @@ export class MacUiInspectorImpl implements UiInspector {
     if (snapshot.secure || snapshot.label?.includes("[REDACTED]")) {
       throw new BrokerError("SECRET_BOUNDARY_DENIED", "Secure or redacted UI elements cannot receive input");
     }
-    if (inputText.length > 0 &&
+    if (["bundle:com.google.Chrome", "bundle:com.apple.Safari"].includes(snapshot.appId) && inputText.length > 0 &&
         (/\b(?:address|location|omnibox|smart search field)\b/iu.test(snapshot.label ?? "") ||
           /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(inputText))) {
       let destination: URL;
@@ -464,7 +474,8 @@ export class MacUiInspectorImpl implements UiInspector {
       executable: snapshot.nativeVisual ? GUI_VISION : OSASCRIPT,
       allowUserOwnedExecutable: snapshot.nativeVisual === true,
       args: snapshot.nativeVisual
-        ? ["type", "visual", snapshot.appId.slice("bundle:".length), snapshot.windowTitle, snapshot.role, snapshot.label ?? "", snapshot.nativeWindowIdentity ?? ""]
+        ? ["type", "visual", snapshot.appId.slice("bundle:".length), snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(snapshot.nativeWindowIdentity!) : snapshot.windowTitle, snapshot.role, snapshot.label ?? "", snapshot.nativeWindowIdentity ?? "",
+          ...(snapshot.appId === DESKTOP_APP_ID ? [desktopManifest(control.desktopDeniedApps)] : [])]
         : ["-l", "JavaScript", "-e", UI_TYPE_SCRIPT, "--", snapshot.appId, snapshot.windowTitle,
           String(snapshot.windowIndex), String(snapshot.elementIndex), snapshot.role, snapshot.label ?? ""],
       stdin: canonicalJson({ text: inputText, keys: [...keys], submit,
@@ -525,6 +536,7 @@ export class UiSnapshotRegistry {
         windowIndex,
         windowTitle,
         elementIndex: -1,
+        nativeVisual: true,
         ...(observation.nativeWindowIdentity === undefined ? {} : { nativeWindowIdentity: observation.nativeWindowIdentity }),
         screenshotFingerprint: uiScreenshotFingerprint(observation.screenshot),
         captureMode: observation.screenshot.mode,
@@ -632,7 +644,7 @@ export function validateUiObserveRequest(appId: unknown, windowHint?: unknown, m
 
 export function validateSensitiveUiTarget(appId: string, windowHint?: string): void {
   const bundleId = appId.slice("bundle:".length);
-  if (SENSITIVE_APP_BUNDLE_IDS.has(bundleId) || (windowHint !== undefined && SENSITIVE_UI_TEXT_PATTERN.test(windowHint))) {
+  if (SENSITIVE_APP_BUNDLE_IDS.has(bundleId.toLowerCase()) || (windowHint !== undefined && SENSITIVE_UI_TEXT_PATTERN.test(windowHint))) {
     throw new BrokerError("SECRET_BOUNDARY_DENIED", "Sensitive application or security UI targets are not observable");
   }
 }
@@ -658,8 +670,7 @@ export function validateUiVisualActionRequest(elementRef: unknown, action: unkno
   const hasCoordinates = options.x !== undefined || options.y !== undefined;
   if ((coordinateRequired && !hasCoordinates) || (action !== "scroll" && !coordinateRequired && hasCoordinates) ||
       (hasCoordinates && (!Number.isSafeInteger(options.x) || !Number.isSafeInteger(options.y) ||
-        (options.x as number) < 0 || (options.x as number) > 20_000 ||
-        (options.y as number) < 0 || (options.y as number) > 20_000))) {
+        Math.abs(options.x as number) > 20_000 || Math.abs(options.y as number) > 20_000))) {
     throw new BrokerError("PRECONDITION_FAILED", "Pointer actions require bounded screen coordinates");
   }
   if (action === "scroll") {
@@ -705,6 +716,7 @@ export function parseUiVisualActionResult(result: ProcessExecutionResult, snapsh
     throw new BrokerError("EXECUTION_FAILED", "Visual action failed");
   }
   const identity = nativeWindowIdentity(record, snapshot.nativeWindowIdentity !== undefined);
+  assertGuiIdentityContext(snapshot.appId, identity);
   if (identity !== snapshot.nativeWindowIdentity) throw new BrokerError("TARGET_NOT_FOUND", "Visual window snapshot is stale");
   if (!hasExactFields(record, guiWindowFields(record, ["status", "app_id", "window_title", "action", "accepted", "focused"])) ||
       record.status !== "ok" || record.app_id !== snapshot.appId || record.window_title !== snapshot.windowTitle ||
@@ -725,7 +737,8 @@ export function parseUiVisualActionResult(result: ProcessExecutionResult, snapsh
 }
 
 export function isBoundedBrowserNavigation(execution: UiTypeExecution): boolean {
-  if (!execution.snapshot.browserNavigation || execution.snapshot.secure ||
+  if (!["bundle:com.google.Chrome", "bundle:com.apple.Safari"].includes(execution.snapshot.appId) ||
+      !execution.snapshot.browserNavigation || execution.snapshot.secure ||
       !["AXTextField", "AXTextArea", "AXSearchField", "AXComboBox"].includes(execution.snapshot.role) ||
       !(execution.submit && execution.keys.length === 0 || !execution.submit && execution.keys.length === 1 && execution.keys[0] === "ENTER")) return false;
   try {
@@ -797,9 +810,11 @@ export function parseUiTypeResult(result: ProcessExecutionResult, execution: UiT
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility input postcondition did not match the approved snapshot");
   }
   const identity = nativeWindowIdentity(record, snapshot.nativeWindowIdentity !== undefined || snapshot.nativeVisual === true);
+  assertGuiIdentityContext(snapshot.appId, identity);
   if (identity !== snapshot.nativeWindowIdentity) throw new BrokerError("TARGET_NOT_FOUND", "UI window snapshot is stale");
   const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle, identity);
-  if (windowId !== snapshot.windowId || opaqueElementId(windowId, snapshot.elementIndex, snapshot.role, snapshot.label ?? "", false) !== snapshot.elementRef) {
+  if (windowId !== snapshot.windowId || (!(snapshot.appId === DESKTOP_APP_ID && snapshot.role === "VisualWindow" && snapshot.elementIndex === -1) &&
+      opaqueElementId(windowId, snapshot.elementIndex, snapshot.role, snapshot.label ?? "", false) !== snapshot.elementRef)) {
     throw new BrokerError("TARGET_NOT_FOUND", "UI element snapshot is stale");
   }
   return {
@@ -860,6 +875,7 @@ export function parseUiActionResult(
     throw new BrokerError("VERIFICATION_FAILED", "Accessibility action readback did not match the approved snapshot");
   }
   const identity = nativeWindowIdentity(record, snapshot.nativeWindowIdentity !== undefined || snapshot.nativeVisual === true);
+  assertGuiIdentityContext(snapshot.appId, identity);
   if (identity !== snapshot.nativeWindowIdentity) throw new BrokerError("TARGET_NOT_FOUND", "UI window snapshot is stale");
   const windowId = opaqueWindowId(snapshot.appId, record.window_index as number, snapshot.windowTitle, identity);
   if (windowId !== snapshot.windowId || opaqueElementId(windowId, snapshot.elementIndex, snapshot.role, snapshot.label ?? "", false) !== snapshot.elementRef) {
@@ -889,10 +905,11 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
   if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Accessibility observation timed out");
   if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Accessibility observation exceeded its output limit");
   if (result.resultClass !== "SUCCEEDED") {
-    if (/not authorized|not permitted|assistive|accessibility|-1743/iu.test(result.stderr)) {
+    if (nativeVisual) throwGuiLauncherFailure(result);
+    if (!nativeVisual && /not authorized|not permitted|assistive|accessibility|-1743/iu.test(result.stderr)) {
       throw new BrokerError("POLICY_DENIED", "Accessibility permission is not granted");
     }
-    throw new BrokerError("EXECUTION_FAILED", "Accessibility observation failed");
+    throw new BrokerError("EXECUTION_FAILED", nativeVisual ? "GUI helper observation failed" : "Accessibility observation failed");
   }
   let parsed: unknown;
   try { parsed = parseJsonStrict(result.stdout); } catch { throw new BrokerError("VERIFICATION_FAILED", "Accessibility observation returned malformed metadata"); }
@@ -924,6 +941,11 @@ export function parseUiObserveResult(result: ProcessExecutionResult, appId: stri
     throw new BrokerError("SECRET_BOUNDARY_DENIED", "Sensitive application or security UI targets are not observable");
   }
   const identity = nativeWindowIdentity(record, nativeVisual);
+  assertGuiIdentityContext(appId, identity);
+  if (appId === DESKTOP_APP_ID && (record.window_title !== "Desktop" || record.window_index !== 0 ||
+      record.focused !== true || record.nodes.length !== 0 || record.truncated !== false)) {
+    throw new BrokerError("VERIFICATION_FAILED", "Desktop observation returned unexpected AX window metadata");
+  }
   const windowId = opaqueWindowId(appId, record.window_index as number, windowTitle, identity);
   const warnings: string[] = [];
   let redacted = false;
@@ -999,7 +1021,10 @@ export function parseUiScreenshotResult(
   if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Screen capture was cancelled");
   if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Screen capture timed out");
   if (result.resultClass === "OUTPUT_LIMIT") throw new BrokerError("OUTPUT_LIMIT", "Screen capture exceeded its output limit");
-  if (result.resultClass !== "SUCCEEDED") throw new BrokerError("EXECUTION_FAILED", "Screen capture failed");
+  if (result.resultClass !== "SUCCEEDED") {
+    if (observed.nativeVisual) throwGuiLauncherFailure(result);
+    throw new BrokerError("EXECUTION_FAILED", "Screen capture failed");
+  }
   let parsed: unknown;
   try { parsed = parseJsonStrict(result.stdout); }
   catch { throw new BrokerError("VERIFICATION_FAILED", "Screen capture returned malformed metadata"); }
@@ -1009,11 +1034,12 @@ export function parseUiScreenshotResult(
     if (!hasExactFields(record, ["status", "error"])) throw new BrokerError("VERIFICATION_FAILED", "Screen capture returned malformed metadata");
     throwGuiWindowError(record.error);
     if (record.error === "screen_window_occluded") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Full-screen capture is blocked by a window above the browser; use capture_mode=active_window or move the covering window away. No secret content was detected by this geometry check.");
-    if (record.error === "screen_other_window_visible" || record.error === "other_window_visible") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Full-screen capture would include another visible window outside the authorized browser; use capture_mode=active_window. This is a window-boundary restriction, not secret-content detection.");
+    if (record.error === "screen_other_window_visible" || record.error === "other_window_visible") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Full-screen capture would include another visible window outside the authorized application; use capture_mode=active_window. This is a window-boundary restriction, not secret-content detection.");
     if (record.error === "sensitive_window_visible") throw new BrokerError("SECRET_BOUNDARY_DENIED", "Full-screen capture includes a known sensitive application or a window with a sensitive title; close or hide that window before capturing.");
     throw new BrokerError("EXECUTION_FAILED", "Screen capture failed");
   }
   const identity = nativeWindowIdentity(record, observed.nativeVisual === true);
+  assertGuiIdentityContext(observed.appId, identity);
   if (identity !== observed.nativeWindowIdentity) throw new BrokerError("VERIFICATION_FAILED", "Screen capture changed the resolved window identity");
   if (typeof record.window_title !== "string") throw new BrokerError("VERIFICATION_FAILED", "Screen capture window title is invalid");
   validateSensitiveUiTarget(observed.appId, record.window_title);

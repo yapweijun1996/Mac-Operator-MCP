@@ -65,7 +65,8 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     const now = Date.now();
     if (now < lockedUntil) { res.set("Retry-After", String(Math.ceil((lockedUntil - now) / 1000))).status(429).end(); return true; }
     if (now - lastLockoutAt >= 3_600_000) lockoutLevel = 0;
-    if (++loginAttempts > 10) {
+    // Only failed password checks count, so successes and concurrency rejections cannot lock the owner out.
+    if (loginAttempts >= 10) {
       const seconds = lockoutSeconds[Math.min(lockoutLevel, lockoutSeconds.length - 1)] ?? 600;
       lockoutLevel++; lastLockoutAt = now; lockedUntil = now + seconds * 1000;
       res.set("Retry-After", String(seconds)).status(429).end(); return true;
@@ -201,8 +202,8 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       const current = store.get("account", "owner")!;
       valid = await verifyPassword(body.password, current.salt, current.passwordHash) && body.username === current.username;
     } finally { activePasswords--; }
-    if (!valid) { res.status(401).type("html").send(loginPage(session.csrf, true, basePath)); return; }
-    lockoutLevel = 0;
+    if (!valid) { loginAttempts++; res.status(401).type("html").send(loginPage(session.csrf, true, basePath)); return; }
+    lockoutLevel = 0; loginAttempts = 0;
     const newId = nonce();
     store.transaction(() => {
       // A concurrent login/reset may already have invalidated this session.
@@ -222,7 +223,7 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
     res.set("Content-Security-Policy", contentSecurityPolicy(new URL(transaction.redirectUri).origin));
     res.type("html").send(consentPage(session.csrf, client.name, transaction.redirectUri,
       transaction.scopes.includes("mac.system.read"), config.grantProfile !== "r1",
-      transaction.scopes.includes("mac.ui.control"), transaction.scopes.includes("mac.terminal.exec"), basePath));
+      transaction.scopes.includes("mac.ui.control"), transaction.scopes.includes("mac.terminal.exec"), basePath, config.guiAccess === "desktop"));
   });
   app.post("/oauth/consent", async (req, res) => {
     const body = consentBody.parse(req.body);
@@ -308,8 +309,8 @@ export async function createAuthApp(input: { config: AuthConfig; store: AuthStor
       const current = store.get("account", "owner")!;
       valid = await verifyPassword(body.password, current.salt, current.passwordHash) && body.username === current.username;
     } finally { activePasswords--; }
-    if (!valid) { res.status(401).type("html").send(approvalLoginPage(session.csrf, true, undefined, session.requestId === "manage-browser-access")); return; }
-    lockoutLevel = 0;
+    if (!valid) { loginAttempts++; res.status(401).type("html").send(approvalLoginPage(session.csrf, true, undefined, session.requestId === "manage-browser-access")); return; }
+    lockoutLevel = 0; loginAttempts = 0;
     const newId = nonce();
     store.transaction(() => {
       if (!store.delete("approval_session", key)) throw new BrowserSessionError("Invalid approval session");

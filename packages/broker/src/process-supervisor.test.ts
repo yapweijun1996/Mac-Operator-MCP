@@ -8,6 +8,18 @@ import { BrokerError } from "@mac-operator/contracts";
 import { assertProcessPathIdentityStable, captureProcessPathIdentity, detectProcessIdentityReplacement, observeProcessRootState, ProcessSupervisor, type ProcessStdinSink } from "./process-supervisor.js";
 
 const CWD = process.cwd();
+// Host scheduling is a fixture prerequisite, separate from the timeout/failure
+// under test. Capacity fixtures stay alive until the test explicitly cancels.
+const FIXTURE_STARTUP_TIMEOUT_MS = 15_000;
+
+async function waitForFixtureReady(ready: () => boolean, description: string): Promise<void> {
+  const deadline = Date.now() + FIXTURE_STARTUP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (ready()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Process fixture did not become ready: ${description}`);
+}
 
 test("process supervisor rejects invalid per-executable capacity", () => {
   assert.throws(() => new ProcessSupervisor({ maxConcurrentPerExecutable: 0 }), /limits are outside/u);
@@ -377,11 +389,25 @@ test("process supervisor drains the process tree when stdin startup binding fail
   try {
     await assert.rejects(supervisor.run({
       executable: "/usr/bin/python3",
-      args: ["-c", "import os,time; child=os.fork(); (os.setsid(), time.sleep(10)) if child == 0 else (os.write(1,('CHILD_PID:' + str(child)).encode()), time.sleep(10))"],
+      args: ["-c", [
+        "import os,time",
+        "read_fd,write_fd=os.pipe()",
+        "child=os.fork()",
+        "if child == 0:",
+        " os.close(read_fd); os.setsid(); os.write(write_fd,b'R'); os.close(write_fd); time.sleep(30)",
+        "else:",
+        " os.close(write_fd); assert os.read(read_fd,1)==b'R'; os.close(read_fd)",
+        " os.write(1,('CHILD_PID:' + str(child) + '\\n').encode()); time.sleep(30)"
+      ].join("\n")],
       cwd: CWD,
       timeoutMs: 2_000,
       outputCapBytes: 100,
-      onStarted: async (value) => { snapshot = value; await new Promise((resolve) => setTimeout(resolve, 100)); },
+      onStarted: async (value) => {
+        snapshot = value;
+        // Capture consumers are attached before onStarted; inject failure only
+        // after the detached child has actually completed its setsid handshake.
+        await waitForFixtureReady(() => /CHILD_PID:[1-9][0-9]*\n/u.test(output), "detached child PID");
+      },
       streamOutput: true,
       onOutputChunk: (chunk) => { output += chunk.toString("utf8"); },
       keepStdinOpen: true,
@@ -404,16 +430,22 @@ test("process supervisor isolates asynchronous one-shot stdin failure", async (t
     return;
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
+  let output = "";
   try {
     const result = await supervisor.run({
       executable: "/usr/bin/python3",
-      args: ["-c", "import os,time; os.close(0); time.sleep(10)"],
+      args: ["-c", "import os,time; os.close(0); os.write(1,b'INPUT_CLOSED'); time.sleep(30)"],
       cwd: CWD,
       stdin: "queued-input".repeat(5_000),
       timeoutMs: 2_000,
       outputCapBytes: 1_024,
-      onStarted: async () => { await new Promise((resolve) => setTimeout(resolve, 100)); }
+      streamOutput: true,
+      onOutputChunk: (chunk) => { output += chunk.toString("utf8"); },
+      // Interpreter startup has its own bounded ready wait. The unchanged
+      // two-second execution budget still bounds delivery failure after close.
+      onStarted: () => waitForFixtureReady(() => output.includes("INPUT_CLOSED"), "closed one-shot stdin")
     });
+    assert.match(output, /INPUT_CLOSED/u);
     assert.equal(result.state, "failed");
     assert.equal(result.resultClass, "EXECUTION_FAILED");
     assert.equal(result.terminationObserved, true);
@@ -1061,23 +1093,40 @@ test("process supervisor terminates a tracked detached descendant", async (t) =>
     return;
   }
   const supervisor = new ProcessSupervisor({ pollIntervalMs: 5, terminationGraceMs: 50 });
-  const startedAt = Date.now();
+  let readyAt = 0;
+  let output = "";
   const result = await supervisor.run({
     executable: "/usr/bin/python3",
     args: [
       "-c",
-      "import os,time; pid=os.fork();\nif pid==0:\n os.setsid(); print(os.getpid(), flush=True); time.sleep(5)\nelse:\n time.sleep(1)"
+      [
+        "import os,time",
+        "read_fd,write_fd=os.pipe()",
+        "pid=os.fork()",
+        "if pid == 0:",
+        " os.close(read_fd); os.setsid(); os.write(write_fd,b'R'); os.close(write_fd); time.sleep(30)",
+        "else:",
+        " os.close(write_fd); assert os.read(read_fd,1)==b'R'; os.close(read_fd)",
+        " print(pid,flush=True); time.sleep(30)"
+      ].join("\n")
     ],
     cwd: CWD,
     timeoutMs: 200,
-    outputCapBytes: 1_024
+    outputCapBytes: 1_024,
+    streamOutput: true,
+    onOutputChunk: (chunk) => { output += chunk.toString("utf8"); },
+    onStarted: async () => {
+      await waitForFixtureReady(() => /^[1-9][0-9]*\n$/u.test(output), "detached descendant PID");
+      readyAt = Date.now();
+    }
   });
   assert.equal(result.state, "timed_out");
   assert.equal(result.resultClass, "TIMEOUT");
   assert.equal(result.terminationObserved, true);
-  const descendantPid = Number.parseInt(result.stdout, 10);
+  const descendantPid = Number.parseInt(output, 10);
   assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
-  assert.ok(Date.now() - startedAt < 2_000, "detached descendant must not hold the supervisor for its full lifetime");
+  assert.ok(readyAt > 0);
+  assert.ok(Date.now() - readyAt < 2_000, "detached descendant must not hold the supervisor for its full lifetime");
   await assertProcessGone(descendantPid);
   assert.equal(supervisor.activeCount(), 0);
 });
@@ -1085,24 +1134,28 @@ test("process supervisor terminates a tracked detached descendant", async (t) =>
 test("process supervisor cancellation kills descendants and releases capacity", async () => {
   const supervisor = new ProcessSupervisor({ maxConcurrent: 1, pollIntervalMs: 5, terminationGraceMs: 50 });
   let cancelled = false;
+  let output = "";
   const running = supervisor.run({
     executable: "/bin/bash",
-    args: ["-c", "/bin/sleep 10 & printf '%s' \"$!\"; wait"],
+    args: ["-c", "/bin/sleep 30 & printf '%s\\n' \"$!\"; wait"],
     cwd: CWD,
-    timeoutMs: 5_000,
+    timeoutMs: 30_000,
     outputCapBytes: 1_024,
+    streamOutput: true,
+    onOutputChunk: (chunk) => { output += chunk.toString("utf8"); },
     shouldCancel: () => cancelled
   });
   // Wait for active admission rather than a wall-clock guess. Under the full
   // cross-package suite, path identity checks can legitimately take longer
   // than 30ms; cancelling before spawn exercises a different contract.
-  await waitForActiveProcess(supervisor, 1, 2_000);
+  await waitForActiveProcess(supervisor, 1, FIXTURE_STARTUP_TIMEOUT_MS);
+  await waitForFixtureReady(() => /^[1-9][0-9]*\n$/u.test(output), "cancellation descendant PID");
   cancelled = true;
   const result = await running;
   assert.equal(result.state, "cancelled");
   assert.equal(result.resultClass, "CANCELLED");
   assert.equal(result.terminationObserved, true);
-  const descendantPid = Number.parseInt(result.stdout, 10);
+  const descendantPid = Number.parseInt(output, 10);
   assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
   await assertProcessGone(descendantPid);
   assert.equal(supervisor.activeCount(), 0);
@@ -1529,13 +1582,13 @@ test("process supervisor enforces concurrent process capacity", async () => {
   let cancelled = false;
   const first = supervisor.run({
     executable: "/bin/sleep",
-    args: ["2"],
+    args: ["30"],
     cwd: CWD,
-    timeoutMs: 5_000,
+    timeoutMs: 30_000,
     outputCapBytes: 100,
     shouldCancel: () => cancelled
   });
-  await waitForActiveProcess(supervisor, 1, 5_000);
+  await waitForActiveProcess(supervisor, 1, FIXTURE_STARTUP_TIMEOUT_MS);
   await assert.rejects(
     supervisor.run({
       executable: "/usr/bin/printf",
@@ -1557,14 +1610,14 @@ test("process supervisor isolates per-executable capacity from the global pool",
   let cancelled = false;
   const first = supervisor.run({
     executable: "/bin/sleep",
-    args: ["2"],
+    args: ["30"],
     cwd: CWD,
-    timeoutMs: 5_000,
+    timeoutMs: 30_000,
     outputCapBytes: 100,
     shouldCancel: () => cancelled
   });
   try {
-    await waitForActiveProcess(supervisor, 1, 5_000);
+    await waitForActiveProcess(supervisor, 1, FIXTURE_STARTUP_TIMEOUT_MS);
     await assert.rejects(
       supervisor.run({
         executable: "/bin/sleep",
@@ -1597,14 +1650,14 @@ test("process supervisor counts concurrent starts for one executable", async () 
   let cancelled = false;
   const runs = Array.from({ length: 4 }, () => supervisor.run({
     executable: "/bin/sleep",
-    args: ["2"],
+    args: ["30"],
     cwd: CWD,
-    timeoutMs: 5_000,
+    timeoutMs: 30_000,
     outputCapBytes: 100,
     shouldCancel: () => cancelled
   }));
   try {
-    await waitForActiveProcess(supervisor, 4, 1_000);
+    await waitForActiveProcess(supervisor, 4, FIXTURE_STARTUP_TIMEOUT_MS);
     await assert.rejects(
       supervisor.run({
         executable: "/bin/sleep",

@@ -1,20 +1,28 @@
-# Browser Computer Use (G1)
+# GUI Computer Use (G1, O1 and V2)
 
 The personal `g1` grant adds five GUI tools to the existing owner profile:
 `mac_app_open`, `mac_app_focus`, `mac_ui_observe`, `mac_ui_action`, and
-`mac_ui_type`. `mac_task_run` remains disabled. The signed Broker policy grants
-`mac.app.control`, `mac.ui.observe`, and `mac.ui.control` only for Google Chrome
-and Safari bundle identities. GUI mutations retain attended `trusted_gui`
-approval, request timeouts, revocation checks, and audit records.
+`mac_ui_type`; O1 and V2 retain this GUI surface. G1 keeps `mac_task_run`
+disabled. GUI access defaults to Chrome and Safari. A separate explicit owner
+opt-in, `guiAccess=desktop`, allows ordinary applications and display observation
+under the signed Broker policy. Existing browser consent never expands into
+desktop consent. Both modes retain `trusted_gui` mutation approvals, request
+timeouts, revocation checks, sensitive-target guards and audit records.
 
-## October 2 GUI repair
+See [explicit desktop delegation](#explicit-desktop-delegation) for the offline
+owner command and [desktop observation](#desktop-observation-and-action-loop)
+for display screenshots and actions. Source changes, a healthy Broker and a
+durable grant do not establish GUI readiness; verify the production MCP route
+and exact installed GUI application's permissions after deployment.
 
-The current V2/O1 deployment inherits this browser boundary. The canonical
+## Historical October 2 GUI repair
+
+The October 2 V2/O1 deployment inherited the browser boundary. The canonical
 contracts use `trusted_gui` for focus/action/type; `trusted_app_control` is not
 an approval class in the current contract enum. An OAuth scope does not create
 browser consent. The earlier Chrome grant was revoked and bound to policy-1;
-the active deployment uses policy-3. Fresh Chrome owner consent must match that
-policy. Do not un-revoke or rewrite old grant rows to restore access.
+that deployment used policy-3. Fresh Chrome owner consent must match the
+active policy. Do not un-revoke or rewrite old grant rows to restore access.
 
 All production observations, including `capture_mode=none`, now run through
 LaunchServices in `~/Applications/Mac Operator GUI.app`, bundle identifier
@@ -60,7 +68,8 @@ records the current production verification and deployment.
 
 ## Canonical window resolution
 
-Focus, observe, capture and input share the native `resolveGuiWindow` resolver.
+Application focus, observe, capture and input share the native
+`resolveGuiWindow` resolver.
 It resolves the exact bundle/PID and focused AXWindow, then correlates the
 visible layer-zero CGWindow using owner PID and global AX position/size. AX and
 CG titles may differ; browser titles are never the correlation key. Ambiguous
@@ -75,7 +84,9 @@ retained operation approvals also require their original element/image evidence.
 Missing app/window, hidden/minimized window, missing AX permission, missing
 screenshot permission, AX metadata failure, correlation ambiguity and capture
 failure have distinct errors. A correlation failure is not reported as absence.
-Observation does not activate an unfocused app; focus it first. Explicit focus
+Application observation does not activate an unfocused app; call
+`mac_app_focus` first. The agent can focus an authorized application through
+MCP without requiring the owner to bring it forward manually. Explicit focus
 may restore a minimized selected window and waits for exact AX focus readback.
 
 Without `window_hint`, focus retains the process's last `AXFocusedWindow`,
@@ -98,22 +109,26 @@ No window titles or UI contents are included in these failure diagnostics.
 
 ## Observation and action loop
 
-1. Open and focus Chrome or Safari.
-   Use `com.google.Chrome` or `com.apple.Safari` as `app_id`; an existing
+1. Open and focus an authorized ordinary application through `mac_app_open`
+   and `mac_app_focus`. Browser mode permits Chrome and Safari; explicit
+   desktop mode also permits ordinary apps such as TextEdit.
+   Use the concrete bundle ID as `app_id`; an existing
    `bundle:` prefix is also accepted. The Broker normalizes either form before
-   applying the app allowlist. `mac_app_open` accepts only `app_id`; navigate
+   applying the signed target policy. `mac_app_open` accepts only `app_id`; navigate
    to a URL through the observed browser address bar.
 2. Call `mac_ui_observe` with `app_id` and optional `capture_mode`:
    `active_window` (default), `selected_window` with an exact `window_hint`,
    `screen`, or `none` for Accessibility metadata only.
-3. The MCP result includes a JPEG `image` content block, window and screen
+3. A screenshot observation includes a JPEG `image` content block, window and screen
    dimensions in macOS screen points, image dimensions in pixels, safe
    Accessibility nodes, and a short-lived `visual_ref`.
 4. Call `mac_ui_action` with that `visual_ref`. Supported visual actions are
    `click`, `double_click`, `right_click`, `move_pointer`, `scroll`,
    `key_press`, `shortcut`, and `wait`. Pointer coordinates are screen points,
-   checked against the observed browser window. Scroll distance is at most
-   1,000 pixels per axis; wait is at most two seconds. Keyboard input is a
+   checked against the observed application window. Global `x` and `y` are
+   bounded to -20,000 through 20,000, allowing displays left of or above the
+   main display; actual window, display and hit ownership checks still apply.
+   Scroll distance is at most 1,000 pixels per axis; wait is at most two seconds. Keyboard input is a
    small allowlist, including `COMMAND_L` for the address bar.
    For visual actions, use an `active_window` or `selected_window` capture.
    Treat `screen` captures as broader visual context and take a window capture
@@ -137,26 +152,85 @@ An example browser flow is: open Chrome, focus it, observe, send
 `shortcut(COMMAND_L)`, type a complete HTTPS URL into the focused address bar with `submit=true`, inspect the new screenshot, then click, type, scroll, and
 observe until the page result is visible.
 
+## Desktop observation and action loop
+
+With explicit desktop policy and owner delegation, call:
+
+```json
+{"app_id":"desktop","capture_mode":"screen"}
+```
+
+This observes one full display without focusing or opening an application. To
+select a display, pass `window_hint:"display:<id>"` using its numeric macOS
+display ID. The result's canonical `app_id` is
+`bundle:dev.macoperator.desktop`; screenshot geometry identifies the observed
+display. The screenshot returns an ordinary short-lived `visual_ref`, scoped
+to the authenticated principal and OAuth session. Pass it as `element_ref`
+to `mac_ui_action`, then inspect the new screenshot/ref before the next action.
+
+For this alias, screenshot modes `active_window` (including the default),
+`selected_window` and `screen` normalize to a display `screen` capture;
+`selected_window` still requires `window_hint`. Use explicit `screen` to make
+the intent clear. `capture_mode=none` returns bounded empty AX nodes without a
+screenshot or actionable `visual_ref`; it is not a desktop Accessibility tree.
+The `desktop` alias is not accepted by `mac_app_open` or `mac_app_focus`.
+Focus a concrete application's bundle ID when the task needs its window or
+focused text field.
+
+Desktop action coordinates use global macOS screen points, bounded to
+-20,000 through 20,000 on each axis. Convert image pixels using the returned
+display bounds: `x = floor(window_x + image_x * window_width / image_width)`
+and `y = floor(window_y + image_y * window_height / image_height)`. Negative
+origins and secondary displays are supported within these bounds. Native
+checks constrain input to the observed display and deny protected sessions,
+sensitive applications, secure controls and unsafe hit targets. These guards
+do not claim to identify arbitrary secrets embedded in screenshot pixels.
+
+Typing still requires a focused ordinary non-secure text target from a fresh
+observation; desktop screenshots do not authorize credential input. Generic
+submissions and sensitive purchase/send/delete/security actions retain exact
+attended approval. The existing credential-free HTTPS browser-address-bar
+exception is unchanged.
+
 ## Host requirements and limits
 
 The visual adapter is a dedicated `Mac Operator GUI.app` in `~/Applications`.
 The Broker permits that one fixed user-owned executable through its process
 supervisor. It checks owner, permissions, path, and content identity around
 each launch; other user-owned executables do not gain GUI execution access.
-Build it with `npm run build` and install it once with
-`npm run install:native:gui-vision --workspace @mac-operator/broker`. macOS must
-grant that app Accessibility and Screen & System Audio Recording. The app's
+Build it with `npm run build`. Every GUI-enabled deployment must run
+`npm run install:native:gui-vision --workspace @mac-operator/broker` from the
+selected release before startup. The installer validates the exact bundle ID,
+application type, executable and strict code signature. If a valid app is
+already installed it returns `action=preserved` without changing its bytes or
+signature, even when the new release artifact differs. An absent app is copied
+into a temporary directory, verified again, and published with an atomic
+exclusive rename. Concurrent installers cannot overwrite or nest an app inside
+the installed bundle. Existing invalid apps fail closed and require a deliberate
+repair; the installer never replaces them automatically. The `--source` option
+selects a preserved signed artifact without rebuilding it; see the exact
+[deployment command](personal-deployment.md#gui-deployment-prerequisite).
+
+macOS must grant the installed app Accessibility and Screen & System Audio
+Recording. Bundle installation and code identity do not prove these TCC grants.
+Run `node scripts/probe-gui-launch-context.mjs` from the service launch context
+after installation; only the production `gui_launcher` LaunchServices readback
+represents the permission boundary. The app's
 `permission` command reports both grants without requesting them;
 `request_accessibility` and `request_screen_recording` open the system consent
 flow. A denied permission makes the GUI tool fail closed. The personal build
-uses ad-hoc signing, so rebuilding and replacing the installed app changes its
-privacy identity and requires permission again. Keep the installed app fixed
-during normal source rebuilds.
+uses ad-hoc signing, so rebuilding and replacing the installed app can change
+its privacy identity and require permission again. Keep the installed app fixed
+during normal source rebuilds. An intentional GUI binary upgrade is a separate
+explicit operation; see [intentional GUI upgrade](personal-deployment.md#intentional-gui-binary-upgrade).
+It must be followed by production LaunchServices permission readback and, if
+necessary, renewing only this app's grants. Do not repeatedly replace it after
+the owner renews those grants.
 
 The current W1 deployment does not gain GUI access merely by updating source
 code: G1 requires a new signed policy, owner OAuth consent for the new scopes,
 and deployment of the new release. The Broker is the only MCP route to this
-app; it enforces the tool scopes, Chrome/Safari target allowlist, bounded
+app; it enforces the tool scopes, configured signed GUI target rules, bounded
 requests, attended approvals, and audit records before invoking the adapter.
 
 An attended GUI mutation creates a short-lived approval request. The public
@@ -167,10 +241,17 @@ approval page can read and issue Broker requests. Verify a pending request
 through the public URL before asking the owner to approve; a missing route
 returns 404 and an expired request returns 403.
 
-Screen capture uses ScreenCaptureKit and rejects known security and credential windows. Full-screen
-capture is limited to the main display and rejects other application windows
-that would be visible beside or above the browser. Dock-owned layer-20 surfaces
-are excluded from both obstruction checks and the actual ScreenCaptureKit image.
+Screen capture uses ScreenCaptureKit and rejects known security and credential
+windows. Application-scoped `screen` captures remain limited to the main display
+and reject other application windows visible beside or above the target window.
+Explicit desktop observation selects a full display and can include ordinary
+applications together, including Dock and the menu bar. The native filter excludes
+known protected and policy-denied application identities and known sensitive
+windows, and validates the visible window set before and after capture. These
+checks do not prove pixel redaction: a new protected process that appears only
+between the window catalog and capture checks remains a residual race.
+For application-scoped captures, Dock-owned layer-20 surfaces are excluded from
+both obstruction checks and the actual ScreenCaptureKit image.
 Other overlays, including computer-control tool overlays, remain subject to the
 existing boundary. Ordinary obstruction and outside-window failures have
 specific messages; `SECRET_BOUNDARY_DENIED` alone does not mean secret text was
@@ -179,8 +260,8 @@ Actions reject secure Accessibility targets and covered coordinates. Arbitrary
 ordinary text displayed by a website cannot be reliably identified as a
 secret, so agents must use the existing owner approval boundary and avoid
 credential pages or sensitive data when choosing what to observe or submit.
-The first release controls Chrome and Safari visually; it does not expose DOM
-automation or unrestricted shell commands.
+GUI tools do not expose DOM automation, security-setting bypasses or shell
+execution; personal owner terminal authority remains a separate scope.
 
 ## Live acceptance check
 
@@ -336,7 +417,8 @@ The browser approval-page login lasts thirty minutes, independently of durable
 browser authority. Expired login cookies do not revoke access or trigger new
 operation approvals. OAuth authentication and its own expiry/revocation, signed
 policy, screenshot revalidation and macOS permissions remain required. Other
-browsers, file writes, app launching and system operations are outside this grant.
+applications, filesystem writes, terminal and system operations are outside
+this browser grant.
 Focus consent previews last ten minutes; visual-action previews last two minutes.
 
 The protected AuthStore `browser_grant` records are the source of durable
@@ -373,6 +455,51 @@ than rolling back database readers. Keep the newer Broker persistence validator
 for ten-minute focus previews as well. Do not rebuild the native GUI app as part
 of this JavaScript-only change.
 
+
+## Explicit desktop delegation
+
+Desktop computer use is a separate owner consent record and signed-policy
+opt-in for G1, O1 or V2. The default remains `guiAccess=browsers`. A durable
+`desktop_grant` binds the owner principal, current policy version and explicit
+consent request; it has no browser-app binding and persists until revoked.
+Existing `browser_grant` records, temporary browser sessions and browser
+approval-page choices are never promoted into desktop authority.
+
+After explicit owner authorization, stop the personal service, take a complete
+stopped-state backup, and run from the selected release with its source commit
+revision:
+
+```sh
+node packages/auth/dist/personal-service.js computer-use ROOT REV --enable --until-revoked
+```
+
+`ROOT` is the private personal state root and `REV` is the release's hexadecimal
+source revision. The command requires exclusive service ownership, verifies
+the existing signed policy and owner/Edge bindings, enables only the GUI target
+expansion, and records explicit desktop consent with intent/completion audit
+events. It preserves non-GUI policy targets and existing OAuth scopes. Repeating
+it with a valid grant for the same principal and policy is idempotent. It does
+not install the GUI app, grant macOS permissions or prove live tool readiness.
+Restart the service and verify [runtime GUI readiness](personal-deployment.md#runtime-gui-readiness)
+and actual authenticated MCP observation/action before claiming acceptance.
+
+The delegation issues exact, single-use child approvals for authorized
+open/focus/action/type calls; every call still needs live unrevoked OAuth
+authentication, current signed policy, native readiness and valid concrete or
+observed target evidence. Secure fields, protected applications and sensitive submissions
+keep their existing denial or exact attended approval requirements. Desktop
+delegation does not confer terminal, filesystem, privileged or security-setting
+authority. The agent can focus an authorized concrete app through MCP rather
+than asking the owner to bring it forward manually.
+
+Use `/approval/access` to inspect and revoke desktop and browser grants
+separately. Revocation persists before child cleanup and is rechecked after
+in-flight approval issuance; Auth reset also revokes both record kinds. Policy
+changes invalidate mismatched delegation without widening old consent.
+Keep updated AuthStore readers while `desktop_grant` records exist, including
+revoked records. Disable desktop delegation to stop issuance; for a binary/state
+rollback restore the complete consistent stopped-state backup instead of
+mixing old readers with new records or partially restored policy/config files.
 
 ## Dock hit-testing correction (2026-09-27)
 

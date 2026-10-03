@@ -10,6 +10,7 @@ import { readAuthFile } from "./cli.js";
 import { assertO1Policy } from "./w1-policy.js";
 import { assertV2Policy } from "./v2-policy.js";
 import { developmentPolicyConfiguration, loadPersonalDevelopmentRuntimeConfig } from "./personal-development-runtime.js";
+import { desktopGrantsForUnchangedGuiPolicy } from "./desktop-grant-migration.js";
 
 const SESSION_TOOL = "mac_terminal_session";
 
@@ -31,8 +32,8 @@ export async function upgradePersonalTerminalSessions(root: string, packageRoot:
     const fullTools = config.grantProfile === "v2" ? V2_TOOLS : O1_TOOLS;
     const assertCurrent = (policy: Parameters<typeof assertO1Policy>[0]): void => config.grantProfile === "v2"
       ? assertV2Policy(policy, config.principalId, config.issuerId,
-        developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))))
-      : assertO1Policy(policy, config.principalId, config.issuerId);
+        developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))), config.guiAccess)
+      : assertO1Policy(policy, config.principalId, config.issuerId, config.guiAccess);
     const verifier = await PolicyBundleVerifier.createFromKeyFile({ schemaDirectory: join(packageRoot, "schemas"),
       expectedKeyId: "personal-policy-1", publicKeyPath: join(data, "policy-public.pem") });
     const prior = await verifier.verifyFile(join(data, "policy.json"));
@@ -72,17 +73,23 @@ export async function upgradePersonalTerminalSessions(root: string, packageRoot:
     await replaceJson(join(data, "policy.json"), bundle);
     await replaceJson(join(data, "edge-service.json"), edge);
     await replaceJson(join(root, "auth/broker-policy-input.json"), { ...policyInput, enabled_tools: [...fullTools] });
-    // Retained browser consent is bound to the policy version; the new revision grants it nothing more.
+    // Retained GUI consent is bound to the policy version; the new revision grants it nothing more.
     const authStore = new AuthStore(join(root, "auth"));
     let browserGrantCount = 0;
+    let desktopGrantCount = 0;
     try {
       const grants = authStore.browserGrants().filter(grant => !grant.revoked && grant.principalId === config.principalId && grant.policyVersion === prior.policy.version);
       browserGrantCount = grants.length;
-      authStore.transaction(() => { for (const grant of grants) authStore.put("browser_grant", grant.id, { ...grant, policyVersion: verified.policy.version }); });
+      const desktopGrants = desktopGrantsForUnchangedGuiPolicy(authStore, config.guiAccess, config.principalId, prior.policy, verified.policy);
+      desktopGrantCount = desktopGrants.length;
+      authStore.transaction(() => {
+        for (const grant of grants) authStore.put("browser_grant", grant.id, { ...grant, policyVersion: verified.policy.version });
+        for (const grant of desktopGrants) authStore.put("desktop_grant", grant.id, { ...grant, policyVersion: verified.policy.version });
+      });
     } finally { authStore.close(); }
     store.appendAudit({ requestId, principalId: config.principalId, tool: "internal_terminal_session_upgrade", eventType: "completion",
       decision: "allow", resultClass: "SUCCEEDED", targetRef: "host:owner-terminal", policyVersion: verified.policy.version, timestampMs: Date.now(),
-      evidence: { sourceRevision, browserGrantCount, scopesExpanded: false } });
+      evidence: { sourceRevision, browserGrantCount, desktopGrantCount, scopesExpanded: false } });
   } finally { store?.close(); await lock.close(); }
 }
 

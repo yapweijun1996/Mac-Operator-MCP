@@ -40,3 +40,17 @@ test("a full client table accepts a new registration only after eviction frees a
   assert.ok(store.get("client", "client-new"));
   assert.equal(store.get("client", "client-0"), undefined);
 });
+
+test("pruneConsumedRefreshTokens keeps the newest consumed hashes and every live token", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "mac-auth-refresh-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new AuthStore(directory, true);
+  t.after(() => store.close());
+  const expiresAt = Date.now() + 60_000;
+  for (let index = 0; index < 6; index++) store.put("refresh", `old-${index}`, { clientId: "client-1", grantId: "grant-1", expiresAt, consumed: true });
+  store.put("refresh", "other-consumed", { clientId: "client-1", grantId: "grant-2", expiresAt, consumed: true });
+  store.put("refresh", "live", { clientId: "client-1", grantId: "grant-1", expiresAt, consumed: false });
+  store.pruneConsumedRefreshTokens("grant-1", 3);
+  for (const gone of ["old-0", "old-1", "old-2"]) assert.equal(store.get("refresh", gone), undefined, gone);
+  for (const kept of ["old-3", "old-4", "old-5", "live", "other-consumed"]) assert.ok(store.get("refresh", kept), kept);
+});

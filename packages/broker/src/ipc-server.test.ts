@@ -487,3 +487,17 @@ test("a synchronous IPC response write failure remains local to its connection",
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a Broker exception is an unknown outcome, not an invalid-JSON error", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-ipc-throw-"));
+  const socketPath = join(directory, "broker.sock");
+  const broker = { handleForIpc: async () => { throw new Error("internal failure"); } } as unknown as Broker;
+  const server = createServer(socket => handleBrokerSocket(socket, broker, 4096));
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  try {
+    const thrown = JSON.parse(await send(socketPath, "{}\n"));
+    assert.equal(thrown.result_class, "UNKNOWN_OUTCOME");
+    assert.equal(thrown.error.message, "IPC request failed inside the Broker");
+    assert.equal(JSON.parse(await send(socketPath, "{bad\n")).result_class, "AUTH_INVALID");
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
