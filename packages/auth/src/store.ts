@@ -141,6 +141,18 @@ export class AuthStore {
     ).run(count).changes));
   }
 
+  /**
+   * Rotation keeps consumed refresh hashes only for replay detection. Retaining every one until
+   * the grant expires would exhaust the per-kind capacity within days, so keep the newest few.
+   */
+  pruneConsumedRefreshTokens(grantId: string, keep: number): void {
+    this.assertAvailable();
+    this.write(() => this.db.prepare(
+      "DELETE FROM records WHERE kind='refresh' AND id IN (SELECT id FROM records WHERE kind='refresh' AND " +
+      "json_extract(payload,'$.grantId') = ? AND json_extract(payload,'$.consumed') = 1 ORDER BY rowid DESC LIMIT -1 OFFSET ?)"
+    ).run(grantId, keep));
+  }
+
   prune(): void {
     this.assertAvailable();
     this.write(() => this.db.prepare("DELETE FROM records WHERE kind != 'account' AND json_extract(payload,'$.expiresAt') <= ?").run(Date.now()));

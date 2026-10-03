@@ -1093,6 +1093,20 @@ test("durable AuthStore revocation propagates through authenticated Broker IPC",
   }
 });
 
+test("long refresh chains stay within capacity and old replays still revoke the grant", async t => {
+  const f = await fixture(t); const tokens = await f.issue();
+  const chain = [tokens.refresh_token];
+  for (let index = 0; index < 8; index++) {
+    const response = await f.request("/token", { grant_type: "refresh_token", client_id: tokens.clientId, refresh_token: chain.at(-1)! });
+    assert.equal(response.status, 200); chain.push((await response.json()).refresh_token);
+  }
+  const consumed = chain.slice(0, -1).filter(token => f.store().get("refresh", fingerprint(token))?.consumed === true);
+  assert.equal(consumed.length, 3, "only the newest consumed hashes are retained");
+  // The latest predecessor is still retained, so replaying it revokes the whole grant.
+  assert.equal((await f.request("/token", { grant_type: "refresh_token", client_id: tokens.clientId, refresh_token: chain.at(-2)! })).status, 400);
+  assert.equal((await f.request("/token", { grant_type: "refresh_token", client_id: tokens.clientId, refresh_token: chain.at(-1)! })).status, 400);
+});
+
 test("refresh cannot escalate scopes and narrowed grants reject older broader tokens", async t => {
   const f = await fixture(t); const tokens = await f.issue();
   assert.equal((await f.request("/token", { grant_type: "refresh_token", client_id: tokens.clientId, refresh_token: tokens.refresh_token, scope: "mac.files.write" })).status, 400);
@@ -1145,6 +1159,21 @@ test("login rate limits cannot be bypassed by forwarded addresses", async t => {
   const stillLocked = await f.request("/oauth/login", { csrf, username: "owner", password }, cookie);
   assert.equal(stillLocked.status, 429);
   assert.ok(Number(stillLocked.headers.get("retry-after")) <= 120);
+});
+
+test("only failed password checks count toward the login lockout", async t => {
+  const f = await fixture(t); const client = await f.register();
+  // Twelve successful logins in one window would exceed the old per-attempt limit of ten.
+  for (let index = 0; index < 12; index++) await f.login(client);
+  const initial = await f.begin(client); const cookie = f.cookieFrom(initial);
+  const csrf = await f.csrfFrom(await f.request("/oauth/login", undefined, cookie));
+  for (let index = 0; index < 9; index++) assert.equal((await f.request("/oauth/login", { csrf, username: "owner", password: "wrong" }, cookie)).status, 401);
+  assert.equal((await f.request("/oauth/login", { csrf, username: "owner", password }, cookie)).status, 303);
+  const next = await f.begin(client); const nextCookie = f.cookieFrom(next);
+  const nextCsrf = await f.csrfFrom(await f.request("/oauth/login", undefined, nextCookie));
+  // The success reset the counter, so nine more failures still do not lock the owner out.
+  for (let index = 0; index < 9; index++) assert.equal((await f.request("/oauth/login", { csrf: nextCsrf, username: "owner", password: "wrong" }, nextCookie)).status, 401);
+  assert.equal((await f.request("/oauth/login", { csrf: nextCsrf, username: "owner", password }, nextCookie)).status, 303);
 });
 
 test("local revocation command persists and refuses password arguments and weak files", async t => {

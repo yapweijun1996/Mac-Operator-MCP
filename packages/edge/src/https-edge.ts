@@ -20,7 +20,7 @@ import {
 import type { GovernedMcpServerOptions } from "./mcp-server.js";
 import { createGovernedMcpServerFactory } from "./mcp-server.js";
 import { projectPrincipal } from "./principal.js";
-import { FixedWindowRateLimiter, type RateLimitOptions } from "./rate-limiter.js";
+import { FixedWindowRateLimiter, rateLimitKey, type RateLimitOptions } from "./rate-limiter.js";
 import { isPlainDataArray, isPlainDataRecord } from "./plain-record.js";
 
 const EDGE_REQUEST_TIMEOUT_MS = 30_000;
@@ -121,7 +121,7 @@ export function createHttpsMcpEdge(options: HttpsMcpEdgeOptions): HttpsMcpEdge {
     }, bearerAuth, (request: Request, response: Response, next: NextFunction) => {
       const auth = (request as Request & { auth?: AuthInfo }).auth;
       const identity = auth?.clientId ?? readPrincipalId(auth) ?? "authenticated";
-      const decision = rateLimiter.consume(identity);
+      const decision = rateLimiter.consume(rateLimitKey(identity));
       if (!decision.allowed) {
         response.setHeader("Retry-After", String(Math.max(1, Math.ceil(decision.retryAfterMs / 1_000))));
         response.status(429).json({ error: "rate_limit_exceeded" });
