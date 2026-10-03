@@ -18,12 +18,19 @@ test("explicit computer-use migration signs only GUI targets, stores distinct co
   const root = await realpath(await mkdtemp("/tmp/mac-computer-use-"));
   const project = await realpath(await mkdtemp(join(homedir(), ".mac-computer-use-project-")));
   try {
-    await mkdir(join(project, ".git"), { mode: 0o700 });
+    await exec("/usr/bin/git", ["init", "--quiet", project], { timeout: 10000 });
     await mkdir(join(root, "tls"), { mode: 0o700 });
     const credentials = join(root, "credentials.env");
     await writeFile(credentials, "MAC_OPERATOR_USERNAME=owner\nMAC_OPERATOR_PASSWORD=test-only-long-owner-passphrase\n", { mode: 0o600 });
-    await runAuthCli(["init", "--dir", join(root, "auth"), "--env-file", credentials,
-      "--redirect-uri", "https://client.example.test/callback", "--issuer", "https://mac.example.test/", "--grant-profile", "o1"]);
+    const previousProjectRoot = process.env.MAC_OPERATOR_PROJECT_ROOT;
+    process.env.MAC_OPERATOR_PROJECT_ROOT = project;
+    try {
+      await runAuthCli(["init", "--dir", join(root, "auth"), "--env-file", credentials,
+        "--redirect-uri", "https://client.example.test/callback", "--issuer", "https://mac.example.test/", "--grant-profile", "o1"]);
+    } finally {
+      if (previousProjectRoot === undefined) delete process.env.MAC_OPERATOR_PROJECT_ROOT;
+      else process.env.MAC_OPERATOR_PROJECT_ROOT = previousProjectRoot;
+    }
     const tls = join(root, "tls");
     await exec("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(tls, "edge.key"),
       "-out", join(tls, "edge.crt"), "-days", "1", "-subj", "/CN=mac.example.test", "-addext", "subjectAltName=DNS:mac.example.test",
