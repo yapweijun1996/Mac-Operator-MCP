@@ -36,3 +36,11 @@ test('typed input result accepts the Broker job identity and rejects unknown fie
   output.data.unexpected = true;
   assert.equal(validate(output), false);
 });
+
+test('visual action input contract accepts bounded negative global display coordinates', async () => {
+  const contract = JSON.parse(await readFile(new URL('../tool-contracts/mac_ui_action.json', import.meta.url), 'utf8'));
+  const validate = new Ajv({ strict: false }).compile(contract.input_schema);
+  const action = { element_ref: 'element:test', action: 'click', x: -1100, y: 200 };
+  assert.equal(validate(action), true, JSON.stringify(validate.errors));
+  assert.equal(validate({ ...action, x: -20001 }), false);
+});

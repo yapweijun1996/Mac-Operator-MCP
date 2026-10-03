@@ -3,7 +3,7 @@ import { BrokerError, CAPABILITY_FAMILIES, CONTRACT_VERSION, PLANNED_TOOL_NAMES,
 import type { BrokerStore, SwitchName } from "./persistence.js";
 import type { FilesystemRootPolicy } from "./filesystem-inspector.js";
 import { isPlainDataRecord } from "./plain-record.js";
-import { isSignedPolicyTargetReference } from "./target-authority.js";
+import { isConcreteGuiTargetReference, isDesktopGuiPolicyScope, isDesktopGuiTargetReference, isSignedPolicyTargetReference } from "./target-authority.js";
 
 export interface ToolPolicy {
   tool: string;
@@ -135,6 +135,7 @@ export function validateBrokerPolicy(policy: BrokerPolicy): void {
         !policy.principalGrants.has(rule.principalId) || !SCOPES.includes(rule.scope) ||
         !policy.principalGrants.get(rule.principalId)!.scopes.includes(rule.scope) ||
         !isPolicyTarget(rule.target, rootIds) || !isPolicyRuleTargetReference(rule.target) ||
+        (isDesktopGuiTargetReference(rule.target) && !isDesktopGuiPolicyScope(rule.scope)) ||
         !isTargetConstraint(rule.target, rule.targetConstraint)) {
       throw new BrokerError("POLICY_DENIED", "Active Broker policy contains malformed target authority");
     }
@@ -264,6 +265,7 @@ function isPolicyRuleTargetReference(target: NormalizedTarget): boolean {
 
 function isTargetConstraint(target: NormalizedTarget, constraint: unknown): constraint is TargetConstraint | undefined {
   if (constraint === undefined) return true;
+  if (isDesktopGuiTargetReference(target)) return false;
   if (constraint === null || typeof constraint !== "object" ||
       !hasOnlyKeys(constraint, ["mode", "references"])) return false;
   const candidate = constraint as TargetConstraint;
@@ -273,7 +275,8 @@ function isTargetConstraint(target: NormalizedTarget, constraint: unknown): cons
     return false;
   }
   return candidate.references.every((reference) =>
-    typeof reference === "string" && isSignedPolicyTargetReference({ kind: target.kind, reference }));
+    typeof reference === "string" && !isDesktopGuiTargetReference({ kind: target.kind, reference }) &&
+    isSignedPolicyTargetReference({ kind: target.kind, reference }));
 }
 
 function isLexicallySorted(values: readonly string[]): boolean {
@@ -360,7 +363,8 @@ export function authorizeTarget(
 ): void {
   validateBrokerPolicy(policy);
   if (!isPolicyId(principalId) || !isKnownScopeList(scopes) ||
-      !isPolicyTarget(target, new Set(policy.filesystemRoots.map((root) => root.rootId)))) {
+      !isPolicyTarget(target, new Set(policy.filesystemRoots.map((root) => root.rootId))) ||
+      isDesktopGuiTargetReference(target)) {
     throw new BrokerError("POLICY_DENIED", "Target authority is malformed");
   }
   const grant = policy.principalGrants.get(principalId);
@@ -377,6 +381,7 @@ export function authorizeTarget(
     (rule.targetConstraint?.mode === "finite_set"
       ? rule.targetConstraint.references.includes(target.reference)
       : rule.target.reference === target.reference ||
+        (isDesktopGuiTargetReference(rule.target) && isConcreteGuiTargetReference(target)) ||
         (rule.target.kind === "docker_object" && rule.target.reference === "all" && target.kind === "docker_object"))
   );
   if (matchingRules.some((rule) => rule.effect === "deny")) {
@@ -387,6 +392,20 @@ export function authorizeTarget(
       throw new BrokerError("POLICY_DENIED", "Target is not allowed for every required scope");
     }
   }
+}
+
+/** Capability discovery checks authority without resolving or launching an application. */
+export function guiCapabilityProbeTarget(policy: BrokerPolicy, target: NormalizedTarget): NormalizedTarget {
+  if (!isDesktopGuiTargetReference(target)) return target;
+  validateBrokerPolicy(policy);
+  const denied = new Set(policy.targetRules.filter(rule => rule.effect === "deny" && rule.target.kind === target.kind)
+    .flatMap(rule => rule.targetConstraint?.references ?? [rule.target.reference]));
+  for (let index = 0; index <= denied.size; index += 1) {
+    const bundle = `bundle:dev.macoperator.capability-probe.${index}`;
+    const reference = target.kind === "app" ? bundle : `window:${bundle}`;
+    if (!denied.has(reference)) return { kind: target.kind, reference };
+  }
+  throw new BrokerError("POLICY_DENIED", "GUI capability probe target is unavailable");
 }
 
 export function runtimeToolStates(policy: BrokerPolicy): RuntimeToolState[] {

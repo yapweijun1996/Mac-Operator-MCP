@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { BrokerPolicy, PolicyDocument } from "@mac-operator/broker";
 import { canonicalJson, type Scope } from "@mac-operator/contracts";
 import { V2_SCOPES, V2_TOOLS } from "./contracts.js";
-import { buildO1TargetRules, w1FilesystemRoots, w1ProjectRoot } from "./w1-policy.js";
+import { buildO1TargetRules, w1FilesystemRoots, w1ProjectRoot, type GuiAccess } from "./w1-policy.js";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const PROJECT_SCOPES: readonly Scope[] = ["mac.project.read", "mac.project.write", "mac.git.read", "mac.git.write",
@@ -36,12 +36,12 @@ export function v2FilesystemRoots(ownerProjectRoot: string, config: V2PolicyConf
 }
 
 export function buildV2TargetRules(principalId: string, filesystemRoots: PolicyDocument["filesystem_roots"], ownerProjectRoot: string,
-  config: V2PolicyConfiguration): PolicyDocument["target_rules"] {
+  config: V2PolicyConfiguration, guiAccess: GuiAccess = "browsers"): PolicyDocument["target_rules"] {
   if (!ID.test(principalId)) throw new Error("V2 principal identity is malformed");
   const safe = validateConfiguration(ownerProjectRoot, config);
   const expectedRoots = v2FilesystemRoots(ownerProjectRoot, safe);
   if (canonicalJson(filesystemRoots) !== canonicalJson(expectedRoots)) throw new Error("V2 filesystem roots do not match protected configuration");
-  const rules = buildO1TargetRules(principalId, filesystemRoots, ownerProjectRoot);
+  const rules = buildO1TargetRules(principalId, filesystemRoots, ownerProjectRoot, guiAccess);
   for (const [index, project] of safe.developmentProjects.entries()) {
     const root = filesystemRoots.find(candidate => candidate.path === project && candidate.write === true);
     if (root === undefined) throw new Error("V2 development source root is unavailable");
@@ -59,7 +59,8 @@ export function buildV2TargetRules(principalId: string, filesystemRoots: PolicyD
 }
 
 /** Preserve signature envelope inputs; the operator signs the returned concrete document separately. */
-export function buildV2PolicyDocument(base: PolicyDocument, principalId: string, issuerId: string, config: V2PolicyConfiguration): PolicyDocument {
+export function buildV2PolicyDocument(base: PolicyDocument, principalId: string, issuerId: string, config: V2PolicyConfiguration,
+  guiAccess: GuiAccess = "browsers"): PolicyDocument {
   if (!ID.test(principalId) || !ID.test(issuerId)) throw new Error("V2 grant identity is malformed");
   const ownerProjectRoot = base.filesystem_roots.find(root => root.root_id === "owner-project")?.path;
   if (ownerProjectRoot === undefined) throw new Error("V2 requires an existing owner project");
@@ -69,14 +70,15 @@ export function buildV2PolicyDocument(base: PolicyDocument, principalId: string,
     trusted_edge_keys: base.trusted_edge_keys.map(key => ({ ...key })),
     principal_grants: [{ principal_id: principalId, issuer: issuerId, scopes: [...V2_SCOPES], enabled: true }],
     filesystem_roots: roots,
-    target_rules: buildV2TargetRules(principalId, roots, ownerProjectRoot, config),
+    target_rules: buildV2TargetRules(principalId, roots, ownerProjectRoot, config, guiAccess),
     tool_enablement: V2_TOOLS.map(tool => ({ tool, enabled: true })),
     kill_switches: { global: false, mutations: false, process: false, network: false, gui: false, destructive: true, privileged: true }
   };
 }
 
 /** A signed document still has to match the independently protected operator configuration. */
-export function assertV2Policy(policy: BrokerPolicy, principalId: string, issuerId: string, config: V2PolicyConfiguration): void {
+export function assertV2Policy(policy: BrokerPolicy, principalId: string, issuerId: string, config: V2PolicyConfiguration,
+  guiAccess: GuiAccess = "browsers"): void {
   const grants = [...policy.principalGrants.values()];
   if (grants.length !== 1 || grants[0]?.principalId !== principalId || grants[0]?.issuer !== issuerId || !grants[0]?.enabled ||
       canonicalJson([...grants[0].scopes].sort()) !== canonicalJson([...V2_SCOPES].sort())) throw new Error("V2 principal grant mismatch");
@@ -88,7 +90,7 @@ export function assertV2Policy(policy: BrokerPolicy, principalId: string, issuer
   const actualRoots = policy.filesystemRoots.map(root => ({ root_id: root.rootId, path: root.path, metadata: root.metadata,
     content_read: root.contentRead, write: root.write, deny_relative_paths: root.denyRelativePaths }));
   if (canonicalJson(actualRoots) !== canonicalJson(roots)) throw new Error("V2 filesystem roots mismatch");
-  const rules = buildV2TargetRules(principalId, roots, project, config);
+  const rules = buildV2TargetRules(principalId, roots, project, config, guiAccess);
   const actualRules = policy.targetRules.map(rule => ({ rule_id: rule.ruleId, effect: rule.effect, principal_id: rule.principalId,
     scope: rule.scope, target: rule.target, ...(rule.targetConstraint === undefined ? {} : { target_constraint: rule.targetConstraint }) }));
   if (canonicalJson(actualRules) !== canonicalJson(rules)) throw new Error("V2 target rules mismatch");

@@ -23,7 +23,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSScreenCaptureUsageDescription</key><string>Capture the authorized browser window for Mac Operator visual tasks.</string>
+  <key>NSScreenCaptureUsageDescription</key><string>Capture authorized application windows or the Desktop for Mac Operator visual tasks.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$app"

@@ -11,6 +11,7 @@ import { readAuthFile } from "./cli.js";
 import { assertO1Policy } from "./w1-policy.js";
 import { assertV2Policy, buildV2PolicyDocument } from "./v2-policy.js";
 import { createPersonalDevelopmentRuntime, developmentPolicyConfiguration, loadPersonalDevelopmentRuntimeConfig } from "./personal-development-runtime.js";
+import { desktopGrantsForUnchangedGuiPolicy } from "./desktop-grant-migration.js";
 
 /** Offline opt-in only. The operator must retain a full stopped-state backup for rollback. */
 export async function upgradePersonalDevelopment(root: string, packageRoot: string, sourceRevision: string, runtimeConfigPath: string): Promise<void> {
@@ -30,17 +31,17 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
     const prior = await verifier.verifyFile(join(data, "policy.json"));
     if (prior.policy.filesystemRoots.find(value => value.rootId === "owner-project")?.path !== development.ownerProjectRoot) throw new Error("Development upgrade owner project mismatch");
     if (config.grantProfile === "v2") {
-      assertV2Policy(prior.policy, config.principalId, config.issuerId, configuration);
+      assertV2Policy(prior.policy, config.principalId, config.issuerId, configuration, config.guiAccess);
       if (canonicalJson(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))) !== canonicalJson(development)) throw new Error("Installed development runtime differs from retry");
       return;
     }
-    assertO1Policy(prior.policy, config.principalId, config.issuerId);
+    assertO1Policy(prior.policy, config.principalId, config.issuerId, config.guiAccess);
     // Validate real Engine, image, provider and protected roots before touching signed authority.
     const runtime = await createPersonalDevelopmentRuntime(development, config.principalId);
     await runtime.runner.close(); await runtime.gateway.close();
     const original = JSON.parse(readAuthFile(join(data, "policy.json")).toString()) as SignedPolicyBundle;
     const now = Date.now();
-    const payload = { ...buildV2PolicyDocument(original.payload, config.principalId, config.issuerId, configuration),
+    const payload = { ...buildV2PolicyDocument(original.payload, config.principalId, config.issuerId, configuration, config.guiAccess),
       revision: original.payload.revision + 1, issued_at_ms: now };
     const bytes = Buffer.from(canonicalJson(payload));
     const privateBytes = readAuthFile(join(root, "personal-policy-private.key"));
@@ -48,7 +49,7 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
     try { bundle = { ...original, payload, payload_digest: sha256(bytes), signature: sign(null, bytes, createPrivateKey(privateBytes)).toString("base64") }; }
     finally { privateBytes.fill(0); }
     const verified = verifier.verify(bundle);
-    assertV2Policy(verified.policy, config.principalId, config.issuerId, configuration);
+    assertV2Policy(verified.policy, config.principalId, config.issuerId, configuration, config.guiAccess);
     const previousEdge = validateEdgeServiceStartupConfig(JSON.parse(readAuthFile(join(data, "edge-service.json")).toString()));
     if (previousEdge.dataRoot !== data || previousEdge.runtimeRoot !== join(data, "run")) throw new Error("Development migration does not relocate existing state");
     const edge = validateEdgeServiceStartupConfig({ ...previousEdge, packageRoot, contractsDirectory: join(packageRoot, "tool-contracts"),
@@ -79,16 +80,22 @@ export async function upgradePersonalDevelopment(root: string, packageRoot: stri
       enabled_tools: [...V2_TOOLS], filesystem_roots: payload.filesystem_roots });
     const authStore = new AuthStore(join(root, "auth"));
     let browserGrantCount = 0;
+    let desktopGrantCount = 0;
     try {
       const grants = authStore.browserGrants().filter(grant => !grant.revoked && grant.principalId === config.principalId && grant.policyVersion === prior.policy.version);
       browserGrantCount = grants.length;
-      authStore.transaction(() => { for (const grant of grants) authStore.put("browser_grant", grant.id, { ...grant, policyVersion: verified.policy.version }); });
+      const desktopGrants = desktopGrantsForUnchangedGuiPolicy(authStore, config.guiAccess, config.principalId, prior.policy, verified.policy);
+      desktopGrantCount = desktopGrants.length;
+      authStore.transaction(() => {
+        for (const grant of grants) authStore.put("browser_grant", grant.id, { ...grant, policyVersion: verified.policy.version });
+        for (const grant of desktopGrants) authStore.put("desktop_grant", grant.id, { ...grant, policyVersion: verified.policy.version });
+      });
     } finally { authStore.close(); }
     // Existing OAuth grants retain their original scopes; reconnecting is a separate consent.
     await replaceJson(join(root, "auth/auth-config.json"), { ...config, grantProfile: "v2" });
     store.appendAudit({ requestId, principalId: config.principalId, tool: "internal_development_upgrade", eventType: "completion", decision: "allow",
       resultClass: "SUCCEEDED", targetRef: "host:development-gateway", policyVersion: verified.policy.version, timestampMs: Date.now(),
-      evidence: { sourceRevision, evidenceSha256: development.evidenceSha256, browserGrantCount, existingOAuthScopesExpanded: false } });
+      evidence: { sourceRevision, evidenceSha256: development.evidenceSha256, browserGrantCount, desktopGrantCount, existingOAuthScopesExpanded: false } });
   } finally { keyManager?.dispose(); store?.close(); await lock.close(); }
 }
 

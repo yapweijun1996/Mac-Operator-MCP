@@ -11,6 +11,7 @@ import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
 import { BrokerStore } from "./persistence.js";
 import { PolicyBundleVerifier, PolicyManager, type PolicyDocument, type SignedPolicyBundle } from "./policy-loader.js";
+import { authorizeTarget } from "./policy.js";
 
 const NOW = 1_700_000_000_000;
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -79,6 +80,25 @@ async function verifier() {
   });
   return { instance, keys };
 }
+
+test("signed desktop GUI policy survives verification while incompatible scopes remain invalid", async () => {
+  const { instance, keys } = await verifier();
+  const document = policyDocument();
+  document.principal_grants[0]!.scopes.push("mac.app.control", "mac.ui.observe", "mac.ui.control");
+  document.target_rules.push(
+    { rule_id: "desktop-app-control", effect: "allow", principal_id: "principal-1", scope: "mac.app.control", target: { kind: "app", reference: "desktop" } },
+    { rule_id: "desktop-window-observe", effect: "allow", principal_id: "principal-1", scope: "mac.ui.observe", target: { kind: "app_window", reference: "desktop" } }
+  );
+  const verified = instance.verify(signedBundle(document, keys.privateKey));
+  assert.doesNotThrow(() => authorizeTarget(verified.policy, "principal-1", ["mac.app.control"], { kind: "app", reference: "bundle:com.apple.TextEdit" }));
+  assert.doesNotThrow(() => authorizeTarget(verified.policy, "principal-1", ["mac.ui.observe"], { kind: "app_window", reference: "window:bundle:com.apple.TextEdit" }));
+  const nonGui = { ...document, target_rules: document.target_rules.map(rule => rule.rule_id === "desktop-app-control"
+    ? { ...rule, scope: "mac.control.read" as const } : rule) };
+  assert.throws(() => instance.verify(signedBundle(nonGui, keys.privateKey)), /schema validation failed|incompatible authority/u);
+  const finite = { ...document, target_rules: document.target_rules.map(rule => rule.rule_id === "desktop-app-control"
+    ? { ...rule, target_constraint: { mode: "finite_set" as const, references: ["desktop"] } } : rule) };
+  assert.throws(() => instance.verify(signedBundle(finite, keys.privateKey)), /schema validation failed|incompatible authority/u);
+});
 
 test("a verified signed policy atomically activates Broker-owned authority", async () => {
   const { instance, keys } = await verifier();

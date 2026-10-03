@@ -23,7 +23,7 @@
   "audit_class": "gui_control",
   "tool_delivery_wave": "wave_4",
   "implementation_status": "planned",
-  "purpose": "Send bounded text to an approved focused non-secure text field in the most recent authorized browser observation.",
+  "purpose": "Send bounded text to an approved focused ordinary non-secure text target in a fresh authorized observation. Desktop delegation never permits credential fields or bypasses exact sensitive-submission approval.",
   "input_summary": "text:string<=10000, element_ref?:recent observed text field, keys?:bounded enum[], submit?:boolean.",
   "output_summary": "characters accepted and postcondition state, never echoed from secure fields.",
   "input_schema": {

@@ -13,11 +13,14 @@ import { Broker, BrokerStore, EdgeKeyring, OwnerTerminalSessionManager, Personal
   type SignedPolicyBundle } from "@mac-operator/broker";
 import { runAuthCli } from "./cli.js";
 import { CODEX_CONTROLLER_EXECUTABLE_SHA256, CODEX_CONTROLLER_VERSION } from "@mac-operator/broker";
-import { O1_TOOLS, V2_CODING_SCOPES, V2_TOOLS } from "./contracts.js";
+import { O1_TOOLS, V2_CODING_SCOPES, V2_TOOLS, type RecordValue } from "./contracts.js";
 import { assertO1Policy } from "./w1-policy.js";
 import { assertV2Policy, buildV2PolicyDocument } from "./v2-policy.js";
 import { REQUIRED_CONTAINER_EVIDENCE, developmentPolicyConfiguration, loadPersonalDevelopmentRuntimeConfig } from "./personal-development-runtime.js";
 import { upgradePersonalTerminalSessions } from "./personal-terminal-session-upgrade.js";
+import { upgradePersonalComputerUse } from "./personal-computer-use-upgrade.js";
+import { upgradePersonalOwnerTerminal } from "./personal-owner-upgrade.js";
+import { AuthStore } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 const SESSION_TOOL = "mac_terminal_session";
@@ -139,6 +142,43 @@ test("terminal-sessions upgrade refuses a policy that differs from the expected 
     const before = await readFile(join(personal, "policy.json"), "utf8");
     await assert.rejects(execFileAsync(process.execPath, [entrypoint(), "terminal-sessions", root, "abcdef1", "--enable"], { timeout: 30_000 }), /./u);
     assert.equal(await readFile(join(personal, "policy.json"), "utf8"), before);
+  } finally { await rm(root, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }); }
+});
+
+test("terminal-sessions upgrade preserves explicit desktop policy and rebinds unchanged GUI consent", { skip: !supported }, async () => {
+  const { root, project, personal, auth } = await provisionO1();
+  try {
+    const optedIn = await upgradePersonalComputerUse(root, process.cwd(), "abcdef1");
+    await downgradeToPreSession(root, personal);
+    const verifier = await PolicyBundleVerifier.createFromKeyFile({ schemaDirectory: join(process.cwd(), "schemas"),
+      expectedKeyId: "personal-policy-1", publicKeyPath: join(personal, "policy-public.pem") });
+    const before = await verifier.verifyFile(join(personal, "policy.json"));
+    const authStore = new AuthStore(join(root, "auth"));
+    let retained: RecordValue<"desktop_grant">;
+    try {
+      const current = authStore.get("desktop_grant", optedIn.desktopGrantId)!;
+      // The fixture now represents a desktop-enabled installation signed before PTY tool enablement.
+      retained = { ...current, policyVersion: before.policy.version };
+      authStore.put("desktop_grant", current.id, retained);
+    } finally { authStore.close(); }
+    const legacy = JSON.parse(await readFile(join(personal, "policy.json"), "utf8")) as SignedPolicyBundle;
+    const configBytes = await readFile(join(root, "auth/auth-config.json"), "utf8");
+
+    await upgradePersonalTerminalSessions(root, process.cwd(), "abcdef2");
+    const after = await verifier.verifyFile(join(personal, "policy.json"));
+    assert.doesNotThrow(() => assertO1Policy(after.policy, auth.principalId, auth.issuerId, "desktop"));
+    assert.throws(() => assertO1Policy(after.policy, auth.principalId, auth.issuerId), "desktop policy must require its explicit mode");
+    const upgraded = JSON.parse(await readFile(join(personal, "policy.json"), "utf8")) as SignedPolicyBundle;
+    const { revision: _r, issued_at_ms: _i, tool_enablement: _t, ...legacyRest } = legacy.payload;
+    const { revision: _r2, issued_at_ms: _i2, tool_enablement: _t2, ...upgradedRest } = upgraded.payload;
+    assert.deepEqual(upgradedRest, legacyRest, "GUI targets, scopes and roots must be unchanged");
+    assert.equal(await readFile(join(root, "auth/auth-config.json"), "utf8"), configBytes);
+    const migratedStore = new AuthStore(join(root, "auth"));
+    try { assert.deepEqual(migratedStore.get("desktop_grant", optedIn.desktopGrantId), { ...retained, policyVersion: after.policy.version }); }
+    finally { migratedStore.close(); }
+    await upgradePersonalOwnerTerminal(root, process.cwd(), "abcdef3");
+    await upgradePersonalTerminalSessions(root, process.cwd(), "abcdef3");
+    assert.equal((await verifier.verifyFile(join(personal, "policy.json"))).policy.revision, after.policy.revision, "compatible retries are no-ops");
   } finally { await rm(root, { recursive: true, force: true }); await rm(project, { recursive: true, force: true }); }
 });
 

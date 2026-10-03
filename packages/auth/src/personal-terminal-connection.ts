@@ -29,7 +29,7 @@ export async function enablePersonalTerminalConnection(root: string, packageRoot
     const verified = await verifier.verifyFile(join(data, "policy.json"));
     if (edge.policyVersion !== verified.policy.version) throw new Error("Existing signed policy binding required");
     assertV2Policy(verified.policy, auth.principalId, auth.issuerId,
-      developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))));
+      developmentPolicyConfiguration(loadPersonalDevelopmentRuntimeConfig(join(data, "development-runtime.json"))), auth.guiAccess);
     const nextAuth = configSchema.parse({ ...auth, ownerTerminalConnection: true });
     const nextEdge = validateEdgeServiceStartupConfig({ ...edge, ownerTerminalConnection: true,
       packageRoot, contractsDirectory: join(packageRoot, "tool-contracts"), sourceRevision });

@@ -5,6 +5,7 @@ import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFi
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { installGuiApplication, validateGuiApplication } from "../packages/broker/scripts/install-gui-app.mjs";
+import { upgradeGuiApplication } from "../packages/broker/scripts/upgrade-gui-app.mjs";
 
 const supported = process.platform === "darwin";
 const run = promisify(execFile);
@@ -143,4 +144,85 @@ test("atomic publication never nests a staged app inside an existing destination
   await validateGuiApplication(input.sourceApp);
   await validateGuiApplication(installed.path);
   assert.deepEqual(await readdir(installed.path), ["Contents"]);
+});
+
+test("intentional GUI binary upgrade atomically retains the old signed app for rollback", { skip: !supported }, async (t) => {
+  const input = await fixture(t);
+  const installed = await installGuiApplication(input);
+  const marker = "Contents/Resources/release-marker";
+  await writeFile(join(input.sourceApp, marker), "intentional desktop release\n");
+  await run("/usr/bin/codesign", ["--force", "--sign", "-", input.sourceApp], options);
+  const upgraded = await upgradeGuiApplication(input);
+  assert.equal(upgraded.action, "upgraded");
+  assert.equal(upgraded.path, installed.path);
+  await validateGuiApplication(upgraded.path);
+  await validateGuiApplication(upgraded.backup);
+  assert.equal(await readFile(join(upgraded.path, marker), "utf8"), "intentional desktop release\n");
+  assert.equal(await readFile(join(upgraded.backup, marker), "utf8"), "original release\n");
+  const before = await stat(join(upgraded.path, "Contents/MacOS/gui_vision"));
+  const contents = await readdir(input.applicationsDirectory);
+  assert.equal((await upgradeGuiApplication(input)).action, "preserved", "identical release must not replace the TCC identity again");
+  assert.equal((await stat(join(upgraded.path, "Contents/MacOS/gui_vision"))).ino, before.ino);
+  assert.deepEqual(await readdir(input.applicationsDirectory), contents);
+  // Ordinary deployment remains absent-only after an intentional upgrade.
+  await writeFile(join(input.sourceApp, marker), "later release without consent\n");
+  await run("/usr/bin/codesign", ["--force", "--sign", "-", input.sourceApp], options);
+  assert.equal((await installGuiApplication(input)).action, "preserved");
+  assert.equal(await readFile(join(upgraded.path, marker), "utf8"), "intentional desktop release\n");
+});
+
+test("invalid upgrade artifact leaves the installed GUI identity untouched", { skip: !supported }, async (t) => {
+  const input = await fixture(t);
+  const installed = await installGuiApplication(input);
+  const before = await stat(join(installed.path, "Contents/MacOS/gui_vision"));
+  await writeFile(join(input.sourceApp, "Contents/Resources/release-marker"), "unsigned tampering\n");
+  await assert.rejects(upgradeGuiApplication(input), /codesign/u);
+  await validateGuiApplication(installed.path);
+  assert.equal((await stat(join(installed.path, "Contents/MacOS/gui_vision"))).ino, before.ino);
+  assert.equal(await readFile(join(installed.path, "Contents/Resources/release-marker"), "utf8"), "original release\n");
+});
+
+test("an unconfirmed exchange retains the old signed GUI app instead of deleting rollback data", { skip: !supported }, async (t) => {
+  const input = await fixture(t);
+  const installed = await installGuiApplication(input);
+  const marker = "Contents/Resources/release-marker";
+  await writeFile(join(input.sourceApp, marker), "new release before publisher error\n");
+  await run("/usr/bin/codesign", ["--force", "--sign", "-", input.sourceApp], options);
+  const directory = resolve(input.sourceApp, "../..");
+  const faultSource = join(directory, "exchange-then-fail.c");
+  const faultExecutable = join(directory, "exchange-then-fail");
+  await writeFile(faultSource, `#include <stdio.h>
+int main(int argc, char **argv) {
+  if (argc != 4) return 64;
+  if (renamex_np(argv[2], argv[3], RENAME_SWAP) != 0) return 75;
+  return 74;
+}
+`);
+  await run("/usr/bin/clang", ["-Wall", "-Wextra", "-Werror", faultSource, "-o", faultExecutable], options);
+  await assert.rejects(upgradeGuiApplication({ ...input, renameExecutable: faultExecutable }), { code: 74 });
+  assert.equal(await readFile(join(installed.path, marker), "utf8"), "new release before publisher error\n");
+  const entries = await readdir(input.applicationsDirectory);
+  assert.equal(entries.includes(".mac-operator-gui-upgrade.lock"), false);
+  const recovery = entries.filter(entry => entry.startsWith(".mac-operator-gui-upgrade-"));
+  assert.equal(recovery.length, 1);
+  const previous = join(input.applicationsDirectory, recovery[0], "Mac Operator GUI.app");
+  await validateGuiApplication(previous);
+  await validateGuiApplication(installed.path);
+  assert.equal(await readFile(join(previous, marker), "utf8"), "original release\n");
+});
+
+test("concurrent intentional upgrade lock fails closed without replacing a current app", { skip: !supported }, async (t) => {
+  const input = await fixture(t);
+  const installed = await installGuiApplication(input);
+  await writeFile(join(input.sourceApp, "Contents/Resources/release-marker"), "new valid release\n");
+  await run("/usr/bin/codesign", ["--force", "--sign", "-", input.sourceApp], options);
+  await mkdir(join(input.applicationsDirectory, ".mac-operator-gui-upgrade.lock"), { mode: 0o700 });
+  await assert.rejects(upgradeGuiApplication(input), { code: "EEXIST" });
+  await validateGuiApplication(installed.path);
+  assert.equal(await readFile(join(installed.path, "Contents/Resources/release-marker"), "utf8"), "original release\n");
+});
+
+test("GUI upgrade command requires intentional --upgrade before touching the installed app", { skip: !supported }, async () => {
+  await assert.rejects(run(process.execPath, [resolve("packages/broker/scripts/upgrade-gui-app.mjs")], options),
+    error => error.code === 1 && /Explicit --upgrade required/u.test(error.stderr));
 });

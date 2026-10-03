@@ -4,7 +4,8 @@ import { MacGuiHelperReadinessProbe, guiReadinessPermissions } from "./gui-helpe
 import type { ProcessExecutionResult } from "./process-supervisor.js";
 
 function fixture(options: { missing?: boolean; directory?: boolean; executable?: boolean; bundleId?: string; signature?: boolean;
-  accessibility?: unknown; screen?: unknown; exitCode?: number; malformed?: boolean } = {}) {
+  accessibility?: unknown; screen?: unknown; exitCode?: number; malformed?: boolean;
+  desktop?: boolean; capabilities?: unknown; capabilityRaw?: string; capabilityResult?: Partial<ProcessExecutionResult> } = {}) {
   const calls: string[] = [];
   const probe = new MacGuiHelperReadinessProbe({
     stat: async path => {
@@ -30,7 +31,13 @@ function fixture(options: { missing?: boolean; directory?: boolean; executable?:
         terminationObserved: true, truncated: false, stdout: options.malformed ? "{}" : JSON.stringify({ status: "ok",
           accessibility: options.accessibility ?? true, screen_recording: options.screen ?? true }) } as ProcessExecutionResult;
     }
-  });
+  }, undefined, { requireOrdinaryApplications: options.desktop === true, productionCapabilities: async () => {
+    calls.push("capabilities");
+    return { resultClass: "SUCCEEDED", exitCode: 0, terminationObserved: true, truncated: false,
+      stdout: options.capabilityRaw ?? JSON.stringify(options.capabilities ?? { status: "ok", version: "0.3",
+        features: { ordinary_apps: true, bounded_global_coordinates: true, desktop_surfaces: true } }),
+      ...options.capabilityResult } as ProcessExecutionResult;
+  } });
   return { probe, calls };
 }
 
@@ -97,4 +104,64 @@ test("readiness re-probes after consent instead of caching denial", async () => 
   assert.equal((await probe.probe()).accessibility, false);
   options.accessibility = true;
   assert.equal((await probe.probe()).accessibility, true);
+});
+
+test("desktop mode requires actual production native capabilities independently of TCC", async () => {
+  const { probe, calls } = fixture({ desktop: true });
+  const state = await probe.probe();
+  assert.equal(state.ordinary_apps, true);
+  assert.equal(state.desktop_surfaces, true);
+  assert.equal(state.accessibility, true);
+  assert.equal(calls.includes("capabilities"), true);
+  assert.equal(guiReadinessPermissions(state).find(value => value.name === "gui_helper_ordinary_apps")?.granted, true);
+});
+
+test("capability timeout and IPC failure preserve TCC evidence and their actual boundary", async () => {
+  for (const capabilityResult of [
+    { resultClass: "TIMEOUT" as const, exitCode: null },
+    { resultClass: "EXECUTION_FAILED" as const, exitCode: 74 }
+  ]) {
+    const state = await fixture({ desktop: true, capabilityResult }).probe.probe();
+    assert.equal(state.accessibility, true);
+    assert.equal(state.screen_recording, true);
+    assert.equal(state.ordinary_apps, null);
+    assert.equal(state.desktop_surfaces, null);
+    assert.match(state.reason!, /^GUI_(?:HELPER_CAPABILITY_PROBE_FAILED|LAUNCHER_TRANSPORT_FAILED)$/u);
+  }
+});
+
+test("legacy or incomplete native helpers fail desktop readiness without an AX denial", async () => {
+  for (const capabilities of [
+    { status: "error", error: "invalid_request" },
+    { status: "ok", version: "0.2", features: { ordinary_apps: false, bounded_global_coordinates: true } },
+    { status: "ok", version: "0.2", features: { ordinary_apps: true, bounded_global_coordinates: false } },
+    { status: "ok", version: "unexpected", features: { ordinary_apps: true, bounded_global_coordinates: true } }
+  ]) {
+    const state = await fixture({ desktop: true, capabilities }).probe.probe();
+    assert.equal(state.identity_valid, true);
+    assert.equal(state.accessibility, true);
+    assert.equal(state.screen_recording, true);
+    assert.equal(state.ordinary_apps, false);
+    assert.equal(state.reason, "GUI_HELPER_UPGRADE_REQUIRED");
+  }
+});
+
+test("desktop mode preserves independent Accessibility denial and skips native feature lookup", async () => {
+  const { probe, calls } = fixture({ desktop: true, accessibility: false });
+  const state = await probe.probe();
+  assert.equal(state.reason, "ACCESSIBILITY_PERMISSION_REQUIRED");
+  assert.equal(state.ordinary_apps, null);
+  assert.equal(calls.includes("capabilities"), false);
+  assert.equal(guiReadinessPermissions(state).find(value => value.name === "gui_helper_ordinary_apps")?.reason, "ACCESSIBILITY_PERMISSION_REQUIRED");
+});
+
+test("malformed native capability evidence does not mask successful permission readback", async () => {
+  const state = await fixture({ desktop: true, capabilityRaw: '{"status":"ok","status":"error"}' }).probe.probe();
+  assert.equal(state.accessibility, true);
+  assert.equal(state.screen_recording, true);
+  assert.equal(state.ordinary_apps, null);
+  assert.equal(state.reason, "GUI_HELPER_CAPABILITY_PROBE_FAILED");
+  const permissions = guiReadinessPermissions(state);
+  assert.equal(permissions.find(value => value.name === "accessibility")?.reason, "verified");
+  assert.equal(permissions.find(value => value.name === "gui_helper_ordinary_apps")?.reason, "GUI_HELPER_CAPABILITY_PROBE_FAILED");
 });

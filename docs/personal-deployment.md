@@ -33,9 +33,38 @@ Treat installation/identity, Accessibility, and Screen Recording as independent
 readiness checks. The production permission probe must traverse `gui_launcher`
 and LaunchServices; directly launching `gui_vision` is not authoritative. Renew
 permissions only for the exact installed app when necessary. An intentional
-GUI binary replacement needs its own backup and rollback plan; a routine
+GUI binary replacement is an explicit operation with a retained backup; a routine
 deployment must not silently replace the owner's existing app. See
 [GUI host requirements](gui-computer-use.md#host-requirements-and-limits).
+
+### Intentional GUI binary upgrade
+
+Ordinary deployments preserve the installed GUI app even when a release's
+artifact differs. When the owner has explicitly authorized a native GUI feature
+upgrade, stop the personal service, save the complete stopped state and current
+signed GUI bundle, and run this separate command from the selected release:
+
+```sh
+node packages/broker/scripts/upgrade-gui-app.mjs --upgrade
+```
+
+The upgrader validates both complete bundles and uses an atomic exchange at
+`~/Applications/Mac Operator GUI.app`. Success returns the previous signed
+bundle's `backup` path. Repeating an identical signed release returns
+`action=preserved` without another replacement. The normal installer never
+performs this upgrade automatically. If an exchange result is uncertain,
+recovery staging is retained instead of deleting a possibly swapped-out old
+app; inspect the installed/staged signed bundles before recovery. An abrupt
+process death may also leave `.mac-operator-gui-upgrade.lock`, requiring checked
+recovery before another intentional upgrade.
+
+A genuine replacement can require re-authorizing only this exact application
+in Accessibility and Screen & System Audio Recording. Do not grant Node or
+every terminal, edit the TCC database, bypass `gui_launcher`, or rebuild and
+reinstall again after permissions have been renewed. Read back both permissions
+through the production LaunchServices route, then test actual MCP observation.
+Retaining a signed backup permits an explicit rollback; it does not guarantee
+that macOS will retain TCC consent across replacements.
 
 ## Historical October 2 GUI repair
 
@@ -513,7 +542,10 @@ GUI-enabled personal service startup also runs the same idempotent installer.
 Installation failure is reported as `GUI_HELPER_UNAVAILABLE` while the Broker's
 health and terminal interfaces remain available. Startup emits bounded GUI
 readiness JSON with `installed`, `identity_valid`, `accessibility`,
-`screen_recording`, and `transport=launchservices`.
+`screen_recording`, and `transport=launchservices`. Explicit desktop mode also
+requires native ordinary-application/display capabilities and exposes
+`ordinary_apps` and `desktop_surfaces` separately, including permission entries
+`gui_helper_ordinary_apps` and `gui_helper_desktop_surfaces`.
 
 `mac_capabilities.permissions` publishes separate `gui_helper_installed`,
 `gui_helper_identity_valid`, `gui_helper_launchservices`, `accessibility`, and
@@ -523,3 +555,35 @@ requests check readiness before consuming mutation approval. Missing or invalid
 helper identity is a precondition failure; AX and screenshot permission denials
 have independent policy errors. `capture_mode=none` requires Accessibility only.
 Broker health reports Broker liveness; GUI readiness is reported separately.
+An unknown capability probe or launcher transport failure is not evidence that
+the app needs replacement; only a verified incompatible feature/protocol result
+reports `GUI_HELPER_UPGRADE_REQUIRED`.
+
+## Explicit desktop computer use
+
+G1, O1 and V2 default to the browser boundary. Enabling ordinary apps and display
+observation requires a distinct explicit owner delegation and signed GUI target
+upgrade, with the service stopped and state backed up:
+
+```sh
+node packages/auth/dist/personal-service.js computer-use ROOT REV --enable --until-revoked
+```
+
+Use the private state `ROOT` and selected release source revision `REV`. This
+operation updates `guiAccess=desktop` and creates a separate until-revoked
+desktop grant; it does not widen old browser consent or change non-GUI scopes.
+Native GUI replacement, when required, uses the separate intentional upgrade
+above. Neither command proves Accessibility, Screen Recording or live MCP
+readiness. After restart, verify `mac_health`, `mac_capabilities`, production
+permission/capability probes and authenticated observation/action calls.
+
+For application work the agent can call `mac_app_focus` with the concrete
+bundle ID, then observe/type without manual owner foregrounding. For display
+work use `mac_ui_observe(app_id="desktop", capture_mode="screen")`, optionally
+`window_hint="display:<id>"`, and its observed `visual_ref` for bounded global
+pointer actions. The desktop alias cannot be opened or focused. Secure typing,
+protected sessions and exact attended sensitive-submission approval remain in
+force. See [desktop delegation](gui-computer-use.md#explicit-desktop-delegation)
+for persistence, revocation and compatible-reader rollback requirements, and
+[desktop observation](gui-computer-use.md#desktop-observation-and-action-loop)
+for capture modes and coordinate conversion.

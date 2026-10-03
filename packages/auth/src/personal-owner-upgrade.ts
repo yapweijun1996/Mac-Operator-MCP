@@ -9,6 +9,7 @@ import { configSchema, O1_SCOPES, O1_TOOLS } from "./contracts.js";
 import { AuthStore, assertPrivateDirectory } from "./store.js";
 import { readAuthFile } from "./cli.js";
 import { assertG1Policy, assertO1Policy, buildO1TargetRules, w1FilesystemRoots } from "./w1-policy.js";
+import { desktopGrantsForUnchangedGuiPolicy } from "./desktop-grant-migration.js";
 
 /** Offline, explicit owner opt-in. Run against a protected backup before switching releases. */
 export async function upgradePersonalOwnerTerminal(root: string, packageRoot: string, sourceRevision: string): Promise<void> {
@@ -24,11 +25,11 @@ export async function upgradePersonalOwnerTerminal(root: string, packageRoot: st
       expectedKeyId: "personal-policy-1", publicKeyPath: join(data, "policy-public.pem") });
     const prior = await verifier.verifyFile(join(data, "policy.json"));
     if (config.grantProfile === "o1") {
-      try { assertO1Policy(prior.policy, config.principalId, config.issuerId); }
+      try { assertO1Policy(prior.policy, config.principalId, config.issuerId, config.guiAccess); }
       catch { throw new Error("Existing O1 policy does not match; if it predates mac_terminal_session run the terminal-sessions upgrade"); }
       return;
     }
-    assertG1Policy(prior.policy, config.principalId, config.issuerId);
+    assertG1Policy(prior.policy, config.principalId, config.issuerId, config.guiAccess);
     store = new BrokerStore(join(data, "broker.sqlite"), { runtimeFence: true,
       auditAnchor: { path: join(data, "audit.anchor"), keySource: { keyId: "personal-audit-1", loadKey: () => readAuthFile(join(data, "audit.key"), 32) } } });
     const policyManager = new PolicyManager(prior.policy, store);
@@ -38,7 +39,7 @@ export async function upgradePersonalOwnerTerminal(root: string, packageRoot: st
     const project = prior.policy.filesystemRoots.find(value => value.rootId === "owner-project")!.path;
     const payload = { ...original.payload, revision: original.payload.revision + 1, issued_at_ms: now,
       principal_grants: [{ principal_id: config.principalId, issuer: config.issuerId, scopes: [...O1_SCOPES], enabled: true }],
-      target_rules: buildO1TargetRules(config.principalId, w1FilesystemRoots(project), project),
+      target_rules: buildO1TargetRules(config.principalId, w1FilesystemRoots(project), project, config.guiAccess),
       tool_enablement: O1_TOOLS.map(tool => ({ tool, enabled: true })) };
     const bytes = Buffer.from(canonicalJson(payload));
     const privateBytes = readAuthFile(join(root, "personal-policy-private.key"));
@@ -46,7 +47,7 @@ export async function upgradePersonalOwnerTerminal(root: string, packageRoot: st
     try { bundle = { ...original, payload, payload_digest: sha256(bytes), signature: sign(null, bytes, createPrivateKey(privateBytes)).toString("base64") }; }
     finally { privateBytes.fill(0); }
     const verified = verifier.verify(bundle);
-    assertO1Policy(verified.policy, config.principalId, config.issuerId);
+    assertO1Policy(verified.policy, config.principalId, config.issuerId, config.guiAccess);
     const previousEdge = validateEdgeServiceStartupConfig(JSON.parse(readAuthFile(join(data, "edge-service.json")).toString()));
     const rebased: Record<string, unknown> = { ...previousEdge, dataRoot: data, runtimeRoot: join(data, "run") };
     for (const field of ["brokerSocketPath", "authenticationKeyPath", "tlsCertificatePath", "tlsPrivateKeyPath",
@@ -86,15 +87,19 @@ export async function upgradePersonalOwnerTerminal(root: string, packageRoot: st
     const authStore = new AuthStore(join(root, "auth"));
     try {
       const grants = authStore.browserGrants().filter(grant => !grant.revoked && grant.principalId === config.principalId && grant.policyVersion === prior.policy.version);
-      if (grants.length > 0) {
+      const desktopGrants = desktopGrantsForUnchangedGuiPolicy(authStore, config.guiAccess, config.principalId, prior.policy, verified.policy);
+      if (grants.length > 0 || desktopGrants.length > 0) {
         const requestId = `owner-terminal-browser-grants-${payload.revision}`;
         store.appendAudit({ requestId, principalId: config.principalId, tool: "internal_owner_terminal_upgrade", eventType: "intent",
           decision: "allow", resultClass: "INTENT_RECORDED", targetRef: "host:owner-terminal", policyVersion: verified.policy.version,
-          evidence: { browserGrantCount: grants.length, priorPolicyVersion: prior.policy.version }, timestampMs: Date.now() });
-        authStore.transaction(() => { for (const grant of grants) authStore.put("browser_grant", grant.id, { ...grant, policyVersion: verified.policy.version }); });
+          evidence: { browserGrantCount: grants.length, desktopGrantCount: desktopGrants.length, priorPolicyVersion: prior.policy.version }, timestampMs: Date.now() });
+        authStore.transaction(() => {
+          for (const grant of grants) authStore.put("browser_grant", grant.id, { ...grant, policyVersion: verified.policy.version });
+          for (const grant of desktopGrants) authStore.put("desktop_grant", grant.id, { ...grant, policyVersion: verified.policy.version });
+        });
         store.appendAudit({ requestId, principalId: config.principalId, tool: "internal_owner_terminal_upgrade", eventType: "completion",
           decision: "allow", resultClass: "SUCCEEDED", targetRef: "host:owner-terminal", policyVersion: verified.policy.version,
-          evidence: { browserGrantCount: grants.length }, timestampMs: Date.now() });
+          evidence: { browserGrantCount: grants.length, desktopGrantCount: desktopGrants.length }, timestampMs: Date.now() });
       }
     } finally { authStore.close(); }
     await replaceJson(join(root, "auth/auth-config.json"), { ...config, grantProfile: "o1" });

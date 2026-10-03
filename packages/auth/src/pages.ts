@@ -22,9 +22,11 @@ export function expiredApprovalPage(sessionExpired = false): string {
 }
 
 export function consentPage(csrf: string, clientName: string, redirect: string, system: boolean,
-                            developer = false, gui = false, terminal = false, basePath = ""): string {
+                            developer = false, gui = false, terminal = false, basePath = "", desktop = false): string {
   const boundary = terminal
-    ? "<li>Run shell commands, scripts and installed CLI tools as the signed-in macOS owner account.</li><li>Commands can access owner-readable files and existing CLI authentication state, and change files or applications within that account's permissions. They are not isolated in the V2 coding container.</li><li>Browser control and file operations are also available under current owner policy. macOS permissions and operation authorization still apply; this does not grant root privileges.</li>"
+    ? `<li>Run shell commands, scripts and installed CLI tools as the signed-in macOS owner account.</li><li>Commands can access owner-readable files and existing CLI authentication state, and change files or applications within that account's permissions. They are not isolated in the V2 coding container.</li><li>${desktop ? "Desktop application control" : "Browser control"} and file operations are also available under current owner policy. macOS permissions and operation authorization still apply; this does not grant root privileges.</li>`
+    : gui && desktop
+    ? "<li>Observe ordinary desktop applications and screenshots, and request bounded mouse and keyboard control under the owner's desktop policy.</li><li>Persistent desktop access requires separate explicit owner authorization. Existing browser access remains limited to its original browser. Security interfaces, secure fields and sensitive submissions remain protected.</li><li>Controlled developer operations may be requested; their mutations require separate Broker owner approval. No root privileges are granted.</li>"
     : gui
     ? "<li>Observe Chrome or Safari windows and screenshots, and request bounded mouse and keyboard control. Browser control requires owner approval; optional persistent browser access covers focus, clicks and input for the owner account until revoked.</li><li>Controlled developer operations may be requested; each mutation requires separate Broker owner approval.</li><li>No unrestricted shell, root access, credential access, or arbitrary scripts are granted.</li>"
     : developer
@@ -35,7 +37,7 @@ export function consentPage(csrf: string, clientName: string, redirect: string, 
 
 export function approvalLoginPage(csrf: string, failed = false, expiresAtMs?: number, management = false): string {
   const deadline = expiresAtMs === undefined ? "" : `<p>Operation approval deadline (UTC): <strong>${new Date(expiresAtMs).toISOString()}</strong>. Complete sign-in and review before this deadline.</p>`;
-  return page(management ? "Manage browser access" : "Approve a Mac operation", `<p>${management ? "Sign in as the owner to view or revoke existing browser access. Signing out does not revoke persistent access." : "Sign in as the owner to review this operation or browser access request. Login alone never approves it."}</p>${deadline}${failed ? '<p role="alert" class="error">Unable to sign in. Check your credentials and try again.</p>' : ""}<form method="post" action="/approval/login"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><label for="username">Username</label><input id="username" name="username" autocomplete="username" maxlength="64" required autofocus><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required><button type="submit">Continue</button></form>`);
+  return page(management ? "Manage GUI access" : "Approve a Mac operation", `<p>${management ? "Sign in as the owner to view or revoke existing browser or desktop access. Signing out does not revoke persistent access." : "Sign in as the owner to review this operation or browser access request. Login alone never approves it."}</p>${deadline}${failed ? '<p role="alert" class="error">Unable to sign in. Check your credentials and try again.</p>' : ""}<form method="post" action="/approval/login"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><label for="username">Username</label><input id="username" name="username" autocomplete="username" maxlength="64" required autofocus><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required><button type="submit">Continue</button></form>`);
 }
 
 export function approvalReviewPage(csrf: string, preview: ApprovalBrowserPreview, failed = false): string {
@@ -59,12 +61,14 @@ export const stylesheet = `:root{font-family:system-ui,sans-serif;color:#192b35;
 
 export function guiSessionPage(csrf: string, grant?: GuiSessionView, grants?: GuiSessionView[]): string {
   const active = grants ?? (grant ? [grant] : []);
+  const desktop = active.some(item => item.desktop);
   const content = active.map(item => {
     const duration = item.persistent
-      ? "<p><strong>Until revoked. No time or operation limit.</strong> This owner account retains browser access after service restarts and reconnecting. Approval-page login expiration does not end this access.</p>"
+      ? `<p><strong>Until revoked. No time or operation limit.</strong> This owner account retains ${item.desktop ? "desktop" : "browser"} access after service restarts and reconnecting. Approval-page login expiration does not end this access.</p>`
       : `<p>Expires (UTC): <strong>${new Date(item.expiresAtMs).toISOString()}</strong>. Remaining operations: ${item.remainingOperations}. Restarting the service ends this temporary session.</p>`;
-    return `<section><p>Focus, click, scroll and type in <strong>${escapeHtml(item.appId)}</strong> without another operation approval.</p>${duration}<form method="post" action="/approval/gui-session/revoke"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="grant_id" value="${escapeHtml(item.id)}"><button>Revoke browser access</button></form></section>`;
+    const target = item.desktop ? "ordinary desktop apps allowed by the current policy" : escapeHtml(item.appId);
+    return `<section><p>Open, focus, click, scroll and type in <strong>${target}</strong> without another routine operation approval.</p>${duration}<form method="post" action="/approval/gui-session/revoke"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="grant_id" value="${escapeHtml(item.id)}"><button>Revoke ${item.desktop ? "desktop" : "browser"} access</button></form></section>`;
   }).join("");
-  return page(active.length ? (active.some(item => item.persistent) ? "Persistent browser access active" : "Browser session active") : "Browser session ended",
-    `${content || "<p>No active browser access remains. Browser mutations require a new owner authorization.</p>"}<p>Keep the target browser in front while the assistant works. File writes and system operations remain outside this grant. OAuth authentication, current policy and macOS permissions still apply. Already issued operations expire within 30 seconds.</p><p><a href="/approval/access">Manage browser access</a></p>`);
+  return page(active.length ? (desktop ? "Persistent desktop access active" : active.some(item => item.persistent) ? "Persistent browser access active" : "Browser session active") : "GUI session ended",
+    `${content || "<p>No active GUI access remains. GUI mutations require a new owner authorization.</p>"}<p>The assistant can bring an authorized target app to the foreground. File writes and system operations remain outside this GUI grant. Secure fields, security interfaces and sensitive submissions remain protected. OAuth authentication, current policy and macOS permissions still apply. Already issued operations expire within 30 seconds.</p><p><a href="/approval/access">Manage GUI access</a></p>`);
 }

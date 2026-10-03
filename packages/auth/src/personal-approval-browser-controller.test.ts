@@ -14,6 +14,7 @@ import {
 } from "@mac-operator/broker";
 import { createPersonalTerminalApprover } from "./personal-terminal-approval.js";
 import { createPersonalApprovalBrowserController } from "./personal-approval-browser-controller.js";
+import { AuthStore } from "./store.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -29,6 +30,7 @@ test("personal browser approval controller binds a real preview through owner IP
   const socketPath = join(runtimeRoot, "approval.sock");
   let keyManager: ApprovalIssuerKeyManager | undefined;
   let runtime: Awaited<ReturnType<typeof createApprovalIssuerRuntime>> | undefined;
+  let authStore: AuthStore | undefined;
   try {
     await provisionAuthenticationKey(keyPath);
     const terminalKeyPath = join(dataRoot, "terminal.key");
@@ -138,9 +140,31 @@ test("personal browser approval controller binds a real preview through owner IP
     assert.equal(store.approvalRecord(childId)?.approverPrincipalId, "owner-browser-issuer");
     controller.sessions.revoke(grant.id);
     assert.notEqual(store.approvalRecord(childId)?.revokedAtMs, null);
+    authStore = new AuthStore(dataRoot, true);
+    const desktopId = "gui-session:12345678-1234-1234-1234-123456789abc";
+    authStore.put("desktop_grant", desktopId, { id: desktopId, principalId: "owner-1", policyVersion: "policy-0.1",
+      consentRequestId: "explicit-owner-desktop-opt-in", createdAt: NOW, revoked: false });
+    const desktopOperation = { requestId: "desktop-focus", principalId: "owner-1", sessionId: "session-1",
+      appId: "bundle:com.apple.finder", tool: "mac_app_focus", contractVersion: "0.1", policyVersion: "policy-0.1",
+      targetKind: "app_window", targetRef: "app_window:window:bundle:com.apple.finder", payloadDigest: "c".repeat(64), expiresAtMs: NOW + 60000 };
+    const disabled = createPersonalApprovalBrowserController({ store, authStore, approvalIssuerRuntime: runtime, socketPath, now: () => NOW + 3 });
+    assert.equal(await disabled.authorizeGuiSession(desktopOperation), false);
+    const desktop = createPersonalApprovalBrowserController({ store, authStore, allowDesktop: true,
+      approvalIssuerRuntime: runtime, socketPath, now: () => NOW + 3 });
+    assert.equal(await desktop.authorizeGuiSession(desktopOperation), true);
+    const desktopChild = guiSessionApprovalId(desktopOperation.requestId);
+    assert.equal(store.approvalRecord(desktopChild)?.approverPrincipalId, "owner-browser-issuer");
+    assert.equal(store.approvalRecord(desktopChild)?.approvalClass, "trusted_gui");
+    assert.equal(store.approvalRecord(desktopChild)?.unattended, false);
+    assert.equal(store.approvalRecord(desktopChild)?.payloadDigest, desktopOperation.payloadDigest);
+    assert.equal(store.approvalRecord(desktopChild)?.useLimit, 1);
+    desktop.sessions.revoke(desktopId);
+    assert.equal(authStore.desktopGrants()[0]?.revoked, true);
+    assert.notEqual(store.approvalRecord(desktopChild)?.revokedAtMs, null);
   } finally {
     await runtime?.close().catch(() => undefined);
     keyManager?.dispose();
+    authStore?.close();
     store.close();
     await rm(root, { recursive: true, force: true });
   }
