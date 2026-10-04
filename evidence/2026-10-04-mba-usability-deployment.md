@@ -110,3 +110,17 @@ jobs (73 / 7 / 24). Only the three unsigned Edge fields changed (original:
 Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
 Not yet verified end to end: from an MBA connector, `mac_read_file` on `~/.zshrc` should return
 `SECRET_PATH_ACCESS`.
+
+## Sixth deployment — release `v2-usability6-20261004-7187a81`
+
+Source revision 7187a812d7b46cc0fcbbae25a94e731b6d007bac (PR evidence counts only executed runs; clearer branch
+and UI errors). Previous release `v2-usability5-20261004-2f85d59` retained. Copy of the running release plus three
+compiled files (`ui-inspector.js`, `broker.js`, `managed-worktrees.js`). No queued/running jobs (completed 76 /
+failed 7 / unknown 25). Only the three unsigned Edge fields changed (original:
+`edge-service.json.before-usability6-20261004`, mode 0600). PM2 recreated from
+`mba-mcp.usability6.ecosystem.json` and saved. Rollback: restore that file, `pm2 delete mba-mcp`,
+`pm2 start mba-mcp.pre-usability6.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both `.well-known` 200.
+Not verified through an authenticated MCP call. Still pending from the fifth deployment: `mac_read_file` on
+`~/.zshrc` should return `SECRET_PATH_ACCESS`.
