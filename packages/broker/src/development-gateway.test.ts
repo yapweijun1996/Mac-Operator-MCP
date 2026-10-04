@@ -238,6 +238,28 @@ test("V2 worktree removal names the caller's unfinished jobs, counts the rest an
   } finally { await f.close(); }
 });
 
+test("V2 worktree removal refusal stays under the failure message bound when the caller's job ids are very long", async () => {
+  const f = await setup(); try {
+    const { worktree } = await f.create();
+    // The job id pattern allows 245 characters; three such ids cannot all be named in 512 characters.
+    const id = (name: string) => `job:${name.repeat(230)}`;
+    for (const [n, name] of ["a", "b", "c"].entries()) {
+      f.store.createJob({ jobId: id(name), ownerPrincipalId: "principal-1", ownerSessionId: "principal-1-session", tool: "mac_test_run", targetRef: `project:${f.project}`,
+        policyVersion: "policy-0.1", payloadDigest: "a".repeat(64), idempotencyKey: `long-${name}`, createdAtMs: NOW + n });
+    }
+    const args = { project_root: f.project, worktree, task_id: "task-1", idempotency_key: "remove-long" }; f.approve("mac_git_worktree_remove", args);
+    const refused = failure(await f.handle("mac_git_worktree_remove", args));
+    assert.equal(refused.result_class, "CONFLICT");
+    const message = refused.error.message;
+    assert.ok(message.length < 512, `message is ${message.length} characters`);
+    assert.match(message, /blocked by 3 unfinished jobs/u);
+    const named = (message.match(/\(mac_test_run, queued\)/gu) ?? []).length;
+    assert.ok(named >= 1 && named < 3, `${named} jobs named`);
+    assert.ok(message.includes(`, and ${3 - named} more)`), message);
+    assert.doesNotMatch(message, /none of them are yours/u);
+  } finally { await f.close(); }
+});
+
 test("V2 worktree list warns about pending and removing records that no other tool can show", async () => {
   const f = await setup(); try {
     const control = { timeoutMs: 30_000, shouldCancel: () => false };

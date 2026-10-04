@@ -7,6 +7,8 @@ import { basename, join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
 import { ManagedWorktrees } from "./managed-worktrees.js";
+import { ProcessSupervisor } from "./process-supervisor.js";
+import { SAFE_GIT_ENVIRONMENT } from "./git-inspector.js";
 import { GitStatusInspector, GitWriteInspectorImpl } from "./git-inspector.js";
 
 const control = { timeoutMs: 30_000, shouldCancel: () => false };
@@ -14,7 +16,7 @@ const authority = () => undefined;
 function git(cwd: string, args: string[]): string {
   return execFileSync("/usr/bin/git", args, { cwd, encoding: "utf8", env: { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_TERMINAL_PROMPT: "0" } });
 }
-export async function worktreeFixture() {
+export async function worktreeFixture(supervisor?: ConstructorParameters<typeof ManagedWorktrees>[2]) {
   const temporary = await mkdtemp(join(tmpdir(), "mac-development-gateway-"));
   const root = await realpath(temporary);
   const project = join(root, "project");
@@ -28,7 +30,7 @@ export async function worktreeFixture() {
   await writeFile(join(project, ".gitignore"), "ignored.txt\n");
   git(project, ["add", "--", "source.txt", ".gitignore"]);
   git(project, ["commit", "-m", "Fixture baseline"]);
-  const registry = new ManagedWorktrees(state, trees);
+  const registry = new ManagedWorktrees(state, trees, supervisor);
   const create = (taskId = "task-1", overrides = {}) => registry.create({ projectRoot: project, branchName: `codex/${taskId}`,
     baseRef: "HEAD", taskId, idempotencyKey: `key-${taskId}`, owner: "owner", ...overrides }, control, authority);
   return { root, project, state, trees, registry, create,
@@ -209,8 +211,8 @@ test("revocation after worktree add retains pending quarantine rather than in-me
       return true;
     });
     await assert.rejects(f.create("revoked", { idempotencyKey: "other-key" }), /already has a managed worktree: task revoked \(branch codex\/revoked, state pending\)/u);
-    assert.deepEqual(f.registry.unresolved(f.project, "owner"), [{ taskId: "revoked", state: "pending" }]);
-    assert.deepEqual(f.registry.unresolved(f.project, "intruder"), []);
+    assert.deepEqual(await f.registry.unresolved(f.project, "owner"), [{ taskId: "revoked", state: "pending" }]);
+    assert.deepEqual(await f.registry.unresolved(f.project, "intruder"), []);
   } finally { await f.cleanup(); }
 });
 
@@ -309,7 +311,7 @@ test("a removal that did not finish blocks every key for the task and is reporte
     for (const key of ["rm-1", "rm-2", "rm-3"]) {
       await assert.rejects(remove(second.record.worktree, key), brokerFailure("UNKNOWN_OUTCOME", /requires operator reconciliation/u));
     }
-    assert.deepEqual(f.registry.unresolved(f.project, "owner"), [{ taskId: "task-1", state: "removing" }]);
+    assert.deepEqual(await f.registry.unresolved(f.project, "owner"), [{ taskId: "task-1", state: "removing" }]);
     await assert.rejects(f.create("task-1", { idempotencyKey: "key-task-1-again" }),
       brokerFailure("UNKNOWN_OUTCOME", /reconciliation.*task task-1 \(branch codex\/task-1\) is removing/u));
   } finally { await f.cleanup(); }
@@ -338,7 +340,7 @@ test("create refuses an existing branch before any pending record or inventory s
     git(f.project, ["branch", "codex/task-taken"]);
     await assert.rejects(f.create("task-taken"), brokerFailure("CONFLICT", /^Branch codex\/task-taken already exists; choose another branch_name$/u));
     assert.equal(existsSync(join(f.state, "worktrees.json")), false);
-    assert.deepEqual(f.registry.unresolved(f.project, "owner"), []);
+    assert.deepEqual(await f.registry.unresolved(f.project, "owner"), []);
     // Same key and task succeed once the branch is gone, which a leftover pending record would have blocked.
     git(f.project, ["branch", "-D", "codex/task-taken"]);
     assert.equal((await f.create("task-taken")).reused, false);
@@ -422,4 +424,79 @@ test("ownedWorktreeContaining matches only the owner's active worktree and never
     assert.equal(owned(join(record.worktree, "source.txt")), false);
     assert.equal(owned(join(second.record.worktree, "source.txt")), true);
   } finally { await f.cleanup(); }
+});
+
+test("branch pre-flight compares exact refs and refuses either direction of a ref directory/file conflict before any record exists", async () => {
+  const f = await worktreeFixture();
+  try {
+    git(f.project, ["branch", "codex/df"]);
+    git(f.project, ["branch", "codex/pre/x"]);
+    // An existing parent ref blocks a child: `worktree add -b` would fail with a D/F conflict after the pending record was pushed.
+    await assert.rejects(f.create("child", { branchName: "codex/df/x" }),
+      brokerFailure("CONFLICT", /^Branch codex\/df\/x cannot be created because branch codex\/df already exists; choose another branch_name$/u));
+    // An existing child ref blocks the parent, which a prefix match would have reported as "already exists".
+    await assert.rejects(f.create("parent", { branchName: "codex/pre" }),
+      brokerFailure("CONFLICT", /^Branch codex\/pre cannot be created because branches below codex\/pre\/ already exist; choose another branch_name$/u));
+    await assert.rejects(f.create("same", { branchName: "codex/df" }), brokerFailure("CONFLICT", /^Branch codex\/df already exists; choose another branch_name$/u));
+    assert.equal(existsSync(join(f.state, "worktrees.json")), false);
+    assert.deepEqual(await f.registry.unresolved(f.project, "owner"), []);
+    // A sibling that merely shares a name prefix is free, and the same keys succeed afterwards.
+    assert.equal((await f.create("child", { branchName: "codex/df-other" })).reused, false);
+    assert.equal((await f.create("parent", { branchName: "codex/prefix" })).reused, false);
+    assert.deepEqual(inventory(f).map((entry) => entry.state), ["active", "active"]);
+    // Branch cleanup after removal also compares exactly: a nested ref created later is not mistaken for the task branch.
+    const removed = await f.registry.remove(f.project, (await f.create("child", { branchName: "codex/df-other" })).record.worktree, "owner", "child", control, authority, () => false, "rm-child");
+    assert.equal(removed.branchDeleted, true);
+  } finally { await f.cleanup(); }
+});
+
+test("unresolved waits for an in-flight create or remove and still reports a record that is really stuck", async () => {
+  const real = new ProcessSupervisor({ maxConcurrent: 2, requireRootOwnedExecutable: true, allowedEnvironmentKeys: Object.keys(SAFE_GIT_ENVIRONMENT) });
+  let gate: Promise<void> | undefined;
+  let entered: (() => void) | undefined;
+  const supervisor = { run: async (request: Parameters<typeof real.run>[0]) => {
+    const args = request.args ?? [];
+    if (gate && (args.includes("add") || args.includes("remove")) && args.includes("worktree")) { entered?.(); await gate; }
+    return real.run(request);
+  } };
+  const f = await worktreeFixture(supervisor);
+  try {
+    const hold = (): { release: () => void; reached: Promise<void> } => {
+      let release!: () => void;
+      gate = new Promise<void>((resolve) => { release = resolve; });
+      const reached = new Promise<void>((resolve) => { entered = resolve; });
+      return { release, reached };
+    };
+    // During a healthy create the record is pending; the listing waits for it instead of warning.
+    const creating = hold();
+    const create = f.create("task-live");
+    await creating.reached;
+    assert.equal(inventory(f)[0]?.state, "pending");
+    let reported: readonly unknown[] | undefined;
+    const listing = f.registry.unresolved(f.project, "owner").then((value) => { reported = value; });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(reported, undefined, "unresolved must not read the record while the create is in flight");
+    creating.release();
+    await create; await listing;
+    assert.deepEqual(reported, []);
+    // The same during a healthy remove.
+    const record = f.registry.list(f.project, "owner")[0]!;
+    const removing = hold();
+    const remove = f.registry.remove(f.project, record.worktree, "owner", "task-live", control, authority, () => false, "rm-live");
+    await removing.reached;
+    assert.equal(inventory(f)[0]?.state, "removing");
+    reported = undefined;
+    const listing2 = f.registry.unresolved(f.project, "owner").then((value) => { reported = value; });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(reported, undefined);
+    removing.release();
+    await remove; await listing2;
+    assert.deepEqual(reported, []);
+    // Once the operation has finished or failed, a record left behind is still reported.
+    gate = undefined;
+    let checks = 0;
+    await assert.rejects(f.registry.create({ projectRoot: f.project, branchName: "codex/stuck", baseRef: "HEAD", taskId: "stuck", idempotencyKey: "stuck-key", owner: "owner" },
+      control, () => { if (++checks >= 3) throw new Error("Authority revoked"); }), /revoked/u);
+    assert.deepEqual(await f.registry.unresolved(f.project, "owner"), [{ taskId: "stuck", state: "pending" }]);
+  } finally { gate = undefined; await f.cleanup(); }
 });

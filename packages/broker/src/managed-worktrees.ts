@@ -157,11 +157,16 @@ export class ManagedWorktrees {
     return this.records.some((entry) => entry.owner === owner && entry.state === "active" && contained(entry.worktree, target));
   }
 
-  /** Records stuck in pending or removing: list() and require() hide them, so callers surface them as warnings. */
-  unresolved(projectRoot: string, owner: string): readonly Pick<ManagedWorktreeRecord, "taskId" | "state">[] {
-    this.checkStorage();
-    return this.records.filter((entry) => entry.projectRoot === projectRoot && entry.owner === owner && (entry.state === "pending" || entry.state === "removing"))
-      .map((entry) => ({ taskId: entry.taskId, state: entry.state }));
+  /**
+   * Records stuck in pending or removing: list() and require() hide them, so callers surface them as warnings.
+   * Runs behind any in-flight create or remove, whose own pending or removing record is not stuck.
+   */
+  unresolved(projectRoot: string, owner: string): Promise<readonly Pick<ManagedWorktreeRecord, "taskId" | "state">[]> {
+    return this.serialize(async () => {
+      this.checkStorage();
+      return this.records.filter((entry) => entry.projectRoot === projectRoot && entry.owner === owner && (entry.state === "pending" || entry.state === "removing"))
+        .map((entry) => ({ taskId: entry.taskId, state: entry.state }));
+    });
   }
 
   create(input: WorktreeCreateRequest, control: GitExecutionControl, assertAuthority: () => void): Promise<{ record: ManagedWorktreeRecord; reused: boolean }> {
@@ -204,9 +209,7 @@ export class ManagedWorktrees {
       const worktree = join(this.worktreeRoot, `task-${sha256(canonicalJson({ project: input.projectRoot, owner: input.owner, task: input.taskId })).slice(0, 32)}`);
       if (existsSync(worktree)) throw new BrokerError("CONFLICT", "Worktree destination already exists");
       // Refuse before the pending record exists: a failed `worktree add -b` would leave it behind and burn an inventory slot.
-      if ((await this.git(input.projectRoot, ["for-each-ref", "--format=%(refname)", `refs/heads/${input.branchName}`], control)).trim() !== "") {
-        throw new BrokerError("CONFLICT", `Branch ${input.branchName} already exists; choose another branch_name`);
-      }
+      await this.assertBranchFree(input.projectRoot, input.branchName, control);
       const record: ManagedWorktreeRecord = { ...input, fingerprint, baseCommit, worktree, state: "pending", rootIdentity: "",
         projectIdentity: primary.identity, gitDirectory: "", gitIdentity: "", removalKey: "" };
       this.records.push(record);
@@ -297,11 +300,36 @@ export class ManagedWorktrees {
    * Deletes the task branch with `git branch -d` so commits that were never merged are never lost. The worktree is
    * already gone and recorded as removed, so a failure here is reported as a kept branch instead of failing the removal.
    */
+  /**
+   * Exact existence of refs/heads/<name> plus whether a ref nests below it. for-each-ref matches a pattern by prefix at
+   * a slash and exits 0 with empty output for nothing, so a real Git failure is never mistaken for absence. The exact
+   * ref sorts before its descendants, so two lines are enough to see both.
+   */
+  private async branchRefs(projectRoot: string, name: string, control: GitExecutionControl): Promise<{ exact: boolean; descendant: boolean }> {
+    const lines = (await this.git(projectRoot, ["for-each-ref", "--count=2", "--format=%(refname)", `refs/heads/${name}`], control)).split("\n").filter((line) => line !== "");
+    return { exact: lines[0] === `refs/heads/${name}`, descendant: lines.some((line) => line.startsWith(`refs/heads/${name}/`)) };
+  }
+
+  /** Refuses an existing branch and either direction of a Git directory/file ref conflict before any pending record exists. */
+  private async assertBranchFree(projectRoot: string, name: string, control: GitExecutionControl): Promise<void> {
+    const own = await this.branchRefs(projectRoot, name, control);
+    if (own.exact) throw new BrokerError("CONFLICT", `Branch ${name} already exists; choose another branch_name`);
+    if (own.descendant) {
+      throw new BrokerError("CONFLICT", `Branch ${name} cannot be created because branches below ${name}/ already exist; choose another branch_name`);
+    }
+    const parts = name.split("/");
+    for (let end = 1; end < parts.length; end += 1) {
+      const ancestor = parts.slice(0, end).join("/");
+      if ((await this.branchRefs(projectRoot, ancestor, control)).exact) {
+        throw new BrokerError("CONFLICT", `Branch ${name} cannot be created because branch ${ancestor} already exists; choose another branch_name`);
+      }
+    }
+  }
+
   private async deleteTaskBranch(record: ManagedWorktreeRecord, control: GitExecutionControl): Promise<WorktreeRemoval> {
     const branchName = record.branchName;
     if (!TASK_BRANCH_PATTERN.test(branchName)) return { branchName, branchDeleted: false, branchNote: "Task branch name is not a managed codex/ branch and was left alone" };
-    // for-each-ref exits 0 with empty output for a missing branch, so a real Git failure is not mistaken for absence.
-    const exists = async (): Promise<boolean> => (await this.git(record.projectRoot, ["for-each-ref", "--format=%(refname)", `refs/heads/${branchName}`], control)).trim() !== "";
+    const exists = async (): Promise<boolean> => (await this.branchRefs(record.projectRoot, branchName, control)).exact;
     const kept = (): WorktreeRemoval => ({ branchName, branchDeleted: false, branchNote:
       `Branch ${branchName} was kept because git branch -d refused it (commits not merged into the primary checkout's HEAD, or the delete could not run); merge it or delete it from the owner terminal` });
     try {

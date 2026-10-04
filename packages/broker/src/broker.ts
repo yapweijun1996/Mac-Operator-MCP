@@ -4152,7 +4152,7 @@ export class Broker {
       const owner = request.principal.principalId;
       return read({ project_root: plan.projectRoot, worktrees: gateway.worktrees.list(plan.projectRoot, owner)
         .map((record) => ({ worktree: record.worktree, branch_name: record.branchName, base_ref: record.baseRef, task_id: record.taskId })) },
-      {}, unresolvedWorktreeWarnings(gateway.worktrees.unresolved(plan.projectRoot, owner)));
+      {}, unresolvedWorktreeWarnings(await gateway.worktrees.unresolved(plan.projectRoot, owner)));
     }
     if (request.tool === "mac_git_worktree_remove") {
       const removal = await gateway.worktrees.remove(plan.projectRoot, plan.worktree!, request.principal.principalId, plan.taskId!, control,
@@ -6016,7 +6016,7 @@ function unfinishedJobsMessage(blockers: ProjectPinningJobs): string {
     const named = blockers.own.slice(0, shown).map((job) => `${job.jobId.slice(0, 100)} (${job.tool}, ${job.state})`).join(", ");
     const more = total - Math.min(shown, blockers.own.length);
     return `Worktree removal is blocked by ${total} unfinished job${total === 1 ? "" : "s"} on this project (` +
-      `${named === "" ? "none of them are yours" : `${named}${more > 0 ? `, and ${more} more` : ""}`}). ` +
+      `${named === "" ? (blockers.own.length === 0 ? "none of them are yours" : "some of them are yours; their ids are omitted to fit this message") : `${named}${more > 0 ? `, and ${more} more` : ""}`}). ` +
       "Queued or running jobs can be cancelled with mac_job_cancel; unknown jobs cannot be cancelled and stay until the owner reconciles the ledger";
   };
   let shown = blockers.own.length;
