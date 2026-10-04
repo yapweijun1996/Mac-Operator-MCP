@@ -25,7 +25,7 @@
   "audit_class": "execution",
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries.",
+  "purpose": "Submit a bounded coding-agent job in one authorized isolated worktree; enforce filesystem, process, secret, Git, and explicit network boundaries. The only tool that changes files in a managed worktree; inspect the result with mac_git_diff, mac_git_status or mac_pr_prepare.",
   "input_summary": "project_root, worktree, task, task_id, execution_profile, max_runtime, idempotency_key, network_policy, model, allowed_paths, validation_plan",
   "output_summary": "job_id, state, task_id, worktree",
   "input_schema": {

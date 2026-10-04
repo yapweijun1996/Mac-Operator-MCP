@@ -23,7 +23,7 @@
   "audit_class": "filesystem_write",
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "atomically create/replace one authorized file with path/type/size policy, explicit idempotency, and optional expected hash.",
+  "purpose": "atomically create/replace one authorized file with path/type/size policy, explicit idempotency, and optional expected hash. Not available inside Broker-managed worktrees; those are changed only by mac_codex_run.",
   "input_summary": "path:string, content:string, idempotency_key:string, encoding?:utf8|base64, expected_sha256?:string, create_only?:boolean.",
   "output_summary": "normalized path, durable job ID, bytes, new sha256 and verification; status is available through mac_job_status.",
   "input_schema": {

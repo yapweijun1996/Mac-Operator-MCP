@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { BrokerError } from "@mac-operator/contracts";
 import { ManagedWorktrees } from "./managed-worktrees.js";
@@ -395,5 +395,31 @@ test("listings beyond the Git output cap are the same refusal instead of a gener
     await assert.rejects(remove(), refused("staged over the output limit, unstaged over the output limit, untracked over the output limit, ignored over the output limit"));
     assert.equal(existsSync(record.worktree), true);
     assert.deepEqual(inventory(f).map((entry) => entry.state), ["active"]);
+  } finally { await f.cleanup(); }
+});
+
+test("ownedWorktreeContaining matches only the owner's active worktree and never a name-prefix sibling", async () => {
+  const f = await worktreeFixture();
+  try {
+    const { record } = await f.create("task-1");
+    const owned = (path: string, owner = "owner") => f.registry.ownedWorktreeContaining(path, owner);
+    assert.equal(owned(record.worktree), true);
+    assert.equal(owned(join(record.worktree, "source.txt")), true);
+    assert.equal(owned(join(record.worktree, "missing", "deep.txt")), true);
+    assert.equal(owned(`${record.worktree}/../${basename(record.worktree)}/source.txt`), true);
+    // A sibling whose name only extends the worktree's name is not inside it, and neither is a path that climbs out.
+    assert.equal(owned(`${record.worktree}0`), false);
+    assert.equal(owned(join(`${record.worktree}0`, "source.txt")), false);
+    assert.equal(owned(`${record.worktree}/../escape.txt`), false);
+    assert.equal(owned(f.trees), false);
+    assert.equal(owned(join(f.state, "broker.sqlite")), false);
+    assert.equal(owned(join(f.project, "source.txt")), false);
+    assert.equal(owned(join(record.worktree, "source.txt"), "intruder"), false);
+    const second = await f.create("task-10");
+    assert.equal(owned(join(second.record.worktree, "source.txt")), true);
+    assert.equal(owned(join(second.record.worktree, "source.txt"), "intruder"), false);
+    await f.registry.remove(f.project, record.worktree, "owner", record.taskId, control, authority, () => false);
+    assert.equal(owned(join(record.worktree, "source.txt")), false);
+    assert.equal(owned(join(second.record.worktree, "source.txt")), true);
   } finally { await f.cleanup(); }
 });

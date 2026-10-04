@@ -210,6 +210,12 @@ const VALIDATION_RUN_TOOLS: readonly string[] = ["mac_test_run", "mac_build_run"
 /** A cancelled task job is replayed unchanged for its idempotency key, so running the task again needs a new key. */
 const CANCELLED_TASK_RERUN_ADVICE = "a re-run needs a NEW idempotency_key because the same key returns the cancelled job";
 
+/** Replaces the generic path denial when ordinary file tools reach the caller's own managed worktree. */
+const MANAGED_WORKTREE_PATH_MESSAGE = "Path is inside a managed worktree: the signed policy keeps ordinary file tools (mac_read_file, mac_list_directory, mac_write_file_atomic, mac_apply_patch) out of it. Change code with mac_codex_run; read changes with mac_git_diff, mac_git_status or mac_pr_prepare.";
+
+/** Path denials that a managed worktree explains; secret-path and .git write denials keep their own message. */
+const MANAGED_WORKTREE_REMAPPED_REASONS: ReadonlySet<string> = new Set(["DENIED_ZONE", "ROOT_CAPABILITY_NOT_GRANTED", "OUTSIDE_AUTHORIZED_ROOTS"]);
+
 /** Explains a truncated tree scan: a hit on the result cap is expected, anything else means a fixed traversal budget ended the scan. */
 function scanTruncationWarnings(truncated: boolean, found: number, requestedLimit: number): { warnings: string[] } | Record<string, never> {
   if (!truncated) return {};
@@ -2789,7 +2795,7 @@ export class Broker {
           if (tool.targetType === "path" || tool.targetType === "filesystem_roots") {
             if (target.kind !== "path") throw new BrokerError("PRECONDITION_FAILED", "Filesystem policy query requires a path target");
             const capability = candidate === "mac_read_file" || candidate === "mac_list_directory" || candidate === "mac_directory_tree" ? "content_read" : candidate === "mac_write_file_atomic" ? "write" : "metadata";
-            const plan = new FilesystemInspector(policy.filesystemRoots).planPath(target.reference, capability);
+            const plan = this.planFilesystemPath(new FilesystemInspector(policy.filesystemRoots), target.reference, capability, request.principal.principalId);
             authorizationTarget = { kind: "path", reference: plan.rootId };
             reportedTarget = { kind: "path", reference: plan.requestedPath };
           } else if (tool.targetType === "job") {
@@ -4794,7 +4800,7 @@ export class Broker {
       validateFindArguments(request.arguments);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
       const roots = request.arguments.roots as string[];
-      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const plans = roots.map((root) => this.planFilesystemPath(inspector, root, "metadata", request.principal.principalId));
       const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
       return {
         target: targets[0]!,
@@ -4812,7 +4818,7 @@ export class Broker {
       validateRecentArguments(request.arguments);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
       const roots = request.arguments.roots as string[];
-      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const plans = roots.map((root) => this.planFilesystemPath(inspector, root, "metadata", request.principal.principalId));
       const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
       return {
         target: targets[0]!,
@@ -4831,7 +4837,7 @@ export class Broker {
       validateSearchTextArguments(request.arguments);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
       const roots = request.arguments.roots as string[];
-      const plans = roots.map((root) => inspector.planPath(root, "content_read"));
+      const plans = roots.map((root) => this.planFilesystemPath(inspector, root, "content_read", request.principal.principalId));
       const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
       return {
         target: targets[0]!,
@@ -4850,7 +4856,7 @@ export class Broker {
       validateProjectDiscoverArguments(request.arguments);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
       const roots = request.arguments.roots as string[];
-      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const plans = roots.map((root) => this.planFilesystemPath(inspector, root, "metadata", request.principal.principalId));
       const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
       return {
         target: targets[0]!,
@@ -4867,7 +4873,7 @@ export class Broker {
       assertExactArguments(request.arguments, ["project_root", "include_tree", "tree_depth"]);
       validateProjectSummaryArguments(request.arguments);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
-      const plan = inspector.planPath(request.arguments.project_root as string, "metadata");
+      const plan = this.planFilesystemPath(inspector, request.arguments.project_root as string, "metadata", request.principal.principalId);
       return {
         target: { kind: "path", reference: plan.rootId },
         filesystem: { inspector, plan },
@@ -4895,7 +4901,7 @@ export class Broker {
         (request.arguments.top_n ?? 20) as number,
         (request.arguments.max_depth ?? 4) as number
       );
-      const plans = roots.map((root) => inspector.planPath(root, "metadata"));
+      const plans = roots.map((root) => this.planFilesystemPath(inspector, root, "metadata", request.principal.principalId));
       const targets = plans.map((plan) => ({ kind: "path" as const, reference: plan.rootId }));
       return {
         target: targets[0]!,
@@ -4915,7 +4921,7 @@ export class Broker {
       const expectedBaseHash = request.arguments.expected_base_hash;
       validateApplyPatchArguments(projectRoot, patchText, expectedBaseHash);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
-      const plan = inspector.planPath(projectRoot as string, "write");
+      const plan = this.planFilesystemPath(inspector, projectRoot as string, "write", request.principal.principalId);
       return {
         target: { kind: "project", reference: projectRoot as string },
         auditTarget: `project:${projectRoot as string}`,
@@ -5144,9 +5150,11 @@ export class Broker {
       };
     }
     const inspector = new FilesystemInspector(policy.filesystemRoots);
-    const plan = inspector.planPath(
+    const plan = this.planFilesystemPath(
+      inspector,
       request.arguments.path,
-      request.tool === "mac_read_file" || request.tool === "mac_list_directory" || request.tool === "mac_directory_tree" ? "content_read" : request.tool === "mac_write_file_atomic" ? "write" : "metadata"
+      request.tool === "mac_read_file" || request.tool === "mac_list_directory" || request.tool === "mac_directory_tree" ? "content_read" : request.tool === "mac_write_file_atomic" ? "write" : "metadata",
+      request.principal.principalId
     );
     return {
       target: { kind: "path", reference: plan.rootId },
@@ -5156,6 +5164,28 @@ export class Broker {
       ...(tree ? { tree } : {}),
       ...(write ? { write } : {})
     };
+  }
+
+  /**
+   * inspector.planPath, except that a path denial caused by the caller's own active managed worktree names the
+   * worktree instead of a generic zone or root message. The denial itself is unchanged; only its text and reason code are.
+   */
+  private planFilesystemPath(
+    inspector: FilesystemInspector,
+    path: string,
+    capability: "metadata" | "content_read" | "write",
+    principalId: string
+  ): FilesystemPathPlan {
+    try {
+      return inspector.planPath(path, capability);
+    } catch (error) {
+      if (error instanceof BrokerError && error.errorClass === "POLICY_DENIED" &&
+          error.reasonCode !== undefined && MANAGED_WORKTREE_REMAPPED_REASONS.has(error.reasonCode) &&
+          this.options.developmentGateway?.worktrees.ownedWorktreeContaining(path, principalId) === true) {
+        throw new BrokerError("POLICY_DENIED", MANAGED_WORKTREE_PATH_MESSAGE, false, "MANAGED_WORKTREE_PATH");
+      }
+      throw error;
+    }
   }
 
   private authorizeCapabilityTarget(policy: BrokerPolicy, principalId: string, tool: ToolPolicy): void {

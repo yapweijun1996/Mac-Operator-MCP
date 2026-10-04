@@ -151,6 +151,12 @@ export class ManagedWorktrees {
     return record.projectRoot;
   }
 
+  /** Pure in-memory check (no I/O, no verify()) so a denial path can name the caller's own active worktree. */
+  ownedWorktreeContaining(path: string, owner: string): boolean {
+    const target = resolve(path);
+    return this.records.some((entry) => entry.owner === owner && entry.state === "active" && contained(entry.worktree, target));
+  }
+
   /** Records stuck in pending or removing: list() and require() hide them, so callers surface them as warnings. */
   unresolved(projectRoot: string, owner: string): readonly Pick<ManagedWorktreeRecord, "taskId" | "state">[] {
     this.checkStorage();

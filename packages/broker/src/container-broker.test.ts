@@ -40,6 +40,8 @@ type FixtureOptions = {
   proofEngine?: string;
   recovery?: boolean;
   roots?: (root: string, project: string) => FilesystemRootPolicy[];
+  /** Adds the mac.files.write, mac.files.search and mac.storage.read scopes and enables the two write tools the default policy keeps disabled. */
+  ordinaryFileTools?: boolean;
 };
 
 function git(cwd: string, args: string[]): string {
@@ -113,9 +115,11 @@ async function fixture(options: FixtureOptions = {}) {
   };
   const key = randomBytes(32);
   const roots = options.roots?.(root, project) ?? [{ rootId: "project", path: project, metadata: true, contentRead: true, write: true, denyRelativePaths: [] }];
-  const base = createDefaultPolicy("edge-1", true, scopes, ["edge-key-1"], roots, [], [], [project], [], [PROFILE]);
-  const tools = new Map([...base.tools].map(([name, policy]) => [name, { ...policy, enabled: DEVELOPMENT_TOOL_NAMES.includes(name) || ["mac_task_run", "mac_git_stage", "mac_git_commit"].includes(name) ? true : policy.enabled }]));
-  const policy = { ...base, tools, targetRules: [...base.targetRules, ...scopes.map((scope, index) => ({ ruleId: `container-project-${index}`, effect: "allow" as const, principalId: "principal-1", scope, target: { kind: "project" as const, reference: project } }))] };
+  const callerScopes: Scope[] = options.ordinaryFileTools ? [...scopes, "mac.files.write", "mac.files.search", "mac.storage.read"] : scopes;
+  const enabledTools = ["mac_task_run", "mac_git_stage", "mac_git_commit", ...(options.ordinaryFileTools ? ["mac_write_file_atomic", "mac_apply_patch"] : [])];
+  const base = createDefaultPolicy("edge-1", true, callerScopes, ["edge-key-1"], roots, [], [], [project], [], [PROFILE]);
+  const tools = new Map([...base.tools].map(([name, policy]) => [name, { ...policy, enabled: DEVELOPMENT_TOOL_NAMES.includes(name) || enabledTools.includes(name) ? true : policy.enabled }]));
+  const policy = { ...base, tools, targetRules: [...base.targetRules, ...callerScopes.map((scope, index) => ({ ruleId: `container-project-${index}`, effect: "allow" as const, principalId: "principal-1", scope, target: { kind: "project" as const, reference: project } }))] };
   function buildBroker() {
     registry = new ManagedWorktrees(state, trees);
     profiles = new ContainerTaskProfileRegistry({ imageId: IMAGE, engineId: ENGINE,
@@ -136,7 +140,7 @@ async function fixture(options: FixtureOptions = {}) {
   let index = 0;
   function request(tool: string, args: Record<string, unknown>, expiresAtMs = NOW + 60_000): UnsignedBrokerRequest {
     return { protocolVersion: "0.1", requestId: `container-request-${++index}`, contractVersion: "0.1", tool, arguments: args,
-      principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes, issuedAtMs: NOW - 1000, expiresAtMs, edgeId: "edge-1" },
+      principal: { principalId: "principal-1", sessionId: "session-1", issuer: "test-issuer", audience: "mac-operator-broker", scopes: callerScopes, issuedAtMs: NOW - 1000, expiresAtMs, edgeId: "edge-1" },
       timestampMs: clock, nonce: `container-nonce-${index}`, policyAudience: "mac-operator-broker", policyVersion: "policy-0.1", authenticationKeyId: "edge-key-1" };
   }
   function approve(tool: string, args: Record<string, unknown>) {
@@ -648,5 +652,102 @@ test("Container Broker labels a task cancelled by Broker shutdown separately fro
     assert.match(job.stderr, /Broker was shutting down/u);
     assert.doesNotMatch(job.stderr, /revoked/u);
     assert.match(job.stderr, /NEW idempotency_key/u);
+  } finally { await f.close(); }
+});
+
+/** Mirrors the MBA layout: a project write root plus a read-only ancestor root that denies gateway state and all-task storage. */
+const mbaLikeRoots = (root: string, project: string): FilesystemRootPolicy[] => [
+  { rootId: "project", path: project, metadata: true, contentRead: true, write: true, denyRelativePaths: [] },
+  { rootId: "ancestor", path: root, metadata: true, contentRead: true, write: false, denyRelativePaths: ["state", "trees"] }
+];
+const GENERIC_ZONE_DENIAL = "Filesystem path is inside a denied zone";
+const GENERIC_WRITE_DENIAL = /^Filesystem root does not grant write for this path/u;
+const gatewayControl = { timeoutMs: 30_000, shouldCancel: () => false };
+
+/** Returns the message of a POLICY_DENIED failure after checking the whole envelope against the versioned failure schema. */
+async function denialMessage(result: BrokerResult): Promise<string> {
+  assert.equal(result.ok, false, JSON.stringify(result));
+  if (result.ok) throw new Error("Expected a denial");
+  let validate = validators.get("broker-failure");
+  if (!validate) {
+    validate = ajv.compile(JSON.parse(await readFile(join(repositoryRoot, "schemas", "broker-failure.schema.json"), "utf8")));
+    validators.set("broker-failure", validate);
+  }
+  assert.equal(validate(result), true, ajv.errorsText(validate.errors));
+  assert.equal(result.result_class, "POLICY_DENIED");
+  return result.error.message;
+}
+
+async function explainDenial(f: Fixture, proposedTool: string, path: string): Promise<unknown> {
+  const result = await f.handle("mac_policy_explain", { proposed_tool: proposedTool, target: { kind: "path", reference: path } });
+  await receiptWarnings(result);
+  const explanation = data(result);
+  assert.equal(explanation.decision, "deny");
+  return explanation.reason_codes;
+}
+
+test("Container Broker names the managed worktree when every ordinary path tool is denied inside it", async () => {
+  const f = await fixture({ ordinaryFileTools: true, roots: mbaLikeRoots });
+  try {
+    const worktree = await f.create();
+    const file = join(worktree, "source.txt");
+    const patch = "--- a/source.txt\n+++ b/source.txt\n@@ -1 +1 @@\n-original\n+changed\n";
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["mac_list_directory", { path: worktree }],
+      ["mac_directory_tree", { path: worktree }],
+      ["mac_read_file", { path: file }],
+      ["mac_stat_path", { path: file }],
+      ["mac_write_file_atomic", { path: file, content: "changed\n", idempotency_key: "worktree-write" }],
+      ["mac_apply_patch", { project_root: worktree, patch }],
+      ["mac_find_files", { roots: [worktree], query: "source" }],
+      ["mac_recent_files", { roots: [worktree], since_seconds: 3600 }],
+      ["mac_search_text", { roots: [worktree], query: "original" }],
+      ["mac_project_discover", { roots: [worktree] }],
+      ["mac_project_summary", { project_root: worktree }],
+      ["mac_storage_analysis", { roots: [worktree] }]
+    ];
+    for (const [tool, args] of calls) {
+      const message = await denialMessage(await f.handle(tool, args));
+      assert.match(message, /managed worktree/u, tool);
+      assert.match(message, /mac_codex_run/u, tool);
+    }
+    // The explanation carries the same stable reason code for a content-read denial and for a write denial.
+    for (const tool of ["mac_list_directory", "mac_write_file_atomic"]) {
+      assert.deepEqual(await explainDenial(f, tool, file), ["POLICY_DENIED", "MANAGED_WORKTREE_PATH"]);
+    }
+    assert.equal(await readFile(file, "utf8"), "original\n");
+    await f.primaryUnchanged();
+  } finally { await f.close(); }
+});
+
+test("Container Broker keeps the generic path denial outside the caller's own active managed worktree", async () => {
+  const f = await fixture({ ordinaryFileTools: true, roots: mbaLikeRoots });
+  try {
+    const worktree = await f.create();
+    const removed = await f.create("task-removed");
+    const removeArgs = { project_root: f.project, worktree: removed, task_id: "task-removed", idempotency_key: "remove-task-removed" };
+    f.approve("mac_git_worktree_remove", removeArgs);
+    assert.equal(data(await f.handle("mac_git_worktree_remove", removeArgs)).removed, true);
+    const other = await f.gateway.worktrees.create({ projectRoot: f.project, branchName: "codex/other", baseRef: "HEAD", taskId: "other",
+      idempotencyKey: "other-key", owner: "principal-2" }, gatewayControl, () => undefined);
+    const outside = [
+      join(f.trees, "unknown-task", "source.txt"),
+      join(f.state, "broker.sqlite"),
+      join(removed, "source.txt"),
+      join(other.record.worktree, "source.txt")
+    ];
+    for (const path of outside) {
+      assert.equal(await denialMessage(await f.handle("mac_read_file", { path })), GENERIC_ZONE_DENIAL, path);
+      assert.match(await denialMessage(await f.handle("mac_write_file_atomic", { path, content: "x\n", idempotency_key: "outside-write" })), GENERIC_WRITE_DENIAL, path);
+      assert.deepEqual(await explainDenial(f, "mac_list_directory", path), ["POLICY_DENIED", "DENIED_ZONE"], path);
+      assert.deepEqual(await explainDenial(f, "mac_write_file_atomic", path), ["POLICY_DENIED", "ROOT_CAPABILITY_NOT_GRANTED"], path);
+    }
+    // A secret path keeps its own denial even inside the caller's worktree.
+    const secret = join(worktree, ".env");
+    assert.equal(await denialMessage(await f.handle("mac_read_file", { path: secret })), "Filesystem content is inside a protected secret zone");
+    assert.deepEqual(await explainDenial(f, "mac_read_file", secret), ["POLICY_DENIED", "SECRET_PATH_ACCESS"]);
+    // The primary project is an ordinary write root and still works.
+    assert.equal(data(await f.handle("mac_read_file", { path: join(f.project, "source.txt") })).content, "original\n");
+    await f.primaryUnchanged();
   } finally { await f.close(); }
 });

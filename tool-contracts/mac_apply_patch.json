@@ -24,7 +24,7 @@
   "audit_class": "filesystem_write",
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "apply bounded textual patch under an authorized project root.",
+  "purpose": "apply bounded textual patch under an authorized project root. Not available inside Broker-managed worktrees; those are changed only by mac_codex_run.",
   "input_summary": "project_root:string, patch:string, expected_base_hash?:string.",
   "output_summary": "changed paths, precondition result, post-write hashes and verification.",
   "input_schema": {
