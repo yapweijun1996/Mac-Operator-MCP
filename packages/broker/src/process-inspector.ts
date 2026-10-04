@@ -1,3 +1,4 @@
+import { BrokerError } from "@mac-operator/contracts";
 import { loadNativePeerAdapter, parsePeerProcessIdentity } from "./peer-credentials.js";
 import { isPlainDataRecord } from "./plain-record.js";
 
@@ -47,12 +48,39 @@ export function inspectProcesses(limit: number, sort: "cpu" | "memory" | "pid" |
 export function inspectProcess(pid: number): SafeProcessDetail {
   if (!Number.isSafeInteger(pid) || pid < 1 || pid > 99_999_999) throw new Error("Process pid is outside the supported range");
   const native = loadNativePeerAdapter() as unknown as NativeProcessAdapter;
-  const before = parsePeerProcessIdentity(native.getProcessIdentity(pid));
+  let before;
+  try {
+    before = parsePeerProcessIdentity(native.getProcessIdentity(pid));
+  } catch (error) {
+    throw classifyProcessReadFailure(pid, error);
+  }
   const detail = parseProcessDetail(native.inspectProcess(pid));
   const after = parsePeerProcessIdentity(native.getProcessIdentity(pid));
   assertStableProcessIdentity(pid, before, after);
   assertProcessDetailIdentity(pid, detail);
   return detail;
+}
+
+/**
+ * The native read only reports that the process could not be read. A signal-0 probe
+ * (no signal is delivered) tells a missing PID (ESRCH) from one the OS refuses to
+ * show this account (EPERM, e.g. launchd as PID 1), so callers get an actionable class.
+ */
+export function classifyProcessReadFailure(
+  pid: number,
+  error: unknown,
+  probe: (pid: number, signal: 0) => unknown = (target, signal) => process.kill(target, signal)
+): unknown {
+  try {
+    probe(pid, 0);
+  } catch (probeError) {
+    const code = (probeError as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ESRCH") return new BrokerError("TARGET_NOT_FOUND", "No process with that PID exists");
+    if (code === "EPERM") {
+      return new BrokerError("POLICY_DENIED", "The operating system does not allow this account to inspect that process (it belongs to another user or is protected)");
+    }
+  }
+  return error;
 }
 
 /**

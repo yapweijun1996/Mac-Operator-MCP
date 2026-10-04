@@ -154,6 +154,23 @@
             "minLength": 1,
             "maxLength": 64
           },
+          "authorized_roots": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 64,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                "metadata": { "type": "boolean" },
+                "content_read": { "type": "boolean" },
+                "write": { "type": "boolean" }
+              },
+              "required": ["path", "metadata", "content_read", "write"]
+            }
+          },
           "protocol_version": {
             "type": "string",
             "minLength": 1,

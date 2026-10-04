@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertProcessDetailIdentity, assertStableProcessIdentity, inspectProcess, inspectProcesses, parseProcessDetail, parseProcessInventory } from "./process-inspector.js";
+import { assertProcessDetailIdentity, assertStableProcessIdentity, classifyProcessReadFailure, inspectProcess, inspectProcesses, parseProcessDetail, parseProcessInventory } from "./process-inspector.js";
 
 test("process inspector returns bounded redacted native metadata", () => {
   const inventory = inspectProcesses(20, "pid");
@@ -96,4 +96,16 @@ test("process inspector result parsers reject non-data and unstable child identi
   } as Record<string, unknown>;
   Object.defineProperty(symbolicDetail, Symbol("authority"), { value: true });
   assert.throws(() => parseProcessDetail(symbolicDetail), /Malformed native process detail/u);
+});
+
+test("process read failures are classified as missing or OS-denied", () => {
+  const raw = new Error("Process identity could not be read");
+  const failWith = (code: string) => () => { throw Object.assign(new Error(code), { code }); };
+  const missing = classifyProcessReadFailure(4242, raw, failWith("ESRCH")) as { errorClass: string };
+  assert.equal(missing.errorClass, "TARGET_NOT_FOUND");
+  const denied = classifyProcessReadFailure(1, raw, failWith("EPERM")) as { errorClass: string; message: string };
+  assert.equal(denied.errorClass, "POLICY_DENIED");
+  assert.match(denied.message, /does not allow this account/u);
+  assert.equal(classifyProcessReadFailure(4242, raw, () => true), raw);
+  assert.equal(classifyProcessReadFailure(4242, raw, failWith("EINVAL")), raw);
 });

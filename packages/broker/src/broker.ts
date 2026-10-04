@@ -2062,6 +2062,15 @@ export class Broker {
               };
             }),
             permissions: gui ? guiReadinessPermissions(gui) : [],
+            // Only callers holding a filesystem-facing scope learn which roots those tools operate on.
+            authorized_roots: request.principal.scopes.some((scope) => /^mac\.(files|storage|project)\./u.test(scope))
+              ? policy.filesystemRoots.slice(0, 64).map((root) => ({
+                path: root.path,
+                metadata: root.metadata,
+                content_read: root.contentRead,
+                write: root.write === true
+              }))
+              : [],
             protocol_version: PROTOCOL_VERSION,
             contract_version: CONTRACT_VERSION,
             version: "0.1.0"
@@ -4790,9 +4799,13 @@ export class Broker {
       validateStorageAnalysisArguments(request.arguments);
       const inspector = new FilesystemInspector(policy.filesystemRoots);
       const requestedRoots = request.arguments.roots as string[] | undefined;
+      // Omitted roots default to the content-readable workspace roots; a metadata-only root such as `/`
+      // is too large to walk by default and must be requested explicitly.
+      const metadataRoots = policy.filesystemRoots.filter((root) => root.metadata === true);
+      const contentRoots = metadataRoots.filter((root) => root.contentRead === true);
       const roots = requestedRoots && requestedRoots.length > 0
         ? requestedRoots
-        : policy.filesystemRoots.filter((root) => root.metadata === true).map((root) => root.path);
+        : (contentRoots.length > 0 ? contentRoots : metadataRoots).map((root) => root.path);
       if (roots.length < 1 || roots.length > 32) throw new BrokerError("POLICY_DENIED", "No metadata filesystem roots are authorized for storage analysis");
       validateStorageSemanticResourceBudget(
         roots.length,
@@ -6571,6 +6584,9 @@ function decodeWriteContent(argumentsValue: Readonly<Record<string, unknown>>): 
 function validateJobArguments(tool: string, argumentsValue: Readonly<Record<string, unknown>>): void {
   if (typeof argumentsValue.job_id !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/u.test(argumentsValue.job_id)) {
     throw new BrokerError("PRECONDITION_FAILED", "job_id is malformed");
+  }
+  if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(argumentsValue.job_id)) {
+    throw new BrokerError("PRECONDITION_FAILED", "job_id must be a Broker job identifier of the form job:<id>, as returned when the job was created");
   }
   if (tool === "mac_job_status") {
     const tailBytes = argumentsValue.tail_bytes;

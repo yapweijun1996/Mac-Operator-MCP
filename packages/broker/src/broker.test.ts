@@ -3804,6 +3804,54 @@ test("job tools do not reveal a job owned by another principal", async () => {
   }
 });
 
+test("mac_job_status explains an unprefixed job_id instead of reporting a malformed record", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-jobid-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.job.read"]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const request = unsigned({ tool: "mac_job_status", arguments: { job_id: "does-not-exist" } }, ["mac.job.read"]);
+    const result = await broker.handle(signRequest(request, key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "PRECONDITION_FAILED");
+    assert.match(JSON.stringify(result), /job:<id>/u);
+    assert.doesNotMatch(JSON.stringify(result), /malformed/u);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_capabilities lists authorized roots only for callers holding a filesystem scope", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-caproots-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
+  const broker = new Broker({
+    store,
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read", "mac.files.read"], ["edge-key-1"], [root]),
+    edgeAuthenticationKeys: testKeyring(key),
+    now: () => NOW
+  });
+  try {
+    const withFiles = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities" }, ["mac.control.read", "mac.files.read"]), key));
+    assert.equal(withFiles.ok, true);
+    assert.deepEqual((withFiles.data as { authorized_roots: unknown }).authorized_roots,
+      [{ path: directory, metadata: true, content_read: true, write: false }]);
+    const controlOnly = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities", requestId: "request-2", nonce: "nonce-2" }, ["mac.control.read"]), key));
+    assert.equal(controlOnly.ok, true);
+    assert.deepEqual((controlOnly.data as { authorized_roots: unknown }).authorized_roots, []);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_stat_path authorizes a signed root before descriptor-backed observation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-stat-"));
   const path = join(directory, "sample.txt");

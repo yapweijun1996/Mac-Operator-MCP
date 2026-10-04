@@ -25,7 +25,7 @@ export function throwGuiWindowError(reason: unknown): void {
     case "frontmost_timeout": throw new BrokerError("TIMEOUT", "FRONTMOST_TIMEOUT: The requested app did not become frontmost within the bounded focus deadline", true);
     case "focused_app_mismatch": throw new BrokerError("VERIFICATION_FAILED", "FOCUSED_APP_MISMATCH: Workspace and system-wide AX did not confirm the requested process");
     case "focused_window_not_found": throw new BrokerError("VERIFICATION_FAILED", "FOCUSED_WINDOW_NOT_FOUND: AX did not confirm the selected process window");
-    case "app_not_frontmost": throw new BrokerError("PRECONDITION_FAILED", "The requested app is running but is not frontmost");
+    case "app_not_frontmost": throw new BrokerError("PRECONDITION_FAILED", "The requested app is running but is not frontmost; call mac_app_focus for it first, then observe again");
     case "window_not_found": throw new BrokerError("TARGET_NOT_FOUND", "FOCUSED_WINDOW_NOT_FOUND: The requested app has no matching window");
     case "window_unavailable": throw new BrokerError("PRECONDITION_FAILED", "The requested window is hidden or minimized");
     case "window_correlation_failed": throw new BrokerError("VERIFICATION_FAILED", "The AX window exists but cannot be correlated to a visible CG window");

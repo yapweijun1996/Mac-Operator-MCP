@@ -6767,3 +6767,23 @@ Settings secret-boundary denial pass through real MCP. Production/native identit
 is unchanged while owner unlock and physical 20/20 focus/observe, current Chrome
 JPEG/AX and multi-window acceptance remain pending. Evidence:
 `evidence/2026-10-02-chrome-focus-protected-session.md`.
+
+## October 4, 2026: MCP usability review fixes (source only, not deployed)
+
+PARTIAL: triaged an external nine-item usability report against source and the
+live MBA service. Confirmed and fixed: `mac_storage_analysis` now stops at a 20 s
+traversal budget with a partial-result warning and, without `roots`, defaults to
+content-readable roots instead of the metadata-only `/`; `mac_capabilities` adds
+`authorized_roots` (only for callers holding a `mac.files.*`, `mac.storage.*` or
+`mac.project.*` scope); `mac_process_inspect` returns `TARGET_NOT_FOUND` or
+`POLICY_DENIED` instead of "Process worker failed"; an unprefixed `job_id` gets an
+explicit `job:<id>` message (a well-formed unknown id already returned
+`TARGET_NOT_FOUND`); `mac_ui_observe` points to `mac_app_focus`; path errors explain
+that `~` is not expanded and point to `authorized_roots`; `mac_log_tail` reports how
+many malformed records were omitted. Not changed: `include_listeners` already
+warns that listener data is unavailable on the current adapter, and Docker
+`include_storage` is implemented behind policy; `mac_service_status` still has no
+way to list its allowlist. Focused tests pass (221 broker/edge, new unit tests for
+each fix); `contract-conformance` and one filesystem pressure test fail identically
+on the unmodified baseline (volume-identity check). The running MBA service still
+needs a restart on the new build to expose these changes.

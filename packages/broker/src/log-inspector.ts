@@ -107,7 +107,7 @@ function parseLogResult(
     });
   }
   const selected = entries.slice(Math.max(0, entries.length - lines));
-  if (malformedLines > 0) warnings.push("Some log records were malformed and were omitted");
+  if (malformedLines > 0) warnings.push(`${malformedLines} malformed log record${malformedLines === 1 ? " was" : "s were"} omitted`);
   const outputLimited = result.resultClass === "OUTPUT_LIMIT";
   if (result.truncated || outputLimited) warnings.push("Log output was truncated by a fixed adapter budget");
   if (entries.length > lines) warnings.push("Log entries were limited to the requested line budget");

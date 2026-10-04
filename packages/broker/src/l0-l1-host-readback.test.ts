@@ -66,3 +66,23 @@ test("real macOS L0/L1 readback stays metadata-only and bounded", (t) => {
   assert.equal(storage.truncated, true);
   assert.match(storage.warnings.join(" "), /max_depth/u);
 });
+
+test("storage analysis returns a partial result when its traversal time budget is exhausted", (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("real host readback requires macOS");
+    return;
+  }
+  const systemLibrary = realpathSync.native("/System/Library");
+  const filesystem = new FilesystemInspector([{
+    rootId: "system-library",
+    path: systemLibrary,
+    metadata: true,
+    contentRead: false,
+    denyRelativePaths: ["Keychains", "LaunchAgents", "LaunchDaemons"]
+  }]);
+  const plan = filesystem.planPath(systemLibrary, "metadata");
+  const storage = filesystem.analyzeStoragePlanned([plan], 5, 4, -1);
+  assert.equal(storage.truncated, true);
+  assert.match(storage.warnings.join(" "), /time budget/u);
+  assert.ok(storage.volumes.length >= 1);
+});

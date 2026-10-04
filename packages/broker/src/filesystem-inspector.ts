@@ -288,6 +288,8 @@ const MAX_PROJECT_SUMMARY_TREE_ENTRIES = 1_000;
 const MAX_STORAGE_DEPTH = 8;
 const MAX_STORAGE_ENTRIES = 50_000;
 const MAX_STORAGE_DIRECTORIES = 10_000;
+/** Stops traversal before the 30 s tool deadline so a large tree yields a partial result instead of TIMEOUT. */
+const MAX_STORAGE_TRAVERSAL_MS = 20_000;
 const TEMPORARY_WRITE_NAME_PATTERN = /^\.mac-operator-write-[A-Za-z0-9._-]{1,96}$/u;
 const MIN_UNLINK_RECOVERY_AGE_MS = 1_000;
 const MAX_UNLINK_RECOVERY_AGE_MS = 604_800_000;
@@ -346,7 +348,7 @@ export class FilesystemInspector {
 
   planPath(requestedPath: string, capability: "metadata" | "content_read" | "write" = "metadata"): FilesystemPathPlan {
     if (!isAbsolute(requestedPath) || requestedPath.includes("\0") || requestedPath.length > 4096) {
-      throw new BrokerError("PRECONDITION_FAILED", "Filesystem path must be a bounded absolute path");
+      throw new BrokerError("PRECONDITION_FAILED", "Filesystem path must be an absolute path of at most 4096 bytes; '~' and relative paths are not expanded");
     }
     const lexicalPath = resolve(requestedPath);
     if (capability === "content_read" || capability === "write") assertContentPathAllowed(lexicalPath);
@@ -354,7 +356,7 @@ export class FilesystemInspector {
     const candidates = this.roots
       .filter((root) => (capability === "metadata" ? root.metadata : capability === "content_read" ? root.contentRead === true : root.write === true) && isContained(root.path, lexicalPath))
       .sort((left, right) => right.path.length - left.path.length);
-    if (candidates.length === 0) throw new BrokerError("POLICY_DENIED", "Filesystem path is outside authorized roots");
+    if (candidates.length === 0) throw new BrokerError("POLICY_DENIED", "Filesystem path is outside authorized roots; mac_capabilities lists authorized_roots");
     const root = candidates[0]!;
     const lexicalRelative = relative(root.path, lexicalPath);
     if (root.denyRelativePaths.some((denied) => isRelativeContained(denied, lexicalRelative))) {
@@ -817,7 +819,8 @@ export class FilesystemInspector {
   analyzeStoragePlanned(
     plans: readonly FilesystemPathPlan[],
     topN: number,
-    maxDepth: number
+    maxDepth: number,
+    traversalBudgetMs: number = MAX_STORAGE_TRAVERSAL_MS
   ): SafeStorageAnalysis {
     if (plans.length < 1 || plans.length > 32) {
       throw new BrokerError("PRECONDITION_FAILED", "Storage analysis requires between 1 and 32 roots");
@@ -864,10 +867,18 @@ export class FilesystemInspector {
     const addWarning = (warning: string): void => {
       if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
     };
+    const deadlineMs = Date.now() + traversalBudgetMs;
+    const budgetExpired = (): boolean => {
+      if (Date.now() <= deadlineMs) return false;
+      truncated = true;
+      addWarning("Storage traversal stopped at its time budget; results are partial. Pass narrower roots or a lower max_depth");
+      return true;
+    };
     while (pending.length > 0 && !truncated) {
       const current = pending.shift()!;
       let cursor: string | undefined;
       while (!truncated) {
+        if (budgetExpired()) break;
         const listing = this.listPlanned(current.plan, cursor, 500, true);
         if (visitedDirectories.has(listing.path) && cursor === undefined) break;
         if (!visitedDirectories.has(listing.path)) {
@@ -881,6 +892,7 @@ export class FilesystemInspector {
         }
         for (const entry of listing.entries) {
           visitedEntries += 1;
+          if (visitedEntries % 64 === 0 && budgetExpired()) break;
           if (visitedEntries > MAX_STORAGE_ENTRIES) {
             truncated = true;
             addWarning("Storage traversal exceeded the fixed entry budget");
