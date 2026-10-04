@@ -4117,11 +4117,12 @@ export class Broker {
         .map((record) => ({ worktree: record.worktree, branch_name: record.branchName, base_ref: record.baseRef, task_id: record.taskId })) });
     }
     if (request.tool === "mac_git_worktree_remove") {
-      await gateway.worktrees.remove(plan.projectRoot, plan.worktree!, request.principal.principalId, plan.taskId!, control,
+      const removal = await gateway.worktrees.remove(plan.projectRoot, plan.worktree!, request.principal.principalId, plan.taskId!, control,
         authority, () => this.options.store.hasActiveProjectJobs(plan.projectRoot) || this.options.store.hasActiveProjectJobs(plan.worktree!), args.idempotency_key as string);
-      return { data: { project_root: plan.projectRoot, worktree: plan.worktree!, removed: true },
+      return { data: { project_root: plan.projectRoot, worktree: plan.worktree!, removed: true, branch_name: removal.branchName, branch_deleted: removal.branchDeleted },
         verification: { required: true, status: "verified", strategy: "changed_paths_and_hash_readback" },
-        auditEvidence: { project: plan.projectRoot, worktree: plan.worktree!, taskId: plan.taskId!, changedPaths: [plan.worktree!] } };
+        auditEvidence: { project: plan.projectRoot, worktree: plan.worktree!, taskId: plan.taskId!, branch: removal.branchName, branchDeleted: removal.branchDeleted, changedPaths: [plan.worktree!] },
+        ...(removal.branchNote === undefined ? {} : { warnings: [removal.branchNote] }) };
     }
     if (request.tool === "mac_codex_preflight") {
       const status = await this.gitInspector.status(plan.worktree ?? plan.projectRoot, true, control);

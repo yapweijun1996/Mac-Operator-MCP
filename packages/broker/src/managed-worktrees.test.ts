@@ -97,8 +97,34 @@ test("worktree removal rejects dirt, ignored files, primary and active jobs; cle
     await writeFile(join(record.worktree, "source.txt"), "dirty\n");
     await assert.rejects(remove(), /clean status/u);
     await writeFile(join(record.worktree, "source.txt"), "original\n");
-    await remove();
+    const removal = await remove();
+    assert.deepEqual(removal, { branchName: "codex/task-1", branchDeleted: true });
+    assert.equal(git(f.project, ["branch", "--list", "codex/task-1"]), "");
     assert.equal(f.registry.list(f.project, "owner").length, 0);
+  } finally { await f.cleanup(); }
+});
+
+test("worktree removal deletes a merged task branch but keeps one with unmerged commits", async () => {
+  const f = await worktreeFixture();
+  try {
+    const kept = await f.create("task-keep");
+    await writeFile(join(kept.record.worktree, "source.txt"), "unmerged work\n");
+    const writer = new GitWriteInspectorImpl(undefined, f.registry.resolveGitMetadata);
+    const staged = await writer.stage(kept.record.worktree, ["source.txt"], control);
+    await writer.commit(kept.record.worktree, "Unmerged task commit", staged.stagedDiffSha256, control);
+    const keptHead = git(f.project, ["rev-parse", "codex/task-keep"]);
+    const removal = await f.registry.remove(f.project, kept.record.worktree, "owner", kept.record.taskId, control, authority, () => false, "remove-keep");
+    assert.equal(removal.branchDeleted, false);
+    assert.match(removal.branchNote ?? "", /was kept because git branch -d refused/u);
+    assert.equal(git(f.project, ["rev-parse", "codex/task-keep"]), keptHead);
+    assert.equal(f.registry.list(f.project, "owner").length, 0);
+    // A retry of the completed removal re-reports the kept branch instead of failing or deleting it.
+    const retry = await f.registry.remove(f.project, kept.record.worktree, "owner", kept.record.taskId, control, authority, () => false, "remove-keep");
+    assert.equal(retry.branchDeleted, false);
+    assert.equal(git(f.project, ["rev-parse", "codex/task-keep"]), keptHead);
+    // The primary checkout and its own branch are untouched.
+    assert.equal(git(f.project, ["rev-parse", "--abbrev-ref", "HEAD"]).trim(), "main");
+    assert.equal(git(f.project, ["status", "--porcelain"]), "");
   } finally { await f.cleanup(); }
 });
 

@@ -95,9 +95,10 @@ Behaviour observed in MBA probes that the tool schemas alone do not show:
   isolation the runbook requires, not a fault. Source changes in a worktree belong to `mac_codex_run`;
   `mac_test_run` / `mac_build_run` validate the worktree as it is, so on an unmodified worktree they test
   unmodified code. Making worktrees writable to MCP clients would be a new signed-policy decision.
-- **`mac_git_worktree_remove` does not delete the branch.** The `codex/...` branch stays in the project
-  repository (identical to its base when nothing was committed). Delete it from the owner terminal with
-  `git branch -d <branch>`.
+- **`mac_git_worktree_remove` also deletes the task branch** with `git branch -d` after the worktree is gone. A
+  branch whose commits are not merged into the primary checkout's HEAD is kept: the result then has
+  `branch_deleted: false` and a warning, and the owner merges it or deletes it from the owner terminal with
+  `git branch -D <branch>`. Retrying a completed removal with the same key re-attempts only the branch cleanup.
 - **Container jobs show no live output.** `mac_job_status` returns empty `stdout`/`stderr` while a test, build or
   task job is `running` (about 70-100 s, mostly workspace staging); output appears when the job finishes.
   There is no phase or progress field.

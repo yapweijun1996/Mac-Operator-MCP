@@ -36,6 +36,15 @@ export interface WorktreeCreateRequest {
 }
 
 /** Protected provenance only; execution/job authority stays in BrokerStore. */
+/** Outcome of the branch cleanup that follows a successful worktree removal. */
+export interface WorktreeRemoval {
+  branchName: string;
+  branchDeleted: boolean;
+  branchNote?: string;
+}
+
+const TASK_BRANCH_PATTERN = /^codex\/[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/u;
+
 export class ManagedWorktrees {
   private readonly stateIdentity: string;
   private readonly treeIdentity: string;
@@ -204,9 +213,13 @@ export class ManagedWorktrees {
   }
 
   remove(projectRoot: string, worktree: string, owner: string, taskId: string, control: GitExecutionControl,
-    assertAuthority: () => void, hasActiveJob: () => boolean, idempotencyKey = "legacy-remove"): Promise<void> {
+    assertAuthority: () => void, hasActiveJob: () => boolean, idempotencyKey = "legacy-remove"): Promise<WorktreeRemoval> {
     return this.serialize(async () => {
-      if (this.removalRetry(projectRoot, worktree, owner, taskId, idempotencyKey)) return;
+      if (this.removalRetry(projectRoot, worktree, owner, taskId, idempotencyKey)) {
+        // A retry after a completed removal only re-attempts the branch cleanup that may not have finished.
+        const done = this.records.find((entry) => entry.worktree === worktree)!;
+        return this.deleteTaskBranch(done, control);
+      }
       const record = this.require(worktree, projectRoot, owner, taskId);
       if (worktree === projectRoot || hasActiveJob()) throw new BrokerError("CONFLICT", "Worktree is primary or has an active/unresolved job");
       assertAuthority();
@@ -229,7 +242,28 @@ export class ManagedWorktrees {
       }
       stored.state = "removed";
       this.persist();
+      return this.deleteTaskBranch(stored, control);
     });
+  }
+
+  /**
+   * Deletes the task branch with `git branch -d` so commits that were never merged are never lost. The worktree is
+   * already gone and recorded as removed, so a failure here is reported as a kept branch instead of failing the removal.
+   */
+  private async deleteTaskBranch(record: ManagedWorktreeRecord, control: GitExecutionControl): Promise<WorktreeRemoval> {
+    const branchName = record.branchName;
+    if (!TASK_BRANCH_PATTERN.test(branchName)) return { branchName, branchDeleted: false, branchNote: "Task branch name is not a managed codex/ branch and was left alone" };
+    // for-each-ref exits 0 with empty output for a missing branch, so a real Git failure is not mistaken for absence.
+    const exists = async (): Promise<boolean> => (await this.git(record.projectRoot, ["for-each-ref", "--format=%(refname)", `refs/heads/${branchName}`], control)).trim() !== "";
+    const kept = (): WorktreeRemoval => ({ branchName, branchDeleted: false, branchNote:
+      `Branch ${branchName} was kept because git branch -d refused it (commits not merged into the primary checkout's HEAD, or the delete could not run); merge it or delete it from the owner terminal` });
+    try {
+      await this.git(record.projectRoot, ["branch", "-d", "--", branchName], control);
+    } catch {
+      // `-d` refuses a branch with commits not merged into the primary checkout's HEAD, and fails when it is already gone.
+      return { ...(await exists().then((present) => !present, () => false) ? { branchName, branchDeleted: true } : kept()) };
+    }
+    return await exists().then((present) => ({ branchName, branchDeleted: !present }), () => kept());
   }
 
   removalRetry(projectRoot: string, worktree: string, owner: string, taskId: string, idempotencyKey: string): boolean {
@@ -330,7 +364,7 @@ export function validateCreate(input: WorktreeCreateRequest): void {
       throw new BrokerError("PRECONDITION_FAILED", "Worktree identifier is malformed");
     }
   }
-  if (typeof input.branchName !== "string" || !/^codex\/[A-Za-z0-9][A-Za-z0-9._/-]{0,120}$/u.test(input.branchName) ||
+  if (typeof input.branchName !== "string" || !TASK_BRANCH_PATTERN.test(input.branchName) ||
       input.branchName.includes("..") || input.branchName.includes("//") || input.branchName.endsWith("/") ||
       input.branchName.split("/").some((part) => part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock"))) {
     throw new BrokerError("PRECONDITION_FAILED", "Task branch must start with codex/ followed by letters, digits, . _ - or / (no empty, dotted or .lock segments, at most 127 characters), for example codex/my-task");

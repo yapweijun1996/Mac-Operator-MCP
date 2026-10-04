@@ -6899,3 +6899,12 @@ with a description. Not reproduced: the claimed `mac_job_status` lag (the ledger
 running, finished 19:25:44, and the next poll at 19:26:20 completed). Unchanged by design or owner decision: worktree
 writes through the ordinary filesystem tools (denied by signed policy, see the sixth entry), the 120 s profile budgets
 (host-owned development runtime config; staging dominates), and a longer access-token lifetime.
+
+## October 4, 2026: worktree removal also deletes the task branch (source only until deployed)
+
+`mac_git_worktree_remove` now runs `git branch -d` on the managed `codex/...` task branch after the worktree is
+removed and recorded. `-d` refuses unmerged commits, so work is never lost: such a branch is kept and reported with
+`branch_deleted: false` plus a warning. The removal itself never fails because of the branch step, and a retry with
+the same idempotency key only re-attempts the cleanup. The contract output gained optional `branch_name` and
+`branch_deleted`. Existence is read with `for-each-ref` so a Git failure is not mistaken for an absent branch.
+New tests cover deleted, kept-unmerged and retry. Not deployed.

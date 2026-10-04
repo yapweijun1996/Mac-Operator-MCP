@@ -24,9 +24,9 @@
   "audit_class": "git_write",
   "tool_delivery_wave": "wave_3",
   "implementation_status": "planned",
-  "purpose": "Remove a clean Broker-owned worktree with ownership checks and read-back verification; never delete the primary repository.",
+  "purpose": "Remove a clean Broker-owned worktree with ownership checks and read-back verification, then delete its task branch with git branch -d (kept with a warning when it has unmerged commits); never delete the primary repository.",
   "input_summary": "project_root, worktree, task_id, idempotency_key",
-  "output_summary": "project_root, worktree, removed",
+  "output_summary": "project_root, worktree, removed, branch_name, branch_deleted",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_git_worktree_remove input",
@@ -111,6 +111,15 @@
           },
           "removed": {
             "const": true
+          },
+          "branch_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "branch_deleted": {
+            "type": "boolean",
+            "description": "True when the task branch no longer exists; false when git branch -d kept it because it has unmerged commits (see warnings)."
           }
         },
         "required": [
@@ -194,6 +203,6 @@
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
     "kb_item_id": "428e62de-1b0c-48dc-9add-c24b563439fe",
-    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Remove a clean Broker-owned worktree with ownership checks and read-back verification; never delete the primary repository."
+    "source_text": "Local V2 design contract from docs/MAC_OPERATOR_V2_DESIGN.md, 2026-10-01. This contract identifier is reserved locally and does not assert an existing KB item. Remove a clean Broker-owned worktree with ownership checks and read-back verification, then delete its task branch with git branch -d (kept with a warning when it has unmerged commits); never delete the primary repository."
   }
 }
