@@ -104,6 +104,25 @@ test("V2 registered validation commands use bounded managed jobs and reject arbi
   } finally { await f.close(); }
 });
 
+test("V2 a task idempotency key held by another tool or payload names the holder job and the differing binding", async () => {
+  const f = await setup(); try {
+    const { worktree } = await f.create(); const args = { project_root: f.project, worktree, task_id: "task-1", max_runtime: 500, idempotency_key: "shared-task-key" };
+    f.approve("mac_test_run", args); const receipt = data(await f.handle("mac_test_run", args)); assert.equal(await settle(f, receipt), "completed"); assert.equal(f.calls, 1);
+    const holder = f.store.ownedJob(receipt.job_id as string, "principal-1")!;
+    const head = `IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job ${holder.jobId} (mac_test_run, completed, created ${new Date(holder.createdAtMs).toISOString()}), but the new request differs in`;
+    const failureSchema = JSON.parse(await readFile(join(repositoryRoot, "schemas", "broker-failure.schema.json"), "utf8")); const validateFailure = ajv.compile(failureSchema);
+    // The same key under mac_build_run shares the namespace and is refused with the tool label.
+    f.approve("mac_build_run", args); const otherTool = failure(await f.handle("mac_build_run", args));
+    assert.equal(otherTool.result_class, "CONFLICT"); assert.equal(otherTool.error.message, `${head} tool. Use a new idempotency_key.`);
+    assert.equal(validateFailure(otherTool), true, ajv.errorsText(validateFailure.errors));
+    // The same tool with other arguments is refused with the arguments label.
+    const changed = { ...args, max_runtime: 400 }; f.approve("mac_test_run", changed); const otherArguments = failure(await f.handle("mac_test_run", changed));
+    assert.equal(otherArguments.result_class, "CONFLICT"); assert.equal(otherArguments.error.message, `${head} arguments. Use a new idempotency_key.`);
+    // The identical request still replays the recorded job and nothing runs again.
+    const repeated = data(await f.handle("mac_test_run", args)); assert.equal(repeated.job_id, receipt.job_id); assert.equal(f.calls, 1);
+  } finally { await f.close(); }
+});
+
 test("V2 dry-run/preflight never execute; unprovisioned coding and push fail closed", async () => {
   const f = await setup(); try {
     const { worktree } = await f.create();

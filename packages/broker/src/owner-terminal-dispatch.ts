@@ -24,7 +24,7 @@ export async function dispatchOwnerTerminal(options: {
   if (job.state === "completed" || job.state === "failed") return makeResult(true);
   if (job.state === "unknown") throw new BrokerError("UNKNOWN_OUTCOME", `Terminal outcome is unresolved; inspect ${job.jobId}`);
   if (job.state === "cancelled") throw new BrokerError("CANCELLED", `Terminal command was cancelled; inspect ${job.jobId}`);
-  if (job.state !== "running" || options.lease === undefined) throw new BrokerError("CONFLICT", "Terminal command is already queued or running");
+  if (job.state !== "running" || options.lease === undefined) throw new BrokerError("CONFLICT", `Terminal command is already queued or running; inspect ${job.jobId}`);
   const persist = (snapshot: ProcessOwnershipSnapshot, initial: boolean): void => {
     const metadata = { pid: snapshot.identity.pid, processGroupId: snapshot.identity.processGroupId,
       startTimeMicros: snapshot.identity.startTimeMicros, recordedAtMs: now(),

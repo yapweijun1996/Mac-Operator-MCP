@@ -13,6 +13,23 @@ const testBackupKeySource = {
   loadKey: () => Buffer.from("0123456789abcdef0123456789abcdef", "ascii")
 };
 
+/** Matches a CONFLICT whose message itself (not its string form, which starts with the class name) satisfies the pattern. */
+function conflictMatching(pattern: RegExp): (error: unknown) => boolean {
+  return (error) => error instanceof BrokerError && error.errorClass === "CONFLICT" && pattern.test(error.message);
+}
+
+/** Runs an action that must fail with a CONFLICT and returns its message. */
+function conflictMessage(action: () => unknown): string {
+  try {
+    action();
+  } catch (error) {
+    assert.ok(error instanceof BrokerError, String(error));
+    assert.equal(error.errorClass, "CONFLICT", error.message);
+    return error.message;
+  }
+  return assert.fail("Expected a CONFLICT");
+}
+
 test("BrokerStore records a monotonic schema version after initialization", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-schema-version-"));
   const databasePath = join(directory, "broker.sqlite");
@@ -1574,11 +1591,12 @@ test("atomic approved job admission links request, approval, intent, and idempot
       payloadDigest: "b".repeat(64),
       approvalClass: "trusted_profile"
     });
-    assert.throws(() => store.admitApprovedJob({ ...conflict, approval: { ...conflict.approval, approvalClass: "trusted_profile" } }), /different job identity or payload/u);
+    const differsInTarget = conflictMatching(/^IDEMPOTENCY_KEY_IN_USE: .*job:atomic \(mac_task_run, completed, created .*\), but the new request differs in target\. Use a new idempotency_key\.$/u);
+    assert.throws(() => store.admitApprovedJob({ ...conflict, approval: { ...conflict.approval, approvalClass: "trusted_profile" } }), differsInTarget);
     assert.equal(store.requestRecord("request-atomic-conflict"), undefined);
     assert.equal(store.ownedJob("job:conflict", "principal-1"), undefined);
     assert.equal(store.approvalRecord("approval:atomic-conflict")?.usedCount, 0);
-    assert.throws(() => store.admitApprovedJob(conflict), /different job identity or payload/u);
+    assert.throws(() => store.admitApprovedJob(conflict), differsInTarget);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
@@ -1856,11 +1874,11 @@ test("job creation is principal-scoped and payload-bound idempotent", async () =
     assert.equal(store.ownedJob("job:cross-session", "principal-1"), undefined);
     assert.throws(
       () => store.createJob({ ...jobInput("job:different", "idem-1"), payloadDigest: "b".repeat(64) }),
-      /different authorized job/u
+      conflictMatching(/^IDEMPOTENCY_KEY_IN_USE: .*job:first \(mac_task_run, completed, .*differs in arguments\./u)
     );
     assert.throws(
       () => store.createJob({ ...jobInput("job:policy-different", "idem-1"), policyVersion: "policy-0.2" }),
-      /different authorized job/u
+      conflictMatching(/^IDEMPOTENCY_KEY_IN_USE: .*job:first \(mac_task_run, completed, .*differs in policy version\./u)
     );
     const otherPrincipal = store.createJob({
       ...jobInput("job:other", "idem-1"),
@@ -1868,6 +1886,100 @@ test("job creation is principal-scoped and payload-bound idempotent", async () =
       ownerPrincipalId: "principal-2"
     });
     assert.equal(otherPrincipal.reused, false);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a held idempotency key names the holder Job and the first differing binding without leaking identifiers", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-idempotency-binding-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const holder = { ...jobInput("job:holder", "idem-binding"), edgeId: "edge-1", edgeKeyId: "edge-1:edge-key-1" };
+    store.createJob(holder);
+    const cases: Array<[Partial<CreateJobInput>, string]> = [
+      [{ tool: "mac_test_run" }, "tool"],
+      [{ payloadDigest: "c".repeat(64) }, "arguments"],
+      [{ targetRef: "task:other" }, "target"],
+      [{ policyVersion: "policy-0.2" }, "policy version"],
+      [{ ownerSessionId: "session-2" }, "OAuth login"],
+      [{ edgeKeyId: "edge-1:edge-key-2" }, "Edge connection"],
+      [{ edgeId: "edge-2", edgeKeyId: "edge-2:edge-key-1" }, "Edge connection"],
+      // The first differing binding wins, in the order tool, arguments, target, policy version, login, Edge.
+      [{ tool: "mac_build_run", payloadDigest: "c".repeat(64), ownerSessionId: "session-2" }, "tool"],
+      [{ targetRef: "task:other", ownerSessionId: "session-2" }, "target"]
+    ];
+    for (const [change, label] of cases) {
+      const message = conflictMessage(() => store.createJob({ ...holder, jobId: "job:attempt", ...change }));
+      assert.ok(message.startsWith("IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job job:holder (mac_task_run, queued, created 1970-01-01T00:00:00.001Z), "), message);
+      assert.ok(message.includes(`, but the new request differs in ${label}. `), message);
+      assert.ok(message.endsWith(label === "OAuth login"
+        ? "Repeat the identical request from the original OAuth login, or use a new idempotency_key."
+        : "Use a new idempotency_key."), message);
+      assert.ok(message.length < 512, `${message.length}`);
+      for (const hidden of ["a".repeat(64), "c".repeat(64), "session-1", "session-2", "edge-1", "edge-2", "edge-key", "idem-binding", "task:test", "task:other"]) {
+        assert.ok(!message.includes(hidden), `${hidden}: ${message}`);
+      }
+    }
+    assert.equal(store.ownedJob("job:attempt", "principal-1"), undefined);
+
+    // An identical request meets a Job that has not finished: the Job is named so its state can be read.
+    const active = conflictMessage(() => store.createJob({ ...holder, jobId: "job:attempt" }));
+    assert.ok(active.includes("job:holder (mac_task_run, queued, "), active);
+    assert.ok(active.endsWith("It has not finished: check it with mac_job_status, then repeat the identical request to replay its outcome."), active);
+
+    // A finished Job is replayed, never re-run: a repeat from another login is told to use the original login or a new key.
+    const started = store.startJob("job:holder", "principal-1", 0, 2);
+    store.finishJob("job:holder", "principal-1", started.revision, { state: "failed", resultClass: "failed", finishedAtMs: 3, exitCode: 1 });
+    assert.equal(store.createJob({ ...holder, jobId: "job:attempt" }).reused, true);
+    const failedLogin = conflictMessage(() => store.createJob({ ...holder, jobId: "job:attempt", ownerSessionId: "session-2" }));
+    assert.ok(failedLogin.endsWith("Repeat the identical request from the original OAuth login (the failed job is never re-run, only replayed as failed), or use a new idempotency_key."), failedLogin);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an atomic admission that meets a Job without a successful outcome names it and says it is never re-run", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-idempotency-failed-holder-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    const failed = admitFailedTaskJob(store, "replay");
+    const retry = atomicJobAdmissionInput("request-replay-retry", "nonce-replay-retry", "job:ignored-replay", "task:test", "task_profile:test");
+    const message = conflictMessage(() => store.admitApprovedJob({ ...retry, job: { ...retry.job, idempotencyKey: "outcome-replay" } }));
+    assert.ok(message.startsWith(`IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job ${failed.jobId} (mac_task_run, failed, created `), message);
+    assert.ok(message.endsWith("A failed or cancelled job is never re-run under its key: use a new idempotency_key to run the request again."), message);
+    assert.equal(store.requestRecord("request-replay-retry"), undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an archived Job holding a key is named only to its own principal", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-idempotency-tombstone-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"), { runtimeFence: true });
+  try {
+    const { requestId, jobId } = admitFailedTaskJob(store, "tombstone-own");
+    failTaskRequest(store, requestId, "TIMEOUT");
+    await store.rotateLedgerArchive(directory, { keySource: testBackupKeySource, nowMs: 100_000, retainRequestCount: 0, retainJobCount: 0, minAgeMs: 1_000 });
+    assert.equal(store.ownedJob(jobId, "principal-1"), undefined);
+
+    const own = conflictMessage(() => store.createJob(jobInput("job:fresh-after-rotation", "outcome-tombstone-own")));
+    assert.equal(own, `IDEMPOTENCY_KEY_IN_USE: this idempotency_key or Job id belongs to archived job ${jobId} ` +
+      "(mac_task_run, failed, finished 1970-01-01T00:00:00.005Z). Archived keys are never released: inspect it with mac_job_status, or use a new idempotency_key.");
+    assert.ok(own.length < 512);
+
+    // The Job id barrier is global: another principal reusing the id is refused without learning whose Job it was.
+    const generic = "Job identity or idempotency key refers to archived history; inspect its status before reuse";
+    const other = conflictMessage(() => store.createJob({ ...jobInput(jobId, "other-principal-key"), ownerPrincipalId: "principal-2" }));
+    assert.equal(other, generic);
+    assert.ok(!other.includes("mac_task_run") && !other.includes("failed") && !other.includes("IDEMPOTENCY_KEY_IN_USE"), other);
+
+    // The key itself is principal-scoped: the same text is free for another principal.
+    const independent = store.createJob({ ...jobInput("job:principal-2-fresh", "outcome-tombstone-own"), ownerPrincipalId: "principal-2" });
+    assert.equal(independent.reused, false);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

@@ -29,6 +29,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
 import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, TASK_JOB_TOOLS, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type JobOutcomeClass, type PrivilegedHelperPayload, type ProjectPinningJobs, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
+import { firstDifferingBinding, idempotencyConflict } from "./idempotency-conflict.js";
 import {
   authorizePrincipalProjection,
   authorizeTarget,
@@ -209,6 +210,16 @@ const VALIDATION_RUN_TOOLS: readonly string[] = ["mac_test_run", "mac_build_run"
 
 /** A cancelled task job is replayed unchanged for its idempotency key, so running the task again needs a new key. */
 const CANCELLED_TASK_RERUN_ADVICE = "a re-run needs a NEW idempotency_key because the same key returns the cancelled job";
+
+/**
+ * Rejects an idempotency key that the caller's earlier Job holds for a different tool, payload, target or policy version.
+ * The OAuth login and Edge connection are bound later by the store, when the Job is admitted.
+ */
+function assertKeyHolderMatches(holder: BrokerJob, request: BrokerRequest, targetRef: string): void {
+  const differs = firstDifferingBinding(holder, { tool: request.tool, payloadDigest: sha256(canonicalJson(request.arguments)),
+    targetRef, policyVersion: request.policyVersion });
+  if (differs !== undefined) throw idempotencyConflict(holder, differs);
+}
 
 /** Replaces the generic path denial when ordinary file tools reach the caller's own managed worktree. */
 const MANAGED_WORKTREE_PATH_MESSAGE = "Path is inside a managed worktree: the signed policy keeps ordinary file tools (mac_read_file, mac_list_directory, mac_write_file_atomic, mac_apply_patch) out of it. Change code with mac_codex_run; read changes with mac_git_diff, mac_git_status or mac_pr_prepare.";
@@ -1245,30 +1256,21 @@ export class Broker {
           request.principal.principalId
         );
         if (existingWriteJob) execution.writeJob = existingWriteJob;
-        if (execution.writeJob && (
-          execution.writeJob.tool !== request.tool ||
-          execution.writeJob.payloadDigest !== sha256(canonicalJson(request.arguments)) ||
-          execution.writeJob.targetRef !== `${target.kind}:${target.reference}` ||
-          execution.writeJob.policyVersion !== request.policyVersion
-        )) {
-          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different write operation");
-        }
+        if (execution.writeJob) assertKeyHolderMatches(execution.writeJob, request, `${target.kind}:${target.reference}`);
       }
       if (execution.ownerTerminal) {
         const existing = this.options.store.ownedJobByIdempotencyKey(execution.ownerTerminal.idempotencyKey, request.principal.principalId);
-        if (existing && (existing.tool !== request.tool || existing.payloadDigest !== sha256(canonicalJson(request.arguments)) ||
-            existing.targetRef !== plannedAuditTarget || existing.policyVersion !== request.policyVersion)) {
-          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different terminal command");
+        if (existing) {
+          assertKeyHolderMatches(existing, request, plannedAuditTarget);
+          execution.taskJob = existing;
         }
-        if (existing) execution.taskJob = existing;
       }
       if (execution.ownerTerminalSession?.action === "start") {
         const existing = this.options.store.ownedJobByIdempotencyKey(execution.ownerTerminalSession.idempotencyKey, request.principal.principalId);
-        if (existing && (existing.tool !== request.tool || existing.payloadDigest !== sha256(canonicalJson(request.arguments)) ||
-            existing.targetRef !== plannedAuditTarget || existing.policyVersion !== request.policyVersion)) {
-          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different terminal session");
+        if (existing) {
+          assertKeyHolderMatches(existing, request, plannedAuditTarget);
+          execution.taskJob = existing;
         }
-        if (existing) execution.taskJob = existing;
       }
       if (request.tool === "mac_job_cancel") assertJobCancellable(execution);
       this.options.store.recordRequestDecision({
@@ -3445,19 +3447,19 @@ export class Broker {
       return writeDispatchResult(job, parseStoredWriteResult(job.stdout), true);
     }
     if (job.state === "queued") {
-      throw new BrokerError("CONFLICT", "Filesystem write is already queued under this idempotency key", true);
+      throw new BrokerError("CONFLICT", `Filesystem write is already queued under this idempotency key (job ${job.jobId})`, true);
     }
     if (job.state === "running" && execution.writeJobNew !== true) {
-      throw new BrokerError("UNKNOWN_OUTCOME", "Filesystem write outcome is unresolved; inspect its Broker job", true);
+      throw new BrokerError("UNKNOWN_OUTCOME", `Filesystem write outcome is unresolved; inspect Broker job ${job.jobId}`, true);
     }
     if (job.state === "unknown") {
-      throw new BrokerError("UNKNOWN_OUTCOME", "Filesystem write outcome is unresolved; inspect its Broker job", true);
+      throw new BrokerError("UNKNOWN_OUTCOME", `Filesystem write outcome is unresolved; inspect Broker job ${job.jobId}`, true);
     }
     if (job.state === "cancelled") {
-      throw new BrokerError("CANCELLED", "Filesystem write was cancelled under this idempotency key");
+      throw new BrokerError("CANCELLED", `Filesystem write was cancelled under this idempotency key (job ${job.jobId})`);
     }
     if (job.state !== "running") {
-      throw new BrokerError("EXECUTION_FAILED", "Filesystem write job already failed under this idempotency key");
+      throw new BrokerError("EXECUTION_FAILED", `Filesystem write job already failed under this idempotency key (job ${job.jobId})`);
     }
     try {
       const workerResult = await this.filesystemExecutor.write(

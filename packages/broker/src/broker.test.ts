@@ -4796,6 +4796,97 @@ test("mac_write_file_atomic requires a bound approval and verifies atomic readba
   }
 });
 
+test("a reused mac_write_file_atomic idempotency key names the Job that holds it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-write-key-held-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, write: true, denyRelativePaths: [] } as const;
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.files.write", "mac.job.read"], ["edge-key-1"], [root]);
+  const writeTool = basePolicy.tools.get("mac_write_file_atomic");
+  assert.ok(writeTool);
+  const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_write_file_atomic", { ...writeTool, enabled: true }) };
+  const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), now: () => NOW });
+  const created = new Date(NOW).toISOString();
+  let sequence = 0;
+  const write = async (argumentsValue: Record<string, unknown>, approved: boolean) => {
+    sequence += 1;
+    if (approved) {
+      store.issueApproval({
+        approvalId: `approval:write-held-${sequence}`, approverPrincipalId: "operator-1", requestingPrincipalId: "principal-1",
+        tool: "mac_write_file_atomic", contractVersion: "0.1", targetKind: "path", targetRef: "path:test-root",
+        payloadDigest: sha256(canonicalJson(argumentsValue)), policyVersion: "policy-0.1", approvalClass: "trusted_write",
+        unattended: false, issuedAtMs: NOW - 1_000, expiresAtMs: NOW + 1_000
+      });
+    }
+    return broker.handle(signRequest(unsigned({
+      requestId: `write-held-${sequence}`, nonce: `write-held-nonce-${sequence}`, tool: "mac_write_file_atomic", arguments: argumentsValue
+    }, ["mac.files.write", "mac.job.read"]), key));
+  };
+  const failure = (result: Awaited<ReturnType<typeof write>>) => {
+    assert.equal(result.ok, false, JSON.stringify(result));
+    if (result.ok) throw new Error("Expected a failure");
+    assert.ok(result.error.message.length < 512, result.error.message);
+    return result;
+  };
+  try {
+    const path = join(directory, "held.txt");
+    const first = { path, content: "first", idempotency_key: "write-key-held", encoding: "utf8", create_only: true };
+    const written = await write(first, true);
+    assert.equal(written.ok, true, JSON.stringify(written));
+    const jobId = (written.ok ? written.data as { job_id: string } : { job_id: "" }).job_id;
+    assert.match(jobId, /^job:write-/u);
+
+    // The same key for a different write names the holder, the state and the differing binding, before any approval is used.
+    const different = failure(await write({ ...first, content: "second" }, false));
+    assert.equal(different.result_class, "CONFLICT");
+    assert.equal(different.error.message, `IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job ${jobId} ` +
+      `(mac_write_file_atomic, completed, created ${created}), but the new request differs in arguments. Use a new idempotency_key.`);
+    assert.equal(await readFile(path, "utf8"), "first");
+
+    // A key held by another tool reports the tool, not a vague "different write".
+    store.createJob({
+      jobId: "job:terminal-held", ownerPrincipalId: "principal-1", ownerSessionId: "session-1", tool: "mac_terminal_exec",
+      targetRef: "host:owner-terminal", policyVersion: "policy-0.1", payloadDigest: "d".repeat(64),
+      idempotencyKey: "terminal-held-key", createdAtMs: NOW - 5_000
+    });
+    const crossTool = failure(await write({ ...first, idempotency_key: "terminal-held-key" }, false));
+    assert.equal(crossTool.result_class, "CONFLICT");
+    assert.equal(crossTool.error.message, `IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job job:terminal-held ` +
+      `(mac_terminal_exec, queued, created ${new Date(NOW - 5_000).toISOString()}), but the new request differs in tool. Use a new idempotency_key.`);
+
+    // An identical request meets a Job that ended without a replayable result: the message names that Job.
+    const edgeKeyId = "edge-1:edge-key-1";
+    const rootIdentity = await lstat(directory);
+    for (const [state, resultClass, errorClass, pattern] of [
+      ["failed", "failed", "EXECUTION_FAILED", /Filesystem write job already failed under this idempotency key \(job job:write-seed-failed\)/u],
+      ["cancelled", "denied", "CANCELLED", /Filesystem write was cancelled under this idempotency key \(job job:write-seed-cancelled\)/u],
+      ["unknown", "unknown", "UNKNOWN_OUTCOME", /Filesystem write outcome is unresolved; inspect Broker job job:write-seed-unknown/u]
+    ] as const) {
+      const seededArguments = { path, content: "seeded", idempotency_key: `write-seed-${state}`, encoding: "utf8", create_only: true };
+      store.createJob({
+        jobId: `job:write-seed-${state}`, edgeId: "edge-1", edgeKeyId, ownerPrincipalId: "principal-1", ownerSessionId: "session-1",
+        tool: "mac_write_file_atomic", targetRef: "path:test-root", policyVersion: "policy-0.1",
+        payloadDigest: sha256(canonicalJson(seededArguments)), idempotencyKey: `write-seed-${state}`, createdAtMs: NOW - 2_000,
+        writeMetadata: {
+          rootId: "test-root", rootPath: await realpath(directory), rootDevice: String(rootIdentity.dev), rootInode: String(rootIdentity.ino),
+          path, bytes: 6, desiredSha256: sha256(Buffer.from("seeded")), expectedSha256: null, createOnly: true,
+          temporaryName: `.mac-operator-write-seed-${state}`
+        }
+      });
+      let current = store.startJob(`job:write-seed-${state}`, "principal-1", 0, NOW - 1_000);
+      if (state === "cancelled") current = store.requestJobCancellation(current.jobId, "principal-1", "TEST_CANCELLED", NOW - 800).job;
+      store.finishJob(current.jobId, "principal-1", current.revision, { state, resultClass, finishedAtMs: NOW - 500 });
+      const replay = failure(await write(seededArguments, true));
+      assert.equal(replay.result_class, errorClass, JSON.stringify(replay));
+      assert.match(replay.error.message, pattern);
+    }
+  } finally {
+    await broker.close();
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("mac_apply_patch requires project write scopes, approval, and bounded readback", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-patch-"));
   const projectRoot = await realpath(directory);

@@ -52,6 +52,7 @@
         ]
       },
       "idempotency_key": {
+        "description": "Client-chosen key, unique per account for ever: repeating the identical request from the same login replays the recorded outcome; any different request needs a new key.",
         "type": "string",
         "minLength": 1,
         "maxLength": 128,

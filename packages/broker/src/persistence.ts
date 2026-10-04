@@ -15,6 +15,7 @@ import {
   type BrokerBackupPruneResult
 } from "./persistence-backup.js";
 import { EDGE_KEY_IDENTITY_PATTERN, isValidEdgeId } from "./edge-keyring.js";
+import { archivedIdempotencyConflict, firstDifferingBinding, idempotencyConflict } from "./idempotency-conflict.js";
 import type { AuditIntegrityReadback } from "./audit-integrity.js";
 import { createAuditArchive, inspectAuditArchive, type AuditArchiveManifest, type AuditArchiveOptions } from "./audit-export.js";
 import { createLedgerArchive, inspectLedgerArchive, type LedgerArchiveManifest, type LedgerArchiveOptions } from "./ledger-export.js";
@@ -1851,16 +1852,14 @@ export class BrokerStore {
           "SELECT * FROM jobs WHERE owner_principal_id = ? AND idempotency_key = ?"
         ).get(input.job.ownerPrincipalId, input.job.idempotencyKey) as JobRow | undefined;
         if (existing) {
-          if (existing.payload_digest !== input.job.payloadDigest || existing.tool !== input.job.tool ||
-              existing.target_ref !== input.job.targetRef || existing.policy_version !== input.job.policyVersion ||
-              existing.owner_session_id !== input.request.sessionId ||
-              existing.owner_edge_id !== input.request.edgeId ||
-              existing.owner_edge_key_id !== (input.job.edgeKeyId ?? null)) {
-            throw new BrokerError("CONFLICT", "Idempotency key was already used for a different job identity or payload");
-          }
           const reused = mapJob(existing);
-          if (reused.state !== "completed" || reused.resultClass !== "success") {
-            throw new BrokerError("CONFLICT", "Idempotency key refers to a Job without a successful terminal outcome");
+          const differs = firstDifferingBinding(reused, {
+            tool: input.job.tool, payloadDigest: input.job.payloadDigest, targetRef: input.job.targetRef,
+            policyVersion: input.job.policyVersion, sessionId: input.request.sessionId,
+            edgeId: input.request.edgeId, edgeKeyId: input.job.edgeKeyId ?? null
+          });
+          if (differs !== undefined || reused.state !== "completed" || reused.resultClass !== "success") {
+            throw idempotencyConflict(reused, differs);
           }
           const completion: AuditEvent = {
             requestId: input.request.requestId,
@@ -2191,12 +2190,12 @@ export class BrokerStore {
           ).get(input.job.ownerPrincipalId, input.job.idempotencyKey) as JobRow | undefined;
           if (existing !== undefined) {
             const reused = mapJob(existing);
-            if (reused.tool !== current.tool || reused.targetRef !== input.job.targetRef ||
-                reused.payloadDigest !== input.job.payloadDigest || reused.policyVersion !== current.policyVersion ||
-                reused.ownerSessionId !== current.sessionId || reused.ownerEdgeId !== current.edgeId ||
-                !matchingEdgeKeyIdentity(current.edgeKeyId ?? null, reused.ownerEdgeKeyId)) {
-              throw new BrokerError("CONFLICT", "Idempotency key was already used for a different task identity or payload");
-            }
+            const differs = firstDifferingBinding(reused, {
+              tool: current.tool, payloadDigest: input.job.payloadDigest, targetRef: input.job.targetRef,
+              policyVersion: current.policyVersion, sessionId: current.sessionId,
+              edgeId: current.edgeId, edgeKeyId: current.edgeKeyId ?? null
+            });
+            if (differs !== undefined) throw idempotencyConflict(reused, differs);
             this.insertAudit({
               ...input.intent,
               eventType: "completion",
@@ -2732,16 +2731,14 @@ export class BrokerStore {
         "SELECT * FROM jobs WHERE owner_principal_id = ? AND idempotency_key = ?"
       ).get(input.ownerPrincipalId, input.idempotencyKey) as JobRow | undefined;
       if (existing) {
-        if (existing.payload_digest !== input.payloadDigest || existing.tool !== input.tool ||
-            existing.target_ref !== input.targetRef || existing.policy_version !== input.policyVersion ||
-            existing.owner_session_id !== input.ownerSessionId ||
-            existing.owner_edge_id !== (input.edgeId ?? null) ||
-            existing.owner_edge_key_id !== (input.edgeKeyId ?? null)) {
-          throw new BrokerError("CONFLICT", "Idempotency key was already used for a different authorized job identity or payload");
-        }
         const reused = mapJob(existing);
-        if (reused.state === "queued" || reused.state === "running") {
-          throw new BrokerError("CONFLICT", "Idempotency key refers to an active Job");
+        const differs = firstDifferingBinding(reused, {
+          tool: input.tool, payloadDigest: input.payloadDigest, targetRef: input.targetRef,
+          policyVersion: input.policyVersion, sessionId: input.ownerSessionId,
+          edgeId: input.edgeId ?? null, edgeKeyId: input.edgeKeyId ?? null
+        });
+        if (differs !== undefined || reused.state === "queued" || reused.state === "running") {
+          throw idempotencyConflict(reused, differs);
         }
         return { job: reused, reused: true };
       }
@@ -5750,9 +5747,15 @@ function assertJobTombstoneAbsent(
   const archived = database.prepare(
     "SELECT 1 FROM job_tombstones WHERE job_id = ? OR (owner_principal_id = ? AND idempotency_key = ?) LIMIT 1"
   ).get(jobId, principalId, idempotencyKey);
-  if (archived !== undefined) {
-    throw new BrokerError("CONFLICT", "Job identity or idempotency key refers to archived history; inspect its status before reuse");
-  }
+  if (archived === undefined) return;
+  // The job_id clause above is a global barrier, so the match can be another principal's row. Only the caller's own
+  // archived Job is named; anything else keeps the generic text.
+  const own = database.prepare(
+    "SELECT * FROM job_tombstones WHERE owner_principal_id = ? AND (job_id = ? OR idempotency_key = ?) LIMIT 1"
+  ).get(principalId, jobId, idempotencyKey) as JobTombstoneRow | undefined;
+  throw own === undefined
+    ? new BrokerError("CONFLICT", "Job identity or idempotency key refers to archived history; inspect its status before reuse")
+    : archivedIdempotencyConflict(mapArchivedJob(own));
 }
 
 function validateStoredRequestTombstone(row: RequestTombstoneRow): void {

@@ -130,9 +130,22 @@ test("Broker owner terminal requires scope and delegation, audits before executi
     const replay = await call(); assert.equal(replay.ok, true, JSON.stringify(replay));
     if (replay.ok) assert.equal((replay.data as { reused: boolean }).reused, true);
     assert.equal(await readFile(join(root, "counter"), "utf8"), "once");
-    assert.equal((await call({ ...args, command: "printf different >> counter" })).ok, false);
     const job = store.ownedJobByIdempotencyKey("same-operation", "principal-1")!;
     assert.equal(job.state, "completed"); assert.equal(job.stdout, "verified");
+    const different = await call({ ...args, command: "printf different >> counter" });
+    const failureSchema = JSON.parse(await readFile(fileURLToPath(new URL("../../../schemas/broker-failure.schema.json", import.meta.url)), "utf8"));
+    const validateFailure = ajv.compile(failureSchema);
+    assert.equal(validateFailure(different), true, ajv.errorsText(validateFailure.errors));
+    assert.equal(different.ok, false); assert.equal(different.result_class, "CONFLICT");
+    if (!different.ok) assert.equal(different.error.message, `IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job ${job.jobId} ` +
+      `(mac_terminal_exec, completed, created ${new Date(job.createdAtMs).toISOString()}), but the new request differs in arguments. Use a new idempotency_key.`);
+    // A key held by another tool names that tool.
+    store.createJob({ jobId: "job:write-held", ownerPrincipalId: "principal-1", ownerSessionId: "session-1", tool: "mac_write_file_atomic",
+      targetRef: "path:test-root", policyVersion: policy.version, payloadDigest: "d".repeat(64), idempotencyKey: "write-held-key", createdAtMs: 1_000 });
+    const crossTool = await call({ ...args, idempotency_key: "write-held-key" });
+    assert.equal(crossTool.ok, false); assert.equal(crossTool.result_class, "CONFLICT");
+    if (!crossTool.ok) assert.equal(crossTool.error.message, "IDEMPOTENCY_KEY_IN_USE: this idempotency_key already belongs to job job:write-held " +
+      "(mac_write_file_atomic, queued, created 1970-01-01T00:00:01.000Z), but the new request differs in tool. Use a new idempotency_key.");
     assert.equal(store.auditEventExists("terminal-3", "intent"), true);
     assert.equal(store.auditEventExists("terminal-3", "completion"), true);
     const pending = call({ command: "printf started > cancel-started; sleep 5; printf late > cancel-late", cwd: root, idempotency_key: "cancel-operation" });
@@ -172,6 +185,7 @@ test("Broker owner terminal requires scope and delegation, audits before executi
       assert.equal(store.ownedJobByIdempotencyKey("same-operation", "principal-1"), undefined);
       const archivedReplay = await call();
       assert.equal(archivedReplay.result_class, "CONFLICT");
+      if (!archivedReplay.ok) assert.match(archivedReplay.error.message, new RegExp(`^IDEMPOTENCY_KEY_IN_USE: this idempotency_key or Job id belongs to archived job ${job.jobId} \\(mac_terminal_exec, completed, finished `, "u"));
       assert.equal(await readFile(join(root, "counter"), "utf8"), "once");
     } finally { archiveKey.fill(0); }
 
