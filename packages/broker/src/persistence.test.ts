@@ -1585,6 +1585,84 @@ test("atomic approved job admission links request, approval, intent, and idempot
   }
 });
 
+/** Admit a task Request with its Job, then finish the Job as `failed` while the Request stays in INTENT_RECORDED. */
+function admitFailedTaskJob(store: BrokerStore, name: string): { requestId: string; jobId: string } {
+  store.issueApproval({
+    approvalId: `approval:outcome-${name}`, approverPrincipalId: "operator-1", requestingPrincipalId: "principal-1",
+    tool: "mac_task_run", contractVersion: "0.1", targetKind: "task_profile", targetRef: "task_profile:test",
+    payloadDigest: "b".repeat(64), policyVersion: "policy-0.1", approvalClass: "trusted_profile", unattended: false,
+    issuedAtMs: 1, expiresAtMs: 100
+  });
+  const input = atomicJobAdmissionInput(`request-outcome-${name}`, `nonce-outcome-${name}`, `job:outcome-${name}`, "task:test", "task_profile:test");
+  store.admitApprovedJob({ ...input, job: { ...input.job, idempotencyKey: `outcome-${name}` } });
+  store.startJob(input.job.jobId, "principal-1", 0, 4);
+  store.finishJob(input.job.jobId, "principal-1", 1, { state: "failed", resultClass: "failed", finishedAtMs: 5, exitCode: 1 });
+  return { requestId: input.request.requestId, jobId: input.job.jobId };
+}
+
+function failTaskRequest(store: BrokerStore, requestId: string, resultClass: string): void {
+  store.markRequestRunning(requestId, 6);
+  store.failRequest({ ...requestEvent(requestId, "completion", resultClass, 7), tool: "mac_task_run", targetRef: "task_profile:test" });
+}
+
+test("ownedJobOutcomeClass reports only the failure class recorded by the failed Job's own Request", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-outcome-class-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  try {
+    for (const [name, resultClass] of [
+      ["timeout", "TIMEOUT"], ["output", "OUTPUT_LIMIT"], ["verification", "VERIFICATION_FAILED"], ["execution", "EXECUTION_FAILED"]
+    ] as const) {
+      const { requestId, jobId } = admitFailedTaskJob(store, name);
+      failTaskRequest(store, requestId, resultClass);
+      assert.equal(store.ownedJobOutcomeClass(jobId, "principal-1"), resultClass);
+      assert.equal(store.ownedJobOutcomeClass(jobId, "principal-2"), undefined);
+    }
+
+    // The Job commits before its Request completion row, so a Request that has not completed yet yields nothing.
+    const pending = admitFailedTaskJob(store, "pending");
+    assert.equal(store.requestRecord(pending.requestId)?.state, "INTENT_RECORDED");
+    assert.equal(store.ownedJobOutcomeClass(pending.jobId, "principal-1"), undefined);
+    store.markRequestRunning(pending.requestId, 6);
+    assert.equal(store.requestRecord(pending.requestId)?.state, "RUNNING");
+    assert.equal(store.ownedJobOutcomeClass(pending.jobId, "principal-1"), undefined);
+
+    // A Request reconciled after a restart to UNKNOWN_OUTCOME is not a failure class.
+    assert.deepEqual(store.reconcileInterruptedRequests(8), { failed: 0, unknown: 1 });
+    assert.equal(store.requestRecord(pending.requestId)?.resultClass, "UNKNOWN_OUTCOME");
+    assert.equal(store.ownedJobOutcomeClass(pending.jobId, "principal-1"), undefined);
+
+    assert.equal(store.ownedJobOutcomeClass("job:outcome-missing", "principal-1"), undefined);
+    for (const [jobId, principalId] of [
+      ["outcome-timeout", "principal-1"], ["job:", "principal-1"], ["job:outcome timeout", "principal-1"],
+      ["job:outcome-timeout", ""], ["job:outcome-timeout", "principal 1"], ["job:outcome-timeout", "p".repeat(129)]
+    ]) {
+      assert.throws(() => store.ownedJobOutcomeClass(jobId!, principalId!), /Job record is malformed/u, `${jobId} ${principalId}`);
+    }
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("ownedJobOutcomeClass still finds the class in the request tombstone after ledger rotation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-job-outcome-tombstone-"));
+  const databasePath = join(directory, "broker.sqlite");
+  const store = new BrokerStore(databasePath, { runtimeFence: true });
+  try {
+    const { requestId, jobId } = admitFailedTaskJob(store, "tombstone");
+    failTaskRequest(store, requestId, "TIMEOUT");
+    await store.rotateLedgerArchive(directory, { keySource: testBackupKeySource, nowMs: 100_000, retainRequestCount: 0, retainJobCount: 0, minAgeMs: 1_000 });
+    assert.equal(store.requestRecord(requestId), undefined);
+    assert.equal(store.ownedJob(jobId, "principal-1"), undefined);
+    assert.equal(store.ownedJobStatus(jobId, "principal-1").archived?.state, "failed");
+    assert.equal(store.ownedJobOutcomeClass(jobId, "principal-1"), "TIMEOUT");
+    assert.equal(store.ownedJobOutcomeClass(jobId, "principal-2"), undefined);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("atomic approved job admission rolls back every injected failure point", async () => {
   const faultPoints = [
     "admit_approved_job.after_request",

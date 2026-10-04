@@ -92,6 +92,8 @@ export interface GuestAttestationKeyConfigActivationIdentity {
 
 export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled" | "unknown";
 export type JobResultClass = "success" | "denied" | "failed" | "verification_failed" | "queued" | "accepted" | "unknown";
+/** Failure classes of the originating Request that mac_job_status reports for a failed Job (the Job row keeps only `failed`). */
+export type JobOutcomeClass = "TIMEOUT" | "OUTPUT_LIMIT" | "VERIFICATION_FAILED" | "EXECUTION_FAILED";
 
 export interface JobLease {
   ownerId: string;
@@ -2791,6 +2793,26 @@ export class BrokerStore {
       "SELECT * FROM job_tombstones WHERE job_id = ? AND owner_principal_id = ?"
     ).get(jobId, principalId) as JobTombstoneRow | undefined;
     return archived === undefined ? {} : { archived: mapArchivedJob(archived) };
+  }
+
+  /**
+   * Failure class the originating Request recorded for a failed Job, read from the live ledger or its tombstone. The Job
+   * row keeps only the coarse failed state, and the Job commits before its Request completion row, so this is best-effort:
+   * a Request that is still running, was reconciled to UNKNOWN_OUTCOME, or reused the Job by idempotency yields nothing.
+   */
+  ownedJobOutcomeClass(jobId: string, principalId: string): JobOutcomeClass | undefined {
+    if (!/^job:[A-Za-z0-9._-]{1,240}$/u.test(jobId) || !/^[A-Za-z0-9._:@/-]{1,128}$/u.test(principalId)) {
+      throw malformedJob();
+    }
+    const row = this.database.prepare(`
+      SELECT result_class FROM requests WHERE job_id = ? AND principal_id = ?
+        AND result_class IN ('TIMEOUT', 'OUTPUT_LIMIT', 'VERIFICATION_FAILED', 'EXECUTION_FAILED')
+      UNION ALL
+      SELECT result_class FROM request_tombstones WHERE job_id = ? AND principal_id = ?
+        AND result_class IN ('TIMEOUT', 'OUTPUT_LIMIT', 'VERIFICATION_FAILED', 'EXECUTION_FAILED')
+      LIMIT 1
+    `).get(jobId, principalId, jobId, principalId) as { result_class?: unknown } | undefined;
+    return row === undefined ? undefined : row.result_class as JobOutcomeClass;
   }
 
   ownedJobByIdempotencyKey(idempotencyKey: string, principalId: string): BrokerJob | undefined {

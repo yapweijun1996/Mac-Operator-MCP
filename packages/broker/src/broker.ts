@@ -27,7 +27,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join } from "node:path";
 import { isPlainDataRecord } from "./plain-record.js";
-import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, TASK_JOB_TOOLS, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type PrivilegedHelperPayload, type ProjectPinningJobs, type WriteJobMetadata } from "./persistence.js";
+import { GUI_SESSION_PREVIEW_TTL_MS, APPROVAL_PREVIEW_TTL_MS, privilegedHelperPayloadTarget, validatePrivilegedHelperPayload, TASK_JOB_TOOLS, type ArchivedJobRecord, type ApprovalConsumptionBinding, type BrokerJob, type BrokerStore, type GuestTaskJobMetadata, type JobLease, type JobOutcomeClass, type PrivilegedHelperPayload, type ProjectPinningJobs, type WriteJobMetadata } from "./persistence.js";
 import { EdgeKeyring, isValidEdgeId, keyIdentity } from "./edge-keyring.js";
 import {
   authorizePrincipalProjection,
@@ -1261,6 +1261,7 @@ export class Broker {
         }
         if (existing) execution.taskJob = existing;
       }
+      if (request.tool === "mac_job_cancel") assertJobCancellable(execution);
       this.options.store.recordRequestDecision({
         requestId: request.requestId,
         principalId: request.principal.principalId,
@@ -3258,7 +3259,9 @@ export class Broker {
       case "mac_job_status": {
         if (execution.archivedJob) {
           return {
-            data: archivedJobStatusData(execution.archivedJob),
+            data: archivedJobStatusData(execution.archivedJob, execution.archivedJob.state === "failed"
+              ? this.options.store.ownedJobOutcomeClass(execution.archivedJob.jobId, request.principal.principalId)
+              : undefined),
             verification: { required: false, status: "verified", strategy: "job_result_validation" },
             truncated: true,
             warnings: ["Job history was archived; output is no longer retained in the live Broker ledger"],
@@ -3279,7 +3282,9 @@ export class Broker {
             : await this.inspectPrivilegedPostcondition(execution.job, request)
           : undefined;
         return {
-          data: jobStatusData(execution.job, output, recovery),
+          data: jobStatusData(execution.job, output, recovery, execution.job.state === "failed"
+            ? this.options.store.ownedJobOutcomeClass(execution.job.jobId, request.principal.principalId)
+            : undefined),
           verification: { required: false, status: "verified", strategy: "job_result_validation" },
           truncated: output.truncated,
           auditTarget: `job:${execution.job.jobId}`,
@@ -6753,10 +6758,25 @@ function boundedJobOutput(job: BrokerJob, tailBytes: number): { stdout: string; 
   };
 }
 
+const NOT_CANCELLABLE_JOB_STATES: ReadonlySet<BrokerJob["state"]> = new Set(["completed", "failed", "cancelled", "unknown"]);
+
+/**
+ * A finished (or archived) Job has nothing left to cancel, so say so before the owner is asked to approve a no-op.
+ * Dispatch keeps its own no-op and archived checks for a Job that finishes between planning and dispatch.
+ */
+function assertJobCancellable(execution: ExecutionPlan): void {
+  const job = execution.archivedJob ?? execution.job;
+  if (job === undefined || !NOT_CANCELLABLE_JOB_STATES.has(job.state)) return;
+  throw new BrokerError("CONFLICT", job.state === "unknown"
+    ? `Job ${job.jobId} cannot be cancelled: its outcome is unresolved (state: unknown) and mac_job_cancel cannot change it. Read its state with mac_job_status.`
+    : `Job ${job.jobId} cannot be cancelled: it has already finished (state: ${job.state}). Read its result with mac_job_status.`);
+}
+
 function jobStatusData(
   job: BrokerJob,
   output: { stdout: string; stderr: string; truncated: boolean },
-  recovery?: WriteRecoveryStatus
+  recovery?: WriteRecoveryStatus,
+  outcomeClass?: JobOutcomeClass
 ) {
   return {
     job_id: job.jobId,
@@ -6770,11 +6790,12 @@ function jobStatusData(
     stdout: output.stdout,
     stderr: output.stderr,
     truncated: output.truncated,
-    ...(recovery ? { recovery } : {})
+    ...(recovery ? { recovery } : {}),
+    ...(outcomeClass === undefined ? {} : { outcome_class: outcomeClass })
   };
 }
 
-function archivedJobStatusData(job: ArchivedJobRecord) {
+function archivedJobStatusData(job: ArchivedJobRecord, outcomeClass?: JobOutcomeClass) {
   return {
     job_id: job.jobId,
     state: job.state,
@@ -6786,7 +6807,8 @@ function archivedJobStatusData(job: ArchivedJobRecord) {
     result_class: job.resultClass,
     stdout: "",
     stderr: "",
-    truncated: true
+    truncated: true,
+    ...(outcomeClass === undefined ? {} : { outcome_class: outcomeClass })
   };
 }
 

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { canonicalJson, sha256, signRequest, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
@@ -12,7 +14,15 @@ import { BrokerStore } from "./persistence.js";
 import { TaskProfileRegistry, type TaskProfile } from "./task-profile.js";
 import type { TaskExecutionControl, TaskExecutionResult, TaskIsolationProof, TaskRunner } from "./task-runner.js";
 
+const require = createRequire(import.meta.url);
+const Ajv2020 = require("ajv/dist/2020").default;
+const ajv = new Ajv2020({ strict: true, allErrors: true });
+require("ajv-formats").default(ajv);
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+let jobStatusValidator: ReturnType<typeof ajv.compile> | undefined;
+
 const NOW = 1_700_000_000_000;
+const archiveKeySource = { keyId: "async-task-test-1", loadKey: () => Buffer.from("0123456789abcdef0123456789abcdef", "ascii") };
 const isolationProof: TaskIsolationProof = {
   schemaVersion: "0.1",
   sandboxMechanism: "sandbox-exec",
@@ -41,11 +51,11 @@ function latch() {
   return { promise, release };
 }
 
-async function setup(run: TaskRunner["run"], closeRunner?: () => Promise<void>) {
+async function setup(run: TaskRunner["run"], closeRunner?: () => Promise<void>, storeOptions?: ConstructorParameters<typeof BrokerStore>[1]) {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-async-task-"));
   const root = await realpath(directory);
   const key = randomBytes(32);
-  let store = new BrokerStore(join(root, "broker.sqlite"));
+  let store = new BrokerStore(join(root, "broker.sqlite"), storeOptions);
   const scopes: Scope[] = ["mac.task.run", "mac.control.read", "mac.job.read", "mac.job.cancel"];
   const basePolicy = createDefaultPolicy("edge-1", true, scopes, ["edge-key-1"],
     [{ rootId: "task-root", path: root, metadata: true, contentRead: true, denyRelativePaths: [] }],
@@ -92,6 +102,17 @@ async function setup(run: TaskRunner["run"], closeRunner?: () => Promise<void>) 
     reopen: () => { store.close(); store = new BrokerStore(join(root, "broker.sqlite")); return store; },
     close: async () => { await broker.close(); store.close(); await rm(root, { recursive: true, force: true }); }
   };
+}
+
+type JobStatusData = { state: string; result_class: string; outcome_class?: string };
+
+/** Read mac_job_status through the Broker and require the result to satisfy the published output schema. */
+async function jobStatus(fixture: Awaited<ReturnType<typeof setup>>, requestId: string, jobId: string): Promise<JobStatusData> {
+  const result = await fixture.handle(requestId, "mac_job_status", { job_id: jobId, tail_bytes: 1_024 });
+  assert.ok(result.ok, JSON.stringify(result));
+  jobStatusValidator ??= ajv.compile(JSON.parse(await readFile(join(repositoryRoot, "tool-contracts", "mac_job_status.json"), "utf8")).output_schema);
+  assert.equal(jobStatusValidator(result), true, ajv.errorsText(jobStatusValidator.errors));
+  return result.data as JobStatusData;
 }
 
 async function settle(fixture: Awaited<ReturnType<typeof setup>>, requestId: string): Promise<void> {
@@ -221,8 +242,14 @@ test("Broker close drains admitted async tasks before the store can be closed", 
 });
 
 for (const scenario of [
-  { name: "failure", result: terminal({ state: "failed", resultClass: "EXECUTION_FAILED", exitCode: 1, verification: { status: "verified" } }), expected: "FAILED" },
-  { name: "timeout", result: terminal({ state: "timed_out", resultClass: "TIMEOUT", exitCode: null, durationMs: 501, verification: { status: "unknown" } }), expected: "TIMED_OUT" }
+  { name: "failure", result: terminal({ state: "failed", resultClass: "EXECUTION_FAILED", exitCode: 1, verification: { status: "verified" } }),
+    expected: "FAILED", outcome: "EXECUTION_FAILED", jobResultClass: "failed" },
+  { name: "timeout", result: terminal({ state: "timed_out", resultClass: "TIMEOUT", exitCode: null, durationMs: 501, verification: { status: "unknown" } }),
+    expected: "TIMED_OUT", outcome: "TIMEOUT", jobResultClass: "failed" },
+  { name: "output-limit", result: terminal({ state: "failed", resultClass: "OUTPUT_LIMIT", exitCode: null, truncated: true, verification: { status: "unknown" } }),
+    expected: "FAILED", outcome: "OUTPUT_LIMIT", jobResultClass: "failed" },
+  { name: "verification-failed", result: terminal({ verification: { status: "failed" } }),
+    expected: "VERIFICATION_FAILED", outcome: "VERIFICATION_FAILED", jobResultClass: "verification_failed" }
 ]) {
   test(`async task ${scenario.name} is persisted and remains inspectable`, async () => {
     const fixture = await setup(async () => scenario.result);
@@ -232,14 +259,58 @@ for (const scenario of [
       assert.equal(fixture.store.requestRecord(`async-${scenario.name}`)?.state, scenario.expected);
       const jobId = fixture.store.requestRecord(`async-${scenario.name}`)?.jobId;
       assert.ok(jobId); assert.equal(fixture.store.ownedJob(jobId, "principal-1")?.state, "failed");
+      const status = await jobStatus(fixture, `async-${scenario.name}-status`, jobId);
+      assert.equal(status.state, "failed"); assert.equal(status.result_class, scenario.jobResultClass);
+      assert.equal(status.outcome_class, scenario.outcome);
       const retry = await fixture.handle(`async-${scenario.name}-retry`);
       assert.equal(retry.ok, true, JSON.stringify(retry));
       if (retry.ok) assert.equal((retry.data as { state: string }).state, "failed");
+      assert.equal((await jobStatus(fixture, `async-${scenario.name}-status-retry`, jobId)).outcome_class, scenario.outcome);
       await fixture.broker.close(); fixture.reopen();
       assert.equal(fixture.store.requestRecord(`async-${scenario.name}-retry`)?.resultClass, "IDEMPOTENT_REUSE");
     } finally { await fixture.close(); }
   });
 }
+
+test("an archived failed task Job still reports its outcome_class from the request tombstone", async () => {
+  const timedOut = terminal({ state: "timed_out", resultClass: "TIMEOUT", exitCode: null, durationMs: 501, verification: { status: "unknown" } });
+  const fixture = await setup(async () => timedOut, undefined, { runtimeFence: true });
+  try {
+    fixture.approve(); const result = await fixture.handle("archive-timeout");
+    assert.equal(result.ok, true, JSON.stringify(result)); await settle(fixture, "archive-timeout");
+    const jobId = fixture.store.requestRecord("archive-timeout")?.jobId;
+    assert.ok(jobId);
+    await fixture.store.rotateLedgerArchive(fixture.root, { keySource: archiveKeySource, nowMs: NOW + 10_000, retainRequestCount: 0, retainJobCount: 0, minAgeMs: 0 });
+    assert.equal(fixture.store.ownedJob(jobId, "principal-1"), undefined);
+    assert.equal(fixture.store.requestRecord("archive-timeout"), undefined);
+    const status = await jobStatus(fixture, "archive-timeout-status", jobId);
+    assert.equal(status.state, "failed"); assert.equal(status.result_class, "failed"); assert.equal(status.outcome_class, "TIMEOUT");
+  } finally { await fixture.close(); }
+});
+
+test("mac_job_status reports no outcome_class for Jobs that did not fail", async () => {
+  const fixture = await setup(async () => terminal());
+  try {
+    fixture.approve(); await fixture.handle("plain-success"); await settle(fixture, "plain-success");
+    const create = (name: string) => fixture.store.createJob({
+      jobId: `job:plain-${name}`, ownerPrincipalId: "principal-1", ownerSessionId: "session-1", tool: "mac_task_run",
+      targetRef: "task_profile:tests.echo", policyVersion: "policy-0.1", payloadDigest: "a".repeat(64),
+      idempotencyKey: `plain-${name}`, createdAtMs: NOW - 5_000
+    });
+    create("queued");
+    create("cancelled"); fixture.store.requestJobCancellation("job:plain-cancelled", "principal-1", "setup", NOW - 4_000);
+    create("unknown"); fixture.store.startJob("job:plain-unknown", "principal-1", 0, NOW - 4_000);
+    fixture.store.finishJob("job:plain-unknown", "principal-1", 1, { state: "unknown", resultClass: "unknown", finishedAtMs: NOW - 3_000 });
+    for (const [state, jobId] of [
+      ["completed", fixture.store.requestRecord("plain-success")?.jobId], ["queued", "job:plain-queued"],
+      ["cancelled", "job:plain-cancelled"], ["unknown", "job:plain-unknown"]
+    ] as const) {
+      assert.ok(jobId);
+      const status = await jobStatus(fixture, `plain-status-${state}`, jobId);
+      assert.equal(status.state, state); assert.equal("outcome_class" in status, false, state);
+    }
+  } finally { await fixture.close(); }
+});
 
 test("task and audit inputs reject malformed limits and caller shell fields", async () => {
   let calls = 0;

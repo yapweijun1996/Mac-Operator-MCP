@@ -25,7 +25,7 @@
   "implementation_status": "planned",
   "purpose": "read status and bounded sanitized output for a Broker-owned asynchronous job.",
   "input_summary": "job_id:string, tail_bytes?:0..524288.",
-  "output_summary": "queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative postcondition status for unresolved writes and independently authenticated Job-bound privileged-helper readback.",
+  "output_summary": "queued/running/completed/failed/cancelled, timestamps, exit/result class, for a failed job a best-effort outcome_class (TIMEOUT, OUTPUT_LIMIT, VERIFICATION_FAILED or EXECUTION_FAILED) read from its originating request, bounded output, and non-authoritative postcondition status for unresolved writes and independently authenticated Job-bound privileged-helper readback.",
   "input_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "mac_job_status input",
@@ -195,6 +195,15 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 9007199254740991
+          },
+          "outcome_class": {
+            "enum": [
+              "TIMEOUT",
+              "OUTPUT_LIMIT",
+              "VERIFICATION_FAILED",
+              "EXECUTION_FAILED"
+            ],
+            "description": "Only for state failed: the failure class the originating request recorded. Best-effort: absent while that request is still completing, when it was reconciled to an unknown outcome, or when its history was pruned."
           }
         },
         "required": [
@@ -284,6 +293,6 @@
     "kbid": "mac-operator-mcp",
     "kb_id": "90f1df58-87f6-4f47-aa9a-2881c478f8a0",
     "kb_item_id": "2002bf22-f988-4068-a952-8227b4bf7ab1",
-    "source_text": "Purpose: read status and bounded sanitized output for a Broker-owned asynchronous job. Input: job_id:string, tail_bytes?:0..524288. Output: queued/running/completed/failed/cancelled, timestamps, exit/result class, bounded output, and non-authoritative postcondition status for unresolved writes plus independently authenticated Job-bound privileged-helper readback. Contract: L2 read_only; scope mac.job.read; target job_id; timeout 5000ms; cap 512KiB; network none; filesystem broker_job_artifacts only; redaction mandatory; approval trusted_read; idempotent yes. Phase 3 planned."
+    "source_text": "Purpose: read status and bounded sanitized output for a Broker-owned asynchronous job. Input: job_id:string, tail_bytes?:0..524288. Output: queued/running/completed/failed/cancelled, timestamps, exit/result class, for a failed job a best-effort outcome_class (TIMEOUT, OUTPUT_LIMIT, VERIFICATION_FAILED or EXECUTION_FAILED) read from its originating request, bounded output, and non-authoritative postcondition status for unresolved writes plus independently authenticated Job-bound privileged-helper readback. Contract: L2 read_only; scope mac.job.read; target job_id; timeout 5000ms; cap 512KiB; network none; filesystem broker_job_artifacts only; redaction mandatory; approval trusted_read; idempotent yes. Phase 3 planned."
   }
 }

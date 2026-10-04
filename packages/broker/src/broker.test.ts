@@ -3772,6 +3772,130 @@ test("job status and queued cancellation are owner-bound and durably audited", a
   }
 });
 
+const FINISHED_JOB_STATES = ["completed", "failed", "cancelled", "unknown"] as const;
+
+function createFinishedJob(store: BrokerStore, jobId: string, state: typeof FINISHED_JOB_STATES[number], finishedAtMs = NOW - 3_000): void {
+  store.createJob({
+    jobId, ownerPrincipalId: "principal-1", ownerSessionId: "session-1", tool: "mac_task_run", targetRef: "task:test",
+    policyVersion: "policy-0.1", payloadDigest: "a".repeat(64), idempotencyKey: jobId, createdAtMs: NOW - 5_000
+  });
+  if (state === "cancelled") {
+    store.requestJobCancellation(jobId, "principal-1", "setup", finishedAtMs);
+    return;
+  }
+  store.startJob(jobId, "principal-1", 0, NOW - 4_000);
+  store.finishJob(jobId, "principal-1", 1, state === "completed"
+    ? { state, resultClass: "success", finishedAtMs, exitCode: 0 }
+    : state === "failed" ? { state, resultClass: "failed", finishedAtMs, exitCode: 1 } : { state, resultClass: "unknown", finishedAtMs });
+}
+
+function issueCancelApproval(store: BrokerStore, approvalId: string, cancelArguments: Record<string, unknown>): void {
+  store.issueApproval({
+    approvalId, approverPrincipalId: "operator-1", requestingPrincipalId: "principal-1", tool: "mac_job_cancel",
+    contractVersion: "0.1", targetKind: "job", targetRef: `job:${cancelArguments.job_id as string}`,
+    payloadDigest: sha256(canonicalJson(cancelArguments)), policyVersion: "policy-0.1", approvalClass: "trusted_write",
+    unattended: false, issuedAtMs: NOW - 1_000, expiresAtMs: NOW + 1_000
+  });
+}
+
+test("mac_job_cancel rejects a finished job with CONFLICT before any approval is requested or consumed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-job-finished-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"));
+  const key = randomBytes(32);
+  const scopes: Scope[] = ["mac.job.read", "mac.job.cancel"];
+  const broker = new Broker({
+    store, policy: createDefaultPolicy("edge-1", true, [...scopes, "mac.policy.explain"]), edgeAuthenticationKeys: testKeyring(key), now: () => NOW
+  });
+  try {
+    for (const state of FINISHED_JOB_STATES) {
+      const jobId = `job:finished-${state}`;
+      createFinishedJob(store, jobId, state);
+      const cancelArguments = { job_id: jobId, reason: "test" };
+      for (const approved of [false, true]) {
+        const requestId = `cancel-${state}-${approved ? "approved" : "unapproved"}`;
+        const approvalId = `approval:${requestId}`;
+        if (approved) issueCancelApproval(store, approvalId, cancelArguments);
+        const result = await broker.handle(signRequest(unsigned({
+          requestId, nonce: `nonce-${requestId}`, tool: "mac_job_cancel", arguments: cancelArguments
+        }, scopes), key));
+        assert.equal(result.ok, false, requestId);
+        assert.equal(result.result_class, "CONFLICT", requestId);
+        if (result.ok) continue;
+        assert.equal(result.error.retryable, false);
+        assert.match(result.error.message, new RegExp(`^Job ${jobId} cannot be cancelled: `, "u"));
+        assert.match(result.error.message, /Read (its result|its state) with mac_job_status\.$/u);
+        if (state === "unknown") {
+          assert.match(result.error.message, /outcome is unresolved \(state: unknown\) and mac_job_cancel cannot change it/u);
+          assert.doesNotMatch(result.error.message, /no longer running/u);
+        } else {
+          assert.match(result.error.message, new RegExp(`it has already finished \\(state: ${state}\\)`, "u"));
+        }
+        assert.equal(store.requestRecord(requestId)?.state, "DENIED");
+        assert.deepEqual(store.auditRows().filter((row) => row.request_id === requestId)
+          .map((row) => [row.event_type, row.result_class, row.target_ref]), [["decision", "CONFLICT", `job:${jobId}`]]);
+        assert.equal(store.approvalPreview(requestId, NOW), undefined);
+        if (approved) assert.equal(store.approvalRecord(approvalId)?.usedCount, 0);
+      }
+      assert.equal(store.ownedJob(jobId, "principal-1")?.state, state);
+    }
+
+    // A live job is unchanged: the unapproved cancel still asks the owner for approval.
+    store.createJob({
+      jobId: "job:still-queued", ownerPrincipalId: "principal-1", ownerSessionId: "session-1", tool: "mac_task_run",
+      targetRef: "task:test", policyVersion: "policy-0.1", payloadDigest: "a".repeat(64), idempotencyKey: "still-queued", createdAtMs: NOW - 5_000
+    });
+    const queued = await broker.handle(signRequest(unsigned({
+      requestId: "cancel-queued-unapproved", nonce: "nonce-cancel-queued-unapproved", tool: "mac_job_cancel", arguments: { job_id: "job:still-queued" }
+    }, scopes), key));
+    assert.equal(queued.result_class, "POLICY_DENIED");
+    assert.ok(store.approvalPreview("cancel-queued-unapproved", NOW));
+
+    // mac_policy_explain without proposed_arguments is not a cancel request, so a finished job is still explained.
+    const explained = await broker.handle(signRequest(unsigned({
+      requestId: "explain-finished-cancel", nonce: "nonce-explain-finished-cancel", tool: "mac_policy_explain",
+      arguments: { proposed_tool: "mac_job_cancel", target: { kind: "job", reference: "job:finished-completed" } }
+    }, ["mac.policy.explain", ...scopes]), key));
+    assert.equal(explained.ok, true, JSON.stringify(explained));
+    if (explained.ok) assert.equal((explained.data as { decision: string }).decision, "allow");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("mac_job_cancel rejects an archived job at plan time without consuming an approval", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-job-archived-"));
+  const store = new BrokerStore(join(directory, "broker.sqlite"), { runtimeFence: true });
+  const key = randomBytes(32);
+  const scopes: Scope[] = ["mac.job.read", "mac.job.cancel"];
+  const broker = new Broker({
+    store, policy: createDefaultPolicy("edge-1", true, scopes), edgeAuthenticationKeys: testKeyring(key), now: () => NOW
+  });
+  try {
+    createFinishedJob(store, "job:archived-completed", "completed");
+    await store.rotateLedgerArchive(directory, {
+      keySource: { keyId: "broker-test-archive-1", loadKey: () => Buffer.from("0123456789abcdef0123456789abcdef", "ascii") },
+      nowMs: NOW, retainRequestCount: 0, retainJobCount: 0, minAgeMs: 1_000
+    });
+    assert.equal(store.ownedJob("job:archived-completed", "principal-1"), undefined);
+    const cancelArguments = { job_id: "job:archived-completed" };
+    issueCancelApproval(store, "approval:cancel-archived", cancelArguments);
+    const result = await broker.handle(signRequest(unsigned({
+      requestId: "cancel-archived", nonce: "nonce-cancel-archived", tool: "mac_job_cancel", arguments: cancelArguments
+    }, scopes), key));
+    assert.equal(result.ok, false);
+    assert.equal(result.result_class, "CONFLICT");
+    if (!result.ok) assert.match(result.error.message, /^Job job:archived-completed cannot be cancelled: it has already finished \(state: completed\)/u);
+    assert.equal(store.approvalRecord("approval:cancel-archived")?.usedCount, 0);
+    assert.equal(store.requestRecord("cancel-archived")?.state, "DENIED");
+    assert.deepEqual(store.auditRows().filter((row) => row.request_id === "cancel-archived")
+      .map((row) => [row.event_type, row.result_class]), [["decision", "CONFLICT"]]);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("job tools do not reveal a job owned by another principal", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-broker-job-owner-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
