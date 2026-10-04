@@ -9,6 +9,7 @@ const options = { env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" }, timeout: 30000
 before(async () => {
   if (process.platform !== "darwin") return;
   directory = await mkdtemp("/tmp/mop-window-tests-");
+  options.env.TMPDIR = directory;
   executable = join(directory, "window-fixture");
   const source = join(directory, "fixture.m");
   await writeFile(source, `

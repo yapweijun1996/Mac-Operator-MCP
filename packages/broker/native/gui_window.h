@@ -122,20 +122,8 @@ static BOOL readGuiFocusedWindow(NSRunningApplication *app, id selected, NSStrin
   return same;
 }
 
-static GuiWindowTarget *resolveGuiWindow(NSString *bundleId, NSString *hint, BOOL focus,
-                                         NSString *expectedIdentity, NSString **reason) {
-  if (!AXIsProcessTrusted()) { *reason = @"accessibility_permission"; return nil; }
-  NSArray<NSRunningApplication *> *apps = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleId];
-  if (apps.count == 0) { *reason = @"app_not_running"; return nil; }
-  NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 3.0;
-  NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
-  if (protectedGuiSession(app.bundleIdentifier)) { *reason = @"protected_session"; return nil; }
-  if (![app.bundleIdentifier isEqualToString:bundleId]) {
-    if (!focus) { *reason = @"app_not_frontmost"; return nil; }
-    if (apps.count != 1) { *reason = @"window_ambiguous"; return nil; }
-    app = apps[0];
-  }
-  enableBrowserAccessibility(bundleId, app.processIdentifier);
+static id selectGuiAxWindow(NSRunningApplication *app, NSString *hint, NSString *expectedIdentity,
+                            NSString **reason) {
   NSArray *windows = axWindows(app.processIdentifier, reason);
   if (windows == nil || windows.count == 0) return nil;
   AXUIElementRef axApp = AXUIElementCreateApplication(app.processIdentifier);
@@ -153,7 +141,44 @@ static GuiWindowTarget *resolveGuiWindow(NSString *bundleId, NSString *hint, BOO
     selected = candidate;
   }
   if (focused != NULL) CFRelease(focused);
-  if (selected == nil) { *reason = error == kAXErrorSuccess ? @"window_not_found" : @"ax_enumeration_failed"; return nil; }
+  if (selected == nil) *reason = error == kAXErrorSuccess || error == kAXErrorNoValue
+    ? @"window_not_found" : @"ax_enumeration_failed";
+  return selected;
+}
+
+static GuiWindowTarget *resolveGuiWindow(NSString *bundleId, NSString *hint, BOOL focus,
+                                         NSString *expectedIdentity, NSString **reason) {
+  if (!AXIsProcessTrusted()) { *reason = @"accessibility_permission"; return nil; }
+  NSArray<NSRunningApplication *> *apps = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleId];
+  if (apps.count == 0) { *reason = @"app_not_running"; return nil; }
+  NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 3.0;
+  NSRunningApplication *app = NSWorkspace.sharedWorkspace.frontmostApplication;
+  if (protectedGuiSession(app.bundleIdentifier)) { *reason = @"protected_session"; return nil; }
+  if (![app.bundleIdentifier isEqualToString:bundleId]) {
+    if (!focus) { *reason = @"app_not_frontmost"; return nil; }
+    if (apps.count != 1) { *reason = @"window_ambiguous"; return nil; }
+    app = apps[0];
+  }
+  enableBrowserAccessibility(bundleId, app.processIdentifier);
+  __block id selected = nil;
+  __block NSString *selectionReason = @"window_not_found";
+  if (focus) {
+    // Launch verification proves process readiness; AX window publication may follow later.
+    pollGuiState(deadline, ^BOOL {
+      NSRunningApplication *frontmost = NSWorkspace.sharedWorkspace.frontmostApplication;
+      if (protectedGuiSession(frontmost.bundleIdentifier)) { selectionReason = @"protected_session"; return YES; }
+      NSRunningApplication *current = [NSRunningApplication runningApplicationWithProcessIdentifier:app.processIdentifier];
+      if (app.terminated || current == nil || ![current.bundleIdentifier isEqualToString:bundleId] ||
+          app.launchDate == nil || ![current.launchDate isEqualToDate:app.launchDate]) {
+        selectionReason = @"app_not_running"; return YES;
+      }
+      selected = selectGuiAxWindow(app, hint, expectedIdentity, &selectionReason);
+      return selected != nil || ![selectionReason isEqualToString:@"window_not_found"];
+    });
+  } else {
+    selected = selectGuiAxWindow(app, hint, expectedIdentity, &selectionReason);
+  }
+  if (selected == nil) { *reason = selectionReason; return nil; }
   AXUIElementRef ax = (__bridge AXUIElementRef)selected;
   NSString *title = attributeText(ax, kAXTitleAttribute);
   if (sensitiveTitle(title)) { *reason = @"target_denied"; return nil; }
@@ -168,8 +193,12 @@ static GuiWindowTarget *resolveGuiWindow(NSString *bundleId, NSString *hint, BOO
         AXUIElementSetAttributeValue(ax, kAXMinimizedAttribute, kCFBooleanFalse) != kAXErrorSuccess) {
       *reason = @"window_unavailable"; return nil;
     }
-    if (AXUIElementPerformAction(ax, kAXRaiseAction) != kAXErrorSuccess) { *reason = @"activation_failed"; return nil; }
-    AXUIElementSetAttributeValue(ax, kAXMainAttribute, kCFBooleanTrue);
+    // Some ordinary windows do not implement AXRaise. Exact focus is the postcondition.
+    if (!readGuiFocusedWindow(app, selected, &stateReason)) {
+      if (![stateReason isEqualToString:@"focused_window_not_found"]) { *reason = stateReason; return nil; }
+      if (AXUIElementPerformAction(ax, kAXRaiseAction) != kAXErrorSuccess) { *reason = @"activation_failed"; return nil; }
+      AXUIElementSetAttributeValue(ax, kAXMainAttribute, kCFBooleanTrue);
+    }
   }
   if (app.hidden || attributeBool(ax, kAXMinimizedAttribute, NO)) { *reason = @"window_unavailable"; return nil; }
   __block NSString *stateReason = @"focused_window_not_found";

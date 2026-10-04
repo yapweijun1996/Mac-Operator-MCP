@@ -184,7 +184,7 @@ static AXUIElementRef desktopFocusedElement(GuiDesktopTarget *target, NSSet<NSSt
   AXUIElementRef element = focusedElement(target.frontmost.processIdentifier); pid_t pid = -1;
   if (element == NULL || AXUIElementGetPid(element, &pid) != kAXErrorSuccess ||
       pid != target.frontmost.processIdentifier || !desktopElementAllowed(element, denied, reason) ||
-      (typing && (!textRole(attributeText(element, kAXRoleAttribute)) || !attributeBool(element, kAXEnabledAttribute, NO)))) {
+      (typing && (!textRole(attributeText(element, kAXRoleAttribute)) || !elementEnabled(element)))) {
     if (element != NULL) CFRelease(element); *reason = @"secure_target"; return NULL;
   }
   return element;

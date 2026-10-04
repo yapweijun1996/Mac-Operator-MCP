@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import test from "node:test";
-import { PLANNED_TOOL_NAMES, canonicalJson, sha256, signBrokerRevocationEvent, verifyBrokerRevocationResponse, signRequest, type AuthenticatedBrokerRevocationResponse, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
+import { BrokerError, PLANNED_TOOL_NAMES, canonicalJson, sha256, signBrokerRevocationEvent, verifyBrokerRevocationResponse, signRequest, type AuthenticatedBrokerRevocationResponse, type Scope, type UnsignedBrokerRequest } from "@mac-operator/contracts";
 import { Broker } from "./broker.js";
 import { createDefaultPolicy } from "./default-policy.js";
 import { EdgeKeyring } from "./edge-keyring.js";
@@ -1966,29 +1966,44 @@ test("mac_ui_action binds a short-lived owned snapshot, GUI approval, and reobse
   }
 });
 
-test("visual UI action returns a fresh screenshot without persisting image bytes in its Job", async () => {
+for (const effect of ["unchanged", "changed", "cross_app", "cross_window", "cross_native_identity"] as const)
+test(effect.startsWith("cross_") ? `visual action rejects postaction ${effect} readback before recording references` :
+  `visual dispatch has an unknown postcondition when a deterministic checkbox is ${effect}`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "mac-operator-visual-action-"));
   const store = new BrokerStore(join(directory, "broker.sqlite"));
   const key = randomBytes(32);
-  const appId = "bundle:com.google.Chrome";
+  const appId = "bundle:com.apple.TextEdit";
   const windowId = "window:0123456789abcdef0123456789abcdef0123456789abcdef";
+  const nativeWindowIdentity = "485:1790918400000:46";
   const visualRef = "element:0123456789abcdef0123456789abcdef0123456789abcdef";
   const nextRef = "element:abcdef0123456789abcdef0123456789abcdef0123456789";
-  const imageData = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100, 0), Buffer.from([0xff, 0xd9])]).toString("base64");
+  let checked = false;
+  const uncheckedImage = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100, 0), Buffer.from([0xff, 0xd9])]).toString("base64");
+  const checkedImage = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(100, 1), Buffer.from([0xff, 0xd9])]).toString("base64");
+  const imageData = effect === "changed" ? checkedImage : uncheckedImage;
   const screenshot = { mode: "active_window" as const, mimeType: "image/jpeg" as const, base64: imageData,
     screenWidth: 800, screenHeight: 600, windowX: 0, windowY: 0, windowWidth: 800, windowHeight: 600,
     captureWidth: 1600, captureHeight: 1200, imageWidth: 1600, imageHeight: 1200 };
   const registry = new UiSnapshotRegistry();
-  registry.recordObservation({ appId, windowId, windowIndex: 0, windowTitle: "Example Domain", focused: true,
-    nodes: [], truncated: false, warnings: [], screenshot, visualRef }, "principal-1", "session-1", NOW);
-  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.ui.control"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
+  registry.recordObservation({ appId, windowId, nativeWindowIdentity, windowIndex: 0, windowTitle: "Example Domain", focused: true,
+    nodes: [], truncated: false, warnings: [], screenshot: { ...screenshot, base64: uncheckedImage }, visualRef }, "principal-1", "session-1", NOW);
+  const basePolicy = createDefaultPolicy("edge-1", true, ["mac.ui.control", "mac.ui.observe"], ["edge-key-1"], [], [], [], [], [], [], [appId]);
   const uiTool = basePolicy.tools.get("mac_ui_action")!;
   const policy = { ...basePolicy, tools: new Map(basePolicy.tools).set("mac_ui_action", { ...uiTool, enabled: true }) };
   const broker = new Broker({ store, policy, edgeAuthenticationKeys: testKeyring(key), uiSnapshotRegistry: registry,
     uiInspector: {
-      async observe() { return { appId, windowId, windowIndex: 0, windowTitle: "Example Domain", focused: true,
-        nodes: [], truncated: false, warnings: [], screenshot, visualRef: nextRef }; },
+      async observe(_appId, _hint, _maxNodes, _control, _mode, expectedIdentity) {
+        if (effect.startsWith("cross_")) assert.equal(expectedIdentity, nativeWindowIdentity);
+        return { appId: effect === "cross_app" ? "bundle:com.example.OtherApp" : appId,
+        windowId: effect === "cross_window" ? "window:" + "1".repeat(48) : windowId,
+        nativeWindowIdentity: effect === "cross_native_identity" ? "485:1790918400000:47" : nativeWindowIdentity,
+        windowIndex: 0, windowTitle: "Example Domain", focused: true,
+        nodes: [{ elementRef: "element:fedcba0123456789fedcba0123456789fedcba0123456789",
+          role: "AXCheckBox", label: checked ? "Test option checked" : "Test option unchecked",
+          enabled: true, focused: false, secure: false }],
+        truncated: false, warnings: [], screenshot: { ...screenshot, base64: checked ? checkedImage : uncheckedImage }, visualRef: nextRef }; },
       async action(execution) { assert.deepEqual(execution.options, { x: 200, y: 150 });
+        checked = effect === "changed";
         return { elementRef: visualRef, action: "click", accepted: true, appId, windowId,
           reobserved: { role: "VisualWindow", enabled: true, focused: true, secure: false },
           warnings: [], truncated: false, verified: true }; }
@@ -2005,11 +2020,33 @@ test("visual UI action returns a fresh screenshot without persisting image bytes
       payloadDigest: sha256(canonicalJson(argumentsValue)), policyVersion: "policy-0.1",
       approvalClass: "trusted_gui", unattended: false, issuedAtMs: NOW - 1000, expiresAtMs: NOW + 1000 });
     const result = await broker.handle(signRequest(request, key));
+    if (effect.startsWith("cross_")) {
+      assert.equal(result.ok, false, JSON.stringify(result));
+      assert.equal(result.result_class, "TARGET_NOT_FOUND", JSON.stringify(result));
+      assert.throws(() => registry.resolve(nextRef, "principal-1", "session-1", NOW),
+        error => error instanceof BrokerError && error.errorClass === "TARGET_NOT_FOUND");
+      assert.equal(store.ownedJobByIdempotencyKey("ui-action:visual-action-request", "principal-1")?.state, "unknown");
+      return;
+    }
     assert.equal(result.ok, true, JSON.stringify(result));
     if (result.ok) {
       const data = result.data as { visual_ref: string; screenshot: { image_base64: string } };
       assert.equal(data.visual_ref, nextRef);
       assert.equal(data.screenshot.image_base64, imageData);
+      const verification = result.verification as { dispatch_status?: string; postcondition_status?: string; evidence?: { summary?: string } };
+      assert.equal(verification.dispatch_status, "verified");
+      assert.equal(verification.postcondition_status, "unknown");
+      assert.match(verification.evidence?.summary ?? "", /observed application window/u);
+      assert.match(verification.evidence?.summary ?? "", /only event dispatch and target identity were verified/u);
+      assert.doesNotMatch(verification.evidence?.summary ?? "", /browser window|page effect/u);
+    }
+    const observed = await broker.handle(signRequest(unsigned({ requestId: "checkbox-observe", nonce: "checkbox-observe-nonce",
+      tool: "mac_ui_observe", arguments: { app_id: appId, capture_mode: "none" } }, ["mac.ui.observe"]), key));
+    assert.equal(observed.ok, true, JSON.stringify(observed));
+    if (observed.ok) {
+      const data = observed.data as { nodes: { role: string; label: string }[] };
+      assert.equal(data.nodes[0]?.role, "AXCheckBox");
+      assert.equal(data.nodes[0]?.label, effect === "changed" ? "Test option checked" : "Test option unchecked");
     }
     assert.equal(store.ownedJobByIdempotencyKey("ui-action:visual-action-request", "principal-1")?.stdout.includes(imageData), false);
   } finally {

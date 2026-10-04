@@ -18,8 +18,11 @@ static NSMutableDictionary *windowA, *windowB;
 static NSArray *fixtureWindows, *fixtureCG;
 static id fixtureFocused;
 static BOOL trusted = YES, activationAccepted = YES, independentMismatch = NO, neverActivate = NO;
-static int activationCount = 0;
+static int activationCount = 0, raiseCount = 0;
 static double activationAt = 0, raiseAt = 0;
+static double windowsReadyAt = 0, protectAt = 0, replacementAt = 0;
+static BOOL windowsNeverReady = NO;
+static AXError raiseError = kAXErrorSuccess;
 @interface FixtureApp : NSObject
 @property NSString *bundleIdentifier;
 @property pid_t processIdentifier;
@@ -30,12 +33,15 @@ static double activationAt = 0, raiseAt = 0;
 + (instancetype)runningApplicationWithProcessIdentifier:(pid_t)pid;
 - (BOOL)activateWithOptions:(NSApplicationActivationOptions)options;
 @end
-static FixtureApp *browser, *other, *front;
+static FixtureApp *browser, *other, *front, *replacement;
 @implementation FixtureApp
 + (NSArray *)runningApplicationsWithBundleIdentifier:(NSString *)bundle {
   return [bundle isEqualToString:browser.bundleIdentifier] ? @[browser] : @[];
 }
-+ (instancetype)runningApplicationWithProcessIdentifier:(pid_t)pid { return pid == browser.processIdentifier ? browser : other; }
++ (instancetype)runningApplicationWithProcessIdentifier:(pid_t)pid {
+  if (pid != browser.processIdentifier) return other;
+  return replacementAt > 0 && NSProcessInfo.processInfo.systemUptime >= replacementAt ? replacement : browser;
+}
 - (BOOL)activateWithOptions:(NSApplicationActivationOptions)options {
   (void)options; activationCount++; activationAt = NSProcessInfo.processInfo.systemUptime;
   return activationAccepted;
@@ -48,6 +54,9 @@ static FixtureApp *browser, *other, *front;
 @implementation FixtureWorkspace
 + (instancetype)sharedWorkspace { static FixtureWorkspace *value; if (!value) value = [self new]; return value; }
 - (FixtureApp *)frontmostApplication {
+  if (protectAt > 0 && NSProcessInfo.processInfo.systemUptime >= protectAt) {
+    other.bundleIdentifier = @"com.apple.SecurityAgent"; front = other; return front;
+  }
   if (activationAccepted && !neverActivate && activationAt > 0 && NSProcessInfo.processInfo.systemUptime - activationAt >= 0.08) front = browser;
   return front;
 }
@@ -66,14 +75,18 @@ static AXError fakeCopy(AXUIElementRef element, CFStringRef attribute, CFTypeRef
   return result == nil ? kAXErrorNoValue : kAXErrorSuccess;
 }
 static AXError fakeCount(AXUIElementRef app, CFStringRef attribute, CFIndex *count) {
-  (void)app; (void)attribute; *count = fixtureWindows.count; return kAXErrorSuccess;
+  (void)app; (void)attribute;
+  *count = windowsNeverReady || NSProcessInfo.processInfo.systemUptime < windowsReadyAt ? 0 : fixtureWindows.count;
+  return kAXErrorSuccess;
 }
 static AXError fakeValues(AXUIElementRef app, CFStringRef attribute, CFIndex start, CFIndex count, CFArrayRef *values) {
   (void)app; (void)attribute; *values = (__bridge_retained CFArrayRef)[fixtureWindows subarrayWithRange:NSMakeRange(start,count)]; return kAXErrorSuccess;
 }
 static AXError fakePid(AXUIElementRef element, pid_t *pid) { *pid = [((__bridge NSDictionary *)element)[@"pid"] intValue]; return kAXErrorSuccess; }
 static AXError fakeRaise(AXUIElementRef element, CFStringRef action) {
-  (void)action; if ((__bridge id)element == windowB) raiseAt = NSProcessInfo.processInfo.systemUptime; return kAXErrorSuccess;
+  (void)action; raiseCount++;
+  if (raiseError != kAXErrorSuccess) return raiseError;
+  if ((__bridge id)element == windowB) raiseAt = NSProcessInfo.processInfo.systemUptime; return kAXErrorSuccess;
 }
 static AXError fakeSet(AXUIElementRef element, CFStringRef attribute, CFTypeRef value) {
   (void)element; (void)attribute; (void)value; return kAXErrorSuccess;
@@ -166,6 +179,47 @@ int main(int argc, const char **argv) { @autoreleasepool {
   } else if ([scenario isEqualToString:@"permission"]) {
     trusted = NO; assert(resolveGuiWindow(browser.bundleIdentifier,@"",YES,@"",&reason) == nil);
     assert([reason isEqualToString:@"accessibility_permission"] && activationCount == 0);
+  } else if ([scenario isEqualToString:@"already-focused-no-raise"]) {
+    browser.bundleIdentifier = @"com.apple.calculator"; front = browser; raiseError = kAXErrorActionUnsupported;
+    GuiWindowTarget *target = resolveGuiWindow(browser.bundleIdentifier,@"",YES,@"",&reason);
+    assert(target && target.axWindow == windowA && raiseCount == 0);
+  } else if ([scenario isEqualToString:@"activated-no-raise"]) {
+    browser.bundleIdentifier = @"com.apple.calculator"; raiseError = kAXErrorActionUnsupported;
+    GuiWindowTarget *target = resolveGuiWindow(browser.bundleIdentifier,@"",YES,@"",&reason);
+    assert(target && target.axWindow == windowA && activationCount == 1 && raiseCount == 0);
+  } else if ([scenario isEqualToString:@"raise-required-rejected"]) {
+    raiseError = kAXErrorActionUnsupported;
+    assert(resolveGuiWindow(browser.bundleIdentifier,@"Window B",YES,@"",&reason) == nil);
+    assert([reason isEqualToString:@"activation_failed"] && raiseCount == 1 && fixtureFocused == windowA);
+  } else if ([scenario isEqualToString:@"startup-readiness"]) {
+    browser.bundleIdentifier = @"com.apple.calculator";
+    double start = NSProcessInfo.processInfo.systemUptime; windowsReadyAt = start + 0.12;
+    GuiWindowTarget *target = resolveGuiWindow(browser.bundleIdentifier,@"",YES,@"",&reason);
+    assert(target && target.axWindow == windowA && activationCount == 1);
+    double elapsed = NSProcessInfo.processInfo.systemUptime - start; assert(elapsed >= 0.12 && elapsed < 1.0);
+  } else if ([scenario isEqualToString:@"startup-protected"]) {
+    windowsNeverReady = YES; protectAt = NSProcessInfo.processInfo.systemUptime + 0.08;
+    double start = NSProcessInfo.processInfo.systemUptime;
+    assert(resolveGuiWindow(browser.bundleIdentifier,@"",YES,@"",&reason) == nil);
+    assert([reason isEqualToString:@"protected_session"] && activationCount == 0);
+    assert(NSProcessInfo.processInfo.systemUptime - start < 0.5);
+  } else if ([scenario isEqualToString:@"startup-observe"]) {
+    front = browser; windowsNeverReady = YES; double start = NSProcessInfo.processInfo.systemUptime;
+    assert(resolveGuiWindow(browser.bundleIdentifier,@"",NO,@"",&reason) == nil);
+    assert([reason isEqualToString:@"window_not_found"] && activationCount == 0);
+    assert(NSProcessInfo.processInfo.systemUptime - start < 0.5);
+  } else if ([scenario isEqualToString:@"startup-replaced"]) {
+    windowsNeverReady = YES; replacementAt = NSProcessInfo.processInfo.systemUptime + 0.08;
+    replacement = [FixtureApp new]; replacement.bundleIdentifier = browser.bundleIdentifier;
+    replacement.processIdentifier = browser.processIdentifier;
+    replacement.launchDate = [browser.launchDate dateByAddingTimeInterval:1.0];
+    assert(resolveGuiWindow(browser.bundleIdentifier,@"",YES,@"",&reason) == nil);
+    assert([reason isEqualToString:@"app_not_running"] && activationCount == 0);
+  } else if ([scenario isEqualToString:@"startup-timeout"]) {
+    windowsNeverReady = YES; double start = NSProcessInfo.processInfo.systemUptime;
+    assert(resolveGuiWindow(browser.bundleIdentifier,@"",YES,@"",&reason) == nil);
+    assert([reason isEqualToString:@"window_not_found"] && activationCount == 0);
+    double elapsed = NSProcessInfo.processInfo.systemUptime - start; assert(elapsed >= 2.9 && elapsed < 3.5);
   } else return 2;
 } return 0; }
 `);
@@ -179,5 +233,13 @@ for (const [scenario, name] of [
   ["independent", "Workspace focus alone cannot substitute for independent system AX application readback"],
   ["hint", "explicit window hint raises and verifies the exact window and rejects duplicate hints"],
   ["cycles", "20 delayed focus and observe cycles preserve window identity through title changes"],
-  ["permission", "missing AX permission fails before any activation"]
+  ["permission", "missing AX permission fails before any activation"],
+  ["already-focused-no-raise", "already focused Calculator window does not require an unsupported redundant AXRaise"],
+  ["activated-no-raise", "application activation with exact window focus does not require redundant AXRaise"],
+  ["raise-required-rejected", "unsupported AXRaise still fails when the selected window is not focused"],
+  ["startup-readiness", "focus waits for bounded AX window readiness before activation"],
+  ["startup-protected", "protected session appearing during readiness aborts before activation"],
+  ["startup-observe", "observation never waits for or activates a missing app window"],
+  ["startup-replaced", "process generation replacement during AX readiness fails before activation"],
+  ["startup-timeout", "missing AX window reaches the shared monotonic focus deadline without activation"]
 ]) test(name, { skip: process.platform !== "darwin" }, () => execFileSync(executable, [scenario], options));

@@ -142,6 +142,18 @@ No window titles or UI contents are included in these failure diagnostics.
 5. Visual actions return a fresh MCP image block and `visual_ref`. Inspect the
    new screenshot before deciding on another action. The Broker records only
    action metadata in durable Jobs and audit logs, never screenshot bytes.
+   For `verification.strategy="visual_action_dispatch"`, `status="verified"`
+   means the bounded event dispatch and target identity were validated.
+   Additive fields make that scope explicit: `dispatch_status="verified"` and
+   `postcondition_status="unknown"`. No intended UI postcondition is supplied
+   to this tool, so it cannot prove that a checkbox changed, focus moved, or
+   navigation completed. A fresh screenshot, even one whose pixels changed,
+   is evidence for the caller to evaluate against the intended result.
+   Independently observe a known control after the action and compare its
+   state with the expected state before continuing. An unchanged control and
+   a changed control both have verified dispatch; only the latter satisfies
+   the intended transition. A reused Job preserves the prior dispatch evidence
+   and does not claim current UI state.
 6. Call `mac_ui_type` with `text` and optionally an Accessibility
    `element_ref`. Without a ref, it selects the focused, non-secure text field
    from the most recent observation in the same owner session. Browser address
@@ -151,6 +163,100 @@ No window titles or UI contents are included in these failure diagnostics.
 An example browser flow is: open Chrome, focus it, observe, send
 `shortcut(COMMAND_L)`, type a complete HTTPS URL into the focused address bar with `submit=true`, inspect the new screenshot, then click, type, scroll, and
 observe until the page result is visible.
+
+### Reliability integration probe
+
+AX references use a stable breadth-first traversal of the selected window.
+Moving focus does not reorder existing targets, and a smaller `max_nodes`
+returns a prefix of the same bounded tree. A focused control outside that
+prefix needs a larger fresh observation before it can receive input. Ordinary
+AX actions may target a non-focused enabled control; typing still requires
+the exact focused text target. Reference TTL, caller/session ownership, native
+application/window generation and retained screenshot checks remain enforced.
+
+Some native editors, including TextEdit, do not implement `AXEnabled` on an
+editable text area. Only an explicit `kAXErrorAttributeUnsupported` permits the
+adapter to infer enabled state from a non-secure text role whose `AXValue`
+attribute is independently reported settable. It never reads that value.
+An explicit disabled flag, malformed value, missing value, permission error,
+read-only control or secure control cannot use this fallback. Input revalidates
+live focus, security and exact window ownership instead of trusting observation
+flags. Native typing accepts an optional observed element index; its original
+index-zero invocation remains supported for older clients and desktop typing.
+
+Application focus waits for AX window readiness inside its existing three-second
+monotonic deadline. The adapter rechecks process generation and protected-session
+state while waiting. After activation, it skips `AXRaise` only when independent
+Workspace, system AX and exact focused-window observations already prove the
+selected window is focused. A required raise that fails remains an error.
+
+After `npm run build`, run the opt-in attended probe with Node.js 24 or newer:
+
+```sh
+MOPS_REAL_GUI=1 node scripts/probe-gui-observation-reliability.mjs
+```
+
+The probe uses the installed production GUI helper and an isolated ephemeral
+Broker store with signed requests and exact per-operation approvals. Ordinary AX
+focus/type operations use one-use approvals delegated for their final request by
+the authorized owner GUI session; visual actions keep attended snapshot approval.
+It creates
+an ordinary Cocoa fixture with a text area, toolbar combo, checkbox, secure field
+and two windows. Its independent state file contains only fixture-owned public
+text and checkbox state; it never reads the secure value or saves screenshots.
+Changed and unchanged checkbox scenarios separate verified dispatch from the
+independently observed UI result. It also tests live TextEdit with one temporary
+document, Calculator, immediate and delayed AX references, disappearance,
+expired references, cross-window/app references, non-frontmost observation and
+screen capture boundaries. Existing application documents remain outside its
+readback and cleanup scope.
+
+Add `MOPS_REAL_GUI_CHROME=1` only when Chrome fixture automation is authorized.
+With `MOPS_REAL_GUI_CHROME_CUA=1`, the probe prints an exact local fixture URL,
+title, probe ID and HTTP acknowledgment URL. The attending controller creates
+one new CUA Chrome tab, retains its exact tab ID, and acknowledges
+`{probe_id, tab_id, url}`. The probe then uses MBA-MCP for the tested interactions.
+At cleanup the controller closes only that retained tab, independently confirms
+it is absent, and acknowledges the same identity with `closed:true`. Each handoff
+has a bounded deadline; a missing acknowledgment fails closed. The CUA setup and
+cleanup actions are reported separately from MBA-MCP acceptance evidence.
+Its own DOM event listener supplies independent textarea and
+checkbox readback, without remote debugging or changing browser settings.
+The alternative Chrome window setup/cleanup and optional TextEdit AppleScript value readback/cleanup require
+separately established AppleEvents access. Set `MOPS_REAL_GUI_APPLE_EVENTS=1`
+only when that existing access has already been verified; the probe does not
+request broader Terminal or Node permissions. Without either CUA handoff or
+existing AppleEvents access, Chrome is explicitly blocked. TextEdit independently
+verifies the public test marker was absent before typing and present in a fresh
+same-window screenshot afterward, polling observation readiness for at most ten
+seconds using a bounded
+Vision OCR utility that saves no image and emits only a boolean.
+The CUA mode also waits for exact TextEdit cleanup: its emitted request binds
+probe ID, app ID, document title, temporary path and observed window ID. The
+controller closes only that document, independently confirms its window is
+absent, and acknowledges the emitted identity with `closed:true` and
+`independently_confirmed_absent:true`. A mismatched or missing acknowledgment
+never permits deletion of an unconfirmed open fixture document.
+An unclosed temporary TextEdit document and its file are retained and reported
+for local cleanup. AppleScript subprocesses are bounded to five seconds;
+timeouts terminate only the probe's own subprocess. Calculator cold-start cleanup
+uses a test-only AppKit utility restricted to Calculator: bundle, PID and process
+generation must match the instance launched by the probe, and only graceful
+`NSRunningApplication.terminate` is attempted. Rejection or changed identity
+fails closed without force termination.
+`node scripts/probe-gui-observation-reliability.mjs --prepare-only` compiles the
+temporary Cocoa app, Calculator utility and screenshot checker without launching
+or controlling any UI. It also compiles a read-only temporary-bundle resolution
+diagnostic. Explicit-path fixture launch is reported separately from temporary
+bundle `mac_app_open`; a failed temporary-bundle launch is a disclosed skipped
+diagnostic and does not substitute for required Flow A on real applications.
+With no opt-in
+flag, the normal probe reports `skipped` and performs no GUI actions.
+
+The probe reports each check and its limits. It fails closed on unavailable
+helper permissions/capabilities or a protected session. It does not lock the
+desktop or open real system authentication UI; those physical scenarios require
+separate attended evidence and are explicitly reported as unexercised.
 
 ## Desktop observation and action loop
 
@@ -552,6 +658,19 @@ requires an exact match to the originally approved screenshot, including its
 geometry. The reference evidence is never replaced and no input is sent during
 retries. Persistent content changes still fail before dispatch. This reduces
 caret false alarms without accepting different pixels; it does not guarantee
-success on continuously changing pages. A returned input success currently verifies dispatch and focus, not
+success on continuously changing pages. This exact-pixel rule still applies to
+attended approvals, sensitive/submitting actions, visual references, desktop and
+legacy adapters. Ordinary concrete native AX targets can use identity-based
+revalidation only when this execution successfully obtains owner GUI session
+authorization. That path independently reobserves the exact application,
+window/process generation, target index/role/label, enabled and secure state,
+input focus when typing, and all screenshot geometry. It tolerates changing
+pixels such as an animated caret; it does not prove that document/page content
+is unchanged. A previous GUI authorization cannot authorize this execution, and
+an attended approval upgrades retained evidence back to exact-pixel checking
+without refreshing its timestamp or expiry. Native event-time security checks
+remain mandatory for both paths.
+
+A returned input success currently verifies dispatch and focus, not
 exact field value; use a fresh screenshot/readback for acceptance. Safari,
 maximum-length input and every OS-level workflow were not covered by this test.

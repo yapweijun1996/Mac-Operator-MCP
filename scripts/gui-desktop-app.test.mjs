@@ -16,12 +16,15 @@ before(async () => {
 #import <ApplicationServices/ApplicationServices.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <assert.h>
-static NSMutableDictionary *window, *field, *toolbar;
+static NSMutableDictionary *window, *field, *toolbar, *fontSize;
+static id focusedField;
 static NSArray *cgWindows;
 static int posted = 0, pressed = 0;
-static BOOL trusted = YES, offDesktop = NO, locked = NO, layoutChanged = NO, recording = YES;
+static Boolean trusted = true;
+static BOOL offDesktop = NO, locked = NO, layoutChanged = NO, recording = YES;
 static BOOL captureChangesLayout = NO, captureOpensSensitive = NO;
-static NSInteger switchAfterPosts = -1;
+static NSInteger switchAfterPosts = -1, secureAfterPosts = -1;
+static NSInteger ownerChangeAfterPosts = -1, disabledAfterPosts = -1, parentSecureAfterPosts = -1;
 static NSMutableDictionary *hit;
 static NSSet *capturedBundles;
 static BOOL captureDeniesOther = NO;
@@ -56,12 +59,20 @@ static AXUIElementRef fakeSystem(void) { return (AXUIElementRef)CFBridgingRetain
 static AXError fakeTimeout(AXUIElementRef element, float timeout) { (void)element; (void)timeout; return kAXErrorSuccess; }
 static AXError fakeCopy(AXUIElementRef element, CFStringRef attribute, CFTypeRef *value) {
   NSDictionary *record = (__bridge NSDictionary *)element; id result = nil;
+  if (CFEqual(attribute,kAXEnabledAttribute) && record[@"enabled_error"] != nil) {
+    *value=NULL; return [record[@"enabled_error"] intValue];
+  }
   if (CFEqual(attribute, kAXFocusedApplicationAttribute)) result = @{@"pid":@(front.processIdentifier)};
   else if (CFEqual(attribute, kAXFocusedWindowAttribute)) result = window;
-  else if (CFEqual(attribute, kAXFocusedUIElementAttribute)) result = field;
+  else if (CFEqual(attribute, kAXFocusedUIElementAttribute)) result = focusedField;
   else result = record[(__bridge NSString *)attribute];
   *value = result == nil ? NULL : CFBridgingRetain(result);
   return result == nil ? kAXErrorNoValue : kAXErrorSuccess;
+}
+static AXError fakeSettable(AXUIElementRef element, CFStringRef attribute, Boolean *value) {
+  assert(CFEqual(attribute,kAXValueAttribute)); NSDictionary *record=(__bridge NSDictionary *)element;
+  *value=[record[@"value_settable"] boolValue];
+  return record[@"settable_error"] == nil ? kAXErrorSuccess : [record[@"settable_error"] intValue];
 }
 static AXError fakeCount(AXUIElementRef element, CFStringRef attribute, CFIndex *count) {
   if (CFEqual(attribute, kAXWindowsAttribute)) *count = 1;
@@ -77,13 +88,21 @@ static AXError fakeAction(AXUIElementRef element, CFStringRef action) {
   (void)element; if (CFEqual(action,kAXPressAction)) pressed++; return kAXErrorSuccess;
 }
 static AXError fakeSet(AXUIElementRef element, CFStringRef attribute, CFTypeRef value) {
-  (void)element; (void)attribute; (void)value; return kAXErrorSuccess;
+  if (CFEqual(attribute,kAXFocusedAttribute) && CFEqual(value,kCFBooleanTrue)) focusedField=(__bridge id)element;
+  return kAXErrorSuccess;
 }
 static AXError fakeHit(AXUIElementRef element, float x, float y, AXUIElementRef *output) {
   (void)element; (void)x; (void)y; *output=(AXUIElementRef)CFRetain((__bridge CFTypeRef)(hit ?: field)); return kAXErrorSuccess;
 }
 static CFArrayRef fakeCG(CGWindowListOption options, CGWindowID selected) { (void)options; (void)selected; return (__bridge_retained CFArrayRef)cgWindows; }
-static void fakePost(CGEventTapLocation tap, CGEventRef event) { (void)tap; (void)event; posted++; if (posted==switchAfterPosts) front=other; }
+static void fakePost(CGEventTapLocation tap, CGEventRef event) {
+  (void)tap; (void)event; posted++;
+  if (posted==switchAfterPosts) front=other;
+  if (posted==secureAfterPosts) field[(__bridge id)kAXSubroleAttribute]=@"AXSecureTextField";
+  if (posted==ownerChangeAfterPosts) field[(__bridge id)kAXWindowAttribute]=@{@"pid":@485,@"window":@"other"};
+  if (posted==disabledAfterPosts) field[(__bridge id)kAXEnabledAttribute]=@NO;
+  if (posted==parentSecureAfterPosts) toolbar[(__bridge id)kAXTitleAttribute]=@"Password";
+}
 static CGError fakeDisplays(uint32_t maximum, CGDirectDisplayID *displays, uint32_t *count) {
   assert(maximum >= 2); displays[0]=1; displays[1]=2; *count=2; return kCGErrorSuccess;
 }
@@ -178,6 +197,8 @@ static CFDictionaryRef fakeSession(void) { return (__bridge_retained CFDictionar
 #define NSRunningApplication FixtureApp
 #define NSWorkspace FixtureWorkspace
 #define AXIsProcessTrusted() trusted
+#define AXIsProcessTrustedWithOptions(options) trusted
+#define CGRequestScreenCaptureAccess() recording
 #define AXUIElementCreateApplication fakeApp
 #define AXUIElementCreateSystemWide fakeSystem
 #define AXUIElementSetMessagingTimeout fakeTimeout
@@ -187,6 +208,7 @@ static CFDictionaryRef fakeSession(void) { return (__bridge_retained CFDictionar
 #define AXUIElementGetPid fakePid
 #define AXUIElementPerformAction fakeAction
 #define AXUIElementSetAttributeValue fakeSet
+#define AXUIElementIsAttributeSettable fakeSettable
 #define AXUIElementCopyElementAtPosition fakeHit
 #define AXUIElementGetTypeID CFDictionaryGetTypeID
 #define CGWindowListCopyWindowInfo fakeCG
@@ -210,6 +232,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
   toolbar=[@{@"pid":@485,(__bridge id)kAXRoleAttribute:@"AXToolbar",(__bridge id)kAXParentAttribute:window} mutableCopy];
   field=[@{@"pid":@485,(__bridge id)kAXRoleAttribute:@"AXTextField",(__bridge id)kAXTitleAttribute:@"Address",
     (__bridge id)kAXEnabledAttribute:@YES,(__bridge id)kAXWindowAttribute:window,(__bridge id)kAXParentAttribute:toolbar} mutableCopy];
+  focusedField=field;
   window[(__bridge id)kAXChildrenAttribute]=@[field];
   window[(__bridge id)kAXParentAttribute]=@{@"pid":@485,(__bridge id)kAXRoleAttribute:@"AXApplication"};
   cgWindows=@[@{(id)kCGWindowOwnerPID:@485,(id)kCGWindowNumber:@46,(id)kCGWindowLayer:@0,(id)kCGWindowAlpha:@1,
@@ -276,14 +299,23 @@ int main(int argc, const char **argv) { @autoreleasepool {
     return emit(@{@"status":@"ok"});
   }
   if ([scenario isEqualToString:@"capabilities"]) { trusted=NO; const char *args[]={"gui","capabilities"}; return executeGui(2,args); }
+  if ([scenario isEqualToString:@"permission"] || [scenario isEqualToString:@"request_accessibility"] || [scenario isEqualToString:@"request_screen_recording"]) {
+    const char *args[]={"gui",scenario.UTF8String}; return executeGui(2,args);
+  }
   if ([scenario isEqualToString:@"focus"]) { front=other; const char *args[]={"gui","focus","visual","com.apple.TextEdit",""}; return executeGui(5,args); }
+  if ([scenario isEqualToString:@"inspect_unsupported_textarea"]) {
+    field[(__bridge id)kAXRoleAttribute]=@"AXTextArea";
+    [field removeObjectForKey:(__bridge id)kAXEnabledAttribute];
+    field[@"enabled_error"]=@(kAXErrorAttributeUnsupported); field[@"value_settable"]=@YES;
+    const char *args[]={"gui","inspect","accessibility","com.apple.TextEdit","","10"}; return executeGui(6,args);
+  }
   if ([scenario isEqualToString:@"inspect"]) { const char *args[]={"gui","inspect","accessibility","com.apple.TextEdit","","10"}; return executeGui(6,args); }
   if ([scenario isEqualToString:@"background_inspect"]) {
     front=other; const char *args[]={"gui","inspect","accessibility","com.apple.TextEdit","","10"};
     int result=executeGui(6,args); assert(front==other && posted==0); return result;
   }
   if ([scenario isEqualToString:@"ax_action"]) {
-    const char *args[]={"gui","ax_action","accessibility","com.apple.TextEdit","Ordinary document","0","AXTextField","Address","press",identity};
+    const char *args[]={"gui","ax_action","accessibility","com.apple.TextEdit","Ordinary document","1","AXTextField","Address","press",identity};
     int result=executeGui(10,args); assert(pressed==1 && posted==0); return result;
   }
   if ([scenario isEqualToString:@"pointer"]) {
@@ -307,6 +339,93 @@ int main(int argc, const char **argv) { @autoreleasepool {
     field[(__bridge id)kAXSubroleAttribute]=@"AXSecureTextField";
     const char *args[]={"gui","type","visual","com.apple.TextEdit","Ordinary document","AXTextField","Address",identity};
     int result=executeGui(8,args); assert(posted==0); return result;
+  }
+  if ([scenario hasPrefix:@"textarea_"]) {
+    field[(__bridge id)kAXRoleAttribute]=@"AXTextArea";
+    field[(__bridge id)kAXTitleAttribute]=@"Text input";
+    if ([scenario hasPrefix:@"textarea_unsupported"]) {
+      [field removeObjectForKey:(__bridge id)kAXEnabledAttribute];
+      field[@"enabled_error"]=@(kAXErrorAttributeUnsupported); field[@"value_settable"]=@YES;
+      if ([scenario isEqualToString:@"textarea_unsupported_readonly"]) field[@"value_settable"]=@NO;
+      if ([scenario isEqualToString:@"textarea_unsupported_error"]) field[@"settable_error"]=@(kAXErrorCannotComplete);
+      if ([scenario isEqualToString:@"textarea_unsupported_nontext"]) field[(__bridge id)kAXRoleAttribute]=@"AXGroup";
+      if ([scenario isEqualToString:@"textarea_unsupported_secure"]) field[(__bridge id)kAXSubroleAttribute]=@"AXSecureTextField";
+    }
+    if ([scenario isEqualToString:@"textarea_enabled_permission_error"]) {
+      field[@"enabled_error"]=@(kAXErrorAPIDisabled); field[@"value_settable"]=@YES;
+    }
+    if ([scenario isEqualToString:@"textarea_enabled_missing"]) {
+      [field removeObjectForKey:(__bridge id)kAXEnabledAttribute]; field[@"value_settable"]=@YES;
+    }
+    if ([scenario isEqualToString:@"textarea_explicit_disabled_settable"]) {
+      field[(__bridge id)kAXEnabledAttribute]=@NO; field[@"value_settable"]=@YES;
+    }
+    if ([scenario isEqualToString:@"textarea_browser"]) application.bundleIdentifier=@"com.google.Chrome";
+    if ([scenario isEqualToString:@"textarea_password"]) field[(__bridge id)kAXTitleAttribute]=@"Password";
+    if ([scenario isEqualToString:@"textarea_secure"]) field[(__bridge id)kAXSubroleAttribute]=@"AXSecureTextField";
+    if ([scenario isEqualToString:@"textarea_auth"]) window[(__bridge id)kAXTitleAttribute]=@"Password authorization";
+    if ([scenario isEqualToString:@"textarea_protected"]) other.bundleIdentifier=@"com.apple.loginwindow";
+    if ([scenario isEqualToString:@"textarea_protected"]) front=other;
+    if ([scenario isEqualToString:@"textarea_disabled"]) field[(__bridge id)kAXEnabledAttribute]=@NO;
+    if ([scenario isEqualToString:@"textarea_owner_missing"]) [field removeObjectForKey:(__bridge id)kAXWindowAttribute];
+    if ([scenario isEqualToString:@"textarea_cross_window"]) field[(__bridge id)kAXWindowAttribute]=@{@"pid":@485, @"window":@"other"};
+    if ([scenario isEqualToString:@"textarea_cross_app"]) field[@"pid"]=@999;
+    if ([scenario isEqualToString:@"textarea_focus_race"]) switchAfterPosts=2;
+    if ([scenario isEqualToString:@"textarea_secure_race"]) secureAfterPosts=2;
+    if ([scenario isEqualToString:@"textarea_last_event_owner_change"]) ownerChangeAfterPosts=16;
+    if ([scenario isEqualToString:@"textarea_last_event_disabled"]) disabledAfterPosts=16;
+    if ([scenario isEqualToString:@"textarea_last_event_parent_secure"]) parentSecureAfterPosts=16;
+    if ([scenario isEqualToString:@"textarea_parent_password"] || [scenario isEqualToString:@"textarea_parent_password_legacy"]) toolbar[(__bridge id)kAXTitleAttribute]=@"Password";
+    if ([scenario isEqualToString:@"textarea_parent_secure"]) toolbar[(__bridge id)kAXSubroleAttribute]=@"AXSecureTextField";
+    if ([scenario isEqualToString:@"textarea_parent_auth"]) toolbar[(__bridge id)kAXTitleAttribute]=@"Authentication";
+    if ([scenario isEqualToString:@"textarea_parent_cross_app"]) toolbar[@"pid"]=@999;
+    if ([scenario isEqualToString:@"textarea_parent_other_window"]) field[(__bridge id)kAXParentAttribute]=@{@"pid":@485,(__bridge id)kAXRoleAttribute:@"AXWindow",@"window":@"other"};
+    if ([scenario isEqualToString:@"textarea_parent_missing"]) [field removeObjectForKey:(__bridge id)kAXParentAttribute];
+    if ([scenario isEqualToString:@"textarea_parent_invalid"]) field[(__bridge id)kAXParentAttribute]=@"invalid";
+    if ([scenario isEqualToString:@"textarea_parent_cycle"]) toolbar[(__bridge id)kAXParentAttribute]=toolbar;
+    if ([scenario isEqualToString:@"textarea_parent_depth"]) {
+      id parent=window;
+      for (NSUInteger depth=0;depth<64;depth++) parent=@{@"pid":@485,(__bridge id)kAXRoleAttribute:@"AXGroup",(__bridge id)kAXParentAttribute:parent};
+      field[(__bridge id)kAXParentAttribute]=parent;
+    }
+    const char *index=[scenario isEqualToString:@"textarea_stale_index"]?"0":"1";
+    const char *label=[scenario isEqualToString:@"textarea_label_changed"]?"Other input":elementLabel((__bridge AXUIElementRef)field).UTF8String;
+    const char *token=[scenario isEqualToString:@"textarea_stale_window"]?"485:1790918400000:99":identity;
+    NSString *role=attributeText((__bridge AXUIElementRef)field,kAXRoleAttribute);
+    if ([scenario isEqualToString:@"textarea_parent_password_legacy"]) {
+      const char *legacyArgs[]={"gui","type","visual",application.bundleIdentifier.UTF8String,"Ordinary document",role.UTF8String,label,token};
+      int result=executeGui(8,legacyArgs); assert(posted==0); return result;
+    }
+    const char *args[]={"gui","type","visual",application.bundleIdentifier.UTF8String,"Ordinary document",role.UTF8String,label,index,token};
+    int result=executeGui(9,args);
+    BOOL allowed=[@[@"textarea_textedit",@"textarea_browser",@"textarea_unsupported_settable"] containsObject:scenario];
+    NSInteger expectedPosts=(allowed || [scenario hasPrefix:@"textarea_last_event"])?16:(([scenario isEqualToString:@"textarea_focus_race"] || [scenario isEqualToString:@"textarea_secure_race"])?2:0);
+    assert(posted==expectedPosts); return result;
+  }
+  if ([scenario hasPrefix:@"toolbar_"]) {
+    fontSize=[@{@"pid":@485,(__bridge id)kAXRoleAttribute:@"AXComboBox",(__bridge id)kAXTitleAttribute:@"font size",
+      (__bridge id)kAXEnabledAttribute:@YES,(__bridge id)kAXWindowAttribute:window,(__bridge id)kAXParentAttribute:window} mutableCopy];
+    window[(__bridge id)kAXChildrenAttribute]=@[field,fontSize];
+    BOOL truncated=NO; NSArray *before=windowElements(485,window,120,&truncated);
+    assert(before.count==3 && before[2]==fontSize);
+    NSArray *bounded=windowElements(485,window,2,&truncated);
+    assert(bounded.count==2 && bounded[0]==before[0] && bounded[1]==before[1] && truncated);
+    if ([scenario isEqualToString:@"toolbar_repeated_children"]) {
+      toolbar[(__bridge id)kAXChildrenAttribute]=@[fontSize];
+      window[(__bridge id)kAXChildrenAttribute]=@[toolbar,toolbar,toolbar,field];
+      truncated=NO; NSArray *small=windowElements(485,window,3,&truncated);
+      NSArray *large=windowElements(485,window,2000,&truncated);
+      assert(small.count==3 && large.count==4);
+      for (NSUInteger index=0;index<small.count;index++) assert(small[index]==large[index]);
+      return emit(@{@"status":@"ok"});
+    }
+    if ([scenario isEqualToString:@"toolbar_focus_change"]) focusedField=fontSize;
+    if ([scenario isEqualToString:@"toolbar_delay"]) usleep(150000);
+    if ([scenario isEqualToString:@"toolbar_disappeared"]) window[(__bridge id)kAXChildrenAttribute]=@[field];
+    if ([scenario isEqualToString:@"toolbar_cross_app"]) front=other;
+    const char *token=[scenario isEqualToString:@"toolbar_cross_window"]?"485:1790918400000:99":identity;
+    const char *args[]={"gui","ax_action","accessibility","com.apple.TextEdit","Ordinary document","2","AXComboBox","font size","focus",token};
+    return executeGui(10,args);
   }
   return 2;
 } }
@@ -334,6 +453,62 @@ test("native generic app admission preserves protected apps, bundle grammar and 
 test("native capabilities independently identify the ordinary application protocol", { skip: process.platform !== "darwin" }, () => {
   assert.deepEqual(run("capabilities"), { status: "ok", version: "0.3", features: { ordinary_apps: true, bounded_global_coordinates: true, desktop_surfaces: true } });
 });
+for (const scenario of ["permission", "request_accessibility", "request_screen_recording"]) {
+  test(`native ${scenario} emits JSON booleans even when AX trust uses the C Boolean type`, { skip: process.platform !== "darwin" }, () => {
+    const result = run(scenario);
+    assert.equal(result.status, "ok");
+    for (const [key, value] of Object.entries(result)) if (key !== "status") assert.equal(value, true);
+  });
+}
+for (const scenario of ["textarea_textedit", "textarea_browser", "textarea_unsupported_settable"]) {
+  test(`native ${scenario} supports ordinary indexed input with live ownership and focus readback`, { skip: process.platform !== "darwin" }, () => {
+    const result = run(scenario);
+    assert.equal(result.status, "ok");
+    assert.equal(result.element_index, 1);
+    assert.equal(result.characters_accepted, 8);
+    assert.equal(result.focus_confirmed, true);
+    assert.equal(result.secure, false);
+  });
+}
+test("native observation uses the same editable-text capability as typing when AXEnabled is unsupported", { skip: process.platform !== "darwin" }, () => {
+  const result=run("inspect_unsupported_textarea");
+  assert.equal(result.status,"ok");
+  assert.equal(result.nodes[1].role,"AXTextArea");
+  assert.equal(result.nodes[1].enabled,true);
+  assert.equal(result.nodes[1].focused,true);
+  assert.equal(result.nodes[1].secure,false);
+});
+for (const [scenario, error] of [
+  ["textarea_password", "secure_target"], ["textarea_secure", "secure_target"], ["textarea_auth", "target_denied"],
+  ["textarea_protected", "protected_session"], ["textarea_disabled", "stale_target"], ["textarea_owner_missing", "stale_target"],
+  ["textarea_cross_window", "stale_target"], ["textarea_cross_app", "stale_target"], ["textarea_stale_index", "stale_target"],
+  ["textarea_stale_window", "stale_target"], ["textarea_label_changed", "stale_target"],
+  ["textarea_focus_race", "focused_app_mismatch"], ["textarea_secure_race", "secure_target"],
+  ["textarea_unsupported_readonly", "stale_target"], ["textarea_unsupported_error", "stale_target"],
+  ["textarea_unsupported_nontext", "stale_target"], ["textarea_unsupported_secure", "secure_target"],
+  ["textarea_enabled_permission_error", "stale_target"], ["textarea_enabled_missing", "stale_target"],
+  ["textarea_explicit_disabled_settable", "stale_target"],
+  ["textarea_last_event_owner_change", "stale_target"], ["textarea_last_event_disabled", "stale_target"],
+  ["textarea_last_event_parent_secure", "secure_target"], ["textarea_parent_password", "secure_target"],
+  ["textarea_parent_password_legacy", "secure_target"], ["textarea_parent_secure", "secure_target"], ["textarea_parent_auth", "secure_target"],
+  ["textarea_parent_cross_app", "stale_target"], ["textarea_parent_other_window", "stale_target"],
+  ["textarea_parent_missing", "secure_target"], ["textarea_parent_invalid", "secure_target"],
+  ["textarea_parent_cycle", "secure_target"], ["textarea_parent_depth", "secure_target"]
+]) {
+  test(`native ${scenario} denies input when a live security or target boundary changes`, { skip: process.platform !== "darwin" }, () => assert.deepEqual(run(scenario), { status: "error", error }));
+}
+for (const scenario of ["toolbar_immediate", "toolbar_delay", "toolbar_focus_change"]) {
+  test(`native ${scenario} preserves a freshly observed toolbar index through ordinary focus changes`, { skip: process.platform !== "darwin" }, () => {
+    const result = run(scenario);
+    assert.equal(result.status, "ok");
+    assert.equal(result.element_index, 2);
+    assert.equal(result.role, "AXComboBox");
+  });
+}
+test("native repeated AX children preserve indices across small observation and action tree limits", { skip: process.platform !== "darwin" }, () => assert.equal(run("toolbar_repeated_children").status, "ok"));
+for (const [scenario, error] of [["toolbar_disappeared", "stale_target"], ["toolbar_cross_window", "stale_target"], ["toolbar_cross_app", "app_not_frontmost"]]) {
+  test(`native ${scenario} rejects changed toolbar scope`, { skip: process.platform !== "darwin" }, () => assert.deepEqual(run(scenario), { status: "error", error }));
+}
 for (const [scenario, error] of [["outside_window", "outside_window"], ["off_desktop", "outside_window"], ["secure_type", "secure_target"], ["background_inspect", "app_not_frontmost"]]) {
   test(`native ordinary application refuses ${scenario} before input dispatch`, { skip: process.platform !== "darwin" }, () => assert.deepEqual(run(scenario), { status: "error", error }));
 }

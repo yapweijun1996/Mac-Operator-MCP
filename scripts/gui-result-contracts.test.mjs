@@ -22,6 +22,12 @@ test('visual click dispatch result satisfies its public contract', async () => {
     job_id: `job:ui-action-${'a'.repeat(48)}`,
     reobserved: { role: 'VisualWindow', enabled: true, focused: true } }, 'visual_action_dispatch');
   assert.equal(validate(output), true, JSON.stringify(validate.errors));
+  output.verification.dispatch_status = 'verified';
+  output.verification.postcondition_status = 'unknown';
+  assert.equal(validate(output), true, JSON.stringify(validate.errors));
+  output.verification.postcondition_status = 'verified';
+  assert.equal(validate(output), false, 'Dispatch evidence must not claim an intended UI postcondition');
+  output.verification.postcondition_status = 'unknown';
   output.verification.strategy = 'unverified_strategy';
   assert.equal(validate(output), false);
 });

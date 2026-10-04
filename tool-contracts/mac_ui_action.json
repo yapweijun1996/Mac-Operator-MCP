@@ -347,6 +347,14 @@
               "visual_action_dispatch"
             ]
           },
+          "dispatch_status": {
+            "const": "verified",
+            "description": "The bounded event dispatch and approved target identity were verified. This does not prove an intended UI effect."
+          },
+          "postcondition_status": {
+            "const": "unknown",
+            "description": "The visual action accepts no intended UI postcondition, so its effect requires independent evaluation of a fresh observation."
+          },
           "evidence": {
             "type": "object",
             "additionalProperties": false,

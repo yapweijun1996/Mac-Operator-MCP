@@ -228,21 +228,61 @@ static BOOL secureElement(AXUIElementRef element) {
     sensitiveTitle(elementLabel(element));
 }
 
+static BOOL elementEnabled(AXUIElementRef element) {
+  CFTypeRef value = NULL;
+  AXError error = AXUIElementCopyAttributeValue(element, kAXEnabledAttribute, &value);
+  BOOL enabled = error == kAXErrorSuccess && value != NULL && CFGetTypeID(value) == CFBooleanGetTypeID() &&
+    CFBooleanGetValue((CFBooleanRef)value);
+  if (value != NULL) CFRelease(value);
+  if (error != kAXErrorAttributeUnsupported) return enabled;
+  // AppKit text views may omit AXEnabled while explicitly exposing editable
+  // AXValue. A capability query never reads document text and cannot override
+  // an explicit disabled flag, unreadable attribute, or protected field.
+  if (!textRole(attributeText(element, kAXRoleAttribute)) || secureElement(element)) return NO;
+  Boolean settable = false;
+  return AXUIElementIsAttributeSettable(element, kAXValueAttribute, &settable) == kAXErrorSuccess && settable;
+}
+
 #import "gui_window.h"
 
-// Focused element stays at index zero for the existing non-secure typing contract.
-// The remaining bounded tree belongs only to the selected browser window.
+static NSString *approvedElementAncestryBlockReason(GuiWindowTarget *target, AXUIElementRef element) {
+  if (element == NULL) return @"secure_target";
+  AXUIElementRef cursor = (AXUIElementRef)CFRetain(element);
+  NSMutableArray *seen = [NSMutableArray array];
+  NSString *blocked = @"secure_target";
+  NSRegularExpression *authentication = [NSRegularExpression regularExpressionWithPattern:
+    @"(?i)\\b(authentication|authorization|authenticate|authorize)\\b" options:0 error:nil];
+  for (NSUInteger depth = 0; depth < 64; depth++) {
+    if ([seen containsObject:(__bridge id)cursor]) break;
+    [seen addObject:(__bridge id)cursor];
+    pid_t pid = -1;
+    if (AXUIElementGetPid(cursor, &pid) != kAXErrorSuccess || pid != target.application.processIdentifier) {
+      blocked = @"stale_target"; break;
+    }
+    NSString *role = attributeText(cursor, kAXRoleAttribute), *label = elementLabel(cursor);
+    if (role.length == 0 || role.length > 128 || secureElement(cursor) ||
+        [authentication firstMatchInString:label options:0 range:NSMakeRange(0, label.length)] != nil) break;
+    if (CFEqual(cursor, (__bridge CFTypeRef)target.axWindow)) { blocked = nil; break; }
+    if ([role isEqualToString:@"AXWindow"]) { blocked = @"stale_target"; break; }
+    if ([@[@"AXApplication", @"AXSystemWide"] containsObject:role]) break;
+    CFTypeRef parent = NULL;
+    AXError error = AXUIElementCopyAttributeValue(cursor, kAXParentAttribute, &parent);
+    if (error != kAXErrorSuccess || parent == NULL || CFGetTypeID(parent) != AXUIElementGetTypeID()) {
+      if (parent != NULL) CFRelease(parent); break;
+    }
+    CFRelease(cursor); cursor = (AXUIElementRef)parent;
+  }
+  CFRelease(cursor);
+  return blocked;
+}
+
+// Tree order must not depend on focus or the observation limit: a toolbar action
+// may change focus without changing any of the observed targets. Unexposed or
+// truncated elements require another observation rather than a focus-based slot.
 static NSArray *windowElements(pid_t pid, id selected, NSInteger limit, BOOL *truncated) {
+  (void)pid;
   NSMutableArray *queue = [NSMutableArray arrayWithObject:selected];
   NSMutableArray *elements = [NSMutableArray array];
-  AXUIElementRef focused = focusedElement(pid);
-  if (focused != NULL) {
-    CFTypeRef ownerWindow = NULL;
-    AXUIElementCopyAttributeValue(focused, kAXWindowAttribute, &ownerWindow);
-    if (ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)selected)) [elements addObject:(__bridge id)focused];
-    if (ownerWindow != NULL) CFRelease(ownerWindow);
-    CFRelease(focused);
-  }
   for (NSUInteger cursor = 0; cursor < queue.count; cursor++) {
     id element = queue[cursor];
     if (elements.count >= (NSUInteger)limit) { *truncated = YES; break; }
@@ -252,7 +292,9 @@ static NSArray *windowElements(pid_t pid, id selected, NSInteger limit, BOOL *tr
     if (secureElement(ax)) continue;
     CFIndex count = 0;
     if (AXUIElementGetAttributeValueCount(ax, kAXChildrenAttribute, &count) != kAXErrorSuccess || count <= 0) continue;
-    CFIndex available = MAX(0, limit - (NSInteger)queue.count);
+    // Use the same hard queue bound for observe and dispatch. A smaller output
+    // limit must not change breadth-first order when providers repeat children.
+    CFIndex available = MAX(0, 2000 - (NSInteger)queue.count);
     if (count > available) *truncated = YES;
     CFArrayRef children = NULL;
     if (available > 0 && AXUIElementCopyAttributeValues(ax, kAXChildrenAttribute, 0, MIN(count, available), &children) == kAXErrorSuccess && children != NULL) {
@@ -284,7 +326,7 @@ static int inspectUi(GuiWindowTarget *target, NSInteger maxNodes) {
     BOOL secure = secureElement(element);
     NSString *role = attributeText(element, kAXRoleAttribute);
     if (role.length == 0 || role.length > 128) { if (focused != NULL) CFRelease(focused); return fail(@"ax_enumeration_failed"); }
-    [nodes addObject:guiNode(nodes.count, role, elementLabel(element), attributeBool(element, kAXEnabledAttribute, NO),
+    [nodes addObject:guiNode(nodes.count, role, elementLabel(element), elementEnabled(element),
       focused != NULL && CFEqual(focused, element), secure, secure ? NO : browserNavigationElement(element, bundleId))];
   }
   if (focused != NULL) CFRelease(focused);
@@ -306,9 +348,11 @@ static int performAxAction(GuiWindowTarget *target, int argc, const char *argv[]
   NSString *role = attributeText(element, kAXRoleAttribute);
   NSString *label = elementLabel(element);
   if (secureElement(element)) return fail(@"secure_target");
+  NSString *blocked = approvedElementAncestryBlockReason(target, element);
+  if (blocked != nil) return fail(blocked);
   if (![role isEqualToString:[NSString stringWithUTF8String:argv[6]]] ||
       ![label isEqualToString:[NSString stringWithUTF8String:argv[7]]] ||
-      !attributeBool(element, kAXEnabledAttribute, NO)) return fail(@"stale_target");
+      !elementEnabled(element)) return fail(@"stale_target");
   NSString *action = [NSString stringWithUTF8String:argv[8]];
   NSDictionary *actions = @{ @"press": (__bridge id)kAXPressAction, @"increment": (__bridge id)kAXIncrementAction,
     @"decrement": (__bridge id)kAXDecrementAction, @"show_menu": (__bridge id)kAXShowMenuAction };
@@ -323,9 +367,11 @@ static int performAxAction(GuiWindowTarget *target, int argc, const char *argv[]
   if (resolveGuiWindow(bundleId, @"", NO, target.identity, &reason) == nil) return fail(reason);
   if (secureElement(element) ||
       ![attributeText(element, kAXRoleAttribute) isEqualToString:role] || ![elementLabel(element) isEqualToString:label]) return fail(@"stale_target");
+  blocked = approvedElementAncestryBlockReason(target, element);
+  if (blocked != nil) return fail(blocked);
   return emit(@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
     @"window_index": @0, @"window_title": title, @"window_identity": target.identity, @"element_index": @(index), @"role": role,
-    @"enabled": @(attributeBool(element, kAXEnabledAttribute, NO)),
+    @"enabled": @(elementEnabled(element)),
     @"focused": @(attributeBool(element, kAXFocusedAttribute, NO)), @"secure": @NO, @"accepted": @YES });
 }
 
@@ -340,26 +386,52 @@ static BOOL postKey(CGKeyCode code, CGEventFlags flags) {
   return YES;
 }
 
-static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, const char *expectedLabel) {
+static NSString *focusedInputBlockReason(GuiWindowTarget *target, AXUIElementRef expected,
+                                         NSString *expectedRole, NSString *expectedLabel) {
+  NSString *reason = @"stale_target";
+  if (!readGuiFocusedWindow(target.application, target.axWindow, &reason)) return reason;
+  if (sensitiveTitle(attributeText((__bridge AXUIElementRef)target.axWindow, kAXTitleAttribute))) return @"target_denied";
+  AXUIElementRef focused = focusedElement(target.application.processIdentifier);
+  if (focused == NULL) return @"stale_target";
+  if (secureElement(focused)) { CFRelease(focused); return @"secure_target"; }
+  NSString *blocked = approvedElementAncestryBlockReason(target, focused);
+  if (blocked != nil) { CFRelease(focused); return blocked; }
+  NSString *role = attributeText(focused, kAXRoleAttribute);
+  NSString *label = elementLabel(focused);
+  CFTypeRef ownerWindow = NULL; pid_t pid = -1;
+  AXUIElementCopyAttributeValue(focused, kAXWindowAttribute, &ownerWindow);
+  BOOL owned = ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)target.axWindow) &&
+    AXUIElementGetPid(focused, &pid) == kAXErrorSuccess && pid == target.application.processIdentifier;
+  if (ownerWindow != NULL) CFRelease(ownerWindow);
+  BOOL matched = expected != NULL && CFEqual(expected, focused) &&
+    [role isEqualToString:expectedRole] && [label isEqualToString:expectedLabel];
+  BOOL enabled = elementEnabled(focused);
+  CFRelease(focused);
+  if (!owned || !matched || !enabled) return @"stale_target";
+  return textRole(role) ? nil : @"target_unsupported";
+}
+
+static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, const char *expectedLabel,
+                            NSInteger expectedIndex) {
   NSString *bundleId = target.application.bundleIdentifier, *title = target.title;
   pid_t pid = target.application.processIdentifier;
   if (!AXIsProcessTrusted()) return fail(@"accessibility_permission");
   AXUIElementRef focused = focusedElement(pid);
   if (focused == NULL) return fail(@"stale_target");
   NSString *role = attributeText(focused, kAXRoleAttribute);
-  NSString *subrole = attributeText(focused, kAXSubroleAttribute);
   NSString *label = elementLabel(focused);
-  CFTypeRef ownerWindow = NULL;
-  AXUIElementCopyAttributeValue(focused, kAXWindowAttribute, &ownerWindow);
-  BOOL owned = ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)target.axWindow);
-  if (ownerWindow != NULL) CFRelease(ownerWindow);
-  BOOL valid = textRole(role) && [role isEqualToString:[NSString stringWithUTF8String:expectedRole]] &&
-    [label isEqualToString:[NSString stringWithUTF8String:expectedLabel]] &&
-    ![subrole localizedCaseInsensitiveContainsString:@"secure"] && !sensitiveTitle(label) &&
-    attributeBool(focused, kAXEnabledAttribute, NO) && owned;
-  id navigationElement = valid && browserNavigationElement(focused, bundleId) ? (__bridge id)focused : nil;
+  id inputElement = (__bridge id)focused;
+  NSString *blocked = focusedInputBlockReason(target, focused,
+    [NSString stringWithUTF8String:expectedRole], [NSString stringWithUTF8String:expectedLabel]);
+  if (blocked == nil && expectedIndex >= 0) {
+    BOOL truncated = NO;
+    NSArray *elements = windowElements(pid, target.axWindow, 2000, &truncated);
+    if (expectedIndex >= (NSInteger)elements.count || !CFEqual((__bridge CFTypeRef)elements[expectedIndex], focused))
+      blocked = @"stale_target";
+  }
+  id navigationElement = blocked == nil && browserNavigationElement(focused, bundleId) ? (__bridge id)focused : nil;
   CFRelease(focused);
-  if (!valid) return fail(@"secure_target");
+  if (blocked != nil) return fail(blocked);
   NSMutableData *input = [NSMutableData data];
   uint8_t buffer[4096];
   while (!feof(stdin) && input.length <= 40000) {
@@ -387,7 +459,13 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
     @"HOME": @115, @"END": @119
   };
   for (id key in keys) if (![key isKindOfClass:NSString.class] || keyCodes[key] == nil) return fail(@"invalid_request");
+  // Parsing input can take time. Revalidate authorization and live focus again,
+  // and before each bounded event pair, instead of trusting observation flags.
+  NSString *reason = @"stale_target";
+  if (resolveGuiWindow(bundleId, @"", NO, target.identity, &reason) == nil) return fail(reason);
   for (NSUInteger offset = 0; offset < text.length;) {
+    blocked = focusedInputBlockReason(target, (__bridge AXUIElementRef)inputElement, role, label);
+    if (blocked != nil) return fail(blocked);
     // Chrome accepts one Unicode scalar per keyboard event; preserve surrogate pairs.
     NSUInteger length = 1;
     if (CFStringIsSurrogateHighCharacter([text characterAtIndex:offset]) && offset + 1 < text.length &&
@@ -411,18 +489,20 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
     CGEventPost(kCGHIDEventTap, up);
     CFRelease(down); CFRelease(up);
   }
-  for (NSString *key in keys) if (!postKey(keyCodes[key].unsignedShortValue, 0)) return fail(@"execution_failed");
-  if ([request[@"submit"] boolValue] && !postKey(36, 0)) return fail(@"execution_failed");
+  for (NSString *key in keys) {
+    blocked = focusedInputBlockReason(target, (__bridge AXUIElementRef)inputElement, role, label);
+    if (blocked != nil) return fail(blocked);
+    if (!postKey(keyCodes[key].unsignedShortValue, 0)) return fail(@"execution_failed");
+  }
+  if ([request[@"submit"] boolValue]) {
+    blocked = focusedInputBlockReason(target, (__bridge AXUIElementRef)inputElement, role, label);
+    if (blocked != nil) return fail(blocked);
+    if (!postKey(36, 0)) return fail(@"execution_failed");
+  }
   // Keep the event sender alive while WindowServer delivers the queued input.
   usleep(250000);
-  if (![NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier isEqualToString:bundleId]) return fail(@"focus_changed");
-  AXUIElementRef after = focusedElement(pid);
-  BOOL focusConfirmed = after != NULL &&
-    [attributeText(after, kAXRoleAttribute) isEqualToString:role] &&
-    ![attributeText(after, kAXSubroleAttribute) localizedCaseInsensitiveContainsString:@"secure"] &&
-    [elementLabel(after) isEqualToString:label];
-  if (after != NULL) CFRelease(after);
-  NSString *reason = @"stale_target";
+  AXUIElementRef after = NULL;
+  BOOL focusConfirmed = NO;
   NSString *postRole = nil;
   if (navigation) {
     focusConfirmed = NO;
@@ -433,7 +513,7 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
       CFTypeRef ownerWindow = NULL;
       if (after != NULL) AXUIElementCopyAttributeValue(after, kAXWindowAttribute, &ownerWindow);
       BOOL owned = ownerWindow != NULL && CFEqual(ownerWindow, (__bridge CFTypeRef)current.axWindow);
-      BOOL verified = owned && !secureElement(after) &&
+      BOOL verified = owned && approvedElementAncestryBlockReason(current, after) == nil && !secureElement(after) &&
         browserNavigationElement((__bridge AXUIElementRef)navigationElement, bundleId) &&
         navigationAddressMatches(text, attributeText((__bridge AXUIElementRef)navigationElement, kAXValueAttribute));
       if (verified) postRole = attributeText(after, kAXRoleAttribute);
@@ -444,11 +524,13 @@ static int typeIntoFocused(GuiWindowTarget *target, const char *expectedRole, co
     }
     if (!focusConfirmed) return fail(@"navigation_unverified");
   } else {
-    if (!focusConfirmed) return fail(@"focus_changed");
+    blocked = focusedInputBlockReason(target, (__bridge AXUIElementRef)inputElement, role, label);
+    if (blocked != nil) return fail(blocked);
     if (resolveGuiWindow(bundleId, @"", NO, target.identity, &reason) == nil) return fail(reason);
+    focusConfirmed = YES;
   }
   NSMutableDictionary *result = [@{ @"status": @"ok", @"app_id": [@"bundle:" stringByAppendingString:bundleId],
-    @"window_index": @0, @"window_title": title, @"window_identity": target.identity, @"element_index": @0, @"role": role,
+    @"window_index": @0, @"window_title": title, @"window_identity": target.identity, @"element_index": @(MAX(0, expectedIndex)), @"role": role,
     @"characters_accepted": @(text.length), @"keys_accepted": keys,
     @"submitted": request[@"submit"], @"focus_confirmed": @YES, @"secure": @NO } mutableCopy];
   if (navigation) { result[@"navigation_verified"] = @YES; result[@"post_role"] = postRole; }
@@ -627,15 +709,15 @@ static int executeGui(int argc, const char *argv[]) {
         @"features": @{ @"ordinary_apps": @YES, @"bounded_global_coordinates": @YES, @"desktop_surfaces": @YES } });
     }
     if (argc == 2 && strcmp(argv[1], "permission") == 0) {
-      return emit(@{ @"status": @"ok", @"accessibility": @(AXIsProcessTrusted()),
-        @"screen_recording": @(CGPreflightScreenCaptureAccess()) });
+      return emit(@{ @"status": @"ok", @"accessibility": @((BOOL)AXIsProcessTrusted()),
+        @"screen_recording": @((BOOL)CGPreflightScreenCaptureAccess()) });
     }
     if (argc == 2 && strcmp(argv[1], "request_accessibility") == 0) {
       NSDictionary *options = @{ (__bridge id)kAXTrustedCheckOptionPrompt: @YES };
-      return emit(@{ @"status": @"ok", @"accessibility": @(AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options)) });
+      return emit(@{ @"status": @"ok", @"accessibility": @((BOOL)AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options)) });
     }
     if (argc == 2 && strcmp(argv[1], "request_screen_recording") == 0) {
-      return emit(@{ @"status": @"ok", @"screen_recording": @(CGRequestScreenCaptureAccess()) });
+      return emit(@{ @"status": @"ok", @"screen_recording": @((BOOL)CGRequestScreenCaptureAccess()) });
     }
     if (argc < 4 || (strcmp(argv[1], "capture") != 0 && strcmp(argv[1], "action") != 0 &&
         strcmp(argv[1], "inspect") != 0 && strcmp(argv[1], "type") != 0 &&
@@ -655,7 +737,7 @@ static int executeGui(int argc, const char *argv[]) {
     BOOL axAction = strcmp(argv[1], "ax_action") == 0;
     BOOL type = strcmp(argv[1], "type") == 0;
     if ((focus && argc != 5) || (inspect && argc != 6 && argc != 7) || (capture && argc != 6) ||
-        (action && argc != 13) || (axAction && argc != 10) || (type && argc != 8)) return fail(@"invalid_request");
+        (action && argc != 13) || (axAction && argc != 10) || (type && argc != 8 && argc != 9)) return fail(@"invalid_request");
     NSString *expected = focus || (inspect && argc == 6) ? @"" : [NSString stringWithUTF8String:argv[argc - 1]];
     if (!focus && !inspect && expected.length == 0) return fail(@"invalid_request");
     NSString *reason = @"window_correlation_failed";
@@ -665,7 +747,11 @@ static int executeGui(int argc, const char *argv[]) {
       @"window_index": @0, @"window_title": target.title, @"window_identity": target.identity, @"focused": @YES });
     if (axAction) return performAxAction(target, argc, argv);
     if (action) return performAction(target, argc, argv);
-    if (type) return typeIntoFocused(target, argv[5], argv[6]);
+    if (type) {
+      NSInteger index = -1;
+      if (argc == 9 && !parseNumber(argv[7], 0, 1999, &index)) return fail(@"invalid_request");
+      return typeIntoFocused(target, argv[5], argv[6], index);
+    }
     if (inspect) {
       NSInteger maxNodes;
       if (!parseNumber(argv[5], 1, 2000, &maxNodes)) return fail(@"invalid_request");

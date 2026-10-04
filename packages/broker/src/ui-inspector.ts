@@ -251,7 +251,9 @@ export interface UiSnapshotRecord {
   nativeWindowIdentity?: string;
   approvalRetainUntilMs?: number;
   revalidationRequired?: boolean;
+  revalidationStrategy?: "screenshot" | "native_ax";
   screenshotFingerprint?: string;
+  screenshotGeometryFingerprint?: string;
   captureMode?: Exclude<UiCaptureMode, "none">;
   screenWidth?: number;
   screenHeight?: number;
@@ -264,6 +266,7 @@ export interface UiSnapshotRecord {
 export interface UiActionExecution {
   snapshot: UiSnapshotRecord;
   action: UiActionName;
+  guiSessionAuthorized?: boolean;
   options?: UiVisualActionOptions;
 }
 
@@ -287,6 +290,7 @@ export interface SafeUiAction {
 
 export interface UiTypeExecution {
   snapshot: UiSnapshotRecord;
+  guiSessionAuthorized?: boolean;
   text: string;
   keys: readonly UiInputKey[];
   submit: boolean;
@@ -307,7 +311,7 @@ export interface SafeUiType {
 }
 
 export interface UiInspector {
-  observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl, captureMode?: UiCaptureMode): Promise<SafeUiObservation>;
+  observe(appId: string, windowHint: string | undefined, maxNodes: number, control: UiExecutionControl, captureMode?: UiCaptureMode, expectedWindowIdentity?: string): Promise<SafeUiObservation>;
   action?(execution: UiActionExecution, control: UiExecutionControl): Promise<SafeUiAction>;
   type?(execution: UiTypeExecution, control: UiExecutionControl): Promise<SafeUiType>;
 }
@@ -365,7 +369,8 @@ export class MacUiInspectorImpl implements UiInspector {
     };
   }
 
-  private async revalidateRetainedSnapshot(snapshot: UiSnapshotRecord, control: UiExecutionControl): Promise<UiExecutionControl> {
+  private async revalidateRetainedSnapshot(snapshot: UiSnapshotRecord, control: UiExecutionControl, requireFocusedInput = true,
+    guiSessionAuthorized = false): Promise<UiExecutionControl> {
     if (!snapshot.revalidationRequired) return control;
     if (!snapshot.screenshotFingerprint || !snapshot.captureMode) {
       throw new BrokerError("TARGET_NOT_FOUND", "Retained UI target has no visual evidence");
@@ -380,11 +385,18 @@ export class MacUiInspectorImpl implements UiInspector {
       if (control.shouldCancel()) throw new BrokerError("CANCELLED", "UI target revalidation was cancelled");
       if (Date.now() >= deadline) throw new BrokerError("TIMEOUT", "UI target revalidation timed out");
       const observed = await this.observe(snapshot.appId, snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(snapshot.nativeWindowIdentity!) : snapshot.windowTitle, MAX_NODES, bounded(), snapshot.captureMode, snapshot.nativeWindowIdentity);
-      assertRetainedUiTargetIdentityMatches(snapshot, observed);
+      assertRetainedUiTargetIdentityMatches(snapshot, observed, requireFocusedInput);
       if (Date.now() >= deadline) throw new BrokerError("TIMEOUT", "UI target revalidation timed out");
       if (control.shouldCancel()) throw new BrokerError("CANCELLED", "UI target revalidation was cancelled");
+      if (snapshot.revalidationStrategy === "native_ax" && guiSessionAuthorized) {
+        if (!supportsNativeAxRevalidation(snapshot) ||
+            uiScreenshotGeometryFingerprint(observed.screenshot!) !== snapshot.screenshotGeometryFingerprint) {
+          throw new BrokerError("TARGET_NOT_FOUND", "Approved UI window geometry changed; observe it again");
+        }
+        return bounded();
+      }
       if (uiScreenshotFingerprint(observed.screenshot!) === snapshot.screenshotFingerprint) return bounded();
-      if (attempt + 1 === MAX_VISUAL_REVALIDATION_ATTEMPTS) assertRetainedUiTargetMatches(snapshot, observed);
+      if (attempt + 1 === MAX_VISUAL_REVALIDATION_ATTEMPTS) assertRetainedUiTargetMatches(snapshot, observed, requireFocusedInput);
       // Observe another caret phase without changing the approved evidence or dispatching input.
       await delay(Math.min(VISUAL_REVALIDATION_INTERVAL_MS, Math.max(0, deadline - Date.now())));
     }
@@ -393,7 +405,7 @@ export class MacUiInspectorImpl implements UiInspector {
 
   async action(execution: UiActionExecution, control: UiExecutionControl): Promise<SafeUiAction> {
     const { snapshot, action } = execution;
-    control = await this.revalidateRetainedSnapshot(snapshot, control);
+    control = await this.revalidateRetainedSnapshot(snapshot, control, false, execution.guiSessionAuthorized);
     if ((VISUAL_ACTION_NAMES as readonly string[]).includes(action)) {
       validateUiVisualActionRequest(snapshot.elementRef, action, execution.options ?? {});
       if (snapshot.role !== "VisualWindow" || !snapshot.focused) {
@@ -454,7 +466,7 @@ export class MacUiInspectorImpl implements UiInspector {
 
   async type(execution: UiTypeExecution, control: UiExecutionControl): Promise<SafeUiType> {
     const { snapshot, text: inputText, keys, submit } = execution;
-    control = await this.revalidateRetainedSnapshot(snapshot, control);
+    control = await this.revalidateRetainedSnapshot(snapshot, control, true, execution.guiSessionAuthorized);
     validateUiTypeRequest(snapshot.elementRef, inputText, keys, submit);
     validateSensitiveUiTarget(snapshot.appId, snapshot.windowTitle);
     if (snapshot.secure || snapshot.label?.includes("[REDACTED]")) {
@@ -474,7 +486,8 @@ export class MacUiInspectorImpl implements UiInspector {
       executable: snapshot.nativeVisual ? GUI_VISION : OSASCRIPT,
       allowUserOwnedExecutable: snapshot.nativeVisual === true,
       args: snapshot.nativeVisual
-        ? ["type", "visual", snapshot.appId.slice("bundle:".length), snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(snapshot.nativeWindowIdentity!) : snapshot.windowTitle, snapshot.role, snapshot.label ?? "", snapshot.nativeWindowIdentity ?? "",
+        ? ["type", "visual", snapshot.appId.slice("bundle:".length), snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(snapshot.nativeWindowIdentity!) : snapshot.windowTitle, snapshot.role, snapshot.label ?? "",
+          ...(snapshot.appId === DESKTOP_APP_ID || snapshot.elementIndex === 0 ? [] : [String(snapshot.elementIndex)]), snapshot.nativeWindowIdentity ?? "",
           ...(snapshot.appId === DESKTOP_APP_ID ? [desktopManifest(control.desktopDeniedApps)] : [])]
         : ["-l", "JavaScript", "-e", UI_TYPE_SCRIPT, "--", snapshot.appId, snapshot.windowTitle,
           String(snapshot.windowIndex), String(snapshot.elementIndex), snapshot.role, snapshot.label ?? ""],
@@ -521,7 +534,8 @@ export class UiSnapshotRegistry {
         ownerPrincipalId,
         ownerSessionId,
         observedAtMs,
-        ...(observation.screenshot === undefined ? {} : { screenshotFingerprint: uiScreenshotFingerprint(observation.screenshot), captureMode: observation.screenshot.mode }),
+        ...(observation.screenshot === undefined ? {} : { screenshotFingerprint: uiScreenshotFingerprint(observation.screenshot),
+          screenshotGeometryFingerprint: uiScreenshotGeometryFingerprint(observation.screenshot), captureMode: observation.screenshot.mode }),
         nativeVisual: observation.nativeVisual === true || observation.screenshot !== undefined,
         ...(observation.nativeWindowIdentity === undefined ? {} : { nativeWindowIdentity: observation.nativeWindowIdentity })
       };
@@ -567,13 +581,31 @@ export class UiSnapshotRegistry {
     const existing = this.approvalSnapshots.get(key);
     if (existing && nowMs < (existing.approvalRetainUntilMs ?? 0)) {
       if (existing.elementRef !== elementRef) throw new BrokerError("TARGET_NOT_FOUND", "Approval target does not match retained evidence");
+      if (existing.revalidationStrategy === "native_ax") {
+        this.approvalSnapshots.set(key, { ...existing, revalidationStrategy: "screenshot" });
+      }
       return;
     }
     const snapshot = this.resolve(elementRef, ownerPrincipalId, ownerSessionId, nowMs);
     if (!snapshot.screenshotFingerprint || !snapshot.captureMode) return;
     if (expiresAtMs <= nowMs || expiresAtMs > nowMs + 120_000) throw new BrokerError("PRECONDITION_FAILED", "UI approval retention is out of bounds");
-    this.approvalSnapshots.set(key, { ...snapshot, approvalRetainUntilMs: expiresAtMs, revalidationRequired: true });
+    this.approvalSnapshots.set(key, { ...snapshot, approvalRetainUntilMs: expiresAtMs, revalidationRequired: true, revalidationStrategy: "screenshot" });
     this.prune(nowMs);
+  }
+
+  retainForGuiSession(elementRef: string, ownerPrincipalId: string, ownerSessionId: string, nowMs: number,
+    expiresAtMs: number, binding: string, requiresExplicitApproval: boolean): void {
+    const key = this.approvalKey(ownerPrincipalId, ownerSessionId, binding);
+    const pending = this.approvalSnapshots.get(key);
+    const hasPendingApproval = pending !== undefined && nowMs < (pending.approvalRetainUntilMs ?? 0);
+    this.retainForApproval(elementRef, ownerPrincipalId, ownerSessionId, nowMs, expiresAtMs, binding);
+    const retained = this.approvalSnapshots.get(key);
+    // Never relax a pending attended approval. A new ordinary owner-session
+    // operation binds native AX identity and geometry, not an animated caret.
+    if ((!hasPendingApproval || pending?.revalidationStrategy === "native_ax") && retained &&
+        !requiresExplicitApproval && supportsNativeAxRevalidation(retained)) {
+      this.approvalSnapshots.set(key, { ...retained, revalidationStrategy: "native_ax" });
+    }
   }
 
   releaseApproval(ownerPrincipalId: string, ownerSessionId: string, binding: string): void {
@@ -1103,22 +1135,34 @@ function uiScreenshotFingerprint(screenshot: SafeUiScreenshot): string {
   return sha256(canonicalJson(screenshot));
 }
 
-export function assertRetainedUiTargetMatches(snapshot: UiSnapshotRecord, observed: SafeUiObservation): void {
-  assertRetainedUiTargetIdentityMatches(snapshot, observed);
+function uiScreenshotGeometryFingerprint(screenshot: SafeUiScreenshot): string {
+  const { base64: _image, ...metadata } = screenshot;
+  return sha256(canonicalJson(metadata));
+}
+
+function supportsNativeAxRevalidation(snapshot: UiSnapshotRecord): boolean {
+  return snapshot.appId !== DESKTOP_APP_ID && snapshot.nativeVisual === true &&
+    snapshot.nativeWindowIdentity !== undefined && snapshot.role !== "VisualWindow" &&
+    snapshot.screenshotGeometryFingerprint !== undefined && !snapshot.secure;
+}
+
+export function assertRetainedUiTargetMatches(snapshot: UiSnapshotRecord, observed: SafeUiObservation, requireFocusedInput = true): void {
+  assertRetainedUiTargetIdentityMatches(snapshot, observed, requireFocusedInput);
   if (uiScreenshotFingerprint(observed.screenshot!) !== snapshot.screenshotFingerprint) {
     throw new BrokerError("TARGET_NOT_FOUND", "Approved UI target changed; observe it again");
   }
 }
 
-function assertRetainedUiTargetIdentityMatches(snapshot: UiSnapshotRecord, observed: SafeUiObservation): void {
+function assertRetainedUiTargetIdentityMatches(snapshot: UiSnapshotRecord, observed: SafeUiObservation, requireFocusedInput: boolean): void {
   if (!observed.focused || observed.appId !== snapshot.appId || observed.windowId !== snapshot.windowId ||
-      observed.windowTitle !== snapshot.windowTitle || !observed.screenshot) {
+      observed.windowTitle !== snapshot.windowTitle || !observed.screenshot ||
+      snapshot.nativeWindowIdentity !== undefined && observed.nativeWindowIdentity !== snapshot.nativeWindowIdentity) {
     throw new BrokerError("TARGET_NOT_FOUND", "Approved UI target changed; observe it and request a new approval");
   }
   if (snapshot.role !== "VisualWindow") {
     const node = observed.nodes[snapshot.elementIndex];
     if (!node || node.elementRef !== snapshot.elementRef || node.role !== snapshot.role ||
-        node.label !== snapshot.label || !node.focused || !node.enabled || node.secure) {
+        node.label !== snapshot.label || (requireFocusedInput && !node.focused) || !node.enabled || node.secure) {
       throw new BrokerError("TARGET_NOT_FOUND", "Approved focused input changed; observe it and request a new approval");
     }
   }

@@ -1264,21 +1264,24 @@ export class Broker {
         const navigation = input?.snapshot && isBoundedBrowserNavigation({ ...input, snapshot: input.snapshot });
         const sensitiveAction = execution.uiAction && (execution.uiAction.options?.key === "ENTER" ||
           /\b(?:buy|purchase|pay|checkout|send|publish|delete|remove|erase|security|privacy)\b/iu.test(snapshot?.label ?? ""));
+        const requiresExplicitApproval = Boolean(submits && !navigation || sensitiveAction);
         if (appId && await this.options.authorizeGuiSession({
           requestId: request.requestId, principalId: request.principal.principalId, sessionId: request.principal.sessionId,
           appId, tool: request.tool, contractVersion: request.contractVersion, policyVersion: request.policyVersion,
           targetKind: target.kind, targetRef: plannedAuditTarget, payloadDigest: sha256(canonicalJson(request.arguments)),
-          requiresExplicitApproval: Boolean(submits && !navigation || sensitiveAction),
+          requiresExplicitApproval,
           expiresAtMs: request.principal.expiresAtMs
         })) {
           if (snapshot?.screenshotFingerprint) {
-            this.uiSnapshotRegistry.retainForApproval(snapshot.elementRef, request.principal.principalId,
-              request.principal.sessionId, this.now(), this.now() + APPROVAL_PREVIEW_TTL_MS, uiApprovalBinding(request));
+            this.uiSnapshotRegistry.retainForGuiSession(snapshot.elementRef, request.principal.principalId,
+              request.principal.sessionId, this.now(), this.now() + APPROVAL_PREVIEW_TTL_MS, uiApprovalBinding(request), requiresExplicitApproval);
             const retained = this.uiSnapshotRegistry.resolve(snapshot.elementRef, request.principal.principalId,
               request.principal.sessionId, this.now(), uiApprovalBinding(request));
             if (execution.uiAction) execution.uiAction.snapshot = retained;
             if (execution.uiType) execution.uiType.snapshot = retained;
           }
+          if (execution.uiAction) execution.uiAction.guiSessionAuthorized = true;
+          if (execution.uiType) execution.uiType.guiSessionAuthorized = true;
           this.checkRevocation(request);
         }
       }
@@ -3670,11 +3673,16 @@ export class Broker {
       execution.uiAction.snapshot.appId === DESKTOP_APP_ID ? desktopDisplayHint(execution.uiAction.snapshot.nativeWindowIdentity!) : undefined,
       100,
       this.executionControl(request, execution.target, timeoutMs, execution.uiActionJob.jobId, [], execution.jobLease),
-      "active_window"
+      "active_window",
+      execution.uiAction.snapshot.nativeWindowIdentity
     );
     this.ensureActiveAuthority(request, execution.target);
     if (!observed.focused || observed.screenshot === undefined || observed.visualRef === undefined) {
       throw new BrokerError("VERIFICATION_FAILED", "Visual action did not produce a verified screenshot");
+    }
+    if (observed.appId !== execution.uiAction.snapshot.appId || observed.windowId !== execution.uiAction.snapshot.windowId ||
+        observed.nativeWindowIdentity !== execution.uiAction.snapshot.nativeWindowIdentity) {
+      throw new BrokerError("TARGET_NOT_FOUND", "Visual action window changed before readback");
     }
     this.uiSnapshotRegistry.recordObservation(observed, request.principal.principalId, request.principal.sessionId, this.now());
     return {
@@ -3716,6 +3724,7 @@ export class Broker {
     try {
       const acted = await this.uiInspector.action(
         { snapshot: execution.uiAction.snapshot, action: execution.uiAction.action,
+          ...(execution.uiAction.guiSessionAuthorized === true ? { guiSessionAuthorized: true } : {}),
           ...(execution.uiAction.options === undefined ? {} : { options: execution.uiAction.options }) },
         this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
       );
@@ -3756,9 +3765,12 @@ export class Broker {
           required: true,
           status: "verified",
           strategy: execution.uiAction.snapshot.role === "VisualWindow" ? "visual_action_dispatch" : "accessibility_reobservation",
+          ...(execution.uiAction.snapshot.role === "VisualWindow"
+            ? { dispatch_status: "verified", postcondition_status: "unknown" }
+            : {}),
           evidence: {
             summary: execution.uiAction.snapshot.role === "VisualWindow"
-              ? "A bounded event was sent to the observed browser window; inspect a fresh screenshot to verify the page effect"
+              ? "A bounded event was sent to the observed application window; only event dispatch and target identity were verified. Inspect a fresh observation to verify the UI effect."
               : "The approved Accessibility element was re-resolved before and after one fixed action",
             readback_hash: sha256(canonicalJson(storedData)),
             observed_at: new Date(this.now()).toISOString()
@@ -3809,7 +3821,8 @@ export class Broker {
     if (!this.uiInspector.type) throw new BrokerError("UNSUPPORTED_CAPABILITY", "UI type adapter is not enabled");
     try {
       const typed = await this.uiInspector.type(
-        { snapshot: execution.uiType.snapshot, text: execution.uiType.text, keys: execution.uiType.keys, submit: execution.uiType.submit },
+        { snapshot: execution.uiType.snapshot, text: execution.uiType.text, keys: execution.uiType.keys, submit: execution.uiType.submit,
+          ...(execution.uiType.guiSessionAuthorized === true ? { guiSessionAuthorized: true } : {}) },
         this.executionControl(request, execution.target, timeoutMs, job.jobId, [], execution.jobLease)
       );
       this.ensureActiveAuthority(request, execution.target);
@@ -5516,12 +5529,14 @@ interface ExecutionPlan {
   };
   uiAction?: {
     elementRef: string;
+    guiSessionAuthorized?: boolean;
     action: UiActionName;
     snapshot?: UiSnapshotRecord;
     options?: UiVisualActionOptions;
   };
   uiType?: {
     elementRef: string;
+    guiSessionAuthorized?: boolean;
     text: string;
     keys: readonly UiInputKey[];
     submit: boolean;
@@ -5980,10 +5995,17 @@ function uiActionDispatchResult(job: BrokerJob, data: UiActionResultData, reused
       required: true,
       status: "verified",
       strategy: data.reobserved.role === "VisualWindow" ? "visual_action_dispatch" : "accessibility_reobservation",
+      ...(data.reobserved.role === "VisualWindow"
+        ? { dispatch_status: "verified", postcondition_status: "unknown" }
+        : {}),
       evidence: {
-        summary: reused ? "Reused a completed UI action Job readback" : data.reobserved.role === "VisualWindow"
-          ? "A bounded event was sent to the observed browser window; inspect a fresh screenshot to verify the page effect"
-          : "The approved Accessibility element was re-resolved before and after one fixed action",
+        summary: data.reobserved.role === "VisualWindow"
+          ? reused
+            ? "Reused a completed visual action dispatch Job readback; only prior event dispatch and target identity were verified. Inspect a fresh observation to verify the UI effect."
+            : "A bounded event was sent to the observed application window; only event dispatch and target identity were verified. Inspect a fresh observation to verify the UI effect."
+          : reused
+            ? "Reused a completed UI action Job readback"
+            : "The approved Accessibility element was re-resolved before and after one fixed action",
         readback_hash: sha256(canonicalJson(data)),
         observed_at: new Date().toISOString()
       }
