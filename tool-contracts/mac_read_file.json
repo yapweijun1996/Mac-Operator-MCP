@@ -114,6 +114,7 @@
             "maximum": 1000000000
           },
           "sha256": {
+            "description": "SHA-256 of the returned content, which is only a prefix when truncated is true; use mac_hash_file for the whole file",
             "type": "string",
             "minLength": 64,
             "maxLength": 64,

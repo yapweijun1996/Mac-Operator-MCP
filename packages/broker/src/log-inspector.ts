@@ -57,6 +57,8 @@ export class MacLogInspector implements LogInspector {
   }
 }
 
+const MAX_MESSAGE_LENGTH = 8192;
+
 export function validateLogRequest(source: string, lines: number, sinceSeconds: number): void {
   if (typeof source !== "string" || source.length < 1 || source.length > 128 || !SOURCE_PATTERN.test(source) ||
       source.includes("..") || source.includes("\\") ||
@@ -89,27 +91,42 @@ function parseLogResult(
   const entries: SafeLogEntry[] = [];
   const warnings: string[] = [];
   let malformedLines = 0;
-  for (const line of result.stdout.split("\n")) {
+  let partialTailDropped = false;
+  const outputLimited = result.resultClass === "OUTPUT_LIMIT";
+  const rawLines = result.stdout.split("\n");
+  // A budget cut usually ends mid-record; drop that unfinished final line rather than report half a sentence.
+  if ((result.truncated || outputLimited) && !result.stdout.endsWith("\n") && rawLines.length > 0) {
+    rawLines.pop();
+    partialTailDropped = true;
+  }
+  // `log show` wraps multi-line messages: lines without a timestamp continue the previous record.
+  const drafts: Array<{ timestamp: string; level: string; text: string }> = [];
+  for (const line of rawLines) {
     if (line.trim().length === 0 || /^Timestamp\s+Ty\s+Process/u.test(line)) continue;
     const match = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\s+(\S+)\s+\S+\s+(.*)$/u.exec(line);
-    if (!match) {
+    if (match) {
+      drafts.push({ timestamp: match[1]!, level: match[2]!, text: match[3]!.replace(/^\[[^\]]{0,256}\]\s+/u, "").trim() });
+    } else if (/^\d{4}-\d{2}-\d{2} /u.test(line)) {
       malformedLines += 1;
-      continue;
+    } else if (drafts.length > 0) {
+      const draft = drafts[drafts.length - 1]!;
+      if (draft.text.length < MAX_MESSAGE_LENGTH) draft.text = `${draft.text}\n${line.trim()}`;
     }
-    const rawMessage = match[3]!.replace(/^\[[^\]]{0,256}\]\s+/u, "").trim();
-    if (rawMessage.length === 0) continue;
-    const redacted = redactLogText(rawMessage);
-    const parsedTimestamp = Date.parse(match[1]!);
+  }
+  for (const draft of drafts) {
+    if (draft.text.length === 0) continue;
+    const redacted = redactLogText(draft.text.slice(0, MAX_MESSAGE_LENGTH));
+    const parsedTimestamp = Date.parse(draft.timestamp);
     entries.push({
       timestamp: Number.isNaN(parsedTimestamp) ? null : new Date(parsedTimestamp).toISOString(),
-      level: match[2]!.slice(0, 64),
+      level: draft.level.slice(0, 64),
       message: redacted.text
     });
   }
   const selected = entries.slice(Math.max(0, entries.length - lines));
   if (malformedLines > 0) warnings.push(`${malformedLines} malformed log record${malformedLines === 1 ? " was" : "s were"} omitted`);
-  const outputLimited = result.resultClass === "OUTPUT_LIMIT";
   if (result.truncated || outputLimited) warnings.push("Log output was truncated by a fixed adapter budget");
+  if (partialTailDropped) warnings.push("The final partial log record was dropped");
   if (entries.length > lines) warnings.push("Log entries were limited to the requested line budget");
   if (requestedSinceSeconds > effectiveSinceSeconds) warnings.push("The requested log window was capped at 24 hours");
   if (entries.some((entry) => entry.message.includes("[REDACTED]"))) warnings.push("Sensitive log content was redacted");

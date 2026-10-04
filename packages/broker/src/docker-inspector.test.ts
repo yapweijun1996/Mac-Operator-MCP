@@ -128,6 +128,20 @@ test("Docker inspect returns bounded sanitized container metadata without env va
   assert.deepEqual(supervisor.calls[0]?.args, ["inspect", "--type", "container", "abc123"]);
 });
 
+test("Docker inspect reports one port entry for matching IPv4 and IPv6 bindings", async () => {
+  const supervisor = new FakeSupervisor([result(JSON.stringify([{
+    Id: "abc123",
+    Name: "/db",
+    State: { Status: "running" },
+    Config: { Image: "example/db:latest" },
+    NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "0.0.0.0", HostPort: "55432" }, { HostIp: "::", HostPort: "55432" }] } },
+    Mounts: []
+  }]))]);
+  const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });
+  const inspection = await inspector.inspect("container", "abc123", { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.deepEqual(inspection.ports, [{ protocol: "tcp", containerPort: 5432, hostPort: 55432 }]);
+});
+
 test("Docker inspect rejects conflicting native object identities", async () => {
   const supervisor = new FakeSupervisor([result(JSON.stringify([{ Id: "abc123", ID: "different" }]))]);
   const inspector = new DockerInspectorImpl({ supervisor, executable: "/usr/bin/docker" });

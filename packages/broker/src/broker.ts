@@ -2071,6 +2071,15 @@ export class Broker {
                 write: root.write === true
               }))
               : [],
+            // Project-bound tools (git, build, agent, audit) accept only these project roots.
+            authorized_projects: authorizedProjects(policy, request.principal.principalId, request.principal.scopes),
+            // Launchd service identifiers mac_service_status may inspect for this caller.
+            authorized_services: request.principal.scopes.includes("mac.service.read")
+              ? policy.targetRules
+                .filter((rule) => rule.principalId === request.principal.principalId && rule.effect === "allow" &&
+                  rule.scope === "mac.service.read" && rule.target.kind === "service")
+                .map((rule) => rule.target.reference).slice(0, 64)
+              : [],
             protocol_version: PROTOCOL_VERSION,
             contract_version: CONTRACT_VERSION,
             version: "0.1.0"
@@ -2671,7 +2680,7 @@ export class Broker {
               pid: process.pid,
               name: process.name,
               executable: process.executable,
-              cpu_percent: process.cpuPercent,
+              cpu_percent: Math.round(process.cpuPercent * 100) / 100,
               memory_bytes: process.memoryBytes,
               owner: process.owner
             }))
@@ -2711,7 +2720,7 @@ export class Broker {
               name: process.name,
               executable: process.executable,
               state: process.state,
-              cpu_percent: process.cpuPercent,
+              cpu_percent: Math.round(process.cpuPercent * 100) / 100,
               memory_bytes: process.memoryBytes,
               parent_pid: process.parentPid,
               child_pids: [...process.childPids],
@@ -6579,6 +6588,21 @@ function decodeWriteContent(argumentsValue: Readonly<Record<string, unknown>>): 
     throw new BrokerError("PRECONDITION_FAILED", "base64 content is malformed");
   }
   return bytes;
+}
+
+function authorizedProjects(
+  policy: BrokerPolicy,
+  principalId: string,
+  callerScopes: readonly string[]
+): Array<{ path: string; scopes: string[] }> {
+  const byPath = new Map<string, Set<string>>();
+  for (const rule of policy.targetRules) {
+    if (rule.principalId !== principalId || rule.effect !== "allow" || rule.target.kind !== "project" || !callerScopes.includes(rule.scope)) continue;
+    const scopes = byPath.get(rule.target.reference) ?? new Set<string>();
+    scopes.add(rule.scope);
+    byPath.set(rule.target.reference, scopes);
+  }
+  return [...byPath.entries()].slice(0, 64).map(([path, scopes]) => ({ path, scopes: [...scopes].sort() }));
 }
 
 function validateJobArguments(tool: string, argumentsValue: Readonly<Record<string, unknown>>): void {

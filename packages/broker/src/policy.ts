@@ -389,7 +389,7 @@ export function authorizeTarget(
   }
   for (const scope of scopes) {
     if (!matchingRules.some((rule) => rule.scope === scope && rule.effect === "allow")) {
-      throw new BrokerError("POLICY_DENIED", "Target is not allowed for every required scope");
+      throw new BrokerError("POLICY_DENIED", "Target is not allowed for every required scope; mac_capabilities lists authorized_roots and authorized_projects");
     }
   }
 }

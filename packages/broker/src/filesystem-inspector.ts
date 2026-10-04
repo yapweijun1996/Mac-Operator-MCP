@@ -935,6 +935,7 @@ export class FilesystemInspector {
       }
     }
 
+    if (truncated) addWarning("Consumer sizes cover only the entries visited before truncation and are lower bounds of real usage");
     const aggregateSizes = new Map(sizeByPath);
     const pathsByDepth = [...parentByPath.keys()].sort((left, right) => right.length - left.length || right.localeCompare(left));
     for (const path of pathsByDepth) {

@@ -6787,3 +6787,28 @@ way to list its allowlist. Focused tests pass (221 broker/edge, new unit tests f
 each fix); `contract-conformance` and one filesystem pressure test fail identically
 on the unmodified baseline (volume-identity check). The running MBA service still
 needs a restart on the new build to expose these changes.
+
+## October 4, 2026: second MCP read-only review fixes (source only, not deployed)
+
+PARTIAL: triaged a 31-call read-only report against source, a real repository and the MBA
+policy. Confirmed and fixed: `mac_git_log` returned only the first commit and
+`mac_git_branch_list` prefixed every branch after the first with U+FFFD because
+`git --format` adds a newline between NUL-terminated records (parsers now split on
+`\0\n`; verified on a real checkout: 5 of 5 commits, clean branch names, no false
+"redacted" warning); `mac_log_tail` counted wrapped multi-line messages as malformed and
+returned a half-cut final line (continuation lines are now folded into their record, a
+cut-off tail is dropped with a warning, messages are capped at the contract's 8192);
+`mac_docker_inspect` reported IPv4 and IPv6 bindings of one port twice; `cpu_percent` is
+rounded to two decimals. The `mac_execution_audit` / `mac_codex_preflight` denial is
+policy, not a bug: the MBA policy grants `mac.project.read`, `mac.agent.read`,
+`mac.audit.read` and `mac.task.run` only for `/Users/yapweijun/DevelopmentProjects/Mac-Operator-MCP`
+(the `Documents/GitHub` clone has git/package/write scopes only), while capabilities reports
+a tool enabled when any project qualifies. `mac_capabilities` now also lists
+`authorized_projects` (path plus the caller's scopes) and `authorized_services`, and the
+target-denial and service-id messages point to them. Documentation only: `mac_read_file`'s
+`sha256` covers the returned (possibly truncated) content. Not changed: storage analysis
+still cannot size a whole disk (it now says sizes are lower bounds when truncated), network
+listeners and Docker storage facts stay unavailable behind their existing warnings, and
+`mac_project_summary` only returns a tree when `include_tree` is set. Focused tests pass;
+the remaining failures are the existing native/virtualization and volume-identity ones that
+also fail on the unmodified baseline, plus timing-flaky snapshot tests. Not deployed.

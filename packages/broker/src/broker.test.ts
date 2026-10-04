@@ -3834,15 +3834,18 @@ test("mac_capabilities lists authorized roots only for callers holding a filesys
   const root = { rootId: "test-root", path: directory, metadata: true, contentRead: true, denyRelativePaths: [] } as const;
   const broker = new Broker({
     store,
-    policy: createDefaultPolicy("edge-1", true, ["mac.control.read", "mac.files.read"], ["edge-key-1"], [root]),
+    policy: createDefaultPolicy("edge-1", true, ["mac.control.read", "mac.files.read", "mac.git.read", "mac.service.read"], ["edge-key-1"], [root], ["system/com.example.svc"], [], ["/tmp/project-a"]),
     edgeAuthenticationKeys: testKeyring(key),
     now: () => NOW
   });
   try {
-    const withFiles = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities" }, ["mac.control.read", "mac.files.read"]), key));
+    const withFiles = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities" }, ["mac.control.read", "mac.files.read", "mac.git.read", "mac.service.read"]), key));
     assert.equal(withFiles.ok, true);
     assert.deepEqual((withFiles.data as { authorized_roots: unknown }).authorized_roots,
       [{ path: directory, metadata: true, content_read: true, write: false }]);
+    assert.deepEqual((withFiles.data as { authorized_projects: unknown }).authorized_projects,
+      [{ path: "/tmp/project-a", scopes: ["mac.git.read"] }]);
+    assert.deepEqual((withFiles.data as { authorized_services: unknown }).authorized_services, ["system/com.example.svc"]);
     const controlOnly = await broker.handle(signRequest(unsigned({ tool: "mac_capabilities", requestId: "request-2", nonce: "nonce-2" }, ["mac.control.read"]), key));
     assert.equal(controlOnly.ok, true);
     assert.deepEqual((controlOnly.data as { authorized_roots: unknown }).authorized_roots, []);

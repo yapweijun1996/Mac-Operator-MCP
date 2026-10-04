@@ -22,7 +22,7 @@ test("launchd service inspector returns bounded status for an allowlisted system
 test("launchd service identifiers reject traversal and non-system domains", () => {
   assert.doesNotThrow(() => validateServiceId("system/com.apple.logd"));
   for (const serviceId of ["", "user/501/com.example", "system/../x", "system//x", "system/x\\y", "system/"]) {
-    assert.throws(() => validateServiceId(serviceId), /system launchd identifier/u);
+    assert.throws(() => validateServiceId(serviceId), /system\/<launchd-label>/u);
   }
 });
 

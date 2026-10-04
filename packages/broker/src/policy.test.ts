@@ -245,7 +245,7 @@ test("policy authority snapshots isolate mutable caller references", () => {
   assert.deepEqual(snapshot.tools.get("mac_health")?.requiredScopes, ["mac.control.read"]);
   assert.throws(
     () => authorizeTarget(snapshot, "principal-1", ["mac.control.read"], { kind: "host", reference: "attacker-target" }),
-    (error: unknown) => error instanceof Error && error.message === "Target is not allowed for every required scope"
+    (error: unknown) => error instanceof Error && error.message === "Target is not allowed for every required scope; mac_capabilities lists authorized_roots and authorized_projects"
   );
 
   const manager = new PolicyManager(createDefaultPolicy("edge-1", true, ["mac.control.read"]));

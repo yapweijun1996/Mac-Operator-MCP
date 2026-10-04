@@ -721,6 +721,14 @@ function sanitizeGitValue(value: string, maxLength: number, allowEmpty = false):
   };
 }
 
+/**
+ * `--format` output is newline-terminated, so each NUL-terminated record is followed by an
+ * inter-record "\n". No field can start with a newline, hence "\0\n" is an unambiguous separator.
+ */
+function splitNulRecords(stdout: string): string[] {
+  return stdout.replace(/\0\n/gu, "\0").split("\0");
+}
+
 export function parseGitLogResult(projectRoot: string, result: ProcessExecutionResult): SafeGitLog {
   if (result.resultClass === "CANCELLED") throw new BrokerError("CANCELLED", "Git log was cancelled");
   if (result.resultClass === "TIMEOUT") throw new BrokerError("TIMEOUT", "Git log timed out");
@@ -741,7 +749,7 @@ export function parseGitLogResult(projectRoot: string, result: ProcessExecutionR
   }
   const commits: SafeGitCommit[] = [];
   const warnings: string[] = [];
-  const records = result.stdout.split("\0");
+  const records = splitNulRecords(result.stdout);
   let malformed = false;
   let redacted = false;
   for (let index = 0; index + 3 < records.length; index += 4) {
@@ -870,7 +878,7 @@ export function parseGitBranchResult(projectRoot: string, result: ProcessExecuti
   let malformed = false;
   let truncated = result.truncated;
   let redacted = false;
-  const records = result.stdout.split("\0");
+  const records = splitNulRecords(result.stdout);
   const addWarning = (warning: string): void => {
     if (!warnings.includes(warning) && warnings.length < 32) warnings.push(warning);
   };

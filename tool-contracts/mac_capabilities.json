@@ -154,6 +154,34 @@
             "minLength": 1,
             "maxLength": 64
           },
+          "authorized_services": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 64,
+            "uniqueItems": false,
+            "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+          },
+          "authorized_projects": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 64,
+            "uniqueItems": false,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                "scopes": {
+                  "type": "array",
+                  "minItems": 0,
+                  "maxItems": 64,
+                  "uniqueItems": false,
+                  "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+                }
+              },
+              "required": ["path", "scopes"]
+            }
+          },
           "authorized_roots": {
             "type": "array",
             "minItems": 0,

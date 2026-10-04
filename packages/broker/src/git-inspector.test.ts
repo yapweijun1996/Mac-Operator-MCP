@@ -415,3 +415,19 @@ test("Git status rejects repository configurations that could execute scripts", 
     /executable integration/u
   );
 });
+
+test("Git log and branch parsers accept the newline git inserts between --format records", () => {
+  const sha = (char: string) => char.repeat(40);
+  const log = parseGitLogResult(
+    "/tmp/project",
+    success(`${sha("a")}\0Alice\0${"2026-09-12T10:00:00+08:00"}\0first\0\n${sha("b")}\0Bob\0${"2026-09-11T10:00:00Z"}\0second\0\n`)
+  );
+  assert.deepEqual(log.commits.map((commit) => commit.subject), ["first", "second"]);
+  assert.deepEqual(log.warnings, []);
+  const branches = parseGitBranchResult(
+    "/tmp/project",
+    success("main\0*\0origin/main\0[ahead 1]\0\ntopic\0 \0\0\0\n")
+  );
+  assert.deepEqual(branches.branches.map((branch) => branch.name), ["main", "topic"]);
+  assert.deepEqual(branches.warnings, []);
+});

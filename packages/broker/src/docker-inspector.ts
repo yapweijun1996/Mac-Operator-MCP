@@ -680,11 +680,15 @@ function parsePorts(value: unknown, warnings: string[]): SafeDockerPort[] {
     }
     for (const item of items.slice(0, MAX_PORTS - ports.length)) {
       const hostPort = isPlainDataRecord(item) && typeof item.HostPort === "string" ? Number(item.HostPort) : null;
-      ports.push({
+      const port: SafeDockerPort = {
         protocol: match[2] as "tcp" | "udp",
         containerPort,
         hostPort: hostPort !== null && Number.isSafeInteger(hostPort) && hostPort >= 1 && hostPort <= 65_535 ? hostPort : null
-      });
+      };
+      // Host IP is not reported, so the IPv4 and IPv6 bindings of one port are the same fact.
+      if (!ports.some((seen) => seen.protocol === port.protocol && seen.containerPort === port.containerPort && seen.hostPort === port.hostPort)) {
+        ports.push(port);
+      }
     }
     if (ports.length >= MAX_PORTS) {
       warnings.push("Docker port bindings were capped");

@@ -104,7 +104,7 @@ test("finite target constraints authorize only their canonical same-kind referen
   ));
   assert.throws(
     () => authorizeTarget(policy, "principal-1", ["mac.service.read"], { kind: "service", reference: "system/com.apple.WindowServer" }),
-    (error: unknown) => error instanceof Error && error.message === "Target is not allowed for every required scope"
+    (error: unknown) => error instanceof Error && error.message === "Target is not allowed for every required scope; mac_capabilities lists authorized_roots and authorized_projects"
   );
 });
 

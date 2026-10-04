@@ -105,7 +105,7 @@ export function parseLaunchdEnablementStatus(serviceId: string, output: string):
 export function validateServiceId(serviceId: string): void {
   if (typeof serviceId !== "string" || serviceId.length > MAX_SERVICE_ID_LENGTH || !SERVICE_ID_PATTERN.test(serviceId) ||
       serviceId.includes("..") || serviceId.includes("//") || serviceId.includes("\\")) {
-    throw new BrokerError("PRECONDITION_FAILED", "service_id must be a system launchd identifier");
+    throw new BrokerError("PRECONDITION_FAILED", "service_id must have the form system/<launchd-label>; mac_capabilities lists authorized_services");
   }
 }
 

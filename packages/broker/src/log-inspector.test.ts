@@ -77,3 +77,26 @@ test("log inspector rejects arbitrary sources and unbounded windows", () => {
     assert.throws(() => validateLogRequest(...args), /outside the supported range/u);
   }
 });
+
+test("log inspector folds continuation lines into their record and drops a cut-off final line", async () => {
+  const stdout = [
+    "Filtering the log data using \"process == x\"",
+    "2026-09-14 12:00:00.000 Df app[1:2] [com.x] first line",
+    "    continued detail",
+    "2026-09-14 12:00:01.000 Df app[1:2] [com.x] second",
+    "2026-09-14 12:00:02.000 Df app[1:2] [com.x] cut off mid-sen"
+  ].join("\n");
+  const inspector = new MacLogInspector({ run: async () => fakeResult("OUTPUT_LIMIT", stdout) });
+  const result = await inspector.tail("system", 10, 1, { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.deepEqual(result.entries.map((entry) => entry.message), ["first line\ncontinued detail", "second"]);
+  assert.equal(result.warnings.some((warning) => /malformed/u.test(warning)), false);
+  assert.ok(result.warnings.includes("The final partial log record was dropped"));
+});
+
+test("log inspector counts only date-prefixed lines it cannot parse as malformed", async () => {
+  const stdout = "2026-09-14 12:00:00.000 Df app[1:2] ok\n2026-09-14 12:00:01 broken\n";
+  const inspector = new MacLogInspector({ run: async () => fakeResult("SUCCEEDED", stdout) });
+  const result = await inspector.tail("system", 10, 1, { timeoutMs: 10_000, shouldCancel: () => false });
+  assert.equal(result.entries.length, 1);
+  assert.ok(result.warnings.includes("1 malformed log record was omitted"));
+});
