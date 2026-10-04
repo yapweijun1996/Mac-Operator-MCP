@@ -63,3 +63,21 @@ In the same window 11 authenticated `POST /mcp initialize` requests with `protoc
 (Cloudflare IAD) returned 400, each followed by a `GET /mcp` 405. The primary endpoint is modern-only by
 design (`legacy: "reject"`; only the owner-terminal endpoint accepts legacy 2025-06-18). Not changed by
 either deployment; whether this client is the Claude connector is not proven.
+
+## Third deployment — release `v2-usability3-20261004-1e4f7b7`
+
+Source revision 1e4f7b7 (reviewed by six adversarial lenses before commit). Previous release
+`v2-usability2-20261004-a7bb6b1` retained. Copy of the running release plus 25 files (13 compiled files
+including `packages/contracts/dist/errors.js` for `BrokerError.reasonCode`, and 12 tool contracts; hashes in
+`USABILITY-HOTFIX-3.json`). No queued/running jobs (completed 73 / failed 7 / unknown 24 before and after).
+Only the three unsigned Edge fields changed (original: `edge-service.json.before-usability3-20261004`).
+PM2 recreated from `mba-mcp.usability3.ecosystem.json` and saved. Rollback: restore that file,
+`pm2 delete mba-mcp`, `pm2 start mba-mcp.pre-usability3.ecosystem.json`, `pm2 save`.
+
+Evidence: PM2 online, restart 0, Auth and Edge children on the new release, `/mcp` 401, both
+`.well-known` documents 200, `/register` with the Claude callback 201, no new errors in the PM2 error log.
+No authenticated MCP call has been made since the restart, so the fixes are not yet observed end to end.
+Verify from an MBA connector: `mac_capabilities` lists `authorized_log_sources`/`authorized_projects`,
+`mac_log_tail` with `system/com.apple.logd` names the bad argument, `mac_policy_explain` returns
+`OUTSIDE_AUTHORIZED_ROOTS`/`ROOT_CAPABILITY_NOT_GRANTED`, and `mac_storage_analysis` without roots returns.
+Owner action recommended: add `Library/CloudStorage` to the signed policy's deny_relative_paths.
